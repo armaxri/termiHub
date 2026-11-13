@@ -94,7 +94,11 @@ export function WorkflowStepRow({
         </button>
         <span className="workflow-step__index">{index + 1}</span>
         <Icon size={14} />
-        <span className="workflow-step__kind" data-testid={`workflow-editor-step-kind-${index}`}>
+        <span
+          className="workflow-step__kind"
+          data-testid={`workflow-editor-step-kind-${index}`}
+          data-kind={step.kind}
+        >
           {stepKindLabel(step.kind)}
         </span>
         <div className="workflow-step__actions">

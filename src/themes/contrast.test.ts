@@ -930,3 +930,29 @@ describe("ansi palettes keep their canonical values (#5309)", () => {
     applyTheme("dark");
   });
 });
+
+/**
+ * OSC 133 command marks (#5563): the success/failure gutter bar is a non-text
+ * indicator on the terminal background, so it needs 3:1 (SC 1.4.11). It used to
+ * paint the tokens at 75% opacity, which dropped Dark's failure red to ~3.7:1 —
+ * readable on paper but easy to miss next to bright prompt text. The bar now
+ * paints the full-strength token (see Terminal.command-mark-style.test.ts).
+ */
+describe("command-mark colours on the terminal background (WCAG 2.2 SC 1.4.11, #5563)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    for (const token of ["colorSuccess", "colorError"] as const) {
+      const fg = theme.colors[token];
+      const bg = theme.colors.terminalBg;
+      it(`${theme.id} ${token} (${fg}) reaches 3:1 on terminalBg (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+      });
+    }
+  }
+
+  it("documents the gap: Dark's failure red at the old 75% opacity was weaker", () => {
+    const dimmed = composite(darkTheme.colors.colorError, darkTheme.colors.terminalBg, 0.75);
+    expect(contrastRatio(dimmed, darkTheme.colors.terminalBg)).toBeLessThan(
+      contrastRatio(darkTheme.colors.colorError, darkTheme.colors.terminalBg)
+    );
+  });
+});

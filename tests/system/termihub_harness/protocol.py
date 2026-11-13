@@ -45,6 +45,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "exitApp",
         "getAttribute",
         "getComputedStyle",
+        "measureElement",
         "getJsErrors",
         "getState",
         "getTerminalViewport",

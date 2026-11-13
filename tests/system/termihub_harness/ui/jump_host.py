@@ -35,7 +35,8 @@ class JumpHostUi(HarnessMixin):
                                   password: Optional[str] = ...,
                                   save_password: bool = ..., auto_reconnect: bool = ...,
                                   connect: bool = ...,
-                                  before_save: Optional[Callable[[], None]] = ...) -> None: ...
+                                  before_save: Optional[Callable[[], None]] = ...,
+                                  x11_forwarding: bool = ...) -> None: ...
         def accept_host_key_prompt(self, *, remember: bool = ..., timeout: float = ...) -> bool: ...
 
     def fill_jump_host(

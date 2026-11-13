@@ -48,6 +48,12 @@
   --tab-border: #12151d;
   --tab-active-border: var(--accent-color);
   --tab-height: 35px;
+  /* Tab sizing (#5557): tabs grow to fit their title up to the max and shrink
+     toward the min only when the strip is full. */
+  --tab-min-width: 120px;
+  --tab-max-width: 240px;
+  /* OSC 133 command-mark gutter bar width (#5563). */
+  --terminal-command-mark-width: 3px;
 
   /* Text colors */
   --text-primary: #dde1ec;

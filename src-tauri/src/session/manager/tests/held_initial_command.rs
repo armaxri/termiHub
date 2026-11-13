@@ -386,7 +386,7 @@ async fn a_capped_setup_without_its_mark_holds_the_command_for_send_now() {
     let emitter = MockEventEmitter::new();
     let sid = open(&manager, &emitter).await;
 
-    // The backend types the setup at its cap; no mark follows.
+    // The line editor takes over at the cap; no mark follows.
     tokio::time::sleep(CAP).await;
     setup.gate_opens();
     assert_eq!(written(&writes), SETUP);
@@ -433,10 +433,9 @@ async fn send_now_on_a_still_pending_capped_setup_types_it_first() {
     );
 }
 
-#[tokio::test]
-async fn a_capped_setup_without_an_initial_command_shows_no_notice() {
-    let (manager, writes, _setup) = capped_manager(true);
-    let emitter = MockEventEmitter::new();
+/// A connection without an initial command, its setup on the canonical-mode
+/// cue.
+async fn open_without_command(manager: &SessionManager, emitter: &MockEventEmitter) -> String {
     manager
         .create_connection(
             "prompt",
@@ -448,13 +447,79 @@ async fn a_capped_setup_without_an_initial_command_shows_no_notice() {
             emitter.clone(),
         )
         .await
-        .expect("connect succeeds");
-    tokio::time::sleep(CAP + CAP_MARGIN + Duration::from_millis(300)).await;
-    assert!(
-        helds(&emitter).is_empty(),
-        "the backend types it at its cap"
+        .expect("connect succeeds")
+}
+
+/// #5564: past its cap a canonical-cue setup is held, never typed blind,
+/// even without an initial command; Send now types it once.
+#[tokio::test]
+async fn a_capped_setup_without_an_initial_command_is_held_for_send_now() {
+    let (manager, writes, setup) = capped_manager(true);
+    let emitter = MockEventEmitter::new();
+    let sid = open_without_command(&manager, &emitter).await;
+
+    tokio::time::sleep(CAP).await;
+    assert!(helds(&emitter).is_empty(), "the margin is not over yet");
+    assert!(written(&writes).is_empty(), "nothing typed at the cap");
+    assert!(within(Duration::from_secs(3), || helds(&emitter) == [true]).await);
+    assert_eq!(
+        held_events(&emitter)[0],
+        InitialCommandHeldEvent {
+            session_id: sid.clone(),
+            held: true,
+            setup: true,
+            initial_command: false,
+        }
     );
+    assert!(written(&writes).is_empty(), "nothing typed blind");
+
+    assert!(manager.send_held_initial_command(&sid));
+    assert!(within(Duration::from_secs(2), || written(&writes) == SETUP).await);
+    assert!(!setup.pending.load(Ordering::SeqCst));
+    assert!(!manager.send_held_initial_command(&sid));
+    assert!(within(Duration::from_secs(2), || helds(&emitter) == [true, false]).await);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(written(&writes), SETUP, "exactly once");
+}
+
+/// #5564: a late cue still types a held canonical-cue setup, and the notice
+/// clears.
+#[tokio::test]
+async fn a_late_cue_releases_a_held_capped_setup() {
+    let (manager, writes, setup) = capped_manager(true);
+    let emitter = MockEventEmitter::new();
+    open_without_command(&manager, &emitter).await;
+    assert!(within(Duration::from_secs(4), || helds(&emitter) == [true]).await);
+
+    setup.gate_opens();
+    assert!(within(Duration::from_secs(2), || helds(&emitter) == [true, false]).await);
+    assert_eq!(written(&writes), SETUP);
+}
+
+/// #5564: a late cue past the notice releases the setup and the command
+/// behind it, once.
+#[tokio::test]
+async fn a_late_cue_releases_a_held_capped_setup_and_its_command() {
+    let (manager, writes, setup) = capped_manager(true);
+    let emitter = MockEventEmitter::new();
+    let sid = open(&manager, &emitter).await;
+    assert!(within(Duration::from_secs(4), || helds(&emitter) == [true]).await);
+    assert!(held_events(&emitter)[0].setup);
     assert!(written(&writes).is_empty());
+
+    setup.gate_opens();
+    assert!(
+        within(Duration::from_secs(2), || written(&writes)
+            == b"SETUP\necho hi\r")
+        .await
+    );
+    assert!(within(Duration::from_secs(2), || helds(&emitter) == [true, false]).await);
+    assert!(
+        !manager.send_held_initial_command(&sid),
+        "nothing left held"
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(written(&writes), b"SETUP\necho hi\r", "exactly once");
 }
 
 // ── The product-test profile, end to end (#5515) ──────────────────────
@@ -709,7 +774,8 @@ async fn old_bash_slow_rc_runs_the_initial_command_once_after_the_setup() {
 
 /// The setup's mark never comes in time (an rc file slower than the setup's
 /// cap plus the margin): the tab gets the held notice with Send now, and
-/// nothing is typed blind.
+/// nothing is typed blind: neither the initial command (#5525) nor the setup,
+/// whose echo used to follow `RC-START` (#5564).
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn old_bash_without_the_setups_mark_holds_the_initial_command() {
@@ -732,7 +798,14 @@ async fn old_bash_without_the_setups_mark_holds_the_initial_command() {
     let out = text();
     let _ = manager.close_session(&sid).await;
     assert!(held, "no held notice: {out:?}");
-    assert!(events[0].held && events[0].initial_command, "{events:?}");
+    assert!(
+        events[0].held && events[0].initial_command && events[0].setup,
+        "{events:?}"
+    );
+    assert!(
+        !out.contains("termihub-setup-done"),
+        "the setup was typed blind: {out:?}"
+    );
     assert!(
         written(&writes).is_empty(),
         "the initial command was typed blind: {out:?}"

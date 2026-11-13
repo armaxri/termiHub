@@ -1,11 +1,11 @@
 import { Zap, Play, Keyboard, Unplug, ScanText } from "lucide-react";
 import { Chip, Input, Field } from "@/components/ui";
-import { t } from "@/i18n/catalog";
 import type { WorkflowTrigger, WorkflowTriggerKind } from "@/types/workflow";
 import type { SavedConnection } from "@/types/connection";
 import { TriggerConnectionPicker } from "./TriggerConnectionPicker";
 import { OnDisconnectTriggerDetail } from "./OnDisconnectTriggerDetail";
 import { OnOutputMatchTriggerDetail } from "./OnOutputMatchTriggerDetail";
+import { triggerKindLabel } from "./workflowStepMeta";
 
 interface WorkflowTriggersEditorProps {
   triggers: WorkflowTrigger[];
@@ -86,35 +86,35 @@ export function WorkflowTriggersEditor({
     <div className="workflow-triggers" data-testid="workflow-editor-triggers">
       <div className="workflow-triggers__chips">
         <Chip
-          label="Manual"
+          label={triggerKindLabel("manual")}
           icon={<Play size={11} />}
           pressed={manual !== undefined}
           onPressedChange={toggleManual}
           data-testid="workflow-trigger-manual"
         />
         <Chip
-          label="On connect"
+          label={triggerKindLabel("on-connect")}
           icon={<Zap size={11} />}
           pressed={onConnect !== undefined}
           onPressedChange={toggleOnConnect}
           data-testid="workflow-trigger-on-connect"
         />
         <Chip
-          label="Hotkey"
+          label={triggerKindLabel("hotkey")}
           icon={<Keyboard size={11} />}
           pressed={hotkey !== undefined}
           onPressedChange={toggleHotkey}
           data-testid="workflow-trigger-hotkey"
         />
         <Chip
-          label={t("workflow.trigger.onDisconnect.label")}
+          label={triggerKindLabel("on-disconnect")}
           icon={<Unplug size={11} />}
           pressed={onDisconnect !== undefined}
           onPressedChange={toggleOnDisconnect}
           data-testid="workflow-trigger-on-disconnect"
         />
         <Chip
-          label={t("workflow.trigger.onOutputMatch.label")}
+          label={triggerKindLabel("on-output-match")}
           icon={<ScanText size={11} />}
           pressed={onOutputMatch !== undefined}
           onPressedChange={toggleOnOutputMatch}

@@ -15,6 +15,14 @@ import pytest
 
 from termihub_harness.colors import parse_color
 from termihub_harness.product_run import InputError, Recorder, load_inputs, parse_inputs
+from termihub_harness.product_run.hosts import (
+    ComposeHosts,
+    HostUnavailable,
+    NativeSshd,
+    RunHosts,
+    parse_exports,
+    target_from_exports,
+)
 from termihub_harness.product_run.grades import is_sentence_case, mix_with_transparent
 from termihub_harness.product_run.recorder import PAGE_TEMPLATE, safe_step_id
 from termihub_harness.product_run.server import answer_human, make_server
@@ -196,3 +204,45 @@ def test_color_mix_with_transparent_is_the_colour_at_that_alpha():
     base = parse_color("#227bba")
     assert (tint.r, tint.g, tint.b) == (base.r, base.g, base.b) and abs(tint.a - 0.1) < 1e-9
     assert mix_with_transparent("#ffffff") == parse_color("#ffffff")
+
+
+# ── SSH hosts (#5535) ────────────────────────────────────────────────────────
+_FIXTURE_OUT = """native-sshd: sshd listening on 127.0.0.1:22400 (pid 1, state /s)
+export TERMIHUB_NATIVE_SSHD='1'
+export TERMIHUB_NATIVE_SSHD_PORT='22400'
+export TERMIHUB_NATIVE_SSHD_USER='arne'
+export TERMIHUB_NATIVE_SSHD_KEY='/s/client key'
+export TERMIHUB_NATIVE_SSHD_DIR='/s'
+export TERMIHUB_NATIVE_SSHD_HOME='/s/home'
+export TERMIHUB_NATIVE_SSHD_JUMP_PORT='22401'
+"""
+
+
+def test_fixture_exports_parse_into_a_target_without_password():
+    exports = parse_exports(_FIXTURE_OUT)
+    assert exports["TERMIHUB_NATIVE_SSHD_KEY"] == "/s/client key"  # shell-unquoted
+    assert "native-sshd:" not in "".join(exports)  # log lines ignored
+    target = target_from_exports(exports)
+    assert (target.port, target.username, target.jump_port) == (22400, "arne", 22401)
+    assert target.password == "" and target.key == "/s/client key"
+    native = NativeSshd(target=target, exports=exports)
+    assert native.session_home == Path("/s/home")
+    assert native.client_key == Path("/s/client key")
+
+
+def test_fixture_exports_missing_the_port_are_refused():
+    with pytest.raises(HostUnavailable, match="TERMIHUB_NATIVE_SSHD_PORT"):
+        target_from_exports({"TERMIHUB_NATIVE_SSHD_USER": "u", "TERMIHUB_NATIVE_SSHD_DIR": "/s"})
+
+
+def test_a_docker_host_that_is_not_up_is_missing_with_its_reason():
+    hosts = ComposeHosts(up={"ssh-password"}, reasons={"ssh-mfa": "no container runtime"})
+    assert hosts.missing("ssh-password") is None
+    assert hosts.missing("ssh-mfa") == "no container runtime"
+    assert "ssh-other" in hosts.missing("ssh-other")
+
+
+def test_without_a_private_agent_the_app_never_gets_the_users_agent():
+    env = RunHosts().app_env()
+    assert set(env) == {"SSH_AUTH_SOCK"}
+    assert env["SSH_AUTH_SOCK"].startswith("/nonexistent/")
