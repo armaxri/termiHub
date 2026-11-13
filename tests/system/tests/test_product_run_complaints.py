@@ -16,6 +16,9 @@ fails until its fix lands; the grade is never weakened to pass.
    field show the leaf folder in full (not ellipsized), let no rendered
    segment spill past the field, fold the middle into "…" and carry the
    full path in the tooltip, at the normal and at the minimum sidebar width.
+4. **Toast stack** (#5618): two toasts raised while the connection editor is
+   open stack without overlapping each other and stay clear of the editor's
+   Save / Cancel footer.
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
 pixels).
@@ -83,6 +86,8 @@ LONG_SEGMENTS = [f"{i}-a-rather-long-folder-name-for-the-path-bar-check" for i i
     "current-folder"
 ]
 EPS = 0.5
+TOAST_REGION = "toast-region"
+EDITOR_FOOTER = "connection-editor-actions"
 
 
 def _center_y(box: dict[str, float]) -> float:
@@ -93,6 +98,16 @@ def _inside(inner: dict[str, float], outer: dict[str, float]) -> bool:
     return (
         inner["x"] >= outer["x"] - EPS
         and inner["x"] + inner["width"] <= outer["x"] + outer["width"] + EPS
+    )
+
+
+def _intersects(a: dict[str, float], b: dict[str, float]) -> bool:
+    """The two viewport boxes overlap by more than the rounding slack."""
+    return (
+        a["x"] < b["x"] + b["width"] - EPS
+        and b["x"] < a["x"] + a["width"] - EPS
+        and a["y"] < b["y"] + b["height"] - EPS
+        and b["y"] < a["y"] + a["height"] - EPS
     )
 
 
@@ -440,3 +455,52 @@ class TestProductRunComplaints(
             )
         self.close_all_tabs()
 
+    # ── 4. toast stack (#5618) ────────────────────────────────────────────────
+    def _toast_items(self) -> list[dict[str, Any]]:
+        """The visible text and button boxes inside the toast stack."""
+        items = []
+        for kind in ("text", "buttons"):
+            items += [i for i in self.driver.measure_element(TOAST_REGION, kind)["items"] if _shown(i)]
+        return items
+
+    def _closed_toast_titles(self) -> list[dict[str, Any]] | None:
+        """The 'Closed …' toast titles once at least two show, else ``None``."""
+        titles = [i for i in self._toast_items() if i["text"].startswith("Closed")]
+        return titles if len(titles) >= 2 else None
+
+    def test_30_toast_stack(self):
+        with self.step(
+            "complaints.toasts.stack",
+            "Two toasts over the connection editor: no overlap, editor footer clear (#5618)",
+            expect="#5618 complaint: the two 'Closed …' toasts sit one above the other with a "
+            "gap (no text showing through), and neither covers the editor's Save / Cancel "
+            "buttons",
+        ):
+            self.switch_to_connections_sidebar()
+            terminals: list[str] = []
+            for _ in range(2):
+                before = self.tab_ids()
+                self.open_new_terminal()
+                self.wait(lambda b=before: len(self.tab_ids()) == len(b) + 1, what="a local terminal")
+                terminals.append(next(t for t in self.tab_ids() if t not in before))
+            self.open_new_connection_editor()
+            for tab in terminals:
+                self.close_tab(tab)
+            texts = self.wait(self._closed_toast_titles, what="both 'Closed' toasts", timeout=3.0)
+            self.evidence(f"toast titles {[(t['text'], t['rect']) for t in texts]}")
+            for i, a in enumerate(texts):
+                for b in texts[i + 1:]:
+                    assert not _intersects(a["rect"], b["rect"]), (
+                        f"toasts overlap: {a['text']!r} {a['rect']} and {b['text']!r} {b['rect']}"
+                    )
+            footer = [
+                b for b in self.driver.measure_element(EDITOR_FOOTER, "buttons")["items"] if _shown(b)
+            ]
+            assert footer, "the editor footer shows no buttons"
+            for item in self._toast_items():
+                for button in footer:
+                    assert not _intersects(item["rect"], button["rect"]), (
+                        f"toast {item['text'] or item['label']!r} {item['rect']} covers the footer "
+                        f"button {button['text']!r} {button['rect']}"
+                    )
+        self.close_all_tabs()

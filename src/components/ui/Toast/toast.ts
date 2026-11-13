@@ -106,6 +106,32 @@ function dismissById(id: string | number): void {
 }
 
 /**
+ * Ids of the success/info toasts that may still be on screen (#5618). They are
+ * transient confirmations, so {@link toast.dismissTransient} clears them when
+ * something more important takes over (an error dialog). Reusing an id for an
+ * error or loading toast drops it from this set.
+ */
+const transientIds = new Set<string | number>();
+
+/**
+ * Cap on {@link transientIds}: auto-dismissed toasts never report back, so the
+ * oldest ids are dropped (they are long gone from the screen by then).
+ */
+const MAX_TRACKED_TRANSIENT = 50;
+
+/** Record (or forget) `id` as a transient toast. */
+function trackTransient(id: string | number | undefined, transient: boolean): void {
+  if (id === undefined) return;
+  transientIds.delete(id);
+  if (!transient) return;
+  transientIds.add(id);
+  if (transientIds.size > MAX_TRACKED_TRANSIENT) {
+    const oldest = transientIds.values().next().value;
+    if (oldest !== undefined) transientIds.delete(oldest);
+  }
+}
+
+/**
  * The termiHub toast API — a token-styled skin over sonner. Every mutating or
  * async user action that resolves in the background should surface one of these
  * so nothing resolves silently (the "reactive" pillar).
@@ -140,6 +166,12 @@ export interface ToastApi {
    * (#4812).
    */
   dismiss(id?: string | number): void;
+  /**
+   * Dismiss every success/info toast still showing, leaving errors and loading
+   * toasts. Called when an error dialog opens, so a stale "Connected" or
+   * "Saved" confirmation never sits beside the error (#5618).
+   */
+  dismissTransient(): void;
 }
 
 /**
@@ -148,46 +180,54 @@ export interface ToastApi {
 export const toast: ToastApi = {
   success(message, opts) {
     cancelRedismiss(opts?.id);
-    return sonnerToast.success(message, {
+    const id = sonnerToast.success(message, {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration,
       action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
+    trackTransient(id ?? opts?.id, true);
+    return id;
   },
 
   error(message, opts) {
     cancelRedismiss(opts?.id);
-    return sonnerToast.error(message, {
+    const id = sonnerToast.error(message, {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
+    trackTransient(id ?? opts?.id, false);
+    return id;
   },
 
   info(message, opts) {
     cancelRedismiss(opts?.id);
-    return sonnerToast.info(message, {
+    const id = sonnerToast.info(message, {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration,
       action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
+    trackTransient(id ?? opts?.id, true);
+    return id;
   },
 
   loading(message, opts) {
     cancelRedismiss(opts?.id);
-    return sonnerToast.loading(message, {
+    const id = sonnerToast.loading(message, {
       id: opts?.id,
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
       testId: opts?.testId,
     });
+    trackTransient(id ?? opts?.id, false);
+    return id;
   },
 
   promise<T>(promise: Promise<T>, messages: ToastPromiseMessages<T>): Promise<T> {
@@ -197,6 +237,7 @@ export const toast: ToastApi = {
         const msg =
           typeof messages.success === "function" ? messages.success(value) : messages.success;
         sonnerToast.success(msg, { id });
+        trackTransient(id, true);
       },
       (error: unknown) => {
         const msg = typeof messages.error === "function" ? messages.error(error) : messages.error;
@@ -208,9 +249,17 @@ export const toast: ToastApi = {
 
   dismiss(id) {
     if (id === undefined) {
+      transientIds.clear();
       sonnerToast.dismiss();
       return;
     }
+    transientIds.delete(id);
     dismissById(id);
+  },
+
+  dismissTransient() {
+    const ids = Array.from(transientIds);
+    transientIds.clear();
+    for (const id of ids) dismissById(id);
   },
 };

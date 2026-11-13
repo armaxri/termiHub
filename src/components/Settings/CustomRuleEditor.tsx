@@ -3,7 +3,7 @@ import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { AlertCircle } from "lucide-react";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
-import { Button, Checkbox, ColorInput, Field, Input } from "@/components/ui";
+import { Button, Checkbox, ColorInput, Field, Input, TOAST_AVOID_PROPS } from "@/components/ui";
 import { compileRules, findMatches, normalizeHexColor } from "@/services/syntaxHighlighting";
 import { resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { getThemedRuleColor } from "@/services/syntaxHighlightingRules";
@@ -356,7 +356,7 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
         </pre>
       </div>
 
-      <div className="custom-rule-editor__actions">
+      <div className="custom-rule-editor__actions" {...TOAST_AVOID_PROPS}>
         <Button variant="ghost" onClick={onCancel} data-testid="custom-rule-cancel">
           Cancel
         </Button>

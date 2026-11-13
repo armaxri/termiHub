@@ -280,7 +280,7 @@ describe("ToastProvider stack offset (#5556)", () => {
     container.remove();
   });
 
-  it("anchors the stack above the visible bottom banner, 16px from other edges", async () => {
+  it("anchors the stack above the banner or a keep-clear element, 16px from other edges", async () => {
     render(<ToastProvider />);
     act(() => {
       toast.success("Connected");
@@ -290,9 +290,37 @@ describe("ToastProvider stack offset (#5556)", () => {
     // BottomBannerRegion publishes --app-bottom-banner-inset (0px when no banner).
     for (const prefix of ["--offset", "--mobile-offset"]) {
       expect(toaster.style.getPropertyValue(`${prefix}-bottom`)).toBe(
-        "calc(var(--app-bottom-banner-inset, 0px) + 16px)"
+        "calc(max(var(--app-bottom-banner-inset, 0px), var(--app-toast-avoid-inset, 0px)) + 16px)"
       );
       expect(toaster.style.getPropertyValue(`${prefix}-right`)).toBe("16px");
+    }
+  });
+});
+
+describe("ToastProvider stacking (#5618)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("lays toasts out expanded, each in its own slot, never drawn over each other", async () => {
+    render(<ToastProvider />);
+    act(() => {
+      toast.success("Closed tab", { id: "first" });
+      toast.info("Connect canceled", { id: "second" });
+    });
+    await waitFor(() => document.querySelectorAll("[data-sonner-toast]").length === 2);
+    for (const el of document.querySelectorAll("[data-sonner-toast]")) {
+      // Collapsed (data-expanded=false) back cards are where the older toast's
+      // text showed through the newer one on the unstyled skin.
+      expect(el.getAttribute("data-expanded")).toBe("true");
     }
   });
 });

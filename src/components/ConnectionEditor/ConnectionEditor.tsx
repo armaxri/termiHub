@@ -81,6 +81,7 @@ import {
   Toggle,
   UnsavedChangesDialog,
   toast,
+  TOAST_AVOID_PROPS,
 } from "@/components/ui";
 import { SettingsField } from "@/components/Settings/SettingsField";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
@@ -2135,7 +2136,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         />
         <div className="connection-editor__content">{renderContent()}</div>
       </div>
-      <div className="connection-editor__actions">
+      <div
+        className="connection-editor__actions"
+        data-testid="connection-editor-actions"
+        {...TOAST_AVOID_PROPS}
+      >
         <Button variant="secondary" onClick={handleCancel} data-testid="connection-editor-cancel">
           Cancel
         </Button>

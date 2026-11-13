@@ -12,7 +12,14 @@ import {
 } from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
 import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout";
-import { Button, Input, Field, Tooltip, UnsavedChangesDialog } from "@/components/ui";
+import {
+  Button,
+  Input,
+  Field,
+  Tooltip,
+  UnsavedChangesDialog,
+  TOAST_AVOID_PROPS,
+} from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
 import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
@@ -538,7 +545,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
         <WorkspaceSettingsSection value={settings} onChange={setSettings} />
       </div>
 
-      <div className="workspace-editor__actions">
+      <div className="workspace-editor__actions" {...TOAST_AVOID_PROPS}>
         <Button variant="secondary" onClick={handleCancel} data-testid="workspace-cancel-btn">
           Cancel
         </Button>

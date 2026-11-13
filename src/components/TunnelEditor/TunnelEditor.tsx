@@ -30,6 +30,7 @@ import {
   Toggle,
   UnsavedChangesDialog,
   toast,
+  TOAST_AVOID_PROPS,
 } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -925,7 +926,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           </label>
         </div>
 
-        <div className="tunnel-editor__actions">
+        <div className="tunnel-editor__actions" {...TOAST_AVOID_PROPS}>
           <Button variant="secondary" onClick={handleCancel} data-testid="tunnel-editor-cancel">
             Cancel
           </Button>
