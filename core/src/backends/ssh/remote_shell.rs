@@ -614,7 +614,7 @@ pub fn erases_setup_echo(shell: RemoteShell, has_integration: bool) -> bool {
 ///   parse error there.
 /// - fish 4.0+: nothing. It emits OSC 7 and OSC 133 itself. Its env and X11
 ///   lines are still typed — joined into one line that ends with the done
-///   mark, so their echo is hidden like the rest ([`join_fish_setup`],
+///   mark, so their echo is hidden like the rest ([`join_marked_setup`],
 ///   #5094).
 /// - cmd.exe (#5109): the hook's `PROMPT` ([`cmd_hook_line`]), ended with
 ///   CR. The connector joins it with the other setup lines at the first
@@ -693,7 +693,7 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 ///   [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)).
 /// - A fish login shell (#5016, #5094): whenever anything is typed. The
 ///   joined fish line always ends with the setup-done mark
-///   ([`join_fish_setup`]), so a fish 4 — which is typed no integration
+///   ([`join_marked_setup`]), so a fish 4 — which is typed no integration
 ///   line — gets its env and X11 lines hidden too. fish redraws its input
 ///   cell by cell, which the filter follows with a screen model
 ///   ([`SetupEchoFilter::set_cell_redraw`](crate::output::setup_echo::SetupEchoFilter::set_cell_redraw)).
@@ -731,12 +731,13 @@ pub fn join_posix_setup(lines: &[String]) -> String {
     format!(" {}\n", statements.join("; "))
 }
 
-/// Join fish setup lines into one typed line, as [`join_posix_setup`] does,
-/// that always ends by printing the setup-done mark (#5094): the mark is
-/// what ends the hidden region, and a fish 4 is typed no integration line
-/// (which carries it otherwise). fish's builtin `printf` takes the same
-/// `\e` / `\a` escapes as POSIX `printf`.
-pub fn join_fish_setup(lines: &[String]) -> String {
+/// Join setup lines into one typed line, as [`join_posix_setup`] does, that
+/// always ends by printing the setup-done mark (#5094): the mark is what ends
+/// the hidden region, and a setup without an integration line (a fish 4, or a
+/// host with the hook off) has nothing else that prints it. A line already
+/// ending in the mark gets no second one. fish's builtin `printf` takes the
+/// same `\e` / `\a` escapes as POSIX `printf`, so one form serves both.
+pub fn join_marked_setup(lines: &[String]) -> String {
     let joined = join_posix_setup(lines);
     let line = joined.trim_end_matches('\n');
     if line.ends_with(SETUP_DONE_PRINTF) {
@@ -2382,7 +2383,7 @@ mod tests {
     fn fish_setup_joins_into_one_line_ending_in_the_done_mark() {
         let env = env_setup_line(FISH4, &env(&[("FOO", "b a'r")])).unwrap();
         let x11 = x11_setup_lines(FISH4, 10, Some("abcd"));
-        let joined = join_fish_setup(&[env.clone(), x11[0].clone(), x11[1].clone()]);
+        let joined = join_marked_setup(&[env.clone(), x11[0].clone(), x11[1].clone()]);
         assert_eq!(joined.matches('\n').count(), 1, "one line: {joined:?}");
         assert!(joined.ends_with('\n'), "{joined:?}");
         assert_eq!(
@@ -2395,10 +2396,10 @@ mod tests {
         assert_eq!(joined.matches("6973;").count(), 1);
 
         let hook = integration_setup_line(FISH3).unwrap();
-        let joined = join_fish_setup(&[env, hook.clone()]);
+        let joined = join_marked_setup(&[env, hook.clone()]);
         assert_eq!(joined.matches("6973;").count(), 1, "{joined:?}");
         assert!(joined.ends_with(&format!("{SETUP_DONE_PRINTF}\n")));
-        assert_eq!(join_fish_setup(std::slice::from_ref(&hook)), hook);
+        assert_eq!(join_marked_setup(std::slice::from_ref(&hook)), hook);
     }
 
     #[test]

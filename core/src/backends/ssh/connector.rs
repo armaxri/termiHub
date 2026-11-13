@@ -606,7 +606,7 @@ impl SshConnector for RusshSshConnector {
         if hide_echo {
             let lines: Vec<String> = setup.drain(..).map(|(_, line)| line).collect();
             let joined = if is_fish {
-                remote_shell::join_fish_setup(&lines)
+                remote_shell::join_marked_setup(&lines)
             } else {
                 remote_shell::join_posix_setup(&lines)
             };
