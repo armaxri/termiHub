@@ -213,7 +213,7 @@ describe("ConnectionList — first-run empty state", () => {
 
       const empty = container.querySelector('[data-testid="connections-empty-state"]');
       expect(empty).not.toBeNull();
-      expect(empty!.getAttribute("data-compact")).toBe("true");
+      expect(empty!.className).toContain("connections-empty--compact");
       // No icon badge, no card, no big button — a single inline line.
       expect(empty!.className).toContain("ui-empty--inline");
       expect(empty!.querySelector(".ui-empty__icon")).toBeNull();
@@ -241,7 +241,7 @@ describe("ConnectionList — first-run empty state", () => {
     await render(root);
 
     const empty = container.querySelector('[data-testid="connections-empty-state"]');
-    expect(empty?.getAttribute("data-compact")).toBe("false");
+    expect(empty?.className).not.toContain("connections-empty--compact");
     expect(empty?.className).toContain("ui-empty--card");
   });
 });

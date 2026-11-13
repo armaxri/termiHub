@@ -494,6 +494,16 @@
   display: flex;
 }
 
+/* Secondary experimental-features signpost under the empty-state button:
+   smaller and quieter than the one-sentence description (R-122, #5702). It
+   takes a full line of the wrapping action row so it sits under the button. */
+.connections-empty__hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
 /* First-run experimental-features signpost link inside the connections empty
    state (UX-002/UX-004). Inline text button styled as a link, tokens only.
    `--text-link` (not the `--accent-color` button fill) so the text meets AA on
