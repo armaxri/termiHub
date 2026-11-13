@@ -27,7 +27,7 @@ export const CREDENTIAL_STORAGE_CHOOSE_TEXT =
 
 /** Under a live save box before any storage choice exists (#5187). */
 export const CREDENTIAL_STORAGE_CHOOSE_HINT =
-  "Tick to choose where termiHub keeps passwords. Saved once the connection succeeds.";
+  "Ticking this asks where to keep passwords. It is saved once the connection succeeds.";
 
 /** Label of the action that leads a user in None mode to the storage setting. */
 export const ENABLE_CREDENTIAL_STORAGE_LABEL = "Enable credential storage…";

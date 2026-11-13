@@ -85,6 +85,11 @@ export interface ResolveConnectSecretOptions {
    * connect it belongs to (#4312). Omitted keeps the generic title.
    */
   label?: string;
+  /**
+   * Display name of the connection type (e.g. `"Telnet"`), so the prompt is
+   * titled after the real transport (#5617). Omitted keeps the SSH title.
+   */
+  transport?: string;
 }
 
 /**
@@ -99,6 +104,7 @@ export async function resolveConnectSecret({
   requestPassword,
   allowSave = true,
   label,
+  transport,
 }: ResolveConnectSecretOptions): Promise<ConnectSecretResult> {
   if (!schema) return { status: "none" };
 
@@ -167,6 +173,11 @@ export async function resolveConnectSecret({
   const options: PasswordPromptOptions = {
     ...(allowSave && !credentialRef && !storeStaysLocked ? {} : { allowSave: false }),
     ...(label ? { label } : {}),
+    ...(transport ? { transport } : {}),
+    // Name the key a passphrase unlocks (#5617).
+    ...(keyPrompt && typeof settings.keyPath === "string" && settings.keyPath.trim()
+      ? { keyPath: settings.keyPath }
+      : {}),
   };
   const answer =
     Object.keys(options).length === 0

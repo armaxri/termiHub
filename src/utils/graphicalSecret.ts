@@ -62,6 +62,11 @@ export interface ResolveGraphicalSettingsOptions {
    * connect it belongs to (#4312, #4475). Omitted keeps the generic title.
    */
   label?: string;
+  /**
+   * Display name of the connection type (e.g. `"VNC"`), so the prompt is
+   * titled after the real transport (#5617). Omitted keeps the SSH title.
+   */
+  transport?: string;
 }
 
 function readString(settings: Record<string, unknown>, key: string): string {
@@ -79,6 +84,7 @@ export async function resolveGraphicalSettings({
   settings,
   requestPassword,
   label,
+  transport,
 }: ResolveGraphicalSettingsOptions): Promise<GraphicalSettingsResult> {
   if (readString(settings, "password").length > 0) {
     return { status: "resolved", settings };
@@ -89,7 +95,10 @@ export async function resolveGraphicalSettings({
     status: "resolved",
     settings: { ...settings, password },
   });
-  const labelOption = label ? { label } : {};
+  const labelOption = {
+    ...(label ? { label } : {}),
+    ...(transport ? { transport } : {}),
+  };
   const host = readString(settings, "host");
   const username = readString(settings, "username");
 
@@ -122,9 +131,10 @@ export async function resolveGraphicalSettings({
   }
   if (stored) return withPassword(stored);
 
-  const answer = label
-    ? await requestPassword(host, username, notice, "password", labelOption)
-    : await requestPassword(host, username, notice, "password");
+  const answer =
+    Object.keys(labelOption).length > 0
+      ? await requestPassword(host, username, notice, "password", labelOption)
+      : await requestPassword(host, username, notice, "password");
   if (answer === null) return { status: "canceled" };
   const entered = answer.password;
   const result = withPassword(entered);

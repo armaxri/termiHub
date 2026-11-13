@@ -68,6 +68,7 @@ import {
 } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { connectionTypeDisplayName } from "@/utils/connectionTypeDisplayName";
 import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { frontendLog } from "@/utils/frontendLog";
@@ -1450,6 +1451,7 @@ export function AgentNode({
           settings: def.config,
           requestPassword,
           label: def.name,
+          transport: connectionTypeDisplayName(def.sessionType),
         }).then((resolved) => {
           if (resolved.status === "canceled") {
             toast.info("Connect canceled");

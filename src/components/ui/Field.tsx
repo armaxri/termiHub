@@ -72,6 +72,8 @@ export interface FieldProps {
   labelIcon?: React.ReactNode;
   /** Extra class names for the label element. */
   labelClassName?: string;
+  /** Test hook forwarded to the label element (e.g. for a visible-label grade). */
+  labelTestId?: string;
   /**
    * Overrides the error message id (defaults to `{htmlFor}-error`, or a
    * generated id). Use when the control already points its `aria-describedby`
@@ -184,6 +186,7 @@ export function Field({
   labelAccessory,
   labelIcon,
   labelClassName,
+  labelTestId,
   errorId: errorIdOverride,
   errorTestId,
   children,
@@ -258,7 +261,9 @@ export function Field({
     return (
       <label className={wrapperClasses} htmlFor={htmlFor} {...rest}>
         {control}
-        <span className={labelClasses}>{labelContent}</span>
+        <span className={labelClasses} data-testid={labelTestId}>
+          {labelContent}
+        </span>
         {labelAccessory}
         {hintNode}
         {errorNode}
@@ -267,11 +272,13 @@ export function Field({
   }
 
   const labelNode = htmlFor ? (
-    <label className={labelClasses} htmlFor={htmlFor}>
+    <label className={labelClasses} htmlFor={htmlFor} data-testid={labelTestId}>
       {labelContent}
     </label>
   ) : (
-    <span className={labelClasses}>{labelContent}</span>
+    <span className={labelClasses} data-testid={labelTestId}>
+      {labelContent}
+    </span>
   );
 
   const labelBlock =

@@ -67,7 +67,7 @@ describe("PasswordPrompt", () => {
     });
     render();
 
-    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH Password");
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH password");
     expect(query("password-prompt-description")?.textContent).toContain(
       "Enter password for alice@example.com"
     );
@@ -81,8 +81,8 @@ describe("PasswordPrompt", () => {
     });
     render();
 
-    // The prompt must not call a key passphrase the account "SSH Password".
-    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH Key Passphrase");
+    // The prompt must not call a key passphrase the account "SSH password".
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH key passphrase");
     expect(query("password-prompt-description")?.textContent).toContain("passphrase");
     expect(query("password-prompt-input")?.getAttribute("placeholder")).toBe("Passphrase");
     expect(query("password-prompt-input")?.getAttribute("aria-label")).toBe("SSH key passphrase");
@@ -435,6 +435,107 @@ describe("PasswordPrompt", () => {
     await expect(answer).resolves.toEqual({ password: "typed-before-status", shouldSave: true });
   });
 
+  describe("transport-aware title (#5617)", () => {
+    const title = () => document.querySelector(".ui-modal__title")?.textContent;
+
+    it("titles a telnet password after telnet, never SSH", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("10.0.0.7", "pi", "", "password", {
+          label: "Lab switch",
+          transport: "Telnet",
+        });
+      });
+      render();
+
+      expect(title()).toBe("Telnet password");
+      expect(title()).not.toContain("SSH");
+      // The product run reads the title by this hook.
+      expect(query("password-prompt-title")?.textContent).toBe("Telnet password");
+      expect(query("password-prompt-input")?.getAttribute("aria-label")).toBe("Telnet password");
+      expect(document.body.textContent).not.toContain("SSH");
+    });
+
+    it("titles a remote-desktop password after its transport", async () => {
+      await act(async () => {
+        void useAppStore
+          .getState()
+          .requestPassword("office", "me", "", "password", { transport: "VNC" });
+      });
+      render();
+
+      expect(title()).toBe("VNC password");
+    });
+
+    it("keeps the SSH title when no transport is given", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("example.com", "alice");
+      });
+      render();
+
+      expect(title()).toBe("SSH password");
+      expect(query("password-prompt-connection")).toBeNull();
+    });
+
+    it("uses sentence case for the key passphrase title", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase", {
+          label: "sys-pr-cred-master-209368c7",
+        });
+      });
+      render();
+
+      // No connection name in the title, so a long name never wraps it.
+      expect(title()).toBe("SSH key passphrase");
+      expect(query("password-prompt-connection")?.textContent).toBe(
+        "Connection: sys-pr-cred-master-209368c7"
+      );
+    });
+
+    it("names the key file a passphrase unlocks", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("127.0.0.1", "arne", "", "key_passphrase", {
+          keyPath: "~/.ssh/id_ed25519",
+        });
+      });
+      render();
+
+      expect(query("password-prompt-description")?.textContent).toBe(
+        "Enter the passphrase for key ~/.ssh/id_ed25519, used by arne@127.0.0.1"
+      );
+    });
+
+    it("ignores a key path on a password prompt", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("example.com", "alice", "", "password", {
+          keyPath: "~/.ssh/id_ed25519",
+        });
+      });
+      render();
+
+      expect(query("password-prompt-description")?.textContent).toBe(
+        "Enter password for alice@example.com"
+      );
+    });
+
+    it("follows the transport of the next queued prompt", async () => {
+      let first: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
+      await act(async () => {
+        first = useAppStore
+          .getState()
+          .requestPassword("a.example", "alice", "", "password", { transport: "Telnet" });
+        void useAppStore.getState().requestPassword("b.example", "bob");
+      });
+      render();
+      expect(title()).toBe("Telnet password");
+
+      act(() => {
+        query("password-prompt-connect")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await expect(first).resolves.toMatchObject({ password: "" });
+      expect(title()).toBe("SSH password");
+    });
+  });
+
   describe("concurrent prompts (#4312)", () => {
     function typePassword(value: string) {
       const input = query("password-prompt-input") as HTMLInputElement;
@@ -451,7 +552,7 @@ describe("PasswordPrompt", () => {
       });
     }
 
-    it("names the connection the prompt is for in its title", async () => {
+    it("names the connection the prompt is for on its own line (#5617)", async () => {
       await act(async () => {
         void useAppStore
           .getState()
@@ -459,9 +560,12 @@ describe("PasswordPrompt", () => {
       });
       render();
 
-      expect(document.querySelector(".ui-modal__title")?.textContent).toBe(
-        "SSH Password — Prod DB"
-      );
+      // The title stays short; the name sits on a truncating line of its own.
+      expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH password");
+      const line = query("password-prompt-connection");
+      expect(line?.textContent).toBe("Connection: Prod DB");
+      expect(line?.getAttribute("title")).toBe("Prod DB");
+      expect(line?.classList.contains("password-prompt__connection")).toBe(true);
     });
 
     it("says how many more prompts are waiting, and none for a single prompt", async () => {
@@ -494,9 +598,7 @@ describe("PasswordPrompt", () => {
       await expect(first).resolves.toMatchObject({ password: "pw-a" });
 
       expect(query("password-prompt-description")?.textContent).toContain("bob@b.example");
-      expect(document.querySelector(".ui-modal__title")?.textContent).toBe(
-        "SSH Password — Jump host"
-      );
+      expect(query("password-prompt-connection")?.textContent).toBe("Connection: Jump host");
       expect((query("password-prompt-input") as HTMLInputElement).value).toBe("");
       expect(query("password-prompt-queue")).toBeNull();
 

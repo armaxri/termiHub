@@ -98,7 +98,8 @@ class CredentialStoreUi(HarnessMixin):
     def credential_indicator_present(self) -> bool:
         """Whether the status-bar credential indicator is in the DOM.
 
-        Only master-password mode renders it; ``none``/keychain modes hide it.
+        Master-password mode renders the lock toggle, keychain mode a static
+        "Keychain" item; ``none`` mode hides it.
         """
         return self.driver.exists(INDICATOR)
 
