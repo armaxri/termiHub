@@ -1549,12 +1549,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                             Ok(line) => line,
                             Err(e) => {
                                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                                return Err(TerminalError::RemoteError(match e {
-                                    stdout_reader::AgentReadError::Closed => {
-                                        "Channel closed before initialize response".into()
-                                    }
-                                    other => format!("Initialize read failed: {other}"),
-                                }));
+                                return Err(stdout_reader::handshake_read_error(e));
                             }
                         };
 
