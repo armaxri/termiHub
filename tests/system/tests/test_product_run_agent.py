@@ -44,9 +44,11 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.colors import contrast
 from termihub_harness.orchestrator import REPO_ROOT
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
+from termihub_harness.ui.theme import ThemeUi
 
 pytestmark = [
     pytest.mark.product_run,
@@ -101,6 +103,7 @@ class TestProductRunAgent(
     SidebarUi,
     ConnectionsUi,
     PasswordPromptUi,
+    ThemeUi,
     SystemTest,
 ):
     phase = "Remote agent"
@@ -365,3 +368,67 @@ class TestProductRunAgent(
                 )
             else:
                 self.evidence("no Connections empty state on screen (connections saved)")
+
+    # ── #5702: inline Connect, compact empty state, link contrast ────────────
+    def test_60_sidebar_empty_states_and_inline_connect(self):
+        """Grade the #5621 follow-ups (#5702) on the live sidebar."""
+        with self.step(
+            "agent.connect-inline",
+            "A disconnected agent's Connect sits on the agent's name row (#5702, R-010)",
+            expect="the fresh agent row with 'Connect' at the end of the name line",
+        ):
+            name = str(self.state.get("fresh_agent") or "")
+            if not name:
+                native = self.need_native()
+                name = unique_name("pr-Agent-Inline")
+                self.create_remote_agent(
+                    name, host=SSH_HOST, port=native.target.port,
+                    username=native.target.username, auth_method="key",
+                )
+            agent_id = self.require_agent(name)["id"]
+            connect_id = f"agent-connect-{agent_id}"
+            self.wait(lambda: self.driver.exists(connect_id), what="the agent's Connect action")
+            title = self.driver.measure_element(f"agent-name-{agent_id}")["rect"]
+            action = self.driver.measure_element(connect_id)["rect"]
+            self.evidence(f"name {title}, connect {action}")
+            middle = action["y"] + action["height"] / 2
+            assert title["y"] - 1 <= middle <= title["y"] + title["height"] + 1, (
+                f"Connect {action} is not on the name row {title}"
+            )
+            assert action["x"] >= title["x"] + title["width"] - 1, "Connect overlaps the name"
+
+        with self.step(
+            "connections.empty-compact",
+            "With remote agents listed, the empty Saved group is one compact line (#5702, R-077)",
+            expect="'No saved connections. New connection' as a single line above the agents",
+        ):
+            if self.driver.exists("connections-empty-state"):
+                cls = self.driver.get_attribute("connections-empty-state", "class") or ""
+                box = self.driver.measure_element("connections-empty-state")["rect"]
+                self.evidence(f"empty state class {cls!r}, box {box}")
+                assert "connections-empty--compact" in cls, "the full card shows beside agents"
+                assert box["height"] <= 48, f"the compact empty state is {box['height']}px tall"
+            else:
+                self.evidence("no Connections empty state on screen (connections saved)")
+
+        with self.step(
+            "themes.solarized-dark.link-contrast",
+            "Solarized Dark: empty-state links meet 4.5:1 on the sidebar (#5702, R-139)",
+            expect="the app in Solarized Dark",
+        ):
+            previous = self.current_theme()
+            self.set_theme("solarized-dark")
+            try:
+                link = self.root_color("--text-link")
+                sidebar = self.root_color("--sidebar-bg")
+                ratio = contrast(link, sidebar)
+                self.evidence(f"--text-link {link.hex()} on {sidebar.hex()} = {ratio:.2f}:1")
+                assert ratio >= 4.5, f"link text only {ratio:.2f}:1 on the sidebar"
+                if self.driver.exists("connections-empty-new-connection"):
+                    cls = self.driver.get_attribute("connections-empty-new-connection", "class")
+                    if "connections-empty__link" in (cls or ""):
+                        shown = self.style_color("color", "connections-empty-new-connection")
+                        self.evidence(f"rendered link {shown.hex()}")
+                        assert shown.hex() == link.hex(), "the empty-state link is not --text-link"
+            finally:
+                self.set_theme(previous or "dark")

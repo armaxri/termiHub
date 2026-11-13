@@ -7,7 +7,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getActivePanelId } from "@/store/layoutSelectors";
-import { useSidebarFollowsActiveTab, revealConnectionRow } from "./useSidebarFollowsActiveTab";
+import {
+  useSidebarFollowsActiveTab,
+  revealConnectionRow,
+  connectionAncestorFolderIds,
+} from "./useSidebarFollowsActiveTab";
 
 const LOCAL = { type: "local", config: {} };
 
@@ -124,5 +128,78 @@ describe("revealConnectionRow", () => {
     revealConnectionRow('Lab/"x"');
     vi.unstubAllGlobals();
     expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+  });
+
+  /** Run the deferred reveal synchronously. */
+  function syncFrames(): void {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+  }
+
+  function addRow(testId: string): ReturnType<typeof vi.fn> {
+    const row = document.createElement("button");
+    row.setAttribute("data-testid", testId);
+    const scroll = vi.fn();
+    row.scrollIntoView = scroll;
+    document.body.appendChild(row);
+    return scroll;
+  }
+
+  it("falls back to the deepest rendered ancestor folder (#5706)", () => {
+    const outer = addRow("folder-toggle-outer");
+    const inner = addRow("folder-toggle-inner");
+    syncFrames();
+    revealConnectionRow("hidden", ["outer", "inner", "missing"]);
+    vi.unstubAllGlobals();
+    expect(inner).toHaveBeenCalledWith({ block: "nearest" });
+    expect(outer).not.toHaveBeenCalled();
+  });
+
+  it("prefers the connection row over its folders", () => {
+    const folder = addRow("folder-toggle-f");
+    const row = addRow("connection-item-c");
+    syncFrames();
+    revealConnectionRow("c", ["f"]);
+    vi.unstubAllGlobals();
+    expect(row).toHaveBeenCalled();
+    expect(folder).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectionAncestorFolderIds", () => {
+  const folders = [
+    { id: "root", parentId: null },
+    { id: "mid", parentId: "root" },
+    { id: "leaf", parentId: "mid" },
+    { id: "loop-a", parentId: "loop-b" },
+    { id: "loop-b", parentId: "loop-a" },
+  ];
+  const connections = [
+    { id: "deep", folderId: "leaf" },
+    { id: "top", folderId: null },
+    { id: "cyclic", folderId: "loop-a" },
+  ];
+
+  it("lists the enclosing folders root first", () => {
+    expect(connectionAncestorFolderIds("deep", connections, folders)).toEqual([
+      "root",
+      "mid",
+      "leaf",
+    ]);
+  });
+
+  it("is empty for a root-level, unknown or missing connection", () => {
+    expect(connectionAncestorFolderIds("top", connections, folders)).toEqual([]);
+    expect(connectionAncestorFolderIds("nope", connections, folders)).toEqual([]);
+    expect(connectionAncestorFolderIds(null, connections, folders)).toEqual([]);
+  });
+
+  it("stops on a malformed parent cycle", () => {
+    expect(connectionAncestorFolderIds("cyclic", connections, folders)).toEqual([
+      "loop-b",
+      "loop-a",
+    ]);
   });
 });
