@@ -185,7 +185,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
 
     def test_editor_opens_with_all_fields(self):
         """TUNNEL-02: New Tunnel opens an editor with name, SSH select, type
-        buttons, the diagram, and a "New SSH Tunnel" title."""
+        buttons, the diagram, and a "New SSH tunnel" title."""
         self._open_new_tunnel_editor()
         fields = (
             "tunnel-editor-name",
@@ -199,7 +199,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             lambda: all(self.driver.exists(t) for t in fields),
             what="the tunnel editor fields",
         )
-        assert "New SSH Tunnel" in self.driver.get_text("tunnel-editor-title")
+        assert "New SSH tunnel" in self.driver.get_text("tunnel-editor-title")
 
     def test_local_type_shows_forward_diagram_and_fields(self):
         """TUNNEL-03: Local forward — Your PC → SSH Server → Target, with both
@@ -284,7 +284,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             what="the name field to pre-fill",
         )
         title = self.driver.get_text("tunnel-editor-title")
-        assert "Edit Tunnel" in title
+        assert "Edit tunnel" in title
         assert tunnel["name"] in title
 
     def test_duplicate_creates_a_copy(self):
