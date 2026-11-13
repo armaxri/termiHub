@@ -42,6 +42,7 @@ mod terminal_reply;
 pub mod unattended;
 pub mod x11;
 pub mod x11_req;
+pub mod x11_untrusted;
 
 pub use self::exec::{
     exec_probe_indicates_capability, probe_exec_capability, ssh_exec_with_stdin, SshExecOutput,
@@ -302,6 +303,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         rows,
         env,
         enable_x11_forwarding: bool_field("enableX11Forwarding", false),
+        x11_untrusted: bool_field("x11Untrusted", crate::config::DEFAULT_X11_UNTRUSTED),
         enable_monitoring: opt_bool("enableMonitoring"),
         enable_file_browser: opt_bool("enableFileBrowser"),
         save_password: opt_bool("savePassword"),
@@ -515,6 +517,36 @@ impl ConnectionType for Ssh {
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
                             visible_when: None,
+                        },
+                        SettingsField {
+                            key: "x11Untrusted".to_string(),
+                            label: "Untrusted X11 forwarding".to_string(),
+                            description: Some(
+                                "Limit what remote programs can do on your screen".to_string(),
+                            ),
+                            help_text: Some(
+                                "Trusted forwarding (off) gives remote programs full access to \
+                                 your local display: they can read other windows and see what \
+                                 you type, as with ssh -Y. Untrusted forwarding (on) gives them a \
+                                 restricted, short-lived key instead, as with ssh -X: new remote \
+                                 windows can open for 20 minutes after connecting, and some \
+                                 programs may not work fully. It needs an X server with the \
+                                 SECURITY extension and xauth. XQuartz (macOS) and VcXsrv \
+                                 (Windows) lack it, so with this on, X11 forwarding stays off \
+                                 there and the connection says why."
+                                    .to_string(),
+                            ),
+                            field_type: FieldType::Boolean,
+                            required: false,
+                            default: Some(serde_json::json!(crate::config::DEFAULT_X11_UNTRUSTED)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: Some(Condition {
+                                field: "enableX11Forwarding".to_string(),
+                                equals: serde_json::json!(true),
+                                ..Default::default()
+                            }),
                         },
                         SettingsField {
                             key: "connectTimeoutSecs".to_string(),
@@ -1514,6 +1546,7 @@ mod tests {
             vec![
                 "shell",
                 "enableX11Forwarding",
+                "x11Untrusted",
                 "connectTimeoutSecs",
                 "keepaliveIntervalSecs",
                 "keepaliveMaxCount",
@@ -1984,6 +2017,45 @@ mod tests {
         });
         let errors = validate_settings(&schema, &settings);
         assert!(errors.is_empty(), "errors: {errors:?}");
+    }
+
+    #[test]
+    fn schema_x11_untrusted_shows_only_with_x11_and_uses_the_one_default() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema.groups[2]
+            .fields
+            .iter()
+            .find(|f| f.key == "x11Untrusted")
+            .unwrap();
+        assert!(matches!(field.field_type, FieldType::Boolean));
+        assert_eq!(field.label, "Untrusted X11 forwarding");
+        // One constant decides the default everywhere (#5585).
+        assert_eq!(
+            field.default,
+            Some(serde_json::json!(crate::config::DEFAULT_X11_UNTRUSTED))
+        );
+        let when = field.visible_when.as_ref().unwrap();
+        assert_eq!(when.field, "enableX11Forwarding");
+        assert_eq!(when.equals, serde_json::json!(true));
+        let help = field.help_text.as_deref().unwrap();
+        for needle in ["Trusted", "Untrusted", "SECURITY", "XQuartz", "20 minutes"] {
+            assert!(help.contains(needle), "{needle:?} missing from {help:?}");
+        }
+    }
+
+    #[test]
+    fn parse_x11_untrusted_reads_the_key_and_defaults_to_the_constant() {
+        let base = serde_json::json!({"host": "h", "username": "u", "authMethod": "agent"});
+        assert_eq!(
+            parse_ssh_settings(&base).x11_untrusted,
+            crate::config::DEFAULT_X11_UNTRUSTED
+        );
+        for value in [true, false] {
+            let mut settings = base.clone();
+            settings["x11Untrusted"] = serde_json::json!(value);
+            assert_eq!(parse_ssh_settings(&settings).x11_untrusted, value);
+        }
     }
 
     // --- Settings parsing tests ---

@@ -72,7 +72,7 @@ async fn x11_forwarding_delivers_channel_to_local_server() {
 
     let alive = Arc::new(AtomicBool::new(true));
     let (_forwarder, remote_display, _cookie) =
-        X11Forwarder::start(&config, &mut session, registry, alive, Some(resolved))
+        X11Forwarder::start(&config, &mut session, registry, alive, Some(resolved), None)
             .await
             .expect("start X11 forwarder");
 

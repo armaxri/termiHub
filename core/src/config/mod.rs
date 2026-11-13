@@ -555,6 +555,11 @@ pub struct SshConfig {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub enable_x11_forwarding: bool,
+    /// Forward X11 with a short-lived untrusted cookie (OpenSSH's
+    /// `ForwardX11Trusted no`, #5585) instead of the real local one. Missing
+    /// in a saved connection means [`DEFAULT_X11_UNTRUSTED`].
+    #[serde(default = "default_x11_untrusted")]
+    pub x11_untrusted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_monitoring: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -726,6 +731,7 @@ impl Default for SshConfig {
             rows: default_rows(),
             env: HashMap::new(),
             enable_x11_forwarding: false,
+            x11_untrusted: DEFAULT_X11_UNTRUSTED,
             enable_monitoring: None,
             enable_file_browser: None,
             save_password: None,
@@ -1160,6 +1166,17 @@ fn default_flow_control() -> String {
 
 fn default_remove_on_exit() -> bool {
     true
+}
+
+/// Whether X11 forwarding is untrusted unless a connection says otherwise
+/// (#5585). Trusted (`ssh -Y`) is today's behaviour; the default is a
+/// maintainer decision, so flipping it is this one line. The config parser,
+/// the serde default and the SSH settings schema (and so the editor) all read
+/// it.
+pub const DEFAULT_X11_UNTRUSTED: bool = false;
+
+fn default_x11_untrusted() -> bool {
+    DEFAULT_X11_UNTRUSTED
 }
 
 fn default_ssh_port() -> u16 {
@@ -1692,6 +1709,7 @@ mod tests {
         assert_eq!(cfg.rows, 24);
         assert!(cfg.env.is_empty());
         assert!(!cfg.enable_x11_forwarding);
+        assert_eq!(cfg.x11_untrusted, DEFAULT_X11_UNTRUSTED);
         assert!(cfg.enable_monitoring.is_none());
         assert!(cfg.enable_file_browser.is_none());
         assert!(cfg.save_password.is_none());
@@ -1929,6 +1947,7 @@ mod tests {
             rows: 43,
             env: HashMap::new(),
             enable_x11_forwarding: true,
+            x11_untrusted: true,
             enable_monitoring: Some(true),
             enable_file_browser: Some(false),
             save_password: None,
@@ -1962,6 +1981,7 @@ mod tests {
             Some("/home/admin/.ssh/id_ed25519")
         );
         assert!(back.enable_x11_forwarding);
+        assert!(back.x11_untrusted);
         assert_eq!(back.enable_monitoring, Some(true));
         assert_eq!(back.enable_file_browser, Some(false));
         assert!(back.save_password.is_none());
@@ -2720,6 +2740,7 @@ mod tests {
         assert_eq!(cfg.cols, 80);
         assert_eq!(cfg.rows, 24);
         assert!(!cfg.enable_x11_forwarding);
+        assert_eq!(cfg.x11_untrusted, DEFAULT_X11_UNTRUSTED);
         assert!(cfg.env.is_empty());
     }
 

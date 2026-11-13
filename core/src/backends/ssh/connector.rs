@@ -136,6 +136,28 @@ fn capture_early_output(early: &mut Vec<u8>, data: &[u8]) {
 /// once, so it is released on session end *or* a later connect failure. A
 /// provisioning failure or a missing server is logged and the session goes on
 /// without display forwarding rather than aborting the connect.
+/// Apply the connection's X11 trust setting to `server` (#5585): the server
+/// to forward to (with an untrusted cookie when asked for) and when new X11
+/// connections stop being accepted, or no server when untrusted forwarding
+/// is not possible here (fail closed, said in the connect status).
+async fn untrusted_x11_server(
+    config: &SshConfig,
+    server: super::x11::ResolvedXServer,
+) -> (
+    Option<super::x11::ResolvedXServer>,
+    Option<tokio::time::Instant>,
+) {
+    use super::x11_untrusted::{choose_cookie, X11CookieDecision, UNTRUSTED_X11_TIMEOUT};
+    let decision = choose_cookie(config.x11_untrusted, &server, UNTRUSTED_X11_TIMEOUT).await;
+    if let X11CookieDecision::Refuse(why) = &decision {
+        connect_progress::report(ConnectStage::Shell, Some(why.describe()));
+    }
+    match decision.apply(server) {
+        Some((server, deadline)) => (Some(server), deadline),
+        None => (None, None),
+    }
+}
+
 async fn resolve_x11_server(
     cancel: Option<&CancellationToken>,
     extensions: &mut Vec<Box<dyn std::any::Any + Send>>,
@@ -470,6 +492,12 @@ impl SshConnector for RusshSshConnector {
         } else {
             None
         };
+        // Untrusted forwarding (#5585) swaps in a generated untrusted cookie,
+        // or turns X11 off for the session when that is not possible.
+        let (x11_server, x11_deadline) = match x11_server {
+            Some(server) => untrusted_x11_server(config, server).await,
+            None => (None, None),
+        };
 
         connect_progress::report(ConnectStage::Shell, Some("Opening the remote shell".into()));
         let mut channel = session
@@ -533,6 +561,7 @@ impl SshConnector for RusshSshConnector {
                 &server,
                 alive.clone(),
                 cancel,
+                x11_deadline,
             )
             .await
             {
@@ -554,6 +583,7 @@ impl SshConnector for RusshSshConnector {
                         registry.clone(),
                         alive.clone(),
                         Some(server),
+                        x11_deadline,
                     )
                     .await
                     {

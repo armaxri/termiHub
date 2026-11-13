@@ -318,7 +318,9 @@ where
 /// server's `x11` channels and hands them here. Dropping it (the session
 /// ended) revokes the grant, so every later `x11` open is refused, and stops
 /// the connections it is relaying. The grant also lapses once the session's
-/// `alive` flag clears.
+/// `alive` flag clears, and, for untrusted forwarding (#5585), once its
+/// deadline passes: later `x11` opens are refused while the connections
+/// already relayed carry on, like OpenSSH's `ForwardX11Timeout`.
 pub struct X11ReqForwarder {
     registry: ForwardedChannelRegistry,
     grant: tokio::sync::mpsc::UnboundedSender<IncomingX11>,
@@ -328,12 +330,14 @@ pub struct X11ReqForwarder {
 
 impl X11ReqForwarder {
     /// Hold the X11 grant on `registry` and serve each accepted `x11` channel
-    /// against `local` with `cookies`, until dropped or `alive` clears.
+    /// against `local` with `cookies`, until dropped or `alive` clears. With a
+    /// `deadline`, new channels are refused from then on.
     pub(crate) fn start(
         registry: ForwardedChannelRegistry,
         local: LocalXServerInfo,
         cookies: X11Cookies,
         alive: Arc<AtomicBool>,
+        deadline: Option<tokio::time::Instant>,
     ) -> Self {
         let (grant, mut channels) = tokio::sync::mpsc::unbounded_channel::<IncomingX11>();
         registry.grant_x11(grant.clone());
@@ -344,10 +348,28 @@ impl X11ReqForwarder {
         let task_registry = registry.clone();
         let task_grant = grant.clone();
         let task = tokio::spawn(async move {
+            let expiry = async move {
+                match deadline {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::pin!(expiry);
+            let mut expired = false;
             loop {
                 let incoming = tokio::select! {
                     biased;
                     _ = task_stop.cancelled() => break,
+                    _ = &mut expiry, if !expired => {
+                        // Refuse later opens; keep relaying the open ones.
+                        expired = true;
+                        task_registry.revoke_x11(&task_grant);
+                        info!(
+                            "X11 forwarding: the untrusted forwarding timeout has passed; \
+                             refusing new X11 connections"
+                        );
+                        continue;
+                    }
                     incoming = channels.recv() => incoming,
                     _ = tokio::time::sleep(ALIVE_POLL) => {
                         if alive.load(Ordering::SeqCst) {
@@ -360,6 +382,15 @@ impl X11ReqForwarder {
                 if !alive.load(Ordering::SeqCst) {
                     // Dropping the channel closes it.
                     break;
+                }
+                if expired
+                    || !super::x11_untrusted::accepts_new_connection(
+                        deadline,
+                        tokio::time::Instant::now(),
+                    )
+                {
+                    info!("X11 forwarding: refused an X11 connection after the timeout");
+                    continue;
                 }
                 debug!(
                     originator = %incoming.originator_address,
@@ -423,7 +454,8 @@ pub enum X11ReqRefusal {
 /// granted: every `x11` channel stays refused and the caller falls back.
 ///
 /// Nothing else on the channel wants a reply before the shell request, so the
-/// first `Success` / `Failure` answers this request. Should the server answer
+/// first `Success` / `Failure` answers this request. `deadline` is when new
+/// `x11` channels stop being accepted (untrusted forwarding, #5585). Should the server answer
 /// only after [`X11_REQ_REPLY_TIMEOUT`], that late reply is read as the shell
 /// request's, which only weakens the shell-refusal check of #4078 (the
 /// `ForceCommand` output check still applies); no X11 grant is ever made.
@@ -433,6 +465,7 @@ pub(crate) async fn request_x11_forwarding(
     server: &ResolvedXServer,
     alive: Arc<AtomicBool>,
     cancel: Option<&CancellationToken>,
+    deadline: Option<tokio::time::Instant>,
 ) -> Result<(X11ReqForwarder, VecDeque<russh::ChannelMsg>), X11ReqRefusal> {
     use russh::ChannelMsg;
 
@@ -446,13 +479,13 @@ pub(crate) async fn request_x11_forwarding(
     }
     let never = CancellationToken::new();
     let cancel = cancel.unwrap_or(&never);
-    let deadline = tokio::time::Instant::now() + X11_REQ_REPLY_TIMEOUT;
+    let reply_deadline = tokio::time::Instant::now() + X11_REQ_REPLY_TIMEOUT;
     let mut other = VecDeque::new();
     loop {
         let msg = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(X11ReqRefusal::ChannelGone),
-            msg = tokio::time::timeout_at(deadline, channel.wait()) => msg,
+            msg = tokio::time::timeout_at(reply_deadline, channel.wait()) => msg,
         };
         match msg {
             Err(_) => return Err(X11ReqRefusal::NoReply),
@@ -464,7 +497,13 @@ pub(crate) async fn request_x11_forwarding(
             Ok(Some(msg)) => other.push_back(msg),
         }
     }
-    let forwarder = X11ReqForwarder::start(registry.clone(), server.info.clone(), cookies, alive);
+    let forwarder = X11ReqForwarder::start(
+        registry.clone(),
+        server.info.clone(),
+        cookies,
+        alive,
+        deadline,
+    );
     Ok((forwarder, other))
 }
 
