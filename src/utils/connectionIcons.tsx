@@ -183,6 +183,8 @@ interface ConnectionIconProps {
   iconEmoji?: string | null;
   size?: number;
   className?: string;
+  /** Test hook on the drawn glyph (not the emoji, which keeps its own id). */
+  testId?: string;
 }
 
 /**
@@ -199,6 +201,7 @@ export function ConnectionIcon({
   iconEmoji,
   size = 16,
   className,
+  testId,
 }: ConnectionIconProps) {
   // Re-renders on theme switches so a palette colour picks the right shade.
   const surfaces = useIconSurfaces();
@@ -218,7 +221,9 @@ export function ConnectionIcon({
   const colorProps = color ? { color, "data-icon-color": iconColor ?? undefined } : {};
   const custom = customIcon ? resolveIconByName(customIcon) : null;
   const info = custom ?? getDefaultIconInfo(config);
-  return <IconGlyph info={info} size={size} className={className} {...colorProps} />;
+  return (
+    <IconGlyph info={info} size={size} className={className} data-testid={testId} {...colorProps} />
+  );
 }
 
 /** Draws a resolved icon, tagged with its `data-icon` id (#5622). */
@@ -234,6 +239,7 @@ function IconGlyph({
   color?: string;
   "data-icon-color"?: string;
   "aria-hidden"?: boolean;
+  "data-testid"?: string;
 }) {
   if (info.iconNode) {
     return (

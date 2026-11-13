@@ -86,4 +86,17 @@ describe("ConnectionList — per-connection icon colour and emoji (#5008)", () =
     expect(plainIcon?.getAttribute("stroke")).toBe("currentColor");
     expect(row("plain").querySelector('[data-testid="connection-icon-emoji"]')).toBeNull();
   });
+
+  it("gives ssh, vnc and local rows three different type glyphs (#5622)", async () => {
+    await render([
+      conn("ssh-row"),
+      conn("vnc-row", { config: { type: "vnc", config: { host: "v" } } }),
+      conn("local-row", { config: { type: "local", config: {} } }),
+    ]);
+    const icon = (id: string) =>
+      container.querySelector(`[data-testid="connection-icon-${id}"]`)?.getAttribute("data-icon");
+    expect(icon("ssh-row")).toBe("key-round");
+    expect(icon("vnc-row")).toBe("screen-share");
+    expect(icon("local-row")).toBe("terminal");
+  });
 });
