@@ -142,6 +142,13 @@
   gap: var(--spacing-xxs);
 }
 
+/* The agent name is user data (#5621): show it exactly as entered. Only the
+   section titles (LOCAL / REMOTE AGENTS) keep the uppercase label style. */
+.connection-list__group-header--agent .connection-list__group-toggle {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 /* Row 2: indent the buttons to sit under the agent name (past chevron + state
    dot + server icon) so they read as belonging to the agent above them. */
 .connection-list__group-header--agent .connection-list__group-actions {

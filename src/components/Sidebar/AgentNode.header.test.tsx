@@ -140,15 +140,16 @@ describe("AgentNode — header presentation (#2524)", () => {
   describe("state dot tracks connectionState (never stale green)", () => {
     // The dot renders via the shared StatusDot primitive, so state now maps to
     // the `--state-*` tones: connected → connected, (re)connecting → connecting,
-    // everything else → disconnected (UISF-003 follow-up).
+    // a failed/dropped agent → disconnected, a never-connected one → the neutral
+    // disabled tone (UISF-003 follow-up, #5621).
     it("shows the connected tone when connected", () => {
       renderAgent(makeAgent({ connectionState: "connected" }));
       const cls = stateDot()?.className ?? "";
       expect(cls).toContain("status-dot--connected");
     });
 
-    it("shows the disconnected tone — not connected — when disconnected", () => {
-      renderAgent(makeAgent({ connectionState: "disconnected" }));
+    it("shows the disconnected tone — not connected — after a failure", () => {
+      renderAgent(makeAgent({ connectionState: "disconnected", lastError: "boom" }));
       const cls = stateDot()?.className ?? "";
       expect(cls).toContain("status-dot--disconnected");
       expect(cls).not.toContain("status-dot--connected");
@@ -176,7 +177,7 @@ describe("AgentNode — header presentation (#2524)", () => {
     ] as const)(
       "exposes a non-colour accessible name (%s → %s) for the state dot",
       (connectionState, label) => {
-        renderAgent(makeAgent({ connectionState }));
+        renderAgent(makeAgent({ connectionState, lastError: "boom" }));
         const dot = stateDot();
         // role=img + aria-label surface the state to AT without hover/colour (A11Y-004).
         expect(dot?.getAttribute("role")).toBe("img");
