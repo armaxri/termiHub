@@ -26,6 +26,14 @@
   --selected-row-indicator: transparent;
   --selected-row-secondary-bg: var(--selected-row-bg);
   --selected-row-secondary-hover-bg: var(--selected-row-hover-bg);
+  /* Form controls (#5639): placeholders, the off toggle and the secondary
+     button border. Default to the plain tokens; a theme whose plain tokens
+     read badly there (Solarized Light) overrides them through
+     ThemeDefinition.controls. */
+  --input-placeholder: var(--text-secondary);
+  --toggle-off-track: var(--bg-active);
+  --toggle-off-thumb: var(--text-secondary);
+  --btn-secondary-border: var(--border-primary);
 
   /* Activity bar */
   --activity-bar-bg: #0b0d12;

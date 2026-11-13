@@ -366,6 +366,12 @@
   pointer-events: auto;
 }
 
+/* #5639: the hovered Connect button takes the text accent, so it reads as an
+   action rather than a faint grey outline. */
+.connection-tree__item-row .connection-tree__connect:hover:not([aria-disabled="true"]) {
+  color: var(--text-accent);
+}
+
 /* The Connect affordance replaces the type tag on hover/focus to avoid overlap */
 .connection-tree__item-row:hover .connection-tree__type,
 .connection-tree__item-row:focus-within .connection-tree__type {

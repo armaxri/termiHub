@@ -62,13 +62,15 @@ export const solarizedDarkTheme: ThemeDefinition = {
 
     // Status — #5399: canonical green / yellow / red / blue lightened along
     // their hue just until they reach AA (4.5:1) on every text surface.
-    colorSuccess: "#8fa114", // green
+    // #5639: success starts from green rotated clear of the yellow (OKLCH hue
+    // 140°, same lightness and chroma), see solarized-light.ts.
+    colorSuccess: "#60a950", // green
     colorWarning: "#bc9417", // yellow
     colorError: "#e87674", // red
     colorInfo: "#4b9fda", // blue
 
     // State dots — #5399: only red missed the 3:1 UI minimum (2.81:1).
-    stateConnected: "#859900", // green, canonical
+    stateConnected: "#56a345", // green, rotated (#5639)
     stateConnecting: "#b58900", // yellow, canonical
     stateDisconnected: "#de3e3b", // red, nudged to 3:1
 
