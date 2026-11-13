@@ -19,6 +19,11 @@ fails until its fix lands; the grade is never weakened to pass.
 4. **Toast stack** (#5618): two toasts raised while the connection editor is
    open stack without overlapping each other and stay clear of the editor's
    Save / Cancel footer.
+5. **File list** (#5623): a long file / folder name ends in an ellipsis inside
+   the list (no hard cut, no horizontal scrollbar), the Modified / Size headers
+   only show above a column that has values, and the header names whose
+   filesystem it is ("user@host (SFTP)" remote, "This computer" local), at the
+   normal and at the minimum sidebar width.
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
 pixels).
@@ -86,6 +91,12 @@ LONG_SEGMENTS = [f"{i}-a-rather-long-folder-name-for-the-path-bar-check" for i i
     "current-folder"
 ]
 EPS = 0.5
+FILE_LIST = "file-browser-list"
+HOST_LABEL = "file-browser-host"
+#: Column headers that must sit above a column of values (#5623).
+DATA_COLUMNS = ("file-browser-sort-modified", "file-browser-sort-size")
+#: A file name far wider than the sidebar, so the list must ellipsize it.
+LONG_FILE = "a-rather-long-file-name-that-never-fits-the-sidebar-width-check.txt"
 TOAST_REGION = "toast-region"
 EDITOR_FOOTER = "connection-editor-actions"
 
@@ -503,4 +514,101 @@ class TestProductRunComplaints(
                         f"toast {item['text'] or item['label']!r} {item['rect']} covers the footer "
                         f"button {button['text']!r} {button['rect']}"
                     )
+        self.close_all_tabs()
+
+    # ── 5. file list names, columns and host (#5623) ──────────────────────────
+    def _grade_file_list(self, where: str, long_names: list[str], host: str) -> None:
+        listing = self.driver.measure_element(FILE_LIST, "text")
+        items = [i for i in listing["items"] if _shown(i)]
+        self.evidence(
+            f"{where}: list {listing['rect']['width']:.0f}px, scroll {listing['scrollWidth']} / "
+            f"client {listing['clientWidth']}; visible {[i['text'] for i in items][:8]}"
+        )
+        problems = []
+        if listing["scrollWidth"] > listing["clientWidth"]:
+            problems.append(
+                f"horizontal overflow: scrollWidth {listing['scrollWidth']} > "
+                f"clientWidth {listing['clientWidth']}"
+            )
+        for name in long_names:
+            cells = [i for i in items if i["text"] == name]
+            if not cells:
+                problems.append(f"no visible row text for {name!r}")
+                continue
+            cell = cells[0]
+            if not _inside(cell["rect"], listing["rect"]):
+                problems.append(f"{name!r} spills past the list")
+            if cell["overflows"] and cell.get("textOverflow") != "ellipsis":
+                problems.append(f"{name!r} is cut without an ellipsis")
+        # Every shown data-column header sits above at least one visible value.
+        for header in DATA_COLUMNS:
+            if not self.driver.exists(header):
+                continue
+            head = self.driver.measure_element(header)
+            if head["rect"]["width"] <= 2:  # hidden by the narrow-width rule
+                continue
+            left, right = head["rect"]["x"], head["rect"]["x"] + head["rect"]["width"]
+            under = [
+                i["text"] for i in items
+                if i["text"] and i["rect"]["x"] < right and i["rect"]["x"] + i["rect"]["width"] > left
+                and i["text"] not in long_names
+            ]
+            if not under:
+                problems.append(f"header {header} shows without a column of values")
+        label = self.driver.measure_element(HOST_LABEL)
+        self.evidence(f"{where}: host label {label['text']!r}")
+        if host not in label["text"]:
+            problems.append(f"host label is {label['text']!r}, not naming {host!r}")
+        assert not problems, f"{where}: " + "; ".join(problems)
+
+    def test_40_file_list_names_columns_host(self):
+        with self.step(
+            "complaints.file-list.remote",
+            "Remote file list: long names ellipsized, no sideways scroll, no empty columns, "
+            "host named (#5623)",
+            expect="#5623 complaint: long file/folder names end in '…' inside the list (full "
+            "name on hover), no horizontal scrollbar, Modified/Size headers only over real "
+            "values, and the header says 'user@host (SFTP)'; also at the minimum width",
+            screenshot=False,
+        ):
+            deep = self._open_remote()
+            root = deep.parents[len(LONG_SEGMENTS) - 1]
+            (root / LONG_FILE).write_text("long name\n", encoding="utf-8")
+            self._go_to(str(root))
+            self.wait(lambda: self.driver.exists(f"file-row-{LONG_FILE}"), what="the long file row")
+            user = self.need_native().target.username
+            self._both_widths(
+                "complaints.file-list.remote",
+                lambda w: self._grade_file_list(
+                    w, [LONG_SEGMENTS[0], LONG_FILE], f"{user}@{SSH_HOST} (SFTP)"
+                ),
+            )
+        with self.step(
+            "complaints.file-list.local",
+            "Local file list: long names ellipsized, no sideways scroll, no empty columns, "
+            "'This computer' (#5623)",
+            expect="#5623 complaint: the local list ellipsizes long names, never scrolls "
+            "sideways, shows no header without values, and says 'This computer'; also at the "
+            "minimum width",
+            screenshot=False,
+        ):
+            local = self.recorder.run_dir / "local-file-list"
+            (local / LONG_SEGMENTS[0]).mkdir(parents=True, exist_ok=True)
+            (local / LONG_FILE).write_text("long name\n", encoding="utf-8")
+            before = self.tab_ids()
+            self.switch_to_connections_sidebar()
+            self.open_new_terminal()
+            self.wait(lambda: len(self.tab_ids()) == len(before) + 1, what="a local terminal")
+            tab = next(t for t in self.tab_ids() if t not in before)
+            self.wait(lambda: self.driver.read_terminal(tab).strip(), what="the local prompt")
+            self.run_command(f"cd '{local}'")
+            self.switch_to_files_sidebar()
+            self.wait_for_path_contains("local-file-list")
+            self.wait(lambda: self.driver.exists(f"file-row-{LONG_FILE}"), what="the long file row")
+            self._both_widths(
+                "complaints.file-list.local",
+                lambda w: self._grade_file_list(
+                    w, [LONG_SEGMENTS[0], LONG_FILE], "This computer"
+                ),
+            )
         self.close_all_tabs()

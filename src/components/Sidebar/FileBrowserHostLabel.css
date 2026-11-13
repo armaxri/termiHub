@@ -1,0 +1,25 @@
+/* "Whose filesystem is this" line above the path bar (#5623). */
+.file-browser-host {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.file-browser-host__icon {
+  flex-shrink: 0;
+}
+
+/* A remote host reads in the accent colour so it never passes for this computer. */
+.file-browser-host--remote .file-browser-host__icon {
+  color: var(--text-accent);
+}
+
+.file-browser-host__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
