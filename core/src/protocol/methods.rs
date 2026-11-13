@@ -12,8 +12,8 @@
 //! the contract. See `docs/remote-protocol.md`.
 
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
-use crate::connection::SessionEndCause;
 pub use crate::connection::ConnectionTypeInfo;
+use crate::connection::SessionEndCause;
 use crate::monitoring::{KillSignal, MonitorStatus, MonitorStatusReason, ProcessInfo, SystemStats};
 use crate::service::ServiceStatus;
 #[cfg(feature = "ssh")]

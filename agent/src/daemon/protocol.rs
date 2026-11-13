@@ -561,10 +561,10 @@ pub fn encode_exit(code: i32, end_cause: Option<SessionEndCause>) -> Vec<u8> {
 /// `None` for a payload without the cause byte or with one this build does
 /// not know.
 pub fn decode_end_cause(payload: &[u8]) -> Option<SessionEndCause> {
-    match payload.get(4)? {
-        &END_CAUSE_REMOTE_CLOSED => Some(SessionEndCause::RemoteClosed),
-        &END_CAUSE_IO_ERROR => Some(SessionEndCause::IoError),
-        &END_CAUSE_TIMEOUT => Some(SessionEndCause::Timeout),
+    match *payload.get(4)? {
+        END_CAUSE_REMOTE_CLOSED => Some(SessionEndCause::RemoteClosed),
+        END_CAUSE_IO_ERROR => Some(SessionEndCause::IoError),
+        END_CAUSE_TIMEOUT => Some(SessionEndCause::Timeout),
         _ => None,
     }
 }
