@@ -43,7 +43,8 @@ function runDuration(run: WorkflowRun): string {
 
 /**
  * The persisted workflow run-history panel (PROD-0046). Lists the most recent
- * runs — status, timing, step progress, and what launched each — beneath the
+ * runs — status, timing, step progress, what launched each and the terminal it
+ * targeted (#5635) — beneath the
  * workflow library, with a single "Clear history" action. Metadata only: the
  * runs' terminal output is never stored. Composed from the shared sidebar
  * list-item shell and UI primitives, tokens only. Lives inside
@@ -118,6 +119,13 @@ export function WorkflowHistorySection() {
                     </time>
                     {duration ? <span> · {duration}</span> : null}
                     <span> · {triggerKindLabel(run.triggeredBy)}</span>
+                    {run.targetLabel ? (
+                      <span>
+                        {" "}
+                        ·{" "}
+                        <span data-testid={`workflow-run-target-${run.id}`}>{run.targetLabel}</span>
+                      </span>
+                    ) : null}
                     {run.stepsCompleted < run.total ? (
                       <span data-testid={`workflow-run-progress-${run.id}`}>
                         {" "}

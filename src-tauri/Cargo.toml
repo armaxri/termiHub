@@ -133,6 +133,8 @@ num-bigint = "0.4"
 russh = { workspace = true }
 russh-sftp = { workspace = true }
 tempfile = "3"
+# Canonicalize without the Windows `\\?\` verbatim prefix (relaunch, #5678).
+dunce = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 anyhow = "1"

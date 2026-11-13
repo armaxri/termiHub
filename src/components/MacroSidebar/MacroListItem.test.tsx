@@ -63,6 +63,31 @@ describe("MacroListItem", () => {
     expect(query("macro-item-m1")?.querySelector(".sidebar-list-item__badge")).toBeNull();
   });
 
+  it("keeps the Play action visible at rest, after the name (#5636)", () => {
+    render(macro());
+    const row = query("macro-item-m1")!;
+    // The row opts into always-visible actions, so Play needs no hover.
+    expect(row.classList.contains("sidebar-list-item--actions-visible")).toBe(true);
+    const play = query("macro-play-m1")!;
+    expect(play.getAttribute("aria-label")).toBe("Play");
+    // Play is not part of the hover-revealed secondary group.
+    expect(play.closest(".macro-item__more")).toBeNull();
+    // The name still comes first in the header (#5519).
+    const header = row.querySelector(".sidebar-list-item__header")!;
+    expect(header.firstElementChild).toBe(query("macro-name-m1"));
+  });
+
+  it("keeps the secondary actions in a labelled hover/focus group (#5636)", () => {
+    render(macro());
+    const more = query("macro-more-m1")!;
+    expect(more.classList.contains("macro-item__more")).toBe(true);
+    expect(more.getAttribute("role")).toBe("group");
+    expect(more.getAttribute("aria-label")).toBe("More actions for Deploy");
+    for (const id of ["edit", "duplicate", "export", "delete"]) {
+      expect(more.querySelector(`[data-testid="macro-${id}-m1"]`)).not.toBeNull();
+    }
+  });
+
   it("renders a control-char preview from the recorded steps", () => {
     render(macro({ steps: [{ data: "ls\r", delayMs: 0 }] }));
     const preview = query("macro-preview-m1");

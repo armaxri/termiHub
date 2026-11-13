@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Plus, Play } from "lucide-react";
 import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
@@ -70,6 +70,11 @@ export function WorkflowSidebar() {
   const workflows = useAppStore((s) => s.workflows);
   const macros = useAppStore((s) => s.macros);
   const { connections } = useProjectedConnections();
+  // Names the connections a workflow's triggers watch, on its row (#5635).
+  const connectionName = useMemo(() => {
+    const names = new Map(connections.map((c) => [c.id, c.name]));
+    return (id: string) => names.get(id);
+  }, [connections]);
   const saveWorkflowToBackend = useAppStore((s) => s.saveWorkflowToBackend);
   const deleteWorkflowFromBackend = useAppStore((s) => s.deleteWorkflowFromBackend);
   const importWorkflows = useAppStore((s) => s.importWorkflows);
@@ -398,6 +403,7 @@ export function WorkflowSidebar() {
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
                 onDelete={handleDelete}
+                connectionName={connectionName}
                 rowRef={ref}
                 rowProps={itemProps}
               />

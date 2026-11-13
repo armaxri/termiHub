@@ -38,9 +38,16 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
+const CONNECTION_NAMES: Record<string, string> = { c1: "Prod shell", c2: "Staging" };
+const connectionName = (id: string): string | undefined => CONNECTION_NAMES[id];
+
 function render(w: Workflow, running = false, h = handlers()) {
   act(() => {
-    root.render(withTooltip(<WorkflowListItem workflow={w} running={running} {...h} />));
+    root.render(
+      withTooltip(
+        <WorkflowListItem workflow={w} running={running} connectionName={connectionName} {...h} />
+      )
+    );
   });
   return h;
 }
@@ -87,18 +94,54 @@ describe("WorkflowListItem", () => {
     expect(query("workflow-run-w1")).toBeNull();
   });
 
-  it("marks the on-connect trigger only when bound to at least one connection", () => {
-    const bound: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: ["c1"] }];
-    render(workflow({ triggers: bound }));
-    expect(query("workflow-on-connect-w1")).not.toBeNull();
-    expect(query("workflow-on-connect-w1")?.textContent).toContain("On connect");
-    expect(query("workflow-on-connect-w1")?.textContent).not.toContain("on-connect");
+  it("shows a muted 'Manual' second line after the name for a manual workflow", () => {
+    render(workflow());
+    const summary = query("workflow-summary-w1");
+    expect(summary?.textContent).toBe("Manual");
+    expect(summary?.closest(".workflow-item__summary")).not.toBeNull();
+    // Never a step count (#5519/#5635).
+    expect(summary?.textContent).not.toMatch(/step/i);
+    expect(query("workflow-armed-w1")).toBeNull();
   });
 
-  it("does not mark on-connect when the trigger binds no connections", () => {
+  it("names the trigger and the connection it watches on the second line", () => {
+    const triggers: WorkflowTrigger[] = [
+      { kind: "on-output-match", connectionIds: ["c1"], pattern: "FIRE" },
+    ];
+    render(workflow({ triggers }));
+    expect(query("workflow-summary-w1")?.textContent).toBe("On output match · Prod shell");
+  });
+
+  it("marks an armed workflow and names what it watches", () => {
+    const bound: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: ["c1", "c2"] }];
+    render(workflow({ triggers: bound }));
+    const armed = query("workflow-armed-w1");
+    expect(armed).not.toBeNull();
+    expect(armed?.textContent).toContain("Armed");
+    expect(armed?.getAttribute("aria-label")).toBe(
+      "Runs automatically: on connect of Prod shell, Staging"
+    );
+    expect(query("workflow-summary-w1")?.textContent).toBe("On connect · Prod shell, Staging");
+  });
+
+  it("does not mark a workflow armed when its trigger binds no connections", () => {
     const empty: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: [] }];
     render(workflow({ triggers: empty }));
-    expect(query("workflow-on-connect-w1")).toBeNull();
+    expect(query("workflow-armed-w1")).toBeNull();
+    expect(query("workflow-summary-w1")?.textContent).toBe("Manual");
+  });
+
+  it("shows a hotkey trigger with its binding but not as armed", () => {
+    render(workflow({ triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+H" }] }));
+    expect(query("workflow-summary-w1")?.textContent).toBe("Hotkey Ctrl+Alt+H");
+    expect(query("workflow-armed-w1")).toBeNull();
+  });
+
+  it("keeps the name first, before the second line", () => {
+    render(workflow({ triggers: [{ kind: "on-disconnect", connectionIds: ["c1"] }] }));
+    const row = query("workflow-item-w1");
+    const text = row?.textContent ?? "";
+    expect(text.indexOf("Bootstrap")).toBeLessThan(text.indexOf("On disconnect"));
   });
 
   it("runs on click and stops the click from bubbling to the row", () => {
