@@ -54,6 +54,14 @@ export interface PasswordPromptOptions {
    */
   transport?: string;
   /**
+   * The secret's own name (e.g. `"Proxy password"`, `"Jump host password"`)
+   * for a prompt that asks for a secret other than the connection's login
+   * password — a schema field secret (#5656). When set it titles the prompt
+   * verbatim instead of `"<transport> password"`, so a proxy password is never
+   * presented as the SSH one. Ignored for a key passphrase prompt.
+   */
+  secretLabel?: string;
+  /**
    * Path of the private key a `key_passphrase` prompt unlocks, named in the
    * prompt so a user with several keys knows which passphrase is wanted
    * (#5617). Ignored for a password prompt.
@@ -108,6 +116,8 @@ export interface PasswordPromptRequest {
   label: string;
   /** See {@link PasswordPromptOptions.transport}; `""` when omitted. */
   transport: string;
+  /** See {@link PasswordPromptOptions.secretLabel}; `""` when omitted. */
+  secretLabel: string;
   /** See {@link PasswordPromptOptions.keyPath}; `""` when omitted. */
   keyPath: string;
   /** See {@link PasswordPromptOptions.savedRejected}. */
@@ -165,6 +175,8 @@ export interface PasswordPromptSlice {
   passwordPromptLabel: string;
   /** Connection-type display name of the prompt on screen, or `""` (#5617). */
   passwordPromptTransport: string;
+  /** Secret name of the prompt on screen, or `""` (#5656). */
+  passwordPromptSecretLabel: string;
   /** Key file of the passphrase prompt on screen, or `""` (#5617). */
   passwordPromptKeyPath: string;
   /** Whether the prompt on screen follows a rejected saved secret (#5156). */
@@ -189,6 +201,7 @@ function headFields(queue: PendingPasswordPrompt[]) {
     passwordPromptAllowSave: head?.allowSave ?? true,
     passwordPromptLabel: head?.label ?? "",
     passwordPromptTransport: head?.transport ?? "",
+    passwordPromptSecretLabel: head?.secretLabel ?? "",
     passwordPromptKeyPath: head?.keyPath ?? "",
     passwordPromptSavedRejected: head?.savedRejected ?? false,
   };
@@ -237,6 +250,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
           allowSave: options.allowSave ?? true,
           label: options.label ?? "",
           transport: options.transport ?? "",
+          secretLabel: options.secretLabel ?? "",
           keyPath: options.keyPath ?? "",
           savedRejected: options.savedRejected ?? false,
           resolve,
