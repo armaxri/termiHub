@@ -465,6 +465,8 @@ class SettingsMountDriver:
         self.menu_open = False
         self.polls_since_open = None
         self.clicks: list[str] = []
+        #: Nav items inside a folded group (#5561); the group toggle unfolds them.
+        self.folded: set[str] = set()
 
     @property
     def mounted(self) -> bool:
@@ -478,6 +480,13 @@ class SettingsMountDriver:
             self.menu_open = True
         elif test_id == "settings-menu-open":
             self.polls_since_open = 0
+        elif test_id == "settings-navgroup-advanced-toggle":
+            self.folded.clear()
+
+    def get_attribute(self, test_id: str, attribute: str):
+        if test_id.startswith("settings-nav-") and test_id in self.folded:
+            return {"data-group-collapsed": "true", "data-nav-group": "advanced"}.get(attribute)
+        return None
 
     def exists(self, test_id: str) -> bool:
         if test_id == "settings-menu-open":
@@ -506,6 +515,21 @@ def test_open_settings_category_clicks_the_nav_after_the_mount():
     driver = SettingsMountDriver(mount_after=5)
     FakeSettings(driver).open_settings_category("appearance")
     assert driver.clicks[-1] == "settings-nav-appearance"
+
+
+def test_open_settings_category_opens_a_folded_nav_group_first():
+    # #5561: rare categories (Portable mode, X server, ...) sit in the folded
+    # Advanced group; the helper opens it the way a user would, then clicks.
+    driver = SettingsMountDriver(mount_after=1)
+    driver.folded.add("settings-nav-portable")
+    FakeSettings(driver).open_settings_category("portable")
+    assert driver.clicks[-2:] == ["settings-navgroup-advanced-toggle", "settings-nav-portable"]
+
+
+def test_open_settings_category_skips_the_toggle_for_a_visible_item():
+    driver = SettingsMountDriver(mount_after=1)
+    FakeSettings(driver).open_settings_category("general")
+    assert "settings-navgroup-advanced-toggle" not in driver.clicks
 
 
 def test_open_settings_tab_times_out_when_the_panel_never_mounts():

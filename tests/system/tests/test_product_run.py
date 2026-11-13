@@ -92,6 +92,8 @@ ALL_CATEGORIES = (
     "safety-prompts x-server security external-files editor plugins backup import "
     "schedules portable updates"
 ).split()
+#: Always-open Settings nav headings (``settingsRegistry.ts`` CATEGORY_GROUPS, #5561).
+SETTINGS_NAV_GROUPS = ("general", "terminal", "connections", "security")
 #: Keyboard shortcut groups (``KeyboardSettings.tsx`` CATEGORY_ORDER).
 KEYBOARD_GROUPS = ("general", "clipboard", "terminal", "navigation", "tab-groups", "remote-desktop")
 
@@ -439,6 +441,15 @@ class TestProductRunChecklist(
                 assert labels[cat] == want, f"{cat} reads {labels[cat]!r}, want {want!r}"
             bad = [label for label in labels.values() if not is_sentence_case(label)]
             assert not bad, f"not sentence case: {bad}"
+            # #5561: the categories sit under a few headings; rare ones fold under Advanced.
+            headings = [
+                self.driver.get_text(f"settings-navgroup-{group}").strip()
+                for group in SETTINGS_NAV_GROUPS
+            ] + [self.driver.get_text("settings-navgroup-advanced-toggle").strip()]
+            self.evidence("nav groups: " + ", ".join(headings))
+            assert all(is_sentence_case(h) for h in headings), headings
+            folded = self.driver.get_attribute("settings-nav-portable", "data-group-collapsed")
+            assert folded == "true", "Portable mode is not folded under Advanced"
         for cat, want, wrong in (
             ("appearance", ["Font family"], ["Font Family"]),
             ("terminal", ["Cursor style", "Right-click behavior"], ["Cursor Style", "Right-Click Behavior"]),

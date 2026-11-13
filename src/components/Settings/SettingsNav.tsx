@@ -72,7 +72,7 @@ export function SettingsNav<T extends string = string>({
     [reachable, activeCategory, onCategoryChange]
   );
 
-  const renderItem = (cat: CategoryItem, collapsed = false) => {
+  const renderItem = (cat: CategoryItem, group?: { id: string; collapsed: boolean }) => {
     const Icon: LucideIcon = iconMap[cat.id as T];
     const isActive = cat.id === activeCategory;
     const isHighlighted = highlightedCategories ? highlightedCategories.has(cat.id as T) : true;
@@ -85,7 +85,9 @@ export function SettingsNav<T extends string = string>({
         onClick={() => onCategoryChange(cat.id as T)}
         tabIndex={isActive ? 0 : -1}
         data-testid={`settings-nav-${cat.id}`}
-        data-group-collapsed={collapsed ? "true" : undefined}
+        // Lets a test harness find and open a folded group before clicking (#5561).
+        data-nav-group={group?.id}
+        data-group-collapsed={group?.collapsed ? "true" : undefined}
       >
         <Icon size={16} />
         <span className="settings-nav__label">{cat.label}</span>
@@ -166,7 +168,7 @@ export function SettingsNav<T extends string = string>({
               className="settings-nav__group-items"
               hidden={!open}
             >
-              {items.map((cat) => renderItem(cat, !open))}
+              {items.map((cat) => renderItem(cat, { id: group.id, collapsed: !open }))}
             </div>
           </div>
         );

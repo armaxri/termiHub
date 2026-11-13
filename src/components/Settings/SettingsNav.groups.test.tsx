@@ -88,6 +88,7 @@ describe("SettingsNav groups (#5561)", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(isFolded("plugins")).toBe(true);
     expect(q("settings-nav-plugins")?.getAttribute("data-group-collapsed")).toBe("true");
+    expect(q("settings-nav-plugins")?.getAttribute("data-nav-group")).toBe("advanced");
     expect(isFolded("general")).toBe(false);
   });
 

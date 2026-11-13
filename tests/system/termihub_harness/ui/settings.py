@@ -83,7 +83,25 @@ class SettingsUi(HarnessMixin):
         self.open_settings_tab()
         nav = f"settings-nav-{category}"
         self.wait(lambda: self.driver.exists(nav), what=f"the {category} settings nav")
+        self.reveal_settings_nav(category)
         self.driver.click(nav)
+
+    def reveal_settings_nav(self, category: str) -> None:
+        """Open the folded nav group (e.g. *Advanced*) that holds ``category`` (#5561).
+
+        Rare categories sit in a group that starts folded. Its items stay in the
+        DOM (so ``exists`` is true) but are hidden, so click the group heading
+        first, the way a user would, and wait until the item shows.
+        """
+        nav = f"settings-nav-{category}"
+        if self.driver.get_attribute(nav, "data-group-collapsed") != "true":
+            return
+        group = self.driver.get_attribute(nav, "data-nav-group")
+        self.driver.click(f"settings-navgroup-{group}-toggle")
+        self.wait(
+            lambda: self.driver.get_attribute(nav, "data-group-collapsed") != "true",
+            what=f"the {group} settings nav group to open",
+        )
 
     def open_import_migration_action(self, testid: str) -> None:
         """Click one action on Settings → Import & Migration (#5195).

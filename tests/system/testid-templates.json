@@ -15,6 +15,11 @@
       "extract": { "kind": "object-field", "const": "CATEGORIES", "field": "id" }
     },
     {
+      "globs": ["settings-navgroup-*", "settings-navgroup-*-toggle"],
+      "source": "src/components/Settings/settingsRegistry.ts",
+      "extract": { "kind": "object-field", "const": "CATEGORY_GROUPS", "field": "id" }
+    },
+    {
       "globs": ["activity-bar-*"],
       "source": "src/components/ActivityBar/ActivityBar.tsx",
       "extract": {

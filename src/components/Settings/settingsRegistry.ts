@@ -78,32 +78,33 @@ export const CATEGORY_GROUPS: CategoryGroupDefinition[] = [
   },
 ];
 
-const CATEGORY_LABELS: Record<SettingsCategory, string> = {
-  general: "General",
-  appearance: "Appearance",
-  terminal: "Terminal",
-  serial: "Serial",
-  accessibility: "Accessibility",
-  "shell-integration": "Shell integration",
-  keyboard: "Keyboard",
-  sessions: "Sessions",
-  "safety-prompts": "Safety prompts",
-  "x-server": "X server",
-  security: "Security",
-  "external-files": "External files",
-  editor: "Editor",
-  plugins: "Plugins",
-  backup: "Backup & restore",
-  import: "Import & migration",
-  schedules: "Schedules",
-  portable: "Portable mode",
-  updates: "Updates",
-};
-
-/** Every category in navigation order (group by group), so search results follow the nav. */
-export const CATEGORIES: CategoryDefinition[] = CATEGORY_GROUPS.flatMap((group) =>
-  group.categories.map((id) => ({ id, label: CATEGORY_LABELS[id] }))
-);
+/**
+ * Every category in navigation order (group by group), so search results follow
+ * the nav. Kept a literal: the system-test testid catalog reads its ids
+ * (`tests/system/testid-templates.json`). `SettingsNav.groups.test.tsx` checks
+ * it lists exactly the {@link CATEGORY_GROUPS} categories, in their order.
+ */
+export const CATEGORIES: CategoryDefinition[] = [
+  { id: "general", label: "General" },
+  { id: "appearance", label: "Appearance" },
+  { id: "accessibility", label: "Accessibility" },
+  { id: "keyboard", label: "Keyboard" },
+  { id: "updates", label: "Updates" },
+  { id: "terminal", label: "Terminal" },
+  { id: "shell-integration", label: "Shell integration" },
+  { id: "sessions", label: "Sessions" },
+  { id: "editor", label: "Editor" },
+  { id: "serial", label: "Serial" },
+  { id: "external-files", label: "External files" },
+  { id: "security", label: "Security" },
+  { id: "safety-prompts", label: "Safety prompts" },
+  { id: "backup", label: "Backup & restore" },
+  { id: "plugins", label: "Plugins" },
+  { id: "import", label: "Import & migration" },
+  { id: "schedules", label: "Schedules" },
+  { id: "portable", label: "Portable mode" },
+  { id: "x-server", label: "X server" },
+];
 
 /**
  * The Settings search index. Search is driven entirely by this list: a category
