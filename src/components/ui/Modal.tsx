@@ -208,6 +208,9 @@ export function Modal({
           ref={setContentEl}
           className={size === "md" ? "ui-modal" : `ui-modal ui-modal--${size}`}
           data-testid={rest["data-testid"]}
+          // The whole dialog is a toast keep-clear zone (#5686): a toast raised
+          // while it is open never covers its body, only the space around it.
+          {...TOAST_AVOID_PROPS}
           // Radix makes everything outside the content inert (aria-hidden) but
           // does not state it on the dialog itself; say so explicitly (#4329).
           aria-modal="true"
@@ -295,8 +298,9 @@ export function Modal({
               </Dialog.Description>
             ) : null}
             <div className="ui-modal__body">{children}</div>
-            {/* The footer is a toast keep-clear zone so a toast never hides its
-                actions (#5618). */}
+            {/* The footer is a toast keep-clear zone of its own (#5618): when the
+                dialog is too tall to clear, the stack still never hides its
+                actions. */}
             {footer ? (
               <div className="ui-modal__foot" {...TOAST_AVOID_PROPS}>
                 {footer}
