@@ -17,13 +17,15 @@ Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
   monitoring, #5471) shows stats that update; a second sshd whose exec sessions
   find no ``sh`` shows the "not supported on this host" state.
 * **Settings and themes.** Every settings category opens without a JavaScript
-  error; the numeric settings show the value in effect (#5554); every built-in
+  error; the Updates build info shows the build date (#5652); the numeric
+  settings show the value in effect (#5554); every built-in
   theme is applied once, with captures of the main surfaces for the UI review
   and a text-contrast grade.
 """
 
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
 import sys
@@ -442,7 +444,23 @@ class TestProductRunSettingsThemes(
             return [f"latest {latest!r} while last checked {last_checked!r}"]
         return []
 
-    def test_02_numeric_values(self):
+    def test_02_build_date(self):
+        with self.step(
+            "settings.build_date",
+            "Settings ▸ Updates build info shows the build (commit) date (#5652)",
+            expect="Settings ▸ Updates with a Build date row: date, time and time zone",
+        ):
+            self.open_settings_category("updates")
+            self.wait(lambda: self.driver.exists("update-build-hash"), what="the build info")
+            self.wait(lambda: self.driver.exists("update-build-date"), timeout=10.0,
+                      what="the build date row (the product run builds from git)")
+            text = self.driver.get_text("update-build-date").strip()
+            self.evidence(f"build date {text!r}")
+            assert "Invalid" not in text, f"build date renders an invalid date: {text!r}"
+            assert re.search(r"\b20\d\d\b", text), f"build date has no year: {text!r}"
+            assert re.search(r"\d{1,2}[:.]\d{2}", text), f"build date has no time: {text!r}"
+
+    def test_03_numeric_values(self):
         for category, testid, key, label in NUMERIC_SETTINGS:
             with self.step(
                 f"settings.numeric.{key}",
@@ -475,7 +493,7 @@ class TestProductRunSettingsThemes(
         self.open_settings_category("appearance")
         self.shot(label="settings")
 
-    def test_03_themes(self):
+    def test_04_themes(self):
         for theme in BUILTIN_THEMES:
             with self.step(
                 f"themes.{theme}",
