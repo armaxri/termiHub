@@ -59,6 +59,12 @@ impl Xvfb {
 }
 
 /// Start Xvfb on a free display that only accepts `auth`'s cookie.
+///
+/// `-noreset` matters: without it the server resets whenever its last client
+/// disconnects, which throws away every authorization added at run time
+/// (the untrusted cookie `xauth generate` adds through SECURITY) and drops
+/// connections that arrive while it resets. A desktop X server always has a
+/// long-lived client (the window manager), so it never resets mid-session.
 fn start_xvfb(xvfb: &Path, auth: &Path, scratch: &Path) -> Option<Xvfb> {
     for display in 150..200u32 {
         if Path::new(&format!("/tmp/.X{display}-lock")).exists()
@@ -70,7 +76,7 @@ fn start_xvfb(xvfb: &Path, auth: &Path, scratch: &Path) -> Option<Xvfb> {
             .arg(format!(":{display}"))
             .args(["-auth"])
             .arg(auth)
-            .args(["-nolisten", "tcp", "-screen", "0", "64x64x24"])
+            .args(["-noreset", "-nolisten", "tcp", "-screen", "0", "64x64x24"])
             .env("HOME", scratch)
             .env("XAUTHORITY", auth)
             .stdin(Stdio::null())
@@ -113,7 +119,10 @@ async fn server_accepts(socket: &str, cookie: &[u8]) -> bool {
     let mut stream = tokio::net::UnixStream::connect(socket)
         .await
         .expect("connect to the private Xvfb");
-    stream.write_all(&setup(cookie)).await.unwrap();
+    stream
+        .write_all(&setup(cookie))
+        .await
+        .expect("send the setup to the private Xvfb");
     let mut status = [0u8; 1];
     tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut status))
         .await
