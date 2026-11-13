@@ -179,11 +179,44 @@ describe("CommandPalette", () => {
       ],
     });
     typeInto("run workflow: deploy");
-    expect(activeLabel()).toBe("Run workflow: Deploy");
+    // The row shows the workflow's name first, with no verb prefix (#5519).
+    expect(activeLabel()).toBe("Deploy");
     keydown("Enter");
     expect(runWorkflow).toHaveBeenCalledWith("wf-1");
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
     expect(connectSpy).not.toHaveBeenCalled();
+  });
+
+  it("lists automations by name and still finds them by the run verb (#5519)", () => {
+    setStore({
+      workflows: [
+        {
+          id: "wf-1",
+          name: "Deploy",
+          tags: [],
+          steps: [{ kind: "send-command", command: "echo hi" }],
+          triggers: [{ kind: "manual" }],
+          createdAt: "2026-07-24T00:00:00Z",
+          updatedAt: "2026-07-24T00:00:00Z",
+        },
+      ],
+      macros: [
+        {
+          id: "m-1",
+          name: "Login",
+          tags: [],
+          steps: [{ data: "a", delayMs: 0 }],
+          createdAt: "2026-07-24T00:00:00Z",
+          updatedAt: "2026-07-24T00:00:00Z",
+        },
+      ],
+    });
+    typeInto("deploy");
+    expect(activeLabel()).toBe("Deploy");
+    typeInto("login");
+    expect(activeLabel()).toBe("Login");
+    typeInto("run macro");
+    expect(activeLabel()).toBe("Login");
   });
 
   it("lists saved workspaces and launches the highlighted one on Enter", () => {

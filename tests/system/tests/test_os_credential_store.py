@@ -10,7 +10,8 @@ user's real secrets are never read or written.
 Covered:
 
 - MT-CRED-01/02/03: a password saved in OS-keychain mode lands in the OS store
-  under service ``termiHub`` and account ``<connection-id>:password``, and
+  under the run's service ``termiHub-dev-ci-<hex>`` (the test-bridge app's
+  per-run keychain namespace, #5478) and account ``<connection-id>:password``, and
   deleting the connection removes it again.
 - MT-CRED-18: a backup restore imports its credentials into the OS store after
   the startup swap and leaves no ``termiHub-backup-restore`` seal key behind;
@@ -46,7 +47,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.locked_file import LockUnavailable, locked
-from termihub_harness.os_store import SEAL_SERVICE, credential_account
+from termihub_harness.os_store import credential_account
 
 pytestmark = pytest.mark.integration
 
@@ -154,8 +155,8 @@ class TestOsCredentialStore(
 
     def _assert_no_new_seal_keys(self, before: set[str]) -> None:
         self.wait(
-            lambda: not (self.os_store.accounts(SEAL_SERVICE) - before),
-            what=f"no {SEAL_SERVICE!r} seal key left in the {self.os_store.name}",
+            lambda: not (self.os_store.accounts(self.os_store.seal_service) - before),
+            what=f"no {self.os_store.seal_service!r} seal key left in the {self.os_store.name}",
         )
 
     def _toggle_on(self, test_id: str) -> None:
@@ -276,7 +277,7 @@ class TestOsCredentialStore(
         if self.find_connection(name) is not None:
             self._delete_connection(name)
         self._assert_not_in_os_store(account)
-        seal_before = self.os_store.accounts(SEAL_SERVICE)
+        seal_before = self.os_store.accounts(self.os_store.seal_service)
 
         self._restore_with_credentials(target)
 
@@ -300,7 +301,7 @@ class TestOsCredentialStore(
         if self.find_connection(name) is not None:
             self._delete_connection(name)
         self._assert_not_in_os_store(account)
-        seal_before = self.os_store.accounts(SEAL_SERVICE)
+        seal_before = self.os_store.accounts(self.os_store.seal_service)
 
         try:
             lock = locked(self.config_dir / _LOCKED_FILE)

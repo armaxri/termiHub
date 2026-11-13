@@ -8,7 +8,9 @@
 #            list) only while the prebuilt test binary runs; the original
 #            default and search list are restored and the keychain deleted on
 #            exit. The login keychain is never written. Also runs the two
-#            #[ignore]d macOS framework smoke tests (hw_key, os_auth).
+#            #[ignore]d macOS framework smoke tests (hw_key, os_auth) and the
+#            OS keychain store / store-switch tests (#5514) in a per-run
+#            keychain namespace.
 #   Linux    a private D-Bus session (dbus-run-session) with its own
 #            gnome-keyring-daemon, whose keyring files and sockets live in a
 #            temporary directory. Needs dbus-run-session and gnome-keyring.
@@ -26,7 +28,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '3,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 if (($# > 0)) && [[ -z "${TERMIHUB_REAL_KEYCHAIN_INSIDE_BUS:-}" ]]; then
@@ -51,6 +53,12 @@ MACOS_IGNORED=(
   credential::os_auth::macos::tests::capability_preflight_does_not_prompt
 )
 MACOS_RAN=""
+# The real-keychain tests of the OS keychain store and the store switch
+# (#5514); macOS only. They refuse to run outside a per-run CI keychain
+# namespace, which TERMIHUB_DEV_NAME=ci-<run> selects (termiHub-dev-ci-<run>).
+MACOS_STORE_FILTER="commands::credential::real_keychain_tests::"
+MACOS_STORE_EXPECTED=3
+MACOS_STORE_RAN=""
 
 # Linux, inside the private session bus: start a fresh gnome-keyring there,
 # export the environment it prints (GNOME_KEYRING_CONTROL, ... as VAR=value
@@ -139,6 +147,12 @@ case "$(uname -s)" in
       --test-threads=1 2>&1 | tee "$WORK/macos-ignored.log"
     MACOS_RAN="$(grep -cE "^test credential::[a-z_:]+ \.\.\. ok\$" \
       "$WORK/macos-ignored.log" || true)"
+    # The OS keychain store and store-switch tests (#5514), in a per-run
+    # keychain namespace inside the throwaway keychain.
+    TERMIHUB_DEV_NAME="ci-$RANDOM$RANDOM" cargo test "${CARGO_ARGS[@]}" -- \
+      "$MACOS_STORE_FILTER" --test-threads=1 2>&1 | tee "$WORK/macos-store.log"
+    MACOS_STORE_RAN="$(grep -cE "^test ${MACOS_STORE_FILTER}[a-z_]+ \.\.\. ok\$" \
+      "$WORK/macos-store.log" || true)"
     ;;
   Linux)
     for tool in dbus-run-session gnome-keyring-daemon; do
@@ -185,4 +199,11 @@ if [[ -n "$MACOS_RAN" ]]; then
     exit 1
   fi
   echo "All $MACOS_RAN macOS framework tests passed."
+fi
+if [[ -n "$MACOS_STORE_RAN" ]]; then
+  if [[ "$MACOS_STORE_RAN" != "$MACOS_STORE_EXPECTED" ]]; then
+    echo "error: expected $MACOS_STORE_EXPECTED OS keychain store tests to pass, $MACOS_STORE_RAN did" >&2
+    exit 1
+  fi
+  echo "All $MACOS_STORE_RAN OS keychain store tests passed."
 fi

@@ -4,6 +4,7 @@ pub mod biometric_types;
 pub mod biometric_unlock;
 pub mod crypto;
 pub mod hw_key;
+mod keychain_error;
 pub mod keychain_index;
 pub mod keychain_namespace;
 mod keyring_thread;

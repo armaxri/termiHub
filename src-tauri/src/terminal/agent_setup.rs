@@ -6,9 +6,9 @@
 /// 3. Resolve the binary (GitHub download or local file).
 /// 4. Upload a self-contained POSIX setup script and execute it in the terminal.
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_binary;
@@ -577,6 +577,14 @@ fn run_windows_install(
         rt_handle,
     );
 
+    // The install lands at the managed Windows location, not the POSIX default
+    // the next connect would run: store it as the agent path (#5522).
+    record_setup_install_path(
+        app_handle,
+        agent_id,
+        agent_install::resolve_windows_install_path(sftp_session, shell),
+    );
+
     emit_progress(
         app_handle,
         agent_id,
@@ -584,6 +592,26 @@ fn run_windows_install(
         "Setup commands sent to terminal",
     );
     info!("Agent setup: Windows install commands sent for agent {agent_id}");
+}
+
+/// Store the launch path a Windows setup resolved as the agent's `agentPath`
+/// (#5522), through the same persisted, folded path as `save_remote_agent`.
+///
+/// The setup only types the install into the visible terminal, so it cannot
+/// see whether it succeeded; it records the one location that install writes
+/// to. An unresolvable path (the encoded-PowerShell profile path is unusable)
+/// keeps the stored path and is logged.
+fn record_setup_install_path<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    resolved: Result<String, TerminalError>,
+) {
+    match resolved {
+        Ok(path) => {
+            crate::commands::connection::record_installed_agent_path(app_handle, agent_id, &path)
+        }
+        Err(e) => warn!("Agent setup: could not resolve the install path for {agent_id}: {e}"),
+    }
 }
 
 /// Inject a setup error into the terminal using the OS-appropriate mechanism.
@@ -1276,3 +1304,7 @@ mod tests {
         assert!(json.contains("sess-123"));
     }
 }
+
+#[cfg(test)]
+#[path = "agent_setup_install_path_tests.rs"]
+mod install_path_tests;

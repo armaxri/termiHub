@@ -55,15 +55,12 @@ describe("MacroListItem", () => {
     container.remove();
   });
 
-  it("renders name and a pluralised step-count badge", () => {
+  it("renders the name first with no step-count badge (#5519)", () => {
     render(macro({ steps: [{ data: "a", delayMs: 0 }] }));
     expect(query("macro-name-m1")?.textContent).toBe("Deploy");
-    expect(query("macro-steps-m1")?.textContent).toBe("1 step");
-  });
-
-  it("pluralises the step badge for zero or multiple steps", () => {
-    render(macro({ steps: [] }));
-    expect(query("macro-steps-m1")?.textContent).toBe("0 steps");
+    const header = query("macro-item-m1")?.querySelector(".sidebar-list-item__header");
+    expect(header?.textContent?.startsWith("Deploy")).toBe(true);
+    expect(query("macro-item-m1")?.querySelector(".sidebar-list-item__badge")).toBeNull();
   });
 
   it("renders a control-char preview from the recorded steps", () => {

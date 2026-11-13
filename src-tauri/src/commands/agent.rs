@@ -1028,7 +1028,9 @@ async fn run_immediate_update(
     let registry = cancellation.inner().clone();
     let complete_id = agent_id.clone();
     let complete_token = token.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let record_app = app_handle.clone();
+    let record_id = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let result = crate::terminal::agent_deploy::update_agent(
             &agent_id,
             &config,
@@ -1043,7 +1045,13 @@ async fn run_immediate_update(
         result
     })
     .await
-    .unwrap_or_else(|e| Err(blocking_join_error(e)))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))?;
+    // A Windows install lands outside the POSIX default the next connect would
+    // run, so store where it went before reporting the result (#5522).
+    if let Some(path) = result.launchable_install_path() {
+        crate::commands::connection::record_installed_agent_path(&record_app, &record_id, path);
+    }
+    Ok(result)
 }
 
 /// The coordinated desktop-push update (#1616): stage the binary, then hand it

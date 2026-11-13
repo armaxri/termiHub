@@ -82,9 +82,17 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
     expect(query("workflow-run-r-ok")).not.toBeNull();
     expect(query("workflow-run-r-bad")).not.toBeNull();
     expect(query("workflow-run-r-ok")?.textContent).toContain("Deploy");
-    expect(query("workflow-run-r-ok")?.textContent).toContain("3/3");
+    // A run that finished every step shows no redundant "3/3"; a run that
+    // stopped early notes how far it got, after the name (#5519).
+    expect(query("workflow-run-r-ok")?.textContent).not.toContain("3/3");
+    expect(query("workflow-run-progress-r-ok")).toBeNull();
     expect(query("workflow-run-r-bad")?.textContent).toContain("Migrate");
-    expect(query("workflow-run-r-bad")?.textContent).toContain("1/4");
+    expect(query("workflow-run-progress-r-bad")?.textContent).toContain("1/4 steps");
+    expect(
+      query("workflow-run-r-bad")
+        ?.querySelector(".sidebar-list-item__header")
+        ?.textContent?.includes("1/4")
+    ).toBe(false);
     // The trigger provenance is surfaced in the row detail.
     expect(query("workflow-run-r-ok")?.textContent).toContain("manual");
   });
