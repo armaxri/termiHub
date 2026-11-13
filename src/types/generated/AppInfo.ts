@@ -19,4 +19,10 @@ isDev: boolean,
 /**
  * Git branch this binary was built from (e.g. `"main"`, `"develop"`, `"unknown"`).
  */
-buildBranch: string, };
+buildBranch: string, 
+/**
+ * Commit time of the build's git commit as an RFC 3339 UTC timestamp
+ * (e.g. `"2026-11-13T09:42:00Z"`), or `None` when the binary was built
+ * without git or the embedded value does not parse.
+ */
+buildCommitTime: string | null, };
