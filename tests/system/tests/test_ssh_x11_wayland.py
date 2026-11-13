@@ -192,7 +192,12 @@ class TestWaylandOnlyX11Hint(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi
         """
         name = unique_name("x11-wayland")
         self.create_ssh_connection(
-            name, host=HOST, port=SSH_X11_PORT, username=SSH_USERNAME, connect=True
+            name,
+            host=HOST,
+            port=SSH_X11_PORT,
+            username=SSH_USERNAME,
+            connect=True,
+            x11_forwarding=True,
         )
         self.handle_password_prompt()
         self.accept_host_key_prompt()
