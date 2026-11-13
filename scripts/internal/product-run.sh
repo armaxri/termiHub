@@ -88,6 +88,28 @@ if [ "$BUILD" -eq 1 ] || ! have_app; then
         ./scripts/internal/build-system-test-app.sh --debug
 fi
 
+# A locked screen stops WKWebView from painting and from answering the test
+# bridge, so every step would time out one by one (#5536). Refuse up front.
+# (captured first: with pipefail, `ioreg | grep -q` fails on ioreg's SIGPIPE)
+CONSOLE_STATE="$( [ "$(uname -s)" = "Darwin" ] && ioreg -n Root -d1 2>/dev/null || true)"
+if case "$CONSOLE_STATE" in *'"CGSSessionScreenIsLocked"=Yes'*) true ;; *) false ;; esac; then
+    echo "the screen is locked: unlock it and keep the display awake for the run" >&2
+    exit 1
+fi
+# Keep the display (and so the unlocked session) awake while this script runs.
+if command -v caffeinate > /dev/null 2>&1; then caffeinate -di -w $$ & fi
+
+# The agent phase deploys this machine's dev agent through the app's setup wizard.
+case "$(uname -s)" in
+Darwin | Linux)
+    if [ ! -x target/debug/termihub-agent ] && [ ! -x target/release/termihub-agent ]; then
+        echo "building the dev agent (cargo build -p termihub-agent)..."
+        cargo build -p termihub-agent ||
+            echo "agent build failed: the agent phase will be not tested" >&2
+    fi
+    ;;
+esac
+
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$REPO/tests/system/artifacts/product-run/$RUN_ID"
 DEV_NAME="product-run-$RUN_ID"
