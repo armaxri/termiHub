@@ -27,7 +27,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from .recorder import _write_atomic
+from .recorder import _write_atomic, safe_step_id
 from .review_images import contact_sheet_file
 from .review_schema import (
     FINDING_FIELDS,
@@ -85,11 +85,11 @@ def surface_of(shot: dict[str, Any]) -> str:
     """The surface a screenshot belongs to (see the module docstring)."""
     explicit = shot.get("surface")
     if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip()
+        return safe_step_id(explicit.strip())
     parts = [p for p in str(shot.get("step", "")).split(".") if p]
     if len(parts) >= 3:
-        return parts[1]
-    return parts[0] if parts else "misc"
+        return safe_step_id(parts[1])
+    return safe_step_id(parts[0]) if parts else "misc"
 
 
 def surface_title(surface: str, shots: list[dict[str, Any]]) -> str:
