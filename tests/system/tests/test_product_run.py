@@ -395,6 +395,40 @@ class TestProductRunChecklist(
         finally:
             self._leave_editor()
 
+    def test_02b_chooser_badge_subtle(self):
+        """The Recommended badge is subtle, not a second solid accent (#5673).
+
+        Opens the chooser and cancels, like :meth:`test_02_chooser_states`, so
+        :meth:`test_02_credential_chooser` still sees a fresh chooser.
+        """
+        with self.step(
+            "checklist.chooser.badge-subtle",
+            "The Recommended badge is an outlined tint, not a solid accent pill (#5673)",
+            expect="OS Keychain's Recommended badge outlined and lightly tinted; only Continue is solid",
+        ):
+            self.require("checklist.profile")
+            self.switch_to_connections_sidebar()
+            self.connection_context_action(CHOOSER_CONN, self.CTX_EDIT)
+            self.wait(lambda: self.driver.exists(SAVE_CREDENTIALS), what="the SSH editor")
+            self.driver.click(SAVE_CREDENTIALS)
+            self.wait(lambda: self.driver.exists(CHOOSER), what="the storage chooser")
+            badge = CHOOSER_OPTION + "os_keychain-badge"
+            badge_bg = self.driver.get_computed_style("background-color", badge)
+            badge_border = self.driver.get_computed_style("border-top-style", badge)
+            button_bg = self.driver.get_computed_style("background-color", CHOOSER_CONTINUE)
+            self.evidence(
+                f"badge background {badge_bg!r}, border {badge_border!r}; "
+                f"Continue background {button_bg!r}"
+            )
+            assert badge_bg != button_bg, f"the badge is as solid as Continue: {badge_bg}"
+            assert badge_border == "solid", f"the badge has no outline: {badge_border!r}"
+        try:
+            if self.driver.exists(CHOOSER):
+                self.driver.click(CHOOSER_CANCEL)
+                self._chooser_closed(within=5.0)
+        finally:
+            self._leave_editor()
+
     def test_02_credential_chooser(self):
         with self.step(
             "checklist.chooser.opens",

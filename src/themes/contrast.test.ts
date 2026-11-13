@@ -1155,9 +1155,12 @@ describe("ansi palettes keep their canonical values (#5309)", () => {
 });
 
 /**
- * Credential-storage chooser polish (#5560). The "Recommended" badge was accent
- * text on the selected card's accent tint (~3.5:1); it is now a filled accent
- * badge with `--text-on-accent`. The master-password warning callout puts
+ * Credential-storage chooser polish (#5560, #5673). The "Recommended" badge was
+ * accent text on the selected card's accent tint (~3.5:1), then a filled accent
+ * pill as heavy as the primary button (#5673). It is now subtle: a `--color-info`
+ * outline (`--accent-color` fell to ~2.5:1 in Solarized Dark) around a
+ * `--bg-selected-hover` tint with `--text-primary` text, graded on the plain,
+ * hovered, selected and hovered-selected card. The master-password warning callout puts
  * primary text on `--bg-warning` over the dialog surface. Both are read from
  * the shipped stylesheet so a later CSS edit cannot silently swap the tokens.
  */
@@ -1174,10 +1177,14 @@ describe("credential-storage chooser contrast (WCAG 2.2 AA, #5560)", () => {
     return m[1];
   }
 
-  it("the Recommended badge is a filled accent badge with on-accent text", () => {
+  it("the Recommended badge is a subtle outlined tint with primary text (#5673)", () => {
     const badge = rule(".credential-storage-option__badge");
-    expect(badge).toMatch(/(?:^|\n)\s*color:\s*var\(--text-on-accent\);/);
-    expect(badge).toMatch(/background:\s*var\(--accent-color\);/);
+    expect(badge).toMatch(/(?:^|\n)\s*color:\s*var\(--text-primary\);/);
+    expect(badge).toMatch(/background:\s*var\(--bg-selected-hover\);/);
+    expect(badge).toMatch(/border:\s*1px solid var\(--color-info\);/);
+    // Only the primary button carries solid accent on the chooser.
+    expect(badge).not.toMatch(/background:\s*var\(--accent-color\)/);
+    expect(badge).not.toMatch(/--text-on-accent/);
   });
 
   it("the warning callout paints primary text on the warning surface", () => {
@@ -1193,10 +1200,48 @@ describe("credential-storage chooser contrast (WCAG 2.2 AA, #5560)", () => {
     );
   const BG_WARNING_ALPHA = Number(warnMix?.[1] ?? NaN) / 100;
 
+  // The radio card's own accent tints (plain, checked, hovered checked), read
+  // from ui.css so the grade follows the shipped card styles.
+  const uiCss = readFileSync(join(SRC_DIR, "components/ui/ui.css"), "utf8");
+  function cardTint(selector: string): number {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(
+      `(?:^|\\n)${escaped}\\s*\\{[^}]*background-color:\\s*color-mix\\(in srgb, var\\(--accent-color\\) (\\d+)%, transparent\\)`
+    ).exec(uiCss);
+    if (!m) throw new Error(`no accent tint on ${selector} in ui.css`);
+    return Number(m[1]) / 100;
+  }
+  const CARD_TINTS = [
+    0,
+    cardTint('.ui-radio-card[data-state="checked"]'),
+    cardTint('.ui-radio-card[data-state="checked"]:hover:not(:disabled)'),
+  ];
+
   for (const theme of BUILT_IN_THEMES) {
     const c = theme.colors;
-    it(`${theme.id} badge text (${c.textOnAccent}) meets AA on ${c.accentColor}`, () => {
-      expect(contrastRatio(c.textOnAccent, c.accentColor)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    /** Every card background the badge sits on, on the dialog and settings surfaces. */
+    const cards = [
+      ...[c.bgSecondary, c.bgPrimary].flatMap((surface) =>
+        CARD_TINTS.map((tint) => composite(c.accentColor, surface, tint))
+      ),
+      c.bgHover,
+    ];
+
+    it(`${theme.id} badge text meets AA on its tint on every card state`, () => {
+      for (const card of cards) {
+        const badgeBg = composite(c.accentColor, card, BG_SELECTED_HOVER_ALPHA);
+        expect(contrastRatio(c.textPrimary, badgeBg), `on ${badgeBg}`).toBeGreaterThanOrEqual(
+          AA_NORMAL_TEXT
+        );
+      }
+    });
+
+    it(`${theme.id} badge outline (${c.colorInfo}) reaches 3:1 on every card state`, () => {
+      for (const card of cards) {
+        expect(contrastRatio(c.colorInfo, card), `on ${card}`).toBeGreaterThanOrEqual(
+          UI_COMPONENT_MIN
+        );
+      }
     });
 
     it(`${theme.id} warning callout text meets AA on --bg-warning`, () => {
