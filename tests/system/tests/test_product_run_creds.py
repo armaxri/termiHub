@@ -410,6 +410,14 @@ class TestProductRunBackup(_CredsBase):
             for section in ("connections", "settings", "credentials"):
                 self._toggle(f"backup-restore-include-{section}", True)
             self.shot(label="preview")
+            if sys.platform == "darwin":
+                # The bundled app relaunches through LaunchServices, which drops
+                # the run's isolation env: the restarted test build would come up
+                # on the default profile and keychain service (#5647).
+                raise pytest.skip.Exception(
+                    "Restore and restart is not run on macOS: the relaunch loses the run's "
+                    "isolated profile (#5647)"
+                )
             self.driver.click("backup-restore-submit")
             self.adopt_app_self_restart(timeout=120.0)
         with self.step(
