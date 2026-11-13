@@ -53,6 +53,19 @@ export interface FieldProps {
   hintVariant?: FieldHintVariant;
   /** Hint placement. Defaults to `"afterControl"`. */
   hintPosition?: FieldHintPosition;
+  /**
+   * `id` for the hint node, so a control that wires its own accessibility can
+   * point `aria-describedby` at it.
+   */
+  hintId?: string;
+  /** Test hook forwarded to the hint node (e.g. for a placement grade). */
+  hintTestId?: string;
+  /**
+   * Further field-owned content below the hint: status notes, a follow-up
+   * action. It stays inside the field, so it never reads as the next field's
+   * text. The inline layout renders it as a full-width row under the field.
+   */
+  details?: React.ReactNode;
   /** Visual field style. Defaults to `"default"`. */
   variant?: FieldVariant;
   /** Field layout. Defaults to `"stack"`. */
@@ -115,6 +128,7 @@ const VARIANT_CLASSES: Record<
     required: string;
     hint: string;
     hintWarning: string;
+    details: string;
     errorTestId: string;
   }
 > = {
@@ -129,6 +143,7 @@ const VARIANT_CLASSES: Record<
     required: "ui-field__required",
     hint: "ui-field__hint",
     hintWarning: "ui-field__hint--warning",
+    details: "ui-field__details",
     errorTestId: "field-error",
   },
   settings: {
@@ -142,6 +157,7 @@ const VARIANT_CLASSES: Record<
     required: "settings-form__required",
     hint: "settings-form__hint",
     hintWarning: "settings-form__hint--warning",
+    details: "settings-form__field-details",
     errorTestId: "settings-field-error",
   },
 };
@@ -180,6 +196,9 @@ export function Field({
   hint,
   hintVariant = "default",
   hintPosition = "afterControl",
+  hintId,
+  hintTestId,
+  details,
   variant = "default",
   layout = "stack",
   required = false,
@@ -245,13 +264,15 @@ export function Field({
   // Amber is the warning colour, so a warning hint also carries a warning icon
   // (#5634): colour alone never signals a caution.
   const hintNode = hasHint ? (
-    <span className={hintClasses}>
+    <span className={hintClasses} id={hintId} data-testid={hintTestId}>
       {hintVariant === "warning" ? (
         <TriangleAlert className="ui-field__hint-icon" aria-hidden="true" />
       ) : null}
       {hint}
     </span>
   ) : null;
+  const hasDetails = details !== undefined && details !== null && details !== false;
+  const detailsNode = hasDetails ? <div className={classes.details}>{details}</div> : null;
   const errorNode = hasError ? (
     <span
       className="ui-field__msg"
@@ -275,6 +296,7 @@ export function Field({
         </span>
         {labelAccessory}
         {hintNode}
+        {detailsNode}
         {errorNode}
       </label>
     );
@@ -311,6 +333,7 @@ export function Field({
           {hintNode}
         </div>
         <div className={classes.control}>{control}</div>
+        {detailsNode}
         {errorNode}
       </div>
     );
@@ -322,6 +345,7 @@ export function Field({
       {hintPosition === "afterLabel" ? hintNode : null}
       {control}
       {hintPosition === "afterControl" ? hintNode : null}
+      {detailsNode}
       {errorNode}
     </div>
   );

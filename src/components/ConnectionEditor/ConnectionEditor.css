@@ -30,11 +30,13 @@
   flex: 1;
   overflow-y: auto;
   padding: var(--spacing-lg);
-  max-width: 640px;
+  /* The form stops at a readable width on large windows (#5641); the content
+     box is border-box, so the padding is added on top of the cap. */
+  max-width: calc(var(--form-max-width) + 2 * var(--spacing-lg));
 }
 
 .connection-editor__form {
-  max-width: 600px;
+  max-width: var(--form-max-width);
 }
 
 /* Action buttons pinned at the bottom */

@@ -110,3 +110,48 @@ def reconnect_wording_problems(text: str, *, serial: bool = False) -> list[str]:
     elif "agent" in lower and "termihub remote agent" not in lower:
         problems.append(f"the notice says 'agent' without 'termiHub remote agent': {text!r}")
     return problems
+
+
+#: ``--form-max-width`` in ``src/styles/variables.css`` (#5641).
+FORM_MAX_WIDTH = 560.0
+#: ``--form-input-narrow-width``: ports and other short numbers (#5641).
+NARROW_INPUT_WIDTH = 160.0
+#: Sub-pixel rounding allowance for measured boxes.
+_SLACK = 1.0
+
+
+def _bottom(rect: dict) -> float:
+    return float(rect["y"]) + float(rect["height"])
+
+
+def editor_layout_problems(rects: dict[str, dict]) -> list[str]:
+    """What is wrong with the connection editor's layout; empty when it is right (#5641).
+
+    ``rects`` maps a role to a viewport box (``{x, y, width, height}``):
+    ``form`` (the settings form), ``header`` (the Connection section header),
+    ``env_hint`` (the ``${VAR}`` note), ``host_field`` / ``host_input`` (the
+    Host field and its input), ``next_field`` (the field after Host) and, when
+    shown, ``host_hint`` (Host's hint) and ``port_input``. The form must stop at the
+    width cap; the ``${VAR}`` note must sit inside the section header, above
+    the Host field, not between them; Host's hint must sit under Host's input
+    and above the next field; the port input must stay narrow.
+    """
+    problems: list[str] = []
+    form = rects["form"]
+    if float(form["width"]) > FORM_MAX_WIDTH + _SLACK:
+        problems.append(f"the form is {form['width']:.0f}px wide, over the {FORM_MAX_WIDTH:.0f}px cap")
+    header, env_hint, host = rects["header"], rects["env_hint"], rects["host_field"]
+    if not (float(header["y"]) - _SLACK <= float(env_hint["y"]) and _bottom(env_hint) <= _bottom(header) + _SLACK):
+        problems.append("the ${VAR} note is not inside the section header")
+    if _bottom(header) > float(host["y"]) + _SLACK:
+        problems.append("the section header overlaps the Host field (the note reads as Host's label)")
+    host_hint = rects.get("host_hint")
+    if host_hint is not None:
+        if float(host_hint["y"]) + _SLACK < _bottom(rects["host_input"]):
+            problems.append("Host's hint is not below Host's input")
+        if _bottom(host_hint) > float(rects["next_field"]["y"]) + _SLACK:
+            problems.append("Host's hint runs into the next field")
+    port = rects.get("port_input")
+    if port is not None and float(port["width"]) > NARROW_INPUT_WIDTH + _SLACK:
+        problems.append(f"the port input is {port['width']:.0f}px wide, not narrow")
+    return problems

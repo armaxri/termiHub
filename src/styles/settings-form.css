@@ -358,6 +358,23 @@
   border-bottom: 1px solid var(--border-secondary);
 }
 
+/* Section header with a description (#5641): the title and its description sit
+   above one divider, so the description never reads as the first field's label. */
+.settings-panel__category-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  margin: 0 0 var(--spacing-md);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.settings-panel__category-header > .settings-panel__category-title {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
 /* === File list === */
 .settings-panel__file-list {
   list-style: none;
