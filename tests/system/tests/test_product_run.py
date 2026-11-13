@@ -546,7 +546,6 @@ class TestProductRunChecklist(
     def test_99_inputs_for_later_phases(self):
         """Record what this run could not cover, so the page never implies more."""
         for section, title, issue in (
-            ("serial", "Serial unplug/replug auto-reconnect (physical adapter)", 5536),
             ("raspberry_pi", "Raspberry Pi SSH host", 5535),
             ("rdp", "RDP host", 5537),
             ("vnc", "VNC host", 5537),
