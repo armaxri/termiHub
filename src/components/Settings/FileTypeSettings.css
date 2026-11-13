@@ -1,0 +1,73 @@
+/* Settings ▸ Editor ▸ Built-in defaults (#5713): a dense two-column
+   pattern → language table instead of one card per mapping. */
+.file-type-settings__table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.file-type-settings__table th {
+  text-align: left;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.file-type-settings__table td {
+  padding: var(--spacing-xxs) var(--spacing-sm);
+  border-bottom: 1px solid var(--border-secondary);
+  vertical-align: middle;
+}
+
+.file-type-settings__table th:first-child,
+.file-type-settings__table td:first-child {
+  width: 55%;
+}
+
+.file-type-settings__table .file-type-settings__action-col,
+.file-type-settings__table .file-type-settings__action {
+  width: calc(var(--control-height-sm) + 2 * var(--spacing-sm));
+  text-align: right;
+}
+
+.file-type-settings__row {
+  transition: background-color var(--transition-fast);
+}
+
+.file-type-settings__row:hover {
+  background-color: var(--bg-hover);
+}
+
+.file-type-settings__pattern,
+.file-type-settings__language {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-type-settings__pattern {
+  color: var(--text-primary);
+}
+
+/* Secondary-text token: >= 4.5:1 on the panel, unlike the old disabled grey. */
+.file-type-settings__language {
+  color: var(--text-secondary);
+}
+
+.file-type-settings__row:hover .file-type-settings__language {
+  color: var(--text-secondary-on-selection);
+}
+
+.file-type-settings__badge {
+  margin-left: var(--spacing-sm);
+  font-family: var(--font-family);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-type-settings__row {
+    transition: none;
+  }
+}
