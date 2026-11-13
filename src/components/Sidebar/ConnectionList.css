@@ -308,6 +308,21 @@
   background-color: var(--selected-row-hover-bg);
 }
 
+/* #5706: a collapsed folder hiding the active tab's connection. The dot and
+   left bar reuse the selection tokens so the hint reads as "the selected row
+   is in here" without claiming the folder itself is selected. */
+.connection-tree__folder--contains-active {
+  box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
+}
+
+.connection-tree__active-marker {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--accent-color);
+}
+
 .connection-tree__folder--drop-over {
   /* #5249: secondary text here sits on --bg-hover / --bg-active. */
   --text-secondary: var(--text-secondary-on-selection);

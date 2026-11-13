@@ -105,6 +105,34 @@ describe("TreeFolderRow", () => {
     act(() => treeitem().click());
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+  it("draws a labelled contains-active marker only when asked (#5706)", () => {
+    const render = (containsActiveLabel?: string) =>
+      act(() =>
+        root.render(
+          <TreeFolderRow
+            buttonRef={() => {}}
+            label="Lab"
+            expanded={false}
+            indentPx={8}
+            ariaLevel={1}
+            tabIndex={0}
+            testId="folder-toggle-lab"
+            containsActiveLabel={containsActiveLabel}
+          />
+        )
+      );
+    render();
+    expect(treeitem().classList.contains("connection-tree__folder--contains-active")).toBe(false);
+    expect(container.querySelector(".connection-tree__active-marker")).toBeNull();
+
+    render("Contains the active connection");
+    const btn = treeitem();
+    expect(btn.classList.contains("connection-tree__folder--contains-active")).toBe(true);
+    const marker = container.querySelector('[data-testid="folder-toggle-lab-active-marker"]');
+    expect(marker?.getAttribute("role")).toBe("img");
+    expect(marker?.getAttribute("aria-label")).toBe("Contains the active connection");
+  });
 });
 
 describe("TreeItemRow", () => {
