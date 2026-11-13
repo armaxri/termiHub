@@ -69,11 +69,11 @@ RDP_USER = "product-run"
 RDP_PASSWORD = "product-run-rdp-pw"
 #: The settings categories (``settingsRegistry.ts`` CATEGORIES).
 SETTINGS_CATEGORIES = (
-    "general", "appearance", "terminal", "serial", "accessibility", "shell-integration",
-    "keyboard", "sessions", "safety-prompts", "x-server", "security", "external-files",
-    "editor", "plugins", "backup", "import", "schedules", "portable", "updates",
+    "general", "appearance", "accessibility", "keyboard", "updates", "terminal",
+    "shell-integration", "sessions", "editor", "serial", "external-files", "security",
+    "safety-prompts", "backup", "plugins", "import", "schedules", "portable", "x-server",
 )
-#: Numeric settings and where they live: (category, testid from #5573, key, label).
+#: Numeric settings and where they live: (category, testid, key, label); ids from #5573.
 NUMERIC_SETTINGS = (
     ("appearance", "settings-font-size", "fontSize", "Font size"),
     ("appearance", "settings-line-height", "lineHeight", "Line height"),
@@ -401,7 +401,7 @@ class TestProductRunSettingsThemes(
         with self.step(
             "settings.categories",
             "Every settings category opens and renders without a JavaScript error",
-            expect="Settings on its last category (Updates)",
+            expect="Settings on its last category (X server, under Advanced)",
             screenshot=False,
         ):
             cursor, _ = self._js_errors(None)
@@ -412,6 +412,7 @@ class TestProductRunSettingsThemes(
                 if not self.driver.exists(nav):
                     missing.append(category)
                     continue
+                self.reveal_settings_nav(category)
                 self.driver.click(nav)
                 time.sleep(0.4)
                 text = self.driver.get_text("settings-panel-content").strip()
@@ -437,19 +438,14 @@ class TestProductRunSettingsThemes(
                 time.sleep(0.5)
                 stored = self.projection_region_cache(SETTINGS_REGION).get(key)
                 self.evidence(f"settings.{key} = {stored!r}")
-                if self.driver.exists(f"{testid}-input"):
-                    value = self.driver.get_value(f"{testid}-input")
-                    default = (
-                        self.driver.get_text(f"{testid}-default")
-                        if self.driver.exists(f"{testid}-default") else ""
-                    )
-                    self.evidence(f"input {value!r}, default marker {default!r}")
-                    assert str(value).strip() or default.strip(), f"{label} shows nothing"
-                else:
-                    assert stored is not None, (
-                        f"{label}: the field is empty on a fresh profile (no value, no default "
-                        "shown) - #5554, fixed by PR #5573"
-                    )
+                self.wait(lambda: self.driver.exists(f"{testid}-input"), what=f"the {label} input")
+                value = str(self.driver.get_value(f"{testid}-input") or "").strip()
+                default = (
+                    self.driver.get_text(f"{testid}-default").strip()
+                    if self.driver.exists(f"{testid}-default") else ""
+                )
+                self.evidence(f"input {value!r}, default marker {default!r}")
+                assert value or default, f"{label} shows neither a value nor its default (#5554)"
 
     def _surfaces(self, theme: str) -> None:
         self.switch_to_connections_sidebar()
