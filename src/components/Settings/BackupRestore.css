@@ -59,3 +59,13 @@
   font-size: var(--font-size-sm);
   color: var(--text-primary);
 }
+
+/* Backup export: a row whose option carries a follow-up field (the master
+   password under Credentials, #5613). */
+.backup-export__row-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}

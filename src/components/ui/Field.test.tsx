@@ -38,6 +38,17 @@ describe("Field", () => {
     expect(label.getAttribute("for")).toBe("host");
   });
 
+  it("forwards labelTestId to the label element", () => {
+    render(
+      <Field label="Host" htmlFor="host" labelTestId="host-label">
+        <Input id="host" />
+      </Field>
+    );
+    const label = document.querySelector('[data-testid="host-label"]');
+    expect(label?.tagName).toBe("LABEL");
+    expect(label?.getAttribute("for")).toBe("host");
+  });
+
   it("does not render an error message when error is absent", () => {
     render(
       <Field data-testid="field" label="Host" htmlFor="host">

@@ -79,6 +79,13 @@ NUMERIC_SETTINGS = (
     ("appearance", "settings-line-height", "lineHeight", "Line height"),
     ("terminal", "settings-scrollback-buffer", "scrollbackBuffer", "Scrollback buffer"),
 )
+#: The backup export dialog's password fields and their visible labels (#5613).
+#: The master password shows only in master-password mode.
+BACKUP_PASSWORD_LABELS = (
+    ("backup-export-passphrase", "Backup passphrase"),
+    ("backup-export-confirm", "Repeat backup passphrase"),
+    ("backup-export-master-password", "Current master password"),
+)
 
 
 def _free_port(start: int, span: int = 30) -> int:
@@ -476,3 +483,47 @@ class TestProductRunSettingsThemes(
                 assert primary >= 4.5, f"primary text contrast {primary:.2f}:1"
                 assert secondary >= 3.0, f"secondary text contrast {secondary:.2f}:1"
             self.close_all_tabs()
+
+    def test_04_backup_labels(self):
+        with self.step(
+            "settings.backup.labels",
+            "Back up everything: every password field has a visible label; Credentials is "
+            "visible without scrolling (#5613)",
+            expect="the Back up dialog with labelled passphrase fields and Credentials in view",
+        ):
+            self.open_settings_category("backup")
+            self.wait(lambda: self.driver.exists("backup-export-btn"), what="the Back up button")
+            self.driver.click("backup-export-btn")
+            self.wait(
+                lambda: self.driver.exists("backup-export-section-connections"),
+                what="the backup sections to load",
+            )
+            problems = []
+            for field, text in BACKUP_PASSWORD_LABELS:
+                if not self.driver.exists(field):
+                    if field == "backup-export-master-password":
+                        continue
+                    problems.append(f"{field}: missing")
+                    continue
+                label = f"{field}-label"
+                if not self.driver.exists(label):
+                    problems.append(f"{field}: no visible label")
+                    continue
+                shown = self.driver.get_text(label).strip()
+                linked = self.driver.get_attribute(label, "for")
+                field_id = self.driver.get_attribute(field, "id")
+                box = self.driver.measure_element(label)["rect"]
+                self.evidence(f"{field}: label {shown!r} for={linked!r} id={field_id!r}")
+                if shown != text:
+                    problems.append(f"{field}: label {shown!r}, expected {text!r}")
+                if not field_id or linked != field_id:
+                    problems.append(f"{field}: label not associated (for={linked!r})")
+                if box["width"] <= 2 or box["height"] <= 2:
+                    problems.append(f"{field}: label not visible")
+            box = self.driver.measure_element("backup-export-sections")["rect"]
+            row = self.driver.measure_element("backup-export-credentials")["rect"]
+            self.evidence(f"sections box {box}; credentials checkbox {row}")
+            if row["y"] < box["y"] or row["y"] + row["height"] > box["y"] + box["height"]:
+                problems.append("the Credentials row is outside the visible list area")
+            self.driver.click("modal-close")
+            assert not problems, "; ".join(problems)
