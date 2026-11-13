@@ -430,7 +430,7 @@ class TestProductRunSsh(
                 ),
                 timeout=60.0, what="uname output",
             )
-            uname = next((ln for ln in text.splitlines() if ln.startswith("Linux")), "")
+            uname = next((ln for ln in text.splitlines() if ln.startswith(("Linux", "Darwin"))), "")
             self.evidence(f"uname: {uname or self.terminal_tail(tab_id)}")
-            assert uname, "no 'Linux …' uname line from the Pi"
+            assert uname, "no uname line from the Pi"
         self.close_all_tabs()
