@@ -12,6 +12,15 @@
   line-height: 1.4;
 }
 
+/* The waiting connect (#5684): primary text, it is why the dialog is up. */
+.unlock-dialog__waiting {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .unlock-dialog__error {
   font-size: var(--font-size-sm);
   color: var(--color-error);
