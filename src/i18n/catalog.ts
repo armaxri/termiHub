@@ -203,6 +203,26 @@ const en = {
   "fileManagerIntegration.action.install": "Install",
   "fileManagerIntegration.action.reinstall": "Reinstall / update",
   "fileManagerIntegration.action.uninstall": "Uninstall",
+
+  // ── Dropped-session wording per transport (#5619, #5660, #5666) ─────────
+  // A serial port has no shell or agent, and a network drop is not a process
+  // exit: each transport says what actually happened.
+  "drop.heading.serial": "Device disconnected — reconnecting…",
+  "drop.heading.telnet": "Connection closed — reconnecting…",
+  "drop.status.serial": "Device disconnected. Waiting for it to come back.",
+  "drop.status.network": "Connection lost. Attempting to reconnect automatically.",
+  "drop.detail.serial": "Scrollback is kept. Waiting for {port} to come back.",
+  "drop.detail.serialUnknownPort": "Scrollback is kept. Waiting for the device to come back.",
+  "drop.detail.ssh": "Scrollback is kept. Your remote shell restarts; running programs are lost.",
+  "drop.detail.telnet":
+    "Scrollback is kept. A new telnet session starts; the remote state is not restored.",
+  "drop.detail.agent":
+    "Scrollback is kept. The termiHub remote agent reattaches the session if it is still running.",
+  "drop.detail.other": "Scrollback is kept. A new session starts; running programs are lost.",
+  "drop.separator.serial": "— device disconnected {time} —",
+  "drop.separator.network": "— connection lost {time} —",
+  "drop.separator.reconnected": "— reconnected {time} —",
+  "drop.overlay.scrollbackKept": "Your scrollback is kept — choose View scrollback to read it.",
 } as const;
 
 /** A stable id naming one catalog message. */
