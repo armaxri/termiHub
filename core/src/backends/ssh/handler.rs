@@ -77,12 +77,72 @@ pub struct IncomingChannel {
     pub connected_port: u32,
 }
 
-/// Registry that routes incoming forwarded channels to the right listener.
+/// A server-opened `x11` channel (RFC 4254 §6.3.2), accepted because this
+/// connection sent `x11-req` and its forwarder is still live (#5570).
+pub struct IncomingX11 {
+    pub channel: russh::Channel<russh::client::Msg>,
+    pub originator_address: String,
+    pub originator_port: u32,
+}
+
+/// Where the handler routes server-opened forwarded channels.
 ///
-/// Keyed by the bound port on the SSH server (as returned by
-/// [`SshSession::tcpip_forward`]). The value is a sender whose receiver
-/// is owned by the corresponding `RemoteForwarder` or X11 event loop.
-pub type ForwardedChannelRegistry = Arc<Mutex<HashMap<u32, UnboundedSender<IncomingChannel>>>>;
+/// - `forwarded-tcpip` channels are keyed by the bound port on the SSH server
+///   (as returned by [`SshSession::tcpip_forward`]); each value is a sender
+///   whose receiver a `RemoteForwarder` or the fallback X11 event loop owns.
+///   [`lock`](Self::lock) hands out that map.
+/// - `x11` channels go to the one X11 grant (#5570): set only once the server
+///   accepted this connection's `x11-req`, cleared again when the forwarder
+///   that asked for it goes away. Without a live grant every `x11` channel is
+///   refused.
+#[derive(Default)]
+pub struct ForwardedChannels {
+    ports: Mutex<HashMap<u32, UnboundedSender<IncomingChannel>>>,
+    x11: Mutex<Option<UnboundedSender<IncomingX11>>>,
+}
+
+impl ForwardedChannels {
+    /// Lock the bound-port → listener map.
+    pub fn lock(
+        &self,
+    ) -> std::sync::LockResult<
+        std::sync::MutexGuard<'_, HashMap<u32, UnboundedSender<IncomingChannel>>>,
+    > {
+        self.ports.lock()
+    }
+
+    fn x11_slot(&self) -> std::sync::MutexGuard<'_, Option<UnboundedSender<IncomingX11>>> {
+        // A plain `Option` stays valid across a panic, so recover the guard.
+        self.x11.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Accept server-opened `x11` channels from now on, delivering them to
+    /// `tx` (#5570). Call only after the server accepted `x11-req`.
+    pub(crate) fn grant_x11(&self, tx: UnboundedSender<IncomingX11>) {
+        *self.x11_slot() = Some(tx);
+    }
+
+    /// Stop accepting `x11` channels, if the grant is still `tx`'s.
+    pub(crate) fn revoke_x11(&self, tx: &UnboundedSender<IncomingX11>) {
+        let mut slot = self.x11_slot();
+        if slot.as_ref().is_some_and(|cur| cur.same_channel(tx)) {
+            *slot = None;
+        }
+    }
+
+    /// The live X11 grant, or `None` (never requested, refused, or its
+    /// forwarder is gone), in which case an `x11` open is refused.
+    pub(crate) fn x11_listener(&self) -> Option<UnboundedSender<IncomingX11>> {
+        self.x11_slot()
+            .as_ref()
+            .filter(|tx| !tx.is_closed())
+            .cloned()
+    }
+}
+
+/// Registry that routes incoming forwarded channels to the right listener
+/// (see [`ForwardedChannels`]).
+pub type ForwardedChannelRegistry = Arc<ForwardedChannels>;
 
 /// Why the handshake refused the server's host key (#5185), recorded by the
 /// handler (on russh's session task) for the connecting task to classify.
@@ -182,7 +242,7 @@ impl TermiHubHandler {
         port: u16,
         forward_agent: bool,
     ) -> (Self, ForwardedChannelRegistry, LivenessWatch) {
-        let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let registry: ForwardedChannelRegistry = Arc::new(ForwardedChannels::default());
         let (liveness_tx, liveness_rx) = watch::channel(false);
         let server_id = Arc::new(OnceLock::new());
         let handler = Self {
@@ -447,9 +507,10 @@ impl russh::client::Handler for TermiHubHandler {
     //
     // Since russh 0.65 a server-opened channel is confirmed only when the
     // handler accepts it, and russh's *default* for these kinds accepts. termiHub
-    // never asks the server for any of them — X11 rides on `forwarded-tcpip`
-    // (see `x11.rs`), and no streamlocal forward is ever requested — so a server
-    // opening one is unsolicited and is refused rather than confirmed.
+    // never asks the server for any of these but `x11` — and that one only on a
+    // connection that sent `x11-req` (#5570, `x11_req.rs`); no streamlocal
+    // forward is ever requested — so a server opening one is unsolicited and is
+    // refused rather than confirmed.
 
     async fn server_channel_open_session(
         &mut self,
@@ -475,15 +536,34 @@ impl russh::client::Handler for TermiHubHandler {
         Ok(())
     }
 
+    /// Accept a server-opened `x11` channel only while this connection holds
+    /// a live X11 grant (#5570): the server accepted our `x11-req` and the
+    /// forwarder that asked for it is still running. Every other `x11` open —
+    /// never requested, refused, or after the session ended — is refused.
     async fn server_channel_open_x11(
         &mut self,
-        _channel: russh::Channel<russh::client::Msg>,
-        _originator_address: &str,
-        _originator_port: u32,
+        channel: russh::Channel<russh::client::Msg>,
+        originator_address: &str,
+        originator_port: u32,
         reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
-        reject_unsolicited(reply, "x11").await;
+        match self.forwarded_channel_registry.x11_listener() {
+            Some(tx) => {
+                debug!("accepting x11 channel: X11 forwarding was requested");
+                // Confirm before handing it over, so the forwarder's first
+                // write cannot overtake the open confirmation.
+                reply.accept().await;
+                // A forwarder that went away in between drops the channel,
+                // which closes it.
+                let _ = tx.send(IncomingX11 {
+                    channel,
+                    originator_address: originator_address.to_string(),
+                    originator_port,
+                });
+            }
+            None => reject_unsolicited(reply, "x11").await,
+        }
         Ok(())
     }
 
