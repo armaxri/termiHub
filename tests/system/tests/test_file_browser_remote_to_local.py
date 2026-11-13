@@ -126,7 +126,9 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
     def _paste_when_enabled(self) -> None:
         """Click the toolbar Paste once the remote clipboard has enabled it."""
         self.wait(
-            lambda: self.driver.get_attribute(self.PASTE, "disabled") is None,
+            # Paste is an inline button only once the clipboard holds entries (#5520).
+            lambda: self.driver.exists(self.PASTE)
+            and self.driver.get_attribute(self.PASTE, "disabled") is None,
             what="Paste to be enabled by the remote clipboard",
         )
         self.driver.click(self.PASTE)

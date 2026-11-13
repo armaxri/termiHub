@@ -17,6 +17,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -89,8 +90,6 @@ function row(name: string): HTMLElement | null {
   return container.querySelector(`[data-testid="file-row-${name}"]`);
 }
 
-const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
-
 setupFileBrowsersRegion();
 setupVirtualListSizing();
 
@@ -121,8 +120,9 @@ describe("FileBrowser — hidden-files toggle (PROD-008)", () => {
     expect(row(".config")).toBeNull();
 
     // Toggle on.
+    const toggle = await findFileBrowserAction("file-browser-toggle-hidden");
     await act(async () => {
-      q("file-browser-toggle-hidden").click();
+      toggle!.click();
     });
     await flushAsync();
 
@@ -136,8 +136,9 @@ describe("FileBrowser — hidden-files toggle (PROD-008)", () => {
 
     expect(useAppStore.getState().layoutConfig.showHiddenFiles ?? false).toBe(false);
 
+    const toggle = await findFileBrowserAction("file-browser-toggle-hidden");
     await act(async () => {
-      q("file-browser-toggle-hidden").click();
+      toggle!.click();
     });
     await flushAsync();
 
