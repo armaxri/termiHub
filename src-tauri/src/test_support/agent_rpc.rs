@@ -181,6 +181,9 @@ pub(crate) struct FakeAgent {
     /// Output senders handed to `register_session_output`, held so the
     /// session's output channel stays open (dropping one EOFs the reader).
     pub(crate) session_outputs: Mutex<Vec<OutputSender>>,
+    /// End-cause slots handed to `register_session_end` (#5732), in order, so
+    /// a test can record the cause a `connection.exit` would carry.
+    pub(crate) session_end_slots: Mutex<Vec<termihub_core::connection::EndCauseSlot>>,
     /// Every scriptable call, as `(method, arguments)` (read it through
     /// [`calls_to`](Self::calls_to); public only so tests can use `..default()`).
     pub(crate) calls: Mutex<Vec<(&'static str, Vec<String>)>>,
@@ -782,6 +785,15 @@ impl AgentRpcClient for FakeAgent {
             .lock()
             .unwrap()
             .remove(remote_session_id);
+        Ok(())
+    }
+    fn register_session_end(
+        &self,
+        _agent_id: &str,
+        _remote_session_id: &str,
+        end_cause: termihub_core::connection::EndCauseSlot,
+    ) -> Result<(), TerminalError> {
+        self.session_end_slots.lock().unwrap().push(end_cause);
         Ok(())
     }
     fn register_files_only(
