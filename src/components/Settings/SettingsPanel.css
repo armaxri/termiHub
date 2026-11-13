@@ -428,14 +428,13 @@
 /* Other platforms: a one-line note + disclosure instead of the list (#5712). */
 .settings-panel__prefix-note {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-xs) var(--spacing-sm);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
   margin-bottom: var(--spacing-sm);
 }
 
 .settings-panel__prefix-note .settings-panel__description {
-  flex: 1 1 20rem;
   margin: 0;
 }
 
