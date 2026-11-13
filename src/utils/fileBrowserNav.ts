@@ -64,6 +64,56 @@ export function splitPathSegments(path: string): PathCrumb[] {
   return crumbs;
 }
 
+/** Which breadcrumb segments a too-narrow path bar folds into its "…" (#5521). */
+export interface CrumbCollapse {
+  /** First hidden segment index (inclusive). */
+  hiddenStart: number;
+  /** End of the hidden range (exclusive); equal to `hiddenStart` when none is hidden. */
+  hiddenEnd: number;
+}
+
+/** Inputs of {@link collapseCrumbs}, all widths in CSS pixels. */
+export interface CollapseCrumbsInput {
+  /** Width of the breadcrumb row, or `null` when unknown (no layout yet: show all). */
+  available: number | null;
+  /** Natural width of each segment, including its leading separator (all but the first). */
+  widths: number[];
+  /** Width of the "…" segment, including its separator. */
+  ellipsisWidth: number;
+}
+
+/**
+ * Decide which middle segments of a breadcrumb fold into one "…" so the path
+ * fits its row (#5521). The leaf (the folder being shown) always stays; then
+ * the root when it fits (it says which drive / share / filesystem this is);
+ * then as many of the leaf's nearest ancestors as fit. A leaf that is wider
+ * than the row on its own is left to ellipsize in CSS.
+ */
+export function collapseCrumbs({
+  available,
+  widths,
+  ellipsisWidth,
+}: CollapseCrumbsInput): CrumbCollapse {
+  const n = widths.length;
+  const none = { hiddenStart: 0, hiddenEnd: 0 };
+  if (available === null || n <= 2) return none;
+  // Sub-pixel rounding in measured widths must not collapse a path that fits.
+  const slack = 0.5;
+  const total = widths.reduce((sum, w) => sum + w, 0);
+  if (total <= available + slack) return none;
+
+  let budget = available + slack - ellipsisWidth - widths[n - 1];
+  const showRoot = widths[0] <= budget;
+  if (showRoot) budget -= widths[0];
+  let tailStart = n - 1;
+  for (let i = n - 2; i >= 1; i--) {
+    if (widths[i] > budget) break;
+    budget -= widths[i];
+    tailStart = i;
+  }
+  return { hiddenStart: showRoot ? 1 : 0, hiddenEnd: tailStart };
+}
+
 /**
  * Sort file entries for display. Directories are always grouped before files
  * (regardless of direction); the chosen key and direction order entries within

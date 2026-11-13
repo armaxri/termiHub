@@ -8,7 +8,8 @@ thumb, text edge, horizontal bar), computed styles, and the store:
 - MT-UI-35 / MT-UI-36 — the vertical thumb shows only with scrollback and is
   the same gutter thumb in normal and horizontal-scroll modes;
 - MT-UI-51 — the thumb sits in its own strip right of the text, the horizontal
-  bar clears the last row, and the breadcrumb keeps the app's thin scrollbar;
+  bar clears the last row, and the breadcrumb never scrolls (long paths fold
+  their middle into "…", #5521) nor overrides the app's thin scrollbar;
 - MT-UI-45 — the connections sidebar is laid out at first bridge contact after
   each of three cold launches (one at a narrow window);
 - MT-UI-47 — inside the zoom overlay Escape reaches the terminal program, the
@@ -217,7 +218,9 @@ class TestLayoutGrades(ConnectionsUi, FilesUi, SidebarUi, TerminalUi, TabsUi, Sy
         self.open_file_browser()
         crumbs = "file-browser-current-path"
         self.wait(lambda: self.driver.exists(crumbs), what="the file browser breadcrumb")
-        assert self.driver.get_computed_style("overflow-x", crumbs) == "auto"
+        # A long path folds its middle segments into "…" (#5521) instead of
+        # scrolling sideways, so the breadcrumb has no scrollbar at all.
+        assert self.driver.get_computed_style("overflow-x", crumbs) == "hidden"
         # The global `* { scrollbar-width: thin }` rule, where the engine exposes
         # it (WebKit before 18.2 resolves only ::-webkit-scrollbar, same tokens).
         width = self.driver.get_computed_style("scrollbar-width", crumbs)

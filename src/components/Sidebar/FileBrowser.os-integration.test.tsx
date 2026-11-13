@@ -27,6 +27,7 @@ import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { OpenTestMenu } from "@/test/OpenTestMenu";
 import type { FileEntry } from "@/types/connection";
 import { seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
 const openPath = vi.fn().mockResolvedValue(undefined);
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -151,9 +152,6 @@ async function renderSession() {
   await flushAsync();
 }
 
-const q = (testId: string) =>
-  container.querySelector(`[data-testid="${testId}"]`) as HTMLButtonElement | null;
-
 setupFileBrowsersRegion();
 
 describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
@@ -181,27 +179,28 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
 
   it("renders both OS-integration actions in local mode", async () => {
     await renderLocal();
-    expect(q("file-browser-open-in-explorer")).toBeTruthy();
-    expect(q("file-browser-open-folder-vscode")).toBeTruthy();
+    expect(await findFileBrowserAction("file-browser-open-in-explorer")).toBeTruthy();
+    expect(await findFileBrowserAction("file-browser-open-folder-vscode")).toBeTruthy();
   });
 
   it("hides both actions in session mode", async () => {
     await renderSession();
-    expect(q("file-browser-open-in-explorer")).toBeNull();
-    expect(q("file-browser-open-folder-vscode")).toBeNull();
+    expect(await findFileBrowserAction("file-browser-open-in-explorer")).toBeNull();
+    expect(await findFileBrowserAction("file-browser-open-folder-vscode")).toBeNull();
   });
 
   it("hides the VS Code action when VS Code is unavailable", async () => {
     await renderLocal({ vscodeAvailable: false });
     // The file-manager action does not depend on VS Code.
-    expect(q("file-browser-open-in-explorer")).toBeTruthy();
-    expect(q("file-browser-open-folder-vscode")).toBeNull();
+    expect(await findFileBrowserAction("file-browser-open-in-explorer")).toBeTruthy();
+    expect(await findFileBrowserAction("file-browser-open-folder-vscode")).toBeNull();
   });
 
   it("opens the OS file manager at the current path", async () => {
     await renderLocal();
+    const action = await findFileBrowserAction("file-browser-open-in-explorer");
     await act(async () => {
-      q("file-browser-open-in-explorer")!.click();
+      action!.click();
     });
     await flushAsync();
     expect(openFolderCalls()).toEqual([{ path: "/home" }]);
@@ -212,8 +211,9 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
 
   it("opens the current folder as a VS Code workspace", async () => {
     await renderLocal();
+    const action = await findFileBrowserAction("file-browser-open-folder-vscode");
     await act(async () => {
-      q("file-browser-open-folder-vscode")!.click();
+      action!.click();
     });
     await flushAsync();
     expect(mockedInvoke).toHaveBeenCalledWith("vscode_open_local", { path: "/home" });
@@ -227,8 +227,9 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
       return Promise.resolve(undefined);
     });
     await renderLocal();
+    const action = await findFileBrowserAction("file-browser-open-in-explorer");
     await act(async () => {
-      q("file-browser-open-in-explorer")!.click();
+      action!.click();
     });
     await flushAsync();
     expect(toastError).toHaveBeenCalledTimes(1);
@@ -242,8 +243,9 @@ describe("FileBrowser — local OS-integration toolbar actions (#2656)", () => {
       return Promise.resolve(undefined);
     });
     await renderLocal();
+    const action = await findFileBrowserAction("file-browser-open-folder-vscode");
     await act(async () => {
-      q("file-browser-open-folder-vscode")!.click();
+      action!.click();
     });
     await flushAsync();
     expect(toastError).toHaveBeenCalledTimes(1);
