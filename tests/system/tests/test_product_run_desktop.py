@@ -843,3 +843,42 @@ class TestProductRunSettingsThemes(
                 if props["border-bottom-style"] == "none":
                     problems.append("heading without a divider")
             assert not problems, "; ".join(problems)
+
+    def test_10_serial_prefix_layout(self):
+        """Settings ▸ Serial folds the Linux /dev prefixes off Linux, chips on Linux (#5712)."""
+        linux = sys.platform.startswith("linux")
+        with self.step(
+            "settings.serial-prefixes",
+            "Settings ▸ Serial shows the /dev scan prefixes as a compact chip grid on Linux "
+            "and folds them behind a one-line note elsewhere (#5712)",
+            expect=(
+                "Settings ▸ Serial with the built-in prefixes as a grid of small switches"
+                if linux else
+                "Settings ▸ Serial with a one-line note that prefix scanning only runs on "
+                "Linux and a Show Linux prefixes button — no per-prefix rows"
+            ),
+        ):
+            self.open_settings_category("serial")
+            self.wait(lambda: self.driver.exists("settings-serial-port-prefixes"),
+                      what="the serial prefix section")
+            problems = []
+            if linux:
+                if not self.driver.exists("settings-serial-prefix-grid"):
+                    problems.append("no prefix chip grid")
+                elif self.driver.get_computed_style(
+                        "display", "settings-serial-prefix-grid") != "grid":
+                    problems.append("the prefix list is not laid out as a grid")
+                if self.driver.exists("settings-serial-prefixes-note"):
+                    problems.append("the off-Linux note shows on Linux")
+            else:
+                if not self.driver.exists("settings-serial-prefixes-note"):
+                    problems.append("no one-line off-Linux note")
+                else:
+                    self.evidence(
+                        f"note {self.driver.get_text('settings-serial-prefixes-note')[:160]!r}")
+                if self.driver.exists("settings-serial-prefixes-list"):
+                    problems.append("the per-prefix rows show without being expanded")
+                if self.driver.get_attribute(
+                        "settings-serial-prefixes-disclosure", "aria-expanded") != "false":
+                    problems.append("no collapsed Show Linux prefixes disclosure")
+            assert not problems, "; ".join(problems)
