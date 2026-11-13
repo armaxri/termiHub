@@ -81,7 +81,7 @@ SOLARIZED_BASE3 = "#fdf6e3"
 
 #: Settings categories (``settingsRegistry.ts`` CATEGORIES) the checklist names.
 CATEGORY_LABELS = {
-    "shell-integration": "Shell integration",
+    "shell-integration": "File manager integration",
     "safety-prompts": "Safety prompts",
     "backup": "Backup & restore",
     "import": "Import & migration",

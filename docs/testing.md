@@ -1834,8 +1834,8 @@ migrates the password into the OS store.
 ### Shell-integration artifacts in the harness (#4963)
 
 [`test_shell_integration_artifacts.py`](../tests/system/tests/test_shell_integration_artifacts.py)
-seeds four shell-integration entries, clicks **Settings → Shell integration →
-Reinstall / Update**, and reads back what the OS file manager reads
+seeds four shell-integration entries, clicks **Settings → File manager integration →
+Install**, and reads back what the OS file manager reads
 ([`termihub_harness/shell_artifacts.py`](../tests/system/termihub_harness/shell_artifacts.py)).
 **Uninstall** must then remove every artifact and leave foreign entries
 byte-for-byte.

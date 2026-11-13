@@ -176,7 +176,7 @@ describe("ShellIntegrationSettings", () => {
     await act(async () => {
       byTestId("shell-integration-entry-save")?.click();
     });
-    expect(errorSpy).toHaveBeenCalledWith("Failed to save shell integration settings", {
+    expect(errorSpy).toHaveBeenCalledWith("Failed to save file manager integration settings", {
       description: "registry key is locked",
     });
     errorSpy.mockRestore();
