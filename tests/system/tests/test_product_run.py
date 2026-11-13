@@ -510,6 +510,27 @@ class TestProductRunChecklist(
                 what="a red and a green gutter mark",
             )
 
+    def test_03b_command_mark_shape(self):
+        """#5640: the zsh marks keep a gutter off the text and differ by more than colour."""
+        with self.step(
+            "checklist.zsh.mark-shape",
+            "Success and failure marks sit in a gutter and differ in shape, not only colour",
+            expect="a solid green bar by true and a dashed red bar by false, clear of the prompt",
+        ):
+            self.require("checklist.zsh.marks")
+            tab = self.wait(lambda: self.find_tab(QUESTION_CONN), what="the question tab")
+            tab_id = tab["id"]
+            ok = self._decorations(tab_id, "terminal-command-mark--success")[-1]
+            bad = self._decorations(tab_id, "terminal-command-mark--failure")[-1]
+            self.evidence(f"success mark: {ok}")
+            self.evidence(f"failure mark: {bad}")
+            for bar in (ok, bad):
+                gap = bar.get("gapToText")
+                assert gap is not None and gap >= 5.5, f"mark touches the text: {bar}"
+            # Shape, not hue: the failure bar is masked into dashes, success is solid.
+            assert ok.get("maskImage") in (None, "", "none"), f"success is not solid: {ok}"
+            assert (bad.get("maskImage") or "none") != "none", f"failure has no shape: {bad}"
+
     # ── 4. settings wording ───────────────────────────────────────────────────
     def _content(self) -> str:
         return self.wait(
