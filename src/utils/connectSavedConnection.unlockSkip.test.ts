@@ -177,3 +177,33 @@ describe("connectSavedConnection — locked vault (#5188)", () => {
     expect(addTabSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("connectSavedConnection — the unlock dialog names the connect (#5684)", () => {
+  it("passes the waiting connection's name and secret kind into the unlock request", async () => {
+    useAppStore.setState({
+      connectionTypes: [
+        { typeId: "ssh", displayName: "SSH" } as ReturnType<
+          typeof useAppStore.getState
+        >["connectionTypes"][number],
+      ],
+    });
+    void connectSavedConnection(sshPassword());
+    await flush();
+    expect(useAppStore.getState().unlockWaiters).toEqual([
+      { name: "web-1", transport: "SSH", secret: "password" },
+    ]);
+  });
+
+  it("lists a second waiting connect, and clears the list when the dialog settles", async () => {
+    void connectSavedConnection(sshPassword());
+    void connectSavedConnection(sshEncryptedKey());
+    await flush();
+    expect(useAppStore.getState().unlockWaiters.map((w) => [w.name, w.secret])).toEqual([
+      ["web-1", "password"],
+      ["build-1", "passphrase"],
+    ]);
+    useAppStore.getState().setUnlockDialogOpen(false);
+    await flush();
+    expect(useAppStore.getState().unlockWaiters).toEqual([]);
+  });
+});

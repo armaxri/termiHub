@@ -101,6 +101,7 @@ function App() {
   const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
   const unlockConnectFallback = useAppStore((s) => s.unlockConnectFallback);
+  const unlockWaiters = useAppStore((s) => s.unlockWaiters);
   const skipUnlock = useAppStore((s) => s.skipUnlock);
   const spawnPickerVisible = useAppStore((s) => s.spawnPickerVisible);
   const spawnPickerRequest = useAppStore((s) => s.spawnPickerRequest);
@@ -402,6 +403,7 @@ function App() {
             onOpenChange={setUnlockDialogOpen}
             connectFallback={unlockConnectFallback}
             onConnectWithoutSaved={skipUnlock}
+            waiting={unlockWaiters}
           />
           <SpawnPicker
             open={spawnPickerVisible}

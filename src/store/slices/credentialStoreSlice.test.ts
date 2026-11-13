@@ -183,3 +183,41 @@ describe("credentialStoreSlice — connect fall-through (#5188)", () => {
     });
   });
 });
+
+describe("credentialStoreSlice — waiting connects (#5684)", () => {
+  const prod = { name: "prod-db", transport: "SSH", secret: "password" } as const;
+  const build = { name: "build-1", transport: "SSH", secret: "passphrase" } as const;
+
+  it("lists each waiting connect once, in request order", () => {
+    const store = makeStore();
+    void store.getState().requestUnlockOutcome({ connectFallback: true, waiter: prod });
+    void store.getState().requestUnlockOutcome({ connectFallback: true, waiter: build });
+    void store.getState().requestUnlockOutcome({ connectFallback: true, waiter: { ...prod } });
+    expect(store.getState().unlockWaiters).toEqual([prod, build]);
+  });
+
+  it("a plain unlock request adds no waiter", () => {
+    const store = makeStore();
+    void store.getState().requestUnlock();
+    store.getState().setUnlockDialogOpen(true);
+    expect(store.getState().unlockWaiters).toEqual([]);
+  });
+
+  it("requestUnlock passes its waiter through", () => {
+    const store = makeStore();
+    void store.getState().requestUnlock({ waiter: prod });
+    expect(store.getState().unlockWaiters).toEqual([prod]);
+  });
+
+  it.each([
+    ["an unlock", (s: ReturnType<typeof makeStore>) => s.getState().resolveUnlock(true)],
+    ["a cancel", (s: ReturnType<typeof makeStore>) => s.getState().setUnlockDialogOpen(false)],
+    ["a skip", (s: ReturnType<typeof makeStore>) => s.getState().skipUnlock()],
+  ])("clears the waiters on %s", async (_label, settle) => {
+    const store = makeStore();
+    const pending = store.getState().requestUnlockOutcome({ connectFallback: true, waiter: prod });
+    settle(store);
+    await pending;
+    expect(store.getState().unlockWaiters).toEqual([]);
+  });
+});
