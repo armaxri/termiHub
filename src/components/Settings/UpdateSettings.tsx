@@ -36,6 +36,7 @@ function formatCheckTime(iso?: string): string {
 export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const updateCheckState = useAppStore((s) => s.updateCheckState);
   const updateInfo = useAppStore((s) => s.updateInfo);
+  const failureReason = useAppStore((s) => s.updateCheckFailureReason);
   const checkForUpdates = useAppStore((s) => s.checkForUpdates);
   const clearSkippedUpdateVersion = useAppStore((s) => s.clearSkippedUpdateVersion);
   const settings = useProjectedSettings();
@@ -53,7 +54,8 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
 
   const isChecking = updateCheckState === "checking";
   const isDevelop = isDevelopUpdate(updateInfo);
-  const notChecked = updateInfo?.channel === "none";
+  // The backend says so explicitly (#5651) — never inferred from other fields.
+  const notChecked = updateInfo?.outcome === "notChecking";
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -188,7 +190,11 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                     Up to date
                   </span>
                 ) : updateCheckState === "error" ? (
-                  <span className="update-settings__error" data-testid="update-latest-version">
+                  <span
+                    className="update-settings__error"
+                    data-testid="update-latest-version"
+                    title={failureReason ?? undefined}
+                  >
                     Check failed
                   </span>
                 ) : isChecking ? (

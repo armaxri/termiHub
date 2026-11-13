@@ -31,6 +31,7 @@ const UPDATE: UpdateInfo = {
   releaseNotes: "",
   isSecurity: false,
   channel: "stable",
+  outcome: "updateAvailable",
 };
 
 let container: HTMLDivElement;
