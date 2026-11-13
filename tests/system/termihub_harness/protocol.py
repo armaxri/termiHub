@@ -43,6 +43,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "emitEvent",
         "exists",
         "exitApp",
+        "forceHover",
         "getAttribute",
         "getComputedStyle",
         "getJsErrors",

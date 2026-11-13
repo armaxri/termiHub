@@ -1049,6 +1049,26 @@ export interface OsInputProbeResult {
   rect?: { left: number; top: number; width: number; height: number };
 }
 
+/**
+ * Render an element as hovered without moving the OS pointer (#5538).
+ *
+ * A synthetic event never sets `:hover`, so this clones every `:hover` rule the
+ * app ships into a bridge-owned stylesheet keyed on an attribute and sets that
+ * attribute on the element and its ancestors: the browser then paints and
+ * computes the real hover rules. Without `testId` it clears a forced hover. The
+ * value is `{ rules }`, the number of `:hover` rules cloned (`0` when cleared).
+ */
+export interface ForceHoverCommand {
+  action: "forceHover";
+  /** Element to hover; absent = clear the forced hover. */
+  testId?: string;
+}
+
+/** The value of a {@link ForceHoverCommand}. */
+export interface ForceHoverResult {
+  rules: number;
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
@@ -1087,6 +1107,7 @@ export type BridgeCommand =
   | CloseWindowCommand
   | ListWindowsCommand
   | OsInputProbeCommand
+  | ForceHoverCommand
   | ReadCoverageCommand
   | ExitAppCommand
   | StubNativeDialogCommand

@@ -8,6 +8,7 @@ import type {
   CoverageChunk,
   DragModifiers,
   DragObservations,
+  ForceHoverResult,
   FrontendLogRecord,
   JsErrorsResult,
   OsInputProbeResult,
@@ -21,6 +22,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { isComposableControl, replayComposition } from "./composition";
 import { frontendDurableInfo } from "@/utils/frontendLog";
 import { armInputProbe, inputProbeEvents } from "./inputProbe";
+import { clearForcedHover, forceHover } from "./forcedHover";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -1359,6 +1361,17 @@ export async function dispatchCommand(
         ...(rect ? { rect } : {}),
       };
       return ok("osInputProbe", result);
+    }
+
+    case "forceHover": {
+      const doc = ownerDocument(deps.root);
+      if (command.testId == null) {
+        clearForcedHover(doc);
+        return ok("forceHover", { rules: 0 } satisfies ForceHoverResult);
+      }
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("forceHover", `no element with data-testid="${command.testId}"`);
+      return ok("forceHover", { rules: forceHover(el) } satisfies ForceHoverResult);
     }
 
     case "readCoverage": {
