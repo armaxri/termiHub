@@ -14,7 +14,10 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
-import { ensureCredentialStoreUnlocked } from "./ensureCredentialStoreUnlocked";
+import {
+  ensureCredentialStoreUnlocked,
+  ensureCredentialStoreUnlockedForConnect,
+} from "./ensureCredentialStoreUnlocked";
 
 /**
  * The shared unlock gate that every connect path calls before resolving a stored
@@ -133,5 +136,56 @@ describe("ensureCredentialStoreUnlocked", () => {
 
     expect(requestUnlock).toHaveBeenCalledTimes(1);
     expect(proceed).toBe(true);
+  });
+});
+
+describe("the unlock gate names the waiting connection (#5684)", () => {
+  const locked = { mode: "master_password", status: "locked" } as const;
+
+  it("a connect passes its name, type and 'password' for password auth", async () => {
+    const requestUnlockOutcome = vi.fn().mockResolvedValue("unlocked");
+    useAppStore.setState({ credentialStoreStatus: locked, requestUnlockOutcome });
+    await ensureCredentialStoreUnlockedForConnect({
+      authMethod: "password",
+      waitingConnection: { name: "prod-db", transport: "SSH" },
+    });
+    expect(requestUnlockOutcome).toHaveBeenCalledWith({
+      connectFallback: true,
+      waiter: { name: "prod-db", transport: "SSH", secret: "password" },
+    });
+  });
+
+  it("key auth with a saved passphrase reads 'passphrase'", async () => {
+    const requestUnlockOutcome = vi.fn().mockResolvedValue("unlocked");
+    useAppStore.setState({ credentialStoreStatus: locked, requestUnlockOutcome });
+    await ensureCredentialStoreUnlockedForConnect({
+      authMethod: "key",
+      savePassword: true,
+      waitingConnection: { name: "build-1" },
+    });
+    expect(requestUnlockOutcome).toHaveBeenCalledWith({
+      connectFallback: true,
+      waiter: { name: "build-1", secret: "passphrase" },
+    });
+  });
+
+  it("without a waiting connection the request carries no waiter", async () => {
+    const requestUnlockOutcome = vi.fn().mockResolvedValue("unlocked");
+    useAppStore.setState({ credentialStoreStatus: locked, requestUnlockOutcome });
+    await ensureCredentialStoreUnlockedForConnect({ authMethod: "password" });
+    expect(requestUnlockOutcome).toHaveBeenCalledWith({ connectFallback: true });
+  });
+
+  it("the plain gate passes the waiter of a field-secret read as a password", async () => {
+    const requestUnlock = vi.fn().mockResolvedValue(true);
+    useAppStore.setState({ credentialStoreStatus: locked, requestUnlock });
+    await ensureCredentialStoreUnlocked({
+      authMethod: "",
+      fieldSecrets: true,
+      waitingConnection: { name: "vnc-1" },
+    });
+    expect(requestUnlock).toHaveBeenCalledWith({
+      waiter: { name: "vnc-1", secret: "password" },
+    });
   });
 });
