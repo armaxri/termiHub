@@ -716,6 +716,7 @@ class Driver:
                        "hscrollReserve"},                  # its strip (#5280)
              "decorations": [{"classes", "background",  # OSC 133 bars,
                               "maskImage", "gapToText",  # shape, gutter (#5640)
+                              "visibleWidth",            # unclipped px (#5693)
                               "top", "left", "width", "height"}, ...],  # flash
              "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px
              "visibleRect": {"left", "top", "width", "height"} | None,  # clip, page px

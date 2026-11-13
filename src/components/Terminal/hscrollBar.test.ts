@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createHscrollProbe,
+  horizontalScrollElementWidth,
   HSCROLL_PROBE_CLASS,
   measureHscrollBar,
   syncHscrollBar,
@@ -45,5 +46,18 @@ describe("hscrollBar (#5280)", () => {
     expect(syncHscrollBar(container, probeWith(40, 40))).toBe(true);
     expect(container.style.getPropertyValue("--hscroll-bar")).toBe("");
     expect(syncHscrollBar(container, probeWith(40, 40))).toBe(false);
+  });
+});
+
+describe("horizontalScrollElementWidth (#5693)", () => {
+  it("adds the .xterm side padding so the screen is not clipped by it", () => {
+    const el = document.createElement("div");
+    el.style.paddingLeft = "11px";
+    el.style.paddingRight = "0px";
+    expect(horizontalScrollElementWidth(el, 800)).toBe(811);
+  });
+
+  it("is the screen width when the element has no padding", () => {
+    expect(horizontalScrollElementWidth(document.createElement("div"), 640)).toBe(640);
   });
 });

@@ -24,12 +24,9 @@
      and sets it inline on this element, because engines that honour the
      standard scrollbar-width (WebView2, WKWebView on WebKit 18.2+) ignore the
      ::-webkit-scrollbar height and lay out their own bar (13 px on the macOS
-     runner). Overlay bars take no layout space, so they keep this default.
-     --terminal-edge-gap is the gap between the content edges and the container
-     in that mode (matches the 8 px text inset used in normal mode). */
+     runner). Overlay bars take no layout space, so they keep this default. */
   --hscroll-bar-styled: 10px;
   --hscroll-bar: var(--hscroll-bar-styled);
-  --terminal-edge-gap: var(--spacing-sm);
 }
 
 /* xterm is opened into this inner viewport (not the container element directly).
@@ -58,13 +55,23 @@
 }
 
 /* In horizontal-scroll mode we set xterm width imperatively to the content
-   width, which would clip with border-box + side padding — so the left/right
-   gaps come from the scroll viewport's inset instead (see below), not from
-   .xterm padding. The bottom padding is safe and reserves room for the
-   horizontal scrollbar plus a small gap, so the bar never covers the last row.
-   FitAddon reads this padding-bottom and reduces the row count to match. */
+   width plus this left padding (updateHorizontalScrollWidth). The left padding
+   is the same command-mark inset and gutter as in normal mode (#5693), so the
+   OSC 133 marks show beside the prompt in both modes; they scroll with the
+   text. The right gap comes from the scroll viewport's inset instead (see
+   below). The bottom padding reserves room for the horizontal scrollbar plus a
+   small gap, so the bar never covers the last row. FitAddon reads both paddings
+   and reduces the column and row counts to match.
+   xterm is resized to a very wide PTY in this mode, so its rows and canvas run
+   far past the screen width. They are clipped here, at the .xterm padding box,
+   not at .xterm-screen: the command marks are drawn inside .xterm-screen at a
+   negative left, so clipping the screen hid them (#5693). `clip` rather than
+   `hidden` so .xterm never becomes a scroll container that a caret or focus
+   change could scroll; `hidden` is the fallback for engines without `clip`. */
 .terminal-horizontal-scroll .xterm {
-  padding: 0 0 calc(var(--hscroll-bar) + var(--spacing-xs)) 0;
+  padding: 0 0 calc(var(--hscroll-bar) + var(--spacing-xs)) var(--terminal-text-inset-left);
+  overflow: hidden;
+  overflow: clip;
 }
 
 .terminal-container .xterm-viewport {
@@ -99,18 +106,15 @@
    nothing left to scroll. This is safe (no resize loop) because the bottom
    strip for the bar is reserved unconditionally via .xterm padding-bottom, so
    showing/hiding the bar never changes the row count. Inset the right edge by
-   the gutter width so the reserved vertical scrollbar never overlaps content,
-   and inset the left edge by the edge gap so the first character keeps the same
-   distance from the container as in normal mode. */
+   the gutter width so the reserved vertical scrollbar never overlaps content.
+   The left edge is not inset: the .xterm left padding holds the command-mark
+   inset and gutter (#5693), so the first character keeps the same distance
+   from the container as in normal mode. */
 .terminal-scroll-viewport.terminal-horizontal-scroll {
-  left: var(--terminal-edge-gap);
+  left: 0;
   right: var(--vscroll-gutter);
   overflow-x: auto;
   overflow-y: hidden;
-}
-
-.terminal-horizontal-scroll .xterm-screen {
-  overflow: hidden;
 }
 
 /* Part of the terminal scrollbar exception (#4585): ask engines that size the

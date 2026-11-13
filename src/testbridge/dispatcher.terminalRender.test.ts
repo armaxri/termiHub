@@ -354,6 +354,29 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports how much of a decoration a clipping ancestor cuts off (#5693)", () => {
+    const screen = handles.element.querySelector<HTMLElement>(".xterm-screen")!;
+    const bar = document.createElement("div");
+    bar.className = "xterm-decoration terminal-command-mark terminal-command-mark--success";
+    screen.appendChild(bar);
+    const rect = (left: number, width: number) => () =>
+      ({ left, right: left + width, top: 0, bottom: 10, width, height: 10 }) as DOMRect;
+    // The bar sits 9px left of the screen, in the .xterm left padding.
+    vi.spyOn(bar, "getBoundingClientRect").mockImplementation(rect(102, 3));
+    vi.spyOn(screen, "getBoundingClientRect").mockImplementation(rect(111, 400));
+    Object.defineProperty(screen, "clientWidth", { configurable: true, value: 400 });
+    Object.defineProperty(screen, "clientHeight", { configurable: true, value: 100 });
+    // The old horizontal-scroll layout clipped the screen: the bar is gone.
+    screen.style.overflowX = "hidden";
+    expect(measureTerminal(handles).decorations[0].visibleWidth).toBe(0);
+    // Clipped at the .xterm padding box instead: the whole bar shows.
+    screen.style.overflowX = "";
+    expect(measureTerminal(handles).decorations[0].visibleWidth).toBe(3);
+    delete (screen as unknown as Record<string, unknown>).clientWidth;
+    delete (screen as unknown as Record<string, unknown>).clientHeight;
+    vi.restoreAllMocks();
+  });
+
   it("returns null for the scrollbar when the gutter is not mounted", () => {
     handles.element.querySelector(".terminal-vscroll-gutter")!.remove();
     expect(measureTerminal(handles).scrollbar).toBeNull();

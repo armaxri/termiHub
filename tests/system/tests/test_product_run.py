@@ -616,6 +616,53 @@ class TestProductRunChecklist(
             assert ok.get("maskImage") in (None, "", "none"), f"success is not solid: {ok}"
             assert (bad.get("maskImage") or "none") != "none", f"failure has no shape: {bad}"
 
+    def _set_hscroll_5693(self, tab_id: str, on: bool) -> None:
+        def state() -> bool:
+            return bool((self.driver.get_state("tabHorizontalScrolling") or {}).get(tab_id))
+
+        if state() is on:
+            return
+        self.driver.context_menu(f"tab-{tab_id}")
+        ctx = "tab-context-horizontal-scroll"
+        self.wait(lambda: self.driver.exists(ctx), what="the tab context menu")
+        self.driver.click(ctx)
+        self.wait(lambda: state() is on, what=f"horizontal scrolling {'on' if on else 'off'}")
+
+    def test_03c_command_mark_horizontal_scroll(self):
+        """#5693: the zsh marks stay visible, with their gutter, in horizontal-scroll mode."""
+        with self.step(
+            "checklist.zsh.mark-hscroll",
+            "Command marks show beside the prompt with horizontal scrolling on",
+            expect="the same solid green and dashed red bars, uncut, clear of the prompt",
+        ):
+            self.require("checklist.zsh.marks")
+            tab = self.wait(lambda: self.find_tab(QUESTION_CONN), what="the question tab")
+            tab_id = tab["id"]
+            self._set_hscroll_5693(tab_id, True)
+            try:
+
+                def marks() -> Optional[list[dict[str, Any]]]:
+                    m = self.driver.measure_terminal(tab_id)
+                    if not m["paint"]["horizontalScroll"]:
+                        return None
+                    found = [
+                        d
+                        for d in m["decorations"]
+                        if "terminal-command-mark" in d["classes"] and d["height"] > 0
+                    ]
+                    return found or None
+
+                bars = self.wait(marks, what="command marks in horizontal-scroll mode")
+                self.evidence(f"marks in horizontal-scroll mode: {bars}")
+                for bar in bars:
+                    # Uncut: the old layout clipped .xterm-screen, so this read 0.
+                    assert bar.get("visibleWidth", 0) >= bar["width"] - 0.5, f"mark clipped: {bar}"
+                    assert bar["left"] >= 0, f"mark left of the container: {bar}"
+                    gap = bar.get("gapToText")
+                    assert gap is not None and gap >= 5.5, f"mark touches the text: {bar}"
+            finally:
+                self._set_hscroll_5693(tab_id, False)
+
     # ── 4. settings wording ───────────────────────────────────────────────────
     def _content(self) -> str:
         return self.wait(
