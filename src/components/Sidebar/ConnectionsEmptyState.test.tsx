@@ -63,7 +63,7 @@ describe("ConnectionsEmptyState", () => {
     const link = query("connections-empty-experimental-link");
     expect(link).not.toBeNull();
     // Names the toggle exactly as its Settings label reads (#5363).
-    expect(link?.textContent).toBe("Settings ▸ General ▸ Allow Experimental Features");
+    expect(link?.textContent).toBe("Settings ▸ General ▸ Allow experimental features");
     act(() => link?.click());
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
   });
@@ -72,7 +72,7 @@ describe("ConnectionsEmptyState", () => {
     useExperimentalFeatures.mockReturnValue(true);
     render();
     expect(query("connections-empty-experimental-link")).toBeNull();
-    expect(container.textContent).not.toContain("Allow Experimental Features");
+    expect(container.textContent).not.toContain("Allow experimental features");
     // The base call-to-action still renders.
     expect(query("connections-empty-new-connection")).not.toBeNull();
   });

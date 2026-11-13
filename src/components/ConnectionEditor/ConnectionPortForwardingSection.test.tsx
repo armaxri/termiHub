@@ -271,7 +271,7 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
       const hint = byTestId("connection-port-forwarding-hint")!;
       expect(hint.textContent).not.toContain("listed in the SSH Tunnels sidebar");
       expect(hint.textContent).toContain(
-        "turn on Settings ▸ General ▸ Allow Experimental Features"
+        "turn on Settings ▸ General ▸ Allow experimental features"
       );
       await click(byTestId("connection-port-forwarding-experimental-link"));
       expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });

@@ -34,7 +34,7 @@ describe("ExperimentalSettingLink", () => {
   it("names the toggle by its Settings label and opens Settings ▸ General", () => {
     act(() => root.render(<ExperimentalSettingLink data-testid="link" />));
     const link = container.querySelector<HTMLButtonElement>('[data-testid="link"]')!;
-    expect(link.textContent).toBe("Settings ▸ General ▸ Allow Experimental Features");
+    expect(link.textContent).toBe("Settings ▸ General ▸ Allow experimental features");
     expect(link.className).toBe("ui-empty__link");
     act(() => link.click());
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });

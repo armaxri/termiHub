@@ -2558,7 +2558,7 @@ Users opt in explicitly and accept these trade-offs.
 
 #### How It Works
 
-A single boolean setting, **Allow Experimental Features** (`experimentalFeaturesEnabled` in `AppSettings`), gates all experimental UI. It is `false` by default and surfaced in **Settings → General**.
+A single boolean setting, **Allow experimental features** (`experimentalFeaturesEnabled` in `AppSettings`), gates all experimental UI. It is `false` by default and surfaced in **Settings → General**.
 
 The `useExperimentalFeatures()` hook (`src/hooks/useExperimentalFeatures.ts`) is the single read point for this flag across the frontend:
 

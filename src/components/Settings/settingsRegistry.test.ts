@@ -180,8 +180,8 @@ describe("settingsRegistry", () => {
     it("is labelled with the shared name every pointer to it uses", () => {
       const entry = SETTINGS_REGISTRY.find((s) => s.id === "experimentalFeaturesEnabled");
       expect(entry?.label).toBe(EXPERIMENTAL_SETTING_LABEL);
-      expect(EXPERIMENTAL_SETTING_LABEL).toBe("Allow Experimental Features");
-      expect(EXPERIMENTAL_SETTING_PATH).toBe("Settings ▸ General ▸ Allow Experimental Features");
+      expect(EXPERIMENTAL_SETTING_LABEL).toBe("Allow experimental features");
+      expect(EXPERIMENTAL_SETTING_PATH).toBe("Settings ▸ General ▸ Allow experimental features");
     });
 
     it("is found by searching for the name pointers use", () => {
