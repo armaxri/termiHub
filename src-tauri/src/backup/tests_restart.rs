@@ -34,7 +34,8 @@ use crate::credential::CredentialManager;
 use crate::macros::config::{Macro, MacroStore};
 use crate::macros::storage::MacroStorage;
 use crate::session::ssh_host_key_verifier::{
-    SshHostKeyEventSink, SshHostKeyPromptClosedEvent, SshHostKeyPromptEvent, SshHostKeyVerifier,
+    SshHostKeyEventSink, SshHostKeyPromptClosedEvent, SshHostKeyPromptEvent,
+    SshHostKeyTrustedEvent, SshHostKeyVerifier,
 };
 use crate::session::ssh_trust_store::SshTrustStore;
 use crate::terminal::backend::ConnectionConfig;
@@ -211,6 +212,8 @@ impl SshHostKeyEventSink for CountingSink {
     }
 
     fn emit_closed(&self, _: &SshHostKeyPromptClosedEvent) {}
+
+    fn emit_trusted(&self, _: &SshHostKeyTrustedEvent) {}
 }
 
 fn host_key(fingerprint: &str) -> HostKeyInfo {

@@ -38,6 +38,7 @@ import type { LocalFileChangedPayload } from "@/types/generated/LocalFileChanged
 import type { LocalDirChangedPayload } from "@/types/generated/LocalDirChangedPayload";
 import type { HopStatusPayload } from "@/types/generated/HopStatusPayload";
 import type { ConnectProgressEvent } from "@/types/generated/ConnectProgressEvent";
+import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
 import type { InitialCommandHeldEvent } from "@/types/generated/InitialCommandHeldEvent";
 import type { ProbeCompletePayload } from "@/types/generated/ProbeCompletePayload";
 import type { SpawnRequest } from "@/types/generated/SpawnRequest";
@@ -176,6 +177,19 @@ export async function onSshHostKeyPromptClosed(
       callback(event.payload);
     }
   );
+}
+
+/**
+ * Subscribe to "host key accepted" reports (#5669): a terminal tab's connect
+ * (`owner` = `${tabId}:${retryCount}`) accepted a host key, with how it was
+ * trusted — for the status-bar SSH chip's tooltip.
+ */
+export async function onSshHostKeyTrusted(
+  callback: (payload: SshHostKeyTrustedEvent) => void
+): Promise<UnlistenFn> {
+  return await listen<SshHostKeyTrustedEvent>(TAURI_EVENT.sshHostKeyTrusted, (event) => {
+    callback(event.payload);
+  });
 }
 
 /**

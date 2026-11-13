@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
 import { toast } from "./toast";
 import { toastHotkey } from "./toastHotkey";
+import { TOAST_AVOID_ATTR, TOAST_DOCKED_CLASS } from "./toastAvoid";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -322,5 +323,91 @@ describe("ToastProvider stacking (#5618)", () => {
       // text showed through the newer one on the unstyled skin.
       expect(el.getAttribute("data-expanded")).toBe("true");
     }
+  });
+});
+
+describe("ToastProvider docked over a tall dialog (#5715)", () => {
+  const original = { width: window.innerWidth, height: window.innerHeight };
+  let dialog: HTMLDivElement;
+
+  /** A `lg` dialog at the 800x600 minimum window: no room above or beside it. */
+  function openTallDialog() {
+    dialog = document.createElement("div");
+    dialog.setAttribute(TOAST_AVOID_ATTR, "");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.getBoundingClientRect = () =>
+      ({ left: 80, top: 24, right: 720, bottom: 576, width: 640, height: 552 }) as DOMRect;
+    document.body.appendChild(dialog);
+  }
+
+  const shown = (text: string) => (document.body.textContent ?? "").includes(text);
+
+  beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 600, configurable: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+    dialog?.remove();
+    Object.defineProperty(window, "innerWidth", { value: original.width, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: original.height, configurable: true });
+  });
+
+  it("shows errors compact at the top edge and defers success until the dialog closes", async () => {
+    openTallDialog();
+    render(<ToastProvider />);
+    expect(document.documentElement.classList.contains(TOAST_DOCKED_CLASS)).toBe(true);
+    act(() => {
+      toast.success("Ran workflow");
+      toast.error("Save failed");
+    });
+    await waitFor(() => shown("Save failed"));
+    const toaster = document.querySelector("[data-sonner-toaster]") as HTMLElement;
+    expect(toaster.getAttribute("data-y-position")).toBe("top");
+    expect(toaster.getAttribute("data-x-position")).toBe("center");
+    expect(toaster.style.getPropertyValue("--offset-top")).toBe("8px");
+    expect(shown("Ran workflow")).toBe(false);
+
+    act(() => dialog.remove());
+    await waitFor(() => shown("Ran workflow"));
+    expect(document.documentElement.classList.contains(TOAST_DOCKED_CLASS)).toBe(false);
+    const after = document.querySelector("[data-sonner-toaster]") as HTMLElement;
+    expect(after.getAttribute("data-y-position")).toBe("bottom");
+    expect(shown("Save failed")).toBe(true);
+  });
+
+  it("takes a success toast already showing down when the dialog opens", async () => {
+    render(<ToastProvider />);
+    act(() => {
+      toast.success("Connected");
+    });
+    await waitFor(() => shown("Connected"));
+
+    act(() => openTallDialog());
+    await waitFor(() => !shown("Connected"));
+
+    act(() => dialog.remove());
+    await waitFor(() => shown("Connected"));
+  });
+
+  it("shows one toast at a time while docked", async () => {
+    openTallDialog();
+    render(<ToastProvider />);
+    act(() => {
+      toast.error("First failure", { id: "f1" });
+      toast.error("Second failure", { id: "f2" });
+    });
+    await waitFor(() => document.querySelectorAll("[data-sonner-toast]").length > 0);
+    await tick(100);
+    const visible = Array.from(document.querySelectorAll("[data-sonner-toast]")).filter(
+      (el) => el.getAttribute("data-visible") === "true"
+    );
+    expect(visible).toHaveLength(1);
   });
 });

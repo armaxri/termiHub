@@ -1,4 +1,5 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useState } from "react";
+import { setTransientDeferred } from "./toast";
 
 /**
  * Attribute marking an element the toast stack must never cover (#5618): an
@@ -31,6 +32,14 @@ export const TOAST_NARROW_CLASS = "th-toast-narrow";
 
 /** Narrowest column the stack is squeezed to beside a dialog (#5686). */
 export const MIN_TOAST_WIDTH = 240;
+
+/**
+ * Class on `<html>` while the stack is docked (#5715): a tall dialog leaves no
+ * room above it nor a {@link MIN_TOAST_WIDTH} column beside it, so the stack
+ * moves to the window's top edge, shows one compact single-line toast at a
+ * time, and success/info toasts wait until the dialog closes.
+ */
+export const TOAST_DOCKED_CLASS = "th-toast-docked";
 
 /** A box in viewport CSS pixels (the subset of `DOMRect` the math needs). */
 export interface Box {
@@ -88,6 +97,12 @@ export function computeToastAvoidInset(boxes: readonly Box[], zone: ToastZone): 
 export interface ToastLayout {
   inset: number;
   width: number;
+  /**
+   * A tall box leaves neither room above it nor a {@link MIN_TOAST_WIDTH}
+   * column beside it (#5715): dock the stack at the top edge in its compact
+   * form and defer success/info toasts until the box goes away.
+   */
+  docked: boolean;
 }
 
 /**
@@ -98,8 +113,11 @@ export interface ToastLayout {
  * ({@link computeToastAvoidInset}). A box without that room — a tall open
  * dialog — cannot be lifted over without pushing the stack off the window, so
  * the column is narrowed to fit beside it instead, down to
- * {@link MIN_TOAST_WIDTH}. When even that does not fit, the box is left out
- * and the smaller keep-clear zones inside it (the dialog footer) still apply.
+ * {@link MIN_TOAST_WIDTH}. When even that does not fit (a `lg` dialog in a
+ * narrow window, a `full` dialog), the layout is `docked` (#5715): the stack
+ * leaves the bottom-right corner for the top edge, where a single compact
+ * error stays readable over the dialog head instead of its body, and
+ * success/info toasts are deferred until the dialog closes.
  */
 export function computeToastLayout(boxes: readonly Box[], zone: ToastZone): ToastLayout {
   const live = boxes.filter((b) => b.bottom > b.top && b.right > b.left);
@@ -108,6 +126,7 @@ export function computeToastLayout(boxes: readonly Box[], zone: ToastZone): Toas
   const bandBottom = zone.viewportHeight - zone.baseInset - zone.edge;
   const bandTop = bandBottom - zone.height;
   let width = zone.width;
+  let docked = false;
   for (const b of live) {
     if (liftable(b)) continue;
     const inColumn = b.right > columnRight - zone.width && b.left < columnRight;
@@ -115,9 +134,11 @@ export function computeToastLayout(boxes: readonly Box[], zone: ToastZone): Toas
     if (!inColumn || !inBand) continue;
     const room = Math.floor(columnRight - b.right - zone.edge);
     if (room >= MIN_TOAST_WIDTH) width = Math.min(width, room);
+    else docked = true;
   }
+  if (docked) width = zone.width;
   const inset = computeToastAvoidInset(live.filter(liftable), { ...zone, width });
-  return { inset, width };
+  return { inset, width, docked };
 }
 
 /** Smallest stack height assumed while no toast is showing (one short toast). */
@@ -148,15 +169,25 @@ function readPxVar(name: string): number {
 /**
  * Keep {@link TOAST_AVOID_INSET_VAR} (and, beside a tall dialog,
  * {@link TOAST_WIDTH_VAR}) current: measure every `[data-toast-avoid]` element
- * and publish where the stack must sit to clear them. Re-measures (at most once per frame) on DOM changes and window resize,
- * because a footer or the Transfers panel can appear, move or resize at any
- * time.
+ * and publish where the stack must sit to clear them. Re-measures (at most
+ * once per frame) on DOM changes and window resize, because a footer or the
+ * Transfers panel can appear, move or resize at any time.
+ *
+ * Returns whether the stack is docked at the top edge (#5715); while it is,
+ * {@link TOAST_DOCKED_CLASS} is on `<html>` and success/info toasts are
+ * deferred ({@link setTransientDeferred}).
  */
-export function useToastAvoidInset(width: number, edge: number): void {
+export function useToastAvoidInset(width: number, edge: number): boolean {
+  const [docked, setDocked] = useState(false);
   useLayoutEffect(() => {
     const root = document.documentElement;
     let frame = 0;
     let last = "";
+    // While docked only one compact toast shows, so the measured stack is
+    // short; measuring it then could make a dialog look liftable and undock,
+    // re-dock, … every frame. The height from before docking stands in.
+    let stackHeight = MIN_STACK_HEIGHT;
+    let isDocked = false;
     const publish = () => {
       frame = 0;
       const boxes = Array.from(
@@ -167,14 +198,18 @@ export function useToastAvoidInset(width: number, edge: number): void {
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
         width,
-        height: measureStackHeight(),
+        height: isDocked ? stackHeight : (stackHeight = measureStackHeight()),
         edge,
         baseInset: readPxVar("--app-bottom-banner-inset"),
       });
-      const value = `${layout.inset}px|${layout.width}`;
+      isDocked = layout.docked;
+      const value = `${layout.inset}px|${layout.width}|${layout.docked}`;
       if (value === last) return;
       last = value;
       root.style.setProperty(TOAST_AVOID_INSET_VAR, `${layout.inset}px`);
+      root.classList.toggle(TOAST_DOCKED_CLASS, layout.docked);
+      setTransientDeferred(layout.docked);
+      setDocked(layout.docked);
       if (layout.width < width) {
         root.style.setProperty(TOAST_WIDTH_VAR, `${layout.width}px`);
         root.classList.add(TOAST_NARROW_CLASS);
@@ -202,6 +237,9 @@ export function useToastAvoidInset(width: number, edge: number): void {
       root.style.removeProperty(TOAST_AVOID_INSET_VAR);
       root.style.removeProperty(TOAST_WIDTH_VAR);
       root.classList.remove(TOAST_NARROW_CLASS);
+      root.classList.remove(TOAST_DOCKED_CLASS);
+      setTransientDeferred(false);
     };
   }, [width, edge]);
+  return docked;
 }
