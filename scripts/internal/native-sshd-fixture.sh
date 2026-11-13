@@ -101,8 +101,8 @@
 # and refuse anywhere else. `down` removes the drop-in, the file and the user.
 #
 # `--scratch-home` (macOS/Linux; ignored on Windows, whose fixture logs in as
-# its own dedicated user): sshd `SetEnv`s HOME, XDG_CONFIG/DATA/STATE/CACHE_HOME
-# and HISTFILE into a `home` dir in the state dir, plus a private agent
+# its own dedicated user): sshd `SetEnv`s HOME, XDG_CONFIG/DATA/STATE/CACHE_HOME,
+# HISTFILE and XAUTHORITY into a `home` dir in the state dir, plus a private agent
 # registry endpoint and a bounded detached-daemon lifetime. A deployed agent
 # and its session daemons then never write into the login user's real home or
 # share its agent registry (#5208). The login shell reads its dotfiles from,
@@ -110,6 +110,7 @@
 # zsh login shell starts at a prompt, not at zsh-newuser-install (#5296). The
 # session's working directory stays the real home (sshd changes into the
 # passwd home), so tests use absolute paths below TERMIHUB_NATIVE_SSHD_HOME.
+# Where xauth is installed it also turns on `X11Forwarding` (#5570).
 #
 # Default --dir: $RUNNER_TEMP/termihub-native-sshd on CI, else
 # ${TMPDIR:-/tmp}/termihub-native-sshd-<user>. Default port: first free of
@@ -404,10 +405,20 @@ EOF
         "$h" "$h/.config" "$h/.local/share"
       printf ' "XDG_STATE_HOME=%s" "XDG_CACHE_HOME=%s" "HISTFILE=%s"' \
         "$h/.local/state" "$h/.cache" "$h/.history"
+      printf ' "XAUTHORITY=%s"' "$h/.Xauthority"
       printf ' "TERMIHUB_REGISTRY_ENDPOINT=%s" TERMIHUB_REGISTRY_IDLE_TIMEOUT_SECS=15' \
         "$STATE_DIR/registry.sock"
       printf ' TERMIHUB_DAEMON_DETACHED_TIMEOUT_SECS=120\n'
     } >>"$config"
+    # X11 forwarding over x11-req (#5570): sshd sets DISPLAY and runs xauth,
+    # which writes to the scratch XAUTHORITY above, never the real
+    # ~/.Xauthority. Only with a scratch home, and only where xauth exists.
+    local xauth
+    xauth="$(command -v xauth 2>/dev/null || true)"
+    [ -z "$xauth" ] && [ -x /opt/X11/bin/xauth ] && xauth=/opt/X11/bin/xauth
+    if [ -n "$xauth" ]; then
+      printf 'X11Forwarding yes\nX11UseLocalhost yes\nXAuthLocation %s\n' "$xauth" >>"$config"
+    fi
   fi
   # OpenSSH 9.8+ penalises a source address after failed auths
   # (PerSourcePenalties), and the rejection tests fail auth on purpose from
