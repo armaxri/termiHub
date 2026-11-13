@@ -234,7 +234,7 @@ fn a_reader_that_finds_the_end_drops_the_sender() {
     let (tx, _rx) = tokio::sync::mpsc::channel(1);
     let output_tx = Arc::new(Mutex::new(Some(tx)));
     let (ctx, _peer) = reader_context(true, output_tx.clone());
-    reader::end_session(&ctx);
+    reader::end_session(&ctx, None);
     assert!(!ctx.alive.load(Ordering::SeqCst));
     assert!(output_tx.lock().unwrap().is_none());
 }
@@ -247,7 +247,7 @@ fn a_stopped_reader_leaves_the_sender_alone() {
     let (tx, _rx) = tokio::sync::mpsc::channel(1);
     let output_tx = Arc::new(Mutex::new(Some(tx)));
     let (ctx, _peer) = reader_context(false, output_tx.clone());
-    reader::end_session(&ctx);
+    reader::end_session(&ctx, None);
     assert!(output_tx.lock().unwrap().is_some());
 }
 
