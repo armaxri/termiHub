@@ -541,6 +541,11 @@ impl SshConnector for RusshSshConnector {
                     extensions.push(Box::new(forwarder));
                     Some(X11Mode::ChannelRequest)
                 }
+                Err(_) if cancel.is_some_and(CancellationToken::is_cancelled) => {
+                    return Err(SessionError::SpawnFailed(
+                        "SSH connection cancelled while requesting X11 forwarding".to_string(),
+                    ));
+                }
                 Err(refusal) => {
                     tracing::info!(?refusal, "SSH server did not accept x11-req");
                     match X11Forwarder::start(

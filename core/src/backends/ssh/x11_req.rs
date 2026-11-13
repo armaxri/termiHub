@@ -377,8 +377,10 @@ impl X11ReqForwarder {
                     }
                 });
             }
-            // Session over: refuse any later `x11` open.
+            // Session over: refuse any later `x11` open and end the
+            // connections still being relayed.
             task_registry.revoke_x11(&task_grant);
+            task_stop.cancel();
             debug!("X11 forwarding: x11-req forwarder stopped");
         });
         Self {
@@ -406,7 +408,7 @@ impl Drop for X11ReqForwarder {
 pub enum X11ReqRefusal {
     /// The server answered `SSH_MSG_CHANNEL_FAILURE` (e.g. `X11Forwarding no`).
     Refused,
-    /// No answer within [`X11_REQ_REPLY_TIMEOUT`].
+    /// No answer within the reply timeout (10 s).
     NoReply,
     /// The request could not be sent, or the channel ended.
     ChannelGone,
@@ -419,6 +421,12 @@ pub enum X11ReqRefusal {
 /// and any other channel messages read while waiting are returned for the
 /// caller to process as if they had just arrived. On a refusal nothing is
 /// granted: every `x11` channel stays refused and the caller falls back.
+///
+/// Nothing else on the channel wants a reply before the shell request, so the
+/// first `Success` / `Failure` answers this request. Should the server answer
+/// only after [`X11_REQ_REPLY_TIMEOUT`], that late reply is read as the shell
+/// request's, which only weakens the shell-refusal check of #4078 (the
+/// `ForceCommand` output check still applies); no X11 grant is ever made.
 pub(crate) async fn request_x11_forwarding(
     channel: &mut russh::Channel<russh::client::Msg>,
     registry: &ForwardedChannelRegistry,
