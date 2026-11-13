@@ -39,7 +39,6 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
-import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { sessionPaneShowsOtherSession } from "@/store/slices/fileBrowsersSlice";
 import { findAgentConnectionType } from "@/utils/agentSessionType";
@@ -60,9 +59,8 @@ import {
   MenuItem,
   MenuSeparator,
 } from "@/components/ui";
-import { TransferEntryRow } from "@/components/TransferQueue";
+import { TransferSummaryChip } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
-import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, localOpenFolder, localStat } from "@/services/api";
 import { sendInputDetached } from "@/services/detachedSessionInput";
@@ -1162,15 +1160,6 @@ export function FileBrowser() {
   // toolbar Refresh button stays as a manual backstop.
   useLocalDirWatch(mode === "local", mode === "local" ? currentPath : null, refresh);
 
-  // The footer transfer list is fully consolidated with the docked Transfer
-  // Queue panel (UX-020 / #2905): both surfaces render from the one authoritative
-  // `transfers` projection region (#2229) via the shared {@link TransferEntryRow}
-  // (its compact variant here), so there is one data source and one row/control
-  // component — no divergent bespoke list. The footer shows the rows owned by the
-  // session this browser is showing (full lifecycle incl. terminal retention).
-  const { queue: transferQueue } = useProjectedTransfers();
-  const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
-  const removeTransfer = useAppStore((s) => s.removeTransfer);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   // The copy-cut clipboard is sourced from the authoritative client-scoped
   // file-browser region (#2228).
@@ -1958,18 +1947,6 @@ export function FileBrowser() {
     );
   }
 
-  // Transfers owned by the session this browser is showing (#1247 / #2905). Only
-  // these belong in the footer; other sessions' transfers live in the docked
-  // Transfer Queue panel. The list above stays live regardless. Sourced from the
-  // authoritative `transfers` region and filtered by session id, so the footer is
-  // the same single source of truth as the panel (full lifecycle incl. terminal
-  // retention). A byte-based session backend that registers no transfers leaves
-  // the footer empty as before.
-  const footerSessionId = sessionFileBrowserId;
-  const activeTransfers = footerSessionId
-    ? Object.values(transferQueue).filter((t) => t.sessionId === footerSessionId)
-    : [];
-
   return (
     <div
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
@@ -2273,23 +2250,9 @@ export function FileBrowser() {
         onKeepBoth={keepBothConflict}
         onCancel={cancelConflict}
       />
-      {activeTransfers.length > 0 && (
-        <div className="file-browser__transfers" data-testid="file-browser-transfers">
-          {activeTransfers.map((t) => (
-            <div key={t.id} data-testid="file-browser-transfer">
-              <TransferEntryRow
-                entry={t}
-                compact
-                onPause={handlePause}
-                onResume={handleResume}
-                onCancel={handleCancel}
-                onRetry={handleRetry}
-                onRemove={removeTransfer}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Transfers are listed only in the docked Transfers panel (#5625); the
+          sidebar shows a one-line summary of this session's that opens it. */}
+      <TransferSummaryChip sessionId={sessionFileBrowserId} />
     </div>
   );
 }

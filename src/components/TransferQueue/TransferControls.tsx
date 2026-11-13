@@ -1,4 +1,4 @@
-import { Pause, Play, X, RotateCw, Trash2 } from "lucide-react";
+import { Pause, Play, X, RotateCw, ListX } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import type { TransferQueueState } from "@/types/transfer";
 
@@ -28,6 +28,10 @@ const ICON = 14;
  * - `queued`    → Cancel
  * - `completed` → Remove
  * - `failed` / `cancelled` → Retry, Remove
+ *
+ * Remove only drops the row from the list, so it is a "list ×" icon labelled
+ * "Remove from list" — never a trash can, which reads as deleting the file
+ * (#5625).
  *
  * Every Transfer Queue row is a queued transfer on the backend's transfer queue
  * — SFTP (PROD-0012), remote-to-remote SFTP (PROD-0013), FTP, Docker and
@@ -107,14 +111,14 @@ export function TransferControls({
       )}
 
       {(state === "completed" || state === "failed" || state === "cancelled") && (
-        <Tooltip content="Remove" side="top">
+        <Tooltip content="Remove from list" side="top">
           <Button
             iconOnly
             variant="ghost"
             size="sm"
-            aria-label="Remove transfer from list"
+            aria-label="Remove from list"
             data-testid="transfer-remove"
-            icon={<Trash2 size={ICON} />}
+            icon={<ListX size={ICON} />}
             onClick={onRemove}
           />
         </Tooltip>
