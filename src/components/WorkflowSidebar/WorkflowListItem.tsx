@@ -10,11 +10,17 @@ import {
   ListChecks,
   CalendarClock,
 } from "lucide-react";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Toggle, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Workflow } from "@/types/workflow";
 import type { WorkflowRunState } from "@/store/appStore";
-import { armedDescription, armedTriggers, workflowRowSummary } from "./workflowRowSummary";
+import { workflowTriggersEnabled } from "@/services/workflowTriggers";
+import {
+  armedDescription,
+  armedTriggers,
+  disarmedDescription,
+  workflowRowSummary,
+} from "./workflowRowSummary";
 
 /**
  * How long a row stays marked after it is saved from the editor (#5687). The
@@ -44,6 +50,12 @@ interface WorkflowListItemProps {
   onDuplicate: (workflowId: string) => void;
   onExport: (workflowId: string) => void;
   onDelete: (workflowId: string) => void;
+  /**
+   * Arm (`true`) or disarm (`false`) the workflow's automatic triggers from its
+   * row (#5674). When given, a trigger-armed row shows an on/off switch next to
+   * its Armed marker; the trigger bindings are kept either way.
+   */
+  onSetTriggersEnabled?: (workflowId: string, enabled: boolean) => void;
   /**
    * Resolve a saved connection id to its display name, for the trigger line
    * and the armed indicator (#5635). Unknown ids show as "Unknown connection".
@@ -85,12 +97,17 @@ export function WorkflowListItem({
   onDuplicate,
   onExport,
   onDelete,
+  onSetTriggersEnabled,
   connectionName = noConnectionName,
   justSaved = false,
   rowRef,
   rowProps,
 }: WorkflowListItemProps) {
   const armed = armedTriggers(workflow).length > 0;
+  const enabled = workflowTriggersEnabled(workflow);
+  const markerDescription = enabled
+    ? armedDescription(workflow, connectionName)
+    : disarmedDescription(workflow, connectionName);
 
   return (
     <SidebarListItem
@@ -229,14 +246,38 @@ export function WorkflowListItem({
           <span className="workflow-item__summary">
             {armed ? (
               <span
-                className="workflow-item__armed"
+                className={
+                  enabled
+                    ? "workflow-item__armed"
+                    : "workflow-item__armed workflow-item__armed--off"
+                }
                 role="img"
-                aria-label={armedDescription(workflow, connectionName)}
-                title={armedDescription(workflow, connectionName)}
+                aria-label={markerDescription}
+                title={markerDescription}
                 data-testid={`workflow-armed-${workflow.id}`}
+                data-armed={enabled ? "true" : "false"}
               >
                 <Zap size={10} aria-hidden="true" />
-                <span aria-hidden="true">Armed</span>
+                <span aria-hidden="true">{enabled ? "Armed" : "Off"}</span>
+              </span>
+            ) : null}
+            {armed && onSetTriggersEnabled ? (
+              // Keep the switch's own clicks and Enter/Space off the row: the row
+              // runs on double-click and the list's roving nav claims Enter.
+              <span
+                className="workflow-item__arm-toggle"
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                }}
+              >
+                <Toggle
+                  checked={enabled}
+                  onCheckedChange={(next) => onSetTriggersEnabled(workflow.id, next)}
+                  aria-label={`${enabled ? "Disarm" : "Arm"} workflow ${workflow.name}`}
+                  data-testid={`workflow-arm-toggle-${workflow.id}`}
+                />
               </span>
             ) : null}
             <span

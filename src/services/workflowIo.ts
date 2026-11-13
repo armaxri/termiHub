@@ -299,8 +299,20 @@ export function parseWorkflowEnvelope(json: string): Workflow[] {
   });
   // Normalise to the stable key order, and keep `parameters` only when it has
   // entries so a parameter-free workflow round-trips without an empty key.
+  // `triggersEnabled` is kept only when it disarms (#5674): absent = armed.
   return workflows.map(
-    ({ id, name, description, tags, steps, triggers, parameters, createdAt, updatedAt }) => ({
+    ({
+      id,
+      name,
+      description,
+      tags,
+      steps,
+      triggers,
+      parameters,
+      triggersEnabled,
+      createdAt,
+      updatedAt,
+    }) => ({
       id,
       name,
       description,
@@ -308,6 +320,7 @@ export function parseWorkflowEnvelope(json: string): Workflow[] {
       steps,
       triggers,
       ...(parameters && parameters.length > 0 ? { parameters } : {}),
+      ...(triggersEnabled === false ? { triggersEnabled } : {}),
       createdAt,
       updatedAt,
     })

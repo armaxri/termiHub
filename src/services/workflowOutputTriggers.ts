@@ -28,6 +28,7 @@
  */
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
 import { AnsiStreamStripper } from "@/utils/stripAnsi";
+import { workflowTriggersEnabled } from "./workflowTriggers";
 
 /** Safety limits of the on-output-match trigger. */
 export const OUTPUT_TRIGGER_LIMITS = {
@@ -123,12 +124,13 @@ export interface CompiledOutputTrigger {
 
 /**
  * Compile every valid, connection-bound on-output-match trigger of
- * `workflows`. Invalid patterns and triggers bound to no connection are
- * skipped, so a bad trigger can never fire.
+ * `workflows`. Invalid patterns, triggers bound to no connection and disarmed
+ * workflows (#5674) are skipped, so none of them can fire.
  */
 export function compileOutputTriggers(workflows: readonly Workflow[]): CompiledOutputTrigger[] {
   const compiled: CompiledOutputTrigger[] = [];
   for (const workflow of workflows) {
+    if (!workflowTriggersEnabled(workflow)) continue;
     workflow.triggers.forEach((trigger: WorkflowTrigger, index) => {
       if (trigger.kind !== "on-output-match") return;
       if (trigger.connectionIds.length === 0) return;

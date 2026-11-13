@@ -127,6 +127,18 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/* Disarmed from its row (#5674): the bindings stay, but nothing fires. */
+.workflow-item__armed--off {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-normal);
+}
+
+.workflow-item__arm-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
 .workflow-item__tags {
   display: flex;
   flex-wrap: wrap;

@@ -23,6 +23,7 @@ import {
   isSessionEndHandled,
   releaseOnConnectSessions,
   sessionEndCauseFromExit,
+  workflowTriggersEnabled,
   type SessionEndCause,
 } from "@/services/workflowTriggers";
 import type { TerminalExitReason } from "@/types/terminal";
@@ -80,6 +81,12 @@ function launchTriggeredRun(
   triggeredBy: WorkflowRunTrigger,
   target: TriggeredTarget
 ): boolean {
+  // Matching already skips disarmed workflows; re-check here so a workflow
+  // disarmed between the match and the launch still never fires (#5674).
+  if (!workflowTriggersEnabled(workflow)) {
+    frontendLog("workflow", `${triggeredBy} trigger for "${workflow.name}" skipped: disarmed`);
+    return false;
+  }
   const busy = busyReason(store.get());
   if (busy) {
     frontendLog("workflow", `${triggeredBy} trigger for "${workflow.name}" skipped: ${busy}`);

@@ -77,6 +77,7 @@ export function WorkflowSidebar() {
     return (id: string) => names.get(id);
   }, [connections]);
   const saveWorkflowToBackend = useAppStore((s) => s.saveWorkflowToBackend);
+  const setWorkflowTriggersEnabled = useAppStore((s) => s.setWorkflowTriggersEnabled);
   const deleteWorkflowFromBackend = useAppStore((s) => s.deleteWorkflowFromBackend);
   const importWorkflows = useAppStore((s) => s.importWorkflows);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
@@ -199,6 +200,20 @@ export function WorkflowSidebar() {
       }
     },
     [workflows, saveWorkflowToBackend]
+  );
+
+  const handleSetTriggersEnabled = useCallback(
+    async (workflowId: string, enabled: boolean) => {
+      const name = workflows.find((w) => w.id === workflowId)?.name ?? "workflow";
+      try {
+        await setWorkflowTriggersEnabled(workflowId, enabled);
+      } catch (err) {
+        toast.error(`Failed to ${enabled ? "arm" : "disarm"} "${name}"`, {
+          description: errorMessage(err),
+        });
+      }
+    },
+    [workflows, setWorkflowTriggersEnabled]
   );
 
   const handleExportAll = useCallback(() => {
@@ -438,6 +453,7 @@ export function WorkflowSidebar() {
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
                 onDelete={handleDelete}
+                onSetTriggersEnabled={(id, enabled) => void handleSetTriggersEnabled(id, enabled)}
                 connectionName={connectionName}
                 justSaved={justSaved?.id === workflow.id}
                 rowRef={ref}

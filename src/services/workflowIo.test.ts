@@ -668,3 +668,24 @@ describe("parseWorkflowEnvelope parameters (PROD-0040, TFE2-005)", () => {
     ).toThrow(message);
   });
 });
+
+describe("parseWorkflowEnvelope triggersEnabled (#5674)", () => {
+  it("keeps a disarmed workflow disarmed across export and import", () => {
+    const wf = sampleWorkflow({ triggersEnabled: false });
+    const [parsed] = parseWorkflowEnvelope(serializeWorkflows([wf]));
+    expect(parsed.triggersEnabled).toBe(false);
+  });
+
+  it("omits the key for an armed or unflagged workflow", () => {
+    const [armed] = parseWorkflowEnvelope(
+      rawEnvelope({ name: "X", steps: [], triggersEnabled: true })
+    );
+    const [absent] = parseWorkflowEnvelope(rawEnvelope({ name: "X", steps: [] }));
+    const [garbage] = parseWorkflowEnvelope(
+      rawEnvelope({ name: "X", steps: [], triggersEnabled: "no" })
+    );
+    expect("triggersEnabled" in armed).toBe(false);
+    expect("triggersEnabled" in absent).toBe(false);
+    expect("triggersEnabled" in garbage).toBe(false);
+  });
+});
