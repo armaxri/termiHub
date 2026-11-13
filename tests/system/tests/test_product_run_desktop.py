@@ -55,6 +55,8 @@ from termihub_harness import (
 from termihub_harness.colors import contrast
 from termihub_harness.native_ssh import fixture_argv
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.editor_layout import measure_editor_layout
+from termihub_harness.product_run.grades import editor_layout_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.product_run.vnc_server import QUADRANTS, ScriptedVncServer
 from termihub_harness.rdp_test_server import find_rdp_test_server
@@ -220,6 +222,10 @@ class TestProductRunRemoteDesktop(
             display_y = self.driver.measure_element("field-scaleMode")["rect"]["y"]
             self.evidence(f"tunnel toggle y={tunnel_y}, scale mode y={display_y}")
             assert tunnel_y < display_y, "the SSH tunnel section is below the display options"
+            # #5641: the ${VAR} note is the section's description, not Host's
+            # label; hints sit under their fields; the form width is capped.
+            layout = editor_layout_problems(measure_editor_layout(self.driver))
+            assert not layout, layout
             self.driver.click("field-useSshTunnel")
             self.wait(lambda: self.driver.exists("field-sshHost"), what="the SSH tunnel fields")
             self.driver.type("field-sshHost", SSH_HOST)
