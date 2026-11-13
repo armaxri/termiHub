@@ -413,7 +413,7 @@ describe("resolveFieldSecrets", () => {
       "ops",
       expect.stringContaining("SSH Password"),
       "password",
-      { allowSave: false }
+      { allowSave: false, secretLabel: "SSH Password" }
     );
     expect(mockedResolve).not.toHaveBeenCalled();
     expect(mockedStore).not.toHaveBeenCalled();
@@ -432,7 +432,8 @@ describe("resolveFieldSecrets", () => {
       "alice",
       expect.stringContaining("Proxy Password"),
       "password",
-      { allowSave: true }
+      // Titled after the field, never the connection's SSH password (#5656).
+      { allowSave: true, secretLabel: "Proxy Password" }
     );
     expect(mockedStore).toHaveBeenCalledWith(
       "Desk",
@@ -462,7 +463,7 @@ describe("resolveFieldSecrets", () => {
       "bob",
       expect.stringContaining("Proxy Password"),
       "password",
-      { allowSave: false }
+      { allowSave: false, secretLabel: "Proxy Password" }
     );
   });
 
@@ -529,7 +530,11 @@ describe("resolveFieldSecrets", () => {
     mockedResolve.mockResolvedValue(null);
     requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
     await resolveFieldSecrets(opts({ label: "Desk" }));
-    expect(requestPassword.mock.calls[0][4]).toEqual({ allowSave: true, label: "Desk" });
+    expect(requestPassword.mock.calls[0][4]).toEqual({
+      allowSave: true,
+      label: "Desk",
+      secretLabel: "SSH Password",
+    });
   });
 
   it("prompts for and splices an inline hop password", async () => {
@@ -544,6 +549,8 @@ describe("resolveFieldSecrets", () => {
       { host: "b", username: "ops", authMethod: "password", password: "hop-pw" },
     ]);
     expect(requestPassword.mock.calls[0][0]).toBe("b");
+    // Titled as the hop's password, not the connection's SSH password (#5656).
+    expect(requestPassword.mock.calls[0][4]?.secretLabel).toBe("Jump host password");
   });
 
   it("without a saved id (create flow) prompts directly and offers no Save box", async () => {
@@ -551,7 +558,10 @@ describe("resolveFieldSecrets", () => {
     requestPassword.mockResolvedValue({ password: "entered", shouldSave: false });
     await resolveFieldSecrets(opts({ connectionId: null }));
     expect(mockedResolve).not.toHaveBeenCalled();
-    expect(requestPassword.mock.calls[0][4]).toEqual({ allowSave: false });
+    expect(requestPassword.mock.calls[0][4]).toEqual({
+      allowSave: false,
+      secretLabel: "SSH Password",
+    });
   });
 
   it("unattended never prompts: a missing secret is refused", async () => {

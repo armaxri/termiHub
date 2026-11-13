@@ -46,6 +46,8 @@ import {
  * "SSH password", "SSH key passphrase" — never "SSH" for a telnet password,
  * which travels unencrypted. The connection name sits on its own truncating
  * line rather than in the title, and a key passphrase prompt names its key.
+ * A schema field secret is titled after its own field (#5656): "Proxy
+ * password", "Jump host password" — never the connection's "SSH password".
  */
 export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
@@ -60,6 +62,7 @@ export function PasswordPrompt() {
   const allowSave = useAppStore((s) => s.passwordPromptAllowSave);
   const label = useAppStore((s) => s.passwordPromptLabel);
   const transport = useAppStore((s) => s.passwordPromptTransport);
+  const secretLabel = useAppStore((s) => s.passwordPromptSecretLabel);
   const keyPath = useAppStore((s) => s.passwordPromptKeyPath);
   const savedRejected = useAppStore((s) => s.passwordPromptSavedRejected);
   const requestId = useAppStore((s) => s.passwordPromptQueue[0]?.id ?? null);
@@ -79,9 +82,11 @@ export function PasswordPrompt() {
   const isPassphrase = kind === "key_passphrase";
   // No transport given: every such caller prompts for an SSH login.
   const transportName = transport || "SSH";
-  const title = isPassphrase
-    ? t("passwordPrompt.title.keyPassphrase")
-    : tf("passwordPrompt.title.password", { transport: transportName });
+  // A schema field secret (a proxy password, a jump host's password) names
+  // itself (#5656): it is not the connection's own login password.
+  const secretName =
+    secretLabel || tf("passwordPrompt.title.password", { transport: transportName });
+  const title = isPassphrase ? t("passwordPrompt.title.keyPassphrase") : secretName;
   const waitingText = `${waiting} more password ${waiting === 1 ? "prompt" : "prompts"} waiting`;
   const target = `${username}@${host}`;
   const description = isPassphrase
@@ -92,7 +97,7 @@ export function PasswordPrompt() {
   const inputPlaceholder = isPassphrase ? "Passphrase" : "Password";
   const inputAriaLabel = isPassphrase
     ? t("passwordPrompt.input.keyPassphrase")
-    : tf("passwordPrompt.input.password", { transport: transportName });
+    : secretLabel || tf("passwordPrompt.input.password", { transport: transportName });
   const secretNoun = isPassphrase ? "passphrase" : "password";
   const saveLabel = savedRejected ? `Replace saved ${secretNoun}` : `Save ${secretNoun}`;
   const saveHint = savedRejected

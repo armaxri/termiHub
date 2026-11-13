@@ -138,6 +138,9 @@ const en = {
   // an SSH one. Sentence case; the connection name sits on its own line.
   "passwordPrompt.title.password": "{transport} password",
   "passwordPrompt.title.keyPassphrase": "SSH key passphrase",
+  // An inline jump host's password (#5656); schema field secrets use their
+  // own field label instead.
+  "passwordPrompt.title.jumpHost": "Jump host password",
   "passwordPrompt.connection": "Connection: {name}",
   "passwordPrompt.description.password": "Enter password for {target}",
   "passwordPrompt.description.keyPassphrase":
