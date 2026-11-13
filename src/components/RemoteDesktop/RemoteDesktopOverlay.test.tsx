@@ -23,6 +23,7 @@ function render(
     errorKind: ConnectionErrorKind;
     aborted: boolean;
     editable: boolean;
+    via: string | null;
   }> = {}
 ) {
   const onCancel = vi.fn();
@@ -44,6 +45,7 @@ function render(
         onEditConnection={overrides.editable === false ? undefined : onEditConnection}
         errorKind={overrides.errorKind}
         aborted={overrides.aborted}
+        via={overrides.via ?? null}
         credentialReentry={<div data-testid="fake-credential-reentry" />}
       />
     );
@@ -77,6 +79,14 @@ describe("RemoteDesktopOverlay", () => {
     expect(el).not.toBeNull();
     expect(el?.textContent).toContain("Connecting to rd-host");
     expect(el?.textContent).toContain("Establishing connection");
+  });
+
+  it("names the SSH tunnel step and gateway while a tunnelled session connects (#5626)", () => {
+    render("connecting", { via: "arne@bastion" });
+    const el = query("remote-desktop-overlay-connecting");
+    expect(el?.textContent).toContain("SSH tunnel");
+    expect(el?.textContent).toContain("via SSH arne@bastion");
+    expect(el?.textContent).toContain("First frame");
   });
 
   it("shows an authenticating sub-state on the connecting overlay", () => {

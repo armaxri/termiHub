@@ -191,6 +191,18 @@ fn opt(value: &str, label: &str) -> SelectOption {
     }
 }
 
+/// Place the **SSH Tunnel** group right after the **Connection** group (#5626),
+/// so the tunnel sits next to Host / Port instead of below the display and
+/// protocol options, where it was out of sight. Appended when there is no
+/// Connection group.
+pub fn insert_ssh_tunnel_group(groups: &mut Vec<SettingsGroup>, server_kind: &str) {
+    let at = groups
+        .iter()
+        .position(|g| g.key == "connection")
+        .map_or(groups.len(), |i| i + 1);
+    groups.insert(at, ssh_tunnel_group(server_kind));
+}
+
 /// The **SSH Tunnel** settings group. `server_kind` names the server in the
 /// toggle's description ("VNC", "RDP").
 ///
@@ -503,5 +515,24 @@ mod tests {
         let printed = format!("{s:?}");
         assert!(!printed.contains("hunter2"), "{printed}");
         assert!(printed.contains("<redacted>"), "{printed}");
+    }
+
+    /// #5626: the tunnel sits right after Connection, next to Host / Port.
+    #[test]
+    fn tunnel_group_is_inserted_after_connection() {
+        let group = |key: &str| SettingsGroup {
+            key: key.to_string(),
+            label: key.to_string(),
+            fields: vec![],
+            collapsed: false,
+        };
+        let mut groups = vec![group("connection"), group("display"), group("vnc")];
+        insert_ssh_tunnel_group(&mut groups, "VNC");
+        let keys: Vec<&str> = groups.iter().map(|g| g.key.as_str()).collect();
+        assert_eq!(keys, ["connection", "sshTunnel", "display", "vnc"]);
+
+        let mut bare = vec![group("display")];
+        insert_ssh_tunnel_group(&mut bare, "RDP");
+        assert_eq!(bare.last().map(|g| g.key.as_str()), Some("sshTunnel"));
     }
 }

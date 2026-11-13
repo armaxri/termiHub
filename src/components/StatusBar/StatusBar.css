@@ -37,6 +37,13 @@
   white-space: nowrap;
 }
 
+/* A plain item with a leading icon keeps the standard icon-text gap (#5626). */
+.status-bar__item--with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
 .status-bar__item--interactive {
   cursor: pointer;
   background: none;
