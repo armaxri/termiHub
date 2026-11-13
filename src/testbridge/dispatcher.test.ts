@@ -215,6 +215,22 @@ describe("dispatchCommand", () => {
       expect(items.map((i) => i.text)).toEqual(["home", "leaf"]);
     });
 
+    it("reports each text item's computed text-overflow (#5623)", async () => {
+      const { deps } = setup(
+        `<ul data-testid="list"><li style="text-overflow:ellipsis;overflow:hidden">long</li>` +
+          `<li>plain</li></ul>`
+      );
+      const res = await dispatchCommand(
+        { action: "measureElement", testId: "list", descendants: "text" },
+        deps
+      );
+      const items = (res.value as { items: Array<{ text: string; textOverflow: string }> }).items;
+      expect(items.map((i) => [i.text, i.textOverflow])).toEqual([
+        ["long", "ellipsis"],
+        ["plain", "clip"],
+      ]);
+    });
+
     it("fails when the element is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "measureElement", testId: "ghost" }, deps);

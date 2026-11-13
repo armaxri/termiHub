@@ -3,12 +3,11 @@ import { AlertTriangle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { currentSettingsView } from "@/store/settingsBridge";
-import { Button } from "@/components/ui";
 import { acknowledgeCrashReports, getCrashReportNotice } from "@/services/api";
 import type { CrashReportNotice as Notice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
-import { useBottomBannerSlot } from "@/components/BottomBanners";
+import { BottomBanner, BottomBannerAction, useBottomBannerSlot } from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
@@ -20,10 +19,11 @@ import "./Diagnostics.css";
  * so the notice appears once per crash. "Don't show again" persists
  * `showCrashReportNotice: false`, re-enabled from General settings.
  *
- * Two actions only (#5558): "View report" and "Close". Exporting lives in the
- * report viewer, where the user has seen what they would export; the opt-out is
- * a small inline link rather than a peer button. "View report" is a secondary
- * (not filled) button so the screen keeps a single filled primary (#5549).
+ * Actions (#5558, #5638): "Don't show again", "Close" and "View report", in the
+ * shared bottom-banner action row. Exporting lives in the report viewer, where
+ * the user has seen what they would export. "View report" is the main
+ * (secondary, not filled) action so the screen keeps a single filled primary
+ * (#5549); the others are ghost buttons of the same size.
  */
 export function CrashReportNotice() {
   const enabled = useProjectedSettings().showCrashReportNotice ?? true;
@@ -71,42 +71,26 @@ export function CrashReportNotice() {
   if (!enabled || !notice || !active) return null;
 
   return (
-    <div className="crash-report-notice" role="status" data-testid="crash-report-notice">
-      <span className="crash-report-notice__icon">
-        <AlertTriangle size={16} />
-      </span>
-      <div className="crash-report-notice__text">
-        <strong>termiHub closed unexpectedly last time.</strong>
-        <span>
-          A crash report was saved on this computer. Nothing was sent anywhere.
-          <button
-            type="button"
-            className="crash-report-notice__never"
-            onClick={handleNeverShow}
-            data-testid="crash-report-notice-never"
-          >
+    <BottomBanner
+      tone="warning"
+      role="status"
+      data-testid="crash-report-notice"
+      icon={<AlertTriangle size={16} />}
+      title="termiHub closed unexpectedly last time."
+      description="A crash report was saved on this computer. Nothing was sent anywhere."
+      actions={
+        <>
+          <BottomBannerAction onClick={handleNeverShow} data-testid="crash-report-notice-never">
             Don't show again
-          </button>
-        </span>
-      </div>
-      <div className="crash-report-notice__actions">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={dismiss}
-          data-testid="crash-report-notice-dismiss"
-        >
-          Close
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleView}
-          data-testid="crash-report-notice-view"
-        >
-          View report
-        </Button>
-      </div>
-    </div>
+          </BottomBannerAction>
+          <BottomBannerAction onClick={dismiss} data-testid="crash-report-notice-dismiss">
+            Close
+          </BottomBannerAction>
+          <BottomBannerAction main onClick={handleView} data-testid="crash-report-notice-view">
+            View report
+          </BottomBannerAction>
+        </>
+      }
+    />
   );
 }

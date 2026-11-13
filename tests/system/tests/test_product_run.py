@@ -7,7 +7,8 @@ the live progress page shows them as they run.
 
 The checklist (supersedes the hand-run kit and #5516):
 
-1. Crash banner (#5454): wording and buttons, **Close** removes it.
+1. Crash banner (#5454): wording and buttons, **Close** removes it; it and the
+   file-manager banner share one button pattern (#5638).
 2. First-save credential chooser (#5409, #5484): OS Keychain pre-selected with
    *Recommended* and the change-later hint; master-password footers
    Cancel·Continue → Cancel·Back·Create vault; Back; OS Keychain + Continue
@@ -71,6 +72,7 @@ QUESTION_CONN = "Startup question (zsh)"
 CHOOSER_CONN = "Chooser test (SSH)"
 QUESTION = "Continue startup? Press y or n:"
 CRASH_EXPORT = "crash-report-notice-export"
+SHELL_BANNER = "shell-integration-banner"
 CHOOSER = "credential-storage-chooser"
 CHOOSER_OPTION = "credential-storage-chooser-option-"
 CHOOSER_CANCEL = "credential-storage-chooser-cancel"
@@ -198,10 +200,10 @@ class TestProductRunChecklist(
     def test_01_crash_banner(self):
         with self.step(
             "checklist.banner.wording",
-            "Crash banner says 'closed unexpectedly' with Close and View report, plus an inline "
-            "Don't show again link (#5558)",
-            expect="the crash banner with two actions, Close and View report, and a small "
-            "'Don't show again' link in its text; no Export and no button named Dismiss",
+            "Crash banner says 'closed unexpectedly' with Don't show again, Close and View report "
+            "in one action row (#5558, #5638)",
+            expect="the crash banner with an amber left accent and three same-height buttons, "
+            "Don't show again, Close and View report; no Export and no button named Dismiss",
         ):
             self.require("checklist.profile")
             self.wait_notice_visible(CRASH_NOTICE)
@@ -224,6 +226,9 @@ class TestProductRunChecklist(
             self.evidence(f"banner buttons: {buttons}")
             assert not self.driver.exists(CRASH_EXPORT), "Export is still in the banner (#5558)"
             assert "Dismiss" not in text, f"a button still says Dismiss: {text!r}"
+            # Kept for checklist.banner.buttons (#5638): the crash banner is gone by then.
+            type(self)._crash_actions = self._banner_actions(CRASH_NOTICE)
+            type(self)._crash_text_color = self.driver.get_computed_style("color", CRASH_NOTICE)
         with self.step(
             "checklist.banner.close",
             "Close removes the crash banner",
@@ -232,6 +237,86 @@ class TestProductRunChecklist(
             self.require("checklist.banner.wording")
             self.driver.click(CRASH_NOTICE_DISMISS)
             self.wait(lambda: not self.driver.exists(CRASH_NOTICE), what="the banner to close")
+
+    # ── 1b. one button pattern across the bottom banners (#5638) ──────────────
+    _crash_actions: Optional[list[dict[str, str]]] = None
+    _crash_text_color: str = ""
+
+    def _banner_actions(self, banner: str) -> list[dict[str, str]]:
+        """Each visible action button of ``banner``: label, class, height and color."""
+        out = []
+        for item in self.driver.measure_element(banner, "buttons")["items"]:
+            if not item["visible"] or not item.get("testId"):
+                continue
+            tid = item["testId"]
+            out.append(
+                {
+                    "testId": tid,
+                    "text": item["text"].strip(),
+                    "class": self.driver.get_attribute(tid, "class") or "",
+                    "height": self.driver.get_computed_style("height", tid),
+                    "color": self.driver.get_computed_style("color", tid),
+                }
+            )
+        return out
+
+    @staticmethod
+    def _assert_banner_button_pattern(
+        actions: list[dict[str, str]], main: str, text_color: str
+    ) -> None:
+        """Every action is a small Button primitive; ``main`` is the one outlined
+        action; the others are ghost buttons in the banner's full-contrast
+        ``text_color`` (#5638)."""
+        for a in actions:
+            cls = a["class"].split()
+            assert "ui-btn" in cls and "ui-btn--sm" in cls, f"{a['text']!r} is no small Button: {cls}"
+            assert "bottom-banner__action" in cls, f"{a['text']!r} is not a banner action: {cls}"
+            assert "ui-btn--primary" not in cls, f"{a['text']!r} is a filled primary (#5549)"
+            if a["text"] == main:
+                assert "ui-btn--secondary" in cls, f"main action {main!r} is not outlined: {cls}"
+            else:
+                assert "ui-btn--ghost" in cls, f"{a['text']!r} is not a ghost button: {cls}"
+                assert same_color(
+                    parse_color(a["color"]), parse_color(text_color)
+                ), f"{a['text']!r} text {a['color']} is not the banner's full-contrast {text_color}"
+        mains = [a for a in actions if "ui-btn--secondary" in a["class"].split()]
+        assert len(mains) == 1, f"want one main action, got {[a['text'] for a in mains]}"
+
+    def test_01b_banner_button_pattern(self):
+        with self.step(
+            "checklist.banner.buttons",
+            "Crash and file-manager banners share one button pattern (#5638)",
+            expect="the file-manager banner with Don't show again, Not now and Install now, all "
+            "the same height as the crash banner's buttons, Install now the only outlined one",
+        ):
+            self.require("checklist.banner.close")
+            crash = type(self)._crash_actions
+            assert crash, "the crash banner's buttons were not recorded"
+            self.wait(
+                lambda: self.driver.exists(SHELL_BANNER), what="the file-manager banner"
+            )
+            files = self._banner_actions(SHELL_BANNER)
+            self.evidence(f"crash actions: {crash}")
+            self.evidence(f"file-manager actions: {files}")
+            assert [a["text"] for a in crash] == ["Don't show again", "Close", "View report"], crash
+            assert [a["text"] for a in files] == [
+                "Don't show again",
+                "Not now",
+                "Install now",
+            ], files
+            self._assert_banner_button_pattern(crash, "View report", type(self)._crash_text_color)
+            self._assert_banner_button_pattern(
+                files, "Install now", self.driver.get_computed_style("color", SHELL_BANNER)
+            )
+            heights = {a["height"] for a in crash + files}
+            assert len(heights) == 1, f"banner buttons differ in height: {heights}"
+            # Same component and label for "stop asking" in both banners.
+            never_classes = {
+                " ".join(sorted(a["class"].split()))
+                for a in crash + files
+                if a["text"] == "Don't show again"
+            }
+            assert len(never_classes) == 1, f"Don't show again differs: {never_classes}"
 
     # ── 2. credential chooser ─────────────────────────────────────────────────
     def _option_checked(self, mode: str) -> bool:
@@ -509,6 +594,27 @@ class TestProductRunChecklist(
                 and self._decorations(tab_id, "terminal-command-mark--success"),
                 what="a red and a green gutter mark",
             )
+
+    def test_03b_command_mark_shape(self):
+        """#5640: the zsh marks keep a gutter off the text and differ by more than colour."""
+        with self.step(
+            "checklist.zsh.mark-shape",
+            "Success and failure marks sit in a gutter and differ in shape, not only colour",
+            expect="a solid green bar by true and a dashed red bar by false, clear of the prompt",
+        ):
+            self.require("checklist.zsh.marks")
+            tab = self.wait(lambda: self.find_tab(QUESTION_CONN), what="the question tab")
+            tab_id = tab["id"]
+            ok = self._decorations(tab_id, "terminal-command-mark--success")[-1]
+            bad = self._decorations(tab_id, "terminal-command-mark--failure")[-1]
+            self.evidence(f"success mark: {ok}")
+            self.evidence(f"failure mark: {bad}")
+            for bar in (ok, bad):
+                gap = bar.get("gapToText")
+                assert gap is not None and gap >= 5.5, f"mark touches the text: {bar}"
+            # Shape, not hue: the failure bar is masked into dashes, success is solid.
+            assert ok.get("maskImage") in (None, "", "none"), f"success is not solid: {ok}"
+            assert (bad.get("maskImage") or "none") != "none", f"failure has no shape: {bad}"
 
     # ── 4. settings wording ───────────────────────────────────────────────────
     def _content(self) -> str:

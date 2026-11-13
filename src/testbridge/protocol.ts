@@ -196,7 +196,8 @@ export interface GetComputedStyleCommand {
  * `"text"` lists every element that holds its own non-blank text node. Each
  * entry says whether it is rendered (non-zero box, not `display: none` /
  * `visibility: hidden`) and whether its own content overflows it
- * (`scrollWidth > clientWidth`, i.e. clipped or ellipsized).
+ * (`scrollWidth > clientWidth`, i.e. clipped or ellipsized) and its computed
+ * `text-overflow`, which tells an ellipsized cut from a hard one.
  */
 export interface MeasureElementCommand {
   action: "measureElement";
@@ -232,6 +233,8 @@ export interface MeasuredItem {
   rect: MeasuredBox;
   visible: boolean;
   overflows: boolean;
+  /** The computed `text-overflow` (`"clip"` or `"ellipsis"`), #5623. */
+  textOverflow: string;
 }
 
 /** A canvas pixel coordinate (backing-store pixels, not CSS pixels). */
@@ -921,6 +924,10 @@ export interface TerminalDecoration {
   classes: string[];
   /** Its computed `background-color`. */
   background: string;
+  /** Its computed `mask-image` (`"none"` when unset) — the failure mark's dash shape (#5640). */
+  maskImage: string;
+  /** Horizontal px from its right edge to the cell grid's left edge; `null` without a screen. */
+  gapToText: number | null;
   /** Rect relative to the terminal container's top-left, in CSS px. */
   top: number;
   left: number;

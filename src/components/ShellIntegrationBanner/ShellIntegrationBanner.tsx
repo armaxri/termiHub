@@ -4,24 +4,25 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { frontendLog } from "@/utils/frontendLog";
 import type { ShellIntegrationStatus } from "@/types/connection";
-import { Button, toast } from "@/components/ui";
+import { toast } from "@/components/ui";
 import { getShellIntegrationStatus, installShellIntegration } from "@/services/api";
 import { defaultShellIntegrationSettings } from "@/components/Settings/shellIntegrationEntries";
 import { INSTALL_TOAST, syncRegistrationFacts } from "@/components/Settings/shellIntegrationStore";
 import { errorMessage } from "@/utils/errorMessage";
-import { useBottomBannerSlot } from "@/components/BottomBanners";
-import "./ShellIntegrationBanner.css";
+import { BottomBanner, BottomBannerAction, useBottomBannerSlot } from "@/components/BottomBanners";
 
 /**
  * Non-blocking first-launch banner offering to add the "Open in termiHub"
  * entries to the user's file manager. Shown once, at the bottom of the app
  * shell, until the integration is registered or the user opts out
- * ("Don't ask again" persists `shellIntegration.firstLaunchBannerDismissed`).
+ * ("Don't show again" persists `shellIntegration.firstLaunchBannerDismissed`).
  * Modelled on {@link TerminalViewModeBanner}.
  *
  * It is the lowest-ranked bottom banner (#5548): while a crash notice shows it
- * stays hidden and appears once that notice is closed. "Install now" is a
- * secondary button so it never competes with the view's filled primary (#5549).
+ * stays hidden and appears once that notice is closed. It shares the bottom
+ * banner shell and button pattern with the crash notice (#5638): "Install now"
+ * is the main (secondary) action so it never competes with the view's filled
+ * primary (#5549); the others are ghost buttons of the same size.
  */
 export function ShellIntegrationBanner() {
   const storedSi = useProjectedSettings().shellIntegration;
@@ -76,40 +77,35 @@ export function ShellIntegrationBanner() {
   }
 
   return (
-    <div className="shell-integration-banner" data-testid="shell-integration-banner">
-      <span className="shell-integration-banner__icon">
-        <FolderOpen size={16} />
-      </span>
-      <div className="shell-integration-banner__text">
-        <strong>Add “Open in termiHub” to your file manager?</strong>
-        <span>Right-click any folder to open it directly in termiHub.</span>
-      </div>
-      <div className="shell-integration-banner__actions">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setDismissedThisSession(true)}
-          data-testid="shell-integration-banner-not-now"
-        >
-          Not now
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={persistDismissed}
-          data-testid="shell-integration-banner-dismiss"
-        >
-          Don't ask again
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleInstall}
-          data-testid="shell-integration-banner-install"
-        >
-          Install now
-        </Button>
-      </div>
-    </div>
+    <BottomBanner
+      tone="info"
+      data-testid="shell-integration-banner"
+      icon={<FolderOpen size={16} />}
+      title="Add “Open in termiHub” to your file manager?"
+      description="Right-click any folder to open it directly in termiHub."
+      actions={
+        <>
+          <BottomBannerAction
+            onClick={persistDismissed}
+            data-testid="shell-integration-banner-dismiss"
+          >
+            Don't show again
+          </BottomBannerAction>
+          <BottomBannerAction
+            onClick={() => setDismissedThisSession(true)}
+            data-testid="shell-integration-banner-not-now"
+          >
+            Not now
+          </BottomBannerAction>
+          <BottomBannerAction
+            main
+            onClick={handleInstall}
+            data-testid="shell-integration-banner-install"
+          >
+            Install now
+          </BottomBannerAction>
+        </>
+      }
+    />
   );
 }

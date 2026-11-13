@@ -100,7 +100,27 @@ describe("ShellIntegrationBanner", () => {
     expect(mockedApi.saveShellIntegrationSettings).not.toHaveBeenCalled();
   });
 
-  it("persists firstLaunchBannerDismissed on Don't ask again", async () => {
+  it("shares the bottom-banner action pattern with the crash notice (#5638)", async () => {
+    await render();
+    const banner = byTestId("shell-integration-banner");
+    expect(banner?.className).toContain("bottom-banner--info");
+    const row = banner?.querySelector(".bottom-banner__actions");
+    const buttons = Array.from(row?.querySelectorAll("button") ?? []);
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual([
+      "Don't show again",
+      "Not now",
+      "Install now",
+    ]);
+    for (const b of buttons) {
+      expect(b.className).toContain("ui-btn--sm");
+      expect(b.className).toContain("bottom-banner__action");
+    }
+    expect(byTestId("shell-integration-banner-dismiss")?.className).toContain("ui-btn--ghost");
+    expect(byTestId("shell-integration-banner-not-now")?.className).toContain("ui-btn--ghost");
+    expect(byTestId("shell-integration-banner-install")?.className).toContain("ui-btn--secondary");
+  });
+
+  it("persists firstLaunchBannerDismissed on Don't show again", async () => {
     await render();
     await act(async () => {
       byTestId("shell-integration-banner-dismiss")?.click();

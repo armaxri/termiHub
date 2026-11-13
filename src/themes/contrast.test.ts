@@ -145,14 +145,15 @@ describe("bottom banner text contrast (WCAG 2.2 AA, #5547)", () => {
     }
   }
 
-  it.each([
-    ["components/Diagnostics/Diagnostics.css", ".crash-report-notice"],
-    ["components/ShellIntegrationBanner/ShellIntegrationBanner.css", ".shell-integration-banner"],
-  ])("%s redirects --text-secondary on %s", (file, selector) => {
-    const css = readFileSync(join(SRC_DIR, file), "utf8");
-    const block = new RegExp(`${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`).exec(css);
-    expect(block?.[1]).toMatch(/--text-secondary:\s*var\(--text-secondary-on-selection\)/);
-  });
+  // #5638: both banners render through the shared BottomBanner shell.
+  it.each([["components/BottomBanners/BottomBanners.css", ".bottom-banner"]])(
+    "%s redirects --text-secondary on %s",
+    (file, selector) => {
+      const css = readFileSync(join(SRC_DIR, file), "utf8");
+      const block = new RegExp(`${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`).exec(css);
+      expect(block?.[1]).toMatch(/--text-secondary:\s*var\(--text-secondary-on-selection\)/);
+    }
+  );
 });
 
 describe("theme text contrast (WCAG 2.2 AA)", () => {

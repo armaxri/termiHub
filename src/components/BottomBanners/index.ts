@@ -6,3 +6,5 @@ export {
   useBottomBannerStore,
 } from "./bottomBannerStore";
 export type { BottomBannerId } from "./bottomBannerStore";
+export { BottomBanner, BottomBannerAction } from "./BottomBanner";
+export type { BottomBannerProps, BottomBannerActionProps, BottomBannerTone } from "./BottomBanner";

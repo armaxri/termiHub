@@ -105,13 +105,13 @@ describe("CrashReportNotice", () => {
     expect(mockedApi.acknowledgeCrashReports).toHaveBeenCalledTimes(1);
   });
 
-  it("offers exactly two actions, View report and Close (#5558)", async () => {
+  it("offers Don't show again, Close and View report in one action row (#5558, #5638)", async () => {
     await render();
-    const actions = byTestId("crash-report-notice")?.querySelector(".crash-report-notice__actions");
+    const actions = byTestId("crash-report-notice")?.querySelector(".bottom-banner__actions");
     const labels = Array.from(actions?.querySelectorAll("button") ?? []).map((b) =>
       b.textContent?.trim()
     );
-    expect(labels).toEqual(["Close", "View report"]);
+    expect(labels).toEqual(["Don't show again", "Close", "View report"]);
     // Export moved into the report viewer, where the user sees what they export.
     expect(byTestId("crash-report-notice-export")).toBeNull();
   });
@@ -123,12 +123,24 @@ describe("CrashReportNotice", () => {
     expect(byTestId("crash-report-notice-view")?.className).toContain("ui-btn--secondary");
   });
 
-  it("renders don't show again as an inline link, not a peer button (#5558)", async () => {
+  it("renders Close and Don't show again as ghost Button primitives (#5638)", async () => {
     await render();
-    const never = byTestId("crash-report-notice-never");
-    expect(never?.textContent).toBe("Don't show again");
-    expect(never?.className).toContain("crash-report-notice__never");
-    expect(never?.closest(".crash-report-notice__text")).not.toBeNull();
+    for (const id of ["crash-report-notice-dismiss", "crash-report-notice-never"]) {
+      const cls = byTestId(id)?.className ?? "";
+      expect(cls).toContain("ui-btn");
+      expect(cls).toContain("ui-btn--ghost");
+      expect(cls).toContain("ui-btn--sm");
+      expect(cls).toContain("bottom-banner__action");
+    }
+    // Same size as View report, so all three share one height and hit area.
+    expect(byTestId("crash-report-notice-view")?.className).toContain("ui-btn--sm");
+  });
+
+  it("uses the warning banner surface (#5638)", async () => {
+    await render();
+    const notice = byTestId("crash-report-notice");
+    expect(notice?.className).toContain("bottom-banner");
+    expect(notice?.className).toContain("bottom-banner--warning");
   });
 
   it("don't show again persists showCrashReportNotice: false", async () => {
