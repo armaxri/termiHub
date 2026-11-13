@@ -1702,8 +1702,13 @@ service is `termiHub-dev-ci-<run>`; the tests refuse any other namespace): a
 read of a never-written key, set/get/delete, choosing the OS keychain store and
 switching to a master password, back, and to `none`, and a leftover item another
 binary wrote (`/usr/bin/security`, the shape an earlier, differently signed
-build leaves), which must read as absent and not block a switch. They disable
-keychain user interaction, so no access prompt appears.
+build leaves), which must read as absent, not block a switch, and be replaced
+when the same account is saved (#5527, both the dev-build and the release item
+policy). An update test re-signs a copy of the test binary ad-hoc (a new code
+directory hash, as every update of the unsigned beta has) and runs one ignored
+helper test in it: the copy cannot read what the original saved, gets the
+recovery message, and saves over it. They disable keychain user interaction,
+so no access prompt appears.
 
 CI runs the wrapper on every leg of the `Run Tests` job (`code-quality.yml`; the
 `.cmd` twin on Windows) — on every PR touching Rust and every push to `develop`,
