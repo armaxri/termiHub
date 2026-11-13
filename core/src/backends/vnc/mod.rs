@@ -1183,10 +1183,10 @@ mod tests {
             keys,
             vec![
                 "connection",
+                "sshTunnel",
                 "display",
                 "features",
                 "vnc",
-                "sshTunnel",
                 "fileTransfer",
                 "proxy"
             ]

@@ -1427,10 +1427,10 @@ mod tests {
             keys,
             vec![
                 "connection",
+                "sshTunnel",
                 "display",
                 "features",
                 "rdp",
-                "sshTunnel",
                 "proxy"
             ]
         );

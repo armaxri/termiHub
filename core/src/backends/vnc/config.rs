@@ -19,7 +19,7 @@ use crate::connection::graphical_resolution::{
     RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
 };
 use crate::connection::graphical_ssh_tunnel::{
-    ssh_tunnel_group, SshTunnelProxy, SshTunnelSettings,
+    insert_ssh_tunnel_group, SshTunnelProxy, SshTunnelSettings,
 };
 use crate::connection::proxy_settings::{direct_proxy_group, DirectProxy};
 use crate::connection::schema::{
@@ -513,7 +513,8 @@ pub fn vnc_settings_schema() -> SettingsSchema {
         ],
     });
 
-    groups.push(ssh_tunnel_group("VNC"));
+    // Right after Connection, next to Host / Port (#5626).
+    insert_ssh_tunnel_group(&mut groups, "VNC");
 
     groups.push(file_transfer_group());
 
@@ -841,10 +842,10 @@ mod tests {
             keys,
             vec![
                 "connection",
+                "sshTunnel",
                 "display",
                 "features",
                 "vnc",
-                "sshTunnel",
                 "fileTransfer",
                 "proxy"
             ]
@@ -1199,8 +1200,12 @@ mod tests {
         let schema = vnc_settings_schema();
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
         let tunnel = keys.iter().position(|k| *k == "sshTunnel").unwrap();
-        assert_eq!(keys.get(tunnel + 1), Some(&"fileTransfer"));
-        let group = &schema.groups[tunnel + 1];
+        let files = keys.iter().position(|k| *k == "fileTransfer").unwrap();
+        assert!(
+            files > tunnel,
+            "File transfer follows the SSH tunnel it may route over"
+        );
+        let group = &schema.groups[files];
         assert_eq!(group.label, "File transfer");
         let toggle = group
             .fields
