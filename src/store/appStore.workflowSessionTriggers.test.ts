@@ -258,6 +258,12 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       pattern: "load average",
     };
 
+    /** The output tap most recently installed (or removed, `null`). */
+    function lastTap(setTap: { mock: { calls: unknown[][] } }) {
+      const calls = setTap.mock.calls;
+      return calls[calls.length - 1]?.[0] as ((sid: string, data: string) => void) | null;
+    }
+
     /** Make the mocked backend persist saves into `savedWorkflows`. */
     function persistSaves() {
       vi.mocked(apiSaveWorkflow).mockImplementation((w: Workflow) => {
@@ -280,7 +286,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch])
       );
       await useAppStore.getState().loadWorkflows();
-      expect(setTap.mock.calls.at(-1)?.[0]).not.toBeNull();
+      expect(lastTap(setTap)).not.toBeNull();
 
       await useAppStore.getState().setWorkflowTriggersEnabled("wf-m", false);
 
@@ -288,7 +294,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       expect(saved.triggersEnabled).toBe(false);
       expect(saved.triggers).toEqual([outputMatch]);
       // With only a disarmed trigger left, the output tap is removed entirely.
-      expect(setTap.mock.calls.at(-1)?.[0]).toBeNull();
+      expect(lastTap(setTap)).toBeNull();
       await new Promise((r) => setTimeout(r, OUTPUT_TRIGGER_LIMITS.batchMs * 3));
       expect(injected).toEqual([]);
       expect(recorded()).toEqual([]);
@@ -303,12 +309,12 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         triggersEnabled: false,
       });
       await useAppStore.getState().loadWorkflows();
-      expect(setTap.mock.calls.at(-1)?.[0]).toBeNull();
+      expect(lastTap(setTap)).toBeNull();
 
       await useAppStore.getState().setWorkflowTriggersEnabled("wf-m", true);
 
       expect("triggersEnabled" in useAppStore.getState().workflows[0]).toBe(false);
-      const tap = setTap.mock.calls.at(-1)?.[0] ?? null;
+      const tap = lastTap(setTap) ?? null;
       expect(tap).not.toBeNull();
       tap!("sess-1", btoa("load average: 0.10\r\n"));
       await vi.waitFor(() => expect(injected).toEqual(["uptime\n"]), {
@@ -323,7 +329,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch])
       );
       await useAppStore.getState().loadWorkflows();
-      const tap = setTap.mock.calls.at(-1)?.[0] ?? null;
+      const tap = lastTap(setTap) ?? null;
       // Disarmed in the store before the engine was recompiled.
       const [armed] = useAppStore.getState().workflows;
       useAppStore.setState({ workflows: [{ ...armed, triggersEnabled: false }] });
