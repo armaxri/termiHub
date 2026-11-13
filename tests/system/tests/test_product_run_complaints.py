@@ -29,6 +29,10 @@ fails until its fix lands; the grade is never weakened to pass.
    reach left of the sidebar (over the activity bar); Up and Upload use
    different icons; the menu offers "Sort by" (Name / Modified / Size) and
    "Copy path".
+7. **Toast noise** (#5665, #5675, #5686): a toast shown while the workflow
+   editor is open covers none of the dialog; three runs of two workflows
+   leave one "Ran workflow" toast; Save and connect raises no "Saved" toast;
+   a "Closed … / Reopen" toast goes away when a dialog opens.
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
 pixels).
@@ -108,6 +112,7 @@ SORT_SUBMENU = "file-browser-sort-submenu"
 SORT_KEYS = ("name", "modified", "size")
 COPY_PATH = "file-browser-copy-path"
 EDITOR_FOOTER = "connection-editor-actions"
+WORKFLOW_DIALOG = "workflow-editor-dialog"
 
 
 def _center_y(box: dict[str, float]) -> float:
@@ -502,7 +507,15 @@ class TestProductRunComplaints(
                 before = self.tab_ids()
                 self.open_new_terminal()
                 self.wait(lambda b=before: len(self.tab_ids()) == len(b) + 1, what="a local terminal")
-                terminals.append(next(t for t in self.tab_ids() if t not in before))
+                tab = next(t for t in self.tab_ids() if t not in before)
+                self.wait(lambda t=tab: self.driver.read_terminal(t).strip(), what="the prompt")
+                # End the shell first: closing a live session raises its confirm
+                # dialog, and a dialog opening dismisses the earlier tab's
+                # "Closed … / Reopen" toast (#5665). An exited tab closes at
+                # once, so both toasts stay up together.
+                self.run_command("exit")
+                self.wait(lambda t=tab: self.terminal_session_exited(t), what="the shell to exit")
+                terminals.append(tab)
             self.open_new_connection_editor()
             for tab in terminals:
                 self.close_tab(tab)
@@ -702,4 +715,114 @@ class TestProductRunComplaints(
                 self._grade_menu_contents()
             finally:
                 self._sidebar_restore(restore)
+        self.close_all_tabs()
+
+    # ── 7. toast noise around dialogs and repeated runs (#5665, #5675, #5686) ──
+    def _toast_titles(self, prefix: str) -> list[dict[str, Any]]:
+        """The visible toast texts that start with ``prefix``."""
+        if not self.driver.exists(TOAST_REGION):
+            return []
+        return [i for i in self._toast_items() if i["text"].startswith(prefix)]
+
+    def test_60_toast_clear_of_open_dialog(self):
+        tag = unique_name("pr").split("-")[-1]
+        with self.step(
+            "complaints.toasts.dialog",
+            "A toast shown while the workflow editor is open stays off the dialog (#5686)",
+            expect="#5686 complaint: with the workflow editor open, the 'Ran workflow' toast "
+            "sits above or beside the dialog and covers none of it ('Add parameter…' visible)",
+        ):
+            workflow = self._create_workflow(f"Toast clear {tag}", [f"echo PR_TOAST_DLG_{tag}"])
+            self.ensure_terminal()
+            self.open_workflows_sidebar()
+            self.run_workflow(workflow)
+            self.wait_for_output(f"PR_TOAST_DLG_{tag}")
+            self.wait(lambda: self._toast_titles("Ran workflow") or None, what="the run's toast")
+            self.open_new_workflow()
+            dialog = self.driver.measure_element(WORKFLOW_DIALOG)["rect"]
+            toasts = self._toast_items()
+            self.evidence(f"dialog {dialog}; toasts {[(t['text'], t['rect']) for t in toasts]}")
+            try:
+                assert toasts, "no toast left to grade (it closed before the editor opened)"
+                for item in toasts:
+                    assert not _intersects(item["rect"], dialog), (
+                        f"toast {item['text'] or item['label']!r} {item['rect']} covers the "
+                        f"open dialog {dialog}"
+                    )
+            finally:
+                self.cancel_clean_editor()
+        self.close_all_tabs()
+
+    def test_61_repeated_runs_one_toast(self):
+        tag = unique_name("pr").split("-")[-1]
+        with self.step(
+            "complaints.toasts.runs",
+            "Running workflows several times in a row shows one 'Ran workflow' toast (#5675)",
+            expect="#5675 complaint: after three runs of two workflows a single 'Ran workflow' "
+            "toast shows (the newest), not a stack of three",
+        ):
+            first = self._create_workflow(f"Run once {tag}", [f"echo PR_RUN_A_{tag}"])
+            second = self._create_workflow(f"Run twice {tag}", [f"echo PR_RUN_B_{tag}"])
+            self.ensure_terminal()
+            self.open_workflows_sidebar()
+            for workflow, marker in ((first, "A"), (second, "B"), (first, "A")):
+                needle = f"PR_RUN_{marker}_{tag}"
+                seen = self.driver.read_terminal().count(needle)
+                self.run_workflow(workflow)
+                # The command line and its output: two more each run.
+                self.wait(
+                    lambda n=needle, s=seen: self.driver.read_terminal().count(n) >= s + 2,
+                    what=f"run output {needle}",
+                )
+            self.wait(lambda: self._toast_titles("Ran workflow") or None, what="a run toast")
+            time.sleep(0.5)  # let a stale toast's exit animation finish
+            titles = [t["text"] for t in self._toast_titles("Ran workflow")]
+            self.evidence(f"'Ran workflow' toasts: {titles}")
+            assert len(titles) == 1, f"{len(titles)} 'Ran workflow' toasts stack: {titles}"
+        self.close_all_tabs()
+
+    def test_62_save_and_connect_no_saved_toast(self):
+        name = unique_name("pr-save-connect")
+        with self.step(
+            "complaints.toasts.saved",
+            "Save and connect opens the tab without a 'Saved' toast (#5665)",
+            expect="#5665 complaint: after Save and connect the new tab is open and no "
+            "'Saved …' toast shows (the tab is the feedback)",
+        ):
+            self.switch_to_connections_sidebar()
+            before = self.tab_ids()
+            self.create_local_connection(name, connect=True)
+            self.wait(lambda: len(self.tab_ids()) > len(before), what="the connected tab")
+            time.sleep(1.0)  # a store toast lands after the persist resolves
+            saved = [t["text"] for t in self._toast_titles("Saved")]
+            self.evidence(f"'Saved' toasts: {saved}")
+            assert not saved, f"Save and connect still shows {saved}"
+        self.close_all_tabs()
+
+    def test_63_reopen_toast_leaves_for_dialog(self):
+        with self.step(
+            "complaints.toasts.closed-dialog",
+            "A 'Closed … / Reopen' toast goes away when a dialog opens (#5665)",
+            expect="#5665 complaint: the workflow editor dialog open with no 'Closed …' toast "
+            "beside it (the toast from the tab closed just before is gone)",
+        ):
+            self.switch_to_connections_sidebar()
+            before = self.tab_ids()
+            self.open_new_terminal()
+            self.wait(lambda: len(self.tab_ids()) == len(before) + 1, what="a local terminal")
+            tab = next(t for t in self.tab_ids() if t not in before)
+            self.close_tab(tab)
+            self.wait(lambda: self._toast_titles("Closed") or None, what="the 'Closed' toast")
+            self.enable_experimental_features()
+            self.open_workflows_sidebar()
+            self.open_new_workflow()
+            try:
+                deadline = time.monotonic() + 3.0
+                while self._toast_titles("Closed") and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                gone = not self._toast_titles("Closed")
+                self.evidence(f"'Closed' toasts with the dialog open: {self._toast_titles('Closed')}")
+                assert gone, "the 'Closed … / Reopen' toast stays beside the open dialog"
+            finally:
+                self.cancel_clean_editor()
         self.close_all_tabs()

@@ -104,6 +104,13 @@ export interface TreeFolderRowProps extends Omit<
   testId?: string;
   /** Icon drawn before the label; defaults to the plain folder glyph. */
   icon?: React.ReactNode;
+  /**
+   * Accessible text of a "contains the active item" marker (#5706): when set,
+   * the collapsed folder hides the active tab's row, so a small selection-tinted
+   * dot is drawn before the chevron and the row gets the `--contains-active`
+   * modifier. The text joins the button's accessible name.
+   */
+  containsActiveLabel?: string;
 }
 
 /**
@@ -123,13 +130,16 @@ export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowPr
       dropOver = false,
       testId,
       icon,
+      containsActiveLabel,
       ...rest
     },
     ref
   ) {
     const composedRef = useComposedButtonRef(ref, buttonRef);
     const Chevron = expanded ? ChevronDown : ChevronRight;
-    const className = `connection-tree__folder${dropOver ? " connection-tree__folder--drop-over" : ""}`;
+    let className = "connection-tree__folder";
+    if (dropOver) className += " connection-tree__folder--drop-over";
+    if (containsActiveLabel) className += " connection-tree__folder--contains-active";
     return (
       <button
         ref={composedRef}
@@ -144,6 +154,15 @@ export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowPr
       >
         {icon ?? <Folder size={16} />}
         <span className="connection-tree__label">{label}</span>
+        {containsActiveLabel && (
+          <span
+            className="connection-tree__active-marker"
+            role="img"
+            aria-label={containsActiveLabel}
+            title={containsActiveLabel}
+            data-testid={testId ? `${testId}-active-marker` : undefined}
+          />
+        )}
         <Chevron size={16} className="connection-tree__chevron" />
       </button>
     );

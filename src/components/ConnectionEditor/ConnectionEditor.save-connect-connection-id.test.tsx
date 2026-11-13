@@ -25,7 +25,7 @@ import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { claimedTargetIds } from "@/store/scheduledRuns";
 import { ConnectionEditor } from "./ConnectionEditor";
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
 import type { ScheduleFire } from "@/types/schedule";
 
@@ -253,5 +253,33 @@ describe("ConnectionEditor — Save and connect binds the tab to its connection 
     expect(tabs).toHaveLength(1);
     expect(tabs[0].connectionId).toBeUndefined();
     expect(claimedTargetIds(fire(["Lab switch"]), useAppStore.getState())).toEqual([]);
+  });
+
+  it("raises no 'Saved' toast: the tab is the feedback (#5665)", async () => {
+    await render(EXISTING.id);
+    await saveAndConnect();
+
+    expect(terminalTabs()).toHaveLength(1);
+    const titles = vi.mocked(toast.success).mock.calls.map(([title]) => title);
+    expect(titles.filter((t) => t.startsWith("Saved"))).toEqual([]);
+  });
+
+  it("still toasts a failed save during Save and connect (#5665)", async () => {
+    saveFailure = "disk full";
+    await render(EXISTING.id);
+    await saveAndConnect();
+
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("disk full"));
+  });
+
+  it("keeps the 'Saved' toast for a plain Save", async () => {
+    await render(EXISTING.id);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="connection-editor-save"]')!.click();
+    });
+    await flush();
+    await flushAsync();
+
+    expect(toast.success).toHaveBeenCalledWith("Saved Lab switch");
   });
 });

@@ -47,6 +47,8 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
+    connection_item_testid,
+    folder_toggle_testid,
     known_hosts,
     unique_name,
 )
@@ -639,4 +641,67 @@ class TestProductRunSsh(
             )
             self.evidence(f"SSH chip tooltip: {title!r}; server fingerprint {want!r}")
             assert want and f"Host key: trusted ({want})" in title, title
+        self.close_all_tabs()
+
+    # ── collapsed folder hiding the active tab's connection (#5706) ─────────
+    def _folder_expanded(self, folder_id: str) -> bool:
+        return self.driver.get_attribute(folder_toggle_testid(folder_id), "aria-expanded") == "true"
+
+    def test_13_sidebar_collapsed_folder_marks_active(self):
+        folder_name = unique_name("pr-follow-folder")
+        inside = unique_name("pr-follow-inside")
+        outside = unique_name("pr-follow-outside")
+        with self.step(
+            "ssh.sidebar.collapsed-folder-marker",
+            "A collapsed folder holding the active tab's connection is marked, not expanded",
+            expect="the collapsed folder row with a small accent dot; the folder stays collapsed",
+        ):
+            self.close_all_tabs()
+            self.switch_to_connections_sidebar()
+            folder = self.create_folder(folder_name)
+            folder_row = folder_toggle_testid(folder["id"])
+            self.folder_context_action(folder["id"], "context-folder-new-connection")
+            self.wait(self.editor_open, what="the new-connection editor")
+            self.driver.type(self.EDITOR_NAME, inside)
+            self._click_editor_save(True)
+            inside_tab = self.tab_id_of(inside)
+            self.create_local_connection(outside, connect=True)
+            self.tab_id_of(outside)
+            self.wait(lambda: self.driver.exists(folder_row), what="the folder row")
+            if self._folder_expanded(folder["id"]):
+                self.driver.click(folder_row)
+            self.wait(
+                lambda: not self._folder_expanded(folder["id"]), what="the folder to collapse"
+            )
+            self.switch_to_tab(inside_tab)
+            active = self.wait(
+                lambda: (lambda a: a if a and a.get("id") == inside_tab else None)(
+                    self.active_tab()
+                ),
+                what="the in-folder tab to become active",
+            )
+            connection_id = active.get("connectionId")
+            assert connection_id, "the in-folder tab carries no saved-connection id"
+            marker = f"{folder_row}-active-marker"
+            self.wait(lambda: self.driver.exists(marker), what="the contains-active marker")
+            label = self.driver.get_attribute(marker, "aria-label")
+            self.evidence(f"folder {folder_name!r}: marker label {label!r}")
+            assert label == "Contains the active connection", label
+            assert not self._folder_expanded(folder["id"]), "a tab switch expanded the folder"
+            assert not self.driver.exists(connection_item_testid(connection_id))
+            self.shot(label=None)
+        with self.step(
+            "ssh.sidebar.collapsed-folder-expand",
+            "Expanding the marked folder shows the active connection's row selected",
+            expect="the folder expanded with the active tab's connection row highlighted",
+        ):
+            self.require("ssh.sidebar.collapsed-folder-marker")
+            self.driver.click(folder_row)
+            row = connection_item_testid(connection_id)
+            self.wait(
+                lambda: self.driver.get_attribute(row, "aria-selected") == "true",
+                timeout=10.0, what="the active connection row to show selected",
+            )
+            assert not self.driver.exists(marker), "the marker stayed on the expanded folder"
+            self.shot(label=None)
         self.close_all_tabs()

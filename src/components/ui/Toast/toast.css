@@ -16,6 +16,19 @@
 }
 
 /*
+ * Beside a tall open dialog the column narrows to fit next to it (#5686);
+ * `useToastAvoidInset` sets the class and width on <html>. `!important`
+ * because sonner writes its own `--width` inline on the toaster. The default
+ * here is overridden inline on <html> while narrowed.
+ */
+:root {
+  --app-toast-width: 340px;
+}
+:root.th-toast-narrow [data-sonner-toaster] {
+  --width: var(--app-toast-width) !important;
+}
+
+/*
  * Grid, not flex: icon | message | close on the first row, and the optional
  * action button on its own row under the message (#5079). Inline, a long
  * action label ("Install XWayland…") squeezed the message and wrapped the

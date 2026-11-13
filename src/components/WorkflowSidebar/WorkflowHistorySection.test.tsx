@@ -129,11 +129,44 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
     expect(query("workflow-run-tolerated-r-clean")).toBeNull();
   });
 
-  it("clears the history via the Clear action", () => {
+  it("labels the Clear history action with visible text (#5719)", () => {
     render([run()]);
     const clear = query("workflow-history-clear") as HTMLButtonElement;
     expect(clear.disabled).toBe(false);
-    act(() => clear.click());
+    expect(clear.textContent).toContain("Clear…");
+    expect(clear.getAttribute("aria-label")).toBe("Clear history");
+  });
+
+  it("asks for confirmation before clearing the history (#5719)", async () => {
+    render([run()]);
+    await act(async () => {
+      query("workflow-history-clear")!.click();
+    });
+    expect(clearWorkflowRunHistory).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("Clear workflow run history?");
+    const confirm = document.querySelector<HTMLButtonElement>(
+      '[data-testid="workflow-history-clear-confirm-confirm"]'
+    );
+    expect(confirm).not.toBeNull();
+    await act(async () => {
+      confirm!.click();
+    });
     expect(clearWorkflowRunHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the history when the confirmation is cancelled (#5719)", async () => {
+    render([run()]);
+    await act(async () => {
+      query("workflow-history-clear")!.click();
+    });
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="workflow-history-clear-confirm-cancel"]')!
+        .click();
+    });
+    expect(clearWorkflowRunHistory).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-testid="workflow-history-clear-confirm-confirm"]')
+    ).toBeNull();
   });
 });

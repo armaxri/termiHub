@@ -446,14 +446,21 @@ export async function connectSavedConnection(
 
     // UX-011: from here on the flow runs the genuinely slow steps (unlock,
     // stored-credential resolve, blocking pre-connect handshake). Show the
-    // non-blocking connecting indicator now — before any of them — so the
-    // pre-tab window is never a silent gap.
-    if (!unattended) {
+    // non-blocking connecting indicator before them, so the pre-tab window is
+    // never a silent gap — except while the unlock dialog is up: it is then
+    // the feedback surface: closing it (X / Escape) ends the connect, and
+    // "Connect without saved password" goes on. A "Connecting… / Abort" toast
+    // beside it would sit over a backdrop that blocks its button (#5665). The
+    // toast appears once the store is unlocked (or skipped) instead.
+    const showConnecting = () => {
+      if (unattended || preconnect.signal.aborted) return;
       connectingToastId = toast.loading("Connecting…", {
         action: { label: "Abort", onClick: abortPreconnect },
         testId: "connect-preconnect-toast",
       });
-    }
+    };
+    const unlockFirst = credentialStoreNeedsUnlock({ authMethod, savePassword, credentialRef });
+    if (!unlockFirst) showConnecting();
 
     // Before attempting credential resolution, check whether the credential store
     // is locked. If it is, we can't read the stored credential and SSH would fall
@@ -481,6 +488,7 @@ export async function connectSavedConnection(
       return { status: "canceled" };
     }
     const storeStaysLocked = unlock === "skipped";
+    if (unlockFirst) showConnecting();
 
     // Try to resolve credential from the store first
     const resolved = storeStaysLocked

@@ -30,6 +30,36 @@
   white-space: nowrap;
 }
 
+/*
+ * The row just saved from the editor (#5687): an accent tint and leading bar so
+ * the user sees which workflow changed. It holds, then fades out over
+ * WORKFLOW_JUST_SAVED_MS (3 s); under reduced motion it stays static until the
+ * sidebar unmarks the row at the same time.
+ */
+.sidebar-list-item.workflow-item--just-saved {
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
+  --text-secondary: var(--text-secondary-on-selection);
+  --text-muted: var(--text-muted-on-selection);
+  --sidebar-list-item-surface: color-mix(in srgb, var(--accent-color) 18%, var(--sidebar-bg));
+  background: var(--bg-selected);
+  box-shadow: inset 2px 0 0 var(--accent-color);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Hold 2 s, then fade 1 s — 3 s in all, matching WORKFLOW_JUST_SAVED_MS. */
+  .workflow-item--just-saved {
+    animation: workflow-item-just-saved 1s ease-out 2s forwards;
+  }
+}
+
+/* Fades from the row's own tint and bar (above) back to the resting row. */
+@keyframes workflow-item-just-saved {
+  to {
+    background-color: transparent;
+    box-shadow: inset 2px 0 0 transparent;
+  }
+}
+
 /* Per-target progress of a concurrent "Run on…" fan-out (#3418). */
 .workflow-item__targets {
   display: flex;
@@ -120,6 +150,12 @@
   flex-direction: column;
   max-height: 40%;
   border-top: 1px solid var(--border-primary);
+}
+
+/* The destructive action reads as such on hover/focus without shouting at rest. */
+.workflow-history__clear:hover:not([disabled]),
+.workflow-history__clear:focus-visible {
+  color: var(--color-error);
 }
 
 .workflow-history__list {

@@ -5,6 +5,7 @@
  * they run, and summarising the per-target outcomes in one toast.
  */
 import { toast } from "@/components/ui";
+import { collapseWorkflowRunOutcome, keepWorkflowRunFailure } from "./workflowRunToasts";
 import type { WorkflowRunResult } from "@/services/workflowRunner";
 
 import type { AppState } from "../appStore";
@@ -159,14 +160,18 @@ export function toastFanoutSummary(
       id: toastId,
       description: `${summary}. ${detail}`,
     });
+    keepWorkflowRunFailure(toastId);
   } else if (cancelled) {
     toast.info(`Workflow "${workflowName}" canceled`, { id: toastId, description: summary });
+    collapseWorkflowRunOutcome(toastId);
   } else if (skipped > 0 || tolerated) {
     toast.info(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, {
       id: toastId,
       description: summary,
     });
+    keepWorkflowRunFailure(toastId);
   } else {
     toast.success(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, { id: toastId });
+    collapseWorkflowRunOutcome(toastId);
   }
 }

@@ -26,6 +26,10 @@ const SELECTED_REDIRECTS: [string, string][] = [
   ["components/TransferView/TransferView.css", ".transfer-pane--drop-target"],
   ["components/TransferView/TransferView.css", ".transfer-pane__row--selected"],
   ["components/Plugins/Plugins.css", ".plugin-row--selected"],
+  [
+    "components/WorkflowSidebar/WorkflowSidebar.css",
+    ".sidebar-list-item.workflow-item--just-saved",
+  ],
 ];
 
 /**

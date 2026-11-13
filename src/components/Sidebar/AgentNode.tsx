@@ -1762,29 +1762,93 @@ export function AgentNode({
             {...listeners}
             onKeyDown={handleHeaderKeyDown}
           >
-            <button
-              className={AGENT_TOGGLE_CLASS}
-              onClick={() => toggleRemoteAgent(agent.id)}
-              aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
-            >
-              <Chevron size={16} className="connection-tree__chevron" />
-              <StatusDot
-                tone={rowPresentation.tone}
-                size="sm"
-                label={rowPresentation.label}
-                title={rowPresentation.label}
-                testId={`agent-state-${agent.id}`}
-              />
-              <Server size={14} />
-              <span className="connection-list__group-title" data-testid={`agent-name-${agent.id}`}>
-                {agent.name}
-              </span>
-              <AgentVersionBadge
-                version={agentVersion}
-                state={agentUpdateState}
-                data-testid={`agent-version-badge-${agent.id}`}
-              />
-            </button>
+            {/* Row 1: the toggle (state, name, version) plus the agent's single
+                state action — Connect, Reconnect or Cancel — inline beside the
+                name (R-010, #5702). Row 2 below only holds a connected agent's
+                several actions, which would crowd the name off row 1 (#2524). */}
+            <div className="connection-list__group-row">
+              <button
+                className={AGENT_TOGGLE_CLASS}
+                onClick={() => toggleRemoteAgent(agent.id)}
+                aria-keyshortcuts={treeRowKeyShortcuts({ rename: true, delete: true })}
+              >
+                <Chevron size={16} className="connection-tree__chevron" />
+                <StatusDot
+                  tone={rowPresentation.tone}
+                  size="sm"
+                  label={rowPresentation.label}
+                  title={rowPresentation.label}
+                  testId={`agent-state-${agent.id}`}
+                />
+                <Server size={14} />
+                <span
+                  className="connection-list__group-title"
+                  data-testid={`agent-name-${agent.id}`}
+                >
+                  {agent.name}
+                </span>
+                <AgentVersionBadge
+                  version={agentVersion}
+                  state={agentUpdateState}
+                  data-testid={`agent-version-badge-${agent.id}`}
+                />
+              </button>
+              {isConnecting && (
+                // Inline Cancel so a stuck connect is abortable without opening the
+                // context menu (G1, #1235).
+                <div className="connection-list__group-actions connection-list__group-actions--inline">
+                  <Tooltip content="Cancel connect" side="top">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      icon={<XCircle size={16} />}
+                      onClick={() => void handleCancelConnect()}
+                      aria-label="Cancel connect"
+                      data-testid={`agent-cancel-connect-${agent.id}`}
+                    />
+                  </Tooltip>
+                </div>
+              )}
+              {isDisconnected && rowPresentation.action === "reconnect" && (
+                // First-class Reconnect after a failure, a drop or auto-reconnect
+                // exhaustion (G3, #1236). The native `title` carries the stored
+                // last error so the user learns *why* the agent went down (matching
+                // the sidebar tree's title-based hover help); clicking re-runs the
+                // normal connect path (disconnected → connecting). The async Button
+                // gives pending/success feedback and a toast on failure.
+                <div className="connection-list__group-actions connection-list__group-actions--inline">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<RefreshCw size={14} />}
+                    onClick={handleConnect}
+                    aria-label="Reconnect"
+                    title={agent.lastError ?? "Reconnect"}
+                    data-testid={`agent-reconnect-${agent.id}`}
+                  >
+                    Reconnect
+                  </Button>
+                </div>
+              )}
+              {isDisconnected && rowPresentation.action === "connect" && (
+                // Nothing has failed yet (never connected, or the user ended the
+                // last connection): a plain Connect, not a Reconnect (#5621).
+                <div className="connection-list__group-actions connection-list__group-actions--inline">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Play size={14} />}
+                    onClick={handleConnect}
+                    aria-label="Connect"
+                    title="Connect"
+                    data-testid={`agent-connect-${agent.id}`}
+                  >
+                    Connect
+                  </Button>
+                </div>
+              )}
+            </div>
             {isConnected && (
               <div className="connection-list__group-actions">
                 <Tooltip content="New folder" side="top">
@@ -1832,61 +1896,6 @@ export function AgentNode({
                     data-testid={`agent-shutdown-${agent.id}`}
                   />
                 </Tooltip>
-              </div>
-            )}
-            {isConnecting && (
-              // Inline Cancel so a stuck connect is abortable without opening the
-              // context menu (G1, #1235).
-              <div className="connection-list__group-actions">
-                <Tooltip content="Cancel connect" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<XCircle size={16} />}
-                    onClick={() => void handleCancelConnect()}
-                    aria-label="Cancel connect"
-                    data-testid={`agent-cancel-connect-${agent.id}`}
-                  />
-                </Tooltip>
-              </div>
-            )}
-            {isDisconnected && rowPresentation.action === "reconnect" && (
-              // First-class Reconnect after a failure, a drop or auto-reconnect
-              // exhaustion (G3, #1236). The native `title` carries the stored
-              // last error so the user learns *why* the agent went down (matching
-              // the sidebar tree's title-based hover help); clicking re-runs the
-              // normal connect path (disconnected → connecting). The async Button
-              // gives pending/success feedback and a toast on failure.
-              <div className="connection-list__group-actions">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<RefreshCw size={14} />}
-                  onClick={handleConnect}
-                  aria-label="Reconnect"
-                  title={agent.lastError ?? "Reconnect"}
-                  data-testid={`agent-reconnect-${agent.id}`}
-                >
-                  Reconnect
-                </Button>
-              </div>
-            )}
-            {isDisconnected && rowPresentation.action === "connect" && (
-              // Nothing has failed yet (never connected, or the user ended the
-              // last connection): a plain Connect, not a Reconnect (#5621).
-              <div className="connection-list__group-actions">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Play size={14} />}
-                  onClick={handleConnect}
-                  aria-label="Connect"
-                  title="Connect"
-                  data-testid={`agent-connect-${agent.id}`}
-                >
-                  Connect
-                </Button>
               </div>
             )}
           </div>

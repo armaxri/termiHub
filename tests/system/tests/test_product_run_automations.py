@@ -200,7 +200,8 @@ class TestProductRunAutomations(
         with self.step(
             "automations.workflow.edit",
             "Editing the wait step's delay saves the new value",
-            expect="the Workflows sidebar after the edit",
+            expect="the Workflows sidebar after the edit; the edited workflow's row is tinted "
+            "with an accent bar on its leading edge (#5687, it fades after about 3 s)",
         ):
             self.require("automations.workflow.create")
             self.edit_workflow(self.ids["workflow"], {"workflow-editor-step-delay-1": WAIT_MS})
@@ -633,3 +634,75 @@ class TestProductRunAutomations(
             graded += 1
         assert graded, "no history row rendered a meta line"
         self.shot(label="history")
+
+    # ── workflow history clear confirmation (#5719) ──────────────────────────
+    def test_95_workflow_history_clear_confirm(self):
+        with self.step(
+            "automations.workflow.history-clear",
+            "Clearing the workflow run history asks first, like the macro history",
+            expect="the Workflows sidebar with a danger confirmation open: 'Clear workflow run "
+            "history?' with 'This removes the recorded runs of every workflow. It cannot be "
+            "undone.' and a red 'Clear history' button; the history header's action reads "
+            "'Clear…' (#5719)",
+            screenshot=False,
+        ):
+            self.require("automations.workflow.run-on")
+            self.open_workflows_sidebar()
+            self.wait(
+                lambda: self.driver.exists("workflow-history-list"), what="the workflow history"
+            )
+            label = self.driver.get_text("workflow-history-clear").strip()
+            self.evidence(f"clear action text: {label!r}")
+            assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
+            before = len(self._state_list("workflowRuns"))
+            assert before, "no workflow runs recorded to protect"
+            self.driver.click("workflow-history-clear")
+            self.wait(
+                lambda: self.driver.exists("workflow-history-clear-confirm-cancel"),
+                what="the clear-history confirmation",
+            )
+            self.shot(label="confirm")
+            self.driver.click("workflow-history-clear-confirm-cancel")
+            self.wait(
+                lambda: not self.driver.exists("workflow-history-clear-confirm-cancel"),
+                what="the confirmation to close",
+            )
+            after = len(self._state_list("workflowRuns"))
+            self.evidence(f"workflow runs before {before}, after cancel {after}")
+            assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
+            assert self.driver.exists("workflow-history-list"), "the history list disappeared"
+
+    # ── the row saved from the editor is marked briefly (#5687) ──────────────
+    def test_96_workflow_edited_row_marked(self):
+        with self.step(
+            "automations.workflow.edited-row",
+            "Saving an edited workflow marks its row briefly so the change is easy to find",
+            expect="the Workflows sidebar right after a save: the edited workflow's row is "
+            "tinted with the accent colour and a 2px accent bar on its leading edge, the "
+            "other rows are not; the row's name and summary stay readable (#5687)",
+            screenshot=False,
+        ):
+            self.require("automations.workflow.edit")
+            wid = self.ids["workflow"]
+            row = f"workflow-item-{wid}"
+            self.edit_workflow(wid, {"workflow-editor-description": f"edited {self.tag}"})
+            marked = self.driver.get_attribute(row, "data-just-saved")
+            background = self.driver.get_computed_style("background-color", row)
+            self.evidence(f"{row}: data-just-saved={marked!r}, background {background}")
+            assert marked == "true", f"the saved row is not marked: data-just-saved={marked!r}"
+            assert background not in ("", "transparent", "rgba(0, 0, 0, 0)"), (
+                f"the marked row paints no tint: {background}"
+            )
+            self.shot(label="marked")
+            box = self.driver.measure_element(row)["rect"]
+            pane = self.driver.measure_element("workflow-list")["rect"]
+            self.evidence(f"row {box}; list {pane}")
+            assert box["y"] >= pane["y"] - 1 and box["y"] + box["height"] <= (
+                pane["y"] + pane["height"] + 1
+            ), f"the saved row {box} is not scrolled into the list's view {pane}"
+            self.wait(
+                lambda: self.driver.get_attribute(row, "data-just-saved") is None,
+                timeout=10.0,
+                what="the saved-row mark to clear",
+            )
+            self.evidence("the mark cleared on its own")
