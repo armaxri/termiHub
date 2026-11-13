@@ -141,7 +141,7 @@ class TestProductRunAgent(
             self.driver.select("field-authMethod", "key")
             self.wait(lambda: self.driver.exists(self.KEY_PATH_INPUT), what="the key path field")
             self.driver.type(self.KEY_PATH_INPUT, str(native.client_key))
-            self.shot(label="editor")
+            self.shot(label="editor", expect=self.EDITOR_NAME)
             self.driver.click(self.EDITOR_SAVE)
             agent = self.require_agent(self.name)
             self.evidence(f"agent {agent['id']}: {agent.get('connectionState')}")
