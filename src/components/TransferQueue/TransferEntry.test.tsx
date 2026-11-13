@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { TransferEntryRow } from "./TransferEntry";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { TransferEntryRow, splitTransferLocation } from "./TransferEntry";
 import { TooltipProvider } from "@/components/ui";
 import type { TransferEntry } from "@/types/transfer";
 
@@ -67,7 +70,7 @@ describe("TransferEntryRow", () => {
   it("renders name, path, percent, and throughput for an active transfer", () => {
     render(entry());
     expect(query("transfer-row")?.textContent).toContain("report.pdf");
-    expect(container.textContent).toContain("/pub/report.pdf");
+    expect(query("transfer-row-path")?.getAttribute("title")).toBe("/pub/report.pdf");
     expect(container.textContent).toContain("78%");
     expect(container.textContent).toContain("23 KB/s");
   });
@@ -255,5 +258,46 @@ describe("TransferEntryRow", () => {
       expect(query("transfer-pause")).not.toBeNull();
       expect(query("transfer-cancel")).not.toBeNull();
     });
+  });
+  // #5625 (R-097): the path column showed only a prefix every row shares. It now
+  // shows the destination folder, truncated in the middle: the folder's own
+  // name never shrinks, and the full path is on the tooltip.
+  describe("path column", () => {
+    it("shows the destination folder with its name kept and the full path on hover", () => {
+      const full = "/Users/arne/work/git/termiHubDev/run/files-local/paste-here/copy-me.txt";
+      render(entry({ name: "copy-me.txt", path: full }));
+      const path = query("transfer-row-path");
+      expect(path?.getAttribute("title")).toBe(full);
+      expect(path?.querySelector(".transfer-row__path-head")?.textContent).toBe(
+        "/Users/arne/work/git/termiHubDev/run/files-local"
+      );
+      expect(path?.querySelector(".transfer-row__path-tail")?.textContent).toBe("/paste-here");
+      // The file name is its own column; the path cell does not repeat it.
+      expect(path?.textContent).not.toContain("copy-me.txt");
+    });
+
+    it("splits Windows and root-level paths", () => {
+      expect(splitTransferLocation("C:\\Users\\me\\Downloads\\a.txt", "a.txt")).toEqual({
+        head: "C:\\Users\\me",
+        tail: "\\Downloads",
+      });
+      expect(splitTransferLocation("/a.txt", "a.txt")).toEqual({ head: "", tail: "/" });
+      expect(splitTransferLocation("/srv/data", "other.bin")).toEqual({
+        head: "/srv",
+        tail: "/data",
+      });
+    });
+  });
+
+  // #5625 (R-100): file names use the UI font like the file list, not the
+  // terminal's monospace font.
+  it("sets file names in the UI font, not monospace", () => {
+    const css = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "TransferQueue.css"),
+      "utf8"
+    );
+    const rule = css.match(/\.transfer-row__name\s*\{([^}]*)\}/);
+    expect(rule).not.toBeNull();
+    expect(rule?.[1]).not.toContain("--font-mono");
   });
 });

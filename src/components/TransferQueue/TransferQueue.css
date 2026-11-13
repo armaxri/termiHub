@@ -88,21 +88,38 @@
   flex: 0 0 auto;
 }
 
+/* File names use the UI font, like the file list (#5625); monospace is for
+   terminal content only. */
 .transfer-row__name {
-  font-family: var(--font-mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 0 1 200px;
 }
 
+/* Destination folder, truncated in the middle (#5625): the parent path
+   (head) shrinks behind an ellipsis while the folder's own name (tail) stays
+   whole. The full path is on the cell's tooltip. */
 .transfer-row__path {
+  display: inline-flex;
+  min-width: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
   white-space: nowrap;
+  flex: 0 1 220px;
+}
+
+.transfer-row__path-head {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 0 1 150px;
+}
+
+.transfer-row__path-tail {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The shared Progress primitive, resized to a thin inline bar for the row. */
@@ -252,6 +269,56 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/*
+ * File-browser transfer summary (#5625): the sidebar no longer repeats the
+ * transfer list — one line pinned under the file list summarises the browsed
+ * session's transfers and opens the Transfers panel.
+ */
+.transfer-summary-chip__bar {
+  flex-shrink: 0;
+  display: flex;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-top: 1px solid var(--border-secondary);
+  background: var(--bg-secondary);
+}
+
+.transfer-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  max-width: 100%;
+  height: var(--control-height-sm);
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.transfer-summary-chip:hover {
+  --text-secondary: var(--text-secondary-on-selection);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.transfer-summary-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.transfer-summary-chip--failed {
+  color: var(--color-error);
+}
+
+.transfer-summary-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Minimized status-bar indicator — a compact count pill after the label. */

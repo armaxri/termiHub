@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ArrowDownUp, Minus } from "lucide-react";
 import { Button, Tooltip, toast, TOAST_AVOID_PROPS } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -30,10 +30,73 @@ function summarize(entries: TransferEntry[]): string {
 }
 
 /**
+ * How long the panel keeps showing a finished queue ("done") before it collapses
+ * into the status-bar indicator (#5625).
+ */
+export const TRANSFER_PANEL_AUTO_COLLAPSE_MS = 3000;
+
+/**
+ * Collapse the panel once its work is done (#5625, R-028): a moment after every
+ * transfer has **completed**, the panel minimizes into the status-bar indicator
+ * so it stops taking room from the terminal. Failed or cancelled rows keep it
+ * open — they need the user's attention.
+ *
+ * The collapse is the panel's own, not the user's, so it is undone the same way:
+ * when a new transfer starts after an auto-collapse, the panel comes back. A panel
+ * the user minimized stays minimized. Each finished set of transfers collapses at
+ * most once, so a user who reopens it from the indicator to look at the rows is
+ * not shut out again.
+ */
+function useAutoCollapse(
+  entries: TransferEntry[],
+  minimized: boolean,
+  setMinimized: (minimized: boolean) => void
+) {
+  const handledSignature = useRef<string | null>(null);
+  const autoCollapsed = useRef(false);
+
+  const allCompleted = entries.length > 0 && entries.every((e) => e.state === "completed");
+  const hasPending = entries.some((e) => !isTerminalTransferState(e.state));
+  const signature = allCompleted
+    ? entries
+        .map((e) => e.id)
+        .sort()
+        .join("\n")
+    : null;
+
+  useEffect(() => {
+    if (!minimized) {
+      // Shown again (by the user or below): the next collapse is a fresh one.
+      autoCollapsed.current = false;
+    } else if (hasPending && autoCollapsed.current) {
+      autoCollapsed.current = false;
+      setMinimized(false);
+    }
+  }, [hasPending, minimized, setMinimized]);
+
+  useEffect(() => {
+    if (signature === null) return;
+    if (minimized) {
+      // Already out of the way: this finished set needs no collapse.
+      handledSignature.current = signature;
+      return;
+    }
+    if (handledSignature.current === signature) return;
+    const timer = setTimeout(() => {
+      handledSignature.current = signature;
+      autoCollapsed.current = true;
+      setMinimized(true);
+    }, TRANSFER_PANEL_AUTO_COLLAPSE_MS);
+    return () => clearTimeout(timer);
+  }, [signature, minimized, setMinimized]);
+}
+
+/**
  * The connection-type-agnostic Transfer Queue panel (#1337), docked above the
  * status bar. Shows one {@link TransferEntryRow} per transfer with per-row
  * controls, a header summary + Minimize, and a footer with Clear Completed and
- * Cancel All.
+ * Cancel All (shown only while something can be cancelled, #5625). It is the
+ * one place transfers are listed; the file browser only links here (#5625).
  *
  * Renders nothing when the queue is empty or minimized — the minimized state is
  * surfaced by the status-bar `TransferQueueIndicator` instead.
@@ -54,6 +117,8 @@ export function TransferQueue() {
   // feedback (success only on a real state change, info on a no-op, error toast
   // on rejection). See {@link useTransferControls}.
   const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
+
+  useAutoCollapse(entries, minimized, setMinimized);
 
   const handleCancelAll = async () => {
     const pending = entries.filter((e) => !isTerminalTransferState(e.state));
@@ -130,15 +195,16 @@ export function TransferQueue() {
         >
           Clear completed
         </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={!hasPending}
-          data-testid="transfer-cancel-all"
-          onClick={handleCancelAll}
-        >
-          Cancel all
-        </Button>
+        {hasPending && (
+          <Button
+            variant="secondary"
+            size="sm"
+            data-testid="transfer-cancel-all"
+            onClick={handleCancelAll}
+          >
+            Cancel all
+          </Button>
+        )}
       </div>
     </div>
   );
