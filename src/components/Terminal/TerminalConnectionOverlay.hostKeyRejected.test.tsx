@@ -74,7 +74,24 @@ describe("TerminalConnectionOverlay — rejected host key (#5185)", () => {
   it("says the user rejected the key instead of 'Connection failed'", () => {
     renderRejected();
     expect(heading()).toBe("You rejected the host key");
-    expect(container.textContent).toMatch(/did not connect because you rejected/i);
+    expect(container.textContent).toMatch(/review the key again/i);
+  });
+
+  it("says it once: no red error box repeating the heading (#5662)", () => {
+    renderRejected();
+    expect(container.textContent).not.toContain(REJECTED);
+    expect(document.querySelector(".ui-connect-progress__error")).toBeNull();
+    // On screen (the live region aside), "rejected" appears only in the heading.
+    const visible = container.cloneNode(true) as HTMLElement;
+    visible.querySelector('[data-testid="content-overlay-live"]')?.remove();
+    expect(visible.textContent?.match(/rejected/gi) ?? []).toHaveLength(1);
+  });
+
+  it("announces the heading and the one-line hint, not the raw error (#5662)", () => {
+    renderRejected();
+    const live = query("content-overlay-live")?.textContent ?? "";
+    expect(live).toMatch(/You rejected the host key\..*review the key again/i);
+    expect(live).not.toContain(REJECTED);
   });
 
   it("offers Review key and Edit connection, and no Retry", () => {

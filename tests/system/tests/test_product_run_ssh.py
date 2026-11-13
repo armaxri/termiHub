@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from typing import Callable, ClassVar
 
 import pytest
 
@@ -106,6 +107,20 @@ class TestProductRunSsh(
             self.evidence(f"ssh-agent: {self.hosts.agent_reason or 'private agent with the client key'}")
             assert t.jump_port, "the fixture started no bastion"
 
+    #: Host-key layout problems measured while each screen was up, graded by
+    #: ``test_10b_hostkey_layout`` (#5662). Class-level: pytest makes a new
+    #: instance per test.
+    _hostkey_layout: ClassVar[dict[str, list[str]]] = {}
+
+    def _measure_hostkey_layout(self, screen: str, measure: Callable[[], list[str]]) -> None:
+        """Record ``screen``'s layout problems; a layout slip never fails the step itself."""
+        try:
+            problems = measure()
+        except Exception as exc:  # noqa: BLE001 - graded later, never fails this step
+            problems = [f"could not measure: {exc}"]
+        type(self)._hostkey_layout[screen] = problems
+        self.evidence(f"{screen} layout: {problems or 'ok'}")
+
     def _trusted(self, port: int) -> list[str]:
         """Fingerprints termiHub remembered for ``127.0.0.1:<port>`` (Accept for host)."""
         path = self.config_dir / "ssh_known_hosts.json"
@@ -134,6 +149,7 @@ class TestProductRunSsh(
             )
             shown = self.wait_hostkey_prompt()
             self.shot(label=None)
+            self._measure_hostkey_layout("first-contact prompt", self.hostkey_layout_problems)
             self.evidence(f"prompt: {shown}")
             self.evidence(f"server fingerprint (ssh-keygen): {want}")
             assert str(port) in shown["host"], f"host line {shown['host']!r} lacks port {port}"
@@ -206,6 +222,7 @@ class TestProductRunSsh(
                 )
                 shown = self.wait_hostkey_prompt()
                 self.shot(label=None)
+                self._measure_hostkey_layout("changed-key prompt", self.hostkey_layout_problems)
                 self.evidence(f"prompt: {shown}")
                 assert "mitm" in shown, "no changed-key warning for a host whose key differs"
                 # The previous key lives in known_hosts here; the prompt shows it
@@ -230,6 +247,7 @@ class TestProductRunSsh(
                 assert wrong in kept, "Reject replaced the recorded key"
                 assert not self._trusted(bastion), "Reject remembered the new key"
                 self.shot(label="after-reject")
+                self._measure_hostkey_layout("rejected-key screen", self.rejected_screen_problems)
             finally:
                 known_hosts.untrust(SSH_HOST, bastion)
         self.close_all_tabs()
@@ -541,3 +559,25 @@ class TestProductRunSsh(
                 )
             self.shot(label=None)
         self.close_all_tabs()
+
+    # ── host-key layout ──────────────────────────────────────────────────────
+    def test_10b_hostkey_layout(self):
+        with self.step(
+            "ssh.hostkey.layout",
+            "Host-key screens: fingerprints never break mid-string and keep a gap before"
+            " their copy button; the rejected-key screen says it once (#5662)",
+            expect="no new screen: graded on the ssh.hostkey.prompt / changed captures",
+            screenshot=False,
+        ):
+            self.require("ssh.hostkey.prompt", "ssh.hostkey.changed")
+            measured = type(self)._hostkey_layout
+            for screen in ("first-contact prompt", "changed-key prompt", "rejected-key screen"):
+                self.evidence(f"{screen}: {measured.get(screen, 'not measured')}")
+            missing = [
+                screen
+                for screen in ("first-contact prompt", "changed-key prompt", "rejected-key screen")
+                if screen not in measured
+            ]
+            assert not missing, f"not measured: {missing}"
+            problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
+            assert not problems, problems
