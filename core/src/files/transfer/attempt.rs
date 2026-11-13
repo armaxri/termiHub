@@ -33,6 +33,7 @@ use super::registry::{TransferHandle, TransferRegistry};
 use super::retry::{decide_resume, ResumeDecision, SourceFingerprint};
 use super::state::{TransferEvent, TransferStateTag};
 use super::{ProgressSink, ThroughputMeter, TransferPhase, TransferProgress, PROGRESS_THROTTLE};
+use crate::errors::FileError;
 use crate::files::copy::ChunkedCopyOutcome;
 
 /// Why an in-flight attempt stopped short of completion (partial bytes kept).
@@ -389,6 +390,32 @@ pub(super) fn apply_resume_gate(
     present: Option<u64>,
     backend: &'static str,
 ) {
+    apply_partial_gate(
+        cursor,
+        handle,
+        sink,
+        current,
+        PartialProbe::measured(present),
+        backend,
+    );
+}
+
+/// [`apply_resume_gate`] over a destination partial that may carry a reason
+/// why it cannot be trusted ([`PartialProbe::restart_note`]). When the gate
+/// then restarts from zero because the partial failed its byte-verify, that
+/// reason is emitted on the row, so the restart is never silent (#5611).
+pub(super) fn apply_partial_gate(
+    cursor: &mut ResumeCursor,
+    handle: &TransferHandle,
+    sink: &ProgressSink,
+    current: Option<SourceFingerprint>,
+    partial: PartialProbe,
+    backend: &'static str,
+) {
+    let PartialProbe {
+        present,
+        restart_note,
+    } = partial;
     if cursor.offset == 0 {
         rebase_cursor(cursor, handle, current);
         return;
@@ -417,7 +444,98 @@ pub(super) fn apply_resume_gate(
             );
         }
         ResumeDecision::RestartUnverified => {
-            info!(backend, transfer_id = %id, requested, ?present, "partial failed byte-verify; restarting from zero");
+            info!(backend, transfer_id = %id, requested, ?present, ?restart_note, "partial failed byte-verify; restarting from zero");
+            if let Some(note) = restart_note {
+                emit(handle, sink, TransferPhase::Transferring, None, Some(note));
+            }
+        }
+    }
+}
+
+/// What a resume probe found at the destination: the bytes present there and,
+/// when the partial could not be brought back to the checkpoint, why — the
+/// reason the row shows if the gate then restarts from zero (#5611).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) struct PartialProbe {
+    /// Bytes at the destination right now (`None` = absent / un-stattable).
+    pub present: Option<u64>,
+    /// Why the partial runs past the checkpoint and stays there.
+    pub restart_note: Option<String>,
+}
+
+impl PartialProbe {
+    /// A measured partial with nothing to explain.
+    pub fn measured(present: Option<u64>) -> Self {
+        Self {
+            present,
+            restart_note: None,
+        }
+    }
+}
+
+/// Row message for an upload whose remote partial runs past the checkpoint on
+/// a protocol that cannot shorten a remote file (FTP, an agent-hosted session).
+pub(super) const UNTRIMMABLE_PARTIAL_NOTE: &str =
+    "remote partial is past the last checkpoint and cannot be trimmed; restarting from start";
+
+/// Bring a resumed **upload's** remote partial back to the `requested`
+/// checkpoint before the resume gate checks it (#5611) — the remote twin of
+/// [`local_partial_size`].
+///
+/// After a crash the remote partial usually holds bytes written after the
+/// last persisted checkpoint, and the gate restarts a destination "longer than
+/// we wrote" from zero. `truncate(len)` shortens the remote file to `len`
+/// bytes and confirms it (SFTP `setstat` size, `truncate` in a container);
+/// once it succeeds the gate sees the checkpoint itself and resumes there,
+/// still byte-verified against the unchanged source.
+///
+/// A partial no longer than the checkpoint is left as is. A protocol that
+/// cannot shorten a remote file answers [`FileError::NotSupported`], and a
+/// failed trim any other error: the untrimmed size is reported, so the gate
+/// restarts from zero (a fresh upload truncates, which is always correct), and
+/// the probe carries the reason for the row.
+pub(super) async fn trim_remote_partial<F, Fut>(
+    present: Option<u64>,
+    requested: u64,
+    truncate: F,
+) -> PartialProbe
+where
+    F: FnOnce(u64) -> Fut,
+    Fut: Future<Output = Result<(), FileError>>,
+{
+    let Some(size) = present else {
+        return PartialProbe::measured(None);
+    };
+    if requested == 0 || size <= requested {
+        return PartialProbe::measured(present);
+    }
+    match truncate(requested).await {
+        Ok(()) => {
+            debug!(
+                present = size,
+                requested, "trimmed the remote partial to its checkpoint"
+            );
+            PartialProbe::measured(Some(requested))
+        }
+        Err(FileError::NotSupported) => {
+            info!(
+                present = size,
+                requested, "remote partial past the checkpoint cannot be trimmed"
+            );
+            PartialProbe {
+                present,
+                restart_note: Some(UNTRIMMABLE_PARTIAL_NOTE.to_string()),
+            }
+        }
+        Err(e) => {
+            warn!(present = size, requested, error = %e, "could not trim the remote partial");
+            PartialProbe {
+                present,
+                restart_note: Some(format!(
+                    "could not trim the remote partial to the last checkpoint ({e}); \
+                     restarting from start"
+                )),
+            }
         }
     }
 }
@@ -450,10 +568,6 @@ pub(super) async fn local_size(path: &str) -> Option<u64> {
 /// resume gate sees the checkpoint itself rather than a partial "longer than
 /// we wrote", which it would restart from zero. A shorter partial is left as
 /// is; a failed trim reports the untrimmed size, so the gate still restarts.
-#[cfg_attr(
-    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
-    allow(dead_code, reason = "only the offset-resuming download executors trim")
-)]
 pub(super) async fn local_partial_size(path: &str, requested: u64) -> Option<u64> {
     let present = local_size(path).await?;
     if requested == 0 || present <= requested {
@@ -1434,6 +1548,101 @@ mod tests {
         apply_resume_gate(&mut cursor, &handle, &sink, fp(100, 7), present, "T");
         assert_eq!(cursor.offset, 3, "resumes from the checkpoint");
         assert_eq!(std::fs::read(&path).expect("read"), b"abc");
+    }
+
+    /// #5611: a crashed upload's remote partial runs past the checkpoint. A
+    /// protocol that can shorten it is trimmed back, so the gate resumes from
+    /// the checkpoint instead of restarting from zero.
+    #[tokio::test]
+    async fn trim_remote_partial_trims_past_the_checkpoint_and_resumes() {
+        let trimmed = Arc::new(Mutex::new(Vec::new()));
+        let rec = trimmed.clone();
+        let partial = trim_remote_partial(Some(900), 600, |len| async move {
+            rec.lock().expect("lock").push(len);
+            Ok(())
+        })
+        .await;
+        assert_eq!(partial, PartialProbe::measured(Some(600)));
+        assert_eq!(trimmed.lock().expect("lock").as_slice(), [600]);
+
+        let (handle, sink, messages) = harness();
+        let mut cursor = ResumeCursor {
+            offset: 600,
+            total: 1000,
+            baseline: fp(1000, 7),
+        };
+        apply_partial_gate(&mut cursor, &handle, &sink, fp(1000, 7), partial, "T");
+        assert_eq!(cursor.offset, 600, "resumes from the checkpoint");
+        assert!(messages.lock().expect("lock").is_empty());
+    }
+
+    /// A partial at or below the checkpoint, an absent one, and a fresh
+    /// transfer are never trimmed.
+    #[tokio::test]
+    async fn trim_remote_partial_leaves_a_verified_partial_alone() {
+        let never = |_len: u64| async { panic!("must not trim") };
+        assert_eq!(
+            trim_remote_partial(Some(600), 600, never).await,
+            PartialProbe::measured(Some(600))
+        );
+        assert_eq!(
+            trim_remote_partial(Some(400), 600, never).await,
+            PartialProbe::measured(Some(400))
+        );
+        assert_eq!(
+            trim_remote_partial(None, 600, never).await,
+            PartialProbe::measured(None)
+        );
+        assert_eq!(
+            trim_remote_partial(Some(900), 0, never).await,
+            PartialProbe::measured(Some(900))
+        );
+    }
+
+    /// A protocol that cannot shorten a remote file keeps the untrimmed size,
+    /// so the gate restarts from zero — and the row says why.
+    #[tokio::test]
+    async fn an_untrimmable_remote_partial_restarts_with_a_reason() {
+        let partial = trim_remote_partial(Some(900), 600, |_| async {
+            Err(FileError::NotSupported)
+        })
+        .await;
+        assert_eq!(partial.present, Some(900));
+        let (handle, sink, messages) = harness();
+        let mut cursor = ResumeCursor {
+            offset: 600,
+            total: 1000,
+            baseline: fp(1000, 7),
+        };
+        apply_partial_gate(&mut cursor, &handle, &sink, fp(1000, 7), partial, "T");
+        assert_eq!(cursor.offset, 0, "restarts from zero");
+        assert_eq!(
+            messages.lock().expect("lock").as_slice(),
+            [UNTRIMMABLE_PARTIAL_NOTE]
+        );
+    }
+
+    /// A trim that fails restarts from zero with the failure on the row.
+    #[tokio::test]
+    async fn a_failed_remote_trim_restarts_with_the_error() {
+        let partial = trim_remote_partial(Some(900), 600, |_| async {
+            Err(FileError::PermissionDenied("/f".into()))
+        })
+        .await;
+        let (handle, sink, messages) = harness();
+        let mut cursor = ResumeCursor {
+            offset: 600,
+            total: 1000,
+            baseline: fp(1000, 7),
+        };
+        apply_partial_gate(&mut cursor, &handle, &sink, fp(1000, 7), partial, "T");
+        assert_eq!(cursor.offset, 0);
+        let messages = messages.lock().expect("lock");
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0].starts_with("could not trim the remote partial"),
+            "{messages:?}"
+        );
     }
 
     #[tokio::test]

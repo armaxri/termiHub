@@ -33,10 +33,11 @@ use tracing::{debug, warn};
 
 pub use super::attempt::STALL_TIMEOUT;
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
+    apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
     local_fingerprint, local_partial_size, map_copy_outcome, open_local_dest, open_local_read,
     probe_timed_out, rehydrate_start_offset, settle_attempt, settle_writer, stop_reason,
-    AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor, StopReason,
+    trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe, Probed, ProgressReporter,
+    ResumeCursor, StopReason,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -234,28 +235,36 @@ async fn run_attempts(
         if resume_mode == ResumeMode::RestartOnly {
             cursor.offset = 0;
         } else {
-            let resuming = cursor.offset > 0;
+            // A partial past the checkpoint (a crash kept writing after the
+            // last persisted one) is trimmed back to it first, so the gate
+            // resumes there (#5609 download, #5611 upload).
+            let offset = cursor.offset;
             let probe = async {
                 match direction {
                     TransferDirection::Download => (
                         channel.remote_fingerprint(remote_path).await,
-                        if resuming {
-                            local_partial_size(local_path, cursor.offset).await
+                        PartialProbe::measured(if offset > 0 {
+                            local_partial_size(local_path, offset).await
                         } else {
                             None
-                        },
+                        }),
                     ),
                     TransferDirection::Upload => (
                         local_fingerprint(local_path).await,
-                        if resuming {
-                            channel.remote_file_size(remote_path).await
+                        if offset > 0 {
+                            trim_remote_partial(
+                                channel.remote_file_size(remote_path).await,
+                                offset,
+                                |len| channel.truncate_file(remote_path, len),
+                            )
+                            .await
                         } else {
-                            None
+                            PartialProbe::default()
                         },
                     ),
                 }
             };
-            let (current, present) = match guard_probe(probe, handle, STALL_TIMEOUT).await {
+            let (current, partial) = match guard_probe(probe, handle, STALL_TIMEOUT).await {
                 Probed::Done(probed) => probed,
                 Probed::Cancelled => {
                     handle.transition(TransferEvent::Cancel);
@@ -276,7 +285,7 @@ async fn run_attempts(
                     continue;
                 }
             };
-            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+            apply_partial_gate(cursor, handle, sink, current, partial, BACKEND);
         }
 
         let progress = Arc::new(AtomicU64::new(cursor.offset));

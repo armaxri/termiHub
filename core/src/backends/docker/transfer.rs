@@ -63,6 +63,12 @@ const READ_SLICE_SCRIPT: &str = r#"if [ "$2" = 1 ]; then exec head -c "$3" < "$1
 tail -c "+$2" < "$1" | head -c "$3""#;
 /// Print the file's size in bytes.
 const SIZE_SCRIPT: &str = r#"exec wc -c < "$1""#;
+/// Shorten the file to `$2` bytes (#5611): `truncate` where the image has it,
+/// else POSIX `dd`, which truncates its output at the seek point when it copies
+/// nothing (`count=0`, no `conv=notrunc`). The caller re-measures the size, so
+/// a container offering neither fails the trim instead of guessing.
+const TRUNCATE_SCRIPT: &str = r#"if command -v truncate >/dev/null 2>&1; then exec truncate -s "$2" -- "$1"; fi
+exec dd if=/dev/null of="$1" bs=1 seek="$2" count=0 2>/dev/null"#;
 
 /// Print the real spelling of `$1` (#5330): symlinks, `.` and `..` resolved.
 /// A folder resolves with `pwd -P`, an existing entry with `readlink -f`, and
@@ -194,6 +200,18 @@ fn size_argv(path: &str) -> Vec<String> {
         SIZE_SCRIPT.into(),
         "sh".into(),
         path.into(),
+    ]
+}
+
+/// Argv shortening `path` to `len` bytes. Pure.
+fn truncate_argv(path: &str, len: u64) -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        TRUNCATE_SCRIPT.into(),
+        "sh".into(),
+        path.into(),
+        len.to_string(),
     ]
 }
 
@@ -492,6 +510,21 @@ impl DockerTransferTarget {
         parse_size(&out)
     }
 
+    /// Shorten a container file to `len` bytes and confirm the new size — how
+    /// a resumed upload drops the bytes a crash left past its last checkpoint
+    /// (#5611). Fails when the container can neither `truncate` nor `dd`, or
+    /// the file does not hold `len` bytes afterwards.
+    pub async fn truncate_file(&self, path: &str, len: u64) -> Result<(), FileError> {
+        let argv = truncate_argv(path, len);
+        exec_command(&self.client, &self.container_id, as_strs(&argv)).await?;
+        match self.file_size(path).await {
+            Some(size) if size == len => Ok(()),
+            other => Err(FileError::OperationFailed(format!(
+                "container file holds {other:?} bytes after the trim, expected {len}"
+            ))),
+        }
+    }
+
     /// The real spelling of `path` inside the container (symlinks, `.` and
     /// `..` resolved; a missing final name resolves through its parent), or
     /// `None` when it cannot be resolved (#5330).
@@ -711,6 +744,7 @@ mod tests {
             write_argv(HOSTILE, false),
             write_argv(HOSTILE, true),
             size_argv(HOSTILE),
+            truncate_argv(HOSTILE, 5),
         ] {
             // The path is exactly one argv element after the `sh` $0 marker,
             // and the script itself never contains it.
@@ -735,6 +769,7 @@ mod tests {
             APPEND_SCRIPT,
             SIZE_SCRIPT,
             READ_SLICE_SCRIPT,
+            TRUNCATE_SCRIPT,
         ] {
             // Every `$` is a quoted positional (`"$1"` / `"+$2"` / `"$3"`), so
             // no path byte is ever word-split, globbed, or evaluated.
@@ -753,6 +788,44 @@ mod tests {
         let argv = read_slice_argv("/f", 262_144, 4096);
         assert_eq!(argv[5..], ["262145", "4096"]);
         assert!(READ_SLICE_SCRIPT.contains(r#"head -c "$3""#));
+    }
+
+    /// The trim script really shortens a file to `$2` bytes — through
+    /// `truncate` and through the `dd` fallback — and leaves a hostile name
+    /// intact (#5611). Runs the script with the host's `sh`.
+    #[cfg(unix)]
+    #[test]
+    fn truncate_script_shortens_the_file_with_truncate_or_dd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = tempfile::tempdir().expect("scratch home");
+        let file = dir.path().join("-x '$(id)`id`; \"q\" .part");
+        for (label, path) in [("truncate", "/usr/bin:/bin"), ("dd", "")] {
+            std::fs::write(&file, b"0123456789").expect("seed");
+            let argv = truncate_argv(file.to_str().expect("utf8"), 4);
+            let mut cmd = std::process::Command::new("/bin/sh");
+            cmd.args(&argv[1..]).env_clear().env("HOME", home.path());
+            if path.is_empty() {
+                // No `truncate` on PATH: only the absolute `dd` fallback runs.
+                let bin = tempfile::tempdir().expect("bin dir");
+                let dd = which_dd();
+                std::os::unix::fs::symlink(dd, bin.path().join("dd")).expect("link dd");
+                cmd.env("PATH", bin.path());
+                let status = cmd.status().expect("run sh");
+                assert!(status.success(), "{label}");
+            } else {
+                cmd.env("PATH", path);
+                assert!(cmd.status().expect("run sh").success(), "{label}");
+            }
+            assert_eq!(std::fs::read(&file).expect("read"), b"0123", "{label}");
+        }
+    }
+
+    #[cfg(unix)]
+    fn which_dd() -> &'static str {
+        ["/bin/dd", "/usr/bin/dd"]
+            .into_iter()
+            .find(|p| std::path::Path::new(p).exists())
+            .expect("dd on the host")
     }
 
     #[test]
