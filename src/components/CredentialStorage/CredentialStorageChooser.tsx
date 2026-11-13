@@ -1,8 +1,8 @@
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode } from "@/types/credential";
 import { markCredentialStorageChosen, switchCredentialStore } from "@/services/api";
-import { Button, Modal, RadioGroup } from "@/components/ui";
+import { Button, Modal, RadioGroup, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import {
@@ -18,6 +18,13 @@ const DEFAULT_CHOICE: CredentialStorageMode = "os_keychain";
 
 type Step = "choose" | "master_password";
 
+/** One confirmation per settled choice (#5630), naming where passwords go. */
+const CHOICE_CONFIRMATION: Record<CredentialStorageMode, string> = {
+  os_keychain: "Passwords will be stored in the OS keychain.",
+  master_password: "Passwords will be stored in your master-password vault.",
+  none: "termiHub will not save passwords.",
+};
+
 /**
  * The one-time "Where should termiHub keep passwords?" chooser (#5187), shown
  * the first time a secret is about to be saved while no storage choice exists.
@@ -30,6 +37,8 @@ type Step = "choose" | "master_password";
  *   saved, and the next save asks again.
  * - Focus opens on the selected option, never the × (#5550); Enter on an
  *   option or a password field presses the primary action.
+ * - Create vault stays disabled until the master password is valid and
+ *   confirmed; a settled choice is confirmed with one toast (#5630).
  *
  * Nothing is written to any store here — the chooser only sets the store up.
  * The waiting save flow writes the secret afterwards through its usual path,
@@ -48,13 +57,8 @@ export function CredentialStorageChooser() {
   const [error, setError] = useState("");
   const [shownOpen, setShownOpen] = useState(open);
   const primaryRef = useRef<HTMLButtonElement>(null);
-  // The tallest the body has been since the chooser opened. Both steps keep
-  // it as their min-height, so the centred dialog's title, close button and
-  // footer stay put when moving between steps instead of jumping (#5560).
-  // A callback ref kept in state: the Radix portal mounts the body after this
-  // component's own commit, so a plain ref would be read too early.
-  const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
-  const [bodyMinHeight, setBodyMinHeight] = useState(0);
+  // Each step's body sizes to its own content (#5630): carrying the choose
+  // step's taller height over left an empty band above the vault footer.
 
   // Reset whenever the chooser opens, during render so a stale choice or a
   // typed master password never shows for a frame.
@@ -66,25 +70,8 @@ export function CredentialStorageChooser() {
       setPassword("");
       setConfirm("");
       setError("");
-      setBodyMinHeight(0);
     }
   }
-
-  // Measured after every render (step change, inline error) and on resize
-  // (late font load). The value only ever grows, so there is no loop.
-  const growBodyMinHeight = useCallback((el: HTMLElement) => {
-    const height = el.offsetHeight;
-    setBodyMinHeight((prev) => (height > prev ? height : prev));
-  }, []);
-  useLayoutEffect(() => {
-    if (bodyEl) growBodyMinHeight(bodyEl);
-  });
-  useLayoutEffect(() => {
-    if (!bodyEl || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => growBodyMinHeight(bodyEl));
-    observer.observe(bodyEl);
-    return () => observer.disconnect();
-  }, [bodyEl, growBodyMinHeight]);
 
   const cancel = useCallback(() => resolveStorageChoice("canceled"), [resolveStorageChoice]);
 
@@ -115,6 +102,7 @@ export function CredentialStorageChooser() {
         await loadCredentialStoreStatus();
       }
       resolveStorageChoice(choice);
+      toast.success(CHOICE_CONFIRMATION[choice]);
     } catch (err) {
       setError(errorMessage(err));
       // Keep the async Button in its error path; the inline error is the feedback.
@@ -131,6 +119,9 @@ export function CredentialStorageChooser() {
 
   const settingUpVault = step === "master_password";
   const advancesToVaultStep = choice === "master_password" && !settingUpVault;
+  // Create vault cannot succeed before both fields are valid and match, so it
+  // says so by being disabled; the live hint and mismatch line say why (#5630).
+  const vaultInvalid = settingUpVault && validateNewMasterPassword(password, confirm) !== null;
 
   // Radix radios swallow Enter (WAI-ARIA; they preventDefault it), and a lone
   // text field has no form to submit, so Enter there would do nothing. Route it to the primary action;
@@ -181,6 +172,7 @@ export function CredentialStorageChooser() {
             ref={primaryRef}
             variant="primary"
             onClick={advancesToVaultStep ? goToVaultStep : handleContinue}
+            disabled={vaultInvalid}
             errorToast={false}
             pendingLabel="Setting up…"
             data-testid="credential-storage-chooser-continue"
@@ -190,19 +182,17 @@ export function CredentialStorageChooser() {
         </>
       }
     >
-      <div
-        ref={setBodyEl}
-        className="credential-storage-chooser"
-        style={bodyMinHeight > 0 ? { minHeight: bodyMinHeight } : undefined}
-        data-testid="credential-storage-chooser-body"
-      >
+      <div className="credential-storage-chooser" data-testid="credential-storage-chooser-body">
         {settingUpVault ? (
           <>
             <p className="credential-storage-chooser__text">
               Choose a strong password to encrypt your saved passwords. termiHub asks for it once
               per session to unlock the vault.
             </p>
-            <div data-testid="credential-storage-chooser-master-password-setup">
+            <div
+              className="credential-storage-chooser__setup"
+              data-testid="credential-storage-chooser-master-password-setup"
+            >
               <MasterPasswordSetupFields
                 password={password}
                 confirm={confirm}
