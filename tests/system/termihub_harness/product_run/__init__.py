@@ -8,7 +8,9 @@ pytest gets ``--product-run`` (see ``conftest.py``).
 * :mod:`.recorder` — status / results / screenshot manifest files of one run.
 * :mod:`.server` — the loopback server behind the progress page's Done button.
 * :mod:`.ui` — :class:`ProductRunUi`, the suite mixin (steps, screenshots,
-  human steps, the isolated profile).
+  human steps, the isolated profile); :mod:`.hover` — real-pointer / forced hover.
+* :mod:`.review` — the UI-review hand-off (``<run>/review/``), :mod:`.review_schema`
+  the finding schema, :mod:`.review_merge` validate + dedupe reviewers' findings.
 """
 
 from .config import InputError, ProductRunInputs, load_inputs, parse_inputs
