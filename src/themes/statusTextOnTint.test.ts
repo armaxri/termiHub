@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "fs";
-import { join, dirname, relative } from "path";
+import { join, dirname, relative, sep } from "path";
 import { fileURLToPath } from "url";
 import { contrastRatio } from "./contrast";
 import { COLOR_TO_CSS_VAR } from "./engine";
@@ -179,7 +179,7 @@ interface Pair {
  */
 function tintPairs(): Pair[] {
   const all = cssFiles(SRC_DIR).flatMap((path) =>
-    rules(readFileSync(path, "utf8"), relative(SRC_DIR, path))
+    rules(readFileSync(path, "utf8"), relative(SRC_DIR, path).split(sep).join("/"))
   );
   const pairs: Pair[] = [];
   for (const r of all) {
