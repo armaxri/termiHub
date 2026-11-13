@@ -119,8 +119,8 @@ export interface ThemeDefinition {
    * Optional opaque surfaces for selected rows in the sidebar (#5562), drawn
    * on `sidebarBg`. Without it, those rows paint the `--bg-selected` /
    * `--bg-selected-hover` accent tints (see `styles/variables.css`) and carry
-   * no indicator bar. A theme built from a fixed palette (Solarized Light)
-   * sets palette colours here, so a selection never reads as a blended,
+   * no indicator bar. A theme built from a fixed palette (Solarized Light
+   * and Dark) sets palette colours here, so a selection never reads as a blended,
    * off-palette grey. Built-in themes only: custom and plugin themes always
    * use the tint defaults.
    */

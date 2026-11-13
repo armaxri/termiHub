@@ -629,7 +629,7 @@ describe("solarized light selection and filled buttons (#5562)", () => {
     expect(style.getPropertyValue("--sidebar-selected-bg")).toBe(selection.bg);
     expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe(selection.bgHover);
     expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe(selection.indicator);
-    for (const other of ["dark", "light", "solarized-dark"]) {
+    for (const other of ["dark", "light"]) {
       applyTheme(other);
       expect(style.getPropertyValue("--sidebar-selected-bg")).toBe("");
       expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe("");
@@ -657,6 +657,67 @@ describe("solarized light selection and filled buttons (#5562)", () => {
     expect(css).toMatch(/--sidebar-selected-bg:\s*var\(--bg-selected\);/);
     expect(css).toMatch(/--sidebar-selected-hover-bg:\s*var\(--bg-selected-hover\);/);
     expect(css).toMatch(/--sidebar-selected-indicator:\s*transparent;/);
+  });
+});
+
+/**
+ * Solarized Dark selected rows (#5582). The sidebar is already base02, so the
+ * Light recipe (one step towards the content surface) maps to base03: the
+ * selected row sits at the same depth as the active tab and the editor, with
+ * the canonical blue bar of the activity bar on its left edge. The darkened
+ * accentColor (for white button labels) misses 3:1 there, so the bar does not
+ * use it. Hovering a selected row lifts it to the theme's hover tone.
+ */
+describe("solarized dark selection (#5582)", () => {
+  const { colors, selection } = solarizedDarkTheme;
+  if (!selection) throw new Error("solarized dark defines no selection surfaces");
+  const TOKENS = ["textPrimary", "textSecondaryOnSelection", "textMutedOnSelection"] as const;
+  const PALETTE = new Set(Object.values(SOLARIZED_PALETTE));
+
+  it("selected rows are base03 with a canonical blue bar, hovered rows the hover tone", () => {
+    expect(selection.bg).toBe(SOLARIZED_PALETTE.base03);
+    expect(selection.bgHover).toBe(colors.bgHover);
+    expect(selection.indicator).toBe(SOLARIZED_PALETTE.blue);
+    expect(selection.indicator).toBe(colors.activityBarIndicator);
+    expect(PALETTE.has(selection.bg)).toBe(true);
+    expect(PALETTE.has(selection.indicator)).toBe(true);
+  });
+
+  for (const [state, bg] of [
+    ["selected", selection.bg],
+    ["hovered selected", selection.bgHover],
+  ] as const) {
+    for (const token of TOKENS) {
+      it(`${token} (${colors[token]}) meets AA on the ${state} row (${bg})`, () => {
+        expect(contrastRatio(colors[token], bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+    it(`the ${state} row stays distinct from the sidebar`, () => {
+      expect(contrastRatio(bg, colors.sidebarBg)).toBeGreaterThanOrEqual(1.1);
+    });
+    it(`the indicator bar reaches 3:1 on the ${state} row`, () => {
+      expect(contrastRatio(selection.indicator, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+    });
+  }
+
+  it("the indicator bar reaches 3:1 against the sidebar it borders", () => {
+    expect(contrastRatio(selection.indicator, colors.sidebarBg)).toBeGreaterThanOrEqual(
+      UI_COMPONENT_MIN
+    );
+  });
+
+  it("hovering a selected row visibly changes it", () => {
+    expect(contrastRatio(selection.bg, selection.bgHover)).toBeGreaterThanOrEqual(1.05);
+  });
+
+  it("applying the theme sets the sidebar selection tokens", () => {
+    applyTheme("solarized-dark");
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe(selection.bg);
+    expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe(selection.bgHover);
+    expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe(selection.indicator);
+    applyTheme("dark");
+    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe("");
   });
 });
 

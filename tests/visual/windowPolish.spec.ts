@@ -6,7 +6,8 @@
  *   the scrollbar gutter reserved (the Appearance column was 13px wider in one
  *   capture than in another);
  * - the window toolbar shows three groups split by visible separators;
- * - a selected connection row in Solarized Light is base2 with an accent bar.
+ * - a selected connection row in Solarized Light is base2 with an accent bar;
+ *   in Solarized Dark it is base03 with the canonical blue bar (#5582).
  *
  * Screenshots land in the usual screens/ folder for human review.
  */
@@ -128,29 +129,49 @@ test("the window toolbar shows session, macro and layout groups (#5559)", async 
   await testInfo.attach("toolbar", { path: file, contentType: "image/png" });
 });
 
-test("a selected Solarized Light connection row is base2 with an accent bar (#5562)", async ({
-  page,
-}, testInfo) => {
-  await boot(page);
-  await page.evaluate(() => window.__visual.applyTheme("solarized-light"));
-  const row = page.locator(".connection-tree__item").first();
-  await row.waitFor();
-  await row.click();
-  await expect(row).toHaveClass(/connection-tree__item--selected/);
-  // Move the pointer away so the row shows its resting selected state.
-  await page.mouse.move(0, 0);
-  await settle(page);
-  await page.waitForTimeout(200);
-  const { bg, shadow, sidebar } = await row.evaluate((el) => ({
-    bg: getComputedStyle(el).backgroundColor,
-    shadow: getComputedStyle(el).boxShadow,
-    sidebar: getComputedStyle(el.closest("[data-testid=sidebar]")!).backgroundColor,
-  }));
-  expect(bg).toBe("rgb(238, 232, 213)"); // base2
-  expect(sidebar).toBe("rgb(253, 246, 227)"); // base3
-  expect(shadow).toContain("rgb(31, 111, 166)"); // accent bar
-  expect(shadow).toContain("inset");
-  const file = join(SCREENS, "window-polish", "solarized-light-selected-row.png");
-  await page.locator("[data-testid=sidebar]").screenshot({ path: file, animations: "disabled" });
-  await testInfo.attach("selected row (solarized light)", { path: file, contentType: "image/png" });
-});
+const SELECTED_ROWS = [
+  {
+    theme: "solarized-light",
+    title: "a selected Solarized Light connection row is base2 with an accent bar (#5562)",
+    bg: "rgb(238, 232, 213)", // base2
+    sidebar: "rgb(253, 246, 227)", // base3
+    bar: "rgb(31, 111, 166)", // accentColor
+  },
+  {
+    theme: "solarized-dark",
+    title: "a selected Solarized Dark connection row is base03 with a blue bar (#5582)",
+    bg: "rgb(0, 43, 54)", // base03
+    sidebar: "rgb(7, 54, 66)", // base02
+    bar: "rgb(38, 139, 210)", // blue, canonical
+  },
+] as const;
+
+for (const expected of SELECTED_ROWS) {
+  test(expected.title, async ({ page }, testInfo) => {
+    await boot(page);
+    await page.evaluate((t) => window.__visual.applyTheme(t), expected.theme);
+    const row = page.locator(".connection-tree__item").first();
+    await row.waitFor();
+    await row.click();
+    await expect(row).toHaveClass(/connection-tree__item--selected/);
+    // Move the pointer away so the row shows its resting selected state.
+    await page.mouse.move(0, 0);
+    await settle(page);
+    await page.waitForTimeout(200);
+    const { bg, shadow, sidebar } = await row.evaluate((el) => ({
+      bg: getComputedStyle(el).backgroundColor,
+      shadow: getComputedStyle(el).boxShadow,
+      sidebar: getComputedStyle(el.closest("[data-testid=sidebar]")!).backgroundColor,
+    }));
+    expect(bg).toBe(expected.bg);
+    expect(sidebar).toBe(expected.sidebar);
+    expect(shadow).toContain(expected.bar);
+    expect(shadow).toContain("inset");
+    const file = join(SCREENS, "window-polish", `${expected.theme}-selected-row.png`);
+    await page.locator("[data-testid=sidebar]").screenshot({ path: file, animations: "disabled" });
+    await testInfo.attach(`selected row (${expected.theme})`, {
+      path: file,
+      contentType: "image/png",
+    });
+  });
+}
