@@ -96,6 +96,7 @@ describe("BackupExportDialog labels and layout (#5613)", () => {
     vi.clearAllMocks();
     vi.mocked(listBackupSections).mockResolvedValue(SECTIONS);
     vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_UNAVAILABLE);
+    vi.mocked(localOpenFolder).mockResolvedValue();
   });
 
   afterEach(() => {
