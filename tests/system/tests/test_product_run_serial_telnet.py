@@ -349,7 +349,7 @@ class TestProductRunTelnet(_PhaseBase):
                 self._type_form_password(TELNET_PASSWORD)
             else:
                 self.evidence("no Password field (no credential store yet): asked at connect")
-            self.shot(label="editor")
+            self.shot(label="editor", expect="connection-editor-name-input")
             before = len(srv.sessions)
             self._click_editor_save(True)
             # The tab opens once the connect has its password: with no stored

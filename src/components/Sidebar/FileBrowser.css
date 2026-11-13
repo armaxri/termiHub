@@ -299,6 +299,11 @@
     display: none;
   }
 
+  /* The active sort's column is hidden: the Name header says so (#5671). */
+  .file-browser__col-sorted-by--size {
+    display: inline-flex;
+  }
+
   .file-browser__list {
     --file-list-modified-space: 0px;
     --file-list-size-space: 0px;
@@ -311,6 +316,10 @@
   .file-browser__col--modified,
   .file-browser__modified {
     display: none;
+  }
+
+  .file-browser__col-sorted-by--modified {
+    display: inline-flex;
   }
 
   .file-browser__list {
@@ -430,24 +439,6 @@
   margin-top: var(--spacing-xs);
 }
 
-/* Transfer footer (issue 1247, consolidated UX-020 / #2905): pinned below the
-   live file list. Rows are the shared Transfer Queue row in its compact variant
-   (see TransferQueue.css `.transfer-row--compact`) so the footer and the docked
-   panel share one row/control component and one data source. The footer now
-   retains terminal rows (single source of truth), so the list is capped and
-   scrolls; the file list above stays scrollable and live. */
-.file-browser__transfers {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  max-height: 148px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border-secondary);
-  background: var(--bg-secondary);
-}
-
 /* Filter + sort sub-bar (issue 1361) */
 .file-browser__subbar {
   display: flex;
@@ -511,7 +502,35 @@
   flex-shrink: 0;
 }
 
-/* Bottom status bar: drop hint (local) + N-selected indicator */
+/* "· sorted by size ↓" on the Name header (#5671): hidden while the sorted
+   column shows its own caret; the container queries above (and `--always`,
+   for a column the listing does not render) reveal it. */
+.file-browser__col-sorted-by {
+  display: none;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-accent);
+}
+
+.file-browser__col-sorted-by.file-browser__col-sorted-by--always {
+  display: inline-flex;
+}
+
+/* Tick slot of the "Sort by" sub-menu rows: keeps its room when unchecked so
+   the labels align (#5671). */
+.file-sort-menu__tick {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--spacing-lg);
+  color: var(--accent-color);
+}
+
+/* Bottom status bar: the N-selected indicator */
 .file-browser__statusbar {
   flex-shrink: 0;
   display: flex;
@@ -521,12 +540,6 @@
   border-top: 1px solid var(--border-secondary);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-}
-
-.file-browser__drop-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
 }
 
 .file-browser__selected-count {

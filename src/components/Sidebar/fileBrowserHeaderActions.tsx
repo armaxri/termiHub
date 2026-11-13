@@ -1,8 +1,9 @@
 import {
-  ArrowUp,
   ClipboardPaste,
   CodeXml,
   Columns2,
+  Copy,
+  CornerLeftUp,
   ExternalLink,
   Eye,
   FilePlus,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import type React from "react";
 import type { FileBrowserAction } from "./FileBrowserActions";
+import { FileSortSubmenu, type FileSort } from "./FileSortSubmenu";
 
 /** What {@link buildFileBrowserActions} needs to know about the browser. */
 export interface FileBrowserActionsInput {
@@ -44,6 +46,11 @@ export interface FileBrowserActionsInput {
   onPaste: () => void;
   onNewFile: () => void;
   onNewFolder: () => void;
+  /** Copy the current folder's full path to the clipboard (#5624). */
+  onCopyPath: () => void;
+  /** The file list's active sort, offered as the "Sort by" sub-menu (#5671). */
+  sort: FileSort;
+  onSort: (sort: FileSort) => void;
 }
 
 /** Whether `path` is a filesystem root ("/" or a bare drive like "C:/"). */
@@ -65,7 +72,9 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       id: "up",
       label: "Go up one directory",
       tooltip: "Go up",
-      icon: <ArrowUp size={14} />,
+      // A parent-folder glyph, so Up never reads as Upload's tray-arrow (#5624).
+      icon: <CornerLeftUp size={14} />,
+      iconName: "corner-left-up",
       onClick: input.onNavigateUp,
       disabled: isRootPath(input.currentPath),
       testId: "file-browser-up",
@@ -115,6 +124,7 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       id: "upload",
       label: "Upload file",
       icon: <Upload size={14} />,
+      iconName: "upload",
       onClick: input.onUpload,
       testId: "file-browser-upload",
       group: "create",
@@ -136,11 +146,20 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     },
     {
       id: "go-to-cwd",
-      label: "Go to terminal working directory",
+      label: "Follow terminal folder",
+      tooltip: "Go to the terminal's working directory",
       icon: <FolderSync size={14} />,
       onClick: input.onNavigateToCwd,
       disabled: !input.hasCwd,
       testId: "file-browser-go-to-cwd",
+      group: "navigate",
+    },
+    {
+      id: "copy-path",
+      label: "Copy path",
+      icon: <Copy size={14} />,
+      onClick: input.onCopyPath,
+      testId: "file-browser-copy-path",
       group: "navigate",
     },
     {
@@ -154,13 +173,21 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     {
       id: "cd-here",
       label: input.canCd
-        ? "Send cd for this folder to the terminal"
-        : "Send cd (no active terminal)",
+        ? "Open this folder in terminal"
+        : "Open this folder in terminal (no active terminal)",
       icon: <Terminal size={14} />,
       onClick: input.onCdHere,
       disabled: !input.canCd,
       testId: "file-browser-cd-here",
       group: "terminal",
+    },
+    {
+      id: "sort",
+      label: "Sort by",
+      icon: null,
+      testId: "file-browser-sort-menu",
+      group: "view",
+      menuNode: <FileSortSubmenu sort={input.sort} onSort={input.onSort} />,
     },
     {
       id: "toggle-hidden",

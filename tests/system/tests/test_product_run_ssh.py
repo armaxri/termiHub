@@ -15,7 +15,8 @@ Raspberry Pi from ``product-run.local.json`` is a read-only real-device leg.
 Steps (in order): host-key prompt contents, key login, remembered key,
 changed-key warning + Reject, passphrase key, agent auth, password,
 keyboard-interactive, jump host, server-side drop + Reconnect, bastion drop +
-auto-reconnect, Raspberry Pi.
+auto-reconnect, Raspberry Pi, duplicate-session tab labels + the sidebar
+selection following the active tab (#5642, #5667).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from typing import Callable, ClassVar
 
 import pytest
 
@@ -107,6 +109,20 @@ class TestProductRunSsh(
             self.evidence(f"ssh-agent: {self.hosts.agent_reason or 'private agent with the client key'}")
             assert t.jump_port, "the fixture started no bastion"
 
+    #: Host-key layout problems measured while each screen was up, graded by
+    #: ``test_10b_hostkey_layout`` (#5662). Class-level: pytest makes a new
+    #: instance per test.
+    _hostkey_layout: ClassVar[dict[str, list[str]]] = {}
+
+    def _measure_hostkey_layout(self, screen: str, measure: Callable[[], list[str]]) -> None:
+        """Record ``screen``'s layout problems; a layout slip never fails the step itself."""
+        try:
+            problems = measure()
+        except Exception as exc:  # noqa: BLE001 - graded later, never fails this step
+            problems = [f"could not measure: {exc}"]
+        type(self)._hostkey_layout[screen] = problems
+        self.evidence(f"{screen} layout: {problems or 'ok'}")
+
     def _trusted(self, port: int) -> list[str]:
         """Fingerprints termiHub remembered for ``127.0.0.1:<port>`` (Accept for host)."""
         path = self.config_dir / "ssh_known_hosts.json"
@@ -135,6 +151,7 @@ class TestProductRunSsh(
             )
             shown = self.wait_hostkey_prompt()
             self.shot(label=None)
+            self._measure_hostkey_layout("first-contact prompt", self.hostkey_layout_problems)
             self.evidence(f"prompt: {shown}")
             self.evidence(f"server fingerprint (ssh-keygen): {want}")
             assert str(port) in shown["host"], f"host line {shown['host']!r} lacks port {port}"
@@ -207,6 +224,7 @@ class TestProductRunSsh(
                 )
                 shown = self.wait_hostkey_prompt()
                 self.shot(label=None)
+                self._measure_hostkey_layout("changed-key prompt", self.hostkey_layout_problems)
                 self.evidence(f"prompt: {shown}")
                 assert "mitm" in shown, "no changed-key warning for a host whose key differs"
                 # The previous key lives in known_hosts here; the prompt shows it
@@ -231,6 +249,7 @@ class TestProductRunSsh(
                 assert wrong in kept, "Reject replaced the recorded key"
                 assert not self._trusted(bastion), "Reject remembered the new key"
                 self.shot(label="after-reject")
+                self._measure_hostkey_layout("rejected-key screen", self.rejected_screen_problems)
             finally:
                 known_hosts.untrust(SSH_HOST, bastion)
         self.close_all_tabs()
@@ -482,8 +501,91 @@ class TestProductRunSsh(
             assert uname, "no uname line from the Pi"
         self.close_all_tabs()
 
+    # ── tab labels + sidebar follow (#5642, #5667) ───────────────────────────
+    def _tab_label(self, tab_id: str) -> str:
+        """The title the tab strip renders for ``tab_id`` (its tooltip carries it in full)."""
+        return self.driver.get_attribute(f"tab-{tab_id}", "title") or ""
+
+    def _sidebar_selected(self, connection_id: str) -> bool:
+        return self.driver.get_attribute(f"connection-item-{connection_id}", "aria-selected") == "true"
+
+    def test_09_duplicate_tabs_and_sidebar_follow(self):
+        first = unique_name("pr-ssh-dup")
+        other = unique_name("pr-ssh-other")
+        with self.step(
+            "ssh.tabs.duplicate-labels",
+            "Two sessions of one connection carry distinguishable tab labels",
+            expect="two tabs of the same connection, the second labelled with a '(2)' counter",
+        ):
+            native = self.need_native()
+            t = native.target
+            self.switch_to_connections_sidebar()
+            for name in (first, other):
+                self.create_ssh_connection(
+                    name, host=SSH_HOST, port=t.port, username=t.username,
+                    auth_method="key", key_path=str(native.client_key), connect=True,
+                )
+                self.accept_all_hostkeys(timeout=5.0)
+                self.wait_connected(self.tab_id_of(name))
+            self.connect_connection(first)
+            dup_tabs = self.wait(
+                lambda: (lambda ts: ts if len(ts) >= 2 else None)(
+                    [tab["id"] for tab in self._all_tabs() if tab.get("title") == first]
+                ),
+                what=f"a second {first!r} tab",
+            )
+            self.wait_connected(dup_tabs[-1])
+            labels = [self._tab_label(tab_id) for tab_id in dup_tabs]
+            self.evidence(f"tab labels of {first!r}: {labels}")
+            assert len(set(labels)) == len(labels), f"duplicate tabs share a label: {labels}"
+            assert any(label.endswith("(2)") for label in labels), labels
+        with self.step(
+            "ssh.sidebar.follows-tab",
+            "Switching tabs moves the sidebar selection to the active tab's connection",
+            expect="the sidebar row of the active tab's connection highlighted, no other row",
+        ):
+            self.require("ssh.tabs.duplicate-labels")
+            other_tab = self.tab_id_of(other)
+            for tab_id in (other_tab, dup_tabs[0]):
+                self.switch_to_tab(tab_id)
+                active = self.wait(
+                    lambda: (lambda a: a if a and a.get("id") == tab_id else None)(self.active_tab()),
+                    what="the tab to become active",
+                )
+                connection_id = active.get("connectionId")
+                self.evidence(f"active tab {active.get('title')!r} -> connection {connection_id!r}")
+                assert connection_id, "the SSH tab carries no saved-connection id"
+                self.wait(
+                    lambda: self._sidebar_selected(connection_id),
+                    timeout=10.0, what="the active tab's sidebar row to be selected",
+                )
+            self.shot(label=None)
+        self.close_all_tabs()
+
+    # ── host-key layout ──────────────────────────────────────────────────────
+    def test_10b_hostkey_layout(self):
+        with self.step(
+            "ssh.hostkey.layout",
+            "Host-key screens: fingerprints never break mid-string and keep a gap before"
+            " their copy button; the rejected-key screen says it once (#5662)",
+            expect="no new screen: graded on the ssh.hostkey.prompt / changed captures",
+            screenshot=False,
+        ):
+            self.require("ssh.hostkey.prompt", "ssh.hostkey.changed")
+            measured = type(self)._hostkey_layout
+            for screen in ("first-contact prompt", "changed-key prompt", "rejected-key screen"):
+                self.evidence(f"{screen}: {measured.get(screen, 'not measured')}")
+            missing = [
+                screen
+                for screen in ("first-contact prompt", "changed-key prompt", "rejected-key screen")
+                if screen not in measured
+            ]
+            assert not missing, f"not measured: {missing}"
+            problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
+            assert not problems, problems
+
     # ── editor layout ────────────────────────────────────────────────────────
-    def test_09_editor_layout(self):
+    def test_11_editor_layout(self):
         with self.step(
             "ssh.editor-layout",
             "SSH editor: hints under their own fields, ${VAR} note in the section header, "

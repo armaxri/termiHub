@@ -61,6 +61,10 @@ import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useSectionResize } from "@/hooks/useSectionResize";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
+import {
+  useSidebarFollowsActiveTab,
+  revealConnectionRow,
+} from "@/hooks/useSidebarFollowsActiveTab";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
 import { experimentalTypeIds } from "@/utils/experimentalTypes";
@@ -926,6 +930,13 @@ export function ConnectionList() {
     clearSelection: clearConnectionSelection,
     selectSingle: selectConnectionSingle,
   } = useTreeSelection(flatVisibleConnectionIds);
+
+  // The selected row follows the focused tab's saved connection (#5642).
+  const isKnownConnection = useCallback(
+    (id: string) => connections.some((c) => c.id === id),
+    [connections]
+  );
+  useSidebarFollowsActiveTab(isKnownConnection, selectConnectionSingle, revealConnectionRow);
 
   // Flat-list index lookup by node id, so each row can resolve its position in
   // the roving-nav item array (`treeNodes`) for tabindex and ref wiring.

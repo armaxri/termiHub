@@ -43,6 +43,8 @@ interface FileBrowserPathBarProps {
   disabled?: boolean;
   /** Breadcrumb segments are drag-to-move drop targets (default `true`). */
   dropTargets?: boolean;
+  /** Copy the full path; offered in the folded segments' menu (#5624). */
+  onCopyPath?: () => void;
 }
 
 /**
@@ -67,6 +69,7 @@ export const FileBrowserPathBar = forwardRef<FileBrowserPathBarHandle, FileBrows
       label = "Path",
       disabled = false,
       dropTargets = true,
+      onCopyPath,
     },
     ref
   ) {
@@ -151,6 +154,7 @@ export const FileBrowserPathBar = forwardRef<FileBrowserPathBarHandle, FileBrows
           testIdPrefix={testIdPrefix}
           label={label}
           dropTargets={dropTargets}
+          onCopyPath={onCopyPath}
         />
       </div>
     );

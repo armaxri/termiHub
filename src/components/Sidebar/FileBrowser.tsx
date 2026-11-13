@@ -39,7 +39,6 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
-import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { sessionPaneShowsOtherSession } from "@/store/slices/fileBrowsersSlice";
 import { findAgentConnectionType } from "@/utils/agentSessionType";
@@ -60,9 +59,8 @@ import {
   MenuItem,
   MenuSeparator,
 } from "@/components/ui";
-import { TransferEntryRow } from "@/components/TransferQueue";
+import { TransferSummaryChip } from "@/components/TransferQueue";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
-import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, localOpenFolder, localStat } from "@/services/api";
 import { sendInputDetached } from "@/services/detachedSessionInput";
@@ -428,12 +426,15 @@ function SortHeader({
   activeKey,
   direction,
   onToggle,
+  children,
 }: {
   label: string;
   col: FileSortKey;
   activeKey: FileSortKey;
   direction: SortDirection;
   onToggle: (col: FileSortKey) => void;
+  /** Extra content after the label (the Name header's "sorted by" hint, #5671). */
+  children?: React.ReactNode;
 }) {
   const active = activeKey === col;
   // `aria-sort` is only valid on columnheader/rowheader, and these headers are
@@ -452,6 +453,7 @@ function SortHeader({
       data-testid={`file-browser-sort-${col}`}
     >
       <span>{label}</span>
+      {children}
       {active &&
         (direction === "asc" ? (
           <ChevronUp size={10} className="file-browser__col-caret" />
@@ -459,6 +461,39 @@ function SortHeader({
           <ChevronDown size={10} className="file-browser__col-caret" />
         ))}
     </button>
+  );
+}
+
+/**
+ * "· sorted by size ↓" beside the Name header (#5671): the active sort column
+ * is not always on screen — Modified / Size hide with their headers at narrow
+ * widths (CSS container queries) or when the listing has no such data. The
+ * hint is visible exactly then: `always` when the column is not rendered at
+ * all, otherwise only inside the container query that hides that column.
+ */
+function SortedByHint({
+  sortKey,
+  direction,
+  always,
+}: {
+  sortKey: Exclude<FileSortKey, "name">;
+  direction: SortDirection;
+  always: boolean;
+}) {
+  return (
+    <span
+      className={`file-browser__col-sorted-by file-browser__col-sorted-by--${sortKey}${
+        always ? " file-browser__col-sorted-by--always" : ""
+      }`}
+      data-testid="file-browser-sorted-by"
+    >
+      · sorted by {sortKey}
+      {direction === "asc" ? (
+        <ChevronUp size={10} className="file-browser__col-caret" aria-label="ascending" />
+      ) : (
+        <ChevronDown size={10} className="file-browser__col-caret" aria-label="descending" />
+      )}
+    </span>
   );
 }
 
@@ -1162,15 +1197,6 @@ export function FileBrowser() {
   // toolbar Refresh button stays as a manual backstop.
   useLocalDirWatch(mode === "local", mode === "local" ? currentPath : null, refresh);
 
-  // The footer transfer list is fully consolidated with the docked Transfer
-  // Queue panel (UX-020 / #2905): both surfaces render from the one authoritative
-  // `transfers` projection region (#2229) via the shared {@link TransferEntryRow}
-  // (its compact variant here), so there is one data source and one row/control
-  // component — no divergent bespoke list. The footer shows the rows owned by the
-  // session this browser is showing (full lifecycle incl. terminal retention).
-  const { queue: transferQueue } = useProjectedTransfers();
-  const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
-  const removeTransfer = useAppStore((s) => s.removeTransfer);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   // The copy-cut clipboard is sourced from the authoritative client-scoped
   // file-browser region (#2228).
@@ -1855,6 +1881,15 @@ export function FileBrowser() {
     }
   }, [newFileName, createFile, requestWrite, currentPath]);
 
+  const copyCurrentPath = useCallback(() => {
+    writeClipboard(currentPath)
+      .then(() => toast.success("Copied path"))
+      .catch((err: unknown) => {
+        frontendLog("file_browser", `Copy path failed: ${errorMessage(err)}`);
+        toast.error(`Failed to copy path: ${errorMessage(err)}`);
+      });
+  }, [currentPath]);
+
   const headerActions = buildFileBrowserActions({
     mode: mode === "session" ? "session" : "local",
     currentPath,
@@ -1890,6 +1925,9 @@ export function FileBrowser() {
     onPaste: handlePaste,
     onNewFile: () => setNewFileName(""),
     onNewFolder: () => setNewDirName(""),
+    onCopyPath: copyCurrentPath,
+    sort,
+    onSort: setSort,
   });
 
   // "none" mode — show placeholder
@@ -1958,18 +1996,6 @@ export function FileBrowser() {
     );
   }
 
-  // Transfers owned by the session this browser is showing (#1247 / #2905). Only
-  // these belong in the footer; other sessions' transfers live in the docked
-  // Transfer Queue panel. The list above stays live regardless. Sourced from the
-  // authoritative `transfers` region and filtered by session id, so the footer is
-  // the same single source of truth as the panel (full lifecycle incl. terminal
-  // retention). A byte-based session backend that registers no transfers leaves
-  // the footer empty as before.
-  const footerSessionId = sessionFileBrowserId;
-  const activeTransfers = footerSessionId
-    ? Object.values(transferQueue).filter((t) => t.sessionId === footerSessionId)
-    : [];
-
   return (
     <div
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
@@ -1990,6 +2016,7 @@ export function FileBrowser() {
             ref={pathBarRef}
             currentPath={currentPath}
             onNavigate={handleNavigatePath}
+            onCopyPath={copyCurrentPath}
           />
           <FileBrowserActions actions={headerActions} />
         </div>
@@ -2018,7 +2045,11 @@ export function FileBrowser() {
               activeKey={sort.key}
               direction={sort.dir}
               onToggle={toggleSort}
-            />
+            >
+              {sort.key !== "name" && (
+                <SortedByHint sortKey={sort.key} direction={sort.dir} always={!columns[sort.key]} />
+              )}
+            </SortHeader>
             {columns.modified && (
               <SortHeader
                 label="Modified"
@@ -2220,21 +2251,13 @@ export function FileBrowser() {
           </ContextMenuContent>
         </ContextMenuRoot>
       </FileBrowserDndProvider>
-      {(mode === "local" || selectedPaths.size > 0) && (
+      {/* The drop target announces itself only during a drag, via the drag
+          overlay, in both modes (#5624) — no permanent "Drop files here". */}
+      {selectedPaths.size > 0 && (
         <div className="file-browser__statusbar">
-          {mode === "local" && (
-            <span className="file-browser__drop-hint" data-testid="file-browser-drop-hint">
-              <Upload size={11} /> Drop files here
-            </span>
-          )}
-          {selectedPaths.size > 0 && (
-            <span
-              className="file-browser__selected-count"
-              data-testid="file-browser-selected-count"
-            >
-              {selectedPaths.size} selected
-            </span>
-          )}
+          <span className="file-browser__selected-count" data-testid="file-browser-selected-count">
+            {selectedPaths.size} selected
+          </span>
         </div>
       )}
       <ConfirmDeleteDialog
@@ -2273,23 +2296,9 @@ export function FileBrowser() {
         onKeepBoth={keepBothConflict}
         onCancel={cancelConflict}
       />
-      {activeTransfers.length > 0 && (
-        <div className="file-browser__transfers" data-testid="file-browser-transfers">
-          {activeTransfers.map((t) => (
-            <div key={t.id} data-testid="file-browser-transfer">
-              <TransferEntryRow
-                entry={t}
-                compact
-                onPause={handlePause}
-                onResume={handleResume}
-                onCancel={handleCancel}
-                onRetry={handleRetry}
-                onRemove={removeTransfer}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Transfers are listed only in the docked Transfers panel (#5625); the
+          sidebar shows a one-line summary of this session's that opens it. */}
+      <TransferSummaryChip sessionId={sessionFileBrowserId} />
     </div>
   );
 }

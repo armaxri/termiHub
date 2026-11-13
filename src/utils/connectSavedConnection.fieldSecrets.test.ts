@@ -128,8 +128,9 @@ describe("connectSavedConnection — schema field secrets (#4429)", () => {
       "ops",
       expect.stringContaining("SSH Password"),
       "password",
-      // The connection's name titles the prompt (#4475).
-      { allowSave: false, label: "Desk" }
+      // The connection's name sits on its own line (#4475); the field's label
+      // titles the prompt (#5656).
+      { allowSave: false, label: "Desk", secretLabel: "SSH Password" }
     );
     expect(openedSettings().sshPassword).toBe("typed-gateway");
     expect(mockedResolveFieldSecrets).not.toHaveBeenCalled();

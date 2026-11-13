@@ -126,6 +126,15 @@ class TransferQueueReads(ProjectionHarness):
     def entry_states(self) -> list[str]:
         return [e["state"] for e in self.queue_entries()]
 
+    def restore_panel(self) -> None:
+        """Un-minimize the panel via its indicator (the store has no direct setter)."""
+        if self.driver.exists(QUEUE_INDICATOR):
+            self.driver.click(QUEUE_INDICATOR)
+            self.wait(
+                lambda: not self.driver.exists(QUEUE_INDICATOR),
+                what="the panel to restore",
+            )
+
     def wait_for_queue_size(self, size: int, *, timeout: float = 30.0) -> list[dict]:
         return self.wait(
             lambda: (
@@ -287,6 +296,16 @@ class TestTransferQueueLiveTransfer(
         base = source_dir.rstrip("/")
         assert entry.get("path") == f"{base}/{dest}/{name}"
 
+        # #5625: with every transfer completed, the panel gets out of the way — it
+        # collapses into the status-bar indicator a moment later. Reopening it
+        # from the indicator keeps it open (that finished set collapses once).
+        self.wait(
+            lambda: self.driver.exists(QUEUE_INDICATOR),
+            what="the panel to collapse once the transfer completed",
+        )
+        assert not self.driver.exists(QUEUE)
+        self.restore_panel()
+
         # The panel renders the completed row and summarises it.
         assert self.driver.exists(ROW)
         assert self.driver.get_text(ROW_STATUS) == "done"
@@ -354,8 +373,12 @@ class TestTransferQueuePanel(TransferQueueReads, SystemTest):
                 lambda: all(e["state"] == "completed" for e in self.queue_entries()),
                 what="leftover rows to settle as completed",
             )
-            self.driver.click(CLEAR_COMPLETED)
+            # An all-completed queue auto-collapses the panel (#5625), so clear it
+            # through the region rather than racing that collapse to the button.
+            self.projection_dispatch_intent("transfer.clearCompleted", {})
             self.wait(lambda: self.queue_entries() == [], what="the queue to empty")
+        # Start the next test expanded, even if the panel auto-collapsed.
+        self.projection_dispatch_intent("transfer.setMinimized", {"minimized": False})
 
     # -- helpers ---------------------------------------------------------------
     def emit_progress(self, **overrides) -> None:
@@ -370,14 +393,6 @@ class TestTransferQueuePanel(TransferQueueReads, SystemTest):
         """
         self.projection_dispatch_intent("transfer.progress", {"progress": progress(**overrides)})
 
-    def restore_panel(self) -> None:
-        """Un-minimize the panel via its indicator (the store has no direct setter)."""
-        if self.driver.exists(QUEUE_INDICATOR):
-            self.driver.click(QUEUE_INDICATOR)
-            self.wait(
-                lambda: not self.driver.exists(QUEUE_INDICATOR),
-                what="the panel to restore",
-            )
 
     def wait_for_row_state(self, state: str, *, transfer_id: str = "t-1") -> dict:
         return self.wait(
@@ -477,13 +492,14 @@ class TestTransferQueuePanel(TransferQueueReads, SystemTest):
         # A settled row is retained, not dropped — that is the panel's contract.
         assert self.driver.exists(QUEUE)
 
-    def test_cancel_all_is_enabled_only_while_a_row_is_pending(self):
-        """Cancel All targets every non-terminal row and disables when none are."""
+    def test_cancel_all_is_shown_only_while_a_row_is_pending(self):
+        """Cancel All targets every non-terminal row and hides when none are (#5625)."""
         self.emit_progress(transferId="t-1", transferred=100)
         self.emit_progress(transferId="t-2", fileName="b.bin", transferred=200)
         self.wait_for_queue_size(2)
 
-        # Two pending rows ⇒ Cancel All is enabled (no `disabled` attribute).
+        # Two pending rows ⇒ Cancel All is shown and enabled.
+        assert self.driver.exists(CANCEL_ALL)
         assert self.driver.get_attribute(CANCEL_ALL, "disabled") is None
 
         self.driver.click(CANCEL_ALL)
@@ -494,11 +510,10 @@ class TestTransferQueuePanel(TransferQueueReads, SystemTest):
             what="both rows to be cancelled",
         )
 
-        # Nothing pending ⇒ Cancel All disables itself.
-        self.wait(
-            lambda: self.driver.get_attribute(CANCEL_ALL, "disabled") is not None,
-            what="Cancel All to disable",
-        )
+        # Nothing pending ⇒ Cancel All hides itself; the panel stays (cancelled
+        # rows keep it open).
+        self.wait(lambda: not self.driver.exists(CANCEL_ALL), what="Cancel All to hide")
+        assert self.driver.exists(QUEUE)
 
     def test_clear_completed_keeps_unfinished_rows(self):
         """Clear Completed drops only `completed` rows, keeping an active one."""

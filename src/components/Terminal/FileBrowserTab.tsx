@@ -18,6 +18,7 @@ import {
   connectionErrorHint,
   connectionErrorKindFromCode,
   isNetworkErrorKind,
+  isSelfExplainingErrorKind,
   type ConnectionErrorKind,
 } from "@/utils/connectionErrorHints";
 import { CONNECTING_TIMEOUT_MS, connectTimeoutMessage } from "@/utils/connectTimeout";
@@ -366,6 +367,7 @@ function FailureScreen({
   const hint = failure.aborted
     ? null
     : connectionErrorHint(backendFamilyFromSessionType(sessionType), failure.kind, getPlatform());
+  const selfExplaining = phase === "failed" && isSelfExplainingErrorKind(failure.kind);
   return (
     <ConnectProgress
       phase={phase}
@@ -374,8 +376,13 @@ function FailureScreen({
       typeLabel={typeLabel}
       typeIcon={typeIcon}
       startedAt={startedAt}
-      error={networkFailure ? undefined : failure.message}
-      announcement={[`${heading}.`, `${title}:`, failure.message].join(" ")}
+      // A rejected host key is said once, by the heading and its hint (#5662).
+      error={networkFailure || selfExplaining ? undefined : failure.message}
+      announcement={[
+        `${heading}.`,
+        `${title}:`,
+        selfExplaining ? (hint?.text ?? failure.message) : failure.message,
+      ].join(" ")}
       autoFocusPrimaryAction={isVisible}
       // Only the client's own deadline knows how long it waited.
       timeText={

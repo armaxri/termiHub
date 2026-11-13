@@ -1948,9 +1948,10 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(0);
   });
 
-  it("shows a persistent 'Drop files here' hint in local mode", async () => {
+  it("shows no permanent 'Drop files here' footer (only the drag overlay, #5624)", async () => {
     await renderLocalAt("/home");
-    expect(container.querySelector('[data-testid="file-browser-drop-hint"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-browser-drop-hint"]')).toBeNull();
+    expect(container.textContent).not.toContain("Drop files here");
   });
 
   it("sorts files by size when the size column header is clicked", async () => {

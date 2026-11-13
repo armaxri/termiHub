@@ -340,7 +340,7 @@ fn authorize_keychain_export(manager: &CredentialManager) -> Result<(), VaultErr
 pub fn authorize_import(manager: &CredentialManager) -> Result<(), VaultError> {
     match manager.get_mode() {
         StorageMode::None => Err(VaultError::StoreUnavailable {
-            message: "Credential storage is turned off. Choose Master Password or OS Keychain \
+            message: "Credential storage is turned off. Choose OS Keychain or Master password \
                       first, then import the vault."
                 .to_string(),
         }),

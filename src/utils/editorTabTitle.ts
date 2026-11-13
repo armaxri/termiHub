@@ -39,7 +39,9 @@ export function getEditorSessionQualifier(
   if (sessionKey.startsWith(SESSION_KEY_PREFIX)) {
     const ownerId = sessionKey.slice(SESSION_KEY_PREFIX.length);
     const owner = allTabs.find((t) => t.id === ownerId);
-    return owner?.title || undefined;
+    // The owner's *display* title, so two sessions of one connection (`web`,
+    // `web (2)`, #5667) qualify their editors distinctly.
+    return owner ? getTabDisplayTitle(owner, allTabs) || undefined : undefined;
   }
 
   return undefined;
@@ -73,4 +75,29 @@ export function getEditorTabDisplayTitle(
   if (!isAmbiguous) return tab.title;
 
   return `${tab.title}${EDITOR_TAB_QUALIFIER_SEPARATOR}${qualifier}`;
+}
+
+/**
+ * Visible title for any tab (#5667). Editor tabs are disambiguated by session
+ * ({@link getEditorTabDisplayTitle}); session tabs opened from the same saved
+ * connection under the same title get a counter suffix in tab order — the
+ * first keeps its plain title, later ones read `name (2)`, `name (3)`, … — so
+ * duplicate sessions of one connection can be told apart. Tabs without a saved
+ * connection keep their title.
+ *
+ * @param tab The tab whose display title is wanted.
+ * @param allTabs All tabs the duplicates are counted against (the current tab group).
+ */
+export function getTabDisplayTitle(tab: TerminalTab, allTabs: readonly TerminalTab[]): string {
+  if (tab.contentType === "editor") return getEditorTabDisplayTitle(tab, allTabs);
+  if (!tab.connectionId) return tab.title;
+
+  const duplicates = allTabs.filter(
+    (other) =>
+      other.connectionId === tab.connectionId &&
+      other.contentType === tab.contentType &&
+      other.title === tab.title
+  );
+  const position = duplicates.findIndex((other) => other.id === tab.id);
+  return position > 0 ? `${tab.title} (${position + 1})` : tab.title;
 }

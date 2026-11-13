@@ -68,6 +68,24 @@ describe("ConnectionsEmptyState", () => {
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
   });
 
+  it("has no stray punctuation-only text after the settings link (#5621)", () => {
+    useExperimentalFeatures.mockReturnValue(false);
+    render();
+    const walker = document.createTreeWalker(
+      query("connections-empty-state")!,
+      NodeFilter.SHOW_TEXT
+    );
+    const orphans: string[] = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent?.trim() ?? "";
+      if (text !== "" && /^[.,;:]+$/.test(text)) orphans.push(text);
+    }
+    expect(orphans).toEqual([]);
+    // Nothing follows the link inside its paragraph that could wrap onto its own line.
+    const link = query("connections-empty-experimental-link")!;
+    expect(link.nextSibling?.textContent?.trim() ?? "").not.toMatch(/^[.,;:]/);
+  });
+
   it("hides the experimental-features signpost when experimental features are on", () => {
     useExperimentalFeatures.mockReturnValue(true);
     render();

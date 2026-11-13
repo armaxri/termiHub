@@ -91,6 +91,16 @@ export function isNetworkErrorKind(kind: ConnectionErrorKind): boolean {
 }
 
 /**
+ * Whether the failure screen drops the raw error box for `kind`, because its
+ * heading and one-line hint already say everything the message does (#5662).
+ * A rejected host key is the user's own decision: "You rejected the host key"
+ * plus one line on what to do next, not the same fact three times.
+ */
+export function isSelfExplainingErrorKind(kind: ConnectionErrorKind): boolean {
+  return kind === "host-key-rejected";
+}
+
+/**
  * The headline the failure screen shows for `kind`, or `null` for the generic
  * "Connection failed" (#5183).
  */

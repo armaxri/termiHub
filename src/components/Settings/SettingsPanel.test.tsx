@@ -8,7 +8,9 @@ import { AppSettings } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
 import { SettingsPanel } from "./SettingsPanel";
 
-vi.mock("@/themes", () => ({
+// Partial mock: Terminal ▸ syntax highlighting reads the real theme colours.
+vi.mock("@/themes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/themes")>()),
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
 }));
@@ -56,7 +58,9 @@ function render() {
   });
 }
 
+/** The shell-hook default, which lives under Terminal ▸ Command marks (#5633). */
 function findShellIntegrationCheckbox(): HTMLElement | null {
+  selectCategory("terminal");
   return container.querySelector(
     "[data-testid='settings-default-shell-integration']"
   ) as HTMLElement | null;
@@ -279,7 +283,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     const checkbox = findShellIntegrationCheckbox();
     expect(checkbox).not.toBeNull();
     expect(isChecked(checkbox!)).toBe(false);
-    expect(container.textContent).toContain("Command marks by default");
+    expect(container.textContent).toContain("Add shell hook to new sessions automatically");
     expect(container.textContent).not.toContain("Shell integration by Default");
   });
 });

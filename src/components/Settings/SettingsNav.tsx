@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import "./SettingsNav.css";
 
@@ -40,7 +40,10 @@ export function SettingsNav<T extends string = string>({
   groups,
 }: SettingsNavProps<T>) {
   const [openedGroups, setOpenedGroups] = useState<Set<string>>(() => new Set());
+  const navRef = useRef<HTMLElement>(null);
   const grouped = !isCompact && groups !== undefined && groups.length > 0;
+
+  useRevealActiveItem(navRef, activeCategory, grouped);
 
   /** Whether a collapsible group shows its items right now. */
   const isGroupOpen = useCallback(
@@ -102,6 +105,8 @@ export function SettingsNav<T extends string = string>({
         role="tablist"
         aria-label="Settings categories"
         onKeyDown={handleKeyDown}
+        ref={navRef}
+        data-testid="settings-category-nav"
       >
         {categories.map((cat) => renderItem(cat))}
       </nav>
@@ -122,6 +127,8 @@ export function SettingsNav<T extends string = string>({
       className="settings-nav settings-nav--grouped"
       aria-label="Settings categories"
       onKeyDown={handleKeyDown}
+      ref={navRef}
+      data-testid="settings-category-nav"
     >
       {groups.map((group) => {
         const open = isGroupOpen(group);
@@ -175,4 +182,41 @@ export function SettingsNav<T extends string = string>({
       })}
     </nav>
   );
+}
+
+/** Scroll the nav's selected tab into view; a no-op while the nav is not laid out. */
+function revealActive(nav: HTMLElement | null): void {
+  const item = nav?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+  if (!item || typeof item.scrollIntoView !== "function") return;
+  item.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/**
+ * Keep the active category visible in the nav (#5633). The Advanced group sits
+ * below the fold, so a category opened there (from a link, search or the arrow
+ * keys) used to leave no highlighted item on screen. Reveals on every change of
+ * the active category, and again when a hidden Settings tab becomes visible
+ * (the nav grows from zero size), since a hidden element cannot be scrolled to.
+ */
+function useRevealActiveItem(
+  navRef: React.RefObject<HTMLElement | null>,
+  activeCategory: string,
+  grouped: boolean
+): void {
+  useEffect(() => {
+    revealActive(navRef.current);
+  }, [navRef, activeCategory, grouped]);
+
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav || typeof ResizeObserver === "undefined") return;
+    let wasHidden = nav.getClientRects().length === 0;
+    const observer = new ResizeObserver(() => {
+      const hidden = nav.getClientRects().length === 0;
+      if (wasHidden && !hidden) revealActive(nav);
+      wasHidden = hidden;
+    });
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [navRef, grouped]);
 }

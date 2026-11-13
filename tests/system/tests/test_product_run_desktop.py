@@ -234,7 +234,7 @@ class TestProductRunRemoteDesktop(
             self._select_when_available("field-sshAuthMethod", "key", what="key auth")
             self.wait(lambda: self.driver.exists("field-sshKeyPath"), what="the SSH key field")
             self.driver.type("field-sshKeyPath", str(native.client_key))
-            self.shot(label="editor")
+            self.shot(label="editor", expect="connection-editor-name-input")
             self._click_editor_save(True)
             if self._prompt_within(10.0):
                 self.handle_password_prompt(RDP_PASSWORD)
@@ -504,7 +504,7 @@ class TestProductRunSettingsThemes(
                 errors += [f"{category}: {e.get('message', '')[:160]}" for e in new]
                 if category == "updates":
                     false_claims += self._update_currency_claims()
-                self.shot(label=category)
+                self.shot(label=category, expect="settings-panel-content")
             self.evidence(f"opened {len(SETTINGS_CATEGORIES) - len(missing)} categories")
             if missing:
                 self.evidence(f"not in the nav (hidden here): {missing}")
@@ -568,10 +568,12 @@ class TestProductRunSettingsThemes(
         self.driver.terminal_input(f"echo product-run theme {theme}")
         time.sleep(0.8)
         self.shot(label="terminal")
+        # Both surfaces are lazy-loaded: wait for the rendered form, not the
+        # Suspense spinner (#5643).
         self.open_new_connection_editor()
-        self.shot(label="editor")
+        self.shot(label="editor", expect="connection-editor-name-input")
         self.open_settings_category("appearance")
-        self.shot(label="settings")
+        self.shot(label="settings", expect="settings-panel-content", scope="settings-panel-content")
 
     def test_04_themes(self):
         for theme in BUILTIN_THEMES:
@@ -721,3 +723,74 @@ class TestProductRunSettingsThemes(
                 if has_reset and reset_type != "button":
                     problems.append(f"the reset marker is not a button (type {reset_type!r})")
                 assert not problems, "; ".join(problems)
+
+    def _nav_item_in_view(self, category: str) -> list[str]:
+        """Problems if ``settings-nav-<category>`` is outside the nav's visible box."""
+        nav = self.driver.measure_element("settings-category-nav")["rect"]
+        item = self.driver.measure_element(f"settings-nav-{category}")["rect"]
+        selected = self.driver.get_attribute(f"settings-nav-{category}", "aria-selected")
+        self.evidence(f"{category}: nav box {nav}; item {item}; aria-selected {selected!r}")
+        problems = []
+        if selected != "true":
+            problems.append(f"{category} is not the selected nav item")
+        if item["y"] < nav["y"] - 1 or item["y"] + item["height"] > nav["y"] + nav["height"] + 1:
+            problems.append(f"the active {category} nav item is scrolled out of the nav")
+        return problems
+
+    def test_07_settings_nav_and_groups(self):
+        """Advanced categories stay visible when active; command marks and Schedules (#5633)."""
+        with self.step(
+            "settings.nav.active-in-view",
+            "Opening a category under Advanced keeps its highlighted nav item in view (#5633)",
+            expect="Settings ▸ Schedules with Schedules highlighted and visible in the nav",
+        ):
+            problems = []
+            for category in ("import", "schedules"):
+                self.open_settings_category(category)
+                time.sleep(0.4)
+                problems += self._nav_item_in_view(category)
+            assert not problems, "; ".join(problems)
+
+        with self.step(
+            "settings.schedules.empty-create",
+            "Settings ▸ Schedules has no repeated SCHEDULES header and offers New schedule (#5633)",
+            expect="Settings ▸ Schedules: one title, a Pause all switch, and a New schedule button",
+        ):
+            self.open_settings_category("schedules")
+            self.wait(lambda: self.driver.exists("schedules-section"), what="the schedules list")
+            empty = self.driver.exists("schedules-empty")
+            create = "schedules-empty-new-btn" if empty else "schedules-new-btn"
+            has_create = self.driver.exists(create)
+            has_header = self.driver.exists("schedules-header")
+            self.evidence(f"empty {empty}; {create} shown {has_create}; header shown {has_header}")
+            problems = []
+            if not has_create:
+                problems.append(f"no New schedule button ({create})")
+            elif self.driver.get_text(create).strip() != "New schedule":
+                problems.append(f"{create} reads {self.driver.get_text(create).strip()!r}")
+            if has_header:
+                problems.append("the page repeats its title as a SCHEDULES section header")
+            if not self.driver.exists("schedules-pause-toggle"):
+                problems.append("the Pause all switch is missing")
+            assert not problems, "; ".join(problems)
+
+        with self.step(
+            "settings.command-marks.grouped",
+            "Both command-mark toggles live together under Terminal ▸ Command marks (#5633)",
+            expect="Settings ▸ Terminal with a Command marks group: Show command marks and, "
+            "nested under it, Add shell hook to new sessions automatically",
+        ):
+            self.open_settings_category("terminal")
+            self.wait(lambda: self.driver.exists("settings-command-marks"),
+                      what="the Command marks group")
+            text = self.driver.get_text("settings-command-marks")
+            self.evidence(f"group text {text[:200]!r}")
+            problems = [
+                f"missing {label!r}"
+                for label in ("Show command marks", "Add shell hook to new sessions automatically")
+                if label not in text
+            ]
+            self.open_settings_category("general")
+            if self.driver.exists("settings-default-shell-integration"):
+                problems.append("the shell-hook toggle still shows under General")
+            assert not problems, "; ".join(problems)

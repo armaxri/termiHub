@@ -29,12 +29,13 @@ export function ConnectionsEmptyState({ onNewConnection }: ConnectionsEmptyState
     <>
       Create your first connection to get started.
       <br />
+      {/* The link ends the sentence with no trailing period: a lone "." after
+          the link wrapped onto its own line in a narrow sidebar (#5621). */}
       More features — SSH Tunnels, Services, Network Tools and Workflows — live behind{" "}
       <ExperimentalSettingLink
         className="connections-empty__link"
         data-testid="connections-empty-experimental-link"
       />
-      .
     </>
   );
 

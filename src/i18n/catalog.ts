@@ -61,7 +61,7 @@ const en = {
   // The user rejected the server's host key in the trust prompt (#5185).
   "connection.heading.hostKeyRejected": "You rejected the host key",
   "connection.hint.hostKeyRejected":
-    "termiHub did not connect because you rejected the server's host key. If you have since confirmed the fingerprint with the server's administrator, review the key again; if the host or port is wrong, edit the connection.",
+    "Review the key again once its fingerprint is confirmed with the server's administrator, or edit the connection if the host or port is wrong.",
   "connection.action.reviewKey": "Review key",
   "connection.details.show": "Details",
   "connection.details.copy": "Copy error",
@@ -138,6 +138,9 @@ const en = {
   // an SSH one. Sentence case; the connection name sits on its own line.
   "passwordPrompt.title.password": "{transport} password",
   "passwordPrompt.title.keyPassphrase": "SSH key passphrase",
+  // An inline jump host's password (#5656); schema field secrets use their
+  // own field label instead.
+  "passwordPrompt.title.jumpHost": "Jump host password",
   "passwordPrompt.connection": "Connection: {name}",
   "passwordPrompt.description.password": "Enter password for {target}",
   "passwordPrompt.description.keyPassphrase":

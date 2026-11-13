@@ -464,6 +464,15 @@
   z-index: var(--z-popover);
 }
 
+/* Radix focuses the surface itself when a menu opens; the global focus ring
+   would then outline the whole popover like a selected input (#5624). Focus is
+   shown on the highlighted item instead. */
+.ui-menu__content:focus,
+.ui-menu__content:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-dropdown);
+}
+
 .ui-menu__content--wide {
   min-width: 220px;
 }
@@ -944,6 +953,14 @@
   box-shadow: var(--shadow-overlay);
   z-index: var(--z-modal);
   overflow: hidden;
+}
+
+/* The dialog container takes focus only as Radix's fallback (tabindex -1); it
+   is not a control, so it never draws the focus ring around the whole modal
+   (#5631). Controls inside keep theirs. */
+.ui-modal:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-overlay);
 }
 
 .ui-modal--lg {
@@ -1442,10 +1459,35 @@
   word-break: break-word;
 }
 
+/* A monospaced value (a fingerprint) takes a full-width row under its label
+   (#5662), with a clear gap before its copy button. */
+.ui-trust-prompt__facts .ui-trust-prompt__fact-label--block,
+.ui-trust-prompt__facts .ui-trust-prompt__fact-value--mono {
+  grid-column: 1 / -1;
+}
+
+.ui-trust-prompt__facts .ui-trust-prompt__fact-value--mono {
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: calc(-1 * var(--spacing-xxs));
+}
+
 .ui-trust-prompt__fact-value--mono .ui-trust-prompt__fact-text {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   line-height: 1.5;
+  word-break: normal;
+  /* Last resort for a single chunk wider than the dialog: scroll, never break
+     mid-string. The copy button always copies the full value. */
+  overflow-x: auto;
+}
+
+/* The pieces a fingerprint may wrap between (after a `:` or a space). Each one
+   stays whole, so a value never breaks mid-string (#5662). */
+.ui-trust-prompt__fact-chunk {
+  white-space: nowrap;
 }
 
 /* A secondary line above a fact's value, e.g. a fingerprint's key type (#5627). */

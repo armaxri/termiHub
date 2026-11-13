@@ -141,7 +141,7 @@ class TestProductRunAgent(
             self.driver.select("field-authMethod", "key")
             self.wait(lambda: self.driver.exists(self.KEY_PATH_INPUT), what="the key path field")
             self.driver.type(self.KEY_PATH_INPUT, str(native.client_key))
-            self.shot(label="editor")
+            self.shot(label="editor", expect=self.EDITOR_NAME)
             self.driver.click(self.EDITOR_SAVE)
             agent = self.require_agent(self.name)
             self.evidence(f"agent {agent['id']}: {agent.get('connectionState')}")
@@ -186,6 +186,23 @@ class TestProductRunAgent(
             self.evidence(f"installed {target} ({target.stat().st_size} bytes), "
                           f"executable={os.access(target, os.X_OK)}, identical to {binary.name}={same}")
             assert os.access(target, os.X_OK) and same, "the installed agent is not the uploaded binary"
+
+    def test_05_setup_terminal_in_lifecycle(self):
+        with self.step(
+            "agent.setup.terminal-lifecycle",
+            "The setup terminal, opened on the deploy's already-live SSH session, is "
+            "listed in the session lifecycle (live status, reconnect on a drop)",
+            expect="the agent's setup terminal tab showing the install output",
+        ):
+            self.require("agent.deploy")
+            tab_id = self.tab_id_of(f"Setup: {self.name}")
+            # Before #5645 the tab never reached the region: no entry at all.
+            status = self.wait(
+                lambda: self.session_status(tab_id),
+                timeout=30.0,
+                what=f"setup tab {tab_id} in the session lifecycle",
+            )
+            self.evidence(f"setup tab {tab_id}: lifecycle status {status!r}")
 
     # ── live connection ──────────────────────────────────────────────────────
     def test_10_connect_and_shell(self):
@@ -298,3 +315,53 @@ class TestProductRunAgent(
                 self.disconnect_agent(self.name)
         except Exception:  # noqa: BLE001 - best-effort tidy-up; the reaper stops the agent
             pass
+
+    def test_50_row_presentation(self):
+        """Grade the agent row the UI review flagged (#5621) on a fresh agent."""
+        with self.step(
+            "agent.row-presentation",
+            "A fresh agent's row shows its name as typed, a neutral dot and a Connect action",
+            expect="the new mixed-case agent row with a grey dot and 'Connect', not red 'Reconnect'",
+        ):
+            native = self.need_native()
+            # Mixed case so a text-transform on the row cannot go unnoticed.
+            name = unique_name("pr-Agent-Case")
+            agent = self.create_remote_agent(
+                name, host=SSH_HOST, port=native.target.port,
+                username=native.target.username, auth_method="key",
+            )
+            agent_id = agent["id"]
+            self.state["fresh_agent"] = name
+            name_id, dot_id = f"agent-name-{agent_id}", f"agent-state-{agent_id}"
+            self.wait(lambda: self.driver.exists(name_id), what="the fresh agent row")
+
+            shown = self.driver.get_text(name_id)
+            transform = self.driver.get_computed_style("text-transform", name_id)
+            self.evidence(f"name {shown!r}, text-transform {transform!r}")
+            assert shown == name, f"the row shows {shown!r}, not the configured {name!r}"
+            assert transform == "none", f"the agent name is text-transformed ({transform})"
+
+            dot_class = self.driver.get_attribute(dot_id, "class") or ""
+            dot_label = self.driver.get_attribute(dot_id, "aria-label")
+            self.evidence(f"dot class {dot_class!r}, label {dot_label!r}")
+            assert "status-dot--disconnected" not in dot_class, "a never-connected agent shows red"
+            assert dot_label == "Not connected", f"dot label {dot_label!r}"
+
+            connect_id = f"agent-connect-{agent_id}"
+            assert self.driver.exists(connect_id), "no 'Connect' action on the fresh agent"
+            label = self.driver.get_text(connect_id).strip()
+            self.evidence(f"action {label!r}")
+            assert label == "Connect", f"the action reads {label!r}"
+            assert not self.driver.exists(f"agent-reconnect-{agent_id}"), "fresh agent offers Reconnect"
+
+            # The empty state (shown while no local connection is saved) must not
+            # carry a period orphaned under its settings link.
+            if self.driver.exists("connections-empty-state"):
+                text = self.driver.get_text("connections-empty-state")
+                self.evidence(f"empty state: {text!r}")
+                assert not text.rstrip().endswith("features."), "stray period after the link"
+                assert not any(line.strip() == "." for line in text.splitlines()), (
+                    "the empty state has a '.'-only line"
+                )
+            else:
+                self.evidence("no Connections empty state on screen (connections saved)")

@@ -69,3 +69,12 @@
   gap: var(--spacing-sm);
   min-width: 0;
 }
+
+/* Restore footer: "Credentials will not be restored." on the left, beside the
+   actions (#5631). */
+.backup-restore__skipped {
+  align-self: center;
+  margin-right: auto;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}

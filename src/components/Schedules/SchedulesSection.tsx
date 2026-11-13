@@ -58,10 +58,25 @@ export interface SchedulesSectionProps {
    * `false`: it only views, pauses/resumes and deletes schedules (#4623).
    */
   editable?: boolean;
+  /**
+   * Offer "New schedule" (in the header and the empty state). Defaults to
+   * {@link editable}; Settings turns it on while keeping editing off (#5633).
+   */
+  creatable?: boolean;
+  /**
+   * Render the "Schedules" section header (default `true`). A page that already
+   * titles itself "Schedules" passes `false` and gets a plain toolbar instead,
+   * so the title is not repeated (#5633).
+   */
+  showTitle?: boolean;
 }
 
 /** Renders the schedules list; see the module notes above. */
-export function SchedulesSection({ editable = true }: SchedulesSectionProps) {
+export function SchedulesSection({
+  editable = true,
+  creatable = editable,
+  showTitle = true,
+}: SchedulesSectionProps) {
   const schedules = useAppStore((s) => s.schedules);
   const paused = useAppStore((s) => s.schedulesPaused);
   const setScheduleEnabled = useAppStore((s) => s.setScheduleEnabled);
@@ -126,46 +141,85 @@ export function SchedulesSection({ editable = true }: SchedulesSectionProps) {
 
   const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
 
+  const pauseToggle = (
+    <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
+      <label className="schedules__pause" htmlFor="schedules-pause-toggle">
+        {compactHeader ? null : <span>Pause all</span>}
+        <Toggle
+          id="schedules-pause-toggle"
+          checked={paused}
+          onCheckedChange={(v) => void handlePause(v)}
+          aria-label="Pause all schedules"
+          data-testid="schedules-pause-toggle"
+        />
+      </label>
+    </Tooltip>
+  );
+
   return (
-    <section className="schedules" data-testid="schedules-section" aria-label="Schedules">
-      <SidebarSectionHeader
-        ref={headerRef}
-        title="Schedules"
-        icon={<CalendarClock size={12} aria-hidden="true" />}
-        data-testid="schedules-header"
-        actions={
-          <>
-            <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
-              <label className="schedules__pause" htmlFor="schedules-pause-toggle">
-                {compactHeader ? null : <span>Pause all</span>}
-                <Toggle
-                  id="schedules-pause-toggle"
-                  checked={paused}
-                  onCheckedChange={(v) => void handlePause(v)}
-                  aria-label="Pause all schedules"
-                  data-testid="schedules-pause-toggle"
-                />
-              </label>
-            </Tooltip>
-            {editable ? (
-              <Tooltip content="New schedule" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="New schedule"
-                  data-testid="schedules-new-btn"
-                  icon={<Plus size={12} />}
-                  onClick={() => openScheduleEditor()}
-                />
-              </Tooltip>
-            ) : null}
-          </>
-        }
-      />
+    <section
+      className={`schedules ${showTitle ? "" : "schedules--page"}`}
+      data-testid="schedules-section"
+      aria-label="Schedules"
+    >
+      {showTitle ? (
+        <SidebarSectionHeader
+          ref={headerRef}
+          title="Schedules"
+          icon={<CalendarClock size={12} aria-hidden="true" />}
+          data-testid="schedules-header"
+          actions={
+            <>
+              {pauseToggle}
+              {creatable ? (
+                <Tooltip content="New schedule" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    aria-label="New schedule"
+                    data-testid="schedules-new-btn"
+                    icon={<Plus size={12} />}
+                    onClick={() => openScheduleEditor()}
+                  />
+                </Tooltip>
+              ) : null}
+            </>
+          }
+        />
+      ) : (
+        <div className="schedules__toolbar" data-testid="schedules-toolbar">
+          {creatable && schedules.length > 0 ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid="schedules-new-btn"
+              icon={<Plus size={12} />}
+              onClick={() => openScheduleEditor()}
+            >
+              New schedule
+            </Button>
+          ) : null}
+          {pauseToggle}
+        </div>
+      )}
       {schedules.length === 0 ? (
         <EmptyState
-          title="No schedules. Schedule a workflow or macro to run it on saved connections at set times."
+          title="No schedules yet"
+          description="Schedule a workflow or macro to run it on saved connections at set times."
+          action={
+            creatable ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                data-testid="schedules-empty-new-btn"
+                icon={<Plus size={12} />}
+                onClick={() => openScheduleEditor()}
+              >
+                New schedule
+              </Button>
+            ) : undefined
+          }
           data-testid="schedules-empty"
         />
       ) : (

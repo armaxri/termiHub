@@ -30,6 +30,7 @@ UNHANDLED_ACTIONS: frozenset[str] = frozenset(
         "getText",
         "getAttribute",
         "measureElement",
+        "renderSettled",
         "sampleCanvas",
         "editorCursor",
         # Needs the real agent transport.

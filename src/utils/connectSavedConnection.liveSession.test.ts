@@ -1,8 +1,9 @@
 /**
  * A tab opened on a session that already connected (the saved-credential
- * pre-connect) never runs the terminal's own connect, so it must register
- * itself in the backend lifecycle region as connected (#5608). Without that the
- * region never lists the tab: no live status and no reconnect after a drop.
+ * pre-connect) never runs the terminal's own connect (#5608). It is opened bound
+ * to that session, and the terminal's bind (`setTabSessionId` →
+ * `mirrorSessionLive`) registers it in the lifecycle region — covered for every
+ * such path in `src/store/liveSessionTabRegistration.test.ts` (#5645).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -21,19 +22,11 @@ vi.mock("@/services/events", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn(), frontendError: vi.fn() }));
 
-vi.mock("@/store/sessionBridge", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/store/sessionBridge")>()),
-  mirrorSessionAlreadyConnected: vi.fn(),
-}));
-
 import { toast } from "@/components/ui";
 import { createTerminal } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
-import { mirrorSessionAlreadyConnected } from "@/store/sessionBridge";
 import type { SavedConnection } from "@/types/connection";
 import { connectSavedConnection } from "./connectSavedConnection";
-
-const mirrored = vi.mocked(mirrorSessionAlreadyConnected);
 
 function sshPassword(): SavedConnection {
   return {
@@ -63,15 +56,18 @@ afterEach(() => {
 });
 
 describe("connectSavedConnection — tab on a live session (#5608)", () => {
-  it("registers the pre-connected tab in the lifecycle region", async () => {
+  it("opens the pre-connected tab bound to its live session", async () => {
     const result = await connectSavedConnection(sshPassword());
     expect(result).toEqual({ status: "opened", tabId: "tab-new", sessionId: "session-1" });
-    expect(mirrored).toHaveBeenCalledExactlyOnceWith("tab-new");
+    const addTab = vi.mocked(useAppStore.getState().addTab);
+    expect(addTab).toHaveBeenCalledOnce();
+    expect(addTab.mock.calls[0][3]).toMatchObject({ sessionId: "session-1" });
   });
 
-  it("leaves a tab that connects itself to the terminal's own connect", async () => {
+  it("leaves a tab that connects itself unbound, to the terminal's own connect", async () => {
     vi.mocked(createTerminal).mockRejectedValueOnce(new Error("network down"));
     await connectSavedConnection(sshPassword());
-    expect(mirrored).not.toHaveBeenCalled();
+    const addTab = vi.mocked(useAppStore.getState().addTab);
+    expect(addTab.mock.calls[0]?.[3]?.sessionId).toBeUndefined();
   });
 });

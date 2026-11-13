@@ -25,6 +25,7 @@ import {
   connectionErrorHeading,
   connectionErrorHint,
   isNetworkErrorKind,
+  isSelfExplainingErrorKind,
 } from "@/utils/connectionErrorHints";
 import { t } from "@/i18n/catalog";
 import { formatElapsed } from "@/utils/formatters";
@@ -351,6 +352,7 @@ export function TerminalConnectionOverlay({
   const failedAt: StepId | undefined = viaAgent ? "start" : reported;
   const networkFailure = phase === "failed" && isNetworkErrorKind(errorKind) && error !== "";
   const hostKeyRejected = phase === "failed" && errorKind === "host-key-rejected";
+  const selfExplaining = phase === "failed" && isSelfExplainingErrorKind(errorKind);
   const showSteps = failedAt !== undefined || steps.length === 1;
   // Same words as the ConnectProgress defaults; spelled out for the announcement.
   const headings: Record<ConnectProgressPhase, string> = {
@@ -371,8 +373,13 @@ export function TerminalConnectionOverlay({
         // `error` is already the store's display string, not a raw IPC error.
         // A network failure leads with its hint and keeps the OS-level detail
         // behind a disclosure below it (#5183).
-        error={networkFailure ? undefined : error}
-        announcement={[`${headings[phase]}.`, `${tabTitle}:`, error].join(" ")}
+        // A rejected host key is said once, by the heading and its hint (#5662).
+        error={networkFailure || selfExplaining ? undefined : error}
+        announcement={[
+          `${headings[phase]}.`,
+          `${tabTitle}:`,
+          selfExplaining ? (hint?.text ?? error) : error,
+        ].join(" ")}
         autoFocusPrimaryAction={isVisible}
         // Only the client's own deadline knows how long it waited.
         timeText={
