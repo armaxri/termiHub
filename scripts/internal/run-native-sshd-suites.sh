@@ -73,4 +73,6 @@ case "$(uname -s)" in
 esac
 
 # ssh_x11_req_native: X11 over x11-req against the same sshd (#5570).
-cargo test -p termihub-core --features ssh --test ssh_native --test ssh_x11_req_native "$@"
+# ssh_x11_untrusted_native: untrusted X11 cookies end to end (#5585).
+cargo test -p termihub-core --features ssh --test ssh_native --test ssh_x11_req_native \
+  --test ssh_x11_untrusted_native "$@"
