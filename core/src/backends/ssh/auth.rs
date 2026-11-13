@@ -491,14 +491,13 @@ where
     H: russh::client::Handler,
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    use russh::keys::agent::AgentIdentity;
-
     let identities = agent.request_identities().await.map_err(|e| {
         SessionError::classified(
             ConnectFailureKind::AgentAuthFailed,
             format!("SSH agent list keys failed: {e}"),
         )
     })?;
+    let public_keys = usable_agent_keys(identities)?;
 
     // Negotiate the RSA hash once; ignored for ed25519/ecdsa agent keys.
     let hash_alg = session
@@ -512,16 +511,11 @@ where
         })?
         .flatten();
 
-    // With no usable identity the outcome is a plain rejection.
     let mut last = russh::client::AuthResult::Failure {
         remaining_methods: russh::MethodSet::empty(),
         partial_success: false,
     };
-    for identity in identities {
-        let public_key = match identity {
-            AgentIdentity::PublicKey { key, .. } => key,
-            _ => continue,
-        };
+    for public_key in public_keys {
         let result = session
             .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
             .await
@@ -546,6 +540,35 @@ where
         last = result;
     }
     Ok(last)
+}
+
+/// The plain public keys an SSH agent offered, in its order.
+///
+/// An agent that offers none (running but empty, e.g. the Windows `ssh-agent`
+/// service before `ssh-add`) is an agent failure, not a credential rejection:
+/// nothing was ever tried against the server, so "check the username,
+/// password, or key" would point the user the wrong way (#5606).
+/// Certificate identities are skipped, as before.
+#[cfg(any(unix, windows))]
+fn usable_agent_keys(
+    identities: Vec<russh::keys::agent::AgentIdentity>,
+) -> Result<Vec<russh::keys::PublicKey>, SessionError> {
+    use russh::keys::agent::AgentIdentity;
+
+    let keys: Vec<_> = identities
+        .into_iter()
+        .filter_map(|identity| match identity {
+            AgentIdentity::PublicKey { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect();
+    if keys.is_empty() {
+        return Err(SessionError::classified(
+            ConnectFailureKind::AgentAuthFailed,
+            "The SSH agent holds no keys. Add one with ssh-add.",
+        ));
+    }
+    Ok(keys)
 }
 
 /// SSH agent authentication is not supported on this platform.
@@ -944,6 +967,46 @@ mod tests {
         .expect_err("cancelled");
         assert!(matches!(err, SessionError::AuthCancelled), "got {err:?}");
         assert_eq!(prompter.seen().len(), 1);
+    }
+
+    /// An agent that is reachable but holds no key fails as an agent problem
+    /// naming the agent, not as a credential rejection (#5606).
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn empty_agent_is_an_agent_failure_not_a_rejection() {
+        let err = usable_agent_keys(Vec::new()).expect_err("no keys");
+        assert_eq!(
+            err.connect_failure_kind(),
+            Some(ConnectFailureKind::AgentAuthFailed)
+        );
+        assert!(!matches!(err, SessionError::AuthFailed), "got {err:?}");
+        let text = err.to_string();
+        assert!(text.contains("SSH agent holds no keys"), "{text}");
+        assert!(text.contains("ssh-add"), "{text}");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn agent_public_keys_are_tried_in_the_agents_order() {
+        use russh::keys::agent::AgentIdentity;
+        use russh::keys::PublicKey;
+
+        let key = PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILBvP9JJiAzsVGhVeydIdLU44iAIoHavZA7GwyoBQ8SZ a",
+        )
+        .expect("test key");
+        let identities = vec![
+            AgentIdentity::PublicKey {
+                key: key.clone(),
+                comment: "first".into(),
+            },
+            AgentIdentity::PublicKey {
+                key: key.clone(),
+                comment: "second".into(),
+            },
+        ];
+        let keys = usable_agent_keys(identities).expect("usable keys");
+        assert_eq!(keys, vec![key.clone(), key]);
     }
 
     #[test]

@@ -151,7 +151,7 @@ describe("connectionErrorHint — every kind for every family", () => {
 
   it("gives the SSH agent-auth hint a title and the platform start command", () => {
     const hint = connectionErrorHint("ssh", "agent-auth", "linux");
-    expect(hint?.title).toBe("SSH Agent not running");
+    expect(hint?.title).toBe("SSH agent not ready");
     expect(hint?.command).toContain("ssh-agent");
     expect(connectionErrorHint("ssh", "agent-auth", "windows")?.command).toContain(
       "Start-Service ssh-agent"

@@ -173,7 +173,7 @@ describe("TerminalConnectionOverlay — platform-aware SSH-agent hint (#2088)", 
     platformMock.value = "windows";
     renderAgentAuthFailure();
     const text = container.textContent ?? "";
-    expect(text).toContain("SSH Agent not running");
+    expect(text).toContain("SSH agent not ready");
     expect(text).toContain(WIN_COMMAND);
     expect(text).not.toContain(UNIX_COMMAND);
   });
@@ -182,7 +182,7 @@ describe("TerminalConnectionOverlay — platform-aware SSH-agent hint (#2088)", 
     platformMock.value = "macos";
     renderAgentAuthFailure();
     const text = container.textContent ?? "";
-    expect(text).toContain("SSH Agent not running");
+    expect(text).toContain("SSH agent not ready");
     expect(text).toContain(UNIX_COMMAND);
     expect(text).not.toContain(WIN_COMMAND);
   });
