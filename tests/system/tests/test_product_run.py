@@ -395,7 +395,7 @@ class TestProductRunChecklist(
         finally:
             self._leave_editor()
 
-    def test_02_chooser_badge_subtle(self):
+    def test_02b_chooser_badge_subtle(self):
         """The Recommended badge is subtle, not a second solid accent (#5673).
 
         Opens the chooser and cancels, like :meth:`test_02_chooser_states`, so
