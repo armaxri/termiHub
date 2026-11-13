@@ -8,6 +8,7 @@
     "agent-update-reconnect",
     "app-quit-cancelled",
     "app-quit-requested",
+    "app-update-download-progress",
     "cli-workspace-requested",
     "connect-progress",
     "connection-ids-changed",

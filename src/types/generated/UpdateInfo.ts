@@ -52,9 +52,10 @@ outcome: UpdateCheckOutcome,
 failureReason?: string, 
 /**
  * How this machine installs the update (#5758): in place through the
- * signed updater, or from the release page.
+ * signed updater, or from the release page. Always sent; optional in the
+ * generated type so a missing value reads as the release page.
  */
-installMethod: UpdateInstallMethod, 
+installMethod?: UpdateInstallMethod, 
 /**
  * `releasePage` only: why the in-place update does not apply here.
  */

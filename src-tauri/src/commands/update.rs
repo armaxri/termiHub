@@ -145,8 +145,10 @@ pub struct UpdateInfo {
     #[cfg_attr(test, ts(optional))]
     pub failure_reason: Option<String>,
     /// How this machine installs the update (#5758): in place through the
-    /// signed updater, or from the release page.
+    /// signed updater, or from the release page. Always sent; optional in the
+    /// generated type so a missing value reads as the release page.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<UpdateInstallMethod>", optional))]
     pub install_method: UpdateInstallMethod,
     /// `releasePage` only: why the in-place update does not apply here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
