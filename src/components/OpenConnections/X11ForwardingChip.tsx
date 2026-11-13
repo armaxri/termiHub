@@ -43,7 +43,9 @@ export function x11ModeCopy(mode: X11ForwardingMode): X11ModeCopy {
         label: "X11 failed",
         hint:
           "X11 forwarding could not be set up, so this session runs without it. Start a " +
-          "local X server (XQuartz on macOS) and reconnect.",
+          "local X server (XQuartz on macOS) and reconnect. With untrusted X11 forwarding " +
+          "on, the local X server also needs the SECURITY extension and xauth (XQuartz and " +
+          "VcXsrv lack it): turn the option off to forward with full access.",
         tone: "failed",
       };
   }

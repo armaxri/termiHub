@@ -496,7 +496,8 @@ impl SshConnector for RusshSshConnector {
             None
         };
         // Untrusted forwarding (#5585) swaps in a generated untrusted cookie,
-        // or turns X11 off for the session when that is not possible.
+        // or turns X11 off for the session when that is not possible; the
+        // session then reports `X11ForwardingMode::Failed` (#5586).
         let (x11_server, x11_deadline) = match x11_server {
             Some(server) => untrusted_x11_server(config, server).await,
             None => (None, None),

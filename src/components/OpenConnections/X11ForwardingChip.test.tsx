@@ -77,6 +77,13 @@ describe("X11ForwardingChip", () => {
     expect(tooltipText(chip)).toContain("runs without it");
   });
 
+  it("explains the untrusted fail-closed case in the failure hint (#5585)", () => {
+    const hint = x11ModeCopy("failed").hint;
+    expect(hint).toContain("untrusted X11 forwarding");
+    expect(hint).toContain("SECURITY extension");
+    expect(hint).toContain("turn the option off");
+  });
+
   it("is keyboard-focusable so the hint is reachable", () => {
     expect(render("fallbackRefused").getAttribute("tabindex")).toBe("0");
   });
