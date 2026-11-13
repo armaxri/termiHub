@@ -133,7 +133,8 @@
  * shared row the buttons crowded the row and pushed the agent name out of view;
  * a column keeps the toggle full-width so the name is always visible and free to
  * ellipsize. Scoped to the agent header so the LOCAL / REMOTE AGENTS section
- * headers keep their single-row layout.
+ * headers keep their single-row layout. A lone state action (Connect,
+ * Reconnect, Cancel) stays on row 1 instead (#5702).
  */
 .connection-list__group-header--agent {
   flex-direction: column;
@@ -156,6 +157,26 @@
   /* Wrap rather than clip the agent's buttons in a narrow sidebar (#4709). */
   flex-wrap: wrap;
   flex-shrink: 1;
+}
+
+/* Row 1 (#5702, R-010): the toggle takes the free width (so the name can
+   ellipsize) and the agent's single state action — Connect, Reconnect or
+   Cancel — sits inline at its end instead of costing a second row. */
+.connection-list__group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.connection-list__group-row .connection-list__group-toggle {
+  flex: 1 1 auto;
+}
+
+.connection-list__group-header--agent .connection-list__group-actions--inline {
+  padding-left: 0;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .connection-list__tree {
@@ -509,13 +530,25 @@
   display: flex;
 }
 
+/* Secondary experimental-features signpost under the empty-state button:
+   smaller and quieter than the one-sentence description (R-122, #5702). It
+   takes a full line of the wrapping action row so it sits under the button. */
+.connections-empty__hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
 /* First-run experimental-features signpost link inside the connections empty
-   state (UX-002/UX-004). Inline text button styled as a link, tokens only. */
+   state (UX-002/UX-004). Inline text button styled as a link, tokens only.
+   `--text-link` (not the `--accent-color` button fill) so the text meets AA on
+   the sidebar in every theme — Solarized Dark's fill measured ~3:1 (R-139). */
 .connections-empty__link {
   padding: 0;
   border: none;
   background: none;
-  color: var(--accent-color);
+  color: var(--text-link);
   font: inherit;
   cursor: pointer;
   text-decoration: underline;
@@ -523,7 +556,8 @@
 }
 
 .connections-empty__link:hover {
-  color: var(--accent-hover);
+  color: var(--text-link);
+  text-decoration-thickness: 2px;
 }
 
 .connections-empty__link:focus-visible {

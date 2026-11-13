@@ -140,6 +140,29 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
     expect(container.textContent).not.toContain("Move to window");
   });
 
+  // R-087 (#5702): the copy and the second button must name the same action.
+  // With no saved connection the button creates one, so it may not read
+  // "Open connection…"; with saved connections it opens one.
+  const secondButtonLabel = () =>
+    container.querySelector('[data-testid="empty-window-open-connection"]')?.textContent?.trim();
+
+  it("labels the second action 'New connection' when the copy says create one", () => {
+    mockConnections = [];
+    act(() => root.render(<EmptyWindowState />));
+
+    expect(container.textContent).toContain("create a connection");
+    expect(secondButtonLabel()).toBe("New connection");
+  });
+
+  it("labels the second action 'Open connection…' when the copy says open one", () => {
+    mockConnections = [fakeConnection()];
+    act(() => root.render(<EmptyWindowState />));
+
+    expect(container.textContent).toContain("open a saved connection");
+    expect(container.textContent).not.toContain("create a connection");
+    expect(secondButtonLabel()).toBe("Open connection…");
+  });
+
   it("surfaces the multi-window hint only when more than one window is open", () => {
     mockWindowCount = 2;
     act(() => root.render(<EmptyWindowState />));

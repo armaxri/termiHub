@@ -99,7 +99,9 @@ export function EmptyWindowState() {
               onClick={handleOpenConnection}
               data-testid="empty-window-open-connection"
             >
-              Open connection…
+              {/* Name the action the click runs, matching the copy above:
+                  open a saved one, or create the first one (R-087, #5702). */}
+              {hasConnections ? "Open connection…" : "New connection"}
             </Button>
           </>
         }

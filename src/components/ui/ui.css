@@ -1327,7 +1327,8 @@
   border: none;
   background: none;
   padding: 0;
-  color: var(--accent-color);
+  /* The AA text token, not the accent button fill (R-139, #5702). */
+  color: var(--text-link);
   cursor: pointer;
   font: inherit;
   text-decoration: underline;

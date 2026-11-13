@@ -1750,6 +1750,7 @@ export function ConnectionList() {
               }}
               onCancelCreateFolder={() => setCreatingFolder(false)}
               onNewConnection={handleNewConnection}
+              compactEmptyState={experimental && !remoteAgentsEmpty}
               onNewFolder={() => setCreatingFolder(true)}
               rootFolders={rootFolders}
               rootConnections={rootConnections}
@@ -1964,6 +1965,8 @@ interface RootDropZoneProps extends TreeNavProps {
   onCreateFolder: (name: string) => void;
   onCancelCreateFolder: () => void;
   onNewConnection: () => void;
+  /** Show the one-line empty state: another sidebar group has content (#5702). */
+  compactEmptyState: boolean;
   onNewFolder: () => void;
   rootFolders: ConnectionFolder[];
   rootConnections: SavedConnection[];
@@ -1989,6 +1992,7 @@ function RootDropZone({
   onCreateFolder,
   onCancelCreateFolder,
   onNewConnection,
+  compactEmptyState,
   onNewFolder,
   rootFolders,
   rootConnections,
@@ -2057,7 +2061,7 @@ function RootDropZone({
             <EmptyState title={`No connections match “${filter.query}”.`} />
           )}
           {!filter && !isCreatingFolder && !hasVisibleResults && (
-            <ConnectionsEmptyState onNewConnection={onNewConnection} />
+            <ConnectionsEmptyState onNewConnection={onNewConnection} compact={compactEmptyState} />
           )}
           {visibleRootFolders.map((folder) => (
             <TreeNode
