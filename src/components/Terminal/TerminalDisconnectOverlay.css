@@ -71,7 +71,7 @@
 
 /* Busy-state tone for the shared Spinner (which owns the rotation). */
 .terminal-disconnect-overlay__icon--busy {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .terminal-disconnect-overlay__subheading {
@@ -109,7 +109,7 @@
 
 /* Files-only "no shell" panel (#4078): informational, not a warning. */
 .terminal-files-only-panel__icon {
-  color: var(--accent-color);
+  color: var(--text-accent);
   opacity: 0.85;
   flex-shrink: 0;
 }

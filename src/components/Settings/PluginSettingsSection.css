@@ -36,7 +36,7 @@
   gap: var(--spacing-xs);
   margin-left: auto;
   font-size: var(--font-size-xs);
-  color: var(--accent-color);
+  color: var(--text-accent);
   opacity: 0;
   transition: opacity var(--transition-normal);
 }

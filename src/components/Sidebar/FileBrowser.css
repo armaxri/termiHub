@@ -527,7 +527,7 @@
   display: inline-flex;
   flex-shrink: 0;
   width: var(--spacing-lg);
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 /* Bottom status bar: the N-selected indicator */

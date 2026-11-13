@@ -110,14 +110,14 @@
 }
 
 .recent-sessions__item-pin {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .recent-sessions__item-saved {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xxs);
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 /* --- Save-as-connection dialog: icon row --- */

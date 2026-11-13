@@ -52,6 +52,7 @@
     "spawn-request",
     "ssh-host-key-prompt",
     "ssh-host-key-prompt-closed",
+    "ssh-host-key-trusted",
     "ssh-keyboard-interactive-prompt",
     "ssh-keyboard-interactive-prompt-closed",
     "terminal-exit",

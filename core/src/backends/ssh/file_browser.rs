@@ -391,6 +391,30 @@ impl SftpTransferChannel {
         self.sftp.metadata(path).await.ok().and_then(|m| m.size)
     }
 
+    /// Shorten a remote file to `len` bytes via SFTP `setstat` (size only), then
+    /// confirm the new size with `stat` — how a resumed upload drops the bytes a
+    /// crash left past its last checkpoint (#5611).
+    ///
+    /// A server that refuses the size change, or reports any other size after
+    /// it, fails the call, so the caller restarts the upload from zero instead
+    /// of appending to a partial it could not verify.
+    pub async fn truncate_file(&self, path: &str, len: u64) -> Result<(), FileError> {
+        let attrs = russh_sftp::protocol::FileAttributes {
+            size: Some(len),
+            ..Default::default()
+        };
+        self.sftp
+            .set_metadata(path, attrs)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("trim remote file failed: {e}")))?;
+        match self.remote_file_size(path).await {
+            Some(size) if size == len => Ok(()),
+            other => Err(FileError::OperationFailed(format!(
+                "remote file holds {other:?} bytes after the trim, expected {len}"
+            ))),
+        }
+    }
+
     /// Best-effort identity (size + mtime) of a remote file via SFTP `stat`, used
     /// to detect a **source** that changed between resumed attempts (PARITY-004,
     /// #3567). `None` when the file is absent or reports no size, so the caller

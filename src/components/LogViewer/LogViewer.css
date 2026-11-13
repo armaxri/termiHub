@@ -55,7 +55,7 @@
 }
 
 .log-viewer__level-filter--info {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .log-viewer__level-filter--debug {
@@ -92,7 +92,7 @@
 /* Toolbar icon actions compose the ghost icon Button primitive; only the
    toggled-on auto-scroll state is bespoke. */
 .ui-btn.log-viewer__toolbar-action--active {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .log-viewer__count {
@@ -145,7 +145,7 @@
 }
 
 .log-viewer__level--INFO {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .log-viewer__level--DEBUG {

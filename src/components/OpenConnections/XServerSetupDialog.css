@@ -25,7 +25,7 @@
 .x-server-setup__lead-icon {
   flex-shrink: 0;
   margin-top: 1px;
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .x-server-setup__body-text,

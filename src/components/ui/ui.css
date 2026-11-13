@@ -1404,7 +1404,7 @@
 }
 
 .ui-trust-prompt__title-icon {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .ui-trust-prompt__title-icon--warn {
@@ -1892,7 +1892,7 @@
 }
 
 .ui-chip--pressed .ui-chip__icon {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .ui-chip--pressed:hover {

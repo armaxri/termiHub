@@ -388,7 +388,7 @@
   left: var(--spacing-sm);
   display: inline-flex;
   align-items: center;
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .monitoring-menu__radio-label {

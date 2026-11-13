@@ -438,6 +438,102 @@ async fn upload_relaunch_restarts_from_zero_when_rest_is_unsupported() {
     assert_eq!(server.rest_commands(), 0);
 }
 
+// --- Relaunch after a crash: partial past the checkpoint (#5611) ---
+
+/// The crash kept writing after the last persisted checkpoint, so the local
+/// partial runs past it. It is trimmed back and the download resumes from the
+/// checkpoint via `REST`, instead of restarting from zero.
+#[tokio::test]
+async fn download_relaunch_trims_a_partial_past_the_checkpoint_and_resumes() {
+    let data = content(CHUNK_SIZE * 3 + 17);
+    let checkpoint = CHUNK_SIZE + 100;
+    let server = MockFtpServer::start(MockFtpOptions::default()).await;
+    server.put(REMOTE, &data, MTIME);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local = dir.path().join("data.bin");
+    std::fs::write(&local, &data[..CHUNK_SIZE * 2 + 3]).expect("seed partial");
+    let reg = TransferRegistry::new();
+    let handle = relaunch_handle(
+        &reg,
+        "ftp-dl-past",
+        TransferDirection::Download,
+        data.len() as u64,
+        Some(MTIME_SECS),
+    );
+    let (sink, _events) = recording_sink();
+
+    run_ftp_transfer(
+        server.config(),
+        FtpDirection::Download,
+        REMOTE.to_string(),
+        s(&local),
+        handle.clone(),
+        reg,
+        sink,
+        checkpoint as u64,
+    )
+    .await;
+
+    assert_eq!(std::fs::read(&local).expect("read"), data, "byte-exact");
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(
+        server.transfers(),
+        vec![retr(checkpoint as u64)],
+        "resumed from the checkpoint, never from zero"
+    );
+}
+
+/// An upload's remote partial past the checkpoint cannot be trimmed over FTP
+/// (and `REST` + `STOR` past it is up to the server), so the relaunch
+/// restarts from zero with a plain `STOR` — and the row says why.
+#[tokio::test]
+async fn upload_relaunch_past_the_checkpoint_restarts_with_a_reason() {
+    let server = MockFtpServer::start(MockFtpOptions::default()).await;
+    let data = content(CHUNK_SIZE * 3 + 1);
+    let checkpoint = CHUNK_SIZE;
+    server.put(REMOTE, &data[..CHUNK_SIZE * 2], MTIME);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let local = dir.path().join("data.bin");
+    std::fs::write(&local, &data).expect("seed source");
+    let reg = TransferRegistry::new();
+    let handle = relaunch_handle(
+        &reg,
+        "ftp-ul-past",
+        TransferDirection::Upload,
+        data.len() as u64,
+        local_mtime(&local),
+    );
+    let (sink, events) = recording_sink();
+
+    run_ftp_transfer(
+        server.config(),
+        FtpDirection::Upload,
+        REMOTE.to_string(),
+        s(&local),
+        handle.clone(),
+        reg,
+        sink,
+        checkpoint as u64,
+    )
+    .await;
+
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(server.get(REMOTE).expect("uploaded"), data, "byte-exact");
+    assert_eq!(server.transfers(), vec![stor(0)]);
+    assert_eq!(
+        server.rest_commands(),
+        0,
+        "never resumed past the checkpoint"
+    );
+    assert!(
+        messages(&events)
+            .iter()
+            .any(|m| m == super::super::attempt::UNTRIMMABLE_PARTIAL_NOTE),
+        "the restart is surfaced: {:?}",
+        messages(&events)
+    );
+}
+
 // --- A folder path handed to a download (#3944) ---
 
 /// A download of a folder path fails: `RETR` on a directory is refused (a real

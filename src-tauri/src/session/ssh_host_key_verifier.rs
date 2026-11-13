@@ -23,6 +23,10 @@
 //! When the connect gives up while the prompt is open (abort, timeout) the core
 //! drops the prompt future; the verifier then emits `ssh-host-key-prompt-closed`
 //! so the dialog closes, and a late answer to it is ignored (#5185).
+//!
+//! Every accepted key of a connect that names its owner (a terminal tab's
+//! `connect_id`) is reported as `ssh-host-key-trusted` with *how* it came to be
+//! trusted, so the status-bar SSH chip can say so in its tooltip (#5669).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -123,6 +127,45 @@ pub struct SshHostKeyPromptClosedEvent {
     pub prompt_id: String,
 }
 
+/// How an accepted SSH host key came to be trusted for a connect (#5669).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub enum SshHostKeyTrust {
+    /// Recorded in the user's own `~/.ssh/known_hosts`.
+    KnownHosts,
+    /// Remembered in termiHub's trust store from an earlier "Accept for host".
+    Remembered,
+    /// First seen on this connect; the user accepted and remembered it.
+    FirstSeenRemembered,
+    /// First seen on this connect; the user accepted it for this session only.
+    FirstSeenOnce,
+    /// The key changed; the user replaced the previously-trusted key with it.
+    ChangedReplaced,
+    /// The key changed; the user accepted it for this session only.
+    ChangedOnce,
+}
+
+/// `ssh-host-key-trusted` payload: a connect accepted a host key and how it was
+/// trusted (#5669), for the status-bar SSH chip of the tab that owns the
+/// connect. Only sent for a connect that names its owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+pub struct SshHostKeyTrustedEvent {
+    /// The `connect_id` of the connect (for a terminal tab
+    /// `${tabId}:${retryCount}`).
+    pub owner: String,
+    /// The host as configured (a jump hop's or the target's).
+    pub host: String,
+    pub port: u16,
+    pub key_type: String,
+    /// The SHA-256 fingerprint in OpenSSH `SHA256:BASE64` form.
+    pub fingerprint: String,
+    pub trust: SshHostKeyTrust,
+}
+
 /// Abstracts frontend event delivery so the verifier is unit-testable without a
 /// Tauri runtime. The production impl wraps `tauri::AppHandle`.
 pub trait SshHostKeyEventSink: Send + Sync + 'static {
@@ -131,6 +174,9 @@ pub trait SshHostKeyEventSink: Send + Sync + 'static {
 
     /// Withdraw a prompt nobody answered because its connect is gone (#5185).
     fn emit_closed(&self, event: &SshHostKeyPromptClosedEvent);
+
+    /// Report how an owned connect's accepted host key was trusted (#5669).
+    fn emit_trusted(&self, event: &SshHostKeyTrustedEvent);
 }
 
 impl<R: tauri::Runtime> SshHostKeyEventSink for tauri::AppHandle<R> {
@@ -142,6 +188,11 @@ impl<R: tauri::Runtime> SshHostKeyEventSink for tauri::AppHandle<R> {
     fn emit_closed(&self, event: &SshHostKeyPromptClosedEvent) {
         use tauri::Emitter;
         let _ = self.emit("ssh-host-key-prompt-closed", event);
+    }
+
+    fn emit_trusted(&self, event: &SshHostKeyTrustedEvent) {
+        use tauri::Emitter;
+        let _ = self.emit("ssh-host-key-trusted", event);
     }
 }
 
@@ -229,6 +280,22 @@ impl SshHostKeyVerifier {
         }
     }
 
+    /// Accept `info`, reporting how it was trusted to the connect's owner, if
+    /// any (#5669).
+    fn accept(&self, info: &HostKeyInfo, trust: SshHostKeyTrust) -> HostKeyDecision {
+        if let Some(owner) = current_prompt_owner() {
+            self.sink.emit_trusted(&SshHostKeyTrustedEvent {
+                owner,
+                host: info.host.clone(),
+                port: info.port,
+                key_type: info.key_type.clone(),
+                fingerprint: info.fingerprint.clone(),
+                trust,
+            });
+        }
+        HostKeyDecision::Accepted
+    }
+
     /// Emit a prompt and await the verdict, returning `false` if the waiting side
     /// is dropped before a reply (e.g. the connect timed out).
     ///
@@ -299,7 +366,7 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         // recorded there is trusted silently, exactly as `ssh` would, without a
         // prompt (#1969 — previously done in the core SSH handler).
         if info.known_hosts == KnownHostsStatus::Match {
-            return HostKeyDecision::Accepted;
+            return self.accept(info, SshHostKeyTrust::KnownHosts);
         }
 
         let host_port = info.host_port();
@@ -308,7 +375,7 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         // what the user's `~/.ssh/known_hosts` recorded.
         let changed = match self.trust_store.lookup(&host_port, &info.fingerprint) {
             // Already trusted → accept without prompting.
-            TrustLookup::Trusted => return HostKeyDecision::Accepted,
+            TrustLookup::Trusted => return self.accept(info, SshHostKeyTrust::Remembered),
             // Unknown to termiHub's own store, but if the key is *changed*
             // relative to the user's `~/.ssh/known_hosts` this is the
             // possible-MITM case, so warn as a changed key rather than first
@@ -330,13 +397,20 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         if !decision.accept {
             return HostKeyDecision::RejectedByUser;
         }
-        if decision.remember && changed {
-            // "Replace trusted key": the old key is no longer trusted (#5627).
-            self.trust_store.replace(&host_port, &info.fingerprint);
-        } else if decision.remember {
-            self.trust_store.remember(&host_port, &info.fingerprint);
-        }
-        HostKeyDecision::Accepted
+        let trust = match (decision.remember, changed) {
+            (true, true) => {
+                // "Replace trusted key": the old key is no longer trusted (#5627).
+                self.trust_store.replace(&host_port, &info.fingerprint);
+                SshHostKeyTrust::ChangedReplaced
+            }
+            (true, false) => {
+                self.trust_store.remember(&host_port, &info.fingerprint);
+                SshHostKeyTrust::FirstSeenRemembered
+            }
+            (false, true) => SshHostKeyTrust::ChangedOnce,
+            (false, false) => SshHostKeyTrust::FirstSeenOnce,
+        };
+        self.accept(info, trust)
     }
 
     /// An unattended connect (a scheduled run, #3527) never prompts: only a key
@@ -386,6 +460,7 @@ mod tests {
         prompts: Mutex<Vec<SshHostKeyPromptEvent>>,
         count: AtomicUsize,
         dismissed: Mutex<Vec<String>>,
+        trusted: Mutex<Vec<SshHostKeyTrustedEvent>>,
     }
 
     impl SshHostKeyEventSink for RecordingSink {
@@ -402,6 +477,13 @@ mod tests {
                 .lock()
                 .expect("dismissed mutex")
                 .push(event.prompt_id.clone());
+        }
+
+        fn emit_trusted(&self, event: &SshHostKeyTrustedEvent) {
+            self.trusted
+                .lock()
+                .expect("trusted mutex")
+                .push(event.clone());
         }
     }
 
@@ -548,6 +630,102 @@ mod tests {
             1,
             "no re-prompt after remember"
         );
+    }
+
+    /// Verify `info` as connect `owner`, answering any prompt with
+    /// `answer` (`(accept, remember)`), and return the trust reported for it.
+    async fn trust_reported(
+        verifier: &Arc<SshHostKeyVerifier>,
+        sink: &Arc<RecordingSink>,
+        info: HostKeyInfo,
+        answer: Option<(bool, bool)>,
+    ) -> Option<SshHostKeyTrust> {
+        let v = verifier.clone();
+        let handle =
+            tokio::spawn(async move { with_prompt_owner(Some("tab-t:0"), v.verify(&info)).await });
+        if let Some((accept, remember)) = answer {
+            resolve_when_ready(verifier, sink, accept, remember).await;
+        }
+        handle.await.unwrap();
+        let event = sink.trusted.lock().unwrap().pop()?;
+        assert_eq!(event.owner, "tab-t:0", "reported to the owning connect");
+        Some(event.trust)
+    }
+
+    /// Each way a key comes to be trusted is reported to the owning connect
+    /// for the status-bar SSH chip (#5669); a rejection reports nothing.
+    #[tokio::test]
+    async fn accepted_keys_report_how_they_were_trusted() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("r:22", "SHA256:R");
+        store.remember("c:22", "SHA256:OLD");
+        store.remember("d:22", "SHA256:OLD");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+        let known = info_kh("k", 22, "SHA256:K", KnownHostsStatus::Match);
+
+        let cases = [
+            (known, None, Some(SshHostKeyTrust::KnownHosts)),
+            (
+                info("r", 22, "SHA256:R"),
+                None,
+                Some(SshHostKeyTrust::Remembered),
+            ),
+            (
+                info("n", 22, "SHA256:N"),
+                Some((true, true)),
+                Some(SshHostKeyTrust::FirstSeenRemembered),
+            ),
+            (
+                info("o", 22, "SHA256:O"),
+                Some((true, false)),
+                Some(SshHostKeyTrust::FirstSeenOnce),
+            ),
+            (
+                info("c", 22, "SHA256:NEW"),
+                Some((true, true)),
+                Some(SshHostKeyTrust::ChangedReplaced),
+            ),
+            (
+                info("d", 22, "SHA256:NEW"),
+                Some((true, false)),
+                Some(SshHostKeyTrust::ChangedOnce),
+            ),
+            (info("x", 22, "SHA256:X"), Some((false, false)), None),
+        ];
+        for (info, answer, expected) in cases {
+            let host = info.host.clone();
+            assert_eq!(
+                trust_reported(&verifier, &sink, info, answer).await,
+                expected,
+                "host {host}"
+            );
+        }
+    }
+
+    /// A connect with no owner (SFTP, tunnels) reports no trust; the event's
+    /// wire shape is snake_case with a camelCase trust (#5669).
+    #[tokio::test]
+    async fn unowned_connect_reports_no_trust_and_wire_shape() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:AA");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        assert!(verifier.verify(&info("h", 22, "SHA256:AA")).await);
+        assert!(sink.trusted.lock().unwrap().is_empty());
+
+        let wire = serde_json::to_value(SshHostKeyTrustedEvent {
+            owner: "tab:0".into(),
+            host: "h".into(),
+            port: 22,
+            key_type: "ssh-ed25519".into(),
+            fingerprint: "SHA256:AA".into(),
+            trust: SshHostKeyTrust::FirstSeenRemembered,
+        })
+        .unwrap();
+        assert_eq!(wire["trust"], "firstSeenRemembered");
+        assert_eq!(wire["key_type"], "ssh-ed25519");
     }
 
     /// The prompt names the connect that raised it (#5243), so the frontend

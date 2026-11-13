@@ -78,7 +78,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
     // A 640px-wide dialog on a narrower window, reaching down to y=760.
     const dialog = box(180, 300, 820, 760);
     const zone = { ...ZONE, viewportWidth: 1000 };
-    expect(computeToastLayout([dialog], zone)).toEqual({ inset: 500, width: 340 });
+    expect(computeToastLayout([dialog], zone)).toEqual({ inset: 500, width: 340, docked: false });
   });
 
   it("narrows the column beside a dialog too tall to clear", () => {
@@ -87,27 +87,60 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
     const footer = box(320, 700, 960, 760);
     const layout = computeToastLayout([dialog, footer], ZONE);
     // 1280 - 16 (edge) - 960 (dialog right) - 16 (gap) = 288.
-    expect(layout).toEqual({ inset: 0, width: 288 });
+    expect(layout).toEqual({ inset: 0, width: 288, docked: false });
   });
 
-  it("keeps clear of the footer when there is no room beside a tall dialog", () => {
+  it("docks the stack when there is no room beside a tall dialog (#5715)", () => {
     const dialog = box(100, 40, 1180, 760);
     const footer = box(100, 700, 1180, 760);
     const layout = computeToastLayout([dialog, footer], ZONE);
-    expect(layout.width).toBe(340);
-    expect(layout.inset).toBe(100);
     expect(1280 - 16 - 1180 - 16).toBeLessThan(MIN_TOAST_WIDTH);
+    expect(layout.docked).toBe(true);
+    expect(layout.width).toBe(340);
+  });
+
+  it("docks beside a `lg` dialog at the 800x600 minimum window (#5715)", () => {
+    // 640px wide, centred, max-height 100vh - 48px.
+    const zone = { ...ZONE, viewportWidth: 800, viewportHeight: 600 };
+    const dialog = box(80, 24, 720, 576);
+    const footer = box(80, 520, 720, 576);
+    expect(computeToastLayout([dialog, footer], zone)).toMatchObject({ docked: true, width: 340 });
+  });
+
+  it("docks over a `full` dialog that fills the window (#5715)", () => {
+    const dialog = box(16, 16, 1264, 784);
+    expect(computeToastLayout([dialog], ZONE).docked).toBe(true);
+  });
+
+  it("does not dock for a tall dialog that leaves a 240px column (#5715)", () => {
+    // 1280 - 16 - 1008 - 16 = 240: exactly the narrowest column.
+    const dialog = box(368, 40, 1008, 760);
+    expect(computeToastLayout([dialog], ZONE)).toEqual({ inset: 0, width: 240, docked: false });
+  });
+
+  it("does not dock for a short dialog it can lift above (#5715)", () => {
+    const zone = { ...ZONE, viewportWidth: 800, viewportHeight: 600 };
+    const dialog = box(80, 300, 720, 560);
+    expect(computeToastLayout([dialog], zone).docked).toBe(false);
   });
 
   it("leaves the layout alone for a dialog outside the toast column", () => {
     const centredDialog = box(430, 40, 850, 760);
-    expect(computeToastLayout([centredDialog], ZONE)).toEqual({ inset: 0, width: 340 });
+    expect(computeToastLayout([centredDialog], ZONE)).toEqual({
+      inset: 0,
+      width: 340,
+      docked: false,
+    });
   });
 
   it("matches computeToastAvoidInset for footers and panels", () => {
     const footer = box(300, 744, 1280, 800);
     const panelAbove = box(300, 600, 1280, 740);
-    expect(computeToastLayout([footer, panelAbove], ZONE)).toEqual({ inset: 200, width: 340 });
+    expect(computeToastLayout([footer, panelAbove], ZONE)).toEqual({
+      inset: 200,
+      width: 340,
+      docked: false,
+    });
   });
 });
 
