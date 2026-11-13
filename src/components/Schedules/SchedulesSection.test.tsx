@@ -95,6 +95,12 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(openScheduleEditor).toHaveBeenCalledWith();
   });
 
+  it("offers a New schedule button in the empty state (#5633)", async () => {
+    await render([]);
+    act(() => query("schedules-empty-new-btn")!.click());
+    expect(openScheduleEditor).toHaveBeenCalledWith();
+  });
+
   it("summarises the rule, action and target hosts", async () => {
     await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
     expect(query("schedule-summary-s1")!.textContent).toBe(

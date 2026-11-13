@@ -82,6 +82,9 @@ describe("settingsRegistry", () => {
         ["Provide X Server Automatically", "provideXServerAutomatically"],
         ["Check for Plugin Updates Automatically", "pluginUpdateCheckEnabled"],
         ["Command Marks (Shell Hook) by Default", "defaultShellIntegration"],
+        // The labels before #5633 grouped both toggles under Terminal ▸ Command marks.
+        ["Command marks by default", "defaultShellIntegration"],
+        ["Command status marks", "terminalCommandDecorations"],
       ];
       for (const [query, id] of oldLabels) {
         expect(filterSettings(query).some((s) => s.id === id)).toBe(true);
@@ -161,13 +164,21 @@ describe("settingsRegistry", () => {
       }
     });
 
+    it("files both command-mark toggles under Terminal, side by side (#5633)", () => {
+      expect(categoryOf("terminalCommandDecorations")).toBe("terminal");
+      expect(categoryOf("defaultShellIntegration")).toBe("terminal");
+      const ids = SETTINGS_REGISTRY.map((s) => s.id);
+      expect(ids.indexOf("defaultShellIntegration")).toBe(
+        ids.indexOf("terminalCommandDecorations") + 1
+      );
+    });
+
     it("keeps only connection/shell/SSH defaults, the diagnostics controls, and the experimental flag in General", () => {
       const general = SETTINGS_REGISTRY.filter((s) => s.category === "general").map((s) => s.id);
       expect(general).toEqual([
         "defaultUser",
         "defaultSshKeyPath",
         "defaultShell",
-        "defaultShellIntegration",
         "defaultX11Forwarding",
         "fileLogLevel",
         "showCrashReportNotice",

@@ -151,6 +151,58 @@ describe("SettingsNav groups (#5561)", () => {
   });
 });
 
+describe("SettingsNav keeps the active category in view (#5633)", () => {
+  const original = Element.prototype.scrollIntoView;
+  let scrolled: { id: string | null; options: unknown }[];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    scrolled = [];
+    Element.prototype.scrollIntoView = vi.fn(function (this: Element, options?: unknown) {
+      scrolled.push({ id: this.getAttribute("data-testid"), options });
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    Element.prototype.scrollIntoView = original;
+  });
+
+  it("scrolls an active category under the folded Advanced group into view on open", () => {
+    render("portable");
+    expect(scrolled.at(-1)).toEqual({
+      id: "settings-nav-portable",
+      options: { block: "nearest", inline: "nearest" },
+    });
+  });
+
+  it("scrolls the newly active category into view when the selection changes", () => {
+    render("general");
+    render("plugins");
+    expect(scrolled.at(-1)?.id).toBe("settings-nav-plugins");
+  });
+
+  it("does not scroll again while the active category stays the same", () => {
+    render("terminal");
+    const count = scrolled.length;
+    render("terminal", vi.fn(), { highlighted: new Set<CatId>(["security"]) });
+    expect(scrolled).toHaveLength(count);
+  });
+
+  it("also keeps the active tab in view in the compact (horizontal) nav", () => {
+    render("portable", vi.fn(), { isCompact: true });
+    expect(scrolled.at(-1)?.id).toBe("settings-nav-portable");
+  });
+
+  it("exposes the nav scroll box for the product-run grade", () => {
+    render("general");
+    expect(q("settings-category-nav")?.classList.contains("settings-nav")).toBe(true);
+  });
+});
+
 describe("CATEGORY_GROUPS (#5561)", () => {
   it("puts every category in exactly one group", () => {
     const grouped = CATEGORY_GROUPS.flatMap((g) => g.categories);
