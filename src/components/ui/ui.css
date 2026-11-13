@@ -331,14 +331,6 @@
   color: var(--color-warning);
 }
 
-/* Warning hints (default and settings variant) lead with a warning icon. */
-.ui-field__hint--warning,
-.settings-form__hint--warning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-xs);
-}
-
 .ui-field__hint-icon {
   display: inline-flex;
   width: 12px;
@@ -1776,6 +1768,15 @@
 
 .settings-form__hint--warning {
   color: var(--color-warning);
+}
+
+/* Warning hints (default and settings variant) lead with a warning icon; this
+   follows the base hint rules so it wins over their display: block. */
+.ui-field__hint--warning,
+.settings-form__hint--warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
 }
 
 /* === Chip (read-only label pill, #4188) === */
