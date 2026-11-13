@@ -26,6 +26,7 @@ import type {
 // replacing the hand-written mirror interfaces this file used to declare.
 import type { TerminalOutputEvent } from "@/types/generated/TerminalOutputEvent";
 import type { TerminalExitEvent } from "@/types/generated/TerminalExitEvent";
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import type { PersistentSessionStateEvent } from "@/types/generated/PersistentSessionStateEvent";
 import type { OwnershipSupersededPayload } from "@/types/generated/OwnershipSupersededPayload";
 import type { AgentSetupProgress } from "@/types/generated/AgentSetupProgress";
@@ -273,9 +274,19 @@ export async function onSessionOwnershipSuperseded(
  * Multiple subscribers per session are supported (needed for persistent
  * sessions where several tabs can attach to the same backend process).
  */
+/**
+ * A `terminal-exit` subscriber: the exit code (`null` when unknown, as for a
+ * dropped link) and why the link ended on its own, when the backend knows
+ * (#5696).
+ */
+export type TerminalExitCallback = (
+  exitCode: number | null,
+  endCause: SessionEndCause | null
+) => void;
+
 export class TerminalOutputDispatcher {
   private outputCallbacks = new Map<string, Set<(data: Uint8Array) => void>>();
-  private exitCallbacks = new Map<string, Set<(exitCode: number | null) => void>>();
+  private exitCallbacks = new Map<string, Set<TerminalExitCallback>>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
   private pendingOutput = new Map<string, Uint8Array[]>();
   /**
@@ -286,7 +297,10 @@ export class TerminalOutputDispatcher {
    */
   private static readonly MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
   /** Buffer exit events for sessions whose subscriber hasn't registered yet. */
-  private pendingExit = new Map<string, number | null>();
+  private pendingExit = new Map<
+    string,
+    { exitCode: number | null; endCause: SessionEndCause | null }
+  >();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
   /**
@@ -349,6 +363,8 @@ export class TerminalOutputDispatcher {
 
     const unlistenExit = await listen<TerminalExitEvent>(TAURI_EVENT.terminalExit, (event) => {
       const { session_id, exit_code } = event.payload;
+      // Older emitters (an agent-proxied session) may omit the cause (#5696).
+      const endCause = event.payload.end_cause ?? null;
       // The session is gone: drop any pre-subscribe output still buffered for it.
       // A session that exits before (or without) a subscriber ever attaching would
       // otherwise keep its buffered output alive forever (#2073). The scrollback a
@@ -357,11 +373,11 @@ export class TerminalOutputDispatcher {
       this.pendingOutput.delete(session_id);
       const cbs = this.exitCallbacks.get(session_id);
       if (cbs && cbs.size > 0) {
-        for (const cb of cbs) cb(exit_code);
+        for (const cb of cbs) cb(exit_code, endCause);
       } else {
         // Buffer the exit for sessions whose subscriber hasn't registered yet
         // (e.g. race between session death and tab reattach setup).
-        this.pendingExit.set(session_id, exit_code);
+        this.pendingExit.set(session_id, { exitCode: exit_code, endCause });
       }
     });
 
@@ -411,7 +427,7 @@ export class TerminalOutputDispatcher {
   }
 
   /** Subscribe to exit events for a specific session. Returns an unsubscribe function. */
-  subscribeExit(sessionId: string, callback: (exitCode: number | null) => void): () => void {
+  subscribeExit(sessionId: string, callback: TerminalExitCallback): () => void {
     let cbs = this.exitCallbacks.get(sessionId);
     if (!cbs) {
       cbs = new Set();
@@ -420,9 +436,9 @@ export class TerminalOutputDispatcher {
     cbs.add(callback);
     // Fire any exit that arrived before this subscriber registered
     if (this.pendingExit.has(sessionId)) {
-      const exitCode = this.pendingExit.get(sessionId)!;
+      const { exitCode, endCause } = this.pendingExit.get(sessionId)!;
       this.pendingExit.delete(sessionId);
-      callback(exitCode);
+      callback(exitCode, endCause);
     }
     return () => {
       const set = this.exitCallbacks.get(sessionId);

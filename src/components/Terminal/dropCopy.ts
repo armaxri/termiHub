@@ -10,6 +10,7 @@
  */
 import { t, tf } from "@/i18n/catalog";
 import { RECONNECTING_HEADING } from "@/utils/reconnectStatus";
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 
 /** What kind of link a dropped session ran over. */
 export type DropTransport = "serial" | "ssh" | "telnet" | "agent" | "other";
@@ -80,21 +81,27 @@ export function formatClock(at: Date): string {
 /**
  * The line written into the scrollback when a session ends. A dropped link
  * (no exit code, on a serial / network / agent transport) reads as
- * "— connection lost hh:mm:ss —" or "— device disconnected hh:mm:ss —"; any
- * real process exit keeps "[Process exited…]".
+ * "— connection lost hh:mm:ss —" or "— device disconnected hh:mm:ss —"; an
+ * SSH / Telnet server that closed the connection cleanly reads as
+ * "— connection closed by server hh:mm:ss —" (#5696); any real process exit
+ * keeps "[Process exited…]".
  */
 export function sessionEndSeparator(input: {
   transport: DropTransport;
   exitCode: number | null;
   reason: "clean" | "dropped" | "killed";
   at: Date;
+  /** Why the link ended, when the backend knows (#5696). */
+  endCause?: SessionEndCause | null;
 }): string {
-  const { transport, exitCode, reason, at } = input;
+  const { transport, exitCode, reason, at, endCause } = input;
   if (reason === "dropped" && exitCode === null && transport !== "other") {
     const time = formatClock(at);
-    return transport === "serial"
-      ? tf("drop.separator.serial", { time })
-      : tf("drop.separator.network", { time });
+    if (transport === "serial") return tf("drop.separator.serial", { time });
+    if (endCause === "remote_closed" && (transport === "ssh" || transport === "telnet")) {
+      return tf("drop.separator.remoteClosed", { time });
+    }
+    return tf("drop.separator.network", { time });
   }
   return exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
 }

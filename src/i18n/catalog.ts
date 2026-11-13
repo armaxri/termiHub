@@ -262,6 +262,7 @@ const en = {
   "drop.detail.other": "Scrollback is kept. A new session starts; running programs are lost.",
   "drop.separator.serial": "— device disconnected {time} —",
   "drop.separator.network": "— connection lost {time} —",
+  "drop.separator.remoteClosed": "— connection closed by server {time} —",
   "drop.separator.reconnected": "— reconnected {time} —",
   "drop.overlay.scrollbackKept": "Your scrollback is kept — choose View scrollback to read it.",
 

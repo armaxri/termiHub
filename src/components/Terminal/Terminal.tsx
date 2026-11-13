@@ -1168,7 +1168,7 @@ export function Terminal({
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
-        const unsubExit = terminalDispatcher.subscribeExit(sessionId, (exitCode) => {
+        const unsubExit = terminalDispatcher.subscribeExit(sessionId, (exitCode, endCause) => {
           // Classify why the session ended so the disconnect overlay can tailor
           // its wording (#1121). A user-initiated kill (e.g. from the Open
           // Connections panel) was tagged beforehand; otherwise exit code 0 is a
@@ -1179,7 +1179,7 @@ export function Terminal({
           const reason = classifyExitReason({ wasKilled, exitCode });
           frontendLog(
             "disconnect",
-            `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason}`
+            `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason} cause=${endCause}`
           );
           // A dropped link is not a process exit (#5619): a serial unplug or a
           // network drop writes a timed "connection lost" line instead.
@@ -1188,6 +1188,7 @@ export function Terminal({
             exitCode,
             reason,
             at: new Date(),
+            endCause,
           });
           xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
           // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).

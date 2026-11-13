@@ -72,6 +72,56 @@ describe("scrollback separators", () => {
     }
   });
 
+  it("writes a closed-by-server line when an SSH / Telnet server closed the link (#5696)", () => {
+    for (const transport of ["ssh", "telnet"] as const) {
+      expect(
+        sessionEndSeparator({
+          transport,
+          exitCode: null,
+          reason: "dropped",
+          at: AT,
+          endCause: "remote_closed",
+        })
+      ).toBe("— connection closed by server 09:05:07 —");
+    }
+  });
+
+  it("keeps connection lost for an I/O error, a timeout or an unknown cause (#5696)", () => {
+    for (const endCause of ["io_error", "timeout", null] as const) {
+      expect(
+        sessionEndSeparator({
+          transport: "telnet",
+          exitCode: null,
+          reason: "dropped",
+          at: AT,
+          endCause,
+        })
+      ).toBe("— connection lost 09:05:07 —");
+    }
+  });
+
+  it("does not let a remote close reword an agent drop or a serial unplug (#5696)", () => {
+    const at = AT;
+    expect(
+      sessionEndSeparator({
+        transport: "agent",
+        exitCode: null,
+        reason: "dropped",
+        at,
+        endCause: "remote_closed",
+      })
+    ).toBe("— connection lost 09:05:07 —");
+    expect(
+      sessionEndSeparator({
+        transport: "serial",
+        exitCode: null,
+        reason: "dropped",
+        at,
+        endCause: "remote_closed",
+      })
+    ).toBe("— device disconnected 09:05:07 —");
+  });
+
   it("writes a device-disconnected line for an unplugged serial device", () => {
     expect(
       sessionEndSeparator({ transport: "serial", exitCode: null, reason: "dropped", at: AT })
