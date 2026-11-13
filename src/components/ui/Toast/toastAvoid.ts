@@ -1,8 +1,9 @@
 import { useLayoutEffect } from "react";
 
 /**
- * Attribute marking an element the toast stack must never cover (#5618): a
- * modal or editor footer with its Save buttons, the Transfers panel. Put it on
+ * Attribute marking an element the toast stack must never cover (#5618): an
+ * open dialog (#5686), a modal or editor footer with its Save buttons, the
+ * Transfers panel. Put it on
  * the element itself (`data-toast-avoid=""`); the toast hub measures every
  * marked element and lifts the stack above any that sits in its way.
  */
@@ -17,6 +18,19 @@ export const TOAST_AVOID_PROPS = { [TOAST_AVOID_ATTR]: "" } as const;
  * when nothing is in the way. Read by `ToastProvider`'s bottom offset.
  */
 export const TOAST_AVOID_INSET_VAR = "--app-toast-avoid-inset";
+
+/**
+ * CSS custom property (on `<html>`) holding a narrowed toast column width, set
+ * only while an open dialog leaves no room above it but enough beside it
+ * (#5686). {@link TOAST_NARROW_CLASS} on `<html>` applies it to the stack.
+ */
+export const TOAST_WIDTH_VAR = "--app-toast-width";
+
+/** Class on `<html>` while {@link TOAST_WIDTH_VAR} narrows the toast column. */
+export const TOAST_NARROW_CLASS = "th-toast-narrow";
+
+/** Narrowest column the stack is squeezed to beside a dialog (#5686). */
+export const MIN_TOAST_WIDTH = 240;
 
 /** A box in viewport CSS pixels (the subset of `DOMRect` the math needs). */
 export interface Box {
@@ -70,6 +84,42 @@ export function computeToastAvoidInset(boxes: readonly Box[], zone: ToastZone): 
   return inset;
 }
 
+/** Where the stack goes: its bottom inset and its column width. */
+export interface ToastLayout {
+  inset: number;
+  width: number;
+}
+
+/**
+ * Lay the toast stack out clear of every keep-clear box (#5618, #5686).
+ *
+ * A box with room above it for the stack (a footer, the Transfers panel, a
+ * short dialog) is cleared by lifting the stack above it
+ * ({@link computeToastAvoidInset}). A box without that room — a tall open
+ * dialog — cannot be lifted over without pushing the stack off the window, so
+ * the column is narrowed to fit beside it instead, down to
+ * {@link MIN_TOAST_WIDTH}. When even that does not fit, the box is left out
+ * and the smaller keep-clear zones inside it (the dialog footer) still apply.
+ */
+export function computeToastLayout(boxes: readonly Box[], zone: ToastZone): ToastLayout {
+  const live = boxes.filter((b) => b.bottom > b.top && b.right > b.left);
+  const liftable = (b: Box) => b.top >= zone.height + 2 * zone.edge;
+  const columnRight = zone.viewportWidth - zone.edge;
+  const bandBottom = zone.viewportHeight - zone.baseInset - zone.edge;
+  const bandTop = bandBottom - zone.height;
+  let width = zone.width;
+  for (const b of live) {
+    if (liftable(b)) continue;
+    const inColumn = b.right > columnRight - zone.width && b.left < columnRight;
+    const inBand = b.bottom > bandTop && b.top < bandBottom;
+    if (!inColumn || !inBand) continue;
+    const room = Math.floor(columnRight - b.right - zone.edge);
+    if (room >= MIN_TOAST_WIDTH) width = Math.min(width, room);
+  }
+  const inset = computeToastAvoidInset(live.filter(liftable), { ...zone, width });
+  return { inset, width };
+}
+
 /** Smallest stack height assumed while no toast is showing (one short toast). */
 const MIN_STACK_HEIGHT = 64;
 
@@ -96,9 +146,9 @@ function readPxVar(name: string): number {
 }
 
 /**
- * Keep {@link TOAST_AVOID_INSET_VAR} current: measure every
- * `[data-toast-avoid]` element and publish the inset the stack needs to clear
- * them. Re-measures (at most once per frame) on DOM changes and window resize,
+ * Keep {@link TOAST_AVOID_INSET_VAR} (and, beside a tall dialog,
+ * {@link TOAST_WIDTH_VAR}) current: measure every `[data-toast-avoid]` element
+ * and publish where the stack must sit to clear them. Re-measures (at most once per frame) on DOM changes and window resize,
  * because a footer or the Transfers panel can appear, move or resize at any
  * time.
  */
@@ -113,7 +163,7 @@ export function useToastAvoidInset(width: number, edge: number): void {
         document.querySelectorAll<HTMLElement>(`[${TOAST_AVOID_ATTR}]`),
         (el) => el.getBoundingClientRect()
       );
-      const inset = computeToastAvoidInset(boxes, {
+      const layout = computeToastLayout(boxes, {
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
         width,
@@ -121,10 +171,17 @@ export function useToastAvoidInset(width: number, edge: number): void {
         edge,
         baseInset: readPxVar("--app-bottom-banner-inset"),
       });
-      const value = `${inset}px`;
+      const value = `${layout.inset}px|${layout.width}`;
       if (value === last) return;
       last = value;
-      root.style.setProperty(TOAST_AVOID_INSET_VAR, value);
+      root.style.setProperty(TOAST_AVOID_INSET_VAR, `${layout.inset}px`);
+      if (layout.width < width) {
+        root.style.setProperty(TOAST_WIDTH_VAR, `${layout.width}px`);
+        root.classList.add(TOAST_NARROW_CLASS);
+      } else {
+        root.style.removeProperty(TOAST_WIDTH_VAR);
+        root.classList.remove(TOAST_NARROW_CLASS);
+      }
     };
     const schedule = () => {
       if (frame === 0) frame = requestAnimationFrame(publish);
@@ -143,6 +200,8 @@ export function useToastAvoidInset(width: number, edge: number): void {
       mutations.disconnect();
       window.removeEventListener("resize", schedule);
       root.style.removeProperty(TOAST_AVOID_INSET_VAR);
+      root.style.removeProperty(TOAST_WIDTH_VAR);
+      root.classList.remove(TOAST_NARROW_CLASS);
     };
   }, [width, edge]);
 }

@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
 import { toast } from "@/components/ui";
+import { claimWorkflowRunToast } from "./workflowRunToasts";
 import { newId } from "@/services/transport/ids";
 import {
   listWorkflows as apiListWorkflows,
@@ -428,6 +429,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     // One clean output panel for the whole fan-out; targets then preserve it.
     clearWorkflowOutputContent();
     void dispatchWorkflowDismissOutput();
+    claimWorkflowRunToast(toastId);
     renderProgress();
 
     const results = await runWithConcurrency(

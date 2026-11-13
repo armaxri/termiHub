@@ -2,6 +2,7 @@ import { Toaster } from "sonner";
 import { CheckCircle2, XCircle, Info, Loader2, X } from "lucide-react";
 import { toastHotkey } from "./toastHotkey";
 import { TOAST_AVOID_INSET_VAR, useToastAvoidInset } from "./toastAvoid";
+import { useDismissOnModalOpen } from "./toastModal";
 import "./toast.css";
 
 /**
@@ -26,7 +27,12 @@ import "./toast.css";
  *
  * It also stays clear of any element marked `data-toast-avoid` (modal and
  * editor footers, the Transfers panel — #5618): `useToastAvoidInset` publishes
- * `--app-toast-avoid-inset`, the height the stack must start above.
+ * `--app-toast-avoid-inset`, the height the stack must start above. An open
+ * dialog is a keep-clear zone too (#5686): the stack sits above it, or beside
+ * it in a narrower column when it is too tall to clear.
+ *
+ * A toast raised with `dismissOnModal` (the "Closed … / Reopen" undo) is
+ * dismissed when a dialog opens (#5665), so it never lingers beside one.
  *
  * Toasts stack expanded (`expand`), each in its own slot with a gap, so a newer
  * toast is never drawn over an older one with both texts showing through
@@ -59,6 +65,7 @@ const TOAST_OFFSET = {
 
 export function ToastProvider() {
   useToastAvoidInset(TOAST_WIDTH, TOAST_EDGE);
+  useDismissOnModalOpen();
   return (
     // `toast-region` lets the product run measure the stack (#5618).
     <div data-testid="toast-region">
