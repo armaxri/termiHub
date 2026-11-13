@@ -7,6 +7,7 @@ and the file lock run for real where the platform has them.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -114,9 +115,12 @@ def test_private_gnome_keyring_round_trips_and_is_torn_down(monkeypatch):
     try:
         env = store.tool_env()
         assert env["DBUS_SESSION_BUS_ADDRESS"] != os.environ.get("DBUS_SESSION_BUS_ADDRESS")
-        assert store.app_env() == {"DBUS_SESSION_BUS_ADDRESS": env["DBUS_SESSION_BUS_ADDRESS"]}
+        assert store.app_env() == {
+            "DBUS_SESSION_BUS_ADDRESS": env["DBUS_SESSION_BUS_ADDRESS"],
+            os_store.DEV_INSTANCE_ENV: store.instance,
+        }
         os_store._run(
-            ["secret-tool", "store", "--label", "t", "service", "termiHub", "username", "a:password"],
+            ["secret-tool", "store", "--label", "t", "service", store.service, "username", "a:password"],
             env=env,
             stdin="value-1",
         )
@@ -202,3 +206,15 @@ def test_store_teardown_gives_up_quietly(tmp_path, monkeypatch):
     monkeypatch.setattr(os_store.shutil, "rmtree", failing_rmtree)
     monkeypatch.setattr(os_store.time, "sleep", lambda _s: None)
     os_store._remove_tree(tmp_path)
+
+
+def test_each_store_run_gets_a_fresh_keychain_namespace_the_app_keeps_verbatim():
+    # #5514: the test-bridge app is an isolated build, so its items live under
+    # ``<base>-dev-<instance>``; the instance must survive the app's filter
+    # (ASCII letters, digits, '-', '_'; at most 32 characters) unchanged.
+    a, b = os_store.run_namespace(), os_store.run_namespace()
+    assert a != b
+    assert re.fullmatch(r"ci-[0-9a-f]{12}", a), a
+    assert len(a) <= 32
+    assert os_store.namespaced(os_store.SERVICE, a) == f"termiHub-dev-{a}"
+    assert os_store.namespaced(os_store.SEAL_SERVICE, a) == f"termiHub-backup-restore-dev-{a}"
