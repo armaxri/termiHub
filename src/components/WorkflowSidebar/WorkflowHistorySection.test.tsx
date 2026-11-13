@@ -93,8 +93,9 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
         ?.querySelector(".sidebar-list-item__header")
         ?.textContent?.includes("1/4")
     ).toBe(false);
-    // The trigger provenance is surfaced in the row detail.
-    expect(query("workflow-run-r-ok")?.textContent).toContain("manual");
+    // The trigger provenance is surfaced in the row detail, as a readable label
+    // rather than the raw trigger id (#5529).
+    expect(query("workflow-run-r-ok")?.textContent).toContain("Manual");
   });
 
   it("notes tolerated continue-on-error failures on a run (PROD-045)", () => {
