@@ -57,8 +57,7 @@ pub struct AppInfo {
 /// Returns `None` for an empty or unparseable value so the frontend can hide
 /// the build date instead of rendering an invalid one.
 pub fn normalize_build_commit_time(raw: &str) -> Option<String> {
-    parse_build_commit_time(raw)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    parse_build_commit_time(raw).map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
 
 /// Return build-time info (version, git hash, dev flag, build branch) to the frontend.

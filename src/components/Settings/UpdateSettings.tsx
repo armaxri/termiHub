@@ -8,6 +8,7 @@ import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
+import { formatBuildDate } from "@/utils/formatters";
 import { Button, RadioGroup, Spinner, StatusDot, Tooltip, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import {
@@ -41,6 +42,9 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
 
   const [savingAutoCheck, setSavingAutoCheck] = useState(false);
   const appInfo = useAppInfo();
+  // Commit time of this build (#5652); empty when unknown or unparseable, which
+  // hides the row rather than rendering "Invalid Date".
+  const buildDate = formatBuildDate(appInfo?.buildCommitTime);
 
   const autoCheck = settings.updates?.autoCheck ?? true;
   const lastCheckTime = settings.updates?.lastCheckTime;
@@ -85,7 +89,11 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   // one click copies version and commit for a bug report.
   const handleCopyBuildInfo = async () => {
     if (!appInfo) return;
-    const text = `termiHub v${appInfo.version}${appInfo.isDev ? " [DEV]" : ""} (${appInfo.gitHash})`;
+    // The copied text keeps the raw UTC commit time: unambiguous in a bug report
+    // whatever the reader's locale or time zone (#5652).
+    const commitTime = buildDate && appInfo.buildCommitTime;
+    const build = commitTime ? `${appInfo.gitHash}, commit time ${commitTime}` : appInfo.gitHash;
+    const text = `termiHub v${appInfo.version}${appInfo.isDev ? " [DEV]" : ""} (${build})`;
     try {
       // Tauri clipboard plugin: navigator.clipboard rejects on macOS/WKWebView
       // when the window is not focused (#4327).
@@ -141,6 +149,14 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                 </Tooltip>
               )}
             </div>
+            {buildDate && (
+              <div className="update-settings__row">
+                <span className="update-settings__label">Build date</span>
+                <span data-testid="update-build-date" title="Commit time of this build">
+                  {buildDate}
+                </span>
+              </div>
+            )}
 
             <div className="update-settings__row">
               <span className="update-settings__label">

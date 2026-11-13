@@ -7,6 +7,7 @@ import {
   formatRelativeAgo,
   formatRelativeTime,
   formatAbsoluteTime,
+  formatBuildDate,
   formatClockTime,
   formatLogTime,
   formatRelativeDay,
@@ -218,6 +219,30 @@ describe("formatAbsoluteTime", () => {
     expect(formatAbsoluteTime(null)).toBe("");
     expect(formatAbsoluteTime("")).toBe("");
     expect(formatAbsoluteTime("not a date")).toBe("");
+  });
+});
+
+describe("formatBuildDate (#5652)", () => {
+  const at = "2026-11-13T09:42:07Z";
+
+  it("formats date, time and time zone in the UI locale", () => {
+    const expected = new Intl.DateTimeFormat(locale.resolveUiLocale(), {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(new Date(at));
+    expect(formatBuildDate(at)).toBe(expected);
+    expect(formatBuildDate(at)).toContain("2026");
+  });
+
+  it("returns an empty string for a missing or unparseable input", () => {
+    expect(formatBuildDate(undefined)).toBe("");
+    expect(formatBuildDate(null)).toBe("");
+    expect(formatBuildDate("")).toBe("");
+    expect(formatBuildDate("not a date")).toBe("");
   });
 });
 
