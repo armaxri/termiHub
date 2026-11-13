@@ -211,6 +211,55 @@ fn the_session_mode_follows_the_reply_and_the_fallback() {
 }
 
 #[test]
+fn the_session_reason_follows_the_reply_and_the_fallback() {
+    use crate::connection::X11ForwardingReason as R;
+    assert_eq!(forwarding_reason(None, true), None, "server-forwarded");
+    assert_eq!(forwarding_reason(None, false), None, "server-forwarded");
+    assert_eq!(
+        forwarding_reason(Some(&X11ReqRefusal::Refused), true),
+        Some(R::ServerRefused)
+    );
+    assert_eq!(
+        forwarding_reason(Some(&X11ReqRefusal::NoReply), true),
+        Some(R::ServerNoReply)
+    );
+    assert_eq!(
+        forwarding_reason(Some(&X11ReqRefusal::ChannelGone), true),
+        Some(R::ServerNoReply)
+    );
+    for refusal in [
+        X11ReqRefusal::Refused,
+        X11ReqRefusal::NoReply,
+        X11ReqRefusal::ChannelGone,
+    ] {
+        assert_eq!(
+            forwarding_reason(Some(&refusal), false),
+            Some(R::FallbackFailed),
+            "{refusal:?}"
+        );
+    }
+}
+
+#[test]
+fn the_session_reason_serializes_for_the_ui() {
+    use crate::connection::X11ForwardingReason as R;
+    for (reason, wire) in [
+        (R::NoLocalXServer, "noLocalXServer"),
+        (R::ServerRefused, "serverRefused"),
+        (R::ServerNoReply, "serverNoReply"),
+        (
+            R::UntrustedNoSecurityExtension,
+            "untrustedNoSecurityExtension",
+        ),
+        (R::UntrustedXauthMissing, "untrustedXauthMissing"),
+        (R::UntrustedXauthFailed, "untrustedXauthFailed"),
+        (R::FallbackFailed, "fallbackFailed"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), wire);
+    }
+}
+
+#[test]
 fn the_session_mode_serializes_for_the_ui() {
     use X11ForwardingMode as M;
     for (mode, wire) in [

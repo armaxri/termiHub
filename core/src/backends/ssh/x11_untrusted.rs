@@ -108,6 +108,19 @@ pub enum UntrustedUnavailable {
 }
 
 impl UntrustedUnavailable {
+    /// The typed reason the session reports for this (#5601). Drops the
+    /// `xauth` detail text, which only goes to the log and connect status.
+    pub fn reason(&self) -> crate::connection::X11ForwardingReason {
+        use crate::connection::X11ForwardingReason;
+        match self {
+            Self::NoXauth => X11ForwardingReason::UntrustedXauthMissing,
+            Self::NoSecurityExtension => X11ForwardingReason::UntrustedNoSecurityExtension,
+            Self::DisplayNotAddressable | Self::Failed(_) => {
+                X11ForwardingReason::UntrustedXauthFailed
+            }
+        }
+    }
+
     /// A user-facing line for the connect status and the log.
     pub fn describe(&self) -> String {
         let why = match self {

@@ -361,6 +361,17 @@ pub struct SessionInfo {
         ts(type = "import(\"./X11ForwardingMode\").X11ForwardingMode", optional)
     )]
     pub x11_forwarding: Option<termihub_core::connection::X11ForwardingMode>,
+    /// Why X11 forwarding is not active for the session, or why it fell back
+    /// to the typed setup (#5601). Omitted when it is off or server-forwarded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(
+            type = "import(\"./X11ForwardingReason\").X11ForwardingReason",
+            optional
+        )
+    )]
+    pub x11_forwarding_reason: Option<termihub_core::connection::X11ForwardingReason>,
 }
 
 /// One agent-hosted session's identity, for server-side `session-lifecycle`
@@ -1309,6 +1320,7 @@ impl SessionManager {
             spawned,
             // Known once connected; the connect above has run (#5586).
             x11_forwarding: connection.x11_forwarding(),
+            x11_forwarding_reason: connection.x11_forwarding_reason(),
         };
 
         // Capture the agent's live session id before `remote_session_id` moves
@@ -2297,6 +2309,7 @@ impl SessionManager {
                         agent_id: Some(agent_id.to_string()),
                         spawned: false,
                         x11_forwarding: None,
+                        x11_forwarding_reason: None,
                     },
                     remote_session_id: Some(remote_session_id.to_string()),
                     line_ending: LineEnding::default(),
@@ -2556,6 +2569,7 @@ impl SessionManager {
                     agent_id: None,
                     spawned: false,
                     x11_forwarding: None,
+                    x11_forwarding_reason: None,
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),

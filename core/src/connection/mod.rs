@@ -85,7 +85,7 @@ pub use registry::{
 pub use save_password::{normalize_save_password, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
-pub use x11_forwarding::X11ForwardingMode;
+pub use x11_forwarding::{X11ForwardingMode, X11ForwardingReason};
 
 use std::sync::Arc;
 
@@ -397,6 +397,14 @@ pub trait ConnectionType: Send + Sync {
     /// connected. `None` when X11 forwarding is off, while disconnected, and
     /// for every backend that has no X11 forwarding (the default).
     fn x11_forwarding(&self) -> Option<X11ForwardingMode> {
+        None
+    }
+
+    /// Why X11 forwarding is not active, or why it fell back to the typed
+    /// setup (#5601), read once connected. `None` when it is off, when the
+    /// server forwards it, while disconnected, and for every backend without
+    /// X11 forwarding (the default).
+    fn x11_forwarding_reason(&self) -> Option<X11ForwardingReason> {
         None
     }
 

@@ -32,7 +32,7 @@ use tracing::{debug, info, warn};
 
 use super::handler::{ForwardedChannelRegistry, IncomingX11};
 use super::x11::{LocalXConnection, LocalXServerInfo, ResolvedXServer};
-use crate::connection::X11ForwardingMode;
+use crate::connection::{X11ForwardingMode, X11ForwardingReason};
 
 /// The only X11 authorization protocol termiHub forwards.
 pub const MIT_MAGIC_COOKIE_1: &str = "MIT-MAGIC-COOKIE-1";
@@ -458,6 +458,23 @@ pub(crate) fn forwarding_mode(
         Err(X11ReqRefusal::Refused) => X11ForwardingMode::FallbackRefused,
         Err(X11ReqRefusal::NoReply | X11ReqRefusal::ChannelGone) => {
             X11ForwardingMode::FallbackNoReply
+        }
+    }
+}
+
+/// Why the session's X11 is not server-forwarded (#5601): `refusal` is the
+/// server's non-acceptance of `x11-req` (`None` when it accepted), and
+/// `fallback_started` whether the typed fallback then started.
+pub(crate) fn forwarding_reason(
+    refusal: Option<&X11ReqRefusal>,
+    fallback_started: bool,
+) -> Option<X11ForwardingReason> {
+    match refusal {
+        None => None,
+        Some(_) if !fallback_started => Some(X11ForwardingReason::FallbackFailed),
+        Some(X11ReqRefusal::Refused) => Some(X11ForwardingReason::ServerRefused),
+        Some(X11ReqRefusal::NoReply | X11ReqRefusal::ChannelGone) => {
+            Some(X11ForwardingReason::ServerNoReply)
         }
     }
 }

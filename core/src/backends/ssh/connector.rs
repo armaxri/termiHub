@@ -83,6 +83,9 @@ pub struct SshShellHandle {
     pub integration_typed: bool,
     /// How X11 forwarding runs (#5586); `None` when it is off.
     pub x11_forwarding: Option<crate::connection::X11ForwardingMode>,
+    /// Why X11 is not active or fell back (#5601); `None` when it is off
+    /// or the server forwards it.
+    pub x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
 }
 
 // ── Shell-refusal detection (#4078) ───────────────────────────────
@@ -148,18 +151,23 @@ async fn untrusted_x11_server(
 ) -> (
     Option<super::x11::ResolvedXServer>,
     Option<tokio::time::Instant>,
+    Option<crate::connection::X11ForwardingReason>,
 ) {
     use super::x11_untrusted::{choose_cookie, untrusted_x11_timeout, X11CookieDecision};
     // One timeout for both the xauth cookie and the refusal deadline, which
     // the x11-req and fallback forwarders share (#5600).
     let timeout = untrusted_x11_timeout(config.x11_untrusted_timeout_mins);
     let decision = choose_cookie(config.x11_untrusted, &server, timeout).await;
-    if let X11CookieDecision::Refuse(why) = &decision {
-        connect_progress::report(ConnectStage::Shell, Some(why.describe()));
-    }
+    let reason = match &decision {
+        X11CookieDecision::Refuse(why) => {
+            connect_progress::report(ConnectStage::Shell, Some(why.describe()));
+            Some(why.reason())
+        }
+        _ => None,
+    };
     match decision.apply(server) {
-        Some((server, deadline)) => (Some(server), deadline),
-        None => (None, None),
+        Some((server, deadline)) => (Some(server), deadline, None),
+        None => (None, None, reason),
     }
 }
 
@@ -452,8 +460,8 @@ impl SshConnector for RusshSshConnector {
     ) -> Result<SshShellHandle, SessionError> {
         use super::jump_host::connect_target_with_liveness;
         use super::x11::X11Forwarder;
-        use super::x11_req::{forwarding_mode, X11Mode};
-        use crate::connection::X11ForwardingMode;
+        use super::x11_req::{forwarding_mode, forwarding_reason, X11Mode};
+        use crate::connection::{X11ForwardingMode, X11ForwardingReason};
         use russh::ChannelMsg;
 
         // Opaque resources kept alive for the session lifetime.
@@ -501,8 +509,15 @@ impl SshConnector for RusshSshConnector {
         // Untrusted forwarding (#5585) swaps in a generated untrusted cookie,
         // or turns X11 off for the session when that is not possible; the
         // session then reports `X11ForwardingMode::Failed` (#5586).
+        // Why X11 is not active or fell back, for the session (#5601).
+        let mut x11_reason = (config.enable_x11_forwarding && x11_server.is_none())
+            .then_some(X11ForwardingReason::NoLocalXServer);
         let (x11_server, x11_deadline) = match x11_server {
-            Some(server) => untrusted_x11_server(config, server).await,
+            Some(server) => {
+                let (server, deadline, refused) = untrusted_x11_server(config, server).await;
+                x11_reason = x11_reason.or(refused);
+                (server, deadline)
+            }
             None => (None, None),
         };
 
@@ -598,6 +613,7 @@ impl SshConnector for RusshSshConnector {
                         x11_deadline,
                     )
                     .await;
+                    x11_reason = forwarding_reason(Some(&refusal), started.is_ok());
                     x11_forwarding = Some(forwarding_mode(Err(refusal), started.is_ok()));
                     match started {
                         Ok((forwarder, display_num, cookie)) => {
@@ -990,6 +1006,7 @@ impl SshConnector for RusshSshConnector {
             remote_shell,
             integration_typed,
             x11_forwarding,
+            x11_forwarding_reason: x11_reason,
         })
     }
 }

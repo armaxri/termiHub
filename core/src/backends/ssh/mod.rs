@@ -148,6 +148,8 @@ struct ConnectedState {
     prompt_settle: Arc<OutputSettle>,
     /// How X11 forwarding runs (#5586); `None` when it is off.
     x11_forwarding: Option<crate::connection::X11ForwardingMode>,
+    /// Why X11 is not active or fell back (#5601).
+    x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
 }
 
 impl Drop for ConnectedState {
@@ -984,6 +986,7 @@ impl ConnectionType for Ssh {
             disconnected: false,
             prompt_settle,
             x11_forwarding: handle.x11_forwarding,
+            x11_forwarding_reason: handle.x11_forwarding_reason,
         });
 
         Ok(())
@@ -1096,6 +1099,10 @@ impl ConnectionType for Ssh {
     fn x11_forwarding(&self) -> Option<crate::connection::X11ForwardingMode> {
         self.state.as_ref()?.x11_forwarding
     }
+
+    fn x11_forwarding_reason(&self) -> Option<crate::connection::X11ForwardingReason> {
+        self.state.as_ref()?.x11_forwarding_reason
+    }
 }
 
 /// Drop the output sender so the session manager's pump sees EOF and ends the
@@ -1177,6 +1184,8 @@ mod tests {
         script: Option<Vec<(Duration, &'static [u8])>>,
         /// Reported as [`SshShellHandle::x11_forwarding`] (#5586).
         x11_forwarding: Option<crate::connection::X11ForwardingMode>,
+        /// Reported as [`SshShellHandle::x11_forwarding_reason`] (#5601).
+        x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
     }
 
     impl MockSshConnector {
@@ -1193,6 +1202,7 @@ mod tests {
                 integration_typed: false,
                 script: None,
                 x11_forwarding: None,
+                x11_forwarding_reason: None,
             }
         }
 
@@ -1209,6 +1219,7 @@ mod tests {
                 integration_typed: false,
                 script: None,
                 x11_forwarding: None,
+                x11_forwarding_reason: None,
             }
         }
 
@@ -1226,6 +1237,7 @@ mod tests {
                 integration_typed: false,
                 script: None,
                 x11_forwarding: None,
+                x11_forwarding_reason: None,
             }
         }
 
@@ -1326,6 +1338,7 @@ mod tests {
                 remote_shell: self.remote_shell,
                 integration_typed: self.integration_typed,
                 x11_forwarding: self.x11_forwarding,
+                x11_forwarding_reason: self.x11_forwarding_reason,
             })
         }
     }
@@ -2621,10 +2634,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_x11_reason_is_reported_while_connected() {
+        use crate::connection::{X11ForwardingMode, X11ForwardingReason};
+        let connector = MockSshConnector {
+            x11_forwarding: Some(X11ForwardingMode::Failed),
+            x11_forwarding_reason: Some(X11ForwardingReason::UntrustedNoSecurityExtension),
+            ..MockSshConnector::new()
+        };
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        assert_eq!(
+            ssh.x11_forwarding_reason(),
+            None,
+            "nothing before the connect"
+        );
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(
+            ssh.x11_forwarding_reason(),
+            Some(X11ForwardingReason::UntrustedNoSecurityExtension)
+        );
+        ssh.disconnect().await.unwrap();
+        assert_eq!(
+            ssh.x11_forwarding_reason(),
+            None,
+            "nothing after disconnect"
+        );
+    }
+
+    #[tokio::test]
     async fn no_x11_mode_without_x11_forwarding() {
         let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
         ssh.connect(mock_settings()).await.unwrap();
         assert_eq!(ssh.x11_forwarding(), None);
+        assert_eq!(ssh.x11_forwarding_reason(), None);
         ssh.disconnect().await.unwrap();
     }
 
@@ -2855,6 +2896,7 @@ mod tests {
             disconnected,
             prompt_settle: Arc::new(OutputSettle::new()),
             x11_forwarding: None,
+            x11_forwarding_reason: None,
         }
     }
 

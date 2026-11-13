@@ -90,6 +90,28 @@ fn a_missing_security_extension_is_told_apart() {
 }
 
 #[test]
+fn every_refusal_maps_to_a_typed_session_reason() {
+    use crate::connection::X11ForwardingReason as R;
+    assert_eq!(
+        UntrustedUnavailable::NoXauth.reason(),
+        R::UntrustedXauthMissing
+    );
+    assert_eq!(
+        UntrustedUnavailable::NoSecurityExtension.reason(),
+        R::UntrustedNoSecurityExtension
+    );
+    assert_eq!(
+        UntrustedUnavailable::DisplayNotAddressable.reason(),
+        R::UntrustedXauthFailed
+    );
+    // The xauth detail text stays out of the reason the UI gets.
+    let failed = UntrustedUnavailable::Failed("secret-ish detail".into()).reason();
+    assert_eq!(failed, R::UntrustedXauthFailed);
+    let wire = serde_json::to_string(&failed).unwrap();
+    assert!(!wire.contains("detail"), "{wire}");
+}
+
+#[test]
 fn every_refusal_tells_the_user_how_to_get_x11_back() {
     for why in [
         UntrustedUnavailable::NoXauth,
