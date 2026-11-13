@@ -189,6 +189,7 @@ export function UnlockDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
+      dismissTransientToasts
       title="Unlock credential store"
       footer={
         <div className="unlock-dialog__footer" data-testid="unlock-dialog-footer">

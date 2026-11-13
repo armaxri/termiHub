@@ -134,7 +134,7 @@ export type { ContentOverlayProps } from "./ContentOverlay";
 export { LiveRegion } from "./LiveRegion";
 export type { LiveRegionProps, LiveRegionPoliteness } from "./LiveRegion";
 
-export { ToastProvider, toast } from "./Toast";
+export { ToastProvider, toast, TOAST_AVOID_PROPS } from "./Toast";
 export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";
 
 export { ErrorBoundary } from "./ErrorBoundary";

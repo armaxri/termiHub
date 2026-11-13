@@ -37,6 +37,7 @@ export function ConnectionErrorDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
+      dismissTransientToasts
       title={
         <span className="connection-error-dialog__title-row">
           <AlertTriangle size={20} className="connection-error-dialog__icon" aria-hidden="true" />

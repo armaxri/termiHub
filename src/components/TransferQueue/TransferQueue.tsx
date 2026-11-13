@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { ArrowDownUp, Minus } from "lucide-react";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, toast, TOAST_AVOID_PROPS } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { useTransferControls } from "@/hooks/useTransferControls";
@@ -74,7 +74,7 @@ export function TransferQueue() {
   const hasPending = entries.some((e) => !isTerminalTransferState(e.state));
 
   return (
-    <div className="transfer-queue" data-testid="transfer-queue">
+    <div className="transfer-queue" data-testid="transfer-queue" {...TOAST_AVOID_PROPS}>
       <div className="transfer-queue__header">
         <ArrowDownUp size={13} />
         <span className="transfer-queue__title">Transfers</span>
