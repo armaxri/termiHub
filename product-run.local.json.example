@@ -1,0 +1,7 @@
+{
+  "_comment": "Setup input for scripts/internal/product-run.sh (#5518). Copy to product-run.local.json (gitignored) and fill in what you have; leave a section out or empty and its steps are reported as not tested. No secrets here: the run asks when a step needs one.",
+  "raspberry_pi": { "host": "", "user": "pi", "port": 22, "key_path": "" },
+  "serial": { "device": "", "baud": 115200 },
+  "rdp": { "host": "", "port": 3389, "user": "" },
+  "vnc": { "host": "", "port": 5900 }
+}

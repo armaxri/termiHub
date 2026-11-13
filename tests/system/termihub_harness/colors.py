@@ -38,7 +38,7 @@ class Rgba(NamedTuple):
 
 
 _HEX = re.compile(r"^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$", re.IGNORECASE)
-_FUNC = re.compile(r"^(rgba?|color)\((.*)\)$", re.IGNORECASE | re.DOTALL)
+_FUNC = re.compile(r"^(rgba?|color|oklab)\((.*)\)$", re.IGNORECASE | re.DOTALL)
 
 #: CSS keywords that mean "no paint" (an unset custom property reads as "").
 _TRANSPARENT = {"transparent", "", "none", "rgba(0, 0, 0, 0)"}
@@ -58,13 +58,37 @@ def _alpha(token: str) -> float:
     return float(token)
 
 
+def _oklab_to_rgba(lightness: float, a: float, b: float, alpha: float) -> Rgba:
+    """sRGB of an OKLab colour (Ottosson's matrices), clamped to the gamut.
+
+    WebKit serialises some computed colours (e.g. a ``color-mix`` mid-transition)
+    in ``oklab()``.
+    """
+    l_ = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3
+    m_ = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3
+    s_ = (lightness - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    linear = (
+        4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+        -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+        -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
+    )
+
+    def encode(c: float) -> float:
+        c = min(max(c, 0.0), 1.0)
+        return 255.0 * (12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055)
+
+    r, g, bl = (encode(c) for c in linear)
+    return Rgba(r, g, bl, alpha)
+
+
 def parse_color(value: str) -> Rgba:
     """Parse a computed or authored CSS colour into :class:`Rgba`.
 
     Accepts ``#rgb``/``#rgba``/``#rrggbb``/``#rrggbbaa``, ``rgb()``/``rgba()`` in
     comma or space syntax (with an optional ``/ alpha``), ``color(srgb r g b
-    [/ a])`` with 0-1 channels, and ``transparent``. Raises ``ValueError`` on
-    anything else, so a grade never silently compares an unparsed string.
+    [/ a])`` with 0-1 channels, ``oklab(L a b [/ alpha])`` and ``transparent``.
+    Raises ``ValueError`` on anything else, so a grade never silently compares an
+    unparsed string.
     """
     text = (value or "").strip()
     if text.lower() in _TRANSPARENT:
@@ -86,6 +110,11 @@ def parse_color(value: str) -> Rgba:
         body, alpha_text = body.rsplit("/", 1)
         alpha = _alpha(alpha_text)
     parts = [p for p in re.split(r"[\s,]+", body.strip()) if p]
+    if kind == "oklab":
+        if len(parts) != 3:
+            raise ValueError(f"not a CSS colour: {value!r}")
+        lightness = float(parts[0][:-1]) / 100 if parts[0].endswith("%") else float(parts[0])
+        return _oklab_to_rgba(lightness, float(parts[1]), float(parts[2]), alpha)
     if kind == "color":
         if not parts or parts[0].lower() not in ("srgb", "srgb-linear"):
             raise ValueError(f"unsupported colour space: {value!r}")

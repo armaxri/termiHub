@@ -344,7 +344,12 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     <div className="settings-panel__category">
       {show("credentialStorageMode") && (
         <div className="settings-panel__section">
-          <h3 className="settings-panel__section-title">Credential storage</h3>
+          <h3
+            className="settings-panel__section-title"
+            data-testid="security-credential-storage-title"
+          >
+            Credential storage
+          </h3>
           <p className="settings-panel__description">
             Choose how connection passwords, SSH key passphrases, and other secrets are stored.
           </p>

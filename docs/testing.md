@@ -258,6 +258,34 @@ headless. The retired operator harness (`scripts/internal/verify-agent-reconnect
   (`TerminalDisconnectOverlay.projection.test.tsx`, `Terminal.agent-reconnect.test.tsx`,
   `Terminal.agent-reattach-scrollback.test.tsx`).
 
+### On-demand full product run (#5518)
+
+The product run replaces hand-run product tests. It is **triggered by hand only**, never scheduled and never part of a CI lane: tests marked `product_run` are deselected unless pytest gets `--product-run`, and the test inventory counts them as manual.
+
+```bash
+./scripts/internal/product-run.sh            # opens the live progress page
+./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving
+```
+
+```mermaid
+flowchart LR
+    A[product-run.sh] --> B[page server on 127.0.0.1]
+    A --> C["pytest --product-run -m product_run"]
+    C --> D[test app, isolated profile]
+    C --> E["status.json / status.js"]
+    C --> F["shots/&lt;step&gt;.png + manifest.json"]
+    B --> G[progress page]
+    E --> G
+    G -- Done button --> H["human/&lt;token&gt;.json"]
+    H --> C
+```
+
+- **Setup input:** optional `product-run.local.json` at the repo root (gitignored; template `product-run.local.json.example`) for a Raspberry Pi SSH host, a serial device and RDP/VNC hosts. No secrets go into it. A step whose input is missing is reported as **not tested** with the reason.
+- **Isolation:** the harness's temporary `TERMIHUB_CONFIG_DIR`/`TERMIHUB_LOG_DIR`, a scratch `HOME`/`XDG_*`/`ZDOTDIR`/`HISTFILE` under the run directory and an own keychain namespace (`TERMIHUB_DEV_NAME=product-run-<run id>`), whose items the script deletes at the end.
+- **Output:** `tests/system/artifacts/product-run/<run id>/` with `index.html` (the page; it also works opened as a file), `status.json`, `results.json` (per step: id, title, status `pass`/`fail`/`not-tested`/`human`, evidence, screenshots), `shots/<step>.png` window captures found by the test app's PID, and `shots/manifest.json` (step, what the screen should show, theme, window size) for the UI-review agents.
+- **Human steps** (OS security sheets, physical actions) pause the run and show a prompt with a **Done** button on the page; `--unattended` records them as not tested.
+- **Writing a phase:** a `SystemTest` suite with `ProductRunUi` first in its bases (`termihub_harness/product_run`) wraps each check in `with self.step(id, title, expect=...)`. A failed step fails only that step; the test fails at the end of its call phase. See `tests/system/tests/test_product_run.py`.
+
 ## 2. Component Integration Tests
 
 **What it does**: Tests React components with backend integration
