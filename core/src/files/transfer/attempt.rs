@@ -1362,6 +1362,34 @@ mod tests {
         assert_eq!(local_size(path_str).await, Some(11));
     }
 
+    /// #5609: after a crash the local partial holds the bytes written after
+    /// the last persisted checkpoint too. They are trimmed off, so the resume
+    /// gate sees exactly the checkpoint and resumes from it instead of
+    /// restarting a "longer than we wrote" partial from zero.
+    #[tokio::test]
+    async fn local_partial_size_trims_bytes_past_the_checkpoint() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dst.part");
+        let path_str = path.to_str().expect("utf8");
+        assert_eq!(local_partial_size(path_str, 4).await, None, "absent stays absent");
+        std::fs::write(&path, b"abcdefgh").expect("write");
+        assert_eq!(local_partial_size(path_str, 8).await, Some(8));
+        assert_eq!(local_partial_size(path_str, 10).await, Some(8), "shorter is kept");
+        assert_eq!(local_partial_size(path_str, 5).await, Some(5));
+        assert_eq!(std::fs::read(&path).expect("read"), b"abcde");
+
+        let (handle, sink, _) = harness();
+        let mut cursor = ResumeCursor {
+            offset: 3,
+            total: 100,
+            baseline: fp(100, 7),
+        };
+        let present = local_partial_size(path_str, cursor.offset).await;
+        apply_resume_gate(&mut cursor, &handle, &sink, fp(100, 7), present, "T");
+        assert_eq!(cursor.offset, 3, "resumes from the checkpoint");
+        assert_eq!(std::fs::read(&path).expect("read"), b"abc");
+    }
+
     #[tokio::test]
     async fn open_local_dest_truncates_fresh_and_appends_at_offset() {
         use tokio::io::AsyncWriteExt;
