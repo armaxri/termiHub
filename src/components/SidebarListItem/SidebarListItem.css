@@ -140,6 +140,18 @@
   pointer-events: auto;
 }
 
+/* Rows that opt into always-visible actions (a schedule's enable switch and
+   delete, #5612) lay them out the same way. */
+.sidebar-list-item--actions-visible .sidebar-list-item__actions {
+  position: static;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  padding-left: 0;
+  background: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .sidebar-list-item__details {
   display: flex;
   flex-direction: column;

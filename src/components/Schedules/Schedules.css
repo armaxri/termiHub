@@ -100,6 +100,12 @@
   white-space: nowrap;
 }
 
+/* The last run's outcome dot sits inline before "Last: …" (#5612); the row's
+   leading dot shows whether the schedule is on. */
+.schedules__last .status-dot {
+  margin-right: var(--spacing-xs);
+}
+
 .schedules__attempts-toggle {
   margin-top: var(--spacing-xxs);
   font-size: var(--font-size-2xs);
