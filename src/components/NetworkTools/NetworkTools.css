@@ -125,7 +125,9 @@
   border-left: 3px solid var(--color-error);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 /* Section title */
@@ -397,7 +399,9 @@
   border-left: 3px solid var(--color-warning);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
-  color: var(--color-warning);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 /* ===================================================================

@@ -139,14 +139,18 @@
 .oc-row__badge--connected,
 .oc-row__badge--up {
   background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 .oc-row__badge--dead,
 .oc-row__badge--down,
 .oc-row__badge--error {
   background: color-mix(in srgb, var(--color-error) 18%, transparent);
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 .oc-row__badge--connecting,
@@ -154,7 +158,9 @@
 .oc-row__badge--paused,
 .oc-row__badge--orphaned {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 .oc-row__badge--stopped {
@@ -164,7 +170,9 @@
 
 .oc-row__badge--spawned {
   background: color-mix(in srgb, var(--color-info) 18%, transparent);
-  color: var(--color-info);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 /* Transfer row (issue 1247): the icon + Cancel button flank a stacked body that

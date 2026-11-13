@@ -380,7 +380,9 @@
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   background: var(--color-error-bg);
   border-bottom: 1px solid var(--border-secondary);
 }

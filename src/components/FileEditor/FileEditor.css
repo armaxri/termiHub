@@ -100,7 +100,9 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   background-color: var(--color-error-bg);
   border-bottom: 1px solid var(--color-error);
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   font-size: var(--font-size-sm);
 }
 
@@ -121,7 +123,9 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   background-color: color-mix(in srgb, var(--color-warning) 12%, var(--bg-secondary));
   border-bottom: 1px solid var(--color-warning);
-  color: var(--color-warning);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   font-size: var(--font-size-sm);
 }
 
@@ -143,7 +147,9 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   background-color: color-mix(in srgb, var(--color-warning) 12%, var(--bg-secondary));
   border-bottom: 1px solid var(--color-warning);
-  color: var(--color-warning);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   font-size: var(--font-size-sm);
 }
 
