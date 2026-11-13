@@ -69,6 +69,25 @@ describe("SidebarListItem", () => {
     expect(el.classList.contains("sidebar-list-item--error")).toBe(true);
   });
 
+  it("keeps the actions visible without a hover when actionsVisible is set (#5612)", () => {
+    act(() =>
+      root.render(
+        <SidebarListItem testId="item-1" name="X" actions={<button>Go</button>} actionsVisible />
+      )
+    );
+    const el = container.querySelector('[data-testid="item-1"]') as HTMLElement;
+    expect(el.classList.contains("sidebar-list-item--actions-visible")).toBe(true);
+    expect(el.classList.contains("sidebar-list-item--stacked-actions")).toBe(false);
+  });
+
+  it("hides the actions behind a hover by default", () => {
+    act(() =>
+      root.render(<SidebarListItem testId="item-1" name="X" actions={<button>Go</button>} />)
+    );
+    const el = container.querySelector('[data-testid="item-1"]') as HTMLElement;
+    expect(el.classList.contains("sidebar-list-item--actions-visible")).toBe(false);
+  });
+
   it("maps status tones to modifier classes", () => {
     // SidebarStatusDot is now an alias of the shared StatusDot primitive
     // (UISF-003), so it renders the promoted `status-dot` classes.

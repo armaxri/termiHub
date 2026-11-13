@@ -170,6 +170,59 @@ describe("SchedulesSection (PROD-043)", () => {
     );
   });
 
+  it("drives the row dot from the schedule state, not the last run (#5612)", async () => {
+    const completed = { at: new Date().toISOString(), outcome: "completed" as const };
+    await render(
+      [
+        view({ id: "off", enabled: false, lastResult: completed }),
+        view({
+          id: "on",
+          enabled: true,
+          confirmedAt: "x",
+          nextRunAt: new Date().toISOString(),
+          lastResult: { at: completed.at, outcome: "failed" as const },
+        }),
+        view({ id: "never", enabled: false }),
+      ],
+      false
+    );
+    const dot = (id: string) => query(`schedule-dot-${id}`)!;
+    expect(dot("off").classList.contains("status-dot--disabled")).toBe(true);
+    expect(dot("off").classList.contains("status-dot--success")).toBe(false);
+    expect(dot("off").getAttribute("aria-label")).toBe("Disabled");
+    expect(dot("on").classList.contains("status-dot--success")).toBe(true);
+    // A schedule that never ran still shows its state.
+    expect(dot("never").classList.contains("status-dot--disabled")).toBe(true);
+    // The last-run outcome moves to its own line.
+    expect(query("schedule-last-dot-off")!.classList.contains("status-dot--success")).toBe(true);
+    expect(query("schedule-last-dot-on")!.classList.contains("status-dot--error")).toBe(true);
+    expect(query("schedule-last-dot-never")).toBeNull();
+  });
+
+  it("tones a paused schedule as a warning", async () => {
+    await render([view({ enabled: true, confirmedAt: "x" })], true);
+    expect(query("schedule-dot-s1")!.classList.contains("status-dot--warning")).toBe(true);
+  });
+
+  it("leads the row with the name and puts the state after it, not as a badge (#5612)", async () => {
+    await render([view({ enabled: false })]);
+    const row = query("schedule-item-s1")!;
+    expect(row.querySelector(".sidebar-list-item__badge")).toBeNull();
+    const name = query("schedule-name-s1")!;
+    const status = query("schedule-status-s1")!;
+    expect(status.textContent).toBe("Disabled");
+    // DOCUMENT_POSITION_FOLLOWING: the state comes after the name.
+    expect(name.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the enable switch and delete visible without a hover (#5612)", async () => {
+    await render([view()]);
+    const row = query("schedule-item-s1")!;
+    expect(row.classList.contains("sidebar-list-item--actions-visible")).toBe(true);
+    expect(row.contains(query("schedule-enable-s1"))).toBe(true);
+    expect(row.contains(query("schedule-delete-s1"))).toBe(true);
+  });
+
   it("expands a schedule to its recent attempts, including skips and their reasons", async () => {
     const now = Date.now();
     const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
