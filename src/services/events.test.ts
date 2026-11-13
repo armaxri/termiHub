@@ -263,7 +263,7 @@ describe("events service", () => {
         payload: { session_id: "sess-1", exit_code: 0 },
       });
 
-      expect(cb).toHaveBeenCalledWith(0);
+      expect(cb).toHaveBeenCalledWith(0, null);
     });
 
     it("unsubscribe stops delivery", async () => {
@@ -384,7 +384,7 @@ describe("events service", () => {
       // The buffered exit is still delivered so the tab learns the session died.
       const exitCb = vi.fn();
       dispatcher.subscribeExit("sess-gone", exitCb);
-      expect(exitCb).toHaveBeenCalledWith(0);
+      expect(exitCb).toHaveBeenCalledWith(0, null);
     });
 
     it("caps buffered pre-subscribe output to a byte ceiling, dropping oldest chunks (#2073)", async () => {
@@ -453,7 +453,31 @@ describe("events service", () => {
       dispatcher.subscribeExit("sess-pre-exit", cb);
 
       expect(cb).toHaveBeenCalledTimes(1);
-      expect(cb).toHaveBeenCalledWith(42);
+      expect(cb).toHaveBeenCalledWith(42, null);
+    });
+
+    it("passes the end cause to live and buffered exit subscribers (#5696)", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const live = vi.fn();
+      dispatcher.subscribeExit("sess-live", live);
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-live", exit_code: null, end_cause: "remote_closed" },
+      });
+      expect(live).toHaveBeenCalledWith(null, "remote_closed");
+
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-late", exit_code: null, end_cause: "io_error" },
+      });
+      const late = vi.fn();
+      dispatcher.subscribeExit("sess-late", late);
+      expect(late).toHaveBeenCalledWith(null, "io_error");
     });
 
     it("delivers buffered null exit code when exit_code is null", async () => {
@@ -472,7 +496,7 @@ describe("events service", () => {
       const cb = vi.fn();
       dispatcher.subscribeExit("sess-null", cb);
 
-      expect(cb).toHaveBeenCalledWith(null);
+      expect(cb).toHaveBeenCalledWith(null, null);
     });
 
     it("does not re-deliver buffered exit on a second subscribeExit call", async () => {

@@ -25,7 +25,8 @@ use tracing::{debug, info, warn};
 use crate::config::{expand_config_value, TelnetConfig};
 use crate::connection::connect_progress::{self, ConnectStage};
 use crate::connection::{
-    Capabilities, ConnectionType, OutputReceiver, OutputSender, SettingsSchema,
+    Capabilities, ConnectionType, EndCauseSlot, OutputReceiver, OutputSender, SessionEndCause,
+    SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -435,6 +436,9 @@ async fn connect_tcp_cancellable(
 pub(super) struct SharedWriter {
     order: Mutex<()>,
     stream: TcpStream,
+    /// Why this connection ended on its own (#5696). Lives with the socket,
+    /// so a reconnect of the same `Telnet` starts with an empty slot.
+    end_cause: EndCauseSlot,
 }
 
 impl SharedWriter {
@@ -442,6 +446,7 @@ impl SharedWriter {
         Self {
             order: Mutex::new(()),
             stream,
+            end_cause: EndCauseSlot::new(),
         }
     }
 
@@ -474,6 +479,9 @@ fn write_locked(writer: &SharedWriter, data: &[u8]) -> Result<(), SessionError> 
     let mut stream = &writer.stream;
     if let Err(e) = stream.write_all(data).and_then(|()| stream.flush()) {
         warn!(error = %e, "Telnet write failed; ending the session");
+        // Recorded before the shutdown: the reader then reads an end of
+        // stream, which must not read as a clean server close (#5696).
+        writer.end_cause.record(SessionEndCause::IoError);
         if let Err(shutdown) = writer.shutdown() {
             debug!("Telnet shutdown after a failed write: {shutdown}");
         }
@@ -687,6 +695,10 @@ impl ConnectionType for Telnet {
             .is_some_and(|s| s.alive.load(Ordering::SeqCst))
     }
 
+    fn end_cause(&self) -> Option<SessionEndCause> {
+        self.state.as_ref().and_then(|s| s.writer.end_cause.get())
+    }
+
     /// Shut the socket down so a `write` parked on a peer that stopped reading
     /// returns (#4394). The parked write holds the write lock, so this shuts
     /// the socket down without taking it (see `SharedWriter`).
@@ -782,3 +794,7 @@ mod early_output_tests;
 #[cfg(test)]
 #[path = "eof_tests.rs"]
 mod eof_tests;
+
+#[cfg(test)]
+#[path = "end_cause_tests.rs"]
+mod end_cause_tests;

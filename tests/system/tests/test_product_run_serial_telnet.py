@@ -415,6 +415,7 @@ class TestProductRunTelnet(_PhaseBase):
             self.wait(lambda: self.driver.read_terminal(tab).count("login:") >= 2
                       or not self.driver.exists(OVERLAY), timeout=15.0, what="the new session")
             self.evidence(f"terminal: {self.tail(tab)}")
-            # #5619/#5660: the server's close reads as a lost connection, then a reconnect.
-            self.assert_drop_marked(tab, "network")
+            # #5696/#5660: the server's clean close reads as closed by the server
+            # (not a lost connection), then a reconnect.
+            self.assert_drop_marked(tab, "server_closed")
         self.close_all_tabs()

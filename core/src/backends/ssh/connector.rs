@@ -23,6 +23,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::SshConfig;
+use crate::connection::{EndCauseSlot, SessionEndCause};
 use crate::errors::SessionError;
 
 use super::remote_cwd;
@@ -86,6 +87,23 @@ pub struct SshShellHandle {
     /// Why X11 is not active or fell back (#5601); `None` when it is off
     /// or the server forwards it.
     pub x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
+    /// Why the shell channel ended on its own (#5696): the server closed it,
+    /// or the transport failed. Recorded before the reader sees EOF.
+    pub end_cause: EndCauseSlot,
+}
+
+/// Why an incoming channel message ends the session (#5696): `Eof` / `Close`
+/// is the server closing the shell channel, `None` the channel itself going
+/// away with the transport (a dropped link, a keepalive timeout). Any other
+/// message does not end it.
+pub(crate) fn channel_end_cause(msg: Option<&russh::ChannelMsg>) -> Option<SessionEndCause> {
+    match msg {
+        Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) => {
+            Some(SessionEndCause::RemoteClosed)
+        }
+        None => Some(SessionEndCause::IoError),
+        Some(_) => None,
+    }
 }
 
 // ── Shell-refusal detection (#4078) ───────────────────────────────
@@ -812,7 +830,11 @@ impl SshConnector for RusshSshConnector {
 
         let alive_task = alive.clone();
         let refused_task = shell_refused.clone();
+        let end_cause = EndCauseSlot::new();
+        let end_cause_task = end_cause.clone();
         tokio::spawn(async move {
+            // Why the channel ended on its own; `None` for a local close.
+            let mut ended_by: Option<SessionEndCause> = None;
             // Early output + the shell-request reply, for refusal detection.
             let mut early_output: Vec<u8> = Vec::new();
             let mut request_failed = false;
@@ -838,6 +860,7 @@ impl SshConnector for RusshSshConnector {
                         }
                     }
                     if !ok {
+                        ended_by = Some(SessionEndCause::IoError);
                         break;
                     }
                 }
@@ -889,6 +912,7 @@ impl SshConnector for RusshSshConnector {
                                     channel.data(&data[..]).await,
                                     "write",
                                 ) {
+                                    ended_by = Some(SessionEndCause::IoError);
                                     break;
                                 }
                             }
@@ -898,6 +922,7 @@ impl SshConnector for RusshSshConnector {
                                     channel.window_change(cols, rows, 0, 0).await,
                                     "resize",
                                 ) {
+                                    ended_by = Some(SessionEndCause::IoError);
                                     break;
                                 }
                             }
@@ -937,7 +962,10 @@ impl SshConnector for RusshSshConnector {
                                 request_failed = true;
                                 break;
                             }
-                            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                                ended_by = channel_end_cause(msg.as_ref());
+                                break;
+                            }
                             _ => {}
                         }
                     }
@@ -961,6 +989,10 @@ impl SshConnector for RusshSshConnector {
                 tracing::info!("SSH host refused the interactive shell");
                 refused_task.store(true, Ordering::SeqCst);
             }
+            // Record the cause before the reader can see the end (#5696).
+            if let Some(cause) = ended_by {
+                end_cause_task.record(cause);
+            }
             // Signal EOF to the reader (an empty chunk is the sentinel). Never
             // block here: if the queue is full the reader still exits once it
             // drains and sees `alive` cleared below.
@@ -977,6 +1009,7 @@ impl SshConnector for RusshSshConnector {
         let alive_write = alive.clone();
 
         Ok(SshShellHandle {
+            end_cause,
             reader: Box::new(RusshShellReader::new(data_rx, alive.clone())),
             write: Arc::new(move |data: &[u8]| {
                 if !alive_write.load(Ordering::SeqCst) {
@@ -1018,6 +1051,28 @@ mod tests {
     // ── Shell-refusal detection (#4078) ──────────────────────────────
 
     const OPENSSH_REFUSAL: &[u8] = b"This service allows sftp connections only.\r\n";
+
+    /// The server closing the shell channel is a remote close; the channel
+    /// going away with the transport is an I/O error; data ends nothing (#5696).
+    #[test]
+    fn channel_end_cause_classifies_the_ending_message() {
+        use russh::ChannelMsg;
+        assert_eq!(
+            channel_end_cause(Some(&ChannelMsg::Eof)),
+            Some(SessionEndCause::RemoteClosed)
+        );
+        assert_eq!(
+            channel_end_cause(Some(&ChannelMsg::Close)),
+            Some(SessionEndCause::RemoteClosed)
+        );
+        assert_eq!(channel_end_cause(None), Some(SessionEndCause::IoError));
+        assert_eq!(
+            channel_end_cause(Some(&ChannelMsg::Data {
+                data: b"x".to_vec().into()
+            })),
+            None
+        );
+    }
 
     #[test]
     fn failed_shell_request_is_a_refusal() {

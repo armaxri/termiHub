@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use super::auto_login::{AutoLogin, AutoLoginConfig, Outcome};
 use super::negotiation::Negotiator;
 use super::{write_locked, SharedWriter, TelnetFilter};
-use crate::connection::OutputSender;
+use crate::connection::{OutputSender, SessionEndCause};
 
 /// Everything the reader thread needs.
 pub(super) struct ReaderContext {
@@ -40,14 +40,19 @@ fn run(mut ctx: ReaderContext) {
         .take()
         .map(|cfg| AutoLogin::new(cfg, Instant::now()));
 
+    // Why the loop ended; `None` when the session was stopped from outside or
+    // lost its subscriber (#5696).
+    let mut cause = None;
     while ctx.alive.load(Ordering::SeqCst) {
         match ctx.stream.read(&mut buf) {
             Ok(0) => {
                 debug!("Telnet server closed the connection");
+                cause = Some(SessionEndCause::RemoteClosed);
                 break;
             }
             Ok(n) => {
                 let Some(filtered) = negotiate(&ctx, &mut filter, &buf[..n]) else {
+                    cause = Some(SessionEndCause::IoError);
                     break;
                 };
                 if let Some(login) = auto_login.as_mut() {
@@ -64,6 +69,7 @@ fn run(mut ctx: ReaderContext) {
             Err(ref e) if is_read_timeout(e) => {}
             Err(e) => {
                 debug!(error = %e, "Telnet read failed; ending the session");
+                cause = Some(cause_of_read_error(&e));
                 break;
             }
         }
@@ -76,7 +82,7 @@ fn run(mut ctx: ReaderContext) {
             }
         }
     }
-    end_session(&ctx);
+    end_session(&ctx, cause);
 }
 
 /// Mark the session dead and, when this thread is the one that found it dead,
@@ -96,9 +102,16 @@ fn run(mut ctx: ReaderContext) {
 /// [`Drop`] guard. Then the sender is left alone: by the time this thread
 /// notices, the same `Telnet` may already be connected again, and the sender
 /// in `output_tx` would belong to that new connection.
-pub(super) fn end_session(ctx: &ReaderContext) {
+///
+/// `cause` is recorded on the connection *before* the sender is dropped, so
+/// the session manager finds it when it sees the stream end (#5696). A cause
+/// recorded earlier (a failed write) wins.
+pub(super) fn end_session(ctx: &ReaderContext, cause: Option<SessionEndCause>) {
     if !ctx.alive.swap(false, Ordering::SeqCst) {
         return;
+    }
+    if let Some(cause) = cause {
+        ctx.writer.end_cause.record(cause);
     }
     let sender = match ctx.output_tx.lock() {
         Ok(mut guard) => guard.take(),
@@ -120,6 +133,16 @@ pub(super) fn is_read_timeout(e: &std::io::Error) -> bool {
     let kind = e.kind();
     kind == std::io::ErrorKind::WouldBlock
         || (cfg!(windows) && kind == std::io::ErrorKind::TimedOut)
+}
+
+/// Why a fatal read error ended the session: a real `TimedOut` (a peer that
+/// failed the TCP keepalive probes) is a timeout, anything else an I/O error.
+pub(super) fn cause_of_read_error(e: &std::io::Error) -> SessionEndCause {
+    if e.kind() == std::io::ErrorKind::TimedOut {
+        SessionEndCause::Timeout
+    } else {
+        SessionEndCause::IoError
+    }
 }
 
 /// Run one chunk through the filter, writing any negotiation replies. Returns

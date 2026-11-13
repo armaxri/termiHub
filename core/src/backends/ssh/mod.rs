@@ -61,7 +61,7 @@ use tracing::{debug, info};
 use crate::config::{JumpHostConfig, SshConfig};
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
-    SelectOption, SettingsField, SettingsGroup, SettingsSchema,
+    SelectOption, SessionEndCause, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -150,6 +150,8 @@ struct ConnectedState {
     x11_forwarding: Option<crate::connection::X11ForwardingMode>,
     /// Why X11 is not active or fell back (#5601).
     x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
+    /// Why the shell channel ended on its own (#5696).
+    end_cause: crate::connection::EndCauseSlot,
 }
 
 impl Drop for ConnectedState {
@@ -987,6 +989,7 @@ impl ConnectionType for Ssh {
             prompt_settle,
             x11_forwarding: handle.x11_forwarding,
             x11_forwarding_reason: handle.x11_forwarding_reason,
+            end_cause: handle.end_cause,
         });
 
         Ok(())
@@ -1022,6 +1025,10 @@ impl ConnectionType for Ssh {
         self.state
             .as_ref()
             .is_some_and(|s| s.alive.load(Ordering::SeqCst) || self.is_files_only())
+    }
+
+    fn end_cause(&self) -> Option<SessionEndCause> {
+        self.state.as_ref().and_then(|s| s.end_cause.get())
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -1186,6 +1193,8 @@ mod tests {
         x11_forwarding: Option<crate::connection::X11ForwardingMode>,
         /// Reported as [`SshShellHandle::x11_forwarding_reason`] (#5601).
         x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
+        /// Pre-recorded in [`SshShellHandle::end_cause`] (#5696).
+        end_cause: Option<SessionEndCause>,
     }
 
     impl MockSshConnector {
@@ -1203,6 +1212,7 @@ mod tests {
                 script: None,
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
+                end_cause: None,
             }
         }
 
@@ -1220,6 +1230,7 @@ mod tests {
                 script: None,
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
+                end_cause: None,
             }
         }
 
@@ -1238,6 +1249,7 @@ mod tests {
                 script: None,
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
+                end_cause: None,
             }
         }
 
@@ -1339,6 +1351,13 @@ mod tests {
                 integration_typed: self.integration_typed,
                 x11_forwarding: self.x11_forwarding,
                 x11_forwarding_reason: self.x11_forwarding_reason,
+                end_cause: {
+                    let slot = crate::connection::EndCauseSlot::new();
+                    if let Some(cause) = self.end_cause {
+                        slot.record(cause);
+                    }
+                    slot
+                },
             })
         }
     }
@@ -2874,6 +2893,32 @@ mod tests {
         ssh.disconnect().await.unwrap();
     }
 
+    // --- End cause (#5696) -------------------------------------------------
+
+    /// The shell channel's end cause is reported while the state is held, and
+    /// a deliberate disconnect drops it.
+    #[tokio::test]
+    async fn end_cause_is_reported_until_disconnect() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector {
+            end_cause: Some(SessionEndCause::RemoteClosed),
+            ..MockSshConnector::new()
+        }));
+        assert_eq!(ssh.end_cause(), None, "no cause before connect");
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(ssh.end_cause(), Some(SessionEndCause::RemoteClosed));
+        ssh.disconnect().await.unwrap();
+        assert_eq!(ssh.end_cause(), None, "a disconnect drops the cause");
+    }
+
+    /// A live shell with no recorded cause reports none.
+    #[tokio::test]
+    async fn a_live_shell_has_no_end_cause() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(ssh.end_cause(), None);
+        ssh.disconnect().await.unwrap();
+    }
+
     // --- Drop guard (CORE-020) --------------------------------------------
 
     /// Build a `ConnectedState` with inert closures except `close`, which bumps
@@ -2897,6 +2942,7 @@ mod tests {
             prompt_settle: Arc::new(OutputSettle::new()),
             x11_forwarding: None,
             x11_forwarding_reason: None,
+            end_cause: crate::connection::EndCauseSlot::new(),
         }
     }
 

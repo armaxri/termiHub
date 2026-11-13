@@ -72,13 +72,14 @@ vi.mock("@/services/api", () => ({
   getAgentSessionBuffer: vi.fn().mockResolvedValue(new Uint8Array()),
 }));
 
-const exitHandlers = vi.hoisted(() => new Map<string, (code: number | null) => void>());
+type ExitHandler = (code: number | null, endCause: string | null) => void;
+const exitHandlers = vi.hoisted(() => new Map<string, ExitHandler>());
 
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
     subscribeOutput: vi.fn(() => vi.fn()),
-    subscribeExit: vi.fn((sessionId: string, cb: (code: number | null) => void) => {
+    subscribeExit: vi.fn((sessionId: string, cb: ExitHandler) => {
       exitHandlers.set(sessionId, cb);
       return vi.fn();
     }),
@@ -144,11 +145,11 @@ function written(): string {
   return xterm.writeln.mock.calls.map((call) => String(call[0])).join("\n");
 }
 
-async function fireExit(code: number | null): Promise<void> {
+async function fireExit(code: number | null, endCause: string | null = null): Promise<void> {
   const onExit = exitHandlers.get("session-1");
   expect(onExit).toBeDefined();
   await act(async () => {
-    onExit?.(code);
+    onExit?.(code, endCause);
     await wait(0);
   });
 }
@@ -170,9 +171,16 @@ describe("Terminal — drop separators (#5619)", () => {
     expect(written()).not.toContain("[Process exited]");
   });
 
-  it("writes a connection-lost line when the telnet server closes the connection", async () => {
+  it("writes a closed-by-server line when the telnet server closes the connection", async () => {
     await mount({ type: "telnet", config: { host: "router", port: 23 } });
-    await fireExit(null);
+    await fireExit(null, "remote_closed");
+    expect(written()).toMatch(new RegExp(`— connection closed by server ${CLOCK} —`));
+    expect(written()).not.toContain("connection lost");
+  });
+
+  it("writes a connection-lost line when the telnet link breaks", async () => {
+    await mount({ type: "telnet", config: { host: "router", port: 23 } });
+    await fireExit(null, "io_error");
     expect(written()).toMatch(new RegExp(`— connection lost ${CLOCK} —`));
   });
 

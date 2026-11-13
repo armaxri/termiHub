@@ -18,6 +18,7 @@ pub mod clipboard_dib;
 pub mod clipboard_image;
 pub mod connect_progress;
 pub mod connect_timeout;
+pub mod end_cause;
 pub mod graphical;
 pub mod graphical_files;
 pub mod graphical_monitors;
@@ -54,6 +55,7 @@ pub use connect_timeout::{
     normalize_connection_settings, normalize_ftp_connect_timeout, CONNECT_TIMEOUT_KEY, FTP_TYPE_ID,
     LEGACY_FTP_TIMEOUT_KEY,
 };
+pub use end_cause::{EndCauseSlot, SessionEndCause};
 pub use graphical::{
     clipboard_sync_enabled, rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver,
     ClipboardTextReceiver, CursorReceiver, CursorShape, CursorUpdate, CursorViolation, DirtyRect,
@@ -405,6 +407,15 @@ pub trait ConnectionType: Send + Sync {
     /// server forwards it, while disconnected, and for every backend without
     /// X11 forwarding (the default).
     fn x11_forwarding_reason(&self) -> Option<X11ForwardingReason> {
+        None
+    }
+
+    /// Why the session's link ended on its own (#5696): the server closed it,
+    /// an I/O error, or a timeout. Recorded before the output channel closes,
+    /// so it is set by the time the session owner sees the output end. `None`
+    /// while connected, after a deliberate
+    /// [`disconnect`](Self::disconnect), and for backends that cannot tell.
+    fn end_cause(&self) -> Option<SessionEndCause> {
         None
     }
 

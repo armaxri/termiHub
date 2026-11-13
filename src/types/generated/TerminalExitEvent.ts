@@ -3,4 +3,10 @@
 /**
  * Exit event emitted when a terminal process exits.
  */
-export type TerminalExitEvent = { session_id: string, exit_code: number | null, };
+export type TerminalExitEvent = { session_id: string, exit_code: number | null, 
+/**
+ * Why the session's link ended on its own (#5696): the server closed it,
+ * an I/O error or a timeout. `null` when the backend cannot tell or the
+ * session was closed deliberately.
+ */
+end_cause: import("./SessionEndCause").SessionEndCause | null, };
