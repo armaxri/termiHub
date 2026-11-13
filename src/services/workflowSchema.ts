@@ -315,6 +315,9 @@ export const importedWorkflowSchema = z.object({
   triggers: z.array(workflowTriggerSchema).default([]),
   tags: z.array(z.string()).default([]),
   parameters: z.array(workflowParameterSchema).optional(),
+  // #5674: a disarmed workflow stays disarmed on import; anything but a
+  // boolean falls back to absent (armed, the default).
+  triggersEnabled: z.boolean().optional().catch(undefined),
   id: z.string().catch(""),
   description: z.string().optional().catch(undefined),
   createdAt: z.string().catch(""),

@@ -202,6 +202,13 @@ export interface WorkflowsSlice {
   /** Delete a workflow by ID; only mutates local state after the backend delete resolves. */
   deleteWorkflowFromBackend: (workflowId: string) => Promise<void>;
   /**
+   * Arm (`true`) or disarm (`false`) a workflow's automatic triggers (#5674)
+   * without touching its trigger bindings, then refresh the list (which also
+   * recompiles the output-match triggers). Rejects when the workflow is unknown
+   * or the save fails; the store is unchanged then.
+   */
+  setWorkflowTriggersEnabled: (workflowId: string, enabled: boolean) => Promise<void>;
+  /**
    * Persisted, metadata-only history of recent workflow runs (PROD-0046),
    * most-recent first. Populated by {@link loadWorkflowRuns} and refreshed as a
    * side effect of each finished run's fire-and-forget record.
@@ -277,6 +284,14 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     const saved = await apiSaveWorkflow(workflow);
     await get().loadWorkflows();
     return saved;
+  },
+
+  setWorkflowTriggersEnabled: async (workflowId, enabled) => {
+    const workflow = get().workflows.find((w) => w.id === workflowId);
+    if (!workflow) throw new Error("Workflow not found");
+    // Absent means armed, so re-arming drops the key rather than storing `true`.
+    const { triggersEnabled: _previous, ...rest } = workflow;
+    await get().saveWorkflowToBackend(enabled ? rest : { ...rest, triggersEnabled: false });
   },
 
   deleteWorkflowFromBackend: async (workflowId) => {

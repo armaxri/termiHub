@@ -124,6 +124,94 @@ describe("WorkflowListItem", () => {
     expect(query("workflow-summary-w1")?.textContent).toBe("On connect · Prod shell, Staging");
   });
 
+  describe("arm toggle (#5674)", () => {
+    const bound: WorkflowTrigger[] = [
+      { kind: "on-output-match", connectionIds: ["c1"], pattern: "ERR" },
+    ];
+
+    function renderWithToggle(w: Workflow) {
+      const h = { ...handlers(), onSetTriggersEnabled: vi.fn() };
+      render(w, false, h);
+      return h;
+    }
+
+    it("shows an on switch next to the Armed marker of an armed workflow", () => {
+      renderWithToggle(workflow({ triggers: bound }));
+      const toggle = query("workflow-arm-toggle-w1");
+      expect(toggle?.getAttribute("role")).toBe("switch");
+      expect(toggle?.getAttribute("aria-checked")).toBe("true");
+      expect(toggle?.getAttribute("aria-label")).toBe("Disarm workflow Bootstrap");
+      expect(query("workflow-armed-w1")?.getAttribute("data-armed")).toBe("true");
+    });
+
+    it("disarms in one click without opening the editor or running", () => {
+      const h = renderWithToggle(workflow({ triggers: bound }));
+      act(() => query("workflow-arm-toggle-w1")?.click());
+      expect(h.onSetTriggersEnabled).toHaveBeenCalledExactlyOnceWith("w1", false);
+      expect(h.onEdit).not.toHaveBeenCalled();
+      expect(h.onRun).not.toHaveBeenCalled();
+    });
+
+    it("shows a disarmed workflow as Off, keeps its bindings, and re-arms", () => {
+      const h = renderWithToggle(workflow({ triggers: bound, triggersEnabled: false }));
+      const marker = query("workflow-armed-w1");
+      expect(marker?.textContent).toBe("Off");
+      expect(marker?.getAttribute("data-armed")).toBe("false");
+      expect(marker?.className).toContain("workflow-item__armed--off");
+      expect(marker?.getAttribute("aria-label")).toBe(
+        "Disarmed, will not run automatically: on output match of Prod shell"
+      );
+      // The bindings are untouched: the summary still names the connection.
+      expect(query("workflow-summary-w1")?.textContent).toBe("On output match · Prod shell");
+      const toggle = query("workflow-arm-toggle-w1");
+      expect(toggle?.getAttribute("aria-checked")).toBe("false");
+      expect(toggle?.getAttribute("aria-label")).toBe("Arm workflow Bootstrap");
+      act(() => toggle?.click());
+      expect(h.onSetTriggersEnabled).toHaveBeenCalledExactlyOnceWith("w1", true);
+    });
+
+    it("keeps a double-click on the switch from running the workflow", () => {
+      const h = renderWithToggle(workflow({ triggers: bound }));
+      act(() => {
+        query("workflow-arm-toggle-w1")?.dispatchEvent(
+          new MouseEvent("dblclick", { bubbles: true })
+        );
+      });
+      expect(h.onRun).not.toHaveBeenCalled();
+    });
+
+    it("keeps Enter on the switch away from the row's keyboard handler", () => {
+      const onKeyDown = vi.fn();
+      const h = { ...handlers(), onSetTriggersEnabled: vi.fn() };
+      act(() => {
+        root.render(
+          withTooltip(
+            <WorkflowListItem
+              workflow={workflow({ triggers: bound })}
+              running={false}
+              connectionName={connectionName}
+              rowProps={{ onKeyDown }}
+              {...h}
+            />
+          )
+        );
+      });
+      act(() => {
+        query("workflow-arm-toggle-w1")?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+        );
+      });
+      expect(onKeyDown).not.toHaveBeenCalled();
+    });
+
+    it("has no switch on a manual workflow or without a handler", () => {
+      renderWithToggle(workflow());
+      expect(query("workflow-arm-toggle-w1")).toBeNull();
+      render(workflow({ triggers: bound }));
+      expect(query("workflow-arm-toggle-w1")).toBeNull();
+    });
+  });
+
   it("does not mark a workflow armed when its trigger binds no connections", () => {
     const empty: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: [] }];
     render(workflow({ triggers: empty }));

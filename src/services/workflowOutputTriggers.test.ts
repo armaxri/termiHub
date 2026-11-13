@@ -87,6 +87,15 @@ describe("compileOutputTriggers", () => {
     ]);
     expect(compiled.map((c) => c.workflowId)).toEqual(["good"]);
   });
+
+  it("skips a disarmed workflow's triggers (#5674)", () => {
+    const compiled = compileOutputTriggers([
+      { ...wf("off", [match("ready")]), triggersEnabled: false },
+      { ...wf("on", [match("ready")]), triggersEnabled: true },
+      wf("default", [match("ready")]),
+    ]);
+    expect(compiled.map((c) => c.workflowId)).toEqual(["on", "default"]);
+  });
 });
 
 describe("OutputTriggerEngine", () => {
@@ -114,6 +123,19 @@ describe("OutputTriggerEngine", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("never fires a disarmed workflow, and is inactive with only disarmed ones (#5674)", () => {
+    const engine = makeEngine([{ ...wf("wf-a", [match("ready")]), triggersEnabled: false }]);
+    expect(engine.active).toBe(false);
+    engine.enqueue("sess-1", "server ready\n");
+    engine.flush();
+    expect(fire).not.toHaveBeenCalled();
+    // Re-arming (a reload of the saved workflows) makes it fire again.
+    engine.setWorkflows([wf("wf-a", [match("ready")])]);
+    engine.enqueue("sess-1", "server ready\n");
+    engine.flush();
+    expect(fire).toHaveBeenCalledTimes(1);
   });
 
   it("fires on a match after the batch window, not synchronously", () => {

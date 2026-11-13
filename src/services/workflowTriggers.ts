@@ -51,12 +51,24 @@ export function matchHotkeyWorkflow(event: KeyboardEvent, workflows: Workflow[])
   return null;
 }
 
-/** Every workflow with an `on-connect` trigger bound to `connectionId`. */
+/**
+ * Whether `workflow`'s automatic triggers (on-connect, on-disconnect,
+ * on-output-match) may fire (#5674). A workflow disarmed from its row keeps its
+ * trigger bindings but never fires automatically; an absent flag means armed.
+ * Manual and hotkey runs are user-started and ignore it.
+ */
+export function workflowTriggersEnabled(workflow: Pick<Workflow, "triggersEnabled">): boolean {
+  return workflow.triggersEnabled !== false;
+}
+
+/** Every armed workflow with an `on-connect` trigger bound to `connectionId`. */
 export function matchOnConnectWorkflows(connectionId: string, workflows: Workflow[]): Workflow[] {
-  return workflows.filter((workflow) =>
-    workflow.triggers.some(
-      (trigger) => trigger.kind === "on-connect" && trigger.connectionIds.includes(connectionId)
-    )
+  return workflows.filter(
+    (workflow) =>
+      workflowTriggersEnabled(workflow) &&
+      workflow.triggers.some(
+        (trigger) => trigger.kind === "on-connect" && trigger.connectionIds.includes(connectionId)
+      )
   );
 }
 
@@ -180,19 +192,24 @@ export function disconnectCauseMatches(
   return effective === "any" || effective === cause;
 }
 
-/** Every workflow with an `on-disconnect` trigger bound to `connectionId` that accepts `cause`. */
+/**
+ * Every armed workflow with an `on-disconnect` trigger bound to `connectionId`
+ * that accepts `cause`.
+ */
 export function matchOnDisconnectWorkflows(
   connectionId: string,
   cause: SessionEndCause,
   workflows: Workflow[]
 ): Workflow[] {
-  return workflows.filter((workflow) =>
-    workflow.triggers.some(
-      (trigger) =>
-        trigger.kind === "on-disconnect" &&
-        trigger.connectionIds.includes(connectionId) &&
-        disconnectCauseMatches(trigger.when, cause)
-    )
+  return workflows.filter(
+    (workflow) =>
+      workflowTriggersEnabled(workflow) &&
+      workflow.triggers.some(
+        (trigger) =>
+          trigger.kind === "on-disconnect" &&
+          trigger.connectionIds.includes(connectionId) &&
+          disconnectCauseMatches(trigger.when, cause)
+      )
   );
 }
 

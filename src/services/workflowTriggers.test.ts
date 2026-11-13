@@ -14,6 +14,7 @@ import {
   matchOnDisconnectWorkflows,
   resetOnDisconnectDispatchState,
   sessionEndCauseFromExit,
+  workflowTriggersEnabled,
 } from "@/services/workflowTriggers";
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
 
@@ -285,5 +286,50 @@ describe("on-disconnect triggers (#3791)", () => {
     });
     expect(run).not.toHaveBeenCalled();
     expect(isSessionEndHandled("t2")).toBe(true);
+  });
+});
+
+describe("disarmed workflows (#5674)", () => {
+  const disarm = (w: Workflow): Workflow => ({ ...w, triggersEnabled: false });
+
+  it("treats an absent or true flag as armed and only false as disarmed", () => {
+    expect(workflowTriggersEnabled({})).toBe(true);
+    expect(workflowTriggersEnabled({ triggersEnabled: true })).toBe(true);
+    expect(workflowTriggersEnabled({ triggersEnabled: false })).toBe(false);
+  });
+
+  it("skips a disarmed workflow's on-connect trigger and keeps the armed one", () => {
+    const workflows = [
+      disarm(makeWorkflow("off", [{ kind: "on-connect", connectionIds: ["c1"] }])),
+      makeWorkflow("on", [{ kind: "on-connect", connectionIds: ["c1"] }]),
+    ];
+    expect(matchOnConnectWorkflows("c1", workflows).map((w) => w.id)).toEqual(["on"]);
+  });
+
+  it("skips a disarmed workflow's on-disconnect trigger", () => {
+    const workflows = [
+      disarm(makeWorkflow("off", [{ kind: "on-disconnect", connectionIds: ["c1"] }])),
+    ];
+    expect(matchOnDisconnectWorkflows("c1", "drop", workflows)).toEqual([]);
+  });
+
+  it("never runs a disarmed workflow from an on-connect dispatch", () => {
+    resetOnConnectDispatchState();
+    const run = vi.fn();
+    dispatchOnConnectTriggers({
+      connectionId: "c1",
+      tabId: "t1",
+      sessionId: "s-disarmed",
+      workflows: [disarm(makeWorkflow("off", [{ kind: "on-connect", connectionIds: ["c1"] }]))],
+      run,
+    });
+    expect(run).not.toHaveBeenCalled();
+    resetOnConnectDispatchState();
+  });
+
+  it("still lets the hotkey of a disarmed workflow run it (user-started)", () => {
+    const workflows = [disarm(makeWorkflow("hk", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]))];
+    const event = makeKeyEvent("h", { ctrl: true, alt: true });
+    expect(matchHotkeyWorkflow(event, workflows)).toBe("hk");
   });
 });

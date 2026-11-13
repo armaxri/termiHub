@@ -41,7 +41,10 @@ vi.mock("@/services/workflowApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import { recordWorkflowRun as apiRecordWorkflowRun } from "@/services/workflowApi";
+import {
+  recordWorkflowRun as apiRecordWorkflowRun,
+  saveWorkflow as apiSaveWorkflow,
+} from "@/services/workflowApi";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
@@ -245,6 +248,126 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         { kind: "on-output-match", connectionIds: ["conn-1"], pattern: "(a+)+", isRegex: true },
       ]);
       expect(tap).toBeNull();
+    });
+  });
+
+  describe("disarm toggle (#5674)", () => {
+    const outputMatch: WorkflowTrigger = {
+      kind: "on-output-match",
+      connectionIds: ["conn-1"],
+      pattern: "load average",
+    };
+
+    /** The output tap most recently installed (or removed, `null`). */
+    function lastTap(setTap: { mock: { calls: unknown[][] } }) {
+      const calls = setTap.mock.calls;
+      return calls[calls.length - 1]?.[0] as ((sid: string, data: string) => void) | null;
+    }
+
+    /** Make the mocked backend persist saves into `savedWorkflows`. */
+    function persistSaves() {
+      vi.mocked(apiSaveWorkflow).mockImplementation((w: Workflow) => {
+        const i = savedWorkflows.findIndex((s) => s.id === w.id);
+        if (i >= 0) savedWorkflows[i] = w;
+        else savedWorkflows.push(w);
+        return Promise.resolve(w);
+      });
+    }
+
+    afterEach(() => {
+      vi.mocked(apiSaveWorkflow).mockImplementation((w: Workflow) => Promise.resolve(w));
+    });
+
+    it("disarms without touching the triggers, and a disarmed trigger never fires", async () => {
+      persistSaves();
+      seedTab("sess-1");
+      const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
+      savedWorkflows.push(
+        workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch])
+      );
+      await useAppStore.getState().loadWorkflows();
+      expect(lastTap(setTap)).not.toBeNull();
+
+      await useAppStore.getState().setWorkflowTriggersEnabled("wf-m", false);
+
+      const saved = useAppStore.getState().workflows[0];
+      expect(saved.triggersEnabled).toBe(false);
+      expect(saved.triggers).toEqual([outputMatch]);
+      // With only a disarmed trigger left, the output tap is removed entirely.
+      expect(lastTap(setTap)).toBeNull();
+      await new Promise((r) => setTimeout(r, OUTPUT_TRIGGER_LIMITS.batchMs * 3));
+      expect(injected).toEqual([]);
+      expect(recorded()).toEqual([]);
+    });
+
+    it("re-arms by dropping the flag, which reinstalls the output tap", async () => {
+      persistSaves();
+      seedTab("sess-1");
+      const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
+      savedWorkflows.push({
+        ...workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch]),
+        triggersEnabled: false,
+      });
+      await useAppStore.getState().loadWorkflows();
+      expect(lastTap(setTap)).toBeNull();
+
+      await useAppStore.getState().setWorkflowTriggersEnabled("wf-m", true);
+
+      expect("triggersEnabled" in useAppStore.getState().workflows[0]).toBe(false);
+      const tap = lastTap(setTap) ?? null;
+      expect(tap).not.toBeNull();
+      tap!("sess-1", btoa("load average: 0.10\r\n"));
+      await vi.waitFor(() => expect(injected).toEqual(["uptime\n"]), {
+        timeout: OUTPUT_TRIGGER_LIMITS.batchMs * 20,
+      });
+    });
+
+    it("re-checks the flag at launch, so a just-disarmed match never runs", async () => {
+      seedTab("sess-1");
+      const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
+      savedWorkflows.push(
+        workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch])
+      );
+      await useAppStore.getState().loadWorkflows();
+      const tap = lastTap(setTap) ?? null;
+      // Disarmed in the store before the engine was recompiled.
+      const [armed] = useAppStore.getState().workflows;
+      useAppStore.setState({ workflows: [{ ...armed, triggersEnabled: false }] });
+
+      tap!("sess-1", btoa("load average: 0.10\r\n"));
+
+      await new Promise((r) => setTimeout(r, OUTPUT_TRIGGER_LIMITS.batchMs * 3));
+      expect(injected).toEqual([]);
+      expect(recorded()).toEqual([]);
+    });
+
+    it("does not run a disarmed on-disconnect trigger on a drop", async () => {
+      useAppStore.setState({
+        workflows: [
+          {
+            ...workflow(
+              "wf-a",
+              [{ kind: "wait", delayMs: 0 }],
+              [{ kind: "on-disconnect", connectionIds: ["conn-1"] }]
+            ),
+            triggersEnabled: false,
+          },
+        ],
+      });
+      seedTab();
+
+      useAppStore.getState().setTerminalExited("tab-1", { code: null, reason: "dropped" });
+
+      await new Promise((r) => setTimeout(r, 20));
+      expect(recorded()).toEqual([]);
+    });
+
+    it("rejects for an unknown workflow and saves nothing", async () => {
+      vi.mocked(apiSaveWorkflow).mockClear();
+      await expect(
+        useAppStore.getState().setWorkflowTriggersEnabled("nope", false)
+      ).rejects.toThrow("Workflow not found");
+      expect(apiSaveWorkflow).not.toHaveBeenCalled();
     });
   });
 });

@@ -196,6 +196,7 @@ mod tests {
             }],
             triggers: vec![WorkflowTrigger::Manual],
             parameters: Vec::new(),
+            triggers_enabled: true,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -313,6 +314,32 @@ mod tests {
         let workflows = mgr.list_workflows().unwrap();
         assert_eq!(workflows.len(), 1);
         assert_eq!(workflows[0].name, "Persisted");
+    }
+
+    #[test]
+    fn disarmed_flag_persists_across_manager_reload_and_rearms() {
+        let dir = TempDir::new().unwrap();
+        let mut wf = sample_workflow("wf-1", "Watcher");
+        wf.triggers = vec![on_connect(&["c1"])];
+        wf.triggers_enabled = false;
+        WorkflowManager::new_for_test(dir.path())
+            .save_workflow(wf.clone())
+            .unwrap();
+
+        // Disarming keeps the trigger bindings and survives a reload.
+        let reloaded = WorkflowManager::new_for_test(dir.path());
+        let got = reloaded.get_workflow("wf-1").unwrap();
+        assert!(!got.triggers_enabled);
+        assert_eq!(got.triggers, wf.triggers);
+
+        // Re-arming persists too, and the file no longer carries the flag.
+        let mut rearmed = got;
+        rearmed.triggers_enabled = true;
+        reloaded.save_workflow(rearmed).unwrap();
+        let again = WorkflowManager::new_for_test(dir.path());
+        assert!(again.get_workflow("wf-1").unwrap().triggers_enabled);
+        let raw = std::fs::read_to_string(dir.path().join("workflows.json")).unwrap();
+        assert!(!raw.contains("triggersEnabled"), "{raw}");
     }
 
     fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {

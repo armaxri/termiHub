@@ -465,12 +465,31 @@ pub struct Workflow {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<WorkflowParameter>>", optional))]
     pub parameters: Vec<WorkflowParameter>,
+    /// Whether the workflow's automatic triggers (`on-connect`,
+    /// `on-disconnect`, `on-output-match`) may fire (#5674). `false` disarms
+    /// the workflow without touching its trigger bindings, so it can be
+    /// re-armed in one click; manual and hotkey runs are unaffected. Defaults
+    /// to `true` and is omitted from JSON while `true`, so an armed workflow
+    /// round-trips byte-identically.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub triggers_enabled: bool,
     /// RFC 3339 timestamp of when the workflow was first created.
     #[serde(default)]
     pub created_at: String,
     /// RFC 3339 timestamp of the workflow's last update.
     #[serde(default)]
     pub updated_at: String,
+}
+
+/// Serde default for [`Workflow::triggers_enabled`]: a workflow is armed.
+fn default_true() -> bool {
+    true
+}
+
+/// Serde skip predicate for [`Workflow::triggers_enabled`]: omit the default.
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// Top-level schema for the workflows JSON file.
@@ -503,13 +522,20 @@ impl crate::utils::migrate::VersionedStore for WorkflowStore {
     /// the version. The bump is what makes the change downgrade-safe: a v1
     /// build refuses to overwrite a v2 file (PER-004) instead of discarding
     /// the workflows whose triggers it cannot parse.
-    const CURRENT_VERSION: u32 = 2;
+    ///
+    /// v3 (#5674) adds the per-workflow `triggersEnabled` flag (absent =
+    /// armed). Every v2 workflow is valid v3 unchanged, so the v2 → v3 step
+    /// only stamps the version. The bump keeps a disarmed workflow disarmed
+    /// across a downgrade: a v2 build would drop the unknown flag on save and
+    /// silently re-arm it, so it must refuse to overwrite a v3 file instead.
+    const CURRENT_VERSION: u32 = 3;
 
     fn migrate(value: serde_json::Value, from_version: u32) -> anyhow::Result<serde_json::Value> {
         let mut value = value;
-        if from_version < 2 {
+        // v1 → v2 → v3 are all version-stamp-only steps (see CURRENT_VERSION).
+        if from_version < 3 {
             if let Some(obj) = value.as_object_mut() {
-                obj.insert("version".to_string(), serde_json::Value::from("2"));
+                obj.insert("version".to_string(), serde_json::Value::from("3"));
             }
         }
         Ok(value)
@@ -579,7 +605,7 @@ mod tests {
     #[test]
     fn workflow_store_default_is_empty() {
         let store = WorkflowStore::default();
-        assert_eq!(store.version, "2");
+        assert_eq!(store.version, "3");
         assert!(store.workflows.is_empty());
     }
 
@@ -716,6 +742,7 @@ mod tests {
             }],
             triggers: vec![WorkflowTrigger::Manual],
             parameters: Vec::new(),
+            triggers_enabled: true,
             created_at: "2026-07-24T00:00:00Z".to_string(),
             updated_at: "2026-07-24T00:00:00Z".to_string(),
         };
@@ -789,7 +816,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_store_migrates_to_v2_unchanged() {
+    fn v1_store_migrates_to_current_unchanged() {
         use crate::utils::migrate::{load_versioned, LoadOutcome};
         let raw = r#"{"version":"1","workflows":[{"id":"wf-1","name":"Login","triggers":[{"kind":"manual"},{"kind":"on-connect","connectionIds":["c1"]},{"kind":"hotkey","binding":"Ctrl+Alt+H"}]}]}"#;
         match load_versioned::<WorkflowStore>(raw) {
@@ -798,7 +825,8 @@ mod tests {
                 migrated_from,
             } => {
                 assert_eq!(migrated_from, Some(1));
-                assert_eq!(data.version, "2");
+                assert_eq!(data.version, "3");
+                assert!(data.workflows[0].triggers_enabled);
                 assert_eq!(
                     data.workflows[0].triggers,
                     vec![
@@ -814,6 +842,45 @@ mod tests {
             }
             _ => panic!("a v1 workflow store must load and migrate"),
         }
+    }
+
+    #[test]
+    fn v2_store_migrates_to_v3_with_every_workflow_armed() {
+        use crate::utils::migrate::{load_versioned, LoadOutcome};
+        let raw = r#"{"version":"2","workflows":[{"id":"wf-1","name":"Watch","triggers":[{"kind":"on-output-match","connectionIds":["c1"],"pattern":"ERROR"}]}]}"#;
+        match load_versioned::<WorkflowStore>(raw) {
+            LoadOutcome::Loaded {
+                data,
+                migrated_from,
+            } => {
+                assert_eq!(migrated_from, Some(2));
+                assert_eq!(data.version, "3");
+                assert!(data.workflows[0].triggers_enabled);
+            }
+            _ => panic!("a v2 workflow store must load and migrate"),
+        }
+    }
+
+    #[test]
+    fn armed_workflow_omits_the_triggers_enabled_key() {
+        let wf: Workflow = serde_json::from_str(r#"{"id":"wf-1","name":"Bare"}"#).unwrap();
+        assert!(wf.triggers_enabled, "an absent flag means armed");
+        let json = serde_json::to_string(&wf).unwrap();
+        assert!(
+            !json.contains("triggersEnabled"),
+            "armed must round-trip unchanged: {json}"
+        );
+    }
+
+    #[test]
+    fn disarmed_workflow_round_trips_the_flag() {
+        let mut wf: Workflow = serde_json::from_str(r#"{"id":"wf-1","name":"Bare"}"#).unwrap();
+        wf.triggers_enabled = false;
+        let json = serde_json::to_string(&wf).unwrap();
+        assert!(json.contains("\"triggersEnabled\":false"), "{json}");
+        let parsed: Workflow = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.triggers_enabled);
+        assert_eq!(parsed, wf);
     }
 
     #[test]
@@ -839,6 +906,7 @@ mod tests {
             steps: vec![],
             triggers: vec![],
             parameters: Vec::new(),
+            triggers_enabled: true,
             created_at: String::new(),
             updated_at: String::new(),
         };
@@ -885,6 +953,7 @@ mod tests {
             }],
             triggers: vec![],
             parameters: params,
+            triggers_enabled: true,
             created_at: String::new(),
             updated_at: String::new(),
         };

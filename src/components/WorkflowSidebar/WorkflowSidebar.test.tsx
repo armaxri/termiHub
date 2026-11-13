@@ -164,6 +164,35 @@ describe("WorkflowSidebar", () => {
     expect(query("workflow-summary-workflow-1")?.textContent).toBe("Manual");
   });
 
+  it("disarms an armed workflow from its row switch (#5674)", async () => {
+    const setWorkflowTriggersEnabled = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workflows: sampleWorkflows, setWorkflowTriggersEnabled });
+    await render();
+    expect(query("workflow-arm-toggle-workflow-1")).toBeNull();
+
+    act(() => query("workflow-arm-toggle-workflow-2")?.click());
+    await flush();
+
+    expect(setWorkflowTriggersEnabled).toHaveBeenCalledExactlyOnceWith("workflow-2", false);
+    expect(query("workflow-editor-dialog")).toBeNull();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed disarm and leaves the row armed (#5674)", async () => {
+    const setWorkflowTriggersEnabled = vi.fn().mockRejectedValue(new Error("disk full"));
+    useAppStore.setState({ workflows: sampleWorkflows, setWorkflowTriggersEnabled });
+    await render();
+
+    act(() => query("workflow-arm-toggle-workflow-2")?.click());
+    await flush();
+    await flush();
+
+    expect(toastError).toHaveBeenCalledWith('Failed to disarm "Banner"', {
+      description: "disk full",
+    });
+    expect(query("workflow-arm-toggle-workflow-2")?.getAttribute("aria-checked")).toBe("true");
+  });
+
   it("filters the list by the search query across name/description/tags", async () => {
     useAppStore.setState({ workflows: sampleWorkflows });
     await render();

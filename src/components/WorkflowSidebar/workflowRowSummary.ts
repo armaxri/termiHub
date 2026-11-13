@@ -58,6 +58,22 @@ export function workflowRowSummary(
   return parts.length > 0 ? parts.join("; ") : triggerKindLabel("manual");
 }
 
+/** What each armed trigger watches, e.g. `on output match of prod; on connect of a, b`. */
+function watchedTriggers(
+  workflow: Workflow,
+  connectionName: (id: string) => string | undefined
+): string {
+  return armedTriggers(workflow)
+    .map(
+      (trigger) =>
+        `${triggerKindLabel(trigger.kind).toLowerCase()} of ${connectionList(
+          trigger.connectionIds,
+          connectionName
+        )}`
+    )
+    .join("; ");
+}
+
 /**
  * The armed indicator's accessible description (#5635), naming what each
  * armed trigger watches, e.g. `Runs automatically: on output match of prod`.
@@ -66,12 +82,17 @@ export function armedDescription(
   workflow: Workflow,
   connectionName: (id: string) => string | undefined
 ): string {
-  const watched = armedTriggers(workflow).map(
-    (trigger) =>
-      `${triggerKindLabel(trigger.kind).toLowerCase()} of ${connectionList(
-        trigger.connectionIds,
-        connectionName
-      )}`
-  );
-  return `Runs automatically: ${watched.join("; ")}`;
+  return `Runs automatically: ${watchedTriggers(workflow, connectionName)}`;
+}
+
+/**
+ * The indicator's accessible description while the workflow is disarmed from
+ * its row (#5674): its bindings are kept but none of them fires, e.g.
+ * `Disarmed, will not run automatically: on output match of prod`.
+ */
+export function disarmedDescription(
+  workflow: Workflow,
+  connectionName: (id: string) => string | undefined
+): string {
+  return `Disarmed, will not run automatically: ${watchedTriggers(workflow, connectionName)}`;
 }

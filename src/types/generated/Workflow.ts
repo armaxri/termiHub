@@ -43,6 +43,15 @@ triggers: Array<WorkflowTrigger>,
  */
 parameters?: Array<WorkflowParameter>, 
 /**
+ * Whether the workflow's automatic triggers (`on-connect`,
+ * `on-disconnect`, `on-output-match`) may fire (#5674). `false` disarms
+ * the workflow without touching its trigger bindings, so it can be
+ * re-armed in one click; manual and hotkey runs are unaffected. Defaults
+ * to `true` and is omitted from JSON while `true`, so an armed workflow
+ * round-trips byte-identically.
+ */
+triggersEnabled?: boolean, 
+/**
  * RFC 3339 timestamp of when the workflow was first created.
  */
 createdAt: string, 
