@@ -49,6 +49,12 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
   testId?: string;
   /** Apply the error modifier (keeps recovery actions visible). */
   error?: boolean;
+  /**
+   * Keep the actions visible in the row's flow instead of revealing them on
+   * hover/focus (#5612): for rows whose controls are the point of the list (a
+   * schedule's enable switch). The name ellipsizes before them.
+   */
+  actionsVisible?: boolean;
 }
 
 /**
@@ -113,6 +119,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       testId,
       className,
       error = false,
+      actionsVisible = false,
       ...rest
     },
     ref
@@ -128,7 +135,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       const header = headerRef.current;
       const actionsEl = header?.querySelector<HTMLElement>(".sidebar-list-item__actions");
       const nameEl = header?.querySelector<HTMLElement>(".sidebar-list-item__name");
-      if (!header || !actionsEl || !nameEl || error) {
+      if (!header || !actionsEl || !nameEl || error || actionsVisible) {
         setStacked(false);
         return;
       }
@@ -141,7 +148,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
           actions: actionsWidth(actionsEl),
         })
       );
-    }, [error]);
+    }, [error, actionsVisible]);
 
     // Re-measure after every render: the action set changes with the row's
     // state (a running tunnel has more actions than a stopped one).
@@ -163,6 +170,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
     const classes = [
       "sidebar-list-item",
       error ? "sidebar-list-item--error" : "",
+      actionsVisible ? "sidebar-list-item--actions-visible" : "",
       stacked ? "sidebar-list-item--stacked-actions" : "",
       className ?? "",
     ]
