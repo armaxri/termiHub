@@ -692,6 +692,10 @@ describe("getDefaultBindings", () => {
       const combo = binding.winLinuxDefault;
       // Actions that ship unbound (null default) cannot collide with anything.
       if (!combo) continue;
+      // `file-browser` actions never fire through the global engine: only a
+      // focused file browser / transfer pane matches them, never a terminal
+      // (Ctrl+L edits the path there, #5540, and still clears a shell).
+      if (binding.scope === "file-browser") continue;
       const single = Array.isArray(combo) ? combo[0] : combo;
       // Simulate the modifier state that a key event would carry for this combo.
       const fakeEvent = {

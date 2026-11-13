@@ -73,7 +73,8 @@ export function isEventFromTextInput(e: KeyboardEvent): boolean {
  * - `yields-to-terminal` fires in every context: the terminal yield depends on
  *   the event's origin, which the key routers check themselves (#4773).
  * - `remote-desktop` never fires here: the remote-desktop canvas reads that
- *   binding itself (#4524).
+ *   binding itself (#4524). Nor does `file-browser`: the focused file browser
+ *   or transfer pane matches it (#5540).
  *
  * `editor-delegated` keeps bailing for the xterm textarea: the terminal's key
  * router already runs copy/paste/select-all, and firing them here too would
@@ -87,7 +88,7 @@ export function isScopeCompatible(
 ): boolean {
   if (scope === "global" || scope === "yields-to-terminal") return true;
   if (scope === "terminal") return ctx === "terminal" && (!fromTextInput || fromTerminal);
-  if (scope === "remote-desktop") return false;
+  if (scope === "remote-desktop" || scope === "file-browser") return false;
   // editor-delegated
   return !(ctx === "editor" || ctx === "form" || fromTextInput);
 }

@@ -422,6 +422,20 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
 
+  // File browser
+  {
+    action: "edit-file-browser-path",
+    label: "Edit file browser path",
+    category: "navigation",
+    // Cmd/Ctrl+L focuses the location field in file managers and browsers
+    // (#5540). Scoped to a focused file browser or transfer pane, which match
+    // it themselves, so a terminal keeps Ctrl+L (clear screen).
+    macDefault: { key: "l", meta: true },
+    winLinuxDefault: { key: "l", ctrl: true },
+    configurable: true,
+    scope: "file-browser",
+  },
+
   // Remote desktop
   {
     action: RELEASE_CHORD_ACTION,
