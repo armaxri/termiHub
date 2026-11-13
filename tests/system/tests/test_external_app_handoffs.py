@@ -245,7 +245,7 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
         self._vscode_detected()
         self._browse_workspace()
         before = len(self.shims.handoffs("code"))
-        self.driver.click(self.OPEN_FOLDER_VSCODE)
+        self.invoke_file_browser_action(self.OPEN_FOLDER_VSCODE)
         inv = self.shims.wait_for_handoff("code", lambda i: i.target is not None, after=before)
         assert len(inv.argv) == 1 and same_path(inv.target, str(self.workspace))
 
@@ -269,7 +269,7 @@ class TestLocalHandoffs(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi, S
         self._browse_workspace()
         opened = len(self.shims.handoffs("xdg-open"))
         before = explorer_folder_titles()
-        self.driver.click(self.OPEN_IN_EXPLORER)
+        self.invoke_file_browser_action(self.OPEN_IN_EXPLORER)
         self._assert_file_manager_opened(self.workspace, after=opened, before=before)
 
         opened = len(self.shims.handoffs("xdg-open"))

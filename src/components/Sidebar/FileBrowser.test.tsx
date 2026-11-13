@@ -16,6 +16,7 @@ import { OpenTestMenu } from "@/test/OpenTestMenu";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction, isActionDisabled } from "@/test/fileBrowserMenu";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -790,9 +791,11 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
     });
     await flushAsync();
 
-    const pasteBtn = container.querySelector('[data-testid="file-browser-paste"]');
-    expect(pasteBtn).toBeTruthy();
-    expect((pasteBtn as HTMLButtonElement).disabled).toBe(true);
+    // An empty clipboard leaves Paste a disabled entry of the "…" menu (#5520).
+    expect(container.querySelector('[data-testid="file-browser-paste"]')).toBeNull();
+    const pasteItem = await findFileBrowserAction("file-browser-paste");
+    expect(pasteItem).toBeTruthy();
+    expect(isActionDisabled(pasteItem!)).toBe(true);
   });
 
   it("enables paste button when clipboard has content", async () => {
@@ -1630,11 +1633,9 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     });
     await flushAsync();
 
-    const btn = container.querySelector(
-      '[data-testid="file-browser-go-to-cwd"]'
-    ) as HTMLButtonElement;
+    const btn = await findFileBrowserAction("file-browser-go-to-cwd");
     expect(btn).toBeTruthy();
-    expect(btn.disabled).toBe(true);
+    expect(isActionDisabled(btn!)).toBe(true);
   });
 
   it("button is enabled when a CWD is available", async () => {
@@ -1657,10 +1658,8 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     });
     await flushAsync();
 
-    const btn = container.querySelector(
-      '[data-testid="file-browser-go-to-cwd"]'
-    ) as HTMLButtonElement;
-    expect(btn.disabled).toBe(false);
+    const btn = await findFileBrowserAction("file-browser-go-to-cwd");
+    expect(isActionDisabled(btn!)).toBe(false);
   });
 
   it("clicking the button navigates to the terminal CWD", async () => {
@@ -1691,11 +1690,9 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     expect(currentFileBrowsersView().local.path).toBe("/home/user");
 
     // Click the Go to CWD button
-    const btn = container.querySelector(
-      '[data-testid="file-browser-go-to-cwd"]'
-    ) as HTMLButtonElement;
+    const btn = await findFileBrowserAction("file-browser-go-to-cwd");
     await act(async () => {
-      btn.click();
+      btn!.click();
     });
     await flushAsync();
 
