@@ -924,6 +924,10 @@ export interface TerminalDecoration {
   classes: string[];
   /** Its computed `background-color`. */
   background: string;
+  /** Its computed `mask-image` (`"none"` when unset) — the failure mark's dash shape (#5640). */
+  maskImage: string;
+  /** Horizontal px from its right edge to the cell grid's left edge; `null` without a screen. */
+  gapToText: number | null;
   /** Rect relative to the terminal container's top-left, in CSS px. */
   top: number;
   left: number;

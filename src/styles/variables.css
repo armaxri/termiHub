@@ -59,6 +59,18 @@
   --tab-max-width: 240px;
   /* OSC 133 command-mark gutter bar width (#5563). */
   --terminal-command-mark-width: 3px;
+  /* Command-mark geometry (#5640): the bar sits --terminal-command-mark-inset
+     from the terminal's left edge, then a gutter keeps it off the prompt text.
+     The .xterm left padding holds all three, so FitAddon counts columns right. */
+  --terminal-command-mark-inset: var(--spacing-xxs);
+  --terminal-command-mark-gutter: 6px;
+  --terminal-text-inset-left: calc(
+    var(--terminal-command-mark-inset) + var(--terminal-command-mark-width) +
+      var(--terminal-command-mark-gutter)
+  );
+  /* Dash pattern that tells a failure mark from a success mark by shape (#5640). */
+  --terminal-command-mark-dash: 4px;
+  --terminal-command-mark-dash-gap: 2px;
 
   /* Text colors */
   --text-primary: #dde1ec;
