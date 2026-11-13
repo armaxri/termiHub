@@ -6,6 +6,7 @@ Runs in the normal (per-PR) lane; the product run itself is hand-triggered.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -246,3 +247,78 @@ def test_without_a_private_agent_the_app_never_gets_the_users_agent():
     env = RunHosts().app_env()
     assert set(env) == {"SSH_AUTH_SOCK"}
     assert env["SSH_AUTH_SOCK"].startswith("/nonexistent/")
+
+
+# ── setup hints and human-step plumbing (#5608) ──────────────────────────────
+def test_a_setup_hint_is_listed_once_per_key(tmp_path):
+    rec = _recorder(tmp_path)
+    rec.add_hint("docker", "start Docker")
+    rec.add_hint("docker", "start Docker")
+    assert rec.load()["hints"] == {"docker": "start Docker"}
+    assert "renderHints" in PAGE_TEMPLATE.read_text(encoding="utf-8")
+
+
+def test_no_container_runtime_becomes_a_setup_hint_checked_once(tmp_path, monkeypatch):
+    from termihub_harness.product_run import ui
+
+    monkeypatch.setattr(ui, "_SETUP_HINTS_DONE", False)
+    rec = _recorder(tmp_path)
+    calls = []
+
+    def no_runtime():
+        calls.append(1)
+        return None
+
+    ui.record_setup_hints(rec, runtime=no_runtime)
+    ui.record_setup_hints(rec, runtime=no_runtime)
+    assert calls == [1]
+    assert rec.load()["hints"]["docker"] == ui.DOCKER_HINT
+
+
+def test_a_running_container_runtime_gives_no_hint(tmp_path, monkeypatch):
+    from termihub_harness.product_run import ui
+
+    monkeypatch.setattr(ui, "_SETUP_HINTS_DONE", False)
+    rec = _recorder(tmp_path)
+    ui.record_setup_hints(rec, runtime=lambda: "docker")
+    assert "hints" not in rec.load()
+
+
+@pytest.mark.parametrize(
+    ("agent_pids", "window_owners", "expected"),
+    [
+        ("", {10, 11}, False),  # no SecurityAgent process at all
+        ("4242\n", {10, 11}, False),  # SecurityAgent idles without a window
+        ("4242\n", {10, 4242}, True),  # its prompt is on screen
+    ],
+)
+def test_a_keychain_prompt_counts_only_when_its_window_is_on_screen(
+    monkeypatch, agent_pids, window_owners, expected
+):
+    import subprocess
+
+    from termihub_harness.product_run import creds_steps
+
+    def fake_run(argv, **_kw):
+        out = agent_pids if argv[-1] == "SecurityAgent" else ""
+        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(creds_steps.sys, "platform", "darwin")
+    monkeypatch.setattr(creds_steps.subprocess, "run", fake_run)
+    monkeypatch.setattr(creds_steps, "macos_window_owner_pids", lambda: window_owners)
+    assert creds_steps.keychain_prompt_on_screen() is expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the keychain link is macOS-only (uses pwd)")
+def test_the_macos_profile_home_links_only_the_keychains_folder(tmp_path, monkeypatch):
+    from termihub_harness.product_run import ui
+
+    account = tmp_path / "account"
+    (account / "Library" / "Keychains").mkdir(parents=True)
+    (account / "Library" / "Preferences").mkdir()
+    monkeypatch.setattr(ui.sys, "platform", "darwin")
+    home = ui.make_profile_home(tmp_path / "home", account_home=account)
+    link = home / "Library" / "Keychains"
+    assert link.is_symlink() and link.resolve() == (account / "Library" / "Keychains").resolve()
+    assert not (home / "Library" / "Preferences").exists()
+    ui.make_profile_home(home, account_home=account)  # idempotent

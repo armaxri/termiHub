@@ -21,6 +21,7 @@ use termihub_core::ipc::ndjson::{LineError, LineSplitter};
 use tracing::{debug, error, info, warn};
 
 use super::agent_stderr;
+use crate::utils::errors::TerminalError;
 
 /// Why reading the agent's stdout stopped.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -73,6 +74,28 @@ pub(super) fn frame(agent_id: &str, item: Result<String, LineError>) -> Frame {
             );
             Frame::Fatal(AgentReadError::Frame(err))
         }
+    }
+}
+
+/// The connect error for a handshake read that stopped before the agent
+/// answered `initialize`.
+///
+/// The exec of the agent command succeeds even when no agent is installed: the
+/// remote shell runs it, prints "not found" on stderr and exits 127, so the
+/// desktop sees the channel close (or that exit status) instead of an exec
+/// error. Both mean the agent could not be started, so they carry the
+/// `agent_missing` code and the error dialog offers "Set up agent" (#5608). An
+/// installed agent that exits with another status keeps a plain remote error.
+pub(super) fn handshake_read_error(err: AgentReadError) -> TerminalError {
+    match err {
+        AgentReadError::Closed => TerminalError::agent_missing(
+            "Channel closed before initialize response: the agent did not start",
+        ),
+        AgentReadError::Exited(status @ (126 | 127)) => TerminalError::agent_missing(format!(
+            "Initialize read failed: the agent command exited with status {status} \
+             (not found or not executable)"
+        )),
+        other => TerminalError::RemoteError(format!("Initialize read failed: {other}")),
     }
 }
 

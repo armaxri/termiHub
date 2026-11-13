@@ -264,6 +264,13 @@ class TestProductRunAgent(
             self.evidence(f"sessions after reconnect: {[s.get('title') or s.get('id') for s in sessions]}")
             tab = self.state.get("shell_tab")
             if tab in self.tab_ids():
+                # By design (#4309) a user Disconnect ends the agent's tabs: the
+                # tab shows "Agent disconnected" and its Reconnect starts a new
+                # session, so reconnect the tab the way a user does first.
+                if self.driver.exists("terminal-view-mode-reconnect-btn"):
+                    banner = self.driver.get_text("terminal-view-mode-banner").strip()
+                    self.evidence(f"tab banner: {banner!r}")
+                    self.driver.click("terminal-view-mode-reconnect-btn")
                 self.evidence(self.echo_round_trip(tab, "PR_AGENT_AFTER_RECONNECT"))
             else:
                 self.evidence("the agent shell tab was closed by the disconnect")
