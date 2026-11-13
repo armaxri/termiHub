@@ -90,7 +90,10 @@ test("settings field labels are sentence case, not uppercased (#5561)", async ({
       .locator(`${SETTINGS_PANEL} .settings-form__label`)
       .evaluateAll((labels) => labels.map((l) => getComputedStyle(l).textTransform));
     expect(transforms.length, `${category} has field labels`).toBeGreaterThan(0);
-    expect(transforms.filter((t) => t === "uppercase"), category).toEqual([]);
+    expect(
+      transforms.filter((t) => t === "uppercase"),
+      category
+    ).toEqual([]);
   }
   await openSettings(page, "general");
   await page.screenshot({ path: join(SCREENS, "settings-polish", "general.png") });
