@@ -348,14 +348,14 @@ class TestProductRunMonitoring(
         with self.step(
             "monitoring.dropdown",
             "The host chip opens Refresh / Disconnect; Disconnect stops monitoring",
-            expect="the status bar after Disconnect: no stats, a connect control",
+            expect="the status bar after Disconnect, with no monitoring numbers",
         ):
             self.require("monitoring.stats")
             self.open_monitoring_dropdown()
             self.shot(label="dropdown")
             self.driver.click("monitoring-disconnect")
             self.wait(lambda: not self.driver.exists("monitoring-cpu"), what="the stats to go")
-            self.evidence(f"connect control shown: {self.driver.exists('monitoring-connect-btn')}")
+            self.evidence(f"monitoring visible after Disconnect: {self.monitoring_visible()}")
         self.close_all_tabs()
 
     def test_02_unsupported_host(self):
