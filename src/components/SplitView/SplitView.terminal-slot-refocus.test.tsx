@@ -17,6 +17,7 @@ const focusTerminal = vi.fn();
 vi.mock("@/components/Terminal/TerminalRegistry", () => ({
   useTerminalRegistry: () => ({
     getElement: () => null,
+    onRegister: () => () => {},
     focusTerminal,
     fitTerminal: vi.fn(),
     parkingRef: { current: null },

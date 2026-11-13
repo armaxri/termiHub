@@ -427,6 +427,11 @@ fn resolve_startup_dir(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> anyhow::Result<()> {
+    // A process started by "Restore and restart" (#5647) refuses to start when
+    // it lost the instance's isolation, and waits for the instance that
+    // relaunched it to exit (releasing its locks) before anything else runs.
+    utils::relaunch::prepare_relaunched_process();
+
     // Pre-init CLI routing: `spawn` / `(un)install-shell-integration` must be
     // handled from the raw args before the Tauri window is created, since
     // `cli().matches()` is only available inside `setup()` (#1364). A spawn
@@ -1082,6 +1087,14 @@ pub fn run() -> anyhow::Result<()> {
             // Dock's Quit, logout or shutdown) still gets its teardown (#4296).
             if let RunEvent::Exit = &event {
                 run_app_teardown(app_handle);
+                // A relaunch was already spawned (#5647): finish the exit the way
+                // Tauri's own restart does — clean up, then exit with code 0
+                // rather than the restart exit code.
+                if utils::relaunch::relaunch_pending() {
+                    info!("Exiting for the relaunch");
+                    app_handle.cleanup_before_exit();
+                    std::process::exit(0);
+                }
             }
 
             // On macOS the app can outlive its windows; a Dock-icon click with no

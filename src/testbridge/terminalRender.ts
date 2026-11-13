@@ -236,6 +236,19 @@ function measureCurrentCharCell(
   };
 }
 
+/**
+ * Whether the terminal element sits in a tab's panel slot (#5620), not in the
+ * registry's off-screen parking node. A reconnect registers a fresh element in
+ * parking; one never adopted keeps a full buffer (and even a painted WebGL
+ * canvas) while the tab shows nothing, so a grade of what the user sees must
+ * check this, not only the buffer.
+ */
+export function isSlotted(element: HTMLElement): boolean {
+  return (
+    element.isConnected && element.parentElement?.classList.contains("terminal-container") === true
+  );
+}
+
 /** Read a registered terminal's real render-path state (`measureTerminal`). */
 export function measureTerminal({
   element,
@@ -258,6 +271,7 @@ export function measureTerminal({
     },
     container: { width: element.clientWidth, height: element.clientHeight },
     renderer: element.dataset.terminalRenderer ?? null,
+    slotted: isSlotted(element),
     webglCanvas: canvas ? { width: canvas.width, height: canvas.height } : null,
     domRows: readDomRows(element),
     scrollbar: measureScrollbar(element),

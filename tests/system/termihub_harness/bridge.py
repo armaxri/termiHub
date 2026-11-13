@@ -674,6 +674,7 @@ class Driver:
              "cell": {"width", "height"},          # renderer's CSS cell px
              "container": {"width", "height"},    # laid-out container px
              "renderer": "webgl" | "dom",
+             "slotted": bool,                      # in its tab's slot, not parked (#5620)
              "webglCanvas": {"width", "height"} | None,
              "domRows": [str, ...] | None,         # rows the DOM renderer painted
              "scrollbar": {"trackHeight", "thumbVisible",

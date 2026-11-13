@@ -25,14 +25,14 @@ export function syncRegistrationFacts(status: ShellIntegrationStatus): void {
 
 /** Toast messages for the register (install / reinstall) lifecycle. */
 export const INSTALL_TOAST: ToastPromiseMessages<unknown> = {
-  loading: "Registering shell integration…",
-  success: "Shell integration registered",
+  loading: "Registering file manager integration…",
+  success: "File manager integration registered",
   error: (e) => `Registration failed: ${errorMessage(e)}`,
 };
 
 /** Toast messages for the unregister (uninstall) lifecycle. */
 export const UNINSTALL_TOAST: ToastPromiseMessages<unknown> = {
-  loading: "Removing shell integration…",
-  success: "Shell integration removed",
+  loading: "Removing file manager integration…",
+  success: "File manager integration removed",
   error: (e) => `Removal failed: ${errorMessage(e)}`,
 };

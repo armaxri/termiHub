@@ -91,7 +91,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "keyboard", label: "Keyboard" },
   { id: "updates", label: "Updates" },
   { id: "terminal", label: "Terminal" },
-  { id: "shell-integration", label: "Shell integration" },
+  { id: "shell-integration", label: "File manager integration" },
   { id: "sessions", label: "Sessions" },
   { id: "editor", label: "Editor" },
   { id: "serial", label: "Serial" },
@@ -361,6 +361,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Register or remove the file-manager right-click integration",
     category: "shell-integration",
     keywords: [
+      "file manager integration",
       "shell integration",
       "context menu",
       "right-click",
@@ -382,7 +383,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "shellIntegrationFallback",
-    label: "Shell integration fallback",
+    label: "File manager integration fallback",
     description: "What to open when no quick-access entry matches a request",
     category: "shell-integration",
     keywords: ["fallback", "picker", "default shell", "shell integration", "new window"],

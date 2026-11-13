@@ -32,6 +32,8 @@ pub mod macos_unthrottle;
 pub mod migrate;
 pub mod panic_hook;
 pub mod portable;
+/// Self-relaunch that keeps the instance's environment and identity (#5647).
+pub mod relaunch;
 pub mod remote_exec;
 pub mod shell_detect;
 /// Single-instance enforcement (per user) for installed release builds

@@ -78,6 +78,7 @@ vi.mock("react-resizable-panels", async (importOriginal) => {
 
 const registry = {
   getElement: vi.fn((_tabId: string): HTMLElement | null => null),
+  onRegister: vi.fn(() => () => {}),
   focusTerminal: vi.fn(),
   fitTerminal: vi.fn(),
   clearTerminal: vi.fn(),
