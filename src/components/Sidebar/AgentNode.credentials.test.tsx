@@ -115,7 +115,7 @@ function renderAgent(agent: RemoteAgentDefinition) {
 
 async function clickConnect() {
   const btn = container.querySelector<HTMLButtonElement>(
-    `[data-testid="agent-reconnect-${AGENT_ID}"]`
+    `[data-testid="agent-connect-${AGENT_ID}"], [data-testid="agent-reconnect-${AGENT_ID}"]`
   );
   expect(btn).not.toBeNull();
   await act(async () => {

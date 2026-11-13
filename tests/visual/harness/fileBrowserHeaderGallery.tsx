@@ -110,6 +110,9 @@ function Header({ cell }: { cell: HeaderCell }) {
     onPaste: noop,
     onNewFile: noop,
     onNewFolder: noop,
+    onCopyPath: noop,
+    sort: { key: "name", dir: "asc" },
+    onSort: noop,
   });
   return (
     <figure className="fbg-cell" data-testid={`fbg-cell-${cell.id}`} data-path={cell.path}>
@@ -118,7 +121,7 @@ function Header({ cell }: { cell: HeaderCell }) {
       </figcaption>
       <div className="fbg-sidebar file-browser" style={{ width: cell.width }}>
         <div className="file-browser__toolbar">
-          <FileBrowserPathBar currentPath={cell.path} onNavigate={noop} />
+          <FileBrowserPathBar currentPath={cell.path} onNavigate={noop} onCopyPath={noop} />
           <FileBrowserActions actions={actions} />
         </div>
       </div>

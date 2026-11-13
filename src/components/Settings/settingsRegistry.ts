@@ -137,27 +137,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["shell", "bash", "zsh", "powershell", "terminal"],
   },
   {
-    id: "defaultShellIntegration",
-    label: "Command marks by default",
-    description:
-      "Pre-enable command marks (OSC 133, a small hook typed into the shell) for new local, SSH and WSL connections",
-    category: "general",
-    keywords: [
-      "ssh",
-      "local",
-      "wsl",
-      "defaults",
-      "command marks",
-      // The label before #5561, so a search for it still lands here.
-      "command marks (shell hook) by default",
-      "shell hook",
-      "shell integration",
-      "osc 133",
-      "osc133",
-      "new connection",
-    ],
-  },
-  {
     id: "defaultX11Forwarding",
     label: "X11 forwarding by default",
     description: "Pre-enable X11 forwarding for new SSH connections",
@@ -257,7 +236,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "terminalCommandDecorations",
-    label: "Command status marks",
+    label: "Show command marks",
     description:
       "Show a success/failure mark next to each finished command (needs shell integration)",
     category: "terminal",
@@ -272,6 +251,31 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "gutter",
       "decoration",
       "shell integration",
+      "command marks",
+      // The label before #5633.
+      "command status marks",
+    ],
+  },
+  {
+    id: "defaultShellIntegration",
+    label: "Add shell hook to new sessions automatically",
+    description:
+      "Turn the shell hook (OSC 133 command marks) on for new local, SSH and WSL connections",
+    category: "terminal",
+    keywords: [
+      "ssh",
+      "local",
+      "wsl",
+      "defaults",
+      "command marks",
+      // Earlier labels (before #5561 and #5633), so a search for them still lands here.
+      "command marks (shell hook) by default",
+      "command marks by default",
+      "shell hook",
+      "shell integration",
+      "osc 133",
+      "osc133",
+      "new connection",
     ],
   },
   {

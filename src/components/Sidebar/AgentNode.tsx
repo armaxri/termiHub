@@ -121,15 +121,69 @@ const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 const EMPTY_FOLDERS: AgentFolderInfo[] = [];
 const NO_SERIAL_PORTS: string[] = [];
 
+/** How an agent row presents its connection state (#5621). */
+export interface AgentRowPresentation {
+  /** Dot tone from the shared `--state-*` palette. */
+  tone: StatusTone;
+  /** Non-colour state word for the dot's accessible name and tooltip. */
+  label: string;
+  /** The inline header action a not-connected agent offers, if any. */
+  action: "connect" | "reconnect" | null;
+}
+
 /**
- * Tone for an agent connection-state dot, from the shared `--state-*` palette.
- * Any non-connected, non-(re)connecting state (including unknown) reads as
- * disconnected, matching the previous `agent-node__state-dot` default.
+ * Presentation of an agent row's connection state. A connected / (re)connecting
+ * agent uses its live tone. A not-connected agent is **neutral** ("Not
+ * connected", grey dot, "Connect") unless something actually went wrong —
+ * `failed` (a stored `lastError`, a failed connect attempt, or an unexpected
+ * drop) — and only then reads as the red "Disconnected" with "Reconnect".
+ * Any unknown state is treated as not connected.
  */
-function agentStateTone(connectionState: string): StatusTone {
-  if (connectionState === "connected") return "connected";
-  if (connectionState === "connecting" || connectionState === "reconnecting") return "connecting";
-  return "disconnected";
+export function agentRowPresentation(
+  connectionState: string,
+  failed: boolean
+): AgentRowPresentation {
+  if (connectionState === "connected") {
+    return { tone: "connected", label: connectionStateLabel("connected"), action: null };
+  }
+  if (connectionState === "connecting" || connectionState === "reconnecting") {
+    return { tone: "connecting", label: connectionStateLabel(connectionState), action: null };
+  }
+  return failed
+    ? { tone: "disconnected", label: connectionStateLabel("disconnected"), action: "reconnect" }
+    : { tone: "disabled", label: "Not connected", action: "connect" };
+}
+
+/**
+ * Local failure tracking for an agent row (#5621): `prev` is the last seen
+ * `connectionState`, `failed` marks a failed connect attempt or an unexpected
+ * drop, and `userEnded` marks a disconnect / shutdown / cancel the user asked
+ * for, so the `disconnected` that follows is not mistaken for a drop.
+ */
+interface AgentRowFailureState {
+  prev: string;
+  failed: boolean;
+  userEnded: boolean;
+}
+
+/** The next {@link AgentRowFailureState} once `connectionState` changes. */
+function nextAgentRowFailureState(
+  state: AgentRowFailureState,
+  connectionState: string
+): AgentRowFailureState {
+  if (connectionState === "connected") {
+    return { prev: connectionState, failed: false, userEnded: false };
+  }
+  const dropped =
+    connectionState === "disconnected" &&
+    (state.prev === "connected" || state.prev === "reconnecting") &&
+    !state.userEnded;
+  return {
+    prev: connectionState,
+    failed: state.failed || dropped,
+    // The user's intent covers exactly the transition it caused.
+    userEnded: connectionState === "disconnected" ? false : state.userEnded,
+  };
 }
 
 /**
@@ -983,6 +1037,30 @@ export function AgentNode({
   const isReconnecting = agent.connectionState === "reconnecting";
   const isConnecting = agent.connectionState === "connecting";
   const isDisconnected = agent.connectionState === "disconnected";
+  // Never-connected vs failed (#5621): adjust the local failure state while
+  // rendering when the connection state changes (React's "adjusting state on a
+  // prop change" pattern), so a drop is caught on the render that shows it.
+  const [rowFailure, setRowFailure] = useState<AgentRowFailureState>(() => ({
+    prev: agent.connectionState,
+    failed: false,
+    userEnded: false,
+  }));
+  if (rowFailure.prev !== agent.connectionState) {
+    setRowFailure(nextAgentRowFailureState(rowFailure, agent.connectionState));
+  }
+  // A connect the user canceled ends in a rejected attempt, not a failure.
+  const connectCanceledRef = useRef(false);
+  const markUserEnded = useCallback(
+    () => setRowFailure((s) => ({ ...s, userEnded: true, failed: false })),
+    []
+  );
+  // A disconnect request that failed leaves the agent up: forget the intent so
+  // a later real drop is not mistaken for it.
+  const clearUserEnded = useCallback(() => setRowFailure((s) => ({ ...s, userEnded: false })), []);
+  const rowPresentation = agentRowPresentation(
+    agent.connectionState,
+    rowFailure.failed || !!agent.lastError
+  );
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
   // Agent version + derived update state (#1347). An outdated or incompatible
@@ -1164,6 +1242,7 @@ export function AgentNode({
 
   const handleConnect = useCallback(async () => {
     if (connecting) return;
+    connectCanceledRef.current = false;
 
     // If the credential store is locked and this agent uses a stored credential,
     // prompt for unlock first and wait — on success the code continues and the
@@ -1266,6 +1345,8 @@ export function AgentNode({
       const classified = classifyAgentError(err);
       setConnectionError(classified);
       setErrorDialogOpen(true);
+      // A failed attempt (not one the user canceled) turns the row red (#5621).
+      if (!connectCanceledRef.current) setRowFailure((s) => ({ ...s, failed: true }));
     } finally {
       setConnecting(false);
     }
@@ -1279,6 +1360,7 @@ export function AgentNode({
   const handleForceReconnect = useCallback(async () => {
     // A reconnect follows at once, so the hosted tabs wait to resume their
     // sessions instead of ending (#4309).
+    markUserEnded();
     try {
       await disconnectRemoteAgent(agent.id, { endHostedSessions: false });
     } catch (err) {
@@ -1288,7 +1370,7 @@ export function AgentNode({
       toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
     }
     void handleConnect();
-  }, [agent.id, disconnectRemoteAgent, handleConnect]);
+  }, [agent.id, disconnectRemoteAgent, handleConnect, markUserEnded]);
 
   // Disconnect (detach) — drop the transport but leave persistent daemon-backed
   // remote sessions running so they re-list on the next connect (G9, #1237).
@@ -1296,14 +1378,16 @@ export function AgentNode({
   // once here and re-throw, so the header Button (`errorToast={false}`) lands
   // in its error state.
   const handleDisconnect = useCallback(async () => {
+    markUserEnded();
     try {
       await disconnectRemoteAgent(agent.id);
     } catch (err) {
+      clearUserEnded();
       // The store action has already logged the failure.
       toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
       throw err;
     }
-  }, [agent.id, disconnectRemoteAgent]);
+  }, [agent.id, disconnectRemoteAgent, markUserEnded, clearUserEnded]);
 
   // The context menu has no error state, so the re-throw (already toasted) ends here.
   const handleDisconnectFromMenu = useCallback(() => {
@@ -1316,13 +1400,20 @@ export function AgentNode({
   // how many sessions the agent detached/killed as a success toast (G9, #1237).
   // Returns the promise so the async Button surfaces pending/error feedback.
   const handleShutdown = useCallback(async () => {
-    const detached = await shutdownRemoteAgent(agent.id);
+    markUserEnded();
+    let detached: number;
+    try {
+      detached = await shutdownRemoteAgent(agent.id);
+    } catch (err) {
+      clearUserEnded();
+      throw err;
+    }
     toast.success(
       detached > 0
         ? `Agent shut down — ${detached} session${detached === 1 ? "" : "s"} stopped`
         : "Agent shut down"
     );
-  }, [agent.id, shutdownRemoteAgent]);
+  }, [agent.id, shutdownRemoteAgent, markUserEnded, clearUserEnded]);
 
   // Open the Update dialog (#4038). The update re-uses the SSH config, so a
   // password agent resolves its password first (stored credential, else a
@@ -1368,6 +1459,8 @@ export function AgentNode({
   // optimistic write here. The prompt-driven `connecting` local state (set by
   // handleConnect) also clears when connectRemoteAgent's promise rejects.
   const handleCancelConnect = useCallback(async () => {
+    connectCanceledRef.current = true;
+    markUserEnded();
     try {
       await cancelConnectAgent(agent.id);
       toast.success("Connect canceled");
@@ -1375,7 +1468,7 @@ export function AgentNode({
       frontendLog("agent_node", `Failed to cancel agent connect: ${errorMessage(err)}`);
       toast.error(`Failed to cancel: ${errorMessage(err)}`);
     }
-  }, [agent.id]);
+  }, [agent.id, markUserEnded]);
 
   const handleNewShellSession = useCallback(() => {
     const defaultShell = agent.capabilities?.availableShells?.[0];
@@ -1676,14 +1769,16 @@ export function AgentNode({
             >
               <Chevron size={16} className="connection-tree__chevron" />
               <StatusDot
-                tone={agentStateTone(agent.connectionState)}
+                tone={rowPresentation.tone}
                 size="sm"
-                label={connectionStateLabel(agent.connectionState)}
-                title={connectionStateLabel(agent.connectionState)}
+                label={rowPresentation.label}
+                title={rowPresentation.label}
                 testId={`agent-state-${agent.id}`}
               />
               <Server size={14} />
-              <span className="connection-list__group-title">{agent.name}</span>
+              <span className="connection-list__group-title" data-testid={`agent-name-${agent.id}`}>
+                {agent.name}
+              </span>
               <AgentVersionBadge
                 version={agentVersion}
                 state={agentUpdateState}
@@ -1756,13 +1851,13 @@ export function AgentNode({
                 </Tooltip>
               </div>
             )}
-            {isDisconnected && (
-              // First-class Reconnect after a drop / auto-reconnect exhaustion
-              // (G3, #1236). The native `title` carries the stored last error so
-              // the user learns *why* the agent went down (matching the sidebar
-              // tree's title-based hover help); clicking re-runs the normal
-              // connect path (disconnected → connecting). The async Button gives
-              // pending/success feedback and a toast on failure.
+            {isDisconnected && rowPresentation.action === "reconnect" && (
+              // First-class Reconnect after a failure, a drop or auto-reconnect
+              // exhaustion (G3, #1236). The native `title` carries the stored
+              // last error so the user learns *why* the agent went down (matching
+              // the sidebar tree's title-based hover help); clicking re-runs the
+              // normal connect path (disconnected → connecting). The async Button
+              // gives pending/success feedback and a toast on failure.
               <div className="connection-list__group-actions">
                 <Button
                   variant="ghost"
@@ -1774,6 +1869,23 @@ export function AgentNode({
                   data-testid={`agent-reconnect-${agent.id}`}
                 >
                   Reconnect
+                </Button>
+              </div>
+            )}
+            {isDisconnected && rowPresentation.action === "connect" && (
+              // Nothing has failed yet (never connected, or the user ended the
+              // last connection): a plain Connect, not a Reconnect (#5621).
+              <div className="connection-list__group-actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<Play size={14} />}
+                  onClick={handleConnect}
+                  aria-label="Connect"
+                  title="Connect"
+                  data-testid={`agent-connect-${agent.id}`}
+                >
+                  Connect
                 </Button>
               </div>
             )}

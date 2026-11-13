@@ -24,6 +24,11 @@ fails until its fix lands; the grade is never weakened to pass.
    only show above a column that has values, and the header names whose
    filesystem it is ("user@host (SFTP)" remote, "This computer" local), at the
    normal and at the minimum sidebar width.
+6. **File browser menu and path polish** (#5624, #5671): at the minimum
+   sidebar width the opened "…" menu stays inside the window and does not
+   reach left of the sidebar (over the activity bar); Up and Upload use
+   different icons; the menu offers "Sort by" (Name / Modified / Size) and
+   "Copy path".
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
 pixels).
@@ -98,6 +103,10 @@ DATA_COLUMNS = ("file-browser-sort-modified", "file-browser-sort-size")
 #: A file name far wider than the sidebar, so the list must ellipsize it.
 LONG_FILE = "a-rather-long-file-name-that-never-fits-the-sidebar-width-check.txt"
 TOAST_REGION = "toast-region"
+SORT_MENU = "file-browser-sort-menu"
+SORT_SUBMENU = "file-browser-sort-submenu"
+SORT_KEYS = ("name", "modified", "size")
+COPY_PATH = "file-browser-copy-path"
 EDITOR_FOOTER = "connection-editor-actions"
 
 
@@ -611,4 +620,86 @@ class TestProductRunComplaints(
                     w, [LONG_SEGMENTS[0], LONG_FILE], "This computer"
                 ),
             )
+        self.close_all_tabs()
+
+    # ── 6. file browser menu placement, icons, Sort by (#5624, #5671) ────────
+    def _open_more_menu(self) -> dict[str, Any]:
+        """Open the '…' menu and return its measured box."""
+        if not self.driver.exists(MORE_MENU):
+            self.driver.click(MORE_ACTIONS)
+        self.wait(lambda: self.driver.exists(MORE_MENU), what="the '…' menu")
+        time.sleep(0.3)  # let the popover settle at its collision-aware spot
+        return self.driver.measure_element(MORE_MENU)
+
+    def _grade_menu_placement(self, where: str) -> None:
+        sidebar = self.driver.measure_element(SIDEBAR)["rect"]
+        window_width = float(self.driver.os_input_probe()["innerWidth"])
+        try:
+            menu = self._open_more_menu()["rect"]
+            self.shot(label=f"{where}-menu")
+        finally:
+            if self.driver.exists(MORE_MENU):
+                self.driver.press_key("Escape")
+        self.evidence(
+            f"{where}: sidebar x={sidebar['x']:.0f} w={sidebar['width']:.0f}, menu "
+            f"x={menu['x']:.0f} w={menu['width']:.0f}, window {window_width:.0f}px"
+        )
+        problems = []
+        if menu["x"] < sidebar["x"] - EPS:
+            problems.append(
+                f"menu left edge {menu['x']:.0f} reaches left of the sidebar ({sidebar['x']:.0f}) "
+                "over the activity bar"
+            )
+        if menu["x"] + menu["width"] > window_width + EPS:
+            problems.append("menu spills past the window's right edge")
+        assert not problems, f"{where}: " + "; ".join(problems)
+
+    def _grade_menu_contents(self) -> None:
+        problems = []
+        up = self.driver.get_attribute("file-browser-up", "data-icon")
+        upload = self.driver.get_attribute("file-browser-upload", "data-icon")
+        self.evidence(f"Up icon {up!r}, Upload icon {upload!r}")
+        if not up or up == upload:
+            problems.append(f"Up and Upload share a glyph ({up!r} / {upload!r})")
+        try:
+            self._open_more_menu()
+            if not self.driver.exists(COPY_PATH):
+                problems.append("no 'Copy path' in the '…' menu")
+            if not self.driver.exists(SORT_MENU):
+                problems.append("no 'Sort by' in the '…' menu")
+            else:
+                self.driver.click(SORT_MENU)
+                self.wait(lambda: self.driver.exists(SORT_SUBMENU), what="the Sort by sub-menu")
+                self.shot(label="sort-menu")
+                missing = [k for k in SORT_KEYS if not self.driver.exists(f"file-browser-sort-by-{k}")]
+                if missing:
+                    problems.append(f"'Sort by' lacks {missing}")
+        finally:
+            for _ in range(2):
+                if self.driver.exists(MORE_MENU):
+                    self.driver.press_key("Escape")
+        assert not problems, "; ".join(problems)
+
+    def test_50_file_browser_menu_and_sort(self):
+        with self.step(
+            "complaints.menu.placement",
+            "The '…' menu stays inside the window and right of the activity bar (#5624)",
+            expect="#5624 complaint: at the minimum sidebar width the open '…' menu starts at or "
+            "right of the sidebar's left edge (never over the activity bar) and ends inside "
+            "the window",
+            screenshot=False,
+        ):
+            self._open_remote()
+            self._both_widths("complaints.menu.placement", self._grade_menu_placement)
+        with self.step(
+            "complaints.menu.sort",
+            "Up and Upload look different; the '…' menu offers Sort by and Copy path (#5624, #5671)",
+            expect="#5624/#5671 complaint: Up is a parent-folder arrow distinct from Upload's tray "
+            "arrow; the '…' menu has 'Sort by ▸' with Name / Modified / Size and 'Copy path'",
+        ):
+            restore = self._sidebar_min()
+            try:
+                self._grade_menu_contents()
+            finally:
+                self._sidebar_restore(restore)
         self.close_all_tabs()

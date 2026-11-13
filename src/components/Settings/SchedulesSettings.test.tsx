@@ -12,8 +12,8 @@ import { SchedulesSettings } from "./SchedulesSettings";
 /**
  * Settings → Schedules (#4623): the always-available schedules panel, usable
  * with experimental features (and so the Workflows sidebar) off. It lists the
- * schedules, pauses/resumes them (per schedule and globally) and deletes them;
- * creating and editing stay in the Workflows sidebar.
+ * schedules, pauses/resumes them (per schedule and globally), deletes them and
+ * creates new ones (#5633); editing stays in the Workflows sidebar.
  */
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
@@ -82,14 +82,28 @@ describe("SchedulesSettings (#4623)", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it("shows an empty state without create/edit actions", async () => {
+  it("shows an empty state with a New schedule button (#5633)", async () => {
     await render([]);
     expect(query("schedules-settings")).not.toBeNull();
     expect(query("schedules-empty")).not.toBeNull();
-    expect(query("schedules-new-btn")).toBeNull();
+    const create = query("schedules-empty-new-btn");
+    expect(create?.textContent).toBe("New schedule");
+    act(() => create!.click());
+    expect(openScheduleEditor).toHaveBeenCalledWith();
   });
 
-  it("lists every schedule with its rule and targets, and offers no editing", async () => {
+  it("does not repeat the page title as a section header (#5633)", async () => {
+    await render([]);
+    expect(query("schedules-header")).toBeNull();
+    const titles = Array.from(container.querySelectorAll("h3, h4, [role='heading']")).map((h) =>
+      h.textContent?.trim().toLowerCase()
+    );
+    expect(titles.filter((t) => t === "schedules")).toHaveLength(1);
+    // The global pause switch stays reachable without the header.
+    expect(query("schedules-pause-toggle")).not.toBeNull();
+  });
+
+  it("lists every schedule with its rule and targets; creates new ones but edits none", async () => {
     await render([view(), view({ id: "s2", name: "Health", enabled: false })]);
     expect(query("schedule-item-s1")).not.toBeNull();
     expect(query("schedule-item-s2")).not.toBeNull();
@@ -97,7 +111,8 @@ describe("SchedulesSettings (#4623)", () => {
     expect(query("schedule-summary-s1")!.textContent).toContain("db-1");
     expect(query("schedule-status-s2")!.textContent).toBe("Disabled");
     expect(query("schedule-edit-s1")).toBeNull();
-    expect(query("schedules-new-btn")).toBeNull();
+    act(() => query("schedules-new-btn")!.click());
+    expect(openScheduleEditor).toHaveBeenCalledWith();
   });
 
   it("pauses (disables) and resumes (re-enables) a single schedule", async () => {

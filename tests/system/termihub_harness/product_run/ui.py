@@ -48,11 +48,14 @@ from .grades import (
 )
 from .hover import Hover, hovered
 from .recorder import Recorder, recorder_from_env, unattended
+from .settle import SETTLE_TIMEOUT, NotSettled, Settled, settle_target, wait_settled
 
 #: Environment variable the runner sets to the run's keychain namespace tag.
 DEV_NAME_ENV = "TERMIHUB_PRODUCT_RUN_DEV_NAME"
 #: How long a human step waits for the operator before it counts as not tested.
 HUMAN_TIMEOUT = 600.0
+#: A failure capture waits this long for a settled screen, then captures anyway.
+FAILURE_SETTLE_TIMEOUT = 3.0
 
 _ZSHRC = 'HISTFILE="$HOME/.zsh_history"\nPROMPT=\'%F{cyan}product-run%f %1~ %# \'\n'
 
@@ -226,6 +229,9 @@ class ProductRunUi(HarnessMixin):
         started = time.monotonic()
         try:
             yield
+            if screenshot:
+                # Inside the try: a capture that never settles fails the step.
+                self.shot(step_id)
         except pytest.skip.Exception as exc:
             rec.end(step_id, "not-tested", reason=str(exc) or "skipped")
             return
@@ -239,8 +245,6 @@ class ProductRunUi(HarnessMixin):
             rec.end(step_id, "fail", reason=message.splitlines()[0][:300] if message else None)
             self._failed_steps.append(step_id)
             return
-        if screenshot:
-            self.shot(step_id)
         rec.evidence(step_id, f"took {time.monotonic() - started:.1f}s")
         rec.end(step_id, "pass")
 
@@ -262,22 +266,40 @@ class ProductRunUi(HarnessMixin):
             raise pytest.skip.Exception("blocked: " + ", ".join(bad) + " did not pass")
 
     # ── screenshots ───────────────────────────────────────────────────────────
-    def shot(self, step_id: Optional[str] = None, *, label: Optional[str] = None) -> Optional[Path]:
+    def shot(
+        self,
+        step_id: Optional[str] = None,
+        *,
+        label: Optional[str] = None,
+        expect: Optional[str] = None,
+        scope: Optional[str] = None,
+        settle_timeout: float = SETTLE_TIMEOUT,
+    ) -> Optional[Path]:
         """Capture the test window for a step; ``None`` when nothing could be captured.
 
         The window is found by the app's PID (macOS: brought to the front by PID
-        first, since WKWebView only paints in the foreground). When the OS
-        capture is unavailable the DOM screenshot is saved instead and the
-        manifest says so (``source: "dom"``; it lacks the terminal canvas).
+        first, since WKWebView only paints in the foreground). Before capturing,
+        the screen must be settled (#5643, :mod:`.settle`): no visible lazy-load
+        spinner or skeleton, no spinner inside ``scope``, the ``expect`` testid
+        visible, fonts loaded and a couple of idle animation frames. A screen
+        that never settles raises :class:`~.settle.NotSettled`, which fails the
+        step, rather than capturing a spinner; a ``"failure"`` capture only
+        waits briefly and is taken either way. When the OS capture is
+        unavailable the DOM screenshot is saved instead and the manifest says so
+        (``source: "dom"``; it lacks the terminal canvas).
         """
         step_id = step_id or self._current_step()
+        pid = getattr(self.app, "pid", None)
+        if pid:
+            bring_app_foreground(pid)
+        settled = self._settle(step_id, label=label, expect=expect, scope=scope, timeout=settle_timeout)
         path = self.recorder.shot_path(step_id, label)
         meta: dict[str, Any] = {"label": label, "theme": self._theme_name()}
         meta.update(self._viewport())
-        pid = getattr(self.app, "pid", None)
+        meta["settled"] = settled is not None
+        if expect:
+            meta["expect_testid"] = expect
         try:
-            if pid:
-                bring_app_foreground(pid)
             frame = capture_window(pid)
             save_png(frame, path)
             meta.update(source="window", width=frame.width, height=frame.height)
@@ -291,6 +313,32 @@ class ProductRunUi(HarnessMixin):
                 return None
         self.recorder.add_screenshot(step_id, path, meta)
         return path
+
+    def _settle(
+        self,
+        step_id: str,
+        *,
+        label: Optional[str],
+        expect: Optional[str],
+        scope: Optional[str],
+        timeout: float,
+    ) -> Optional[Settled]:
+        """Wait for a settled screen; ``None`` for an unsettled failure capture."""
+        failure = label == "failure"
+        what = settle_target(expect, scope)
+        try:
+            settled = wait_settled(
+                lambda: self.driver.render_settled(expect, scope=scope),
+                what=what,
+                timeout=min(timeout, FAILURE_SETTLE_TIMEOUT) if failure else timeout,
+            )
+        except NotSettled as exc:
+            if not failure:
+                raise
+            self.recorder.evidence(step_id, f"failure capture not settled: {exc}")
+            return None
+        self.recorder.evidence(step_id, f"capture {label or 'end'}: {settled.note()}")
+        return settled
 
     def _theme_name(self) -> Optional[str]:
         try:

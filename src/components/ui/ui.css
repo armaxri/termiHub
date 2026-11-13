@@ -464,6 +464,15 @@
   z-index: var(--z-popover);
 }
 
+/* Radix focuses the surface itself when a menu opens; the global focus ring
+   would then outline the whole popover like a selected input (#5624). Focus is
+   shown on the highlighted item instead. */
+.ui-menu__content:focus,
+.ui-menu__content:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-dropdown);
+}
+
 .ui-menu__content--wide {
   min-width: 220px;
 }

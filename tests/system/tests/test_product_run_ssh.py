@@ -15,7 +15,8 @@ Raspberry Pi from ``product-run.local.json`` is a read-only real-device leg.
 Steps (in order): host-key prompt contents, key login, remembered key,
 changed-key warning + Reject, passphrase key, agent auth, password,
 keyboard-interactive, jump host, server-side drop + Reconnect, bastion drop +
-auto-reconnect, Raspberry Pi.
+auto-reconnect, Raspberry Pi, duplicate-session tab labels + the sidebar
+selection following the active tab (#5642, #5667).
 """
 
 from __future__ import annotations
@@ -478,4 +479,65 @@ class TestProductRunSsh(
             uname = next((ln for ln in text.splitlines() if ln.startswith(("Linux", "Darwin"))), "")
             self.evidence(f"uname: {uname or self.terminal_tail(tab_id)}")
             assert uname, "no uname line from the Pi"
+        self.close_all_tabs()
+
+    # ── tab labels + sidebar follow (#5642, #5667) ───────────────────────────
+    def _tab_label(self, tab_id: str) -> str:
+        """The title the tab strip renders for ``tab_id`` (its tooltip carries it in full)."""
+        return self.driver.get_attribute(f"tab-{tab_id}", "title") or ""
+
+    def _sidebar_selected(self, connection_id: str) -> bool:
+        return self.driver.get_attribute(f"connection-item-{connection_id}", "aria-selected") == "true"
+
+    def test_09_duplicate_tabs_and_sidebar_follow(self):
+        first = unique_name("pr-ssh-dup")
+        other = unique_name("pr-ssh-other")
+        with self.step(
+            "ssh.tabs.duplicate-labels",
+            "Two sessions of one connection carry distinguishable tab labels",
+            expect="two tabs of the same connection, the second labelled with a '(2)' counter",
+        ):
+            native = self.need_native()
+            t = native.target
+            self.switch_to_connections_sidebar()
+            for name in (first, other):
+                self.create_ssh_connection(
+                    name, host=SSH_HOST, port=t.port, username=t.username,
+                    auth_method="key", key_path=str(native.client_key), connect=True,
+                )
+                self.accept_all_hostkeys(timeout=5.0)
+                self.wait_connected(self.tab_id_of(name))
+            self.connect_connection(first)
+            dup_tabs = self.wait(
+                lambda: (lambda ts: ts if len(ts) >= 2 else None)(
+                    [tab["id"] for tab in self._all_tabs() if tab.get("title") == first]
+                ),
+                what=f"a second {first!r} tab",
+            )
+            self.wait_connected(dup_tabs[-1])
+            labels = [self._tab_label(tab_id) for tab_id in dup_tabs]
+            self.evidence(f"tab labels of {first!r}: {labels}")
+            assert len(set(labels)) == len(labels), f"duplicate tabs share a label: {labels}"
+            assert any(label.endswith("(2)") for label in labels), labels
+        with self.step(
+            "ssh.sidebar.follows-tab",
+            "Switching tabs moves the sidebar selection to the active tab's connection",
+            expect="the sidebar row of the active tab's connection highlighted, no other row",
+        ):
+            self.require("ssh.tabs.duplicate-labels")
+            other_tab = self.tab_id_of(other)
+            for tab_id in (other_tab, dup_tabs[0]):
+                self.switch_to_tab(tab_id)
+                active = self.wait(
+                    lambda: (lambda a: a if a and a.get("id") == tab_id else None)(self.active_tab()),
+                    what="the tab to become active",
+                )
+                connection_id = active.get("connectionId")
+                self.evidence(f"active tab {active.get('title')!r} -> connection {connection_id!r}")
+                assert connection_id, "the SSH tab carries no saved-connection id"
+                self.wait(
+                    lambda: self._sidebar_selected(connection_id),
+                    timeout=10.0, what="the active tab's sidebar row to be selected",
+                )
+            self.shot(label=None)
         self.close_all_tabs()

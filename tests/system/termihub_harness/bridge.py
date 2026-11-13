@@ -583,6 +583,32 @@ class Driver:
             {"action": "measureElement", "testId": test_id, "descendants": descendants}
         )
 
+    def render_settled(
+        self,
+        test_id: Optional[str] = None,
+        *,
+        scope: Optional[str] = None,
+        frames: int = 2,
+    ) -> dict[str, Any]:
+        """Whether the screen has finished rendering, for a capture (#5643).
+
+        Waits ``frames`` animation frames in the page while watching the DOM,
+        then returns ``{settled, reasons, fonts, busy, mutations,
+        throttledFrames}``: ``reasons`` says why it is not settled (a visible
+        lazy-load fallback or skeleton, a spinner or ``aria-busy`` element
+        inside ``scope``, ``test_id`` missing or not visible, web fonts
+        loading, DOM changes during the frames). It does not retry; see
+        :func:`termihub_harness.product_run.settle.wait_settled`.
+        """
+        return self._call(
+            {
+                "action": "renderSettled",
+                "testId": test_id,
+                "scopeTestId": scope,
+                "frames": frames,
+            }
+        )
+
     def sample_canvas(
         self, test_id: str, points: Sequence[tuple[int, int]] = ()
     ) -> dict[str, Any]:

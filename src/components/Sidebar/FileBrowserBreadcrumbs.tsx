@@ -1,10 +1,11 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Folder } from "lucide-react";
+import { ChevronRight, Copy, Folder, HardDrive } from "lucide-react";
 import {
   DropdownMenuContent,
   DropdownMenuRoot,
   DropdownMenuTrigger,
   MenuItem,
+  MenuSeparator,
   Tooltip,
 } from "@/components/ui";
 import { useElementWidth } from "@/hooks/useElementWidth";
@@ -33,6 +34,37 @@ export interface CollapsingBreadcrumbsProps {
    * breadcrumbs opt out (default `true`).
    */
   dropTargets?: boolean;
+  /** Copy the full path to the clipboard; adds "Copy path" to the fold's menu (#5624). */
+  onCopyPath?: () => void;
+}
+
+/** Characters a middle-truncated segment keeps at its end (#5624). */
+const TRUNCATED_TAIL = 8;
+
+/**
+ * A segment's visible text. The POSIX root is a drive glyph rather than a bare
+ * "/" that reads as stray punctuation (#5624); its name stays for assistive
+ * tech. A `truncated` segment splits into an ellipsizing head and a fixed
+ * tail, so CSS shortens it in the middle ("5-a-rather-lo…bar-check").
+ */
+function CrumbText({ label, truncated }: { label: string; truncated?: boolean }) {
+  if (label === "/") {
+    return (
+      <>
+        <HardDrive size={12} className="file-browser__crumb-root" aria-hidden />
+        <span className="sr-only">/</span>
+      </>
+    );
+  }
+  if (truncated && label.length > TRUNCATED_TAIL + 4) {
+    return (
+      <>
+        <span className="file-browser__crumb-head">{label.slice(0, -TRUNCATED_TAIL)}</span>
+        <span className="file-browser__crumb-tail">{label.slice(-TRUNCATED_TAIL)}</span>
+      </>
+    );
+  }
+  return <>{label}</>;
 }
 
 interface CrumbProps {
@@ -43,6 +75,8 @@ interface CrumbProps {
   onEdit?: () => void;
   testIdPrefix: string;
   dropTargets: boolean;
+  /** Shown middle-truncated (the leaf's direct parent in a tight row, #5624). */
+  truncated?: boolean;
 }
 
 /**
@@ -52,7 +86,16 @@ interface CrumbProps {
  * (PROD-006), so a row can be dragged "up" into any ancestor folder; it
  * highlights valid vs refused drops.
  */
-function Crumb({ label, path, isLeaf, onNavigate, onEdit, testIdPrefix, dropTargets }: CrumbProps) {
+function Crumb({
+  label,
+  path,
+  isLeaf,
+  onNavigate,
+  onEdit,
+  testIdPrefix,
+  dropTargets,
+  truncated,
+}: CrumbProps) {
   const dropId = dropTargets ? `crumb:${path}` : `${testIdPrefix}-crumb:${path}`;
   const { setNodeRef, highlight } = useFileDropTarget(dropId, path, undefined, !dropTargets);
   const editsPath = isLeaf && !!onEdit;
@@ -67,11 +110,13 @@ function Crumb({ label, path, isLeaf, onNavigate, onEdit, testIdPrefix, dropTarg
       disabled={isLeaf && !onEdit}
       aria-current={isLeaf ? "location" : undefined}
       aria-description={editsPath ? "Edit path" : undefined}
+      aria-label={label === "/" ? "Root folder (/)" : undefined}
+      title={truncated ? label : undefined}
       // Per-segment id so a drag can target one ancestor (`dragTo`, #4007).
       data-testid={`${testIdPrefix}-crumb-${label}`}
       data-drop-highlight={highlight ?? undefined}
     >
-      {label}
+      <CrumbText label={label} truncated={truncated} />
     </button>
   );
 }
@@ -85,10 +130,12 @@ function Sep() {
 function CollapsedCrumbs({
   hidden,
   onNavigate,
+  onCopyPath,
   testIdPrefix,
 }: {
   hidden: PathCrumb[];
   onNavigate: (path: string) => void;
+  onCopyPath?: () => void;
   testIdPrefix: string;
 }) {
   return (
@@ -97,7 +144,7 @@ function CollapsedCrumbs({
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="file-browser__crumb"
+            className="file-browser__crumb file-browser__crumb--overflow"
             aria-label="Show collapsed folders"
             data-testid={`${testIdPrefix}-crumb-overflow`}
           >
@@ -117,6 +164,18 @@ function CollapsedCrumbs({
             {crumb.label}
           </MenuItem>
         ))}
+        {onCopyPath && (
+          <>
+            <MenuSeparator />
+            <MenuItem
+              icon={<Copy size={14} />}
+              onSelect={onCopyPath}
+              data-testid={`${testIdPrefix}-crumb-menu-copy-path`}
+            >
+              Copy path
+            </MenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenuRoot>
   );
@@ -141,6 +200,7 @@ export function CollapsingBreadcrumbs({
   testIdPrefix = "file-browser",
   label = "Path",
   dropTargets = true,
+  onCopyPath,
 }: CollapsingBreadcrumbsProps) {
   const crumbs = useMemo(() => splitPathSegments(currentPath), [currentPath]);
   const [observeNav, width] = useElementWidth<HTMLElement>();
@@ -165,30 +225,37 @@ export function CollapsingBreadcrumbs({
     });
   }, [crumbs, measureWidth]);
 
-  const { hiddenStart, hiddenEnd } =
+  const { hiddenStart, hiddenEnd, parentWidth } =
     metrics && metrics.widths.length === crumbs.length && metrics.widths.every((w) => w > 0)
       ? collapseCrumbs({ available: width, ...metrics })
       : { hiddenStart: 0, hiddenEnd: 0 };
   const hidden = crumbs.slice(hiddenStart, hiddenEnd);
   const last = crumbs.length - 1;
 
-  const renderCrumb = (crumb: PathCrumb, i: number, sep: boolean) => (
-    <span
-      className={`file-browser__crumb-group${i === last ? " file-browser__crumb-group--leaf" : ""}`}
-      key={crumb.path}
-    >
-      {sep && <Sep />}
-      <Crumb
-        label={crumb.label}
-        path={crumb.path}
-        isLeaf={i === last}
-        onNavigate={onNavigate}
-        onEdit={onEdit}
-        testIdPrefix={testIdPrefix}
-        dropTargets={dropTargets}
-      />
-    </span>
-  );
+  const renderCrumb = (crumb: PathCrumb, i: number, sep: boolean) => {
+    const truncated = parentWidth !== undefined && i === hiddenEnd && i !== last;
+    return (
+      <span
+        className={`file-browser__crumb-group${i === last ? " file-browser__crumb-group--leaf" : ""}${
+          truncated ? " file-browser__crumb-group--truncated" : ""
+        }`}
+        style={truncated ? { maxWidth: `${parentWidth}px` } : undefined}
+        key={crumb.path}
+      >
+        {sep && <Sep />}
+        <Crumb
+          label={crumb.label}
+          path={crumb.path}
+          isLeaf={i === last}
+          onNavigate={onNavigate}
+          onEdit={onEdit}
+          testIdPrefix={testIdPrefix}
+          dropTargets={dropTargets}
+          truncated={truncated}
+        />
+      </span>
+    );
+  };
 
   return (
     <nav
@@ -203,7 +270,12 @@ export function CollapsingBreadcrumbs({
       {hidden.length > 0 && (
         <span className="file-browser__crumb-group" key="collapsed">
           {hiddenStart > 0 && <Sep />}
-          <CollapsedCrumbs hidden={hidden} onNavigate={onNavigate} testIdPrefix={testIdPrefix} />
+          <CollapsedCrumbs
+            hidden={hidden}
+            onNavigate={onNavigate}
+            onCopyPath={onCopyPath}
+            testIdPrefix={testIdPrefix}
+          />
         </span>
       )}
       {crumbs.slice(hiddenEnd).map((c, j) => {
@@ -224,14 +296,21 @@ export function CollapsingBreadcrumbs({
       {/* Natural widths of every segment (with its separator) plus the "…". */}
       <span className="file-browser__crumb-measure" ref={setMeasureRef} aria-hidden="true">
         {crumbs.map((crumb, i) => (
-          <span className="file-browser__crumb-group" key={crumb.path}>
+          <span
+            className={`file-browser__crumb-group${
+              i === crumbs.length - 1 ? " file-browser__crumb-group--leaf" : ""
+            }`}
+            key={crumb.path}
+          >
             {i > 0 && <Sep />}
-            <span className="file-browser__crumb">{crumb.label}</span>
+            <span className="file-browser__crumb">
+              <CrumbText label={crumb.label} />
+            </span>
           </span>
         ))}
         <span className="file-browser__crumb-group">
           <Sep />
-          <span className="file-browser__crumb">…</span>
+          <span className="file-browser__crumb file-browser__crumb--overflow">…</span>
         </span>
       </span>
     </nav>

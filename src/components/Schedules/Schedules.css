@@ -78,6 +78,21 @@
 
 /* "Pause all" label + toggle in the section header. The label never wraps; at
    narrow widths the component drops it for a tooltip (#4709). */
+/* Settings ▸ Schedules (#5633): the page has its own title, so no header,
+   no sidebar divider and no height cap; a toolbar holds the actions. */
+.schedules--page {
+  max-height: none;
+  border-top: none;
+}
+
+.schedules__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xs) 0;
+}
+
 .schedules__pause {
   display: inline-flex;
   align-items: center;

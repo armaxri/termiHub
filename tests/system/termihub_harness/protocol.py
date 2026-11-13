@@ -67,6 +67,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "readCoverage",
         "readTerminal",
         "readFrontendLog",
+        "renderSettled",
         "readTerminalCells",
         "readTerminalOutput",
         "readTerminalWebglFrame",

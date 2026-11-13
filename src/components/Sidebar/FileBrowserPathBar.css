@@ -13,6 +13,10 @@
   width: 100%;
   min-width: 0;
   height: var(--control-height-md);
+  /* A subtle field so the bar reads as a navigable path (#5624). */
+  padding: 0 var(--spacing-xxs);
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
 }
 
 .file-browser__breadcrumbs {
@@ -35,6 +39,54 @@
 /* The leaf segment is the only one allowed to shrink (and ellipsize). */
 .file-browser__crumb-group--leaf {
   flex-shrink: 1;
+}
+
+/* The current folder reads as the primary segment (#5624). */
+.file-browser__crumb-group--leaf .file-browser__crumb {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+/* The leaf's direct parent, kept middle-truncated when the row is tight
+   (#5624): the head ellipsizes, the last characters stay. Its max-width is
+   set inline from the collapse decision. */
+.file-browser__crumb-group--truncated {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.file-browser__crumb-group--truncated .file-browser__crumb {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.file-browser__crumb-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser__crumb-tail {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.file-browser__crumb-root {
+  display: block;
+  color: var(--text-secondary);
+}
+
+/* The fold reads as a button that opens a menu, not as stray text (#5624). */
+.file-browser__crumb--overflow {
+  padding: 0 var(--spacing-xs);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-browser__crumb.file-browser__crumb--overflow:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
 }
 
 .file-browser__crumb-sep {

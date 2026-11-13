@@ -46,7 +46,7 @@ import {
 import { PanelNode, LeafPanel, TerminalTab } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
-import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
+import { getTabDisplayTitle } from "@/utils/editorTabTitle";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
 import { TabConnectionIcon } from "@/components/Terminal/TabConnectionIcon";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
@@ -274,7 +274,7 @@ export function SplitView() {
   const zoomedTabTitle = useMemo(() => {
     if (!zoomedTab) return "";
     const allTabs = getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs);
-    return getEditorTabDisplayTitle(zoomedTab, allTabs);
+    return getTabDisplayTitle(zoomedTab, allTabs);
   }, [zoomedTab, rootPanel]);
 
   // Empty-window first-class state (#1902): the window holds zero tabs across

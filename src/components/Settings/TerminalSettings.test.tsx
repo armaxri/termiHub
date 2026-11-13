@@ -221,6 +221,59 @@ describe("TerminalSettings", () => {
     );
   });
 
+  describe("the command-marks group (#5633)", () => {
+    const group = () => container.querySelector('[data-testid="settings-command-marks"]');
+    const labelsIn = (el: Element | null) =>
+      Array.from(el?.querySelectorAll(".settings-form__label") ?? []).map((l) => l.textContent);
+
+    it("puts both command-mark toggles under one Command marks heading", () => {
+      renderWith(defaultSettings);
+      expect(group()).not.toBeNull();
+      expect(group()!.querySelector("h4")?.textContent).toBe("Command marks");
+      expect(labelsIn(group())).toEqual([
+        "Show command marks",
+        "Add shell hook to new sessions automatically",
+      ]);
+      expect(
+        group()!.querySelector('[data-testid="settings-terminal-command-decorations"]')
+      ).not.toBeNull();
+      expect(
+        group()!.querySelector('[data-testid="settings-default-shell-integration"]')
+      ).not.toBeNull();
+    });
+
+    it("nests the shell-hook toggle under Show command marks", () => {
+      renderWith(defaultSettings);
+      const hook = group()!.querySelector('[data-testid="settings-default-shell-integration"]')!;
+      expect(hook.closest(".settings-panel__nested")).not.toBeNull();
+    });
+
+    it("keeps the shell hook off by default and flips defaultShellIntegration", () => {
+      const onChange = renderWith(defaultSettings);
+      const toggle = container.querySelector(
+        '[data-testid="settings-default-shell-integration"]'
+      ) as HTMLElement;
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      act(() => toggle.click());
+      expect(onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ defaultShellIntegration: true })
+      );
+    });
+
+    it("hides the group when search matches neither toggle", () => {
+      act(() => {
+        root.render(
+          <TerminalSettings
+            settings={defaultSettings}
+            onChange={vi.fn()}
+            visibleFields={new Set(["cursorBlink"])}
+          />
+        );
+      });
+      expect(group()).toBeNull();
+    });
+  });
+
   it("reflects a disabled command status marks setting", () => {
     renderWith({ ...defaultSettings, terminalCommandDecorations: false });
     const toggle = container.querySelector(
