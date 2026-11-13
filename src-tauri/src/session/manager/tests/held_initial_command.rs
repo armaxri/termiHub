@@ -514,7 +514,10 @@ async fn a_late_cue_releases_a_held_capped_setup_and_its_command() {
         .await
     );
     assert!(within(Duration::from_secs(2), || helds(&emitter) == [true, false]).await);
-    assert!(!manager.send_held_initial_command(&sid), "nothing left held");
+    assert!(
+        !manager.send_held_initial_command(&sid),
+        "nothing left held"
+    );
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(written(&writes), b"SETUP\necho hi\r", "exactly once");
 }

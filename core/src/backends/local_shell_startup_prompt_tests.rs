@@ -536,7 +536,10 @@ async fn old_bash_past_the_cap(bash: &str, secs: u32) -> Session {
     let past_cap = READY_CAP + Duration::from_millis(800);
     s.soak(past_cap.saturating_sub(start.elapsed())).await;
     let text = s.text();
-    assert!(!text.contains("RC-DONE"), "the rc is still running: {text:?}");
+    assert!(
+        !text.contains("RC-DONE"),
+        "the rc is still running: {text:?}"
+    );
     assert!(
         !text.contains("printf") && !text.contains("6973;"),
         "the setup was typed blind into the cooked tty: {text:?}"
@@ -562,7 +565,10 @@ async fn old_bash_setup_past_its_cap_waits_for_the_line_editor() {
     .await;
     assert!(!s.shell.gated_setup().is_some_and(|g| g.is_pending()));
     let text = s.text();
-    assert!(!text.contains("printf"), "the setup's echo showed: {text:?}");
+    assert!(
+        !text.contains("printf"),
+        "the setup's echo showed: {text:?}"
+    );
     assert_exit_marks(&mut s).await;
     assert!(!s.text().contains("command not found"), "{:?}", s.text());
     s.close().await;
