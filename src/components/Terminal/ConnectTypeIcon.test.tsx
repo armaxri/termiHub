@@ -1,8 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import type React from "react";
+import { describe, it, expect, afterEach } from "vitest";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+
+/** Render into a detached container and return it (React 19 createRoot). */
+function render(ui: React.ReactElement): { container: HTMLElement } {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => root.render(ui));
+  return { container };
+}
 import { ConnectTypeIcon } from "./ConnectTypeIcon";
 
 /** The connect overlay's centre glyph uses the shared type map (#5622). */
+afterEach(() => {
+  document.body.innerHTML = "";
+});
+
 describe("ConnectTypeIcon", () => {
   it.each([
     ["ssh", "key-round"],

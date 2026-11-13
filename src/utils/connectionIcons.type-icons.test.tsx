@@ -4,8 +4,19 @@
  * graphical types (VNC/RDP) never borrow the local-shell `>_` glyph. The icon
  * id is exposed as a `data-icon` attribute so product-run grades can check it.
  */
-import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import type React from "react";
+import { describe, it, expect, afterEach } from "vitest";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+
+/** Render into a detached container and return it (React 19 createRoot). */
+function render(ui: React.ReactElement): { container: HTMLElement } {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => root.render(ui));
+  return { container };
+}
 import type { ConnectionConfig } from "@/types/terminal";
 import {
   ConnectionIcon,
@@ -19,6 +30,10 @@ const BUILTIN_TYPES = ["local", "ssh", "serial", "telnet", "docker", "vnc", "rdp
 function iconIdOf(container: HTMLElement): string | null {
   return container.querySelector("svg")?.getAttribute("data-icon") ?? null;
 }
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
 
 describe("connection type icons (#5622)", () => {
   it("gives every built-in connection type a distinct icon id", () => {

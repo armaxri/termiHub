@@ -31,14 +31,12 @@ vi.mock("lucide-react", () => ({
   Check: () => null,
   CircleAlert: () => null,
   Clock: () => null,
-  Cable: () => null,
-  Container: () => null,
-  Globe: () => null,
-  Monitor: () => null,
-  Terminal: () => null,
-  Wifi: () => null,
   Copy: () => null,
 }));
+
+// The type glyph comes from the shared connection-type map (#5622), covered by
+// ConnectTypeIcon.test.tsx; stub it so this lucide mock stays minimal.
+vi.mock("./ConnectTypeIcon", () => ({ ConnectTypeIcon: () => null }));
 
 import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";

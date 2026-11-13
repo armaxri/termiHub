@@ -21,10 +21,6 @@ import {
   Square,
   RefreshCw,
   Terminal,
-  Cable,
-  Container,
-  Globe,
-  Wifi,
   Upload,
   FolderPlus,
   Zap,
@@ -45,7 +41,7 @@ import {
   moveShortcutHint,
   type FolderMoveTarget,
 } from "@/utils/connectionKeyboardMove";
-import { ConnectionIcon } from "@/utils/connectionIcons";
+import { ConnectionIcon, ConnectionTypeIcon } from "@/utils/connectionIcons";
 import {
   agentGraphicalTabConfig,
   isAgentTunnelledGraphicalType,
@@ -164,20 +160,9 @@ type AgentItemNavProps = Pick<
   "activeIndex" | "getNodeIndex" | "getRowRef" | "onTreeKeyDown" | "onRowFocus"
 >;
 
-/** Icon for a session/connection type string. */
+/** Icon for a session/connection type string — the shared type glyph (#5622). */
 function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
-  switch (type) {
-    case "serial":
-      return <Cable size={size} />;
-    case "docker":
-      return <Container size={size} />;
-    case "ssh":
-      return <Wifi size={size} />;
-    case "telnet":
-      return <Globe size={size} />;
-    default:
-      return <Terminal size={size} />;
-  }
+  return <ConnectionTypeIcon type={type} size={size} />;
 }
 
 /** Class of an agent header's expand/collapse toggle (its focusable control). */

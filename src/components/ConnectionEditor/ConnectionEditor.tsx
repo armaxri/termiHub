@@ -3,6 +3,7 @@ import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
 import { z } from "zod";
 import { iconColorSchema, iconEmojiSchema } from "@/utils/connectionIconStyle";
+import { ConnectionTypeIcon } from "@/utils/connectionIcons";
 import {
   PlugZap,
   TerminalSquare,
@@ -1789,7 +1790,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             >
               {builtinTypeOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
+                  <span className="connection-editor__type-option">
+                    <ConnectionTypeIcon
+                      type={opt.value}
+                      size={13}
+                      className="connection-editor__type-icon"
+                      aria-hidden
+                    />
+                    {opt.label}
+                  </span>
                 </SelectItem>
               ))}
               {pluginTypes.length > 0 && (
