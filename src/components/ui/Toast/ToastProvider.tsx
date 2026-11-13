@@ -19,15 +19,34 @@ import "./toast.css";
  *
  * Motion is left to the global reduced-motion rules in `toast.css`.
  *
+ * The stack anchors above any visible app-level bottom banner (#5556): the
+ * bottom offset reads `--app-bottom-banner-inset`, published by
+ * `BottomBannerRegion`, so a toast never covers a banner's buttons.
+ *
  * `hotkey` replaces sonner's default Alt+T, which stole focus from a terminal
  * running readline's transpose-words (#5316); see {@link toastHotkey}.
  */
+/** Gap between the toast stack and the window edge (or the banner above it). */
+const TOAST_EDGE = 16;
+
+/**
+ * sonner offsets: 16px from the window edges; from the bottom, 16px above the
+ * top of the visible bottom banner (the inset is `0px` when none shows, #5556).
+ */
+const TOAST_OFFSET = {
+  top: TOAST_EDGE,
+  right: TOAST_EDGE,
+  left: TOAST_EDGE,
+  bottom: `calc(var(--app-bottom-banner-inset, 0px) + ${TOAST_EDGE}px)`,
+};
+
 export function ToastProvider() {
   return (
     <Toaster
       position="bottom-right"
       gap={8}
-      offset={16}
+      offset={TOAST_OFFSET}
+      mobileOffset={TOAST_OFFSET}
       closeButton
       hotkey={toastHotkey()}
       toastOptions={{ className: "th-toast", unstyled: true, closeButtonAriaLabel: "Close" }}
