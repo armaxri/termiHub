@@ -389,7 +389,7 @@ class TestProductRunChecklist(
             "After the chooser, Save credentials is still in view (#5630)",
             expect=(
                 "the SSH editor scrolled to Save credentials, "
-                "a 'stored in the OS keychain' toast"
+                "a 'stored in the OS Keychain' toast"
             ),
         ):
             self.require("checklist.chooser.os-keychain")
