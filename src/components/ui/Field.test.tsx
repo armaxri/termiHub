@@ -348,4 +348,60 @@ describe("Field", () => {
       "true"
     );
   });
+
+  it("gives the hint an id so a control can point aria-describedby at it (#5641)", () => {
+    render(
+      <Field data-testid="field" variant="settings" label="Host" hint="Server" hintId="host-desc">
+        <Input id="host" />
+      </Field>
+    );
+    const hint = document.getElementById("host-desc");
+    expect(hint?.className).toContain("settings-form__hint");
+    expect(hint?.textContent).toBe("Server");
+  });
+
+  it("renders details after the hint, both below the control (#5641)", () => {
+    render(
+      <Field
+        data-testid="field"
+        variant="settings"
+        label="Host"
+        hint="Server"
+        details={<p data-testid="details">extra</p>}
+      >
+        <Input id="host" data-testid="ctl" />
+      </Field>
+    );
+    const field = document.querySelector('[data-testid="field"]') as HTMLElement;
+    const kids = Array.from(field.children);
+    const ctl = kids.findIndex((k) => k.getAttribute("data-testid") === "ctl");
+    const hint = kids.findIndex((k) => k.classList.contains("settings-form__hint"));
+    const details = kids.findIndex((k) =>
+      k.contains(document.querySelector('[data-testid="details"]'))
+    );
+    expect(ctl).toBeGreaterThanOrEqual(0);
+    expect(hint).toBeGreaterThan(ctl);
+    expect(details).toBeGreaterThan(hint);
+  });
+
+  it("inline layout renders details as a full-width row, not beside the control (#5641)", () => {
+    render(
+      <Field
+        data-testid="field"
+        variant="settings"
+        layout="inline"
+        label="Save password"
+        hint="Reuse it"
+        details={<p data-testid="details">extra</p>}
+      >
+        <input type="checkbox" data-testid="ctl" />
+      </Field>
+    );
+    const field = document.querySelector('[data-testid="field"]') as HTMLElement;
+    const control = field.querySelector(".settings-form__field-control") as HTMLElement;
+    expect(control.querySelector('[data-testid="details"]')).toBeNull();
+    const row = field.querySelector(".settings-form__field-details") as HTMLElement;
+    expect(row.parentElement).toBe(field);
+    expect(row.querySelector('[data-testid="details"]')).toBeTruthy();
+  });
 });

@@ -105,9 +105,10 @@ interface ConnectionSettingsFormProps {
    */
   afterField?: { key: string; node: React.ReactNode };
   /**
-   * A section-level note rendered under the first shown group's heading,
-   * above its fields — e.g. the `${VAR}` expansion hint, which applies to the
-   * connection fields rather than to the editor's Type select (#5560).
+   * A section-level note rendered as the first shown group's description,
+   * inside its header (above the divider) — e.g. the `${VAR}` expansion hint,
+   * which applies to the connection fields rather than to the editor's Type
+   * select (#5560), and must not read as the first field's label (#5641).
    */
   leadNote?: React.ReactNode;
 }
@@ -363,8 +364,11 @@ export function ConnectionSettingsForm({
         const isLeadGroup = !leadNoteShown;
         leadNoteShown = true;
         return (
-          <FormGroupSection key={group.key} group={group}>
-            {isLeadGroup && leadNote}
+          <FormGroupSection
+            key={group.key}
+            group={group}
+            description={isLeadGroup ? leadNote : undefined}
+          >
             {visibleFields.map((field) => (
               <React.Fragment key={field.key}>
                 {
@@ -471,17 +475,41 @@ function matchHostOf(key: string | undefined, values: Record<string, unknown>): 
  */
 function FormGroupSection({
   group,
+  description,
   children,
 }: {
   group: SettingsGroup;
+  /** Section description shown in the header, under the title (#5641). */
+  description?: React.ReactNode;
   children: React.ReactNode;
 }) {
   if (group.collapsed === true) {
-    return <CollapsibleGroupSection group={group}>{children}</CollapsibleGroupSection>;
+    return (
+      <CollapsibleGroupSection group={group}>
+        {description}
+        {children}
+      </CollapsibleGroupSection>
+    );
   }
+  if (!description) {
+    return (
+      <div className="settings-panel__category" data-testid={`form-group-${group.key}`}>
+        <h3 className="settings-panel__category-title">{group.label}</h3>
+        {children}
+      </div>
+    );
+  }
+  // Title and description share the header, above the divider, so the
+  // description reads as the section's, never as the first field's label.
   return (
     <div className="settings-panel__category" data-testid={`form-group-${group.key}`}>
-      <h3 className="settings-panel__category-title">{group.label}</h3>
+      <div
+        className="settings-panel__category-header"
+        data-testid={`form-group-${group.key}-header`}
+      >
+        <h3 className="settings-panel__category-title">{group.label}</h3>
+        {description}
+      </div>
       {children}
     </div>
   );

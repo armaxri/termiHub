@@ -596,8 +596,11 @@ describe("ConnectionEditor ${VAR} hint placement (#5560)", () => {
     expect(hint?.textContent).toBe("Use ${VAR} for environment variables, e.g. ${USER}");
     const section = q("form-group-conn")!;
     expect(section.contains(hint)).toBe(true);
-    // Heading first, then the hint, then the fields it applies to.
-    expect(section.querySelector("h3")?.nextElementSibling).toBe(hint);
+    // The hint is the section description inside the header, and the first
+    // thing after the header is the Host field, not the hint (#5641).
+    const header = section.querySelector(".settings-panel__category-header")!;
+    expect(header.contains(hint)).toBe(true);
+    expect(header.nextElementSibling?.getAttribute("data-testid")).toBe("dynamic-field-host");
     // Nothing about ${VAR} is left next to the Type select.
     const typeField = q("connection-editor-type-select")!.closest(".settings-form__field, div")!;
     expect(typeField.parentElement?.textContent ?? "").not.toContain("environment variables");

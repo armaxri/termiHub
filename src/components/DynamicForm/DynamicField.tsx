@@ -202,10 +202,28 @@ export function DynamicField({
       error={error || undefined}
       errorId={errorId}
       errorTestId={`${testIdBase}-error`}
+      // A boolean is a toggle row: label and hint left, toggle right (#5641).
+      layout={field.fieldType.type === "boolean" ? "inline" : "stack"}
+      // The description is this field's own hint, directly under its control.
+      hint={field.description || undefined}
+      hintId={descriptionId}
+      hintTestId={`${testIdBase}-hint`}
+      details={
+        platformNote || credentialStorageOff || credentialSaved || storedSecret ? (
+          <FieldStatusNotes
+            testIdBase={testIdBase}
+            platformNote={platformNote}
+            platformNoteId={platformNoteId}
+            storageOffId={credentialStorageOff ? storageOffId : undefined}
+            credentialSaved={credentialSaved}
+            storedSecret={storedSecret}
+          />
+        ) : undefined
+      }
     >
       {/* Fragment: each input widget wires its own id / aria-describedby (the
           error, description and platform-note ids above), so Field only renders
-          the label row and the inline error. */}
+          the label row, the hint, the details and the inline error. */}
       <>
         {renderFieldInput(
           field,
@@ -221,39 +239,64 @@ export function DynamicField({
           savedConnectionContext,
           storedSecret
         )}
-        {field.description && (
-          <p id={descriptionId} className="settings-form__hint">
-            {field.description}
-          </p>
-        )}
-        {platformNote && (
-          <p
-            id={platformNoteId}
-            className="settings-form__hint settings-form__hint--warning"
-            data-testid={`${testIdBase}-platform-note`}
-          >
-            {platformNote}
-          </p>
-        )}
-        {credentialStorageOff && (
-          <div className="settings-form__storage-off" data-testid={`${testIdBase}-storage-off`}>
-            <p id={storageOffId} className="settings-form__hint">
-              {CREDENTIAL_STORAGE_OFF_TEXT}
-            </p>
-            <EnableCredentialStorageButton data-testid={`${testIdBase}-enable-storage`} />
-          </div>
-        )}
-        {credentialSaved && (
-          <p
-            className="settings-form__hint settings-form__hint--success"
-            data-testid={`${testIdBase}-credential-saved`}
-          >
-            Password saved in credential store
-          </p>
-        )}
-        {storedSecret && <StoredSecretHint state={storedSecret} testIdBase={testIdBase} />}
       </>
     </Field>
+  );
+}
+
+/** Props for {@link FieldStatusNotes}. */
+interface FieldStatusNotesProps {
+  testIdBase: string;
+  /** Platform-limitation note (PROD-019), or null/undefined when none. */
+  platformNote?: string | null;
+  platformNoteId?: string;
+  /** Set while credential storage is off: id of the "storage off" note. */
+  storageOffId?: string;
+  credentialSaved?: boolean;
+  storedSecret?: StoredSecretState;
+}
+
+/**
+ * The status notes a field owns below its hint: platform limitation, storage
+ * off (with its enable action), "password saved" and the stored-secret state.
+ */
+function FieldStatusNotes({
+  testIdBase,
+  platformNote,
+  platformNoteId,
+  storageOffId,
+  credentialSaved,
+  storedSecret,
+}: FieldStatusNotesProps) {
+  return (
+    <>
+      {platformNote && (
+        <p
+          id={platformNoteId}
+          className="settings-form__hint settings-form__hint--warning"
+          data-testid={`${testIdBase}-platform-note`}
+        >
+          {platformNote}
+        </p>
+      )}
+      {storageOffId && (
+        <div className="settings-form__storage-off" data-testid={`${testIdBase}-storage-off`}>
+          <p id={storageOffId} className="settings-form__hint">
+            {CREDENTIAL_STORAGE_OFF_TEXT}
+          </p>
+          <EnableCredentialStorageButton data-testid={`${testIdBase}-enable-storage`} />
+        </div>
+      )}
+      {credentialSaved && (
+        <p
+          className="settings-form__hint settings-form__hint--success"
+          data-testid={`${testIdBase}-credential-saved`}
+        >
+          Password saved in credential store
+        </p>
+      )}
+      {storedSecret && <StoredSecretHint state={storedSecret} testIdBase={testIdBase} />}
+    </>
   );
 }
 
@@ -636,6 +679,7 @@ function NumberField({
     <>
       <NumberInput
         id={a11y.id}
+        className="settings-form__input--narrow"
         value={value != null ? Number(value) : ""}
         onValueChange={(v) => onChange(v === "" ? undefined : v)}
         min={fieldType.min}
@@ -723,6 +767,7 @@ function PortField({
         max={65535}
         placeholder={field.placeholder}
         aria-required={field.required || undefined}
+        className="settings-form__input--narrow"
         data-testid={testIdBase}
       />
     </>
