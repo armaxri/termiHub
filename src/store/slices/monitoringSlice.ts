@@ -78,6 +78,17 @@ export interface MonitoringSlice {
    * and tears the entry down so the picker/Retry is reachable again.
    */
   cancelMonitoring: (key: string) => Promise<void>;
+  /**
+   * Monitor keys the user stopped from the status-bar host menu (#5628). The
+   * status bar's auto-connect skips these, so a stop is not silently undone by
+   * the next render; {@link MonitoringSlice.startMonitoring} clears the latch.
+   * Client-only presentation state: it never reaches the backend region.
+   */
+  stoppedMonitorKeys: Record<string, true>;
+  /** Stop one monitor at the user's request and latch it off (#5628). */
+  stopMonitoring: (key: string) => Promise<void>;
+  /** Clear a user stop so the status bar auto-connects the monitor again (#5628). */
+  startMonitoring: (key: string) => void;
   /** Per-session capabilities fetched after session creation (keyed by sessionId). */
   sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
   setSessionCapabilities: (
@@ -93,6 +104,21 @@ export const createMonitoringSlice: StateCreator<AppState, [], [], MonitoringSli
   // Monitoring — state lives in the authoritative `system-monitors` region
   // (#2224), not here (audit gap G6, #1231).
   sessionCapabilities: {},
+  stoppedMonitorKeys: {},
+
+  stopMonitoring: async (key) => {
+    // Latch first, so the chips hide and auto-connect stays off even while the
+    // backend close is still in flight.
+    set((state) => ({ stoppedMonitorKeys: { ...state.stoppedMonitorKeys, [key]: true } }));
+    await get().disconnectMonitoring(key);
+  },
+
+  startMonitoring: (key) =>
+    set((state) => {
+      if (!state.stoppedMonitorKeys[key]) return {};
+      const { [key]: _cleared, ...rest } = state.stoppedMonitorKeys;
+      return { stoppedMonitorKeys: rest };
+    }),
 
   clearMonitoringError: (key) => {
     const entry = currentMonitorsView().monitors[key];

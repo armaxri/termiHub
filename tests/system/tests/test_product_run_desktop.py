@@ -67,6 +67,8 @@ pytestmark = [
 ]
 
 CONNECT_TIMEOUT = 60.0
+#: The status-bar host-stats chips (``monitoring-<name>``) that must all go on a stop (#5628).
+_METRIC_CHIPS = ("cpu", "mem", "disk", "swap", "net")
 RDP_USER = "product-run"
 RDP_PASSWORD = "product-run-rdp-pw"
 #: The settings categories (``settingsRegistry.ts`` CATEGORIES).
@@ -356,22 +358,37 @@ class TestProductRunMonitoring(
             self.evidence(f"before {first}; after {changed}")
         with self.step(
             "monitoring.dropdown",
-            "The host chip opens Refresh / Disconnect; Disconnect stops monitoring",
-            expect="the status bar after Disconnect, with no monitoring numbers",
+            "The host chip opens a compact menu that fits 800x600; Disconnect stops monitoring",
+            expect="the status bar after Disconnect: no metric chip, only 'Monitoring off · Start'",
         ):
             self.require("monitoring.stats")
-            self.open_monitoring_dropdown()
-            self.shot(label="dropdown")
-            self.driver.click("monitoring-disconnect")
-            self.wait(lambda: not self.driver.exists("monitoring-cpu"), what="the stats to go")
-            self.evidence(f"monitoring visible after Disconnect: {self.monitoring_visible()}")
+            # The menu must fit the 800x600 minimum window (#5628, R-042).
+            self.driver.resize_window(800, 600)
+            try:
+                self.open_monitoring_dropdown()
+                self.shot(label="dropdown")
+                menu = self.driver.measure_element("monitoring-menu")["rect"]
+                bar = self.driver.measure_element("status-bar")["rect"]
+                self.evidence(f"menu height {menu['height']:.0f}px, status bar {bar['height']:.0f}px")
+                assert menu["height"] <= 600 - bar["height"], f"menu {menu} does not fit 800x600"
+                assert menu["top"] >= 0, f"menu clipped at the top: {menu}"
+                self.driver.click("monitoring-disconnect")
+            finally:
+                self.driver.resize_window(1280, 800)
+            self.wait(lambda: self.driver.exists("monitoring-stopped"), what="the stopped state")
+            # Monitoring used to restart from the cached sample, leaving Mem / Disk /
+            # Swap / Net behind (R-040). Hold a few samples to prove it stays off.
+            time.sleep(6.0)
+            left = [c for c in _METRIC_CHIPS if self.driver.exists(f"monitoring-{c}")]
+            self.evidence(f"metric chips after Disconnect: {left}")
+            assert not left, f"metric chips survived Disconnect: {left}"
         self.close_all_tabs()
 
     def test_02_unsupported_host(self):
         with self.step(
             "monitoring.unsupported",
-            "A host whose exec sessions cannot run sh shows 'Monitoring not supported on this host'",
-            expect="the SSH tab with 'Monitoring not supported on this host · Retry' in the status bar",
+            "A host whose exec sessions cannot run sh shows muted 'Monitoring unavailable'",
+            expect="the SSH tab with muted 'Monitoring unavailable' (info icon, no Retry)",
         ):
             native = self.need_native()
             port = _free_port(native.target.port + 20)
@@ -385,13 +402,19 @@ class TestProductRunMonitoring(
             tab_id = self._ssh_tab("pr-mon-nosh", port)
             self.evidence(self.echo_round_trip(tab_id, "PR_MON_NOSH_SHELL"))
             self.wait(
-                lambda: self.driver.exists("monitoring-retry-btn")
-                and self.driver.get_attribute("monitoring-retry-btn", "data-reason") == "unsupported",
+                lambda: self.driver.exists("monitoring-unsupported"),
                 timeout=90.0, what="the unsupported-host state",
             )
-            label = self.driver.get_text("monitoring-retry-btn")
-            self.evidence(f"status bar: {label!r}")
-            assert "not supported on this host" in label, label
+            label = self.driver.get_text("monitoring-unsupported")
+            reason = self.driver.get_attribute("monitoring-unsupported", "title") or ""
+            self.evidence(f"status bar: {label!r}; tooltip {reason!r}")
+            assert "Monitoring unavailable" in label, label
+            assert "sh" in reason, reason
+            # A capability state, not an error (#5628, R-043): muted, no Retry.
+            assert not self.driver.exists("monitoring-retry-btn"), "Retry on an unsupported host"
+            color = self.driver.get_computed_style("color", "monitoring-unsupported")
+            error = self.driver.get_computed_style("--color-error")
+            self.evidence(f"text colour {color}; error token {error}")
             assert not self.driver.exists("monitoring-cpu"), "stats on an unsupported host"
         self.close_all_tabs()
 

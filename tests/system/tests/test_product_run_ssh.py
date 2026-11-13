@@ -152,6 +152,12 @@ class TestProductRunSsh(
             self.wait_connected(tab_id)
             self.evidence(self.echo_round_trip(tab_id, "PR_SSH_KEY_LOGIN_OK"))
             assert not self.password_prompt_open(), "key auth asked for a password"
+            # Every SSH tab shows the SSH chip with host:port + auth method (#5628, R-105).
+            chip = self.driver.get_text("status-bar-ssh") if self.driver.exists("status-bar-ssh") else ""
+            title = self.driver.get_attribute("status-bar-ssh", "title") or ""
+            self.evidence(f"SSH chip: {chip!r}; tooltip {title!r}")
+            assert f":{port}" in chip, f"no SSH host:port chip on a key-auth tab: {chip!r}"
+            assert "Auth: key" in title, title
         with self.step(
             "ssh.hostkey.remembered",
             "The remembered key is in termiHub's trust store; a second connect does not ask again",
@@ -281,6 +287,9 @@ class TestProductRunSsh(
             self.wait_connected(tab_id)
             assert not self.password_prompt_open(), "agent auth asked for a password"
             self.evidence(self.echo_round_trip(tab_id, "PR_SSH_AGENT_OK"))
+            title = self.driver.get_attribute("status-bar-ssh", "title") or ""
+            self.evidence(f"SSH chip tooltip: {title!r}")
+            assert "Auth: SSH agent" in title, f"no SSH chip on an agent-auth tab: {title!r}"
         self.close_all_tabs()
 
     def test_05_password(self):

@@ -2,7 +2,7 @@
  * Tests for the SSH jump-host (ProxyJump) hop chain shown in the status bar.
  *
  * When the active terminal connects through a bastion, the status bar shows
- * `SSH: user@target via gateway`. Direct connections show nothing.
+ * `SSH: user@target:port via gateway:port`; direct connections show the target.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -65,17 +65,18 @@ describe("StatusBar — jump-host hop chain", () => {
     act(() => root.render(React.createElement(StatusBar)));
     await flushAsync();
 
-    const item = container.querySelector('[data-testid="status-bar-jump-host"]');
+    const item = container.querySelector('[data-testid="status-bar-ssh"]');
     expect(item).not.toBeNull();
-    expect(item!.textContent).toContain("SSH: deploy@app-server via bastion");
+    expect(item!.textContent).toContain("SSH: deploy@app-server:22 via bastion:22");
   });
 
-  it("shows nothing for a direct SSH connection", async () => {
+  it("shows the target alone for a direct SSH connection (#5628)", async () => {
     setActiveTab({ type: "ssh", config: { host: "app-server", username: "deploy" } });
 
     act(() => root.render(React.createElement(StatusBar)));
     await flushAsync();
 
-    expect(container.querySelector('[data-testid="status-bar-jump-host"]')).toBeNull();
+    const item = container.querySelector('[data-testid="status-bar-ssh"]');
+    expect(item!.textContent).toBe("SSH: deploy@app-server:22");
   });
 });
