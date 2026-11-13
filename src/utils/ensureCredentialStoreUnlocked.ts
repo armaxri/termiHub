@@ -14,6 +14,7 @@
 
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
+import type { UnlockWaiter } from "@/store/slices/credentialStoreSlice";
 
 /** Inputs the gate needs to decide whether a stored credential is involved. */
 export interface UnlockGateOptions {
@@ -32,6 +33,35 @@ export interface UnlockGateOptions {
    * so it needs the store whatever the auth method.
    */
   fieldSecrets?: boolean;
+  /**
+   * The connection that is waiting on the unlock, so the dialog can name it
+   * (#5684). Omitted keeps the dialog's generic text.
+   */
+  waitingConnection?: WaitingConnection;
+}
+
+/** Identity of a connection waiting on the unlock dialog (#5684). */
+export interface WaitingConnection {
+  /** The connection's name. */
+  name: string;
+  /** Display name of its connection type (e.g. `"SSH"`), when known. */
+  transport?: string;
+}
+
+/**
+ * The dialog's waiter for these options: which connection is waiting and
+ * which stored secret it reads — a key passphrase for key auth, otherwise a
+ * password (stored field secrets such as a tunnel password are passwords).
+ */
+function unlockWaiter(opts: UnlockGateOptions): UnlockWaiter | undefined {
+  const waiting = opts.waitingConnection;
+  if (!waiting?.name) return undefined;
+  const secret = opts.authMethod === "key" && !opts.fieldSecrets ? "passphrase" : "password";
+  return {
+    name: waiting.name,
+    ...(waiting.transport ? { transport: waiting.transport } : {}),
+    secret,
+  };
 }
 
 /**
@@ -87,7 +117,8 @@ export async function ensureCredentialStoreUnlocked(opts: UnlockGateOptions): Pr
   if (credentialStoreNeedsUnlock(opts)) {
     const { requestUnlock } = useAppStore.getState();
     frontendLog("credential", "connect gate: store locked, requesting unlock before resolve");
-    const unlocked = await requestUnlock();
+    const waiter = unlockWaiter(opts);
+    const unlocked = await requestUnlock(waiter ? { waiter } : undefined);
     if (!unlocked) {
       frontendLog("credential", "connect gate: unlock dismissed, aborting connect");
       return false;
@@ -119,7 +150,11 @@ export async function ensureCredentialStoreUnlockedForConnect(
   if (!credentialStoreNeedsUnlock(opts)) return "unlocked";
   const { requestUnlockOutcome } = useAppStore.getState();
   frontendLog("credential", "connect gate: store locked, requesting unlock before resolve");
-  const outcome = await requestUnlockOutcome({ connectFallback: true });
+  const waiter = unlockWaiter(opts);
+  const outcome = await requestUnlockOutcome({
+    connectFallback: true,
+    ...(waiter ? { waiter } : {}),
+  });
   if (outcome === "skipped") {
     frontendLog("credential", "connect gate: connecting without the saved credential");
   } else if (outcome === "canceled") {

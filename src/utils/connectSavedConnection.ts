@@ -471,7 +471,13 @@ export async function connectSavedConnection(
     const unlock = unattended
       ? "unlocked"
       : await untilAborted(
-          ensureCredentialStoreUnlockedForConnect({ authMethod, savePassword, credentialRef }),
+          ensureCredentialStoreUnlockedForConnect({
+            authMethod,
+            savePassword,
+            credentialRef,
+            // The dialog names the connect it holds up (#5684).
+            waitingConnection: { name: connection.name, transport },
+          }),
           preconnect.signal
         );
     if (unlock === PRECONNECT_ABORTED) return { status: "canceled" };

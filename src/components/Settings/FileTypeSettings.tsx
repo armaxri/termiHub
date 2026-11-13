@@ -7,6 +7,7 @@ import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { Button, ConfirmDialog, Input, Tooltip, EmptyState } from "@/components/ui";
 import { compareNames } from "@/utils/locale";
 import { isImeComposing } from "@/utils/imeComposition";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -115,12 +116,12 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
     <div className="settings-panel__category" data-testid="settings-editor">
       {show("fileLanguageMappings") && (
         <>
-          <h3 className="settings-panel__category-title">Editor</h3>
+          <SettingsSectionHeading>Editor</SettingsSectionHeading>
 
           {/* User overrides section */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Custom file type mappings</h3>
+              <SettingsSectionHeading>Custom file type mappings</SettingsSectionHeading>
               {userEntries.length > 0 && (
                 <div className="settings-panel__section-actions">
                   <Button
@@ -237,7 +238,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
           {/* Built-in reference table */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Built-in defaults</h3>
+              <SettingsSectionHeading>Built-in defaults</SettingsSectionHeading>
             </div>
             <p className="settings-panel__description">
               These mappings are applied automatically. Click{" "}

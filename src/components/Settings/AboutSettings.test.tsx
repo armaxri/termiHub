@@ -53,7 +53,7 @@ describe("AboutSettings", () => {
 
   it("renders the About category heading", async () => {
     await render();
-    const heading = container.querySelector(".settings-panel__category-title");
+    const heading = container.querySelector(".settings-section__heading");
     expect(heading?.textContent).toBe("About");
   });
 

@@ -144,6 +144,7 @@ export async function resolveConnectSecret({
       authMethod,
       savePassword,
       credentialRef,
+      ...(label ? { waitingConnection: { name: label, transport } } : {}),
     });
     if (unlock === "canceled") return { status: "canceled" };
     storeStaysLocked = unlock === "skipped";

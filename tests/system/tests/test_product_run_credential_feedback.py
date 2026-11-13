@@ -174,3 +174,44 @@ class TestProductRunCredentialFeedback(
                 # with the dialog's X, which cancels the connect.
                 self.driver.click("modal-close")
             self.wait(lambda: not self.driver.exists("unlock-dialog-input"), what="cancelled")
+
+    def test_50_unlock_names_connection(self):
+        """The unlock dialog a connect raises names that connect (#5684).
+
+        The status-bar unlock keeps the generic text. No sshd: the connect is
+        cancelled on the unlock dialog before anything connects.
+        """
+        name = unique_name("pr-unlock-names")
+        with self.step(
+            "cred-feedback.unlock.names-connection",
+            "The unlock dialog raised by a connect names the waiting connection (#5684)",
+            expect=f"#5684: the unlock dialog says 'Unlock to connect to {name} (SSH) with its "
+            "saved password.'; the status-bar unlock shows no such line",
+        ):
+            self.require("cred-feedback.switch-once")
+            if self.credential_store_locked():
+                self.unlock_credential_store(MASTER_PASSWORD)
+            self.switch_to_connections_sidebar()
+            # Never connected: the unlock dialog is closed first.
+            self.create_ssh_connection(
+                name, host="127.0.0.1", port=1, username="nobody", save_password=True
+            )
+            self.require_connection(name)
+            self.lock_credential_store()
+
+            # The plain unlock from the status bar names nothing.
+            self.open_unlock_dialog()
+            plain = self.driver.exists("unlock-dialog-waiting")
+            self.driver.click("modal-close")
+            self.wait(lambda: not self.driver.exists("unlock-dialog-input"), what="closed")
+
+            self.connect_connection(name)
+            self.wait(lambda: self.driver.exists("unlock-dialog-waiting"), what="the waiting line")
+            try:
+                line = self.driver.get_text("unlock-dialog-waiting").strip()
+                self.evidence(f"status-bar unlock names a connect: {plain}; connect line {line!r}")
+                assert not plain, "the status-bar unlock names a waiting connection"
+                assert line == f"Unlock to connect to {name} (SSH) with its saved password.", line
+            finally:
+                self.driver.click("modal-close")
+            self.wait(lambda: not self.driver.exists("unlock-dialog-input"), what="cancelled")

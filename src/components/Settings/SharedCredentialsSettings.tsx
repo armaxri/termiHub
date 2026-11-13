@@ -15,6 +15,7 @@ import {
   type SharedCredentialDialogMode,
 } from "./SharedCredentialDialog";
 import "./CredentialVault.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** "Used by 2 connections" / "Not used". */
 export function usageSummary(usages: NamedCredentialUsage[]): string {
@@ -91,7 +92,7 @@ export function SharedCredentialsSettings() {
 
   return (
     <div className="settings-panel__section" data-testid="shared-credentials">
-      <h3 className="settings-panel__section-title">Shared credentials</h3>
+      <SettingsSectionHeading>Shared credentials</SettingsSectionHeading>
       <p className="settings-panel__description">
         A password or key passphrase that several connections use. Change it here once and every
         connection that uses it picks up the new secret. Choose one in a connection&apos;s

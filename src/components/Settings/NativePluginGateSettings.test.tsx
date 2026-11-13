@@ -490,7 +490,7 @@ describe("NativePluginGateSettings", () => {
       withStatus({ isolation: "full", enforced: ["seatbelt"] });
       await renderFlushed();
       const section = query("settings-native-plugin-gate")!;
-      expect(section.querySelector("h3")!.textContent).toBe(" Native plugins");
+      expect(section.querySelector("h3")!.textContent).toBe("Native plugins");
       expect(query("native-plugin-disclosure")!.textContent).toContain("sandboxed process");
     });
 

@@ -7,6 +7,7 @@ import { resolveRestoreMode, type RestoreLastSessionMode } from "@/utils/restore
 import { Button, NumberInput, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import type { SettingsUpdate } from "./GeneralSettings";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SessionSettingsProps {
   settings: AppSettings;
@@ -48,7 +49,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
     <>
       {show("restoreLastSessionOnStartup") && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Restore</h3>
+          <SettingsSectionHeading>Restore</SettingsSectionHeading>
 
           <SettingsField
             label="Restore last session on startup"
@@ -78,7 +79,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
         show("sessionHistoryLimit") ||
         show("showRecentSessions")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Session history</h3>
+          <SettingsSectionHeading>Session history</SettingsSectionHeading>
 
           {show("sessionHistoryEnabled") && (
             <SettingsField
@@ -154,7 +155,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
       {show("networkToolHistoryEnabled") && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Network tool history</h3>
+          <SettingsSectionHeading>Network tool history</SettingsSectionHeading>
 
           <SettingsField
             label="Record network tool history"

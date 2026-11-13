@@ -137,14 +137,6 @@
   overflow-wrap: anywhere;
 }
 
-.settings-panel__section-title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-heading);
-  color: var(--text-primary);
-  margin: 0;
-}
-
 .settings-panel__section-actions {
   display: flex;
   flex-wrap: wrap;

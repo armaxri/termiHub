@@ -57,13 +57,29 @@ export function formatMacroStepData(data: string, maxLength = 80): string {
   return out;
 }
 
+/** How many input lines the macro row's step-list tooltip shows before "…". */
+export const MAX_PREVIEW_LINES = 12;
+
 /**
- * Summarise a macro's whole step list into a compact one-line preview, joining
- * the per-step previews. Used for the collapsed list row where only a hint of
- * the macro's content is shown.
+ * Split a macro's recorded input into the lines it types (R-112, #5680): the
+ * steps' data is joined and cut at each Enter / line feed, so a keystroke-by-
+ * keystroke recording and a hand-authored one-line-per-step macro both read
+ * as the commands they send. Each line is made printable with
+ * {@link formatMacroStepData} (control keys other than Enter keep their
+ * glyph / caret token); blank lines are dropped.
+ *
+ * The macro row shows the first line; its tooltip lists the rest.
+ *
+ * @param steps     The macro's recorded steps.
+ * @param maxLength Maximum length of each line before truncation.
  */
-export function summariseMacroSteps(steps: MacroStep[], maxLength = 80): string {
-  return formatMacroStepData(steps.map((s) => s.data).join(""), maxLength);
+export function macroPreviewLines(steps: MacroStep[], maxLength = 80): string[] {
+  return steps
+    .map((s) => s.data)
+    .join("")
+    .split(/\r\n|\r|\n/)
+    .map((line) => formatMacroStepData(line, maxLength))
+    .filter((line) => line.trim().length > 0);
 }
 
 /*

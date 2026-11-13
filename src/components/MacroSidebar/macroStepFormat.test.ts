@@ -3,7 +3,7 @@ import {
   escapeMacroStepData,
   formatMacroStepData,
   parseMacroStepText,
-  summariseMacroSteps,
+  macroPreviewLines,
 } from "./macroStepFormat";
 
 describe("formatMacroStepData", () => {
@@ -32,18 +32,34 @@ describe("formatMacroStepData", () => {
   });
 });
 
-describe("summariseMacroSteps", () => {
-  it("joins step data into one readable preview", () => {
+describe("macroPreviewLines", () => {
+  it("cuts a keystroke recording into the lines it types (#5680)", () => {
     expect(
-      summariseMacroSteps([
-        { data: "echo hi", delayMs: 0 },
+      macroPreviewLines([
+        { data: "e", delayMs: 0 },
+        { data: "cho hi", delayMs: 5 },
         { data: "\r", delayMs: 5 },
+        { data: "ls -la\r\n", delayMs: 5 },
       ])
-    ).toBe("echo hi⏎");
+    ).toEqual(["echo hi", "ls -la"]);
   });
 
-  it("returns an empty string for no steps", () => {
-    expect(summariseMacroSteps([])).toBe("");
+  it("keeps one line per hand-authored step and drops blank lines", () => {
+    expect(
+      macroPreviewLines([
+        { data: "echo one\r", delayMs: 0 },
+        { data: "\r", delayMs: 0 },
+        { data: "echo two\n", delayMs: 0 },
+      ])
+    ).toEqual(["echo one", "echo two"]);
+  });
+
+  it("keeps non-Enter control keys as readable tokens", () => {
+    expect(macroPreviewLines([{ data: "top\rq\x03", delayMs: 0 }])).toEqual(["top", "q^C"]);
+  });
+
+  it("returns no lines for no steps", () => {
+    expect(macroPreviewLines([])).toEqual([]);
   });
 });
 

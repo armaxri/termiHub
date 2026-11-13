@@ -5,6 +5,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { SerialPortScanPrefix } from "@/types/connection";
 import { Button, Input, Toggle, Tooltip } from "@/components/ui";
 import { isImeComposing } from "@/utils/imeComposition";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SerialPortSettingsProps {
   visibleFields?: Set<string>;
@@ -75,7 +76,7 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
   return (
     <div className="settings-panel__section" data-testid="settings-serial-port-prefixes">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">Serial port scan prefixes</h3>
+        <SettingsSectionHeading>Serial port scan prefixes</SettingsSectionHeading>
         <span className="settings-panel__section-badge">
           {enabledCount} / {prefixes.length} enabled
         </span>

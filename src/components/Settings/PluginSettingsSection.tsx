@@ -11,6 +11,7 @@ import { hasSettings, pluginTypeIcon } from "@/components/Plugins/pluginPresenta
 import { pluginSettingsDefaults, pluginSettingsToSchema } from "./pluginSettingsSchema";
 import "./PluginSettingsSection.css";
 import { withLoggedFallback } from "@/utils/loggedFallback";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Debounce before a plugin's edited settings are persisted. */
 const SAVE_DEBOUNCE_MS = 300;
@@ -116,7 +117,7 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
   if (configurable.length === 0) {
     return (
       <div className="settings-panel__category" data-testid="plugin-settings-section">
-        <h3 className="settings-panel__category-title">Plugins</h3>
+        <SettingsSectionHeading>Plugins</SettingsSectionHeading>
         <EmptyState
           variant="panel"
           title="No installed plugin has configurable settings."
@@ -128,7 +129,7 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
 
   return (
     <div className="settings-panel__category" data-testid="plugin-settings-section">
-      <h3 className="settings-panel__category-title">Plugins</h3>
+      <SettingsSectionHeading>Plugins</SettingsSectionHeading>
       <p className="settings-panel__description">
         Configure settings for installed plugins that declare them. Changes are saved automatically.
       </p>
@@ -187,7 +188,7 @@ function PluginSettingsGroup({
     >
       <div className="plugin-settings__header">
         <Icon size={16} className="plugin-settings__icon" aria-hidden="true" />
-        <h3 className="settings-panel__section-title">{manifest.name}</h3>
+        <SettingsSectionHeading>{manifest.name}</SettingsSectionHeading>
         <span className="settings-panel__badge">plugin</span>
         <span
           className={`plugin-settings__saved${saved ? " plugin-settings__saved--visible" : ""}`}

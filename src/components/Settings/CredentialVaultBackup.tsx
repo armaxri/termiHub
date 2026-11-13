@@ -7,6 +7,7 @@ import { Button } from "@/components/ui";
 import { credentialStorageOffText } from "@/utils/credentialStorageCopy";
 import { CredentialVaultExportDialog } from "./CredentialVaultExportDialog";
 import { CredentialVaultImportDialog } from "./CredentialVaultImportDialog";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface CredentialVaultBackupProps {
   /** Display label of the active store mode, used in the import dialog copy. */
@@ -86,7 +87,7 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
 
   return (
     <div className="settings-panel__section" data-testid="credential-vault-backup">
-      <h3 className="settings-panel__section-title">Credential vault backup</h3>
+      <SettingsSectionHeading>Credential vault backup</SettingsSectionHeading>
       <p className="settings-panel__description">
         Export your saved credentials to a passphrase-protected, encrypted file to back them up or
         move them to another machine, and import such a file into your current store.

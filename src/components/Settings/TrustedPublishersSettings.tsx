@@ -7,6 +7,7 @@ import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { fingerprintShort } from "@/components/Plugins/pluginPresentation";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Plugins → Trusted publishers (#2036). Lists every publisher key the
@@ -55,7 +56,7 @@ export function TrustedPublishersSettings() {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-trusted-publishers">
-        <h3 className="settings-panel__section-title">Trusted publishers</h3>
+        <SettingsSectionHeading>Trusted publishers</SettingsSectionHeading>
         <p className="settings-panel__description">
           Publisher keys termiHub trusts to sign plugins. Plugins signed by a trusted key install as
           "Verified" with no untrusted-source warning. Bundled first-party keys cannot be revoked;

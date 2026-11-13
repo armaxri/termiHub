@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { Circle, Plus } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { CircleDot, Plus } from "lucide-react";
+import { getActiveTab, useAppStore } from "@/store/appStore";
 import { SearchInput, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
@@ -13,6 +13,7 @@ import { serializeMacros } from "@/services/macroIo";
 import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
 import { MacroHistorySection } from "./MacroHistorySection";
+import { latestMacroRuns } from "./macroRunFormat";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
@@ -46,6 +47,13 @@ export function MacroSidebar() {
     [openScheduleEditor]
   );
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);
+  // Where Play types (R-113, #5680): the active terminal tab's title.
+  const playTarget = useAppStore((s) => {
+    const tab = getActiveTab(s);
+    return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
+  });
+  const macroRuns = useAppStore((s) => s.macroRuns);
+  const lastRuns = useMemo(() => latestMacroRuns(macroRuns), [macroRuns]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   // The macro the run-history panel is narrowed to (#3543); null = every macro.
@@ -216,6 +224,7 @@ export function MacroSidebar() {
   return (
     <div className="macro-sidebar" data-testid="macro-sidebar">
       <SidebarToolbar
+        align="center"
         aria-label="Macro actions"
         overflowLabel="More macro actions"
         overflowTestId="macro-toolbar-overflow"
@@ -232,9 +241,12 @@ export function MacroSidebar() {
           },
           {
             id: "record",
+            // A filled record dot, icon-only like the other secondaries, so the
+            // toolbar matches the Workflows one: text primary, icon secondaries
+            // with tooltips (R-079, #5680).
             label: "Record new macro",
-            shortLabel: "Record new",
-            icon: <Circle size={12} />,
+            icon: <CircleDot size={14} />,
+            iconOnly: true,
             onClick: handleRecord,
             testId: "macro-record-btn",
           },
@@ -308,6 +320,8 @@ export function MacroSidebar() {
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
                 onDelete={handleDelete}
+                playTarget={playTarget}
+                lastRun={lastRuns.get(macro.id)}
                 rowRef={ref}
                 rowProps={itemProps}
               />
