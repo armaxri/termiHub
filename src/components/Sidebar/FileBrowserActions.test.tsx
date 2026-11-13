@@ -201,6 +201,10 @@ describe("buildFileBrowserActions", () => {
       container.querySelector(`[data-testid="${id}"] svg`)?.getAttribute("class") ?? "";
     expect(glyph("file-browser-up")).toContain("lucide-corner-left-up");
     expect(glyph("file-browser-upload")).toContain("lucide-upload");
+    const iconOf = (id: string) =>
+      container.querySelector(`[data-testid="${id}"]`)?.getAttribute("data-icon");
+    expect(iconOf("file-browser-up")).toBe("corner-left-up");
+    expect(iconOf("file-browser-upload")).toBe("upload");
   });
 
   it("runs Copy path from the menu (#5624)", async () => {

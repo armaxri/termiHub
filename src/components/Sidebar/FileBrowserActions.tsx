@@ -34,6 +34,11 @@ export interface FileBrowserAction {
   tooltip?: React.ReactNode;
   /** Icon of the button and of its menu entry. */
   icon: React.ReactNode;
+  /**
+   * Stable name of the icon, exposed as `data-icon` on the inline button so
+   * the product run can tell look-alike glyphs apart (#5624).
+   */
+  iconName?: string;
   onClick?: () => void;
   disabled?: boolean;
   /** `data-testid` of the button and of its menu entry. */
@@ -104,6 +109,8 @@ const FALLBACK_ICON_WIDTH = 28;
 const FALLBACK_GAP = 2;
 /** Estimated width of an inline button's visible text, per character. */
 const CHAR_WIDTH = 7;
+/** Gap the overflow menu keeps to the window's top, right and bottom edges. */
+const MENU_EDGE_PADDING = 8;
 
 /** Props for {@link FileBrowserActions}. */
 export interface FileBrowserActionsProps {
@@ -135,6 +142,14 @@ export function FileBrowserActions({
     [observeRow]
   );
   const [metrics, setMetrics] = useState({ iconWidth: FALLBACK_ICON_WIDTH, gap: FALLBACK_GAP });
+  // Left edge of the row when the menu opened: the menu never reaches left of
+  // it, so at the minimum sidebar width it cannot spill over the activity bar
+  // (#5624). A menu wider than the room left of the "…" grows to the right.
+  const [menuLeft, setMenuLeft] = useState(0);
+  const onMenuOpenChange = useCallback((open: boolean) => {
+    if (open)
+      setMenuLeft(Math.max(0, Math.round(rowRef.current?.getBoundingClientRect().left ?? 0)));
+  }, []);
 
   useLayoutEffect(() => {
     const measured = triggerRef.current?.getBoundingClientRect().width ?? 0;
@@ -194,13 +209,14 @@ export function FileBrowserActions({
             aria-pressed={action.checked}
             aria-busy={action.busy}
             data-testid={action.testId}
+            data-icon={action.iconName}
           >
             {action.inlineText}
           </Button>
         </Tooltip>
       ))}
       <span className="file-browser__actions-spacer" aria-hidden="true" />
-      <DropdownMenuRoot>
+      <DropdownMenuRoot onOpenChange={onMenuOpenChange}>
         <Tooltip content={overflowLabel} side="top">
           <DropdownMenuTrigger asChild>
             <Button
@@ -215,7 +231,18 @@ export function FileBrowserActions({
             />
           </DropdownMenuTrigger>
         </Tooltip>
-        <DropdownMenuContent align="end" sideOffset={4} data-testid="file-browser-more-menu">
+        <DropdownMenuContent
+          align="end"
+          sideOffset={4}
+          collisionPadding={{
+            left: menuLeft,
+            top: MENU_EDGE_PADDING,
+            right: MENU_EDGE_PADDING,
+            bottom: MENU_EDGE_PADDING,
+          }}
+          data-collision-left={menuLeft}
+          data-testid="file-browser-more-menu"
+        >
           {sections.map((section, i) => (
             <Fragment key={section[0].id}>
               {i > 0 && <MenuSeparator />}
