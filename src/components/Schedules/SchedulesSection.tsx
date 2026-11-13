@@ -1,7 +1,15 @@
 import { useCallback, useState } from "react";
 import { CalendarClock, ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Toggle, Tooltip, toast, EmptyState } from "@/components/ui";
+import {
+  Button,
+  StatusDot,
+  Toggle,
+  Tooltip,
+  TruncatedText,
+  toast,
+  EmptyState,
+} from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarListItem } from "@/components/SidebarListItem";
@@ -283,12 +291,17 @@ export function SchedulesSection({
                     <span className="schedules__meta" data-testid={`schedule-status-${s.id}`}>
                       {status}
                     </span>
-                    <span className="schedules__meta" data-testid={`schedule-summary-${s.id}`}>
+                    {/* Ellipsizes with the full text in a tooltip rather than wrap
+                        mid-identifier (R-082, #5680). */}
+                    <TruncatedText
+                      className="schedules__meta"
+                      data-testid={`schedule-summary-${s.id}`}
+                    >
                       {describeRule(s.rule)} · {labels.actionLabel(s.action)} on{" "}
                       {labels.targets(s.targets).label}
-                    </span>
+                    </TruncatedText>
                     {result ? (
-                      <span
+                      <TruncatedText
                         className="schedules__meta schedules__last"
                         data-testid={`schedule-last-${s.id}`}
                       >
@@ -306,7 +319,7 @@ export function SchedulesSection({
                         · {result.outcome}
                         {result.catchUp ? " (catch-up)" : ""}
                         {result.message ? ` — ${result.message}` : ""}
-                      </span>
+                      </TruncatedText>
                     ) : null}
                     {attempts.length > 0 ? (
                       <Button

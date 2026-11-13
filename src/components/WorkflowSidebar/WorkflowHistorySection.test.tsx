@@ -60,7 +60,8 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
 
   it("shows the empty state and disables Clear when there are no runs", () => {
     render([]);
-    expect(query("workflow-history-empty")).not.toBeNull();
+    // One empty-state wording with the macro history (R-081, #5680).
+    expect(query("workflow-history-empty")?.textContent).toBe("No runs yet.");
     expect(query("workflow-history-list")).toBeNull();
     expect((query("workflow-history-clear") as HTMLButtonElement)?.disabled).toBe(true);
   });
@@ -96,6 +97,14 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
     // The trigger provenance is surfaced in the row detail, as a readable label
     // rather than the raw trigger id (#5529).
     expect(query("workflow-run-r-ok")?.textContent).toContain("Manual");
+  });
+
+  it("keeps the run metadata on one truncating line (R-082, #5680)", () => {
+    render([run({ id: "r-local", targetLabel: "pr-auto-local-with-a-long-identifier" })]);
+    const meta = query("workflow-run-meta-r-local")!;
+    expect(meta.classList.contains("ui-truncate")).toBe(true);
+    expect(meta.classList.contains("workflow-history__meta")).toBe(true);
+    expect(meta.contains(query("workflow-run-target-r-local"))).toBe(true);
   });
 
   it("names the target terminal so runs on different terminals differ (#5635)", () => {
