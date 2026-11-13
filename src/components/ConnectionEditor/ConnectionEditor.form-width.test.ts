@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import editorCss from "./ConnectionEditor.css?raw";
-import variablesCss from "@/styles/variables.css?raw";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const editorCss = readFileSync(join(here, "ConnectionEditor.css"), "utf8");
+const variablesCss = readFileSync(join(here, "../../styles/variables.css"), "utf8");
 
 /** CSS-level guard for the editor's width cap (#5641); the live grade measures it. */
 describe("ConnectionEditor form width cap (#5641)", () => {

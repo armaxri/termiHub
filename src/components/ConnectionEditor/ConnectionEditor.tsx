@@ -1875,8 +1875,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             Fill from ~/.ssh/config…
           </Button>
           <p className="settings-form__hint">
-            Fill in the host, user, port, key, and any jump-host chain from a host in your OpenSSH
-            client config. You can review and edit everything before saving.
+            Copies host, user, port, key and jump hosts from one OpenSSH config entry. Review before
+            saving.
           </p>
           <SshConnectionImportDialog
             open={importOpen}

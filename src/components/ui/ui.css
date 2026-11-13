@@ -1733,8 +1733,27 @@
   margin-left: auto;
 }
 
-.settings-form__field--inline > .ui-field__msg {
+.settings-form__field--inline > .ui-field__msg,
+.settings-form__field--inline > .settings-form__field-details {
   flex-basis: 100%;
+}
+
+/* Field-owned content below the hint (status notes, a follow-up action, #5641). */
+.settings-form__field-details,
+.ui-field__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.ui-field--inline > .ui-field__details {
+  flex-basis: 100%;
+}
+
+/* Short numeric values (ports, timeouts) get a narrow input, not the full form
+   width (#5641). */
+.settings-form__input--narrow {
+  max-width: var(--form-input-narrow-width);
 }
 
 /* Field hint: spacing between fields comes from the field's own margin, so the
