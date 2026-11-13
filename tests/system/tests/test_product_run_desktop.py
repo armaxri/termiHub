@@ -228,7 +228,7 @@ class TestProductRunRemoteDesktop(
             self._select_when_available("field-sshAuthMethod", "key", what="key auth")
             self.wait(lambda: self.driver.exists("field-sshKeyPath"), what="the SSH key field")
             self.driver.type("field-sshKeyPath", str(native.client_key))
-            self.shot(label="editor")
+            self.shot(label="editor", expect="connection-editor-name-input")
             self._click_editor_save(True)
             if self._prompt_within(10.0):
                 self.handle_password_prompt(RDP_PASSWORD)
@@ -498,7 +498,7 @@ class TestProductRunSettingsThemes(
                 errors += [f"{category}: {e.get('message', '')[:160]}" for e in new]
                 if category == "updates":
                     false_claims += self._update_currency_claims()
-                self.shot(label=category)
+                self.shot(label=category, expect="settings-panel-content")
             self.evidence(f"opened {len(SETTINGS_CATEGORIES) - len(missing)} categories")
             if missing:
                 self.evidence(f"not in the nav (hidden here): {missing}")
@@ -562,10 +562,12 @@ class TestProductRunSettingsThemes(
         self.driver.terminal_input(f"echo product-run theme {theme}")
         time.sleep(0.8)
         self.shot(label="terminal")
+        # Both surfaces are lazy-loaded: wait for the rendered form, not the
+        # Suspense spinner (#5643).
         self.open_new_connection_editor()
-        self.shot(label="editor")
+        self.shot(label="editor", expect="connection-editor-name-input")
         self.open_settings_category("appearance")
-        self.shot(label="settings")
+        self.shot(label="settings", expect="settings-panel-content", scope="settings-panel-content")
 
     def test_04_themes(self):
         for theme in BUILTIN_THEMES:

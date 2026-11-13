@@ -237,6 +237,46 @@ export interface MeasuredItem {
   textOverflow: string;
 }
 
+/**
+ * Whether the screen has finished rendering, for a screenshot (#5643).
+ *
+ * The product run captured editors and Settings while their lazy-loaded chunk
+ * still showed the Suspense spinner, so the UI review graded a spinner. This
+ * query waits `frames` animation frames (default 2) while watching the DOM, then
+ * reports why the screen is *not* settled: a visible lazy-load fallback or
+ * skeleton anywhere, a visible spinner or `aria-busy` element inside
+ * `scopeTestId`, the `testId` element missing or not rendered, web fonts still
+ * loading, or DOM changes during the idle frames. `settled` is true when
+ * `reasons` is empty. Visible spinners and `aria-busy` elements outside the
+ * scope are listed in `busy` but do not block (a connecting badge elsewhere is
+ * legitimate). A frame that does not arrive within 200 ms (a throttled,
+ * occluded webview) counts as passed and is reported in `throttledFrames`.
+ */
+export interface RenderSettledCommand {
+  action: "renderSettled";
+  /** The surface's own element that must be present and rendered. */
+  testId?: string;
+  /** Spinners and `aria-busy` elements inside this element block settling. */
+  scopeTestId?: string;
+  /** Animation frames that must pass with no DOM change (default 2, max 10). */
+  frames?: number;
+}
+
+/** The `value` of a {@link RenderSettledCommand}. */
+export interface RenderSettledResult {
+  settled: boolean;
+  /** Why the screen is not settled; empty when it is. */
+  reasons: string[];
+  /** `document.fonts.status` (`"loaded"` / `"loading"`), or `"unavailable"`. */
+  fonts: string;
+  /** Every visible busy indicator (blocking or not), described for evidence. */
+  busy: string[];
+  /** DOM mutations seen during the idle frames (terminal rows excluded). */
+  mutations: number;
+  /** Frames that timed out instead of arriving (a throttled webview). */
+  throttledFrames: number;
+}
+
 /** A canvas pixel coordinate (backing-store pixels, not CSS pixels). */
 export interface CanvasPoint {
   x: number;
@@ -1163,6 +1203,7 @@ export type BridgeCommand =
   | GetValueCommand
   | GetComputedStyleCommand
   | MeasureElementCommand
+  | RenderSettledCommand
   | SampleCanvasCommand
   | DragCommand
   | DragToCommand
