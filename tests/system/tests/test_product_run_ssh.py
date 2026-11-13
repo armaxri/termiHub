@@ -399,6 +399,8 @@ class TestProductRunSsh(
             self.wait(lambda: not self.driver.exists("terminal-disconnect-overlay"), what="the overlay to close")
             self.wait_connected(drop_tab)
             self.evidence(self.echo_round_trip(drop_tab, "PR_SSH_RECONNECTED_OK"))
+            # #5619/#5660: the drop reads as a lost connection, then a reconnect.
+            self.assert_drop_marked(drop_tab, "network")
         with self.step(
             "ssh.auto-reconnect",
             "Bastion down: the jump tab notices; bastion back: it reconnects on its own",
@@ -415,6 +417,8 @@ class TestProductRunSsh(
                 )
                 self.evidence(f"while down: status {self.session_status(jump_tab)!r}")
                 self.shot(label="bastion-down")
+                # #5619: no bare "agent" (reads as ssh-agent) in the SSH notice.
+                self.assert_reconnect_wording()
                 bastion.restore()
                 self.wait(
                     lambda: self.session_status(jump_tab) == "connected",
@@ -424,6 +428,8 @@ class TestProductRunSsh(
                 # #5620: the buffer held both lines while the pane painted blank —
                 # grade what is rendered: the pre-drop line and the new output.
                 self.assert_terminal_painted(jump_tab, "PR_SSH_JUMP_OK", "PR_SSH_AUTO_RECONNECT_OK")
+                # #5660: a timed marker separates the old session from the new one.
+                self.assert_drop_marked(jump_tab, "network")
             finally:
                 bastion.restore()
         self.close_all_tabs()
