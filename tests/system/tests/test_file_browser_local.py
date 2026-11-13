@@ -470,7 +470,10 @@ class TestFileBrowserLocal(
         self._fresh_temp_browser()
         prefix = f"e2e_fb_{unique_name('dc')}_"
         workspace = Path(self._workspace)
-        sub = workspace / f"{prefix}sub"
+        # A short leaf (the workspace is fresh, so "up" is unique): a long path
+        # folds its middle segments into "…" (#5521), and the leaf's nearest
+        # ancestor — the workspace — must stay a visible segment to drop on.
+        sub = workspace / "up"
         source = sub / f"{prefix}file.txt"
         sub.mkdir()
         source.write_text("drag me up\n")
