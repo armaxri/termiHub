@@ -6,6 +6,7 @@ Runs in the normal (per-PR) lane; the product run itself is hand-triggered.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -306,3 +307,18 @@ def test_a_keychain_prompt_counts_only_when_its_window_is_on_screen(
     monkeypatch.setattr(creds_steps.subprocess, "run", fake_run)
     monkeypatch.setattr(creds_steps, "macos_window_owner_pids", lambda: window_owners)
     assert creds_steps.keychain_prompt_on_screen() is expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the keychain link is macOS-only (uses pwd)")
+def test_the_macos_profile_home_links_only_the_keychains_folder(tmp_path, monkeypatch):
+    from termihub_harness.product_run import ui
+
+    account = tmp_path / "account"
+    (account / "Library" / "Keychains").mkdir(parents=True)
+    (account / "Library" / "Preferences").mkdir()
+    monkeypatch.setattr(ui.sys, "platform", "darwin")
+    home = ui.make_profile_home(tmp_path / "home", account_home=account)
+    link = home / "Library" / "Keychains"
+    assert link.is_symlink() and link.resolve() == (account / "Library" / "Keychains").resolve()
+    assert not (home / "Library" / "Preferences").exists()
+    ui.make_profile_home(home, account_home=account)  # idempotent

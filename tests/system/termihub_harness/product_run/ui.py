@@ -87,13 +87,30 @@ def profile_env(home: Path, dev_name: str) -> dict[str, str]:
     }
 
 
-def make_profile_home(home: Path) -> Path:
-    """Create the scratch home with a plain ``.zshrc`` (no new-user menu)."""
+def make_profile_home(home: Path, *, account_home: Optional[Path] = None) -> Path:
+    """Create the scratch home with a plain ``.zshrc`` (no new-user menu).
+
+    On macOS the Security framework finds the default (login) keychain under
+    ``$HOME/Library/Keychains``; with a bare scratch ``HOME`` every keychain
+    write fails ("A default keychain could not be found", OSStatus -25307,
+    #5608). So that one directory is linked to the account's real one. Nothing
+    in it is changed: the app writes only under the run's own service, which
+    ``product-run.sh`` removes at the end, and the default keychain and search
+    list stay as they are.
+    """
     for sub in (".config", ".local/share", ".local/state", ".cache"):
         (home / sub).mkdir(parents=True, exist_ok=True)
     zshrc = home / ".zshrc"
     if not zshrc.exists():
         zshrc.write_text(_ZSHRC, encoding="utf-8")
+    if sys.platform == "darwin":
+        import pwd  # POSIX-only
+
+        real = (account_home or Path(pwd.getpwuid(os.getuid()).pw_dir)) / "Library" / "Keychains"
+        link = home / "Library" / "Keychains"
+        if real.is_dir() and not link.exists() and not link.is_symlink():
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(real, target_is_directory=True)
     return home
 
 
