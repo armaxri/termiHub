@@ -1451,10 +1451,35 @@
   word-break: break-word;
 }
 
+/* A monospaced value (a fingerprint) takes a full-width row under its label
+   (#5662), with a clear gap before its copy button. */
+.ui-trust-prompt__facts .ui-trust-prompt__fact-label--block,
+.ui-trust-prompt__facts .ui-trust-prompt__fact-value--mono {
+  grid-column: 1 / -1;
+}
+
+.ui-trust-prompt__facts .ui-trust-prompt__fact-value--mono {
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: calc(-1 * var(--spacing-xxs));
+}
+
 .ui-trust-prompt__fact-value--mono .ui-trust-prompt__fact-text {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   line-height: 1.5;
+  word-break: normal;
+  /* Last resort for a single chunk wider than the dialog: scroll, never break
+     mid-string. The copy button always copies the full value. */
+  overflow-x: auto;
+}
+
+/* The pieces a fingerprint may wrap between (after a `:` or a space). Each one
+   stays whole, so a value never breaks mid-string (#5662). */
+.ui-trust-prompt__fact-chunk {
+  white-space: nowrap;
 }
 
 /* A secondary line above a fact's value, e.g. a fingerprint's key type (#5627). */

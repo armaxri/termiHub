@@ -35,6 +35,17 @@ export interface TrustFact {
 }
 
 /**
+ * Split a monospaced value (a fingerprint) into the chunks it may wrap
+ * between: after each `:` and at whitespace (#5662). `SHA256:<base64>` becomes
+ * `SHA256:` + `<base64>`; a colon-separated hex digest becomes one chunk per
+ * byte. Each chunk renders `nowrap`, so the value never breaks mid-string.
+ * Joining the chunks gives back the original value unchanged.
+ */
+export function fingerprintChunks(value: string): string[] {
+  return value.match(/[^:\s]*(?::|\s+|$)/g)?.filter((c) => c !== "") ?? [value];
+}
+
+/**
  * Props for the shared {@link TrustPrompt} — the security-sensitive
  * trust-on-first-use dialog behind both the SSH host-key prompt (#1959) and the
  * RDP certificate prompt (#1767).
@@ -210,7 +221,12 @@ export function TrustPrompt({
         <dl className="ui-trust-prompt__facts">
           {facts.map((fact, i) => (
             <Fragment key={fact.testId ?? `${fact.label}-${i}`}>
-              <dt>{fact.label}</dt>
+              {/* A monospaced value (a fingerprint) gets a full-width row of its
+                  own under its label, so it does not have to squeeze in beside
+                  the label column (#5662). */}
+              <dt className={fact.mono ? "ui-trust-prompt__fact-label--block" : undefined}>
+                {fact.label}
+              </dt>
               <dd
                 className={fact.mono ? "ui-trust-prompt__fact-value--mono" : undefined}
                 data-testid={fact.testId}
@@ -221,7 +237,15 @@ export function TrustPrompt({
                       {fact.detail}
                     </span>
                   )}
-                  {fact.value}
+                  {fact.mono
+                    ? fingerprintChunks(fact.value).map((chunk, j) => (
+                        // `<wbr>` marks the only places the line may break.
+                        <Fragment key={j}>
+                          {j > 0 && <wbr />}
+                          <span className="ui-trust-prompt__fact-chunk">{chunk}</span>
+                        </Fragment>
+                      ))
+                    : fact.value}
                 </span>
                 {fact.copyable && (
                   <Button

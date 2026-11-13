@@ -5,6 +5,7 @@ import {
   connectionErrorHint,
   connectionErrorKindFromCode,
   isNetworkErrorKind,
+  isSelfExplainingErrorKind,
   type BackendFamily,
   type ConnectionErrorKind,
 } from "./connectionErrorHints";
@@ -238,9 +239,14 @@ describe("rejected host key (#5185)", () => {
   it("maps host_key_untrusted to host-key-rejected with its own heading and hint", () => {
     expect(connectionErrorKindFromCode("host_key_untrusted")).toBe("host-key-rejected");
     expect(connectionErrorHeading("host-key-rejected")).toBe("You rejected the host key");
-    expect(connectionErrorHint("ssh", "host-key-rejected")?.text).toMatch(
-      /rejected the server's host key/
-    );
+    expect(connectionErrorHint("ssh", "host-key-rejected")?.text).toMatch(/review the key again/i);
     expect(isNetworkErrorKind("host-key-rejected")).toBe(false);
+  });
+
+  it("is the only self-explaining kind: its screen drops the raw error box (#5662)", () => {
+    expect(isSelfExplainingErrorKind("host-key-rejected")).toBe(true);
+    for (const kind of ["auth", "refused", "timeout", "other"] as const) {
+      expect(isSelfExplainingErrorKind(kind)).toBe(false);
+    }
   });
 });
