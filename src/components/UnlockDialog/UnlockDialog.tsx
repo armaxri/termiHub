@@ -28,6 +28,9 @@ interface UnlockDialogProps {
   onConnectWithoutSaved?: () => void;
 }
 
+/** Id of the unlock error line, referenced by the password field (#5629). */
+const UNLOCK_ERROR_ID = "unlock-dialog-password-error";
+
 /** Type guard for the backend's unlock error shape (see `UnlockCredentialStoreError`). */
 function isCorruptStoreError(err: unknown): boolean {
   return (
@@ -132,14 +135,16 @@ export function UnlockDialog({
     }
   }, [open, biometricAvailable, handleBiometricUnlock]);
 
-  const handleUnlock = useCallback(async () => {
-    if (!password || loading) return;
+  /** Try the typed password. Resolves `true` once unlocked, `false` on any failure. */
+  const attemptUnlock = useCallback(async (): Promise<boolean> => {
+    if (!password || loading) return false;
     setLoading(true);
     setError("");
     try {
       await unlockCredentialStore(password);
       toast.success("Credential store unlocked");
       onOpenChange(false);
+      return true;
     } catch (err) {
       if (isCorruptStoreError(err)) {
         frontendLog("credential", "Unlock failed: credentials file is corrupt");
@@ -151,10 +156,20 @@ export function UnlockDialog({
         setError("Incorrect master password.");
       }
       setPassword("");
+      return false;
     } finally {
       setLoading(false);
     }
   }, [password, loading, onOpenChange]);
+
+  /**
+   * The Unlock button's async click. A failed attempt rejects, so the Button
+   * returns to idle instead of flashing its green success state (#5629); the
+   * inline field error is the feedback, so no toast either.
+   */
+  const handleUnlockClick = useCallback(async () => {
+    if (!(await attemptUnlock())) throw new Error("unlock failed");
+  }, [attemptUnlock]);
 
   const handleReset = useCallback(async () => {
     if (resetting) return;
@@ -180,9 +195,9 @@ export function UnlockDialog({
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (isImeComposing(e)) return;
-      if (e.key === "Enter") handleUnlock();
+      if (e.key === "Enter") void attemptUnlock();
     },
-    [handleUnlock]
+    [attemptUnlock]
   );
 
   return (
@@ -220,7 +235,8 @@ export function UnlockDialog({
             ) : (
               <Button
                 variant="primary"
-                onClick={handleUnlock}
+                onClick={handleUnlockClick}
+                errorToast={false}
                 disabled={!password || loading}
                 data-testid="unlock-dialog-unlock"
               >
@@ -280,11 +296,18 @@ export function UnlockDialog({
             onKeyDown={handleKeyDown}
             placeholder="Master password"
             autoFocus={!biometricAvailable}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? UNLOCK_ERROR_ID : undefined}
             data-testid="unlock-dialog-input"
           />
         </Field>
         {error && (
-          <p className="unlock-dialog__error" data-testid="unlock-dialog-error">
+          <p
+            className="unlock-dialog__error"
+            id={UNLOCK_ERROR_ID}
+            role="alert"
+            data-testid="unlock-dialog-error"
+          >
             {error}
           </p>
         )}
