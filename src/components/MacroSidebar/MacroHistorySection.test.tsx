@@ -64,7 +64,7 @@ describe("MacroHistorySection (#3543)", () => {
 
   it("shows an empty state and disables Clear with no runs", () => {
     render([]);
-    expect(query("macro-history-empty")!.textContent).toContain("No playbacks recorded yet");
+    expect(query("macro-history-empty")!.textContent).toBe("No runs yet.");
     expect((query("macro-history-clear") as HTMLButtonElement).disabled).toBe(true);
     expect(query("macro-history-filter")).toBeNull();
   });
@@ -87,14 +87,14 @@ describe("MacroHistorySection (#3543)", () => {
     expect(first.textContent).toContain("Deploy");
     // A full playback shows no redundant "2/2" (#5519).
     expect(first.textContent).not.toContain("2/2");
-    expect(first.textContent).toContain("manual");
+    expect(first.textContent).toContain("Manual");
     expect(first.textContent).toContain("3s");
     expect(query("macro-run-targets-run-1")!.textContent).toContain("prod-1");
 
     const second = query("macro-run-run-2")!;
     // A partial playback notes how far it got, in the metadata after the name.
     expect(query("macro-run-progress-run-2")!.textContent).toContain("1/2 steps");
-    expect(second.textContent).toContain("scheduled");
+    expect(second.textContent).toContain("Scheduled");
     expect(second.querySelector('[aria-label="Target disconnected"]')).not.toBeNull();
     expect(query("macro-run-targets-run-2")!.textContent).toContain("3 terminals");
     expect(query("macro-run-targets-run-2")!.getAttribute("title")).toBe("a\nb\nc");
@@ -103,9 +103,28 @@ describe("MacroHistorySection (#3543)", () => {
     );
   });
 
-  it("labels a workflow-step origin readably", () => {
-    render([run({ origin: "workflow-step" })]);
-    expect(query("macro-run-run-1")!.textContent).toContain("workflow step");
+  it("labels every origin in sentence case (R-081, #5680)", () => {
+    const cases = [
+      ["manual", "Manual"],
+      ["palette", "Palette"],
+      ["scheduled", "Scheduled"],
+      ["workflow-step", "Workflow step"],
+    ] as const;
+    for (const [origin, label] of cases) {
+      render([run({ origin })]);
+      expect(query("macro-run-meta-run-1")!.textContent).toContain(` · ${label}`);
+    }
+  });
+
+  it("keeps the metadata on one truncating line, the error on its own (R-082, #5680)", () => {
+    render([run({ error: "terminal closed" })]);
+    const meta = query("macro-run-meta-run-1")!;
+    // One ellipsizing line (TruncatedText reveals the full text when clipped).
+    expect(meta.classList.contains("ui-truncate")).toBe(true);
+    expect(meta.classList.contains("macro-history__meta")).toBe(true);
+    expect(meta.contains(query("macro-run-targets-run-1"))).toBe(true);
+    // The error is a separate line, not appended inside the truncated meta.
+    expect(meta.contains(query("macro-run-error-run-1"))).toBe(false);
   });
 
   it("narrows to one macro and offers to show all again", () => {
@@ -141,7 +160,7 @@ describe("MacroHistorySection (#3543)", () => {
 
   it("says when the filtered macro has no runs", () => {
     render([run({ macroId: "m2" })], "m1");
-    expect(query("macro-history-empty")!.textContent).toContain("not been played yet");
+    expect(query("macro-history-empty")!.textContent).toBe("No runs of this macro yet.");
   });
 
   it("asks for confirmation before clearing the history (#5636)", async () => {

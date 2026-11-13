@@ -13,9 +13,11 @@ import {
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
-import type { MacroRun, MacroRunOrigin, MacroRunStatus } from "@/types/macro";
+import type { MacroRun, MacroRunStatus } from "@/types/macro";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { t } from "@/i18n/catalog";
+import { macroRunOriginLabel, macroRunTargetsText } from "./macroRunFormat";
 
 /** Map a playback's terminal status to a {@link StatusDot} tone. */
 function statusTone(status: MacroRunStatus): StatusTone {
@@ -41,32 +43,11 @@ function statusLabel(status: MacroRunStatus): string {
   }
 }
 
-/** Human label for what launched a playback. */
-function originLabel(origin: MacroRunOrigin): string {
-  switch (origin) {
-    case "manual":
-      return "manual";
-    case "palette":
-      return "palette";
-    case "workflow-step":
-      return "workflow step";
-    case "scheduled":
-      return "scheduled";
-  }
-}
-
 /** The playback's duration as a compact string (e.g. `2s`); empty if unknown. */
 function runDuration(run: MacroRun): string {
   const ms = new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime();
   if (!Number.isFinite(ms) || ms < 0) return "";
   return formatElapsed(Math.round(ms / 1000));
-}
-
-/** Where a playback went: the single target's label, or "N terminals". */
-function targetsText(run: MacroRun): string {
-  const labels = run.targetLabels ?? [];
-  if (run.targetCount === 1 && labels.length === 1) return labels[0];
-  return `${run.targetCount} terminal${run.targetCount === 1 ? "" : "s"}`;
 }
 
 /** Props of {@link MacroHistorySection}. */
@@ -174,7 +155,7 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
       />
       {runs.length === 0 ? (
         <EmptyState
-          title={macroId ? "This macro has not been played yet." : "No playbacks recorded yet."}
+          title={macroId ? t("macroHistory.empty.filtered") : t("runHistory.empty")}
           data-testid="macro-history-empty"
         />
       ) : (
@@ -195,25 +176,30 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
                 }
                 actions={null}
                 details={
-                  <span className="macro-history__meta">
-                    <time dateTime={run.endedAt} title={formatAbsoluteTime(run.endedAt)}>
-                      {formatRelativeTime(run.endedAt)}
-                    </time>
-                    {duration ? <span> · {duration}</span> : null}
-                    <span> · {originLabel(run.origin)}</span>
-                    {run.stepsPlayed < run.totalSteps ? (
-                      <span data-testid={`macro-run-progress-${run.id}`}>
-                        {" "}
-                        · {run.stepsPlayed}/{run.totalSteps} steps
-                      </span>
-                    ) : null}
-                    <span
-                      title={run.targetLabels?.join("\n")}
-                      data-testid={`macro-run-targets-${run.id}`}
+                  <>
+                    <TruncatedText
+                      className="macro-history__meta"
+                      data-testid={`macro-run-meta-${run.id}`}
                     >
-                      {" "}
-                      · {targetsText(run)}
-                    </span>
+                      <time dateTime={run.endedAt} title={formatAbsoluteTime(run.endedAt)}>
+                        {formatRelativeTime(run.endedAt)}
+                      </time>
+                      {duration ? <span> · {duration}</span> : null}
+                      <span> · {macroRunOriginLabel(run.origin)}</span>
+                      {run.stepsPlayed < run.totalSteps ? (
+                        <span data-testid={`macro-run-progress-${run.id}`}>
+                          {" "}
+                          · {run.stepsPlayed}/{run.totalSteps} steps
+                        </span>
+                      ) : null}
+                      <span
+                        title={run.targetLabels?.join("\n")}
+                        data-testid={`macro-run-targets-${run.id}`}
+                      >
+                        {" "}
+                        · {macroRunTargetsText(run)}
+                      </span>
+                    </TruncatedText>
                     {run.error ? (
                       <span
                         className="macro-history__error"
@@ -222,7 +208,7 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
                         {run.error}
                       </span>
                     ) : null}
-                  </span>
+                  </>
                 }
               />
             );

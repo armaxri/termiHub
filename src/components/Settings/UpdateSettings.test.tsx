@@ -83,6 +83,7 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "stable",
+        outcome: "updateAvailable",
       },
     });
     await render();
@@ -101,6 +102,7 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "stable",
+        outcome: "updateAvailable",
       },
     });
     await render();
@@ -120,6 +122,7 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "develop",
+        outcome: "updateAvailable",
         buildCommit: "0e3504c",
         buildPublishedAt: "2026-10-26T23:31:19+00:00",
       },
@@ -147,10 +150,43 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "none",
+        outcome: "notChecking",
       },
     });
     await render();
     expect(query("update-latest-version")?.textContent).toBe("Not checked for this build");
+  });
+
+  it("shows a failed check as 'Check failed' with the backend's reason (#5651)", async () => {
+    seedSettings({ updates: { autoCheck: true, lastCheckTime: "2026-11-13T08:00:00Z" } });
+    useAppStore.setState({
+      updateCheckState: "error",
+      updateCheckFailureReason: "GitHub API returned HTTP 503",
+      updateInfo: null,
+    });
+    await render();
+    const latest = query("update-latest-version");
+    expect(latest?.textContent).toBe("Check failed");
+    expect(latest?.getAttribute("title")).toBe("GitHub API returned HTTP 503");
+    expect(query("update-last-checked")?.textContent).not.toBe("Never");
+  });
+
+  it("does not say 'Not checked for this build' for a feed-backed result without a URL (#5651)", async () => {
+    seedSettings({ updates: { autoCheck: true, lastCheckTime: "2026-11-13T08:00:00Z" } });
+    useAppStore.setState({
+      updateCheckState: "up-to-date",
+      updateInfo: {
+        available: false,
+        latestVersion: "0.1.0",
+        releaseUrl: "",
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "stable",
+        outcome: "upToDate",
+      },
+    });
+    await render();
+    expect(query("update-latest-version")?.textContent).toBe("Up to date");
   });
 
   it("says 'Not checked yet' before any check has run (#5615)", async () => {
@@ -169,6 +205,7 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "stable",
+        outcome: "upToDate",
       },
     });
     await render();
@@ -187,6 +224,7 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "stable",
+        outcome: "upToDate",
       },
     });
     await render();
@@ -215,6 +253,7 @@ describe("UpdateSettings", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "stable",
+        outcome: "updateAvailable",
       },
     });
     await render();

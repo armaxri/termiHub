@@ -768,7 +768,12 @@ describe("ConnectionSettingsForm leadNote (#5560)", () => {
     });
     expect(queryAll("lead-note")).toHaveLength(1);
     const first = query("form-group-connection")!;
-    expect(first.querySelector("h3")?.nextElementSibling).toBe(query("lead-note"));
+    // The note is the section's description, inside its header (#5641): it
+    // never sits between the header and the first field's label.
+    const header = first.querySelector(".settings-panel__category-header")!;
+    expect(header.querySelector("h3")).toBeTruthy();
+    expect(header.contains(query("lead-note"))).toBe(true);
+    expect(header.nextElementSibling?.classList.contains("settings-form__field")).toBe(true);
   });
 
   it("goes to the next group when the first has no shown fields", () => {

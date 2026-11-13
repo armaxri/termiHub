@@ -127,7 +127,9 @@
   padding: var(--spacing-xxs) 0;
 }
 
+/* One ellipsizing line with the full text in a tooltip (R-082, #5680). */
 .workflow-history__meta {
+  display: block;
   color: var(--text-secondary);
   font-size: var(--font-size-2xs);
 }

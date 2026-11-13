@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { MacroListItem } from "./MacroListItem";
 import { withTooltip } from "@/test/tooltip";
-import type { Macro } from "@/types/macro";
+import type { Macro, MacroRun } from "@/types/macro";
 
 function macro(overrides: Partial<Macro> = {}): Macro {
   return {
@@ -35,11 +35,51 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-function render(m: Macro, h = handlers()) {
+function render(
+  m: Macro,
+  h = handlers(),
+  extra: { playTarget?: string | null; lastRun?: MacroRun } = {}
+) {
   act(() => {
-    root.render(withTooltip(<MacroListItem macro={m} {...h} />));
+    root.render(withTooltip(<MacroListItem macro={m} {...h} {...extra} />));
   });
   return h;
+}
+
+/** Reveal a non-focusable trigger's tooltip through its focus handler. */
+function revealTooltip(el: Element) {
+  act(() => {
+    el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  });
+}
+
+/** Reveal a focusable trigger's tooltip by focusing it. */
+function focus(el: HTMLElement) {
+  act(() => {
+    el.focus();
+    el.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+  });
+}
+
+function tooltipText(): string | null {
+  return document.querySelector('[role="tooltip"]')?.textContent ?? null;
+}
+
+function run(overrides: Partial<MacroRun> = {}): MacroRun {
+  return {
+    id: "r1",
+    macroId: "m1",
+    macroName: "Deploy",
+    startedAt: new Date(Date.now() - 2000).toISOString(),
+    endedAt: new Date().toISOString(),
+    status: "completed",
+    stepsPlayed: 1,
+    totalSteps: 1,
+    targetCount: 1,
+    targetLabels: ["pr-auto-local"],
+    origin: "manual",
+    ...overrides,
+  };
 }
 
 describe("MacroListItem", () => {
@@ -88,13 +128,75 @@ describe("MacroListItem", () => {
     }
   });
 
-  it("renders a control-char preview from the recorded steps", () => {
-    render(macro({ steps: [{ data: "ls\r", delayMs: 0 }] }));
-    const preview = query("macro-preview-m1");
-    expect(preview).not.toBeNull();
-    // "\r" renders as the ⏎ glyph via macroStepFormat, never a raw carriage return.
-    expect(preview?.textContent).toContain("ls");
-    expect(preview?.textContent).toContain("⏎");
+  it("shows the first line it types in the secondary text, not a joined dump (R-112)", () => {
+    render(
+      macro({
+        steps: [
+          { data: "echo one\r", delayMs: 0 },
+          { data: "echo two\r", delayMs: 0 },
+        ],
+      })
+    );
+    const preview = query("macro-preview-m1")!;
+    expect(preview.textContent).toBe("echo one");
+    expect(preview.tagName).not.toBe("CODE");
+    expect(preview.classList.contains("macro-item__preview")).toBe(true);
+    // No step count on the row (#5519).
+    expect(query("macro-item-m1")!.textContent).not.toMatch(/\bsteps?\b/);
+  });
+
+  it("lists every line it types in the preview's tooltip (R-112)", () => {
+    render(
+      macro({
+        steps: [
+          { data: "echo one\r", delayMs: 0 },
+          { data: "echo two\r", delayMs: 0 },
+        ],
+      })
+    );
+    revealTooltip(query("macro-preview-m1")!);
+    const steps = document.querySelector('[data-testid="macro-steps-m1"]');
+    expect(steps).not.toBeNull();
+    const lines = Array.from(steps!.querySelectorAll(".macro-item__step")).map(
+      (el) => el.textContent
+    );
+    expect(lines).toEqual(["echo one", "echo two"]);
+  });
+
+  it("omits the preview for a macro with no input", () => {
+    render(macro({ steps: [] }));
+    expect(query("macro-preview-m1")).toBeNull();
+  });
+
+  it("names the terminal Play types into (R-113)", () => {
+    render(macro(), handlers(), { playTarget: "pr-auto-local" });
+    focus(query("macro-play-m1")!);
+    expect(tooltipText()).toContain("Play in: pr-auto-local");
+  });
+
+  it("says when there is no terminal to play into (R-113)", () => {
+    render(macro(), handlers(), { playTarget: null });
+    focus(query("macro-play-m1")!);
+    expect(tooltipText()).toContain("no active terminal");
+  });
+
+  it("shows when and where it last ran (R-113)", () => {
+    render(macro(), handlers(), { lastRun: run() });
+    const line = query("macro-last-run-m1")!;
+    expect(line.textContent).toBe("Last run: just now on pr-auto-local");
+    expect(line.querySelector("time")).not.toBeNull();
+  });
+
+  it("names the terminal count for a multi-terminal last run", () => {
+    render(macro(), handlers(), {
+      lastRun: run({ targetCount: 3, targetLabels: ["a", "b", "c"] }),
+    });
+    expect(query("macro-last-run-m1")!.textContent).toContain("on 3 terminals");
+  });
+
+  it("has no last-run line before the first playback", () => {
+    render(macro());
+    expect(query("macro-last-run-m1")).toBeNull();
   });
 
   it("shows the description and tags when present", () => {

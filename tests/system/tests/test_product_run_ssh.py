@@ -52,6 +52,8 @@ from termihub_harness import (
 )
 from termihub_harness.native_ssh import NativeBastionControl, NativeSshServerControl
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.editor_layout import measure_editor_layout
+from termihub_harness.product_run.grades import editor_layout_problems
 from termihub_harness.product_run.hosts import (
     COMPOSE_MFA,
     COMPOSE_PASSWORD,
@@ -581,6 +583,32 @@ class TestProductRunSsh(
             assert not missing, f"not measured: {missing}"
             problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
             assert not problems, problems
+
+    # ── editor layout ────────────────────────────────────────────────────────
+    def test_11_editor_layout(self):
+        with self.step(
+            "ssh.editor-layout",
+            "SSH editor: hints under their own fields, ${VAR} note in the section header, "
+            "form width capped (#5641)",
+            expect=(
+                "the SSH editor: a capped-width form, the ${VAR} note under the Connection "
+                "title above its divider, each hint directly under its field, a narrow Port input"
+            ),
+        ):
+            self.switch_to_connections_sidebar()
+            self.open_new_connection_editor()
+            self.select_connection_type("ssh")
+            self.wait(lambda: self.driver.exists("field-host-hint"), what="the SSH fields")
+            rects = measure_editor_layout(self.driver)
+            self.evidence(f"form {rects['form']['width']:.0f}px wide, port {rects['port_input']['width']:.0f}px")
+            problems = editor_layout_problems(rects)
+            assert not problems, problems
+        try:
+            if self.driver.exists("connection-editor-cancel"):
+                self.driver.click("connection-editor-cancel")
+            self.dismiss_modals()
+        except Exception as exc:  # noqa: BLE001 - cleanup must not fail the run
+            print(f"[product-run] could not close the editor cleanly: {exc}")
 
     # ── SSH chip: host-key trust (#5669) ─────────────────────────────────────
     def test_12_ssh_chip_trust(self):

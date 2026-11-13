@@ -30,11 +30,27 @@
   white-space: nowrap;
 }
 
-.macro-item__preview {
+/* The first line the macro types, in the row's secondary text (R-112, #5680):
+   not a dim joined monospace dump — the whole input is in the tooltip. */
+.macro-item__preview,
+.macro-item__last-run {
   display: block;
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The tooltip's step list: one input line per row, monospace so the commands
+   read as typed. */
+.macro-item__steps {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+}
+
+.macro-item__step {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -109,7 +125,10 @@
   padding: var(--spacing-xxs) 0;
 }
 
+/* One line that ellipsizes (with the full text in a tooltip) instead of
+   wrapping mid-identifier (R-082, #5680). */
 .macro-history__meta {
+  display: block;
   color: var(--text-secondary);
   font-size: var(--font-size-2xs);
 }

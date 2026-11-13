@@ -55,6 +55,8 @@ from termihub_harness import (
 from termihub_harness.colors import contrast
 from termihub_harness.native_ssh import fixture_argv
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.editor_layout import measure_editor_layout
+from termihub_harness.product_run.grades import editor_layout_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.product_run.vnc_server import QUADRANTS, ScriptedVncServer
 from termihub_harness.rdp_test_server import find_rdp_test_server
@@ -220,6 +222,10 @@ class TestProductRunRemoteDesktop(
             display_y = self.driver.measure_element("field-scaleMode")["rect"]["y"]
             self.evidence(f"tunnel toggle y={tunnel_y}, scale mode y={display_y}")
             assert tunnel_y < display_y, "the SSH tunnel section is below the display options"
+            # #5641: the ${VAR} note is the section's description, not Host's
+            # label; hints sit under their fields; the form width is capped.
+            layout = editor_layout_problems(measure_editor_layout(self.driver))
+            assert not layout, layout
             self.driver.click("field-useSshTunnel")
             self.wait(lambda: self.driver.exists("field-sshHost"), what="the SSH tunnel fields")
             self.driver.type("field-sshHost", SSH_HOST)
@@ -516,7 +522,25 @@ class TestProductRunSettingsThemes(
         self.evidence(f"updates: latest {latest!r}, last checked {last_checked!r}")
         if last_checked == "Never" and latest == "Up to date":
             return [f"latest {latest!r} while last checked {last_checked!r}"]
-        return []
+        return self._update_failure_claims(latest, last_checked)
+
+    def _update_failure_claims(self, latest: str, last_checked: str) -> list[str]:
+        """A failed check states why and was recorded (#5651).
+
+        The backend stamps the last check time even when the feed fetch fails and
+        reports the reason, so "Check failed" never pairs with "Never" and always
+        carries the reason as its tooltip.
+        """
+        if latest != "Check failed":
+            return []
+        reason = (self.driver.get_attribute("update-latest-version", "title") or "").strip()
+        self.evidence(f"updates: check failed, reason {reason!r}")
+        claims = []
+        if last_checked == "Never":
+            claims.append("a failed check left last checked at 'Never'")
+        if not reason:
+            claims.append("a failed check shows no reason")
+        return claims
 
     def test_02_build_date(self):
         with self.step(
@@ -843,3 +867,71 @@ class TestProductRunSettingsThemes(
                 if props["border-bottom-style"] == "none":
                     problems.append("heading without a divider")
             assert not problems, "; ".join(problems)
+
+    #: Built-in mappings the defaults-table grade samples (``languageMapping.ts``).
+    _BUILTIN_SAMPLE = (".babelrc", ".bashrc", "Dockerfile", "Makefile")
+
+    def test_09_editor_builtin_defaults_table(self):
+        """Settings ▸ Editor shows the built-in defaults as a dense table (#5713).
+
+        At the 800x600 minimum window: the defaults are a table whose pattern and
+        language columns line up row to row, the content column does not scroll
+        sideways, and the mapped language reads at >= 4.5:1.
+        """
+        with self.step(
+            "settings.editor.builtin-defaults",
+            "Settings ▸ Editor lists the built-in file type defaults as a compact, aligned "
+            "pattern → language table that fits 800x600 without sideways scrolling (#5713)",
+            expect="Settings ▸ Editor at 800x600 with a dense two-column Built-in defaults "
+            "table and readable language names",
+        ):
+            self.driver.resize_window(800, 600)
+            try:
+                self.open_settings_category("editor")
+                self.wait(lambda: self.driver.exists("file-type-builtin-table"),
+                          what="the built-in defaults table")
+                time.sleep(0.4)
+                self.shot(label="builtin-defaults-800x600")
+                problems = []
+                content = self.driver.measure_element("settings-panel-content")
+                table = self.driver.measure_element("file-type-builtin-table")
+                self.evidence(
+                    f"content scrollWidth {content['scrollWidth']} / clientWidth "
+                    f"{content['clientWidth']}; table {table['rect']}"
+                )
+                if content["scrollWidth"] > content["clientWidth"] + 1:
+                    problems.append("the settings content scrolls horizontally at 800x600")
+                if table["scrollWidth"] > table["clientWidth"] + 1:
+                    problems.append("the defaults table is wider than its box")
+                lefts: dict[str, set[int]] = {"pattern": set(), "language": set()}
+                heights = []
+                for pattern in self._BUILTIN_SAMPLE:
+                    row = f"file-type-builtin-row-{pattern}"
+                    if not self.driver.exists(row):
+                        problems.append(f"no table row for {pattern}")
+                        continue
+                    heights.append(self.driver.measure_element(row)["rect"]["height"])
+                    for column in lefts:
+                        rect = self.driver.measure_element(
+                            f"file-type-builtin-{column}-{pattern}"
+                        )["rect"]
+                        lefts[column].add(round(rect["x"]))
+                self.evidence(f"column lefts {lefts}; row heights {heights}")
+                for column, xs in lefts.items():
+                    if len(xs) > 1:
+                        problems.append(f"the {column} column is not aligned: x {sorted(xs)}")
+                if heights and max(heights) > 36:
+                    problems.append(f"rows are not dense: up to {max(heights):.0f}px tall")
+                language = "file-type-builtin-language-.babelrc"
+                if self.driver.exists(language):
+                    fg = self.style_color("color", language)
+                    bg = self.opaque_background(
+                        "settings-panel-content", self.root_color("--bg-primary")
+                    )
+                    ratio = contrast(fg, bg)
+                    self.evidence(f"mapped language contrast {ratio:.2f}:1")
+                    if ratio < 4.5:
+                        problems.append(f"mapped language contrast {ratio:.2f}:1 < 4.5:1")
+                assert not problems, "; ".join(problems)
+            finally:
+                self.driver.resize_window(1280, 800)

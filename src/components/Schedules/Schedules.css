@@ -121,8 +121,12 @@
   margin-right: var(--spacing-xs);
 }
 
+/* The toggle's icon starts where the meta text starts (R-082, #5680): pull the
+   ghost button left by its own inline padding instead of indenting it. */
 .schedules__attempts-toggle {
+  align-self: flex-start;
   margin-top: var(--spacing-xxs);
+  margin-left: calc(-1 * var(--spacing-sm));
   font-size: var(--font-size-2xs);
 }
 
