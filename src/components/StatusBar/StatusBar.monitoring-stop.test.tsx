@@ -79,7 +79,9 @@ function liveMonitor() {
 describe("StatusBar — stop monitoring, compact menu, unsupported host (#5628)", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let connectMonitoring: ReturnType<typeof vi.fn>;
+  let connectMonitoring: ReturnType<
+    typeof vi.fn<(key: string, host?: string | null) => Promise<void>>
+  >;
 
   beforeEach(async () => {
     container = document.createElement("div");
@@ -89,7 +91,7 @@ describe("StatusBar — stop monitoring, compact menu, unsupported host (#5628)"
     primeSshTab();
     ({ transport, teardown: teardownMonitors } = installMonitorHarness());
     await ensureMonitorsSubscribed();
-    connectMonitoring = vi.fn(() => Promise.resolve());
+    connectMonitoring = vi.fn((_key: string, _host?: string | null) => Promise.resolve());
     // The backend close drops the region entry (it keeps only the stats cache).
     const disconnectMonitoring = vi.fn(async () => setMonitor(null));
     useAppStore.setState({ connectMonitoring, disconnectMonitoring });

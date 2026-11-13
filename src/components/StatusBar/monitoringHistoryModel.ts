@@ -70,6 +70,7 @@ export function buildMetricBlocks(histories: MonitorHistories): MetricBlock[] {
   const blocks: Omit<MetricBlock, "hasData">[] = [
     { key: "cpu", label: "CPU", unit: "percent", values: histories.cpu, min: 0, max: 100 },
     { key: "memory", label: "Memory", unit: "percent", values: histories.memory, min: 0, max: 100 },
+    { key: "disk", label: "Disk", unit: "percent", values: histories.disk, min: 0, max: 100 },
   ];
   if (hasSamples(histories.swap)) {
     blocks.push({

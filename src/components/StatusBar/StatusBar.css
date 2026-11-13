@@ -177,6 +177,29 @@
   color: var(--color-error);
 }
 
+/* Icon + label buttons in the host-stats group keep a gap between them (#5628). */
+.monitoring-status .status-bar__item--interactive {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+/*
+  Quiet capability / off states (#5628): an unsupported host or a monitor the
+  user stopped. Muted, never the error colour — neither is a failure.
+*/
+/* The restart verb in "Monitoring off · Start" reads as the action. */
+.monitoring-status__action {
+  color: var(--text-primary);
+}
+
+.monitoring-status__muted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+}
+
 .monitoring-menu__info {
   padding: var(--spacing-xs) var(--spacing-md);
 }
@@ -189,15 +212,32 @@
   font-size: var(--font-size-sm);
 }
 
-/* Stacked metric sparklines in the monitoring dropdown (PROD-0030). */
-.monitoring-menu__sparks {
-  display: flex;
-  flex-direction: column;
+/*
+  The host menu (#5628) must fit the 800x600 minimum window: compact rows keep
+  it under ~400px, and the window-height cap scrolls it rather than clip it
+  on a smaller window or a host with many cores.
+*/
+.monitoring-menu {
+  max-height: calc(100vh - var(--status-bar-height) - var(--spacing-xl));
+  overflow-y: auto;
 }
 
-/* Metric sparkline block in the monitoring dropdown (PROD-0030). */
-.monitoring-menu__spark {
+/* One compact row per metric: label, inline mini-sparkline, value (#5628). */
+.monitoring-menu__metrics {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: var(--spacing-sm);
   padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+}
+
+.monitoring-menu__metric {
+  display: contents;
+}
+
+.monitoring-menu__metric .monitoring-menu__value {
+  font-variant-numeric: tabular-nums;
 }
 
 .monitoring-menu__spark-header {
@@ -315,12 +355,17 @@
   color: var(--text-secondary);
 }
 
-/* Header for the refresh-interval radio group in the detail dropdown (1233). */
+/* Sentence-case header for a refresh-interval radio group (1233, #5628). */
 .monitoring-menu__interval-label {
   padding: var(--spacing-xs) var(--spacing-md) var(--spacing-xxs);
   font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+}
+
+/* These menu labels are sentences, not section caps (R-117, #5628). */
+.ui-menu__label.monitoring-menu__interval-label,
+.ui-menu__label.monitoring-menu__label {
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* Radio-style interval items: reserve space for the leading tick indicator. */

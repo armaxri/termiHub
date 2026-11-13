@@ -11,7 +11,7 @@
  * **Client-side fallback.** Without a region ring the hook reconstructs a short
  * rolling window on the client by folding each new sample of the active monitor
  * into fixed-capacity rings ({@link pushBounded}), one per tracked metric (CPU,
- * memory, swap, network rx/tx). The fold always runs, so falling back is seamless.
+ * memory, disk, swap, network rx/tx). The fold always runs, so falling back is seamless.
  *
  * New samples are detected by the monitor's monotonically increasing
  * `sampleCount` (from the region), not by object identity: a paused or stale
@@ -34,7 +34,7 @@ import { pushBounded } from "@/utils/ringBuffer";
 export const MONITOR_HISTORY_CAP = 90;
 
 /** The system-metric series tracked for history. */
-export const MONITOR_METRIC_KEYS = ["cpu", "memory", "swap", "netRx", "netTx"] as const;
+export const MONITOR_METRIC_KEYS = ["cpu", "memory", "disk", "swap", "netRx", "netTx"] as const;
 
 /** A single tracked metric. */
 export type MonitorMetricKey = (typeof MONITOR_METRIC_KEYS)[number];
@@ -47,7 +47,7 @@ export type MonitorHistories = Record<MonitorMetricKey, (number | null)[]>;
 
 /** A fresh, empty history for every tracked metric. */
 export function emptyMonitorHistories(): MonitorHistories {
-  return { cpu: [], memory: [], swap: [], netRx: [], netTx: [] };
+  return { cpu: [], memory: [], disk: [], swap: [], netRx: [], netTx: [] };
 }
 
 /** Accumulated rolling-history state for a single monitor. */
@@ -90,13 +90,16 @@ export function monitorMetricValues(
   stats: SystemStats | null,
   sampleCount: number
 ): MonitorMetricValues {
-  if (!stats) return { cpu: null, memory: null, swap: null, netRx: null, netTx: null };
+  if (!stats) {
+    return { cpu: null, memory: null, disk: null, swap: null, netRx: null, netTx: null };
+  }
   const unavailable = new Set(stats.unavailableMetrics ?? []);
   const primed = sampleCount >= 2;
   const net = primed && !unavailable.has("network");
   return {
     cpu: primed && !unavailable.has("cpu") ? stats.cpuUsagePercent : null,
     memory: unavailable.has("memory") ? null : stats.memoryUsedPercent,
+    disk: unavailable.has("disk") ? null : stats.diskUsedPercent,
     swap: stats.swapTotalKb > 0 && !unavailable.has("swap") ? stats.swapUsedPercent : null,
     netRx: net ? stats.netRxBytesPerSec : null,
     netTx: net ? stats.netTxBytesPerSec : null,
@@ -209,16 +212,16 @@ export function useMonitorHistory({
   // Depend on the individual metric scalars rather than the `values` object so a
   // fresh object literal each render never re-runs the fold on its own (the
   // `sampleCount` gate would hold anyway, but this keeps the effect honest).
-  const { cpu, memory, swap, netRx, netTx } = values;
+  const { cpu, memory, disk, swap, netRx, netTx } = values;
   useEffect(() => {
     setState((prev) =>
       foldMonitorSample(
         prev,
-        { key, sampleCount, values: { cpu, memory, swap, netRx, netTx } },
+        { key, sampleCount, values: { cpu, memory, disk, swap, netRx, netTx } },
         capacity
       )
     );
-  }, [key, sampleCount, cpu, memory, swap, netRx, netTx, capacity]);
+  }, [key, sampleCount, cpu, memory, disk, swap, netRx, netTx, capacity]);
 
   // The projection client applies diffs copy-on-write, so a changed ring is a new
   // array and an unchanged one keeps its identity — memoizing on it is exact.
