@@ -458,8 +458,12 @@ pub struct AppSettings {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub default_shell_integration: bool,
-    /// Default value for X11 Forwarding toggle in new SSH connections.
-    #[serde(default = "default_true")]
+    /// Default value for X11 Forwarding toggle in new SSH connections. Off by
+    /// default, like OpenSSH's `ForwardX11 no` (#5555): forwarding lets the
+    /// remote host open windows on, and read input from, the local X server.
+    /// The field is always written, so a profile saved while the default was
+    /// on keeps its stored `true` (no migration).
+    #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub default_x11_forwarding: bool,
     /// Whether termiHub automatically provides a local X server for SSH X11
@@ -774,7 +778,7 @@ impl Default for AppSettings {
             warn_large_port_scan: true,
             warn_large_ping_sweep: true,
             default_shell_integration: false,
-            default_x11_forwarding: true,
+            default_x11_forwarding: false,
             provide_x_server_automatically: None,
             stop_x_server_when_idle: true,
             restore_last_session_on_startup: true,
@@ -2209,17 +2213,29 @@ mod tests {
     fn legacy_default_settings_round_trip_byte_identical() {
         let (_, saved) = load_and_resave(LEGACY_DEFAULTS);
         assert_eq!(saved, as_v2(LEGACY_DEFAULTS));
-        // A fresh default serializes to the same bytes, at v2 with the hook off.
+        // A fresh default serializes to the same bytes, at v2 with the hook
+        // and X11 forwarding off.
         assert_eq!(
             serde_json::to_string_pretty(&AppSettings::default()).unwrap(),
-            as_v2(LEGACY_DEFAULTS)
+            as_fresh_v2(LEGACY_DEFAULTS)
         );
     }
 
     #[test]
     fn legacy_minimal_settings_save_as_old_backend_did() {
         let (_, saved) = load_and_resave(r#"{"version":"1","externalConnectionFiles":[]}"#);
-        assert_eq!(saved, as_v2(LEGACY_DEFAULTS));
+        assert_eq!(saved, as_fresh_v2(LEGACY_DEFAULTS));
+    }
+
+    /// The bytes a profile with no stored X11 default saves as: [`as_v2`] with
+    /// X11 forwarding off, the fresh-profile default since #5555. A stored
+    /// `true` is kept ([`as_v2`] leaves it alone).
+    fn as_fresh_v2(legacy: &str) -> String {
+        as_v2(legacy).replacen(
+            r#""defaultX11Forwarding": true"#,
+            r#""defaultX11Forwarding": false"#,
+            1,
+        )
     }
 
     #[test]

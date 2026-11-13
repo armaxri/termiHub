@@ -507,7 +507,9 @@ impl ConnectionType for Ssh {
                             help_text: None,
                             field_type: FieldType::Boolean,
                             required: false,
-                            default: Some(serde_json::json!(true)),
+                            // Off, like OpenSSH's `ForwardX11 no` and like the
+                            // parser reads a missing key (#5555).
+                            default: Some(serde_json::json!(false)),
                             placeholder: None,
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,

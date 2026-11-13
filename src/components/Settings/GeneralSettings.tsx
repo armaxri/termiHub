@@ -255,10 +255,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("defaultX11Forwarding") && (
             <SettingsField
               label="X11 forwarding by default"
-              hint="Pre-enable X11 forwarding for new SSH connections."
+              hint="Pre-enable X11 forwarding for new SSH connections. Off by default: it lets the remote host open windows on your local X server and read what you type into them, so turn it on only for hosts you trust."
             >
               <Toggle
-                checked={settings.defaultX11Forwarding ?? true}
+                checked={settings.defaultX11Forwarding ?? false}
                 onCheckedChange={(checked) =>
                   onChange((prev) => ({ ...prev, defaultX11Forwarding: checked }))
                 }

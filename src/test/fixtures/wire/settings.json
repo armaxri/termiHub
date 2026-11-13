@@ -7,7 +7,7 @@
     "cursorStyle": "underline",
     "defaultLineEnding": "crlf",
     "defaultShellIntegration": false,
-    "defaultX11Forwarding": true,
+    "defaultX11Forwarding": false,
     "externalConnectionFiles": [
       {
         "enabled": false,
