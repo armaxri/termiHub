@@ -110,7 +110,11 @@ warnLargePingSweep?: boolean,
  */
 defaultShellIntegration?: boolean, 
 /**
- * Default value for X11 Forwarding toggle in new SSH connections.
+ * Default value for X11 Forwarding toggle in new SSH connections. Off by
+ * default, like OpenSSH's `ForwardX11 no` (#5555): forwarding lets the
+ * remote host open windows on, and read input from, the local X server.
+ * The field is always written, so a profile saved while the default was
+ * on keeps its stored `true` (no migration).
  */
 defaultX11Forwarding?: boolean, 
 /**

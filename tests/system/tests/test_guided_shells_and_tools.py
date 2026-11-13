@@ -72,7 +72,7 @@ class TestGuidedShellsAndTools(
 
     # ── Helpers ──────────────────────────────────────────────────────────────
     def _x11_ssh_session(self) -> str:
-        """Save + connect an SSH connection to the ssh-x11 fixture (X11 on by default)."""
+        """Save + connect an SSH connection to the ssh-x11 fixture, X11 forwarding on."""
         self.close_all_tabs()
         name = unique_name("x11-real")
         self.open_new_connection_editor()
@@ -83,8 +83,9 @@ class TestGuidedShellsAndTools(
         self.driver.type("field-port", str(SSH_X11_PORT))
         self.driver.type("field-username", SSH_USERNAME)
         self.driver.select("field-authMethod", "password")
-        # X11 forwarding defaults ON for SSH; clicking the toggle would turn it off.
+        # X11 forwarding is opt-in (#5555); one click turns it on.
         self.wait(lambda: self.driver.exists("field-enableX11Forwarding"), what="the X11 toggle")
+        self.driver.click("field-enableX11Forwarding")
         self.driver.click(self.EDITOR_SAVE)
         self.connect_connection(name)
         return name
