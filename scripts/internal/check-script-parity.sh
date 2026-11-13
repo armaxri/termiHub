@@ -73,6 +73,9 @@ ALLOWLIST=(
   # First-party plugin publisher key (#3980): one-time maintainer tool around
   # OpenSSL 3 + `gh secret set`; Git Bash works on Windows, a .cmd adds nothing.
   "scripts/internal/setup-plugin-publisher-key.sh"  # one-time maintainer key setup
+  # In-app updater signing key (#5758): one-time maintainer tool around the Tauri
+  # CLI signer + `gh secret set`; Git Bash works on Windows, a .cmd adds nothing.
+  "scripts/internal/setup-updater-signing-key.sh"  # one-time maintainer key setup
   # Branch protection as code (CI-017, #3675): admin-only maintainer tool around
   # `gh api`; Git Bash works on Windows.
   "scripts/internal/apply-branch-protection.sh"  # maintainer applies .github/branch-protection.json

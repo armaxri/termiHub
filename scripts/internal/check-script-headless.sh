@@ -112,6 +112,7 @@ SCRIPTS=(
   "scripts/internal/setup-agent-signing-key.sh"
   "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/setup-plugin-publisher-key.sh"
+  "scripts/internal/setup-updater-signing-key.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/internal/verify-plugin-runner-bundle.sh"
   "scripts/internal/verify-rdp-helper-bundle.sh"
@@ -306,6 +307,29 @@ if [ "$(cat "$FP_REPO_KEY")" = "$fp_key_before" ]; then
 else
   echo "::error::signing lifecycle: a first-party publisher dry run modified the repo tree"
   failures=$((failures + 1))
+fi
+
+# --- In-app updater signing key setup, dry-run (#5758) ---
+# Needs the repo's Tauri CLI (pnpm install) for `tauri signer`; skipped without it.
+UP_SETUP="scripts/internal/setup-updater-signing-key.sh"
+UP_CONFIG="src-tauri/tauri.updater.conf.json"
+if [ -x node_modules/.bin/tauri ]; then
+  up_before="$(cat "$UP_CONFIG")"
+  mkdir -p "$LC/up"
+  cp "$UP_CONFIG" "$LC/up/tauri.updater.conf.json"
+  lc_step "updater: setup --dry-run (temp config copy)" bash "$UP_SETUP" --dry-run
+  lc_step "updater: setup --dry-run writes a given config" \
+    bash "$UP_SETUP" --dry-run --config "$LC/up/tauri.updater.conf.json"
+  lc_refuse "updater: setup over a real key without --force" \
+    bash "$UP_SETUP" --dry-run --config "$LC/up/tauri.updater.conf.json"
+  if [ "$(cat "$UP_CONFIG")" = "$up_before" ]; then
+    echo "ok    signing lifecycle: $UP_CONFIG left untouched"
+  else
+    echo "::error::signing lifecycle: an updater dry run modified the repo tree"
+    failures=$((failures + 1))
+  fi
+else
+  echo "skip  signing lifecycle: updater key setup needs the Tauri CLI (pnpm install)"
 fi
 
 lifecycle_failures=$((failures - help_failures))
