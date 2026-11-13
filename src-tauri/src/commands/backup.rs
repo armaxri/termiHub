@@ -199,8 +199,21 @@ pub async fn apply_backup_restore(
 }
 
 /// Restart termiHub so a staged restore is applied before any store loads.
+///
+/// Relaunches the current executable directly with this instance's
+/// environment and arguments ([`crate::utils::relaunch`]), never through
+/// Tauri's `request_restart`, which on macOS goes through LaunchServices and
+/// drops the environment — a dev or test instance would come back on the
+/// default profile (#5647). A relaunch that cannot be started is returned as
+/// an error and the app keeps running.
 #[tauri::command]
-pub fn restart_after_backup_restore(app: AppHandle) {
+pub fn restart_after_backup_restore(app: AppHandle) -> Result<(), String> {
     info!("Restarting to apply the backup restore");
-    app.request_restart();
+    crate::utils::relaunch::relaunch_app(&app, &crate::utils::relaunch::OsSpawner).map_err(|e| {
+        tracing::error!("Could not relaunch after the backup restore: {e}");
+        format!(
+            "The backup was restored, but termiHub could not restart itself ({e}). \
+             Quit and start termiHub again to load it."
+        )
+    })
 }

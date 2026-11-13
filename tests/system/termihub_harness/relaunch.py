@@ -1,8 +1,10 @@
 """Find the process an app started when it restarted itself (#4127).
 
 Some app flows end in a self-restart: a backup restore stages the restored
-stores and calls ``AppHandle::request_restart``, which spawns the same binary
-again (same arguments, inherited environment) and exits. The harness launched
+stores and relaunches the app (``utils::relaunch``, #5647): it spawns the same
+binary directly — on macOS too, never through LaunchServices — with the same
+arguments and its full environment, and exits; the new process waits for the
+old one to be gone before it starts up. The harness launched
 the first process, but the relaunched one is not its child once the parent has
 exited, so :class:`~termihub_harness.orchestrator.AppInstance` has to look it up
 to track it (and to kill it on teardown).
