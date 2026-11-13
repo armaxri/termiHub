@@ -7,7 +7,8 @@ import { acknowledgeAgentCrashNotice, getAgentCrashNotices } from "@/services/ap
 import { onAgentCrashNoticesChanged } from "@/services/events";
 import type { AgentCrashNotice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
-import { openDiagnosticsExport, useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
+import { useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
+import { useBottomBannerSlot } from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
@@ -22,9 +23,13 @@ function asList(list: AgentCrashNotice[] | null | undefined): AgentCrashNotice[]
  *
  * The backend checks an agent once after each (re)connect, off the connect
  * path, and pushes the pending list; this component only fetches that list on
- * mount and follows the push. Any action (view, export, dismiss) acknowledges
+ * mount and follows the push. Any action (view, dismiss) acknowledges
  * the report, so the same crash is never announced twice. Honours the shared
  * `showCrashReportNotice` opt-out (the backend then does not check at all).
+ *
+ * Only the first pending notice is shown; closing it reveals the next (#5548).
+ * Like the local notice it offers "View report" and "Close" only (#5558) —
+ * exporting lives in the report viewer.
  */
 export function AgentCrashReportNotice() {
   const enabled = useProjectedSettings().showCrashReportNotice ?? true;
@@ -70,69 +75,52 @@ export function AgentCrashReportNotice() {
     [setViewedAgentReport, dismiss]
   );
 
-  const handleExport = useCallback(
-    (notice: AgentCrashNotice) => {
-      openDiagnosticsExport();
-      dismiss(notice);
-    },
-    [dismiss]
-  );
+  // #5548: one bottom banner at a time — agent crash notices rank below the
+  // local crash notice and above promotional prompts, and show one by one.
+  const active = useBottomBannerSlot("agent-crash-report", enabled && notices.length > 0);
 
-  if (!enabled || notices.length === 0) return null;
+  if (!enabled || notices.length === 0 || !active) return null;
 
   const agentName = (id: string) => remoteAgents.find((a) => a.id === id)?.name ?? id;
 
+  const notice = notices[0];
+
   return (
-    <>
-      {notices.map((notice) => (
-        <div
-          key={notice.agentId}
-          className="crash-report-notice"
-          role="status"
-          data-testid={`agent-crash-notice-${notice.agentId}`}
+    <div
+      className="crash-report-notice"
+      role="status"
+      data-testid={`agent-crash-notice-${notice.agentId}`}
+    >
+      <span className="crash-report-notice__icon">
+        <AlertTriangle size={16} />
+      </span>
+      <div className="crash-report-notice__text">
+        <strong>Agent “{agentName(notice.agentId)}” crashed since it was last connected.</strong>
+        <span>
+          {notice.newCount === 1
+            ? "A new crash report was saved on that host."
+            : `${notice.newCount} new crash reports were saved on that host.`}{" "}
+          Nothing was sent anywhere.
+        </span>
+      </div>
+      <div className="crash-report-notice__actions">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => dismiss(notice)}
+          data-testid={`agent-crash-notice-dismiss-${notice.agentId}`}
         >
-          <span className="crash-report-notice__icon">
-            <AlertTriangle size={16} />
-          </span>
-          <div className="crash-report-notice__text">
-            <strong>
-              Agent “{agentName(notice.agentId)}” crashed since it was last connected.
-            </strong>
-            <span>
-              {notice.newCount === 1
-                ? "A new crash report was saved on that host."
-                : `${notice.newCount} new crash reports were saved on that host.`}{" "}
-              Nothing was sent anywhere.
-            </span>
-          </div>
-          <div className="crash-report-notice__actions">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => dismiss(notice)}
-              data-testid={`agent-crash-notice-dismiss-${notice.agentId}`}
-            >
-              Close
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => handleExport(notice)}
-              data-testid={`agent-crash-notice-export-${notice.agentId}`}
-            >
-              Export diagnostics…
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => handleView(notice)}
-              data-testid={`agent-crash-notice-view-${notice.agentId}`}
-            >
-              View report
-            </Button>
-          </div>
-        </div>
-      ))}
-    </>
+          Close
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => handleView(notice)}
+          data-testid={`agent-crash-notice-view-${notice.agentId}`}
+        >
+          View report
+        </Button>
+      </div>
+    </div>
   );
 }

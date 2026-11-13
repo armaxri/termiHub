@@ -140,7 +140,7 @@ class TestTransferViewLive(
         ssh_tab = self._connect()
         self.connect_sftp_browser()
         self.wait_for_path_contains(self._home)
-        self.driver.click(OPEN_TRANSFER_VIEW)
+        self.invoke_file_browser_action(OPEN_TRANSFER_VIEW)  # a "…" menu entry (#5520)
         self.wait(lambda: self.driver.exists(VIEW), what="the transfer view")
         self.wait(
             lambda: self.driver.get_value("transfer-pane-remote-path") == self._home,

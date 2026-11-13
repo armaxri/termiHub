@@ -235,7 +235,9 @@ class TestTransferQueueLiveTransfer(
         )
 
         self.wait(
-            lambda: self.driver.get_attribute("file-browser-paste", "disabled") is None,
+            # Paste is an inline button only once the clipboard holds entries (#5520).
+            lambda: self.driver.exists("file-browser-paste")
+            and self.driver.get_attribute("file-browser-paste", "disabled") is None,
             what="Paste to enable once the clipboard holds the copied file",
         )
         self.driver.click("file-browser-paste")

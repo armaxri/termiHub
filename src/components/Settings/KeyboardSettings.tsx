@@ -383,7 +383,12 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
       {groupedBindings.map((group) => (
         <div key={group.category} className="keyboard-settings__group">
-          <h4 className="keyboard-settings__group-title">{group.label}</h4>
+          <h4
+            className="keyboard-settings__group-title"
+            data-testid={`keyboard-settings-group-title-${group.category}`}
+          >
+            {group.label}
+          </h4>
           <table className="keyboard-settings__table">
             <thead>
               <tr>

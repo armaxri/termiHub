@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import type { StorageChoiceOutcome } from "@/store/slices/credentialStoreSlice";
 import type { CredentialStorageMode, CredentialStoreStatusInfo } from "@/types/credential";
 import { CredentialStorageChooser } from "./CredentialStorageChooser";
+import { expectedStorageCards, readStorageCards } from "@/test/credentialStorageCards";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -182,11 +183,17 @@ describe("CredentialStorageChooser (#5187)", () => {
         "wrong horse"
       );
     });
-    await click("credential-storage-chooser-continue");
-
-    expect(query("credential-storage-chooser-master-password-error")?.textContent).toBe(
+    // The mismatch shows inline under the confirmation while typing (#5552)…
+    expect(query("credential-storage-chooser-master-password-mismatch")?.textContent).toBe(
       "Passwords do not match."
     );
+    await click("credential-storage-chooser-continue");
+
+    // …and Create vault keeps it there instead of repeating it below.
+    expect(query("credential-storage-chooser-master-password-mismatch")?.textContent).toBe(
+      "Passwords do not match."
+    );
+    expect(query("credential-storage-chooser-master-password-error")).toBeNull();
     expect(calls("switch_credential_store")).toHaveLength(0);
     expect(outcome()).toBeUndefined();
   });
@@ -272,5 +279,137 @@ describe("CredentialStorageChooser (#5187)", () => {
     expect(
       query("credential-storage-chooser-option-os_keychain")?.getAttribute("aria-checked")
     ).toBe("true");
+  });
+
+  async function pressEnter(el: Element) {
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+  }
+
+  it("renders the shared option list Settings ▸ Security shows too (#5553)", async () => {
+    await openChooser();
+    expect(readStorageCards(query("credential-storage-chooser-options")!)).toEqual(
+      expectedStorageCards()
+    );
+  });
+
+  describe("keyboard (#5550)", () => {
+    it("opens with focus on the selected option, not the close button", async () => {
+      await openChooser();
+      expect(document.activeElement).toBe(query("credential-storage-chooser-option-os_keychain"));
+      expect(document.activeElement).not.toBe(query("modal-close"));
+    });
+
+    it("Enter on the selected option accepts it", async () => {
+      const { outcome } = await openChooser();
+
+      await pressEnter(document.activeElement!);
+
+      expect(calls("switch_credential_store").map((c) => c[1])).toEqual([
+        { newMode: "os_keychain", masterPassword: null },
+      ]);
+      expect(outcome()).toBe("os_keychain");
+    });
+
+    it("Enter on Master password moves on to the vault step", async () => {
+      await openChooser();
+      await click("credential-storage-chooser-option-master_password");
+
+      await pressEnter(query("credential-storage-chooser-option-master_password")!);
+
+      expect(query("credential-storage-chooser-master-password-setup")).not.toBeNull();
+      expect(calls("switch_credential_store")).toHaveLength(0);
+    });
+
+    it("Enter in the confirmation field creates the vault", async () => {
+      const { outcome } = await openChooser();
+      await click("credential-storage-chooser-option-master_password");
+      await click("credential-storage-chooser-continue");
+      const confirm = query(
+        "credential-storage-chooser-master-password-confirm-input"
+      ) as HTMLInputElement;
+      await act(async () => {
+        setInputValue(
+          query("credential-storage-chooser-master-password-input") as HTMLInputElement,
+          "correct horse"
+        );
+        setInputValue(confirm, "correct horse");
+      });
+
+      await pressEnter(confirm);
+
+      expect(outcome()).toBe("master_password");
+    });
+  });
+
+  describe("primary action style (#5551)", () => {
+    const primary = () => query("credential-storage-chooser-continue")!;
+
+    it("keeps one filled primary look across Continue, Create vault and Back", async () => {
+      await openChooser();
+      expect(primary().className).toContain("ui-btn--primary");
+
+      await click("credential-storage-chooser-option-master_password");
+      await click("credential-storage-chooser-continue");
+      expect(primary().textContent).toBe("Create vault");
+      expect(primary().className).toContain("ui-btn--primary");
+      expect(primary().className).not.toContain("ui-btn--success");
+
+      await click("credential-storage-chooser-back");
+      expect(primary().textContent).toBe("Continue");
+      expect(primary().className).toContain("ui-btn--primary");
+      expect(primary().className).not.toContain("ui-btn--success");
+    });
+  });
+
+  describe("master password fields (#5552)", () => {
+    async function openVaultStep() {
+      await openChooser();
+      await click("credential-storage-chooser-option-master_password");
+      await click("credential-storage-chooser-continue");
+    }
+    const input = (suffix: string) =>
+      query(`credential-storage-chooser-master-password-${suffix}`) as HTMLInputElement;
+
+    it("labels both fields persistently instead of with placeholders", async () => {
+      await openVaultStep();
+      for (const [suffix, label] of [
+        ["input", "Master password"],
+        ["confirm-input", "Confirm password"],
+      ]) {
+        const el = input(suffix);
+        expect(el.getAttribute("placeholder")).toBeNull();
+        expect(document.querySelector(`label[for="${el.id}"]`)?.textContent).toBe(label);
+      }
+    });
+
+    it("shows a live requirements hint linked to the password field", async () => {
+      await openVaultStep();
+      const hint = query("credential-storage-chooser-master-password-hint")!;
+      expect(hint.textContent).toContain("at least 8 characters");
+      expect(input("input").getAttribute("aria-describedby")).toContain(hint.id);
+
+      await act(async () => setInputValue(input("input"), "abc"));
+      expect(hint.textContent).toBe("5 more characters needed (at least 8).");
+
+      await act(async () => setInputValue(input("input"), "correct horse"));
+      expect(hint.textContent).toContain("Meets the 8-character minimum");
+    });
+
+    it("flags a mismatched confirmation inline, not while it is still a prefix", async () => {
+      await openVaultStep();
+      await act(async () => {
+        setInputValue(input("input"), "correct horse");
+        setInputValue(input("confirm-input"), "correct");
+      });
+      expect(query("credential-storage-chooser-master-password-mismatch")).toBeNull();
+
+      await act(async () => setInputValue(input("confirm-input"), "correct cow"));
+      expect(query("credential-storage-chooser-master-password-mismatch")?.textContent).toBe(
+        "Passwords do not match."
+      );
+      expect(input("confirm-input").getAttribute("aria-invalid")).toBe("true");
+    });
   });
 });

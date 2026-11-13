@@ -100,6 +100,13 @@ def test_lane_is_manual_with_manual_mark():
     assert mod.lane_for([mod.Mark("manual", None, "")]) == "manual"
 
 
+def test_product_run_counts_as_manual_not_a_ci_lane():
+    # #5518: the product run is hand-triggered and deselected in every CI lane.
+    assert mod.lane_for([mod.Mark("product_run", None, "")]) == "manual"
+    lane = mod.lane_for([mod.Mark("integration", None, ""), mod.Mark("product_run", None, "")])
+    assert lane == "manual"
+
+
 def test_manual_wins_over_integration():
     lane = mod.lane_for(
         [mod.Mark("integration", None, ""), mod.Mark("manual", None, "")]

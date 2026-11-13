@@ -506,7 +506,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           highlightedCategories={highlightedCategories}
           isCompact={isCompact}
         />
-        <div className="settings-panel__content">{renderContent()}</div>
+        <div className="settings-panel__content" data-testid="settings-panel-content">
+          {renderContent()}
+        </div>
       </div>
       <div className="settings-panel__footer">
         termiHub {appInfo ? `v${appInfo.version}` : ""} [DEV]

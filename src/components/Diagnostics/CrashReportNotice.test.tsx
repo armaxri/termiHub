@@ -105,10 +105,30 @@ describe("CrashReportNotice", () => {
     expect(mockedApi.acknowledgeCrashReports).toHaveBeenCalledTimes(1);
   });
 
-  it("export opens the diagnostics export dialog", async () => {
+  it("offers exactly two actions, View report and Close (#5558)", async () => {
     await render();
-    await click("crash-report-notice-export");
-    expect(useDiagnosticsDialogStore.getState().exportOpen).toBe(true);
+    const actions = byTestId("crash-report-notice")?.querySelector(".crash-report-notice__actions");
+    const labels = Array.from(actions?.querySelectorAll("button") ?? []).map((b) =>
+      b.textContent?.trim()
+    );
+    expect(labels).toEqual(["Close", "View report"]);
+    // Export moved into the report viewer, where the user sees what they export.
+    expect(byTestId("crash-report-notice-export")).toBeNull();
+  });
+
+  it("uses no filled primary, so the view keeps a single primary (#5549)", async () => {
+    await render();
+    const notice = byTestId("crash-report-notice");
+    expect(notice?.querySelector(".ui-btn--primary")).toBeNull();
+    expect(byTestId("crash-report-notice-view")?.className).toContain("ui-btn--secondary");
+  });
+
+  it("renders don't show again as an inline link, not a peer button (#5558)", async () => {
+    await render();
+    const never = byTestId("crash-report-notice-never");
+    expect(never?.textContent).toBe("Don't show again");
+    expect(never?.className).toContain("crash-report-notice__never");
+    expect(never?.closest(".crash-report-notice__text")).not.toBeNull();
   });
 
   it("don't show again persists showCrashReportNotice: false", async () => {

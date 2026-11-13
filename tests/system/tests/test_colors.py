@@ -43,6 +43,13 @@ def test_parse_color_accepts_every_form_a_webview_returns(text, expected):
     assert all(math.isclose(a, b, abs_tol=1e-6) for a, b in zip(got, expected)), got
 
 
+def test_parse_color_reads_webkit_oklab():
+    # WebKit serialises a color-mix mid-transition in oklab() (#5518).
+    tint = parse_color("oklab(0.562865 -0.053648 -0.114595 / 0.25)")
+    assert tint.hex() == "#227bba" and tint.a == 0.25
+    assert parse_color("oklab(100% 0 0)").hex() == "#ffffff"
+
+
 @pytest.mark.parametrize("bad", ["red", "#12", "hsl(0, 0%, 0%)", "color(display-p3 1 0 0)", "1px"])
 def test_parse_color_rejects_what_it_cannot_grade(bad):
     with pytest.raises(ValueError):

@@ -14,6 +14,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
 const openPath = vi.fn().mockResolvedValue(undefined);
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -133,9 +134,6 @@ async function renderSession() {
   await flushAsync();
 }
 
-const q = (testId: string) =>
-  container.querySelector(`[data-testid="${testId}"]`) as HTMLButtonElement | null;
-
 setupFileBrowsersRegion();
 
 describe("FileBrowser — open transfer view (#3558)", () => {
@@ -162,8 +160,9 @@ describe("FileBrowser — open transfer view (#3558)", () => {
 
   async function openFrom(render: () => Promise<void>) {
     await render();
+    const open = await findFileBrowserAction("file-browser-open-transfer-view");
     await act(async () => {
-      q("file-browser-open-transfer-view")!.click();
+      open!.click();
     });
   }
 
