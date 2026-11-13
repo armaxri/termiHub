@@ -147,8 +147,11 @@ async fn untrusted_x11_server(
     Option<super::x11::ResolvedXServer>,
     Option<tokio::time::Instant>,
 ) {
-    use super::x11_untrusted::{choose_cookie, X11CookieDecision, UNTRUSTED_X11_TIMEOUT};
-    let decision = choose_cookie(config.x11_untrusted, &server, UNTRUSTED_X11_TIMEOUT).await;
+    use super::x11_untrusted::{choose_cookie, untrusted_x11_timeout, X11CookieDecision};
+    // One timeout for both the xauth cookie and the refusal deadline, which
+    // the x11-req and fallback forwarders share (#5600).
+    let timeout = untrusted_x11_timeout(config.x11_untrusted_timeout_mins);
+    let decision = choose_cookie(config.x11_untrusted, &server, timeout).await;
     if let X11CookieDecision::Refuse(why) = &decision {
         connect_progress::report(ConnectStage::Shell, Some(why.describe()));
     }

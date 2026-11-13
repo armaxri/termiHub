@@ -128,6 +128,34 @@ fn new_connections_are_accepted_only_before_the_deadline() {
     ));
 }
 
+#[test]
+fn the_configured_timeout_maps_to_a_window_or_no_limit() {
+    // Unset: OpenSSH's default 20 minutes.
+    assert_eq!(untrusted_x11_timeout(None), Some(UNTRUSTED_X11_TIMEOUT));
+    assert_eq!(UNTRUSTED_X11_TIMEOUT, Duration::from_secs(20 * 60));
+    // 0: no client-side limit.
+    assert_eq!(untrusted_x11_timeout(Some(0)), None);
+    assert_eq!(
+        untrusted_x11_timeout(Some(1)),
+        Some(Duration::from_secs(60))
+    );
+    assert_eq!(
+        untrusted_x11_timeout(Some(90)),
+        Some(Duration::from_secs(90 * 60))
+    );
+    let max = crate::config::MAX_X11_UNTRUSTED_TIMEOUT_MINS;
+    assert_eq!(max, 1440);
+    assert_eq!(
+        untrusted_x11_timeout(Some(max)),
+        Some(Duration::from_secs(u64::from(max) * 60))
+    );
+    // Out of range (a hand-edited config): capped, never wider.
+    assert_eq!(
+        untrusted_x11_timeout(Some(u32::MAX)),
+        Some(Duration::from_secs(u64::from(max) * 60))
+    );
+}
+
 // ── Cookie source selection ─────────────────────────────────────────────
 
 #[tokio::test]
@@ -135,7 +163,7 @@ async fn trusted_forwarding_keeps_the_real_cookie_and_never_runs_xauth() {
     let server = tcp_server(6000, Some(REAL_HEX));
     // A program that cannot exist: running it would refuse, not trust.
     let xauth = [OsString::from("/nonexistent/termihub-5585-xauth")];
-    let decision = choose_cookie_with(false, &server, UNTRUSTED_X11_TIMEOUT, &xauth).await;
+    let decision = choose_cookie_with(false, &server, Some(UNTRUSTED_X11_TIMEOUT), &xauth).await;
     assert!(matches!(decision, X11CookieDecision::Trusted));
     let (applied, deadline) = decision.apply(server).unwrap();
     assert_eq!(applied.cookie.as_deref(), Some(REAL_HEX));
@@ -146,7 +174,7 @@ async fn trusted_forwarding_keeps_the_real_cookie_and_never_runs_xauth() {
 async fn untrusted_without_xauth_fails_closed() {
     let server = tcp_server(6000, Some(REAL_HEX));
     let xauth = [OsString::from("/nonexistent/termihub-5585-xauth")];
-    let decision = choose_cookie_with(true, &server, UNTRUSTED_X11_TIMEOUT, &xauth).await;
+    let decision = choose_cookie_with(true, &server, Some(UNTRUSTED_X11_TIMEOUT), &xauth).await;
     assert!(matches!(
         decision,
         X11CookieDecision::Refuse(UntrustedUnavailable::NoXauth)
@@ -157,7 +185,7 @@ async fn untrusted_without_xauth_fails_closed() {
 #[tokio::test]
 async fn untrusted_on_an_unaddressable_display_fails_closed() {
     let server = tcp_server(5999, Some(REAL_HEX));
-    let decision = choose_cookie_with(true, &server, UNTRUSTED_X11_TIMEOUT, &[]).await;
+    let decision = choose_cookie_with(true, &server, Some(UNTRUSTED_X11_TIMEOUT), &[]).await;
     assert!(matches!(
         decision,
         X11CookieDecision::Refuse(UntrustedUnavailable::DisplayNotAddressable)
@@ -205,7 +233,8 @@ printf '\377\377\000\000\000\000\000\022MIT-MAGIC-COOKIE-1\000\020UNTRUSTED-COOK
         let xauth = [recording_fake(dir.path())];
         let server = tcp_server(6007, Some(REAL_HEX));
         let before = tokio::time::Instant::now();
-        let decision = choose_cookie_with(true, &server, Duration::from_secs(120), &xauth).await;
+        let decision =
+            choose_cookie_with(true, &server, Some(Duration::from_secs(120)), &xauth).await;
         let (applied, deadline) = decision.apply(server).expect("forwarded");
         assert_eq!(
             applied.cookie.as_deref(),
@@ -246,6 +275,49 @@ printf '\377\377\000\000\000\000\000\022MIT-MAGIC-COOKIE-1\000\020UNTRUSTED-COOK
         assert!(!authority.parent().unwrap().exists());
     }
 
+    /// The arguments the recording fake was last run with.
+    fn recorded_args(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("log.args"))
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_configured_timeout_sets_the_cookie_lifetime_and_the_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let xauth = [recording_fake(dir.path())];
+        let server = tcp_server(6007, Some(REAL_HEX));
+        let timeout = untrusted_x11_timeout(Some(90));
+        let before = tokio::time::Instant::now();
+        let decision = choose_cookie_with(true, &server, timeout, &xauth).await;
+        let after = tokio::time::Instant::now();
+        let (_, deadline) = decision.apply(server).expect("forwarded");
+        let deadline = deadline.expect("a deadline");
+        let window = Duration::from_secs(90 * 60);
+        assert!(deadline >= before + window && deadline <= after + window);
+        let args = recorded_args(dir.path());
+        assert_eq!(&args[args.len() - 2..], ["timeout", "5460"]); // 90 min + 60 s
+    }
+
+    #[tokio::test]
+    async fn no_limit_asks_for_a_lasting_cookie_and_sets_no_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let xauth = [recording_fake(dir.path())];
+        let server = tcp_server(6007, Some(REAL_HEX));
+        let decision =
+            choose_cookie_with(true, &server, untrusted_x11_timeout(Some(0)), &xauth).await;
+        let (applied, deadline) = decision.apply(server).expect("forwarded");
+        assert_eq!(
+            applied.cookie.as_deref(),
+            Some(hex::encode(UNTRUSTED).as_str())
+        );
+        assert!(deadline.is_none(), "no client-side refusal");
+        let args = recorded_args(dir.path());
+        assert_eq!(&args[args.len() - 2..], ["timeout", "0"]);
+    }
+
     #[tokio::test]
     async fn a_server_without_security_fails_closed() {
         let dir = tempfile::tempdir().unwrap();
@@ -255,7 +327,7 @@ printf '\377\377\000\000\000\000\000\022MIT-MAGIC-COOKIE-1\000\020UNTRUSTED-COOK
 exit 1"#,
         )];
         let server = tcp_server(6000, None);
-        let decision = choose_cookie_with(true, &server, UNTRUSTED_X11_TIMEOUT, &xauth).await;
+        let decision = choose_cookie_with(true, &server, Some(UNTRUSTED_X11_TIMEOUT), &xauth).await;
         assert!(matches!(
             decision,
             X11CookieDecision::Refuse(UntrustedUnavailable::NoSecurityExtension)
@@ -270,7 +342,7 @@ exit 1"#,
         let decision = choose_cookie_with(
             true,
             &tcp_server(6000, Some(REAL_HEX)),
-            UNTRUSTED_X11_TIMEOUT,
+            Some(UNTRUSTED_X11_TIMEOUT),
             &xauth,
         )
         .await;
@@ -290,7 +362,7 @@ exit 1"#,
         let decision = choose_cookie_with(
             true,
             &tcp_server(6000, Some(REAL_HEX)),
-            UNTRUSTED_X11_TIMEOUT,
+            Some(UNTRUSTED_X11_TIMEOUT),
             &xauth,
         )
         .await;

@@ -16,9 +16,11 @@
 //! the user's `~/.Xauthority` is never read or written (`xauth` authenticates
 //! to the server with a second private file that holds only the real cookie).
 //! Like OpenSSH's `ForwardX11Timeout`, new X11 connections are refused once
-//! [`UNTRUSTED_X11_TIMEOUT`] has passed; the server-side cookie lives a little
-//! longer ([`XAUTH_TIMEOUT_SLACK`]) so the client-side refusal always comes
-//! first.
+//! the connection's timeout ([`untrusted_x11_timeout`], 20 minutes unless
+//! set, #5600) has passed; the server-side cookie lives a little longer
+//! ([`XAUTH_TIMEOUT_SLACK`]) so the client-side refusal always comes first.
+//! A timeout of `0` removes the client-side limit and asks for a cookie that
+//! does not expire (`timeout 0`).
 //!
 //! **Fallback rule: fail closed.** When the local server has no SECURITY
 //! extension (XQuartz, Xvfb on macOS, VcXsrv) or `xauth` is missing, the
@@ -39,9 +41,25 @@ use tracing::{info, warn};
 use super::x11::{LocalXConnection, LocalXServerInfo, ResolvedXServer};
 use super::x11_req::MIT_MAGIC_COOKIE_1;
 
-/// How long new X11 connections are accepted with an untrusted cookie, like
-/// OpenSSH's default `ForwardX11Timeout` (20 minutes).
-pub const UNTRUSTED_X11_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+/// How long new X11 connections are accepted with an untrusted cookie when
+/// the connection does not say, like OpenSSH's default `ForwardX11Timeout`
+/// (20 minutes).
+pub const UNTRUSTED_X11_TIMEOUT: Duration =
+    Duration::from_secs(crate::config::DEFAULT_X11_UNTRUSTED_TIMEOUT_MINS as u64 * 60);
+
+/// The untrusted X11 timeout for a connection's `x11UntrustedTimeoutMins`
+/// (#5600): unset is [`UNTRUSTED_X11_TIMEOUT`], `0` is no limit (`None`),
+/// and anything above [`crate::config::MAX_X11_UNTRUSTED_TIMEOUT_MINS`] is
+/// capped to it.
+pub fn untrusted_x11_timeout(minutes: Option<u32>) -> Option<Duration> {
+    match minutes {
+        None => Some(UNTRUSTED_X11_TIMEOUT),
+        Some(0) => None,
+        Some(m) => Some(Duration::from_secs(
+            u64::from(m.min(crate::config::MAX_X11_UNTRUSTED_TIMEOUT_MINS)) * 60,
+        )),
+    }
+}
 
 /// How much longer the server-side cookie lives than the client-side window,
 /// as in OpenSSH (`X11_TIMEOUT_SLACK`).
@@ -131,10 +149,10 @@ pub enum X11CookieDecision {
     /// Trusted forwarding: the real local cookie, as before.
     Trusted,
     /// Untrusted forwarding with this generated cookie; new X11 connections
-    /// are refused after the deadline.
+    /// are refused after the deadline (none: no client-side limit).
     Untrusted {
         cookie: UntrustedCookie,
-        deadline: tokio::time::Instant,
+        deadline: Option<tokio::time::Instant>,
     },
     /// Untrusted forwarding was asked for but is not possible: no X11.
     Refuse(UntrustedUnavailable),
@@ -155,7 +173,7 @@ impl X11CookieDecision {
                     info: server.info,
                     cookie: Some(cookie.hex),
                 },
-                Some(deadline),
+                deadline,
             )),
             Self::Refuse(_) => None,
         }
@@ -166,12 +184,14 @@ impl X11CookieDecision {
 ///
 /// Trusted forwarding keeps the real cookie and never runs `xauth`.
 /// Untrusted forwarding generates an untrusted cookie that expires
-/// `timeout` + [`XAUTH_TIMEOUT_SLACK`] after its last use; when that is not
-/// possible the decision is [`X11CookieDecision::Refuse`] (fail closed).
+/// `timeout` + [`XAUTH_TIMEOUT_SLACK`] after its last use (never, for no
+/// `timeout`) and refuses new X11 connections `timeout` after now; when that
+/// is not possible the decision is [`X11CookieDecision::Refuse`] (fail
+/// closed).
 pub async fn choose_cookie(
     untrusted: bool,
     server: &ResolvedXServer,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> X11CookieDecision {
     choose_cookie_with(untrusted, server, timeout, &xauth_candidates()).await
 }
@@ -180,7 +200,7 @@ pub async fn choose_cookie(
 pub(crate) async fn choose_cookie_with(
     untrusted: bool,
     server: &ResolvedXServer,
-    timeout: Duration,
+    timeout: Option<Duration>,
     xauth: &[OsString],
 ) -> X11CookieDecision {
     if !untrusted {
@@ -207,12 +227,12 @@ pub(crate) async fn choose_cookie_with(
     match generated {
         Ok(cookie) => {
             info!(
-                timeout_secs = timeout.as_secs(),
+                timeout_secs = timeout.map_or(0, |t| t.as_secs()),
                 "X11 forwarding: generated an untrusted cookie for the local display"
             );
             X11CookieDecision::Untrusted {
                 cookie,
-                deadline: started + timeout,
+                deadline: timeout.map(|t| started + t),
             }
         }
         Err(why) => {
@@ -312,7 +332,7 @@ fn generate_untrusted_cookie(
     xauth: &[OsString],
     display: &str,
     real_hex: Option<&str>,
-    timeout: Duration,
+    timeout: Option<Duration>,
 ) -> Result<UntrustedCookie, UntrustedUnavailable> {
     let io_failed = |e: std::io::Error| UntrustedUnavailable::Failed(e.to_string());
     let dir = private_dir().map_err(io_failed)?;
@@ -327,7 +347,10 @@ fn generate_untrusted_cookie(
         .unwrap_or_default();
     write_private(&auth_in, &entry).map_err(io_failed)?;
 
-    let server_timeout = (timeout + XAUTH_TIMEOUT_SLACK).as_secs().to_string();
+    // `timeout 0`: the X SECURITY extension never expires the cookie.
+    let server_timeout = timeout
+        .map_or(0, |t| (t + XAUTH_TIMEOUT_SLACK).as_secs())
+        .to_string();
     for program in xauth {
         let mut command = crate::util::no_window::no_window_command(program);
         command

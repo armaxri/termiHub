@@ -304,6 +304,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         env,
         enable_x11_forwarding: bool_field("enableX11Forwarding", false),
         x11_untrusted: bool_field("x11Untrusted", crate::config::DEFAULT_X11_UNTRUSTED),
+        x11_untrusted_timeout_mins: opt_u32("x11UntrustedTimeoutMins"),
         enable_monitoring: opt_bool("enableMonitoring"),
         enable_file_browser: opt_bool("enableFileBrowser"),
         save_password: opt_bool("savePassword"),
@@ -530,8 +531,8 @@ impl ConnectionType for Ssh {
                                  you type, as with ssh -Y.\n\n\
                                  Untrusted forwarding (on) gives them a restricted, short-lived \
                                  key instead, as with ssh -X: new remote windows can open for 20 \
-                                 minutes after connecting, and some programs may not work \
-                                 fully.\n\n\
+                                 minutes after connecting (change this with the untrusted X11 \
+                                 timeout), and some programs may not work fully.\n\n\
                                  It needs an X server with the SECURITY extension, and xauth. \
                                  XQuartz (macOS) and VcXsrv (Windows) lack it, so there X11 \
                                  forwarding stays off with this on, and the connection says \
@@ -547,6 +548,44 @@ impl ConnectionType for Ssh {
                             visible_when: Some(Condition {
                                 field: "enableX11Forwarding".to_string(),
                                 equals: serde_json::json!(true),
+                                ..Default::default()
+                            }),
+                        },
+                        SettingsField {
+                            key: "x11UntrustedTimeoutMins".to_string(),
+                            label: "Untrusted X11 timeout (min)".to_string(),
+                            description: Some(
+                                "How long after connecting new remote windows can open".to_string(),
+                            ),
+                            help_text: Some(format!(
+                                "With untrusted X11 forwarding, remote programs can open new \
+                                 windows only for this many minutes after you connect, like \
+                                 ssh's ForwardX11Timeout. Windows that are already open keep \
+                                 working. Later, reconnect to open more.\n\n\
+                                 Leave empty for the default ({default} minutes). Enter 0 for no \
+                                 limit, or up to {max} minutes (one day).",
+                                default = crate::config::DEFAULT_X11_UNTRUSTED_TIMEOUT_MINS,
+                                max = crate::config::MAX_X11_UNTRUSTED_TIMEOUT_MINS,
+                            )),
+                            field_type: FieldType::Number {
+                                min: Some(0.0),
+                                max: Some(f64::from(crate::config::MAX_X11_UNTRUSTED_TIMEOUT_MINS)),
+                            },
+                            required: false,
+                            default: None,
+                            placeholder: Some(
+                                crate::config::DEFAULT_X11_UNTRUSTED_TIMEOUT_MINS.to_string(),
+                            ),
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: Some(Condition {
+                                field: "enableX11Forwarding".to_string(),
+                                equals: serde_json::json!(true),
+                                all_of: vec![Condition {
+                                    field: "x11Untrusted".to_string(),
+                                    equals: serde_json::json!(true),
+                                    ..Default::default()
+                                }],
                                 ..Default::default()
                             }),
                         },
@@ -1549,6 +1588,7 @@ mod tests {
                 "shell",
                 "enableX11Forwarding",
                 "x11Untrusted",
+                "x11UntrustedTimeoutMins",
                 "connectTimeoutSecs",
                 "keepaliveIntervalSecs",
                 "keepaliveMaxCount",
@@ -2058,6 +2098,96 @@ mod tests {
             settings["x11Untrusted"] = serde_json::json!(value);
             assert_eq!(parse_ssh_settings(&settings).x11_untrusted, value);
         }
+    }
+
+    #[test]
+    fn schema_x11_untrusted_timeout_is_bounded_and_shows_only_when_untrusted() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema.groups[2]
+            .fields
+            .iter()
+            .find(|f| f.key == "x11UntrustedTimeoutMins")
+            .unwrap();
+        assert_eq!(field.label, "Untrusted X11 timeout (min)");
+        match field.field_type {
+            FieldType::Number { min, max } => {
+                assert_eq!(min, Some(0.0));
+                assert_eq!(max, Some(1440.0));
+            }
+            ref other => panic!("not a number field: {other:?}"),
+        }
+        assert!(field.default.is_none(), "empty means the default");
+        assert_eq!(field.placeholder.as_deref(), Some("20"));
+        let when = field.visible_when.as_ref().unwrap();
+        assert_eq!(when.field, "enableX11Forwarding");
+        assert_eq!(when.equals, serde_json::json!(true));
+        assert_eq!(when.all_of.len(), 1);
+        assert_eq!(when.all_of[0].field, "x11Untrusted");
+        assert_eq!(when.all_of[0].equals, serde_json::json!(true));
+        let help = field.help_text.as_deref().unwrap();
+        for needle in ["20 minutes", "0 for no limit", "1440 minutes"] {
+            assert!(help.contains(needle), "{needle:?} missing from {help:?}");
+        }
+    }
+
+    #[test]
+    fn parse_x11_untrusted_timeout_reads_numbers_and_numeric_strings() {
+        let base = serde_json::json!({"host": "h", "username": "u", "authMethod": "agent"});
+        assert_eq!(parse_ssh_settings(&base).x11_untrusted_timeout_mins, None);
+        for (value, want) in [
+            (serde_json::json!(0), Some(0)),
+            (serde_json::json!(90), Some(90)),
+            (serde_json::json!("45"), Some(45)),
+            (serde_json::json!(""), None),
+            (serde_json::json!(-5), None),
+        ] {
+            let mut settings = base.clone();
+            settings["x11UntrustedTimeoutMins"] = value.clone();
+            assert_eq!(
+                parse_ssh_settings(&settings).x11_untrusted_timeout_mins,
+                want,
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validation_rejects_an_out_of_range_x11_untrusted_timeout() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let settings = |mins: serde_json::Value| {
+            serde_json::json!({
+                "host": "h", "port": 22, "username": "u", "authMethod": "agent",
+                "enableX11Forwarding": true, "x11Untrusted": true,
+                "x11UntrustedTimeoutMins": mins,
+            })
+        };
+        for ok in [0, 1, 20, 1440] {
+            let errors = validate_settings(&schema, &settings(serde_json::json!(ok)));
+            assert!(
+                !errors.iter().any(|e| e.field == "x11UntrustedTimeoutMins"),
+                "{ok}: {errors:?}"
+            );
+        }
+        let errors = validate_settings(&schema, &settings(serde_json::json!(1441)));
+        let error = errors
+            .iter()
+            .find(|e| e.field == "x11UntrustedTimeoutMins")
+            .expect("1441 is rejected");
+        assert_eq!(
+            error.message,
+            "Untrusted X11 timeout (min) must be at most 1440"
+        );
+        let errors = validate_settings(&schema, &settings(serde_json::json!(-1)));
+        let error = errors
+            .iter()
+            .find(|e| e.field == "x11UntrustedTimeoutMins")
+            .expect("-1 is rejected");
+        assert_eq!(
+            error.message,
+            "Untrusted X11 timeout (min) must be at least 0"
+        );
     }
 
     // --- Settings parsing tests ---

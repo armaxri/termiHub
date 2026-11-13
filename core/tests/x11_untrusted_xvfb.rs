@@ -161,7 +161,7 @@ async fn untrusted_cookie_from_a_real_x_server() {
         },
         cookie: Some(REAL_HEX.to_string()),
     };
-    let decision = choose_cookie(true, &resolved, Duration::from_secs(60)).await;
+    let decision = choose_cookie(true, &resolved, Some(Duration::from_secs(60))).await;
     let security = has_security_extension(server.display, &auth);
     match decision {
         X11CookieDecision::Untrusted { .. } => {

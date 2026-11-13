@@ -560,6 +560,12 @@ pub struct SshConfig {
     /// in a saved connection means [`DEFAULT_X11_UNTRUSTED`].
     #[serde(default = "default_x11_untrusted")]
     pub x11_untrusted: bool,
+    /// Minutes after connecting during which untrusted X11 forwarding accepts
+    /// new X11 connections (OpenSSH's `ForwardX11Timeout`, #5600). `None`
+    /// means [`DEFAULT_X11_UNTRUSTED_TIMEOUT_MINS`]; `0` means no client-side
+    /// limit; values above [`MAX_X11_UNTRUSTED_TIMEOUT_MINS`] are capped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x11_untrusted_timeout_mins: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_monitoring: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -732,6 +738,7 @@ impl Default for SshConfig {
             env: HashMap::new(),
             enable_x11_forwarding: false,
             x11_untrusted: DEFAULT_X11_UNTRUSTED,
+            x11_untrusted_timeout_mins: None,
             enable_monitoring: None,
             enable_file_browser: None,
             save_password: None,
@@ -1174,6 +1181,15 @@ fn default_remove_on_exit() -> bool {
 /// the serde default and the SSH settings schema (and so the editor) all read
 /// it.
 pub const DEFAULT_X11_UNTRUSTED: bool = false;
+
+/// Minutes untrusted X11 forwarding accepts new X11 connections when a
+/// connection does not set `x11UntrustedTimeoutMins` (#5600): OpenSSH's
+/// default `ForwardX11Timeout` of 20 minutes.
+pub const DEFAULT_X11_UNTRUSTED_TIMEOUT_MINS: u32 = 20;
+
+/// The longest untrusted X11 timeout a connection can set, in minutes (one
+/// day). `0` (no limit) is allowed as well.
+pub const MAX_X11_UNTRUSTED_TIMEOUT_MINS: u32 = 24 * 60;
 
 fn default_x11_untrusted() -> bool {
     DEFAULT_X11_UNTRUSTED
@@ -1710,6 +1726,7 @@ mod tests {
         assert!(cfg.env.is_empty());
         assert!(!cfg.enable_x11_forwarding);
         assert_eq!(cfg.x11_untrusted, DEFAULT_X11_UNTRUSTED);
+        assert!(cfg.x11_untrusted_timeout_mins.is_none());
         assert!(cfg.enable_monitoring.is_none());
         assert!(cfg.enable_file_browser.is_none());
         assert!(cfg.save_password.is_none());
@@ -1948,6 +1965,7 @@ mod tests {
             env: HashMap::new(),
             enable_x11_forwarding: true,
             x11_untrusted: true,
+            x11_untrusted_timeout_mins: Some(90),
             enable_monitoring: Some(true),
             enable_file_browser: Some(false),
             save_password: None,
@@ -1982,6 +2000,7 @@ mod tests {
         );
         assert!(back.enable_x11_forwarding);
         assert!(back.x11_untrusted);
+        assert_eq!(back.x11_untrusted_timeout_mins, Some(90));
         assert_eq!(back.enable_monitoring, Some(true));
         assert_eq!(back.enable_file_browser, Some(false));
         assert!(back.save_password.is_none());
