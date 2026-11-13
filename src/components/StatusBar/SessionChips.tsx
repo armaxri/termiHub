@@ -1,15 +1,18 @@
 import { Cable, Route } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { serialStatusChip, sshStatusChip } from "@/utils/sessionStatusChips";
+import { useTabSshHostKeyTrust } from "@/store/sshHostKeyTrustBridge";
 
 /**
  * The SSH chip for the active tab (#5628): `SSH: user@host:port` on every SSH
- * tab, with ` via hop:port` when it jumps, and the auth method in the tooltip.
- * Hidden for non-SSH tabs.
+ * tab, with ` via hop:port` when it jumps, and the auth method and the host
+ * key's trust state (#5669) in the tooltip. Hidden for non-SSH tabs.
  */
 export function SshStatus() {
   const config = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
-  const chip = sshStatusChip(config);
+  const tabId = useAppStore((s) => getActiveTab(s)?.id);
+  const hostKeys = useTabSshHostKeyTrust(tabId);
+  const chip = sshStatusChip(config, hostKeys);
   if (!chip) return null;
   return (
     <span className="status-bar__item" data-testid="status-bar-ssh" title={chip.tooltip}>

@@ -10,6 +10,8 @@ import type { ConnectionConfig } from "@/types/terminal";
 import { getJumpHosts } from "@/utils/jumpHost";
 import { isSshConnectionConfig } from "@/utils/typedConnectionConfig";
 import { connectionConfigFields } from "@/utils/connectionConfigFields";
+import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
+import type { SshHostKeyTrust } from "@/types/generated/SshHostKeyTrust";
 
 /** A status-bar chip: its visible label and its tooltip. */
 export interface SessionChip {
@@ -50,24 +52,48 @@ function authDescription(method: string | undefined, keyPath: string | undefined
   }
 }
 
+/** How a host key was trusted, for the chip tooltip (#5669). */
+const TRUST_WORDING: Record<SshHostKeyTrust, string> = {
+  knownHosts: "trusted via ~/.ssh/known_hosts",
+  remembered: "trusted",
+  firstSeenRemembered: "first seen, accepted and remembered",
+  firstSeenOnce: "first seen, trusted once (this session only)",
+  changedReplaced: "changed, new key accepted and remembered",
+  changedOnce: "changed, trusted once (this session only)",
+};
+
+/** The tooltip line for the target's accepted host key, e.g. `Host key: trusted (SHA256:…)`. */
+export function hostKeyTrustLine(event: SshHostKeyTrustedEvent): string {
+  return `Host key: ${TRUST_WORDING[event.trust]} (${event.fingerprint})`;
+}
+
 /**
  * The SSH chip for an SSH config: `user@host:port`, plus ` via hop:port → …`
  * when it jumps, so a target and bastion that differ only by port stay
- * distinguishable. The tooltip names the auth method (and key). Returns `null`
- * for non-SSH configs or an SSH config without a host.
+ * distinguishable. The tooltip names the auth method (and key) and, once the
+ * session's connect accepted the target's host key (`hostKeys`, #5669), how
+ * that key is trusted. Returns `null` for non-SSH configs or an SSH config
+ * without a host.
  */
-export function sshStatusChip(config: ConnectionConfig | undefined | null): SessionChip | null {
+export function sshStatusChip(
+  config: ConnectionConfig | undefined | null,
+  hostKeys: readonly SshHostKeyTrustedEvent[] = []
+): SessionChip | null {
   if (!isSshConnectionConfig(config)) return null;
   const fields = config.config;
   const host = fields.host?.trim();
   if (!host) return null;
-  const endpoint = `${host}:${numberOr(fields.port, DEFAULT_SSH_PORT)}`;
+  const port = numberOr(fields.port, DEFAULT_SSH_PORT);
+  const endpoint = `${host}:${port}`;
   const target = fields.username ? `${fields.username}@${endpoint}` : endpoint;
   const hops = getJumpHosts(config);
   const label = hops.length > 0 ? `${target} via ${hops.map(hopEndpoint).join(" → ")}` : target;
+  // A jump chain also reports each hop's key; only the target's is shown.
+  const targetKey = hostKeys.find((k) => k.host.trim() === host && k.port === port);
   const tooltip = [
     `SSH: ${label}`,
     `Auth: ${authDescription(fields.authMethod, fields.keyPath)}`,
+    ...(targetKey ? [hostKeyTrustLine(targetKey)] : []),
   ].join("\n");
   return { label, tooltip };
 }
