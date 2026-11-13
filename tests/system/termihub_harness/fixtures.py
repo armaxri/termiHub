@@ -319,12 +319,13 @@ REMOTE_AGENT_KBDINT_CONTAINER_SUFFIX = "remote-agent-kbdint"
 #: Version the armed image advertises (mirrors the compose build arg), so the test
 #: can assert the banner names it.
 REMOTE_AGENT_PENDING_VERSION = "9.9.9"
-#: On the macOS native target the deployed-agent suites log in to the native
-#: sshd, where :func:`install_native_agent` put a host-OS agent (#5424), and
-#: the armed, real-swap and keyboard-interactive suites to its agent-host
-#: variants on fixed ports above it (#5444).
+#: On the macOS and Windows native targets the deployed-agent suites log in to
+#: the native sshd, where :func:`install_native_agent` put a host-OS agent
+#: (#5424, #5511), and on macOS the armed, real-swap and keyboard-interactive
+#: suites to its agent-host variants on fixed ports above it (#5444).
 if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
     REMOTE_AGENT_PORT = NATIVE_SSH_TARGET.port
+if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
     REMOTE_AGENT_PENDING_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "pending")
     REMOTE_AGENT_UPDATE_SWAP_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "swap")
     REMOTE_AGENT_KBDINT_PORT = native_ssh.variant_port(NATIVE_SSH_TARGET, "kbdint")
@@ -1091,14 +1092,31 @@ SYSTEM_TEST_AGENT_TARGET_DIR = Path("target") / "system-test-agent"
 
 def system_test_agent_binary(target: str) -> Path:
     """Where ``build-system-test-agent.sh`` leaves the test-hooks agent for ``target``."""
-    return REPO_ROOT / SYSTEM_TEST_AGENT_TARGET_DIR / target / "release" / "termihub-agent"
+    name = "termihub-agent.exe" if "-windows-" in target else "termihub-agent"
+    return REPO_ROOT / SYSTEM_TEST_AGENT_TARGET_DIR / target / "release" / name
+
+
+def _bash() -> str:
+    """The ``bash`` that runs the repo's scripts: Git Bash on Windows.
+
+    A bare ``bash`` from a Windows Python can resolve to ``System32\\bash.exe``
+    (WSL) ahead of Git Bash (see :func:`~.native_ssh.fixture_argv`).
+    """
+    if sys.platform == "win32":
+        from .git_bash import GIT_BASH_PATHS
+
+        found = next((path for path in GIT_BASH_PATHS if os.path.exists(path)), None)
+        if found is not None:
+            return found
+    return "bash"
 
 
 def build_host_test_agent(*, build_timeout: float = 1500.0) -> Path:
     """Build (a no-op when current) the test-hooks agent for this host (#5424).
 
     ``build-system-test-agent.sh --host``: the same ``--features test-hooks``
-    recipe as the container agent, for the host's own triple, in
+    recipe as the container agent, for the host's own triple (on Windows the
+    ``.exe``, built under Git Bash, #5511), in
     :data:`SYSTEM_TEST_AGENT_TARGET_DIR`. Returns the binary. Raises
     :class:`ContainerRuntimeUnavailable` (a skip) off CI and
     :class:`ComposeFixtureFailed` on CI when the build fails.
@@ -1106,7 +1124,7 @@ def build_host_test_agent(*, build_timeout: float = 1500.0) -> Path:
     script = REPO_ROOT / "scripts" / "internal" / "build-system-test-agent.sh"
     try:
         result = subprocess.run(
-            ["bash", str(script), "--host"],
+            [_bash(), str(script), "--host"],
             check=True,
             timeout=build_timeout,
             capture_output=True,
@@ -1131,20 +1149,47 @@ def build_host_test_agent(*, build_timeout: float = 1500.0) -> Path:
     return built
 
 
+#: The launch path :func:`install_native_agent` installed the agent at on a
+#: Windows host, which the agent definitions must carry (#5511); ``None`` on
+#: macOS, where the app's default ``~/.local/bin/termihub-agent`` is it.
+_native_agent_path: Optional[str] = None
+
+
 def install_native_agent(target: "native_ssh.NativeSshTarget") -> str:
     """Build the host test-hooks agent and install it for the native sshd's user.
 
-    The plain deployed-agent suites then find it where the app runs it,
-    ``$HOME/.local/bin/termihub-agent``, as they do in the ``remote-agent``
-    container (#5424). Returns the installed path.
+    The plain deployed-agent suites then find it where the app runs it, as they
+    do in the ``remote-agent`` container: ``$HOME/.local/bin/termihub-agent``
+    on macOS (#5424), and on Windows where the app's PowerShell deploy step
+    puts it (#5511), whose path :func:`deployed_agent_path` hands the suites.
+    Returns the installed path.
     """
+    global _native_agent_path
     binary = build_host_test_agent()
     control = native_ssh.NativeSshServerControl(target)
     if not control.available:
         raise ContainerRuntimeUnavailable(
             "the native sshd fixture exported no client key to install the agent with"
         )
-    return control.install_agent(binary)
+    try:
+        installed = control.install_agent(binary)
+    except native_ssh.NativeSshExecError as exc:
+        raise _native_host_failed(exc) from exc
+    if sys.platform == "win32":
+        _native_agent_path = installed
+    return installed
+
+
+def deployed_agent_path() -> Optional[str]:
+    """The ``agentPath`` an agent definition for ``remote_agent_fixtures`` needs.
+
+    ``None`` (the app's default ``~/.local/bin/termihub-agent``) for the
+    container and the macOS native sshd. On the Windows native sshd the path
+    :func:`install_native_agent` installed the ``.exe`` at, in the
+    forward-slash form the app stores after its PowerShell deploy step (#5511).
+    Call it after the fixture ran.
+    """
+    return _native_agent_path
 
 
 #: The agent test hook's env (``agent/src/update/test_hook.rs``): arm it with a

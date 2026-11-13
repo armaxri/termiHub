@@ -101,8 +101,10 @@ export const CREDENTIAL_STORAGE_CHANGE_LATER_TEXT =
   "You can change this any time under Settings ▸ Security ▸ Credential storage.";
 
 /**
- * The chooser's options, OS Keychain first (pre-selected). Labels match the
- * Settings ▸ Security options, so the user finds the same choice there.
+ * The credential-storage options, OS Keychain first (recommended, pre-selected
+ * in the chooser). The single list both the first-use chooser and Settings ▸
+ * Security ▸ Credential storage render (#5553), so the user meets the same
+ * order, names, descriptions and badge on both surfaces.
  */
 export const CREDENTIAL_STORAGE_CHOICES: CredentialStorageChoiceCopy[] = [
   {

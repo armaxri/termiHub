@@ -266,3 +266,33 @@ describe("ToastProvider hotkey (#5316)", () => {
     expect(document.activeElement).toBe(document.querySelector("[data-sonner-toaster]"));
   });
 });
+
+describe("ToastProvider stack offset (#5556)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("anchors the stack above the visible bottom banner, 16px from other edges", async () => {
+    render(<ToastProvider />);
+    act(() => {
+      toast.success("Connected");
+    });
+    await waitFor(() => document.querySelector("[data-sonner-toaster]") !== null);
+    const toaster = document.querySelector("[data-sonner-toaster]") as HTMLElement;
+    // BottomBannerRegion publishes --app-bottom-banner-inset (0px when no banner).
+    for (const prefix of ["--offset", "--mobile-offset"]) {
+      expect(toaster.style.getPropertyValue(`${prefix}-bottom`)).toBe(
+        "calc(var(--app-bottom-banner-inset, 0px) + 16px)"
+      );
+      expect(toaster.style.getPropertyValue(`${prefix}-right`)).toBe("16px");
+    }
+  });
+});

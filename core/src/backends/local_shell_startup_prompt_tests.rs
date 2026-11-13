@@ -464,3 +464,40 @@ async fn no_gated_setup_without_the_integration() {
     assert!(s.shell.gated_setup().is_none());
     s.close().await;
 }
+
+/// A shell on the canonical-mode cue (macOS `/bin/bash` 3.2) offers its
+/// pending setup to the session manager with the cap it is typed at, so the
+/// initial command waits for the setup's mark that long (#5525); a shell
+/// announcing its line editor offers it uncapped.
+#[tokio::test]
+#[serial(local_pty)]
+async fn the_offered_setup_carries_its_cap() {
+    let canonical = std::env::var("TERMIHUB_TEST_OLD_BASH").unwrap_or("/bin/bash".into());
+    if installed(&canonical) && ready_signal(&canonical) == ReadySignal::Canonical {
+        let s = Session::start_in(
+            &canonical,
+            serde_json::json!({ "shellIntegration": true }),
+            |home| {
+                std::fs::write(home.join(".bash_profile"), "sleep 2\n").expect("profile");
+            },
+        )
+        .await;
+        let setup = s
+            .shell
+            .gated_setup()
+            .expect("a pending canonical-cue setup");
+        assert!(setup.is_pending());
+        assert_eq!(
+            setup.cap(),
+            Some(crate::backends::local_shell_setup::READY_CAP)
+        );
+        s.close().await;
+    } else {
+        eprintln!("{canonical} is not on the canonical-mode cue — skipping that half");
+    }
+    if let Some(shell) = shell_with_line_editor_mark("zsh") {
+        let s = Session::start(&shell).await;
+        assert_eq!(gated(&s).cap(), None);
+        s.close().await;
+    }
+}

@@ -1032,7 +1032,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     fn gated_setup(&self) -> Option<Arc<dyn GatedSetup>> {
         let setup = self.state.as_ref()?.setup.as_ref()?;
         setup
-            .is_gated()
+            .awaits_line_editor()
             .then(|| Arc::new(GatedHandle(setup.clone())) as Arc<dyn GatedSetup>)
     }
 }

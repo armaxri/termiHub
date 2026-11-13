@@ -16,7 +16,8 @@
 //!    key answering such a question keeps the next prompt fresh (#5515).
 //!    A shell whose bracketed paste is off never sends the mark: the session
 //!    owner then offers to type the setup at the user's word (#5512; see
-//!    [`GatedSetup`]).
+//!    [`GatedSetup`]). On the canonical-mode cue the session owner waits
+//!    for the setup's prompt mark up to its cap (#5525).
 //! 2. **Its echo is filtered out.** At the moment the line is typed, a
 //!    [`SetupEchoFilter`] is armed on the output; it removes the echo up to
 //!    the setup's own end mark, and shows everything as-is when the held
@@ -113,6 +114,20 @@ impl TypedSetup {
     /// **Send now** types it otherwise (#5512).
     pub(crate) fn is_gated(&self) -> bool {
         !self.watching.load(Ordering::SeqCst) && self.state.lock().is_ok_and(|s| s.gate.is_some())
+    }
+
+    /// Whether the setup waits for the line editor at all
+    /// ([`type_when_ready`](Self::type_when_ready)): it is hidden and not
+    /// bootstrapped. Either [`is_gated`](Self::is_gated), or on the
+    /// canonical-mode cue up to [`cap`](Self::cap) (#5525).
+    pub(crate) fn awaits_line_editor(&self) -> bool {
+        self.hide && self.state.lock().is_ok_and(|s| s.watch.is_none())
+    }
+
+    /// The latest the setup is typed after the spawn: [`READY_CAP`] on the
+    /// canonical-mode cue, `None` when gated on the line editor's mark.
+    pub(crate) fn cap(&self) -> Option<Duration> {
+        (!self.is_gated()).then_some(READY_CAP)
     }
 
     /// Type the setup now, unless it already was. Arms the filter first, so
@@ -348,7 +363,8 @@ impl TypedSetup {
     }
 }
 
-/// The session owner's handle on a gated [`TypedSetup`] (#5512).
+/// The session owner's handle on a [`TypedSetup`] waiting for the line
+/// editor (#5512, #5525).
 pub(crate) struct GatedHandle(pub(crate) Arc<TypedSetup>);
 
 impl GatedSetup for GatedHandle {
@@ -359,5 +375,9 @@ impl GatedSetup for GatedHandle {
     fn send_now(&self) {
         debug!("typing the shell-integration setup at the user's word");
         self.0.type_now();
+    }
+
+    fn cap(&self) -> Option<Duration> {
+        self.0.cap()
     }
 }
