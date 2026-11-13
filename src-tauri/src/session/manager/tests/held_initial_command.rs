@@ -139,6 +139,8 @@ struct FakeSetup {
     output: OutputSlot,
     /// Whether typing it brings the prompt mark (a shell that runs it).
     marks: bool,
+    /// [`GatedSetup::cap`]: `Some` for the canonical-mode cue (#5525).
+    cap: Option<Duration>,
 }
 
 impl FakeSetup {
@@ -167,11 +169,22 @@ impl termihub_core::connection::GatedSetup for FakeSetup {
     fn send_now(&self) {
         self.type_it();
     }
+    fn cap(&self) -> Option<Duration> {
+        self.cap
+    }
 }
 
 /// A manager whose session has a held setup and no probe: a shell with
 /// bracketed paste off and the integration on.
 fn setup_manager(marks: bool) -> (SessionManager, Writes, Arc<FakeSetup>) {
+    setup_manager_capped(marks, None)
+}
+
+/// As [`setup_manager`], for a setup typed at the latest at `cap`.
+fn setup_manager_capped(
+    marks: bool,
+    cap: Option<Duration>,
+) -> (SessionManager, Writes, Arc<FakeSetup>) {
     let writes = Writes::default();
     let output = OutputSlot::default();
     let setup = Arc::new(FakeSetup {
@@ -179,6 +192,7 @@ fn setup_manager(marks: bool) -> (SessionManager, Writes, Arc<FakeSetup>) {
         writes: writes.clone(),
         output: output.clone(),
         marks,
+        cap,
     });
     let gated: Arc<dyn termihub_core::connection::GatedSetup> = setup.clone();
     let mut manager = mock_manager(
@@ -190,6 +204,7 @@ fn setup_manager(marks: bool) -> (SessionManager, Writes, Arc<FakeSetup>) {
         output,
     );
     manager.set_held_notice_after(NOTICE_AFTER);
+    manager.set_setup_cap_margin(CAP_MARGIN);
     (manager, writes, setup)
 }
 
@@ -329,6 +344,119 @@ async fn closing_the_session_clears_a_held_setup_and_types_nothing() {
     assert!(written(&writes).is_empty());
 }
 
+// ── A setup on the canonical-mode cue (#5525) ─────────────────────────
+
+/// A canonical-cue setup's cap: past the 1 s mark-only timeout.
+const CAP: Duration = Duration::from_millis(1500);
+const CAP_MARGIN: Duration = Duration::from_millis(300);
+
+fn capped_manager(marks: bool) -> (SessionManager, Writes, Arc<FakeSetup>) {
+    setup_manager_capped(marks, Some(CAP))
+}
+
+#[tokio::test]
+async fn a_capped_setup_holds_the_command_past_the_mark_only_timeout() {
+    let (manager, writes, setup) = capped_manager(true);
+    let emitter = MockEventEmitter::new();
+    open(&manager, &emitter).await;
+
+    // A slow rc file: the setup's cue has not come by the 1 s fallback.
+    tokio::time::sleep(INITIAL_COMMAND_READY_TIMEOUT + Duration::from_millis(200)).await;
+    assert!(written(&writes).is_empty(), "nothing typed blind");
+    assert!(
+        helds(&emitter).is_empty(),
+        "no notice before the setup's cap"
+    );
+
+    // The line editor reads: the setup goes in, its mark sends the command.
+    setup.gate_opens();
+    assert!(
+        within(Duration::from_secs(2), || written(&writes)
+            == b"SETUP\necho hi\r")
+        .await
+    );
+    tokio::time::sleep(CAP + CAP_MARGIN).await;
+    assert_eq!(written(&writes), b"SETUP\necho hi\r", "exactly once");
+    assert!(helds(&emitter).is_empty(), "the prompt came in time");
+}
+
+#[tokio::test]
+async fn a_capped_setup_without_its_mark_holds_the_command_for_send_now() {
+    let (manager, writes, setup) = capped_manager(false);
+    let emitter = MockEventEmitter::new();
+    let sid = open(&manager, &emitter).await;
+
+    // The backend types the setup at its cap; no mark follows.
+    tokio::time::sleep(CAP).await;
+    setup.gate_opens();
+    assert_eq!(written(&writes), SETUP);
+    assert!(helds(&emitter).is_empty(), "the margin is not over yet");
+    assert!(within(Duration::from_secs(3), || helds(&emitter) == [true]).await);
+    assert_eq!(
+        held_events(&emitter)[0],
+        InitialCommandHeldEvent {
+            session_id: sid.clone(),
+            held: true,
+            setup: false,
+            initial_command: true,
+        }
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(written(&writes), SETUP, "the command is never typed blind");
+
+    assert!(manager.send_held_initial_command(&sid));
+    assert!(
+        within(Duration::from_secs(2), || written(&writes)
+            == b"SETUP\necho hi\r")
+        .await
+    );
+    assert!(!manager.send_held_initial_command(&sid));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(written(&writes), b"SETUP\necho hi\r", "exactly once");
+    assert_eq!(helds(&emitter), [true, false], "the notice clears");
+}
+
+#[tokio::test]
+async fn send_now_on_a_still_pending_capped_setup_types_it_first() {
+    let (manager, writes, _setup) = capped_manager(true);
+    let emitter = MockEventEmitter::new();
+    let sid = open(&manager, &emitter).await;
+    assert!(within(Duration::from_secs(4), || helds(&emitter) == [true]).await);
+    assert!(held_events(&emitter)[0].setup);
+    assert!(written(&writes).is_empty());
+
+    assert!(manager.send_held_initial_command(&sid));
+    assert!(
+        within(Duration::from_secs(2), || written(&writes)
+            == b"SETUP\necho hi\r")
+        .await
+    );
+}
+
+#[tokio::test]
+async fn a_capped_setup_without_an_initial_command_shows_no_notice() {
+    let (manager, writes, _setup) = capped_manager(true);
+    let emitter = MockEventEmitter::new();
+    manager
+        .create_connection(
+            "prompt",
+            serde_json::json!({}),
+            None,
+            None,
+            false,
+            false,
+            emitter.clone(),
+        )
+        .await
+        .expect("connect succeeds");
+    tokio::time::sleep(CAP + CAP_MARGIN + Duration::from_millis(300)).await;
+    assert!(
+        helds(&emitter).is_empty(),
+        "the backend types it at its cap"
+    );
+    assert!(written(&writes).is_empty());
+}
+
 // ── The product-test profile, end to end (#5515) ──────────────────────
 
 /// A local zsh from 5.1 (it announces its line editor), if installed.
@@ -446,4 +574,165 @@ async fn local_zsh_startup_question_then_marks_and_the_initial_command() {
         1,
         "the initial command ran once: {out:?}"
     );
+}
+
+// ── macOS /bin/bash 3.2 on the canonical-mode cue, end to end (#5525) ──
+
+/// A local bash older than 5.1 (no bracketed-paste mark: the setup waits
+/// for the canonical-mode cue), if installed: `TERMIHUB_TEST_OLD_BASH`, else
+/// macOS's `/bin/bash` 3.2.
+#[cfg(unix)]
+fn bash_on_the_canonical_cue() -> Option<String> {
+    let bash = std::env::var("TERMIHUB_TEST_OLD_BASH").unwrap_or_else(|_| "/bin/bash".into());
+    let Ok(out) = std::process::Command::new(&bash).arg("--version").output() else {
+        eprintln!("SKIPPED: {bash} is not installed");
+        return None;
+    };
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let version = text
+        .split_whitespace()
+        .skip_while(|w| *w != "version")
+        .nth(1)
+        .unwrap_or("");
+    let mut parts = version.split('.').map(|p| {
+        p.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    });
+    let old = (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) < (5, 1);
+    if !old {
+        eprintln!("SKIPPED: {bash} ({version}) announces its line editor");
+    }
+    old.then_some(bash)
+}
+
+/// Start `bash` with the integration and an initial command in a scratch
+/// `HOME` whose `.bash_profile` is `profile`.
+#[cfg(unix)]
+async fn start_old_bash(
+    bash: &str,
+    profile: &str,
+) -> (
+    SessionManager,
+    Writes,
+    MockEventEmitter,
+    String,
+    tempfile::TempDir,
+) {
+    use super::initial_command::{env_vars, local_shell, recording_manager};
+    let home = tempfile::tempdir().expect("temp home");
+    std::fs::write(home.path().join(".bash_profile"), profile).expect("profile");
+    for dir in [".config", ".local/share", ".local/state", ".cache"] {
+        std::fs::create_dir_all(home.path().join(dir)).expect("scratch dir");
+    }
+    let path = |name: &str| home.path().join(name).to_string_lossy().into_owned();
+    let (manager, writes) = recording_manager("local", local_shell);
+    let settings = serde_json::json!({
+        "shell": bash,
+        "shellIntegration": true,
+        "initialCommand": "echo INITIAL-COMMAND-RAN",
+        "envVars": env_vars(&[
+            ("HOME", &path("")),
+            ("HISTFILE", &path(".bash_history")),
+            ("INPUTRC", &path(".inputrc")),
+            ("XDG_CONFIG_HOME", &path(".config")),
+            ("XDG_DATA_HOME", &path(".local/share")),
+            ("XDG_STATE_HOME", &path(".local/state")),
+            ("XDG_CACHE_HOME", &path(".cache")),
+            ("SHELL_SESSION_HISTORY", "0"),
+            ("BASH_SILENCE_DEPRECATION_WARNING", "1"),
+            ("TERM_PROGRAM", ""),
+        ]),
+    });
+    let emitter = MockEventEmitter::new();
+    let sid = manager
+        .create_connection("local", settings, None, None, false, false, emitter.clone())
+        .await
+        .expect("connect succeeds");
+    (manager, writes, emitter, sid, home)
+}
+
+/// The issue's case: `/bin/bash` 3.2 with a 2 s `sleep` in `.bash_profile`,
+/// the integration on and an initial command. The command used to be typed
+/// after 1 s into the still-cooked tty, ahead of the setup; it now waits for
+/// the setup's prompt mark and runs once, after the rc output, with marks.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn old_bash_slow_rc_runs_the_initial_command_once_after_the_setup() {
+    const RAN: &str = "\x1b]133;C\x07INITIAL-COMMAND-RAN";
+    let Some(bash) = bash_on_the_canonical_cue() else {
+        return;
+    };
+    let (manager, writes, emitter, sid, _home) = start_old_bash(
+        &bash,
+        "echo RC-START\nsleep 2\necho RC-DONE\nPS1='old-bash$ '\n",
+    )
+    .await;
+    let text = || String::from_utf8_lossy(&emitted(&emitter)).into_owned();
+
+    tokio::time::sleep(INITIAL_COMMAND_READY_TIMEOUT + Duration::from_millis(300)).await;
+    assert!(
+        written(&writes).is_empty(),
+        "the initial command was typed during the rc: {:?}",
+        text()
+    );
+    let ran = within(Duration::from_secs(30), || text().contains(RAN)).await;
+    assert!(
+        ran,
+        "the initial command did not run with marks: {:?}",
+        text()
+    );
+    manager.send_input(&sid, b"false\r").await.expect("false");
+    let failed = within(Duration::from_secs(30), || text().contains("\x1b]133;D;1")).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let out = text();
+    let _ = manager.close_session(&sid).await;
+    assert!(failed, "the failed command got no error mark: {out:?}");
+    assert!(out.find("RC-DONE") < out.find(RAN), "{out:?}");
+    assert_eq!(out.matches(RAN).count(), 1, "ran once: {out:?}");
+    assert!(!out.contains("command not found"), "{out:?}");
+    assert_eq!(
+        written(&writes),
+        b"echo INITIAL-COMMAND-RAN\rfalse\r",
+        "termiHub typed the command once, then only the user's input"
+    );
+    assert!(
+        held_events(&emitter).is_empty(),
+        "no notice: the mark came in time"
+    );
+}
+
+/// The setup's mark never comes in time (an rc file slower than the setup's
+/// cap plus the margin): the tab gets the held notice with Send now, and
+/// nothing is typed blind.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn old_bash_without_the_setups_mark_holds_the_initial_command() {
+    use crate::session::manager::held_initial_command::SETUP_CAP_MARGIN;
+    use termihub_core::session::prompt_ready::PROBE_CAP;
+    let Some(bash) = bash_on_the_canonical_cue() else {
+        return;
+    };
+    let (manager, writes, emitter, sid, _home) =
+        start_old_bash(&bash, "echo RC-START\nsleep 60\necho RC-DONE\n").await;
+    let text = || String::from_utf8_lossy(&emitted(&emitter)).into_owned();
+
+    // The setup's cap is the core's `READY_CAP`, the same 10 s as PROBE_CAP.
+    let held = within(
+        PROBE_CAP + SETUP_CAP_MARGIN + Duration::from_secs(5),
+        || !held_events(&emitter).is_empty(),
+    )
+    .await;
+    let events = held_events(&emitter);
+    let out = text();
+    let _ = manager.close_session(&sid).await;
+    assert!(held, "no held notice: {out:?}");
+    assert!(events[0].held && events[0].initial_command, "{events:?}");
+    assert!(
+        written(&writes).is_empty(),
+        "the initial command was typed blind: {out:?}"
+    );
+    assert!(!out.contains("RC-DONE"), "{out:?}");
 }
