@@ -401,6 +401,10 @@ class TestProductRunBackup(_CredsBase):
             expect="the restore preview listing connections, settings and credentials",
         ):
             self.require("backup.wipe")
+            # A wiped profile has no credential store, and credentials only
+            # import into one ("Choose Master Password or OS Keychain first"),
+            # so set the master-password store up the way a user would first.
+            self.setup_master_password_store(MASTER_PASSWORD)
             rows = self.preview_restore(target, BACKUP_PASSPHRASE)
             self.evidence(f"preview: {rows}")
             for section in ("connections", "settings", "credentials"):

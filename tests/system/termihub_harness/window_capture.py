@@ -393,8 +393,8 @@ def _capture_linux(pid: int) -> Frame:
     return parse_xwd(dump.stdout)
 
 
-def _macos_window(pid: int) -> tuple[int, tuple[float, float, float, float]]:
-    """The largest on-screen window owned by ``pid``: its number and its bounds.
+def _macos_windows() -> list[tuple[int, int, tuple[float, float, float, float]]]:
+    """Every on-screen window as ``(owner pid, window number, bounds)``.
 
     Bounds are ``(x, y, width, height)`` in screen points (CoreGraphics).
     """
@@ -438,23 +438,44 @@ def _macos_window(pid: int) -> tuple[int, tuple[float, float, float, float]]:
     windows = cg.CGWindowListCopyWindowInfo(on_screen_only | exclude_desktop, 0)
     if not windows:
         raise CaptureUnavailable("CGWindowListCopyWindowInfo returned no window list")
-    best: Optional[tuple[int, tuple[float, float, float, float]]] = None
-    best_area = -1.0
+    found: list[tuple[int, int, tuple[float, float, float, float]]] = []
     try:
         for i in range(cf.CFArrayGetCount(windows)):
             info = cf.CFArrayGetValueAtIndex(windows, i)
-            if number(info, "kCGWindowOwnerPID") != pid:
+            owner = number(info, "kCGWindowOwnerPID")
+            wid = number(info, "kCGWindowNumber")
+            if owner is None or wid is None:
                 continue
             bounds = cf.CFDictionaryGetValue(info, keys["kCGWindowBounds"])
             rect = tuple(number(bounds, k) or 0.0 for k in ("X", "Y", "Width", "Height"))
-            area = rect[2] * rect[3]
-            wid = number(info, "kCGWindowNumber")
-            if wid is not None and area > best_area:
-                best, best_area = (int(wid), rect), area  # type: ignore[assignment]
+            found.append((int(owner), int(wid), rect))  # type: ignore[arg-type]
     finally:
         cf.CFRelease(windows)
         for ref in keys.values():
             cf.CFRelease(ref)
+    return found
+
+
+def macos_window_owner_pids() -> set[int]:
+    """The PIDs that own an on-screen window right now (macOS only).
+
+    Lets a caller tell whether a process it already identified by PID (e.g. the
+    system's ``SecurityAgent``, which draws keychain prompts) shows a window.
+    """
+    return {owner for owner, _, _ in _macos_windows()}
+
+
+def _macos_window(pid: int) -> tuple[int, tuple[float, float, float, float]]:
+    """The largest on-screen window owned by ``pid``: its number and its bounds.
+
+    Bounds are ``(x, y, width, height)`` in screen points (CoreGraphics).
+    """
+    best: Optional[tuple[int, tuple[float, float, float, float]]] = None
+    best_area = -1.0
+    for owner, wid, rect in _macos_windows():
+        area = rect[2] * rect[3]
+        if owner == pid and area > best_area:
+            best, best_area = (wid, rect), area
     if best is None:
         raise CaptureUnavailable(f"no on-screen window belongs to pid {pid}")
     return best
