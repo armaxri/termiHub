@@ -222,7 +222,7 @@
   border-left-color: var(--accent-color);
 }
 .th-toast[data-type="loading"] [data-icon] {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 /* ── Spinner (loading icon) ─────────────────────────────────────────── */

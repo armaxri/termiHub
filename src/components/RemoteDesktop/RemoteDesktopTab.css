@@ -156,7 +156,7 @@
 }
 
 .rd-overlay__icon {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .rd-overlay__icon--error {
@@ -333,7 +333,7 @@
 }
 
 .rd-drop__icon {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .rd-drop--off .rd-drop__icon {

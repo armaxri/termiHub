@@ -78,7 +78,7 @@
 }
 
 .tunnel-item__host[data-on-agent="true"] {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .tunnel-item__host-icon {
@@ -166,7 +166,7 @@
   background: none;
   border: none;
   padding: 0;
-  color: var(--accent-color);
+  color: var(--text-link);
   font: inherit;
   cursor: pointer;
   text-decoration: underline;

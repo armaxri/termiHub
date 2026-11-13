@@ -15,7 +15,7 @@
 .agent-update-banner__icon {
   display: inline-flex;
   align-items: center;
-  color: var(--accent-color);
+  color: var(--text-accent);
   flex-shrink: 0;
 }
 

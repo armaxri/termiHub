@@ -51,7 +51,7 @@
 .tunnel-diagram__arrow-line {
   font-size: var(--font-size-xl);
   line-height: 1;
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .tunnel-diagram__arrow-label {

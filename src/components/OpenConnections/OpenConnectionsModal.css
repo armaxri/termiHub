@@ -198,7 +198,9 @@
 /* termiHub-managed X server: accent to signal termiHub ownership. */
 .oc-row__badge--managed {
   background: color-mix(in srgb, var(--accent-color) 18%, transparent);
-  color: var(--accent-color);
+  /* #5727: --text-accent misses AA on its own accent tint (Light, Solarized);
+     the tint keeps the accent cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 /* Adopted external X server: neutral, matches the section count chip. */

@@ -531,7 +531,9 @@
 }
 
 .layout-size-badge--custom {
-  color: var(--accent-color);
+  /* #5727: --text-accent misses AA on its own accent tint (Light, Solarized);
+     the tint keeps the accent cue, the label uses --text-primary. */
+  color: var(--text-primary);
   border-color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
