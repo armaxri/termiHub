@@ -16,6 +16,12 @@ import type { Workflow } from "@/types/workflow";
 import type { WorkflowRunState } from "@/store/appStore";
 import { armedDescription, armedTriggers, workflowRowSummary } from "./workflowRowSummary";
 
+/**
+ * How long a row stays marked after it is saved from the editor (#5687). The
+ * `.workflow-item--just-saved` fade in WorkflowSidebar.css runs for the same time.
+ */
+export const WORKFLOW_JUST_SAVED_MS = 3000;
+
 interface WorkflowListItemProps {
   workflow: Workflow;
   /** Whether this workflow is the one currently running (shows a stop affordance). */
@@ -43,6 +49,11 @@ interface WorkflowListItemProps {
    * and the armed indicator (#5635). Unknown ids show as "Unknown connection".
    */
   connectionName?: (connectionId: string) => string | undefined;
+  /**
+   * The row was just saved from the editor: tint it briefly so the user sees
+   * which workflow changed (#5687). Static under reduced motion.
+   */
+  justSaved?: boolean;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
@@ -75,6 +86,7 @@ export function WorkflowListItem({
   onExport,
   onDelete,
   connectionName = noConnectionName,
+  justSaved = false,
   rowRef,
   rowProps,
 }: WorkflowListItemProps) {
@@ -84,6 +96,8 @@ export function WorkflowListItem({
     <SidebarListItem
       ref={rowRef}
       {...rowProps}
+      className={justSaved ? "workflow-item--just-saved" : undefined}
+      data-just-saved={justSaved ? "true" : undefined}
       testId={`workflow-item-${workflow.id}`}
       nameTestId={`workflow-name-${workflow.id}`}
       name={workflow.name}

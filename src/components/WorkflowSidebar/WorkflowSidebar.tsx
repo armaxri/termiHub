@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Play } from "lucide-react";
 import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
@@ -13,9 +13,10 @@ import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useListFilter, nameDescriptionTagsFields } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
-import { WorkflowListItem } from "./WorkflowListItem";
+import { WorkflowListItem, WORKFLOW_JUST_SAVED_MS } from "./WorkflowListItem";
 import { WorkflowHistorySection } from "./WorkflowHistorySection";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
@@ -94,6 +95,13 @@ export function WorkflowSidebar() {
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
   const [runTargets, setRunTargets] = useState<RunTargetsState | null>(null);
+  // The row just saved from the editor, marked briefly so the user sees which
+  // one changed (#5687). `seq` tells two saves of the same workflow apart.
+  const [justSaved, setJustSaved] = useState<{ id: string; seq: number } | null>(null);
+  const justSavedSeq = useRef(0);
+  const scrolledSeq = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = usePrefersReducedMotion();
   const { query, setQuery, filtered } = useListFilter(workflows, nameDescriptionTagsFields);
   const exportWorkflowsToFile = useJsonFileExport("workflows");
   const importWorkflowsFromFile = useJsonFileImport("workflows");
@@ -280,6 +288,8 @@ export function WorkflowSidebar() {
       try {
         await saveWorkflowToBackend(updated);
         setEditing(null);
+        justSavedSeq.current += 1;
+        setJustSaved({ id: updated.id, seq: justSavedSeq.current });
         toast.success(`Saved workflow "${result.name}"`);
       } catch (err) {
         // Keep the dialog open so the edits are not lost on a failed save.
@@ -290,6 +300,30 @@ export function WorkflowSidebar() {
     },
     [editing, saveWorkflowToBackend]
   );
+
+  // Unmark the saved row once its highlight has played out (#5687).
+  useEffect(() => {
+    if (!justSaved) return;
+    const timer = window.setTimeout(
+      () => setJustSaved((current) => (current === justSaved ? null : current)),
+      WORKFLOW_JUST_SAVED_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [justSaved]);
+
+  // Bring the saved row into view once it renders (a new workflow's row may
+  // appear a beat after the save resolves). Scroll once per save, so the list
+  // is not pulled back while the user scrolls during the highlight.
+  useEffect(() => {
+    if (!justSaved || scrolledSeq.current === justSaved.seq) return;
+    const rowTestId = `workflow-item-${justSaved.id}`;
+    const row = Array.from(listRef.current?.children ?? []).find(
+      (el) => el.getAttribute("data-testid") === rowTestId
+    );
+    if (!(row instanceof HTMLElement)) return;
+    scrolledSeq.current = justSaved.seq;
+    row.scrollIntoView?.({ block: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+  }, [justSaved, filtered, reducedMotion]);
 
   // Roving-tabindex keyboard navigation over the filtered list, matching the
   // other management sidebars. Enter runs the focused workflow.
@@ -380,6 +414,7 @@ export function WorkflowSidebar() {
         />
       ) : (
         <div
+          ref={listRef}
           className="workflow-sidebar__list"
           data-testid="workflow-list"
           role="tree"
@@ -404,6 +439,7 @@ export function WorkflowSidebar() {
                 onExport={handleExportOne}
                 onDelete={handleDelete}
                 connectionName={connectionName}
+                justSaved={justSaved?.id === workflow.id}
                 rowRef={ref}
                 rowProps={itemProps}
               />
