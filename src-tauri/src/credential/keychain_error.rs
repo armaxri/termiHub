@@ -83,17 +83,20 @@ pub(crate) fn is_duplicate_item(error: &KeyringError) -> bool {
     os_status(error) == Some(ERR_SEC_DUPLICATE_ITEM)
 }
 
+/// An `OSStatus` with its name, for example `OSStatus -25293 errSecAuthFailed`.
+pub(crate) fn describe_status(code: i32) -> String {
+    let name = STATUS_NAMES
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map_or("unknown", |(_, n)| n);
+    format!("OSStatus {code} {name}")
+}
+
 /// A log- and user-safe description of a keyring error: the variant, the
 /// `OSStatus` (with its name) when there is one, and the platform message.
 /// Never includes a stored value (a `BadEncoding` error carries one).
 pub(crate) fn describe(error: &KeyringError) -> String {
-    let status = os_status(error).map(|code| {
-        let name = STATUS_NAMES
-            .iter()
-            .find(|(c, _)| *c == code)
-            .map_or("unknown", |(_, n)| n);
-        format!(", OSStatus {code} {name}")
-    });
+    let status = os_status(error).map(|code| format!(", {}", describe_status(code)));
     let status = status.unwrap_or_default();
     match error {
         KeyringError::PlatformFailure(inner) => format!("PlatformFailure{status}: {inner}"),
