@@ -647,6 +647,39 @@ impl ConnectionManager {
         }
     }
 
+    /// Store the path a deploy/setup installed the agent to as that agent's
+    /// `agentPath`, so the next connect launches it (#5522).
+    ///
+    /// Applies [`adopted_agent_path`](crate::terminal::agent_install::adopted_agent_path):
+    /// only a Windows install path is stored, and a user-set custom path is
+    /// kept. Edits the stored entry in place — every other field, the
+    /// unknown on-disk ones included, is untouched. Returns whether the stored
+    /// path changed; an unknown agent is an error.
+    pub fn record_agent_install_path(&self, agent_id: &str, installed_path: &str) -> Result<bool> {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        self.sync_from_disk(&mut store);
+        let agent = store
+            .agents
+            .iter_mut()
+            .find(|a| a.id == agent_id)
+            .ok_or_else(|| anyhow::anyhow!("Agent {} not found", agent_id))?;
+        let posix_default = crate::terminal::backend::RemoteAgentConfig::default()
+            .agent_path()
+            .to_string();
+        let Some(path) = crate::terminal::agent_install::adopted_agent_path(
+            agent.config.agent_path.as_deref(),
+            installed_path,
+            &posix_default,
+        ) else {
+            return Ok(false);
+        };
+        agent.config.agent_path = Some(path);
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist the agent install path")?;
+        Ok(true)
+    }
+
     /// Delete a remote agent by ID.
     pub fn delete_agent(&self, id: &str) -> Result<()> {
         // Best-effort credential cleanup: if the store is locked (e.g. master-password
@@ -3366,3 +3399,7 @@ mod unknown_fields_tests;
 #[cfg(test)]
 #[path = "manager_secret_fields_tests.rs"]
 mod secret_fields_tests;
+
+#[cfg(test)]
+#[path = "manager_agent_install_path_tests.rs"]
+mod agent_install_path_tests;
