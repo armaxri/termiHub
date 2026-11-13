@@ -113,7 +113,10 @@ fi
 
 echo "=== Building RDP sidecar (${PROFILE}${TARGET:+, ${TARGET}}) ==="
 # The excluded crate is built by pointing cargo at its own manifest.
-cargo build --manifest-path rdp-sidecar/Cargo.toml "${CARGO_FLAGS[@]}"
+# `${a[@]+"${a[@]}"}` expands an empty array to nothing: a plain "${a[@]}" is an
+# unbound-variable error under `set -u` in bash < 4.4 (macOS /bin/bash 3.2),
+# which broke every flag-less build there (#5606).
+cargo build --manifest-path rdp-sidecar/Cargo.toml ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"}
 
 if [ ! -f "$BIN_PATH" ]; then
     echo "ERROR: expected binary not found at $BIN_PATH" >&2

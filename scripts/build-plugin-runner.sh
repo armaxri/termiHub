@@ -104,7 +104,9 @@ else
 fi
 
 echo "=== Building plugin runner (${PROFILE}${TARGET:+, ${TARGET}}) ==="
-cargo build -p termihub-plugin-runner --bin termihub-plugin-runner "${CARGO_FLAGS[@]}"
+# `${a[@]+"${a[@]}"}`: an empty "${a[@]}" is unbound under `set -u` in bash < 4.4
+# (macOS /bin/bash 3.2, #5606).
+cargo build -p termihub-plugin-runner --bin termihub-plugin-runner ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"}
 
 if [ ! -f "$BIN_PATH" ]; then
     echo "ERROR: expected binary not found at $BIN_PATH" >&2
