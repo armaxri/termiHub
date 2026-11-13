@@ -20,4 +20,9 @@ spawned?: boolean,
  * How X11 forwarding runs for an SSH session with it on (#5586), for the
  * Open Connections panel. Omitted when X11 forwarding is off.
  */
-x11Forwarding?: import("./X11ForwardingMode").X11ForwardingMode, };
+x11Forwarding?: import("./X11ForwardingMode").X11ForwardingMode, 
+/**
+ * Why X11 forwarding is not active for the session, or why it fell back
+ * to the typed setup (#5601). Omitted when it is off or server-forwarded.
+ */
+x11ForwardingReason?: import("./X11ForwardingReason").X11ForwardingReason, };

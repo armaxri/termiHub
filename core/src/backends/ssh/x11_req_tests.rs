@@ -211,6 +211,55 @@ fn the_session_mode_follows_the_reply_and_the_fallback() {
 }
 
 #[test]
+fn the_session_reason_follows_the_reply_and_the_fallback() {
+    use crate::connection::X11ForwardingReason as R;
+    assert_eq!(forwarding_reason(None, true), None, "server-forwarded");
+    assert_eq!(forwarding_reason(None, false), None, "server-forwarded");
+    assert_eq!(
+        forwarding_reason(Some(&X11ReqRefusal::Refused), true),
+        Some(R::ServerRefused)
+    );
+    assert_eq!(
+        forwarding_reason(Some(&X11ReqRefusal::NoReply), true),
+        Some(R::ServerNoReply)
+    );
+    assert_eq!(
+        forwarding_reason(Some(&X11ReqRefusal::ChannelGone), true),
+        Some(R::ServerNoReply)
+    );
+    for refusal in [
+        X11ReqRefusal::Refused,
+        X11ReqRefusal::NoReply,
+        X11ReqRefusal::ChannelGone,
+    ] {
+        assert_eq!(
+            forwarding_reason(Some(&refusal), false),
+            Some(R::FallbackFailed),
+            "{refusal:?}"
+        );
+    }
+}
+
+#[test]
+fn the_session_reason_serializes_for_the_ui() {
+    use crate::connection::X11ForwardingReason as R;
+    for (reason, wire) in [
+        (R::NoLocalXServer, "noLocalXServer"),
+        (R::ServerRefused, "serverRefused"),
+        (R::ServerNoReply, "serverNoReply"),
+        (
+            R::UntrustedNoSecurityExtension,
+            "untrustedNoSecurityExtension",
+        ),
+        (R::UntrustedXauthMissing, "untrustedXauthMissing"),
+        (R::UntrustedXauthFailed, "untrustedXauthFailed"),
+        (R::FallbackFailed, "fallbackFailed"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), wire);
+    }
+}
+
+#[test]
 fn the_session_mode_serializes_for_the_ui() {
     use X11ForwardingMode as M;
     for (mode, wire) in [
@@ -490,6 +539,7 @@ async fn accepted_x11_req_forwards_with_the_real_cookie_locally_only() {
         &resolved(&local, Some(REAL_HEX)),
         alive,
         None,
+        None,
     )
     .await;
     assert_eq!(reported(&forwarder), X11ForwardingMode::ServerForwarded);
@@ -550,6 +600,7 @@ async fn the_grant_lapses_when_the_session_is_no_longer_alive() {
         &resolved(&local, None),
         alive.clone(),
         None,
+        None,
     )
     .await
     .expect("accepted");
@@ -570,6 +621,7 @@ async fn refused_x11_req_selects_the_fallback_and_grants_nothing() {
         &resolved(&local, Some(REAL_HEX)),
         Arc::new(AtomicBool::new(true)),
         None,
+        None,
     )
     .await;
     assert_eq!(reported(&result), X11ForwardingMode::FallbackRefused);
@@ -577,6 +629,47 @@ async fn refused_x11_req_selects_the_fallback_and_grants_nothing() {
     assert!(c.registry.x11_listener().is_none());
     let open = c.server.channel_open_x11("127.0.0.1", 40000).await;
     assert!(open.is_err(), "no x11 channel without an accepted x11-req");
+}
+
+#[tokio::test]
+async fn new_x11_channels_are_refused_after_the_untrusted_timeout() {
+    let (local, mut seen_local) = fake_x_server().await;
+    let mut c = connect(true).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(400);
+    let (_forwarder, _early) = request_x11_forwarding(
+        &mut c.channel,
+        &c.registry,
+        &resolved(&local, Some(REAL_HEX)),
+        Arc::new(AtomicBool::new(true)),
+        None,
+        Some(deadline),
+    )
+    .await
+    .expect("accepted");
+    let (_, fake_hex, _) = c.seen.lock().unwrap().clone().expect("x11-req seen");
+    let fake = hex::decode(&fake_hex).unwrap();
+
+    // Before the timeout: served as usual.
+    let before = open_and_send(&c.server, &fake).await.expect("x11 accepted");
+    let got = tokio::time::timeout(STEP, seen_local.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got, mit(b'l', &REAL));
+
+    // After it: refused at the SSH level, like OpenSSH's ForwardX11Timeout.
+    tokio::time::sleep_until(deadline + ALIVE_POLL).await;
+    let after = c.server.channel_open_x11("127.0.0.1", 40001).await;
+    assert!(
+        matches!(
+            after,
+            Err(russh::Error::ChannelOpenFailure(
+                russh::ChannelOpenFailure::AdministrativelyProhibited
+            ))
+        ),
+        "an x11 channel after the timeout must be refused"
+    );
+    drop(before);
 }
 
 #[tokio::test]
@@ -590,6 +683,7 @@ async fn unanswered_x11_req_selects_the_fallback_and_grants_nothing() {
         Arc::new(AtomicBool::new(true)),
         None,
         Duration::from_millis(200),
+        None,
     )
     .await;
     assert!(c.seen.lock().unwrap().is_some(), "x11-req was sent");

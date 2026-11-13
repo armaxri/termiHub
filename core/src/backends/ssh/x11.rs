@@ -222,6 +222,9 @@ impl X11Forwarder {
     /// socket/DISPLAY/TCP probe. Pass `None` (core standalone / tests) to detect
     /// a user-run server here via [`detect_local_x_server`].
     ///
+    /// With a `deadline` (untrusted forwarding, #5585), X11 connections that
+    /// arrive after it are closed unserved.
+    ///
     /// Returns `(forwarder, remote_display_number, xauth_cookie)`.
     pub async fn start(
         _config: &SshConfig,
@@ -229,6 +232,7 @@ impl X11Forwarder {
         registry: ForwardedChannelRegistry,
         alive: Arc<AtomicBool>,
         resolved: Option<ResolvedXServer>,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<(Self, u32, Option<String>), SessionError> {
         // Use the provisioner-resolved server as-is; without one, detect a
         // user-run server here (the sole fallback probe on the connect path).
@@ -291,6 +295,13 @@ impl X11Forwarder {
                     biased;
                     incoming = channel_rx.recv() => {
                         match incoming {
+                            Some(_) if !super::x11_untrusted::accepts_new_connection(
+                                deadline,
+                                tokio::time::Instant::now(),
+                            ) => {
+                                // Dropping the channel closes it.
+                                info!("X11 forwarding: refused an X11 connection after the timeout");
+                            }
                             Some(ch) => {
                                 debug!("X11 forwarding: accepted new channel");
                                 let local_x = local_x.clone();

@@ -152,6 +152,7 @@ pub(super) async fn maps_with_session() -> (Sessions, Tasks, Overrides, Arc<Coun
                 agent_id: None,
                 spawned: false,
                 x11_forwarding: None,
+                x11_forwarding_reason: None,
             },
             remote_session_id: None,
             line_ending: LineEnding::default(),
