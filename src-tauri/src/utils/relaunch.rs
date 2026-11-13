@@ -99,10 +99,7 @@ impl RelaunchCommand {
             .filter(|(name, _)| !is_relaunch_marker(name))
             .collect();
         let identity = identity_names(&env).join(",");
-        env.push((
-            RELAUNCH_AFTER_PID_ENV.into(),
-            parent_pid.to_string().into(),
-        ));
+        env.push((RELAUNCH_AFTER_PID_ENV.into(), parent_pid.to_string().into()));
         env.push((RELAUNCH_IDENTITY_ENV.into(), identity.into()));
         Self {
             program,
@@ -185,7 +182,10 @@ pub fn identity_not_kept(
     parent_env
         .iter()
         .filter(|(name, _)| !is_relaunch_marker(name))
-        .filter(|(name, _)| name.to_str().is_some_and(|n| n.starts_with(IDENTITY_PREFIX)))
+        .filter(|(name, _)| {
+            name.to_str()
+                .is_some_and(|n| n.starts_with(IDENTITY_PREFIX))
+        })
         .filter(|(name, value)| command.env_value(name) != Some(value.as_os_str()))
         .map(|(name, _)| name.to_string_lossy().into_owned())
         .collect()
@@ -365,6 +365,8 @@ pub fn prepare_relaunched_process() {
 /// (see [`relaunch_pending`]). A failed spawn is returned and the app keeps
 /// running.
 pub fn relaunch_app(app: &tauri::AppHandle, spawner: &dyn Spawner) -> io::Result<()> {
+    use tauri::Manager;
+
     let env = app.env();
     let program = tauri::process::current_binary(&env)?;
     let args = env.args_os.iter().skip(1).cloned().collect::<Vec<_>>();
