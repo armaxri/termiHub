@@ -316,3 +316,65 @@ fn process_alive_sees_this_process_and_not_a_finished_one() {
     child.wait().unwrap();
     assert!(!process_alive(pid));
 }
+
+// ── executable resolution (#5678) ─────────────────────────────────────────
+
+/// The app was started through a symlinked directory (like a slot's `target/`
+/// symlink): the relaunch resolves and starts the real binary, with the same
+/// environment and arguments, instead of refusing the symlinked path.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_executable_path_relaunches_the_real_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_dir = dir.path().join("build-volume").join("debug");
+    std::fs::create_dir_all(&real_dir).unwrap();
+    let real_binary = real_dir.join("termihub");
+    std::fs::write(&real_binary, b"").unwrap();
+    let link = dir.path().join("target");
+    std::os::unix::fs::symlink(dir.path().join("build-volume"), &link).unwrap();
+    let launched_as = link.join("debug").join("termihub");
+
+    let program = resolve_executable(|| Ok(launched_as.clone())).unwrap();
+    assert_eq!(program, dunce::canonicalize(&real_binary).unwrap());
+    assert!(!program.starts_with(&link));
+
+    let spawner = RecordingSpawner::default();
+    let args = vec![OsString::from("--workspace"), OsString::from("Main")];
+    spawn_relaunch(
+        &spawner,
+        program.clone(),
+        args.clone(),
+        isolated_env(),
+        4242,
+    )
+    .unwrap();
+    let spawned = spawner.spawned.borrow();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0].program, program);
+    assert_eq!(spawned[0].args, args);
+    assert!(identity_not_kept(&isolated_env(), &spawned[0]).is_empty());
+}
+
+#[test]
+fn an_executable_path_without_symlinks_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("termihub");
+    std::fs::write(&binary, b"").unwrap();
+    let canonical = dunce::canonicalize(&binary).unwrap();
+    assert_eq!(
+        resolve_executable(|| Ok(canonical.clone())).unwrap(),
+        canonical
+    );
+}
+
+#[test]
+fn an_unresolvable_executable_is_an_error_not_a_relaunch() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("gone").join("termihub");
+    let err = resolve_executable(|| Ok(missing.clone())).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    assert!(err.to_string().contains("gone"));
+
+    let err = resolve_executable(|| Err(io::Error::other("no current exe"))).unwrap_err();
+    assert!(err.to_string().contains("no current exe"));
+}

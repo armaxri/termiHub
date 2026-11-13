@@ -357,6 +357,28 @@ pub fn prepare_relaunched_process() {
     }
 }
 
+/// The real path of the running executable, for the relaunch (#5678).
+///
+/// `current_exe` (in production [`std::env::current_exe`]) is resolved with
+/// `dunce::canonicalize` ([`std::fs::canonicalize`] without the Windows `\\?\`
+/// verbatim prefix), so an app started through a path containing a
+/// symlink — a symlinked `target/` dir, an `/Applications` alias — relaunches
+/// the real binary. Tauri's `current_binary` refused such a path on macOS
+/// ("contains a symlink on a non-allowed platform") and the restart failed.
+/// Only the program path changes; the environment and arguments of the
+/// relaunch are untouched.
+pub fn resolve_executable(
+    current_exe: impl FnOnce() -> io::Result<PathBuf>,
+) -> io::Result<PathBuf> {
+    let exe = current_exe()?;
+    dunce::canonicalize(&exe).map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!("cannot resolve the executable {}: {err}", exe.display()),
+        )
+    })
+}
+
 /// Relaunch the running app with its environment and arguments, then exit it.
 ///
 /// Spawns the relaunch first (see [`spawn_relaunch`]); only when that worked
@@ -368,7 +390,7 @@ pub fn relaunch_app(app: &tauri::AppHandle, spawner: &dyn Spawner) -> io::Result
     use tauri::Manager;
 
     let env = app.env();
-    let program = tauri::process::current_binary(&env)?;
+    let program = resolve_executable(std::env::current_exe)?;
     let args = env.args_os.iter().skip(1).cloned().collect::<Vec<_>>();
     spawn_relaunch(
         spawner,
