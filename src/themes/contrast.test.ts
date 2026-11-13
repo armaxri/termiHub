@@ -93,6 +93,68 @@ function accentTintAlpha(cssVar: string): number {
 const BG_SELECTED_ALPHA = accentTintAlpha("--bg-selected");
 const BG_SELECTED_HOVER_ALPHA = accentTintAlpha("--bg-selected-hover");
 
+/**
+ * The share of `hue` in an opaque banner surface token in `styles/variables.css`
+ * (`--bg-banner-warning: color-mix(in srgb, var(--color-warning) 4%,
+ * var(--bg-secondary))` yields 0.04), read from the stylesheet so the grade
+ * follows the shipped CSS.
+ */
+function bannerTintAlpha(cssVar: string, hue: string): number {
+  const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+  const m = new RegExp(
+    `${cssVar}:\\s*color-mix\\(in srgb, var\\(${hue}\\) (\\d+(?:\\.\\d+)?)%, var\\(--bg-secondary\\)\\)`
+  ).exec(css);
+  if (!m) throw new Error(`${cssVar} is not a ${hue} mix over --bg-secondary in variables.css`);
+  return Number(m[1]) / 100;
+}
+
+/**
+ * App-level bottom banners (#5547): the crash notice (warning surface) and the
+ * file-manager prompt (info surface) paint their subtitle and ghost buttons in
+ * `--text-secondary`, which each banner redirects to
+ * `--text-secondary-on-selection`. Plain `--text-secondary` measured ~4.1:1 on
+ * the former 10% warm tint and 4.4:1 on the 10% accent tint.
+ */
+describe("bottom banner text contrast (WCAG 2.2 AA, #5547)", () => {
+  const surfaces = [
+    ["--bg-banner-warning", "--color-warning", "colorWarning"],
+    ["--bg-banner-info", "--accent-color", "accentColor"],
+  ] as const;
+
+  for (const theme of BUILT_IN_THEMES) {
+    for (const [cssVar, hue, hueKey] of surfaces) {
+      const bg = composite(
+        theme.colors[hueKey],
+        theme.colors.bgSecondary,
+        bannerTintAlpha(cssVar, hue)
+      );
+      for (const token of ["textPrimary", "textSecondaryOnSelection"] as const) {
+        const fg = theme.colors[token];
+        it(`${theme.id} ${token} (${fg}) meets AA on ${cssVar} (${bg})`, () => {
+          expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+        });
+      }
+      // The amber icon (with the amber top border) is what marks the crash
+      // notice as a warning, so it must read as a graphic (1.4.11). The info
+      // banner's folder icon is decorative; its text carries the meaning.
+      if (hueKey === "colorWarning") {
+        it(`${theme.id} warning icon reaches 3:1 on ${cssVar} (${bg})`, () => {
+          expect(contrastRatio(theme.colors[hueKey], bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+        });
+      }
+    }
+  }
+
+  it.each([
+    ["components/Diagnostics/Diagnostics.css", ".crash-report-notice"],
+    ["components/ShellIntegrationBanner/ShellIntegrationBanner.css", ".shell-integration-banner"],
+  ])("%s redirects --text-secondary on %s", (file, selector) => {
+    const css = readFileSync(join(SRC_DIR, file), "utf8");
+    const block = new RegExp(`${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`).exec(css);
+    expect(block?.[1]).toMatch(/--text-secondary:\s*var\(--text-secondary-on-selection\)/);
+  });
+});
+
 describe("theme text contrast (WCAG 2.2 AA)", () => {
   const cases = [
     ...BUILT_IN_THEMES.map((theme) => ({ theme, token: "textMuted" as const })),
@@ -784,5 +846,31 @@ describe("ansi palettes keep their canonical values (#5309)", () => {
     const xterm = getXtermTheme();
     expect(xterm.brightBlack).toBe(xterm.background);
     applyTheme("dark");
+  });
+});
+
+/**
+ * OSC 133 command marks (#5563): the success/failure gutter bar is a non-text
+ * indicator on the terminal background, so it needs 3:1 (SC 1.4.11). It used to
+ * paint the tokens at 75% opacity, which dropped Dark's failure red to ~3.7:1 —
+ * readable on paper but easy to miss next to bright prompt text. The bar now
+ * paints the full-strength token (see Terminal.command-mark-style.test.ts).
+ */
+describe("command-mark colours on the terminal background (WCAG 2.2 SC 1.4.11, #5563)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    for (const token of ["colorSuccess", "colorError"] as const) {
+      const fg = theme.colors[token];
+      const bg = theme.colors.terminalBg;
+      it(`${theme.id} ${token} (${fg}) reaches 3:1 on terminalBg (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+      });
+    }
+  }
+
+  it("documents the gap: Dark's failure red at the old 75% opacity was weaker", () => {
+    const dimmed = composite(darkTheme.colors.colorError, darkTheme.colors.terminalBg, 0.75);
+    expect(contrastRatio(dimmed, darkTheme.colors.terminalBg)).toBeLessThan(
+      contrastRatio(darkTheme.colors.colorError, darkTheme.colors.terminalBg)
+    );
   });
 });

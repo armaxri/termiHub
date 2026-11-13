@@ -51,6 +51,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "integration: launches the real built app/agent (needs `pnpm tauri build`)",
+    "product_run: on-demand full product run (#5518) — deselected unless --product-run; run via scripts/internal/product-run.sh",
     "manual: guided-manual test — automated setup then an operator prompt (skipped unless --manual + TTY)",
     "requires_tools(*tools, platforms=None): runner tools the test needs; checked once at session start (termihub_harness/tool_preflight.py, #5340)",
     "native_sshd(platforms=('darwin', 'win32')): the suite runs against the native sshd fixture where TERMIHUB_SYSTEM_SSH_TARGET=native (termihub_harness/native_ssh.py, #5176)",

@@ -1287,8 +1287,9 @@ impl SessionManager {
         // The hook-free prompt check for the initial command (#5029).
         let prompt_probe = connection.prompt_probe();
         let probe_uncapped = connection.prompt_probe_uncapped();
-        // A typed setup waiting for the line editor's mark without a cap
-        // (#5512): the initial command waits for the mark it brings.
+        // A typed setup waiting for the line editor, for its mark (#5512) or
+        // for its canonical-mode cue (#5525, #5564): the initial command waits
+        // for the mark it brings.
         let gated_setup = connection.gated_setup().filter(|s| s.is_pending());
 
         let info = SessionInfo {
@@ -1479,8 +1480,8 @@ impl SessionManager {
 
         // Send the initial command once the shell waits at its prompt: the
         // OSC 133 prompt-start mark, else the backend's hook-free probe, else
-        // a timeout (#4345, #5029). Behind a gated setup only the mark it
-        // brings, or the user's Send now, sends it (#5512).
+        // a timeout (#4345, #5029). Behind a pending typed setup only the mark
+        // it brings, or the user's Send now, sends it (#5512, #5525).
         if let (Some(cmd), Some(ready)) = (initial_command, prompt_ready) {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
@@ -1517,7 +1518,8 @@ impl SessionManager {
                 Self::inject_initial_command(&sessions, &sid, &cmd).await;
             });
         } else if let Some(setup) = gated_setup {
-            // No initial command: the setup alone is held (#5512).
+            // No initial command: the setup alone is held (#5512), on the
+            // canonical-mode cue past its cap (#5564).
             let sid = session_id.clone();
             let held = self.held_initial_commands.clone();
             // Not app-owned (#3105): stopped with the session's reader.

@@ -230,6 +230,10 @@ export function Tab({
     />
   );
   const shownTitle = displayTitle ?? tab.title;
+  // The tab's tooltip always carries the full title (#5557) — the title is
+  // ellipsized only when the strip is full — and spells out what the grey
+  // dirty dot means, which a dot alone cannot.
+  const tabTooltip = isDirty ? `${shownTitle} (unsaved changes)` : shownTitle;
   // Under reduced motion the connecting glyph is static (#4039), so a steady
   // text label beside it carries the "still connecting" signal instead.
   const reducedMotion = usePrefersReducedMotion();
@@ -324,7 +328,7 @@ export function Tab({
           onClose();
         }
       }}
-      title={shownTitle}
+      title={tabTooltip}
       data-testid={`tab-${tab.id}`}
       {...attributes}
       {...listeners}
@@ -370,13 +374,14 @@ export function Tab({
       )}
       <span className="tab__title">
         {isDirty && (
-          <span
-            className="tab__dirty-dot"
-            role="img"
-            aria-label="Unsaved changes"
-            title="Unsaved changes"
-            data-testid={`tab-dirty-dot-${tab.id}`}
-          />
+          <Tooltip content="Unsaved changes" side="bottom">
+            <span
+              className="tab__dirty-dot"
+              role="img"
+              aria-label="Unsaved changes"
+              data-testid={`tab-dirty-dot-${tab.id}`}
+            />
+          </Tooltip>
         )}
         {shownTitle}
       </span>

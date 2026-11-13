@@ -262,7 +262,8 @@ _WINDOWS_NO_DAEMON_SKIPS = [
     )
     for index, prefix in enumerate(
         [
-            "deployed-agent container fixture",
+            # #5511: the plain deployed-agent suites run against the native
+            # sshd's host agent there; only the macOS-only variants skip.
             "armed deployed-agent container fixture",
             "keyboard-interactive deployed-agent fixture",
             "real-swap deployed-agent container fixture",

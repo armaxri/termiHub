@@ -233,6 +233,7 @@ unmount.
 | `getAttribute`             | Read an element's markup attribute                             |
 | `getValue`                 | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
 | `getComputedStyle`         | Read a _computed_ CSS property — incl. theme custom properties |
+| `measureElement`           | Read an element's box, overflow and visible buttons / text     |
 | `readTerminal`             | Read a terminal's reconstructed logical-line text              |
 | `getTerminalViewport`      | Read a terminal's `{ viewportY, baseY }` scroll position       |
 | `inspectTerminal`          | Read a terminal's OSC 133 marks and inline-image store         |
@@ -252,6 +253,7 @@ unmount.
 | `closeWindow`              | Close this window through the OS close path (see below)        |
 | `listWindows`              | Read the backend window registry (`[{ label, tabCount? }]`)    |
 | `osInputProbe`             | Read the OS key/pointer events the webview got (`isTrusted`)   |
+| `forceHover`               | Test-only: paint an element's `:hover` rules (no OS pointer)   |
 | `readCoverage`             | Read a chunk of `window.__coverage__` (coverage builds only)   |
 | `exitApp`                  | Test-only: quit the app normally (coverage profiles, below)    |
 | `stubNativeDialog`         | Test-only: answer the next native open/save dialog (below)     |

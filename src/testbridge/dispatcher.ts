@@ -8,8 +8,11 @@ import type {
   CoverageChunk,
   DragModifiers,
   DragObservations,
+  ForceHoverResult,
   FrontendLogRecord,
   JsErrorsResult,
+  MeasuredBox,
+  MeasuredElement,
   OsInputProbeResult,
   TerminalCellRow,
   TerminalInspection,
@@ -21,6 +24,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { isComposableControl, replayComposition } from "./composition";
 import { frontendDurableInfo } from "@/utils/frontendLog";
 import { armInputProbe, inputProbeEvents } from "./inputProbe";
+import { clearForcedHover, forceHover } from "./forcedHover";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -626,6 +630,55 @@ export function readCoverageChunk(
 const PROJECTION_UNAVAILABLE =
   "projection recorder is not available (test bridge not in projection mode)";
 
+/** A DOMRect as a plain box (CSS pixels). */
+function boxOf(el: Element): MeasuredBox {
+  const r = el.getBoundingClientRect();
+  return { x: r.x, y: r.y, width: r.width, height: r.height };
+}
+
+/** Whether `el` is rendered: a non-empty box and not hidden by style. */
+function isRendered(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return false;
+  const style = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
+  return style.display !== "none" && style.visibility !== "hidden";
+}
+
+/** Whether `el` holds a non-blank text node of its own. */
+function hasOwnText(el: Element): boolean {
+  return Array.from(el.childNodes).some(
+    (n) => n.nodeType === Node.TEXT_NODE && (n.textContent ?? "").trim() !== ""
+  );
+}
+
+/** The `measureElement` result for `el` (#5535). */
+function measureElement(el: Element, descendants?: "buttons" | "text"): MeasuredElement {
+  const result: MeasuredElement = {
+    rect: boxOf(el),
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    title: el.getAttribute("title"),
+    text: (el.textContent ?? "").trim(),
+  };
+  if (descendants) {
+    const nodes =
+      descendants === "buttons"
+        ? Array.from(el.querySelectorAll('button, [role="button"]'))
+        : Array.from(el.querySelectorAll("*")).filter(hasOwnText);
+    result.items = nodes.map((node) => ({
+      testId: node.getAttribute("data-testid"),
+      label: node.getAttribute("aria-label"),
+      text: (node.textContent ?? "").trim(),
+      rect: boxOf(node),
+      visible: isRendered(node),
+      overflows: node.scrollWidth > node.clientWidth,
+    }));
+  }
+  return result;
+}
+
 const ok = (action: BridgeCommand["action"], value?: unknown): BridgeResponse =>
   value === undefined ? { ok: true, action } : { ok: true, action, value };
 
@@ -732,6 +785,12 @@ export async function dispatchCommand(
       const view = doc.defaultView ?? window;
       const value = view.getComputedStyle(el).getPropertyValue(command.property).trim();
       return ok("getComputedStyle", value);
+    }
+
+    case "measureElement": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("measureElement", `no element with data-testid="${command.testId}"`);
+      return ok("measureElement", measureElement(el, command.descendants));
     }
 
     case "sampleCanvas": {
@@ -1359,6 +1418,17 @@ export async function dispatchCommand(
         ...(rect ? { rect } : {}),
       };
       return ok("osInputProbe", result);
+    }
+
+    case "forceHover": {
+      const doc = ownerDocument(deps.root);
+      if (command.testId == null) {
+        clearForcedHover(doc);
+        return ok("forceHover", { rules: 0 } satisfies ForceHoverResult);
+      }
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("forceHover", `no element with data-testid="${command.testId}"`);
+      return ok("forceHover", { rules: forceHover(el) } satisfies ForceHoverResult);
     }
 
     case "readCoverage": {

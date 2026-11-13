@@ -8,15 +8,17 @@
 //!    starting, the kernel's cooked-mode tty echoes the line at once — ahead
 //!    of the rc output — and the line editor echoes it again later. So the
 //!    line waits until the line editor is reading (the PTY left canonical
-//!    mode; see `line_editor_reading`), bounded by [`READY_CAP`]. Input the
-//!    user types before that sends the setup first, so it never splits or
-//!    swallows their command. A shell that announces its line editor with
+//!    mode; see `line_editor_reading`). Past [`READY_CAP`] it is held, not
+//!    typed blind into a still-cooked tty (#5564). Input the user types
+//!    before that sends the setup first, so it never splits or swallows their
+//!    command. A shell that announces its line editor with
 //!    bracketed paste waits for that instead, with no cap, because a startup
 //!    question leaves canonical mode too (#5452; see [`ReadySignal`]). One
 //!    key answering such a question keeps the next prompt fresh (#5515).
 //!    A shell whose bracketed paste is off never sends the mark: the session
 //!    owner then offers to type the setup at the user's word (#5512; see
-//!    [`GatedSetup`]).
+//!    [`GatedSetup`]). On the canonical-mode cue the session owner does the
+//!    same past the setup's cap (#5525, #5564).
 //! 2. **Its echo is filtered out.** At the moment the line is typed, a
 //!    [`SetupEchoFilter`] is armed on the output; it removes the echo up to
 //!    the setup's own end mark, and shows everything as-is when the held
@@ -41,7 +43,9 @@ use super::local_shell_setup_watch::{PromptWatch, Verdict};
 use crate::connection::{GatedSetup, OutputSender, PromptProbe};
 use crate::output::setup_echo::{HideOutcome, SetupEchoFilter};
 
-/// Upper bound on waiting for the line editor before typing the setup anyway.
+/// How long a setup on the canonical-mode cue waits for the line editor
+/// before it counts as held: the session owner then offers **Send now**
+/// (#5564). It is still typed when the line editor takes over later.
 pub(crate) const READY_CAP: Duration = Duration::from_secs(10);
 
 /// How often the line-editor probe is polled.
@@ -115,6 +119,21 @@ impl TypedSetup {
         !self.watching.load(Ordering::SeqCst) && self.state.lock().is_ok_and(|s| s.gate.is_some())
     }
 
+    /// Whether the setup waits for the line editor at all
+    /// ([`type_when_ready`](Self::type_when_ready)): it is hidden and not
+    /// bootstrapped. Either [`is_gated`](Self::is_gated), or on the
+    /// canonical-mode cue up to [`cap`](Self::cap) (#5525).
+    pub(crate) fn awaits_line_editor(&self) -> bool {
+        self.hide && self.state.lock().is_ok_and(|s| s.watch.is_none())
+    }
+
+    /// How long after the spawn the setup waits for its cue before it counts
+    /// as held: [`READY_CAP`] on the canonical-mode cue, `None` when gated on
+    /// the line editor's mark. Either way it is never typed blind (#5564).
+    pub(crate) fn cap(&self) -> Option<Duration> {
+        (!self.is_gated()).then_some(READY_CAP)
+    }
+
     /// Type the setup now, unless it already was. Arms the filter first, so
     /// no byte of the echo can pass before it is watching.
     pub(crate) fn type_now(self: &Arc<Self>) {
@@ -145,12 +164,13 @@ impl TypedSetup {
         }
     }
 
-    /// Type the setup once the line editor reads (`reading`), or at
-    /// [`READY_CAP`]; gives up when the session ends (`alive` cleared).
-    /// With a [`PasteGate`] the line editor must also have announced a fresh
-    /// line, and there is no cap: typing blind could answer a startup
-    /// question (#5452). The session owner offers **Send now** instead
-    /// ([`GatedSetup`], #5512).
+    /// Type the setup once the line editor reads (`reading`); gives up when
+    /// the session ends (`alive` cleared). With a [`PasteGate`] the line
+    /// editor must also have announced a fresh line: typing blind could
+    /// answer a startup question (#5452). There is no cap: typed into a
+    /// still-cooked tty, the kernel would echo the setup ahead of the rc
+    /// output, and an rc `read` would take it as its answer (#5564). The
+    /// session owner offers **Send now** instead ([`GatedSetup`], #5512).
     pub(crate) fn type_when_ready(self: Arc<Self>, reading: PromptProbe, alive: Arc<AtomicBool>) {
         let _ = self.reading.set(reading.clone());
         std::thread::spawn(move || {
@@ -165,11 +185,8 @@ impl TypedSetup {
                     break;
                 }
                 let waited = start.elapsed();
-                if gate.is_none() && waited >= READY_CAP {
-                    debug!("no line editor seen; typing the setup anyway");
-                    break;
-                }
-                // A shell stuck at a startup question can wait for hours.
+                // A shell stuck at a startup question, or in a slow rc file,
+                // can wait for hours.
                 std::thread::sleep(if waited >= READY_CAP {
                     READY_POLL * 10
                 } else {
@@ -348,7 +365,8 @@ impl TypedSetup {
     }
 }
 
-/// The session owner's handle on a gated [`TypedSetup`] (#5512).
+/// The session owner's handle on a [`TypedSetup`] waiting for the line
+/// editor (#5512, #5525).
 pub(crate) struct GatedHandle(pub(crate) Arc<TypedSetup>);
 
 impl GatedSetup for GatedHandle {
@@ -359,5 +377,9 @@ impl GatedSetup for GatedHandle {
     fn send_now(&self) {
         debug!("typing the shell-integration setup at the user's word");
         self.0.type_now();
+    }
+
+    fn cap(&self) -> Option<Duration> {
+        self.0.cap()
     }
 }

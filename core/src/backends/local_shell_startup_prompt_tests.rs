@@ -464,3 +464,136 @@ async fn no_gated_setup_without_the_integration() {
     assert!(s.shell.gated_setup().is_none());
     s.close().await;
 }
+
+/// A shell on the canonical-mode cue (macOS `/bin/bash` 3.2) offers its
+/// pending setup to the session manager with the cap it is typed at, so the
+/// initial command waits for the setup's mark that long (#5525); a shell
+/// announcing its line editor offers it uncapped.
+#[tokio::test]
+#[serial(local_pty)]
+async fn the_offered_setup_carries_its_cap() {
+    let canonical = std::env::var("TERMIHUB_TEST_OLD_BASH").unwrap_or("/bin/bash".into());
+    if installed(&canonical) && ready_signal(&canonical) == ReadySignal::Canonical {
+        let s = Session::start_in(
+            &canonical,
+            serde_json::json!({ "shellIntegration": true }),
+            |home| {
+                std::fs::write(home.join(".bash_profile"), "sleep 2\n").expect("profile");
+            },
+        )
+        .await;
+        let setup = s
+            .shell
+            .gated_setup()
+            .expect("a pending canonical-cue setup");
+        assert!(setup.is_pending());
+        assert_eq!(
+            setup.cap(),
+            Some(crate::backends::local_shell_setup::READY_CAP)
+        );
+        s.close().await;
+    } else {
+        eprintln!("{canonical} is not on the canonical-mode cue — skipping that half");
+    }
+    if let Some(shell) = shell_with_line_editor_mark("zsh") {
+        let s = Session::start(&shell).await;
+        assert_eq!(gated(&s).cap(), None);
+        s.close().await;
+    }
+}
+
+/// A bash on the canonical-mode cue (macOS `/bin/bash` 3.2), if installed:
+/// `TERMIHUB_TEST_OLD_BASH`, else `/bin/bash`.
+fn bash_on_the_canonical_cue() -> Option<String> {
+    let bash = std::env::var("TERMIHUB_TEST_OLD_BASH").unwrap_or("/bin/bash".into());
+    if installed(&bash) && ready_signal(&bash) == ReadySignal::Canonical {
+        Some(bash)
+    } else {
+        eprintln!("{bash} is not on the canonical-mode cue (5.1+ or missing) — skipping");
+        None
+    }
+}
+
+/// Start `bash` with the integration on, its rc file `echo RC-START`, then
+/// `sleep secs`, then `echo RC-DONE` and a fixed prompt. Soak past the
+/// setup's cap and check that nothing was typed blind (#5564): the setup is
+/// still pending, and no byte of it reached the screen.
+async fn old_bash_past_the_cap(bash: &str, secs: u32) -> Session {
+    use crate::backends::local_shell_setup::READY_CAP;
+    let start = std::time::Instant::now();
+    let rc = format!("echo RC-START\nsleep {secs}\necho RC-DONE\nPS1='{PROMPT} '\n");
+    let mut s = Session::start_in(
+        bash,
+        serde_json::json!({ "shellIntegration": true }),
+        |home| {
+            std::fs::write(home.join(".bash_profile"), &rc).expect("profile");
+            std::fs::write(home.join(".bashrc"), &rc).expect("bashrc");
+        },
+    )
+    .await;
+    s.read_until("the rc output", |t| t.contains("RC-START"))
+        .await;
+    let past_cap = READY_CAP + Duration::from_millis(800);
+    s.soak(past_cap.saturating_sub(start.elapsed())).await;
+    let text = s.text();
+    assert!(
+        !text.contains("RC-DONE"),
+        "the rc is still running: {text:?}"
+    );
+    assert!(
+        !text.contains("printf") && !text.contains("6973;"),
+        "the setup was typed blind into the cooked tty: {text:?}"
+    );
+    let setup = s.shell.gated_setup().expect("the setup is offered");
+    assert!(setup.is_pending(), "the setup is held past its cap");
+    s
+}
+
+/// #5564: an rc file slower than the setup's cap (`READY_CAP`, 10 s). The
+/// setup is held, not typed into the still-cooked tty, and still goes in
+/// (hidden) once the line editor takes over: the marks follow.
+#[tokio::test]
+#[serial(local_pty)]
+async fn old_bash_setup_past_its_cap_waits_for_the_line_editor() {
+    let Some(bash) = bash_on_the_canonical_cue() else {
+        return;
+    };
+    let mut s = old_bash_past_the_cap(&bash, 12).await;
+    s.read_until("the integrated prompt", |t| {
+        t.contains("RC-DONE") && t.contains("\x1b]133;A")
+    })
+    .await;
+    assert!(!s.shell.gated_setup().is_some_and(|g| g.is_pending()));
+    let text = s.text();
+    assert!(
+        !text.contains("printf"),
+        "the setup's echo showed: {text:?}"
+    );
+    assert_exit_marks(&mut s).await;
+    assert!(!s.text().contains("command not found"), "{:?}", s.text());
+    s.close().await;
+}
+
+/// #5564: a setup held past its cap goes in on the session owner's **Send
+/// now** (the user asked for it), exactly once, and the marks follow when
+/// the shell reads it.
+#[tokio::test]
+#[serial(local_pty)]
+async fn old_bash_held_setup_goes_in_on_send_now() {
+    let Some(bash) = bash_on_the_canonical_cue() else {
+        return;
+    };
+    let mut s = old_bash_past_the_cap(&bash, 14).await;
+    let setup = s.shell.gated_setup().expect("the setup is offered");
+    setup.send_now();
+    assert!(!setup.is_pending());
+    setup.send_now(); // a second Send now types nothing
+    s.read_until("the integrated prompt", |t| {
+        t.contains("RC-DONE") && t.contains("\x1b]133;A")
+    })
+    .await;
+    assert_exit_marks(&mut s).await;
+    let text = s.text();
+    assert!(!text.contains("command not found"), "{text:?}");
+    s.close().await;
+}

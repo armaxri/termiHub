@@ -186,6 +186,54 @@ export interface GetComputedStyleCommand {
   property: string;
 }
 
+/**
+ * Measure an element's layout box and overflow, and optionally its visible
+ * descendants (#5535): the product run grades "fits on one line", "nothing is
+ * clipped" and "the leaf folder is fully visible" from these numbers, which no
+ * other verb exposes.
+ *
+ * `descendants: "buttons"` lists every `button` / `[role=button]` inside;
+ * `"text"` lists every element that holds its own non-blank text node. Each
+ * entry says whether it is rendered (non-zero box, not `display: none` /
+ * `visibility: hidden`) and whether its own content overflows it
+ * (`scrollWidth > clientWidth`, i.e. clipped or ellipsized).
+ */
+export interface MeasureElementCommand {
+  action: "measureElement";
+  testId: string;
+  descendants?: "buttons" | "text";
+}
+
+/** One box in a {@link MeasureElementCommand} result (CSS pixels, viewport-relative). */
+export interface MeasuredBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The `value` of a {@link MeasureElementCommand}. */
+export interface MeasuredElement {
+  rect: MeasuredBox;
+  scrollWidth: number;
+  clientWidth: number;
+  scrollHeight: number;
+  clientHeight: number;
+  title: string | null;
+  text: string;
+  items?: MeasuredItem[];
+}
+
+/** A descendant in a {@link MeasuredElement}. */
+export interface MeasuredItem {
+  testId: string | null;
+  label: string | null;
+  text: string;
+  rect: MeasuredBox;
+  visible: boolean;
+  overflows: boolean;
+}
+
 /** A canvas pixel coordinate (backing-store pixels, not CSS pixels). */
 export interface CanvasPoint {
   x: number;
@@ -1049,6 +1097,26 @@ export interface OsInputProbeResult {
   rect?: { left: number; top: number; width: number; height: number };
 }
 
+/**
+ * Render an element as hovered without moving the OS pointer (#5538).
+ *
+ * A synthetic event never sets `:hover`, so this clones every `:hover` rule the
+ * app ships into a bridge-owned stylesheet keyed on an attribute and sets that
+ * attribute on the element and its ancestors: the browser then paints and
+ * computes the real hover rules. Without `testId` it clears a forced hover. The
+ * value is `{ rules }`, the number of `:hover` rules cloned (`0` when cleared).
+ */
+export interface ForceHoverCommand {
+  action: "forceHover";
+  /** Element to hover; absent = clear the forced hover. */
+  testId?: string;
+}
+
+/** The value of a {@link ForceHoverCommand}. */
+export interface ForceHoverResult {
+  rules: number;
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
@@ -1065,6 +1133,7 @@ export type BridgeCommand =
   | GetAttributeCommand
   | GetValueCommand
   | GetComputedStyleCommand
+  | MeasureElementCommand
   | SampleCanvasCommand
   | DragCommand
   | DragToCommand
@@ -1087,6 +1156,7 @@ export type BridgeCommand =
   | CloseWindowCommand
   | ListWindowsCommand
   | OsInputProbeCommand
+  | ForceHoverCommand
   | ReadCoverageCommand
   | ExitAppCommand
   | StubNativeDialogCommand

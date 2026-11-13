@@ -130,6 +130,14 @@ def pytest_addoption(parser):
         "Without it they skip, so CI / AI-agent / normal runs stay green.",
     )
     parser.addoption(
+        "--product-run",
+        action="store_true",
+        default=False,
+        help="Run the on-demand @pytest.mark.product_run suites (#5518). Without it "
+        "they are deselected, so no CI lane collects them. Use "
+        "scripts/internal/product-run.sh, which also serves the live progress page.",
+    )
+    parser.addoption(
         "--manual-platform",
         action="store",
         default=None,
@@ -179,6 +187,7 @@ def pytest_collection_modifyitems(config, items):
     marker, e.g. ``@pytest.mark.manual(platforms=["macos", "windows"])``; omitting
     ``platforms`` runs it everywhere.
     """
+    _deselect_product_run(config, items)
     enabled = bool(config.getoption("manual"))
     interactive = sys.stdin.isatty()
     selected = config.getoption("manual_platform") or detect_platform()
@@ -196,6 +205,52 @@ def pytest_collection_modifyitems(config, items):
         if reason:
             item.add_marker(pytest.mark.skip(reason=reason))
     native_ssh.apply_markers(items, NATIVE_SSH_TARGET)
+
+
+# ── On-demand product run (#5518) ─────────────────────────────────────────────
+# A product run is triggered by hand only. Its suites are *deselected* (not
+# skipped) without --product-run, so no lane counts them as skips and the skip
+# guard's budgets stay untouched. See termihub_harness/product_run.
+PRODUCT_RUN_MARKER = "product_run"
+
+
+def _deselect_product_run(config, items):
+    if config.getoption("product_run"):
+        return
+    dropped = [item for item in items if item.get_closest_marker(PRODUCT_RUN_MARKER)]
+    if not dropped:
+        return
+    config.hook.pytest_deselected(items=dropped)
+    items[:] = [item for item in items if not item.get_closest_marker(PRODUCT_RUN_MARKER)]
+
+
+def _finish_product_run(session):
+    config = session.config
+    if not config.getoption("product_run") or hasattr(config, "workerinput"):
+        return
+    from termihub_harness.product_run import recorder_from_env
+
+    recorder = recorder_from_env()
+    if recorder is not None and recorder.status_path.is_file():
+        recorder.finish(exit_status=int(session.exitstatus))
+        print(f"\n[product-run] results: {recorder.run_dir / 'results.json'}")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    """A product-run test fails (in its call phase) when one of its steps failed.
+
+    Steps record their failure and let the suite carry on (ProductRunUi.step),
+    so the test body itself returns normally.
+    """
+    result = yield
+    if pyfuncitem.get_closest_marker(PRODUCT_RUN_MARKER) is not None:
+        from termihub_harness.product_run.ui import failed_steps_of
+
+        failed = failed_steps_of(pyfuncitem.instance)
+        if failed:
+            pytest.fail("product-run steps failed: " + ", ".join(failed), pytrace=False)
+    return result
 
 
 # ── Runner-tool preflight (#5340) ─────────────────────────────────────────────
@@ -563,6 +618,7 @@ def pytest_sessionfinish(session, exitstatus):
     flush the guided-manual report."""
     hang_guard.close()
     _LEAKS.extend(app_leaks.reap_leaks("the session"))
+    _finish_product_run(session)
     _enforce_skip_guard(session)
     _enforce_rerun_budget(session)
     config = session.config
@@ -983,7 +1039,9 @@ def traceroute_fixtures():
 @tool_preflight.fixture_needs("docker")
 def remote_agent_fixtures():
     """Deployed-agent SSH container (compose profile ``agent``, port 2211), or
-    on the macOS native target the native sshd with a host agent installed.
+    on the macOS and Windows native targets the native sshd with a host agent
+    installed (on Windows where the app's PowerShell deploy step puts it, see
+    :func:`~termihub_harness.deployed_agent_path`).
 
     Unlike ``ssh_fixtures``, this bakes a freshly-built ``termihub-agent`` binary
     into the image, so a live connect finds the agent already installed (#995).
@@ -994,8 +1052,9 @@ def remote_agent_fixtures():
     toolchain (or without Docker) stay green.
     """
     if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
-        # macOS native target (#5424): a host-OS test-hooks agent installed for
-        # the native sshd's user stands in for the container's baked-in one.
+        # macOS / Windows native target (#5424, #5511): a host-OS test-hooks
+        # agent installed for the native sshd's user stands in for the
+        # container's baked-in one.
         try:
             install_native_agent(NATIVE_SSH_TARGET)
         except ContainerRuntimeUnavailable as exc:
@@ -1025,7 +1084,7 @@ def remote_agent_pending_fixtures():
     binary staging, and skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
-    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
         # macOS native target (#5444): the fixture's armed agent-host variant.
         try:
             return native_pending_variant(NATIVE_SSH_TARGET)
@@ -1064,7 +1123,7 @@ def remote_agent_update_swap_fixtures():
     reset the same way per attempt (#5444). Skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
-    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
         # macOS native target (#5444): the swap variant, reset per attempt.
         try:
             return native_swap_host(NATIVE_SSH_TARGET)
@@ -1096,7 +1155,7 @@ def remote_agent_kbdint_fixtures():
     reads sshd's accept lines from (``logs()``): the container, or on the
     macOS native target the ``kbdint`` variant (#5444).
     """
-    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
         # macOS native target (#5444): the keyboard-interactive variant (CI's
         # root sshd only). Its ``logs()`` carry sshd's accept lines.
         try:

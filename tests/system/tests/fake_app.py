@@ -29,6 +29,7 @@ UNHANDLED_ACTIONS: frozenset[str] = frozenset(
         "type",
         "getText",
         "getAttribute",
+        "measureElement",
         "sampleCanvas",
         "editorCursor",
         # Needs the real agent transport.
@@ -330,6 +331,8 @@ def dispatcher_like(
                     "hasFocus": True,
                 },
             }
+        if action == "forceHover":
+            return {"ok": True, "action": "forceHover", "value": {"rules": 0}}
         if action == "readCoverage":
             if coverage is None:
                 return {"ok": True, "action": "readCoverage", "value": None}

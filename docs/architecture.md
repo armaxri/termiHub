@@ -1636,6 +1636,19 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
     **Limitation:** a keychain item that was never indexed and whose key cannot be derived (e.g. a
     file-editor sudo password saved under a host label by a build that predates the index) cannot
     be discovered; re-saving it records it.
+  - **Items another build wrote** (#5514, #5527). On macOS a keychain item trusts only the build
+    that wrote it, by its code signature, and every ad-hoc signed build (each dev rebuild, each
+    update of the unsigned beta) has a new one. Such an item reads as `errSecAuthFailed`, or
+    shows an access prompt; "Always Allow" trusts only the build that asked, so the next update
+    asks again. termiHub reads an unindexed one as absent and fails closed on an indexed one with
+    a message that names the recovery (allow the prompt, or save the secret again). Saving
+    replaces an item this build may not read: it is looked up by its attributes and deleted
+    without reading its value (no prompt), then written again
+    (`src-tauri/src/credential/keychain_unread.rs`). Dev and test-instance builds go further
+    (`ItemPolicy::Isolated`): their namespace is shared by every build and profile of a
+    checkout, so an item their index does not list is never read or deleted, and a write
+    always replaces the item without reading it. A rebuilt dev build with a fresh profile
+    therefore never prompts for an earlier build's item.
 - **None** — Passwords are prompted at connection time and never persisted (the default for new installations).
 
 Credential storage is managed through the Security section in Settings.

@@ -42,6 +42,12 @@
   --tab-border: #12151d;
   --tab-active-border: var(--accent-color);
   --tab-height: 35px;
+  /* Tab sizing (#5557): tabs grow to fit their title up to the max and shrink
+     toward the min only when the strip is full. */
+  --tab-min-width: 120px;
+  --tab-max-width: 240px;
+  /* OSC 133 command-mark gutter bar width (#5563). */
+  --terminal-command-mark-width: 3px;
 
   /* Text colors */
   --text-primary: #dde1ec;
@@ -83,6 +89,18 @@
   --color-error-bg: color-mix(in srgb, var(--color-error) 12%, transparent);
   --bg-warning: color-mix(in srgb, var(--color-warning) 12%, transparent);
   --border-warning: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  /*
+   * App-level bottom banners (#5547, #5558): opaque surfaces derived from the
+   * status-bar surface so they belong to every theme's palette. The warning
+   * banner (crash notices) keeps only a faint amber cast and carries its
+   * semantics in a 1px amber top border plus the amber icon; the info banner
+   * (file-manager prompt) a faint accent cast. Their secondary text renders in
+   * --text-secondary-on-selection, graded >= 4.5:1 on both surfaces in
+   * src/themes/contrast.test.ts.
+   */
+  --bg-banner-info: color-mix(in srgb, var(--accent-color) 6%, var(--bg-secondary));
+  --bg-banner-warning: color-mix(in srgb, var(--color-warning) 4%, var(--bg-secondary));
+  --border-banner-warning: color-mix(in srgb, var(--color-warning) 60%, var(--bg-secondary));
   /*
    * Notice amber: brighter than --color-warning, reserved for
    * "update available" indicator dots (status bar + update notification).

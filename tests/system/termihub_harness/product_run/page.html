@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>termiHub product run</title>
+    <!-- Live progress page of one product run (#5518). Self-contained: it polls
+         status.js next to it, so it works served (with a working Done button)
+         and opened as a file (Done is then a one-line shell command). -->
+    <style>
+      :root {
+        --bg: #f7f7f5;
+        --panel: #ffffff;
+        --text: #1d1f23;
+        --muted: #5b616b;
+        --line: #dcdde0;
+        --pass: #17723a;
+        --fail: #b3261e;
+        --nt: #6b6f76;
+        --run: #1f5fb8;
+        --human: #8a5a00;
+        --human-bg: #fff4dc;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #15171b;
+          --panel: #1e2126;
+          --text: #e7e9ec;
+          --muted: #a1a7b0;
+          --line: #33373e;
+          --pass: #5fd08a;
+          --fail: #ff8a80;
+          --nt: #a1a7b0;
+          --run: #7fb0ff;
+          --human: #ffcf70;
+          --human-bg: #3a2f17;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 -apple-system,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px 16px 60px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 4px;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .counts {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 12px 0 18px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .s-pass {
+        color: var(--pass);
+      }
+      .s-fail {
+        color: var(--fail);
+      }
+      .s-not-tested {
+        color: var(--nt);
+      }
+      .s-running {
+        color: var(--run);
+      }
+      .s-human {
+        color: var(--human);
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+      }
+      .human {
+        background: var(--human-bg);
+        border-color: var(--human);
+      }
+      .human h2 {
+        margin: 0 0 6px;
+        font-size: 16px;
+        color: var(--human);
+      }
+      .human button {
+        font: inherit;
+        padding: 6px 14px;
+        margin: 8px 8px 0 0;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+      }
+      .human button.primary {
+        background: var(--pass);
+        border-color: var(--pass);
+        color: #fff;
+      }
+      code,
+      pre {
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        margin: 6px 0 0;
+      }
+      h3 {
+        font-size: 13px;
+        text-transform: none;
+        color: var(--muted);
+        margin: 22px 0 8px;
+      }
+      .step-head {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
+      }
+      .step-title {
+        font-weight: 600;
+        flex: 1 1 260px;
+      }
+      .step-id {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .reason {
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .shots {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .shots img {
+        width: 200px;
+        max-width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+      }
+      .current {
+        outline: 2px solid var(--run);
+      }
+      .sev-P1 {
+        color: var(--fail);
+      }
+      .sev-P2 {
+        color: var(--human);
+      }
+      .sev-P3 {
+        color: var(--nt);
+      }
+      .finding-meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>termiHub product run</h1>
+      <div class="meta" id="meta">Waiting for the run to start…</div>
+      <div class="counts" id="counts"></div>
+      <div id="human"></div>
+      <div id="review"></div>
+      <div id="steps"></div>
+    </main>
+    <script>
+      "use strict";
+      const STATUS_LABEL = {
+        pass: "pass",
+        fail: "fail",
+        "not-tested": "not tested",
+        running: "running",
+        human: "your turn",
+      };
+      let lastHumanToken = null;
+
+      function el(tag, attrs, ...children) {
+        const node = document.createElement(tag);
+        for (const [key, value] of Object.entries(attrs || {})) {
+          if (key === "class") node.className = value;
+          else node.setAttribute(key, value);
+        }
+        for (const child of children) {
+          if (child == null) continue;
+          node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+        }
+        return node;
+      }
+
+      function pill(status) {
+        return el("span", { class: `pill s-${status}` }, STATUS_LABEL[status] || status);
+      }
+
+      async function answer(token, result) {
+        const note = result === "done" ? "" : prompt("What did you see? (optional)") || "";
+        const res = await fetch("api/human", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, result, note }),
+        });
+        if (!res.ok) alert("Could not record the answer: " + (await res.text()));
+      }
+
+      function renderHuman(doc) {
+        const box = document.getElementById("human");
+        const ask = doc.human;
+        if (!ask) {
+          box.replaceChildren();
+          lastHumanToken = null;
+          return;
+        }
+        if (ask.token === lastHumanToken) return; // keep a half-typed note
+        lastHumanToken = ask.token;
+        const panel = el(
+          "div",
+          { class: "panel human" },
+          el("h2", {}, "Your turn"),
+          el("div", {}, ask.instruction),
+          el("div", { class: "reason" }, "Expected: " + ask.expected)
+        );
+        if (location.protocol === "file:") {
+          const cmd = `echo '{"result":"done"}' > '${doc.run_dir || "."}/${ask.answer_file}'`;
+          panel.append(el("div", { class: "reason" }, "When done, run:"), el("pre", {}, cmd));
+        } else {
+          const done = el("button", { class: "primary" }, "Done");
+          done.onclick = () => answer(ask.token, "done");
+          const failed = el("button", {}, "It did not work");
+          failed.onclick = () => answer(ask.token, "failed");
+          const skip = el("button", {}, "Skip");
+          skip.onclick = () => answer(ask.token, "skip");
+          panel.append(el("div", {}, done, failed, skip));
+        }
+        box.replaceChildren(panel);
+      }
+
+      function renderStep(step, current) {
+        const node = el(
+          "div",
+          { class: "panel" + (step.id === current ? " current" : "") },
+          el(
+            "div",
+            { class: "step-head" },
+            pill(step.status),
+            el("span", { class: "step-title" }, step.title),
+            el("span", { class: "step-id" }, step.id)
+          )
+        );
+        if (step.reason) node.append(el("div", { class: "reason" }, step.reason));
+        if (step.evidence && step.evidence.length) {
+          node.append(el("pre", {}, step.evidence.join("\n")));
+        }
+        if (step.screenshots && step.screenshots.length) {
+          const shots = el("div", { class: "shots" });
+          for (const file of step.screenshots) {
+            const img = el("img", { src: file, alt: `${step.title} screenshot`, loading: "lazy" });
+            shots.append(el("a", { href: file, target: "_blank" }, img));
+          }
+          node.append(shots);
+        }
+        return node;
+      }
+
+      window.__productRun = function (doc) {
+        const s = doc.summary || {};
+        document.getElementById("meta").textContent =
+          `${doc.run_id} · ${doc.state} · started ${doc.started_at}` +
+          (doc.finished_at ? ` · finished ${doc.finished_at}` : "") +
+          (doc.profile && doc.profile.dev_name
+            ? ` · keychain namespace ${doc.profile.dev_name}`
+            : "");
+        document.title = `termiHub product run (${doc.state})`;
+        document
+          .getElementById("counts")
+          .replaceChildren(
+            ...["pass", "fail", "not-tested", "human", "running"]
+              .filter((k) => s[k])
+              .map((k) => el("span", { class: `pill s-${k}` }, `${s[k]} ${STATUS_LABEL[k]}`))
+          );
+        renderHuman(doc);
+        const list = document.getElementById("steps");
+        const byPhase = new Map();
+        for (const step of doc.steps || []) {
+          if (!byPhase.has(step.phase)) byPhase.set(step.phase, []);
+          byPhase.get(step.phase).push(step);
+        }
+        const nodes = [];
+        for (const [phase, steps] of byPhase) {
+          nodes.push(el("h3", {}, phase));
+          for (const step of steps) nodes.push(renderStep(step, doc.current));
+        }
+        list.replaceChildren(...nodes);
+      };
+
+      // The UI review (#5538): review/findings.js, written by
+      // scripts/internal/product-run-review.py merge after the reviewers ran.
+      window.__productRunReview = function (doc) {
+        const box = document.getElementById("review");
+        const c = doc.counts || {};
+        const nodes = [
+          el("h3", {}, "UI review"),
+          el(
+            "div",
+            { class: "counts" },
+            ...["P1", "P2", "P3"].map((k) =>
+              el("span", { class: `pill sev-${k}` }, `${c[k] || 0} ${k}`)
+            ),
+            el(
+              "span",
+              { class: "finding-meta" },
+              `${doc.raw_count} reported, merged ${doc.generated_at}`
+            )
+          ),
+        ];
+        for (const bad of doc.rejected || []) {
+          nodes.push(
+            el("div", { class: "panel reason" }, `Rejected ${bad.file}: ${bad.errors.join("; ")}`)
+          );
+        }
+        for (const f of doc.findings || []) {
+          const panel = el(
+            "div",
+            { class: "panel" },
+            el(
+              "div",
+              { class: "step-head" },
+              el("span", { class: `pill sev-${f.severity}` }, f.severity),
+              el("span", { class: "step-title" }, f.finding),
+              el("span", { class: "step-id" }, `${f.id} · ${f.kind} · ${f.surface}`)
+            ),
+            el("div", { class: "reason" }, "Suggestion: " + f.suggestion)
+          );
+          const shots = el("div", { class: "shots" });
+          for (const file of f.screenshots || []) {
+            const img = el("img", { src: file, alt: `${f.id} screenshot`, loading: "lazy" });
+            shots.append(el("a", { href: file, target: "_blank" }, img));
+          }
+          panel.append(shots);
+          nodes.push(panel);
+        }
+        box.replaceChildren(...nodes);
+      };
+
+      function load(src) {
+        const script = document.createElement("script");
+        script.src = src + "?t=" + Date.now();
+        script.onload = script.onerror = () => script.remove();
+        document.head.append(script);
+      }
+      function poll() {
+        load("status.js");
+        load("review/findings.js");
+      }
+      poll();
+      setInterval(poll, 1500);
+    </script>
+  </body>
+</html>

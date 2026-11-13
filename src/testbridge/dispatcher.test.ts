@@ -156,6 +156,73 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("measureElement", () => {
+    /** Give an element a fake box and scroll/client widths (jsdom lays out nothing). */
+    function fakeBox(el: Element, width: number, scrollWidth = width): void {
+      el.getBoundingClientRect = () =>
+        ({ x: 1, y: 2, width, height: width ? 10 : 0 }) as unknown as DOMRect;
+      Object.defineProperty(el, "scrollWidth", { configurable: true, value: scrollWidth });
+      Object.defineProperty(el, "clientWidth", { configurable: true, value: width });
+    }
+
+    it("reports the box, overflow, title and text of an element", async () => {
+      const { deps, container } = setup(`<nav data-testid="bar" title="/a/b/c">/ a b c</nav>`);
+      fakeBox(container.querySelector("nav") as Element, 100, 140);
+      const res = await dispatchCommand({ action: "measureElement", testId: "bar" }, deps);
+      expect(res).toMatchObject({
+        ok: true,
+        value: {
+          rect: { x: 1, y: 2, width: 100, height: 10 },
+          scrollWidth: 140,
+          clientWidth: 100,
+          title: "/a/b/c",
+          text: "/ a b c",
+        },
+      });
+      expect((res.value as { items?: unknown }).items).toBeUndefined();
+    });
+
+    it("lists buttons with their visibility and overflow", async () => {
+      const { deps, container } = setup(
+        `<div data-testid="row"><button data-testid="up" aria-label="Up"></button>` +
+          `<span role="button" data-testid="more">More</span>` +
+          `<button data-testid="gone" style="display:none"></button></div>`
+      );
+      fakeBox(container.querySelector('[data-testid="up"]') as Element, 20);
+      fakeBox(container.querySelector('[data-testid="more"]') as Element, 20, 30);
+      fakeBox(container.querySelector('[data-testid="gone"]') as Element, 0);
+      const res = await dispatchCommand(
+        { action: "measureElement", testId: "row", descendants: "buttons" },
+        deps
+      );
+      const items = (res.value as { items: Array<Record<string, unknown>> }).items;
+      expect(items.map((i) => [i.testId, i.label, i.visible, i.overflows])).toEqual([
+        ["up", "Up", true, false],
+        ["more", null, true, true],
+        ["gone", null, false, false],
+      ]);
+    });
+
+    it("lists only elements with their own text for descendants: text", async () => {
+      const { deps } = setup(
+        `<nav data-testid="bar"><span><b>home</b></span><span> </span><i>leaf</i></nav>`
+      );
+      const res = await dispatchCommand(
+        { action: "measureElement", testId: "bar", descendants: "text" },
+        deps
+      );
+      const items = (res.value as { items: Array<{ text: string }> }).items;
+      expect(items.map((i) => i.text)).toEqual(["home", "leaf"]);
+    });
+
+    it("fails when the element is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "measureElement", testId: "ghost" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
+    });
+  });
+
   describe("click", () => {
     it("dispatches a bubbling click the element's handler observes", async () => {
       const { deps, container } = setup(`<button data-testid="go">Go</button>`);
