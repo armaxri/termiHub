@@ -23,11 +23,15 @@ let container: HTMLDivElement;
 let root: Root;
 const realRect = Element.prototype.getBoundingClientRect;
 
-function render(currentPath: string, onNavigate = vi.fn()) {
+function render(currentPath: string, onNavigate = vi.fn(), onCopyPath?: () => void) {
   act(() => {
     root.render(
       <TooltipProvider>
-        <CollapsingBreadcrumbs currentPath={currentPath} onNavigate={onNavigate} />
+        <CollapsingBreadcrumbs
+          currentPath={currentPath}
+          onNavigate={onNavigate}
+          onCopyPath={onCopyPath}
+        />
       </TooltipProvider>
     );
   });
@@ -116,5 +120,55 @@ describe("CollapsingBreadcrumbs", () => {
       item!.click();
     });
     expect(onNavigate).toHaveBeenCalledWith("/Users/arne");
+  });
+
+  it("renders the fold as a visible button and the root as an icon (#5624)", () => {
+    width.value = 200;
+    render(LONG_LOCAL);
+    const trigger = container.querySelector('[data-testid="file-browser-crumb-overflow"]')!;
+    expect(trigger.classList.contains("file-browser__crumb--overflow")).toBe(true);
+    const rootCrumb = container.querySelector('[data-testid="file-browser-crumb-/"]')!;
+    expect(rootCrumb.querySelector("svg")).not.toBeNull();
+    expect(rootCrumb.getAttribute("aria-label")).toBe("Root folder (/)");
+  });
+
+  it("keeps the direct parent, middle-truncated, when it fits (#5624)", () => {
+    const parent = "a-very-long-parent-folder-name";
+    width.value = 200;
+    render(`/home/${parent}/leaf`);
+    expect(visible()).toEqual(["/", "…", parent, "leaf"]);
+    const crumb = container.querySelector<HTMLElement>(
+      `[data-testid="file-browser-crumb-${parent}"]`
+    )!;
+    // Head ellipsizes, tail stays: "a-very-long-pa…der-name".
+    expect(crumb.querySelector(".file-browser__crumb-head")?.textContent).toBe(
+      parent.slice(0, parent.length - 8)
+    );
+    expect(crumb.querySelector(".file-browser__crumb-tail")?.textContent).toBe(parent.slice(-8));
+    expect(crumb.getAttribute("title")).toBe(parent);
+    const group = crumb.closest<HTMLElement>(".file-browser__crumb-group")!;
+    expect(group.classList.contains("file-browser__crumb-group--truncated")).toBe(true);
+    expect(group.style.maxWidth).toMatch(/px$/);
+  });
+
+  it("copies the full path from the fold's menu (#5624)", async () => {
+    width.value = 200;
+    const onCopyPath = vi.fn();
+    render(LONG_LOCAL, vi.fn(), onCopyPath);
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[data-testid="file-browser-crumb-overflow"]'
+    )!;
+    await act(async () => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    const copy = document.querySelector<HTMLElement>(
+      '[data-testid="file-browser-crumb-menu-copy-path"]'
+    );
+    expect(copy).not.toBeNull();
+    await act(async () => {
+      copy!.click();
+    });
+    expect(onCopyPath).toHaveBeenCalledTimes(1);
   });
 });

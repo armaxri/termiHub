@@ -45,6 +45,9 @@ function input(overrides: Partial<FileBrowserActionsInput> = {}): FileBrowserAct
     onPaste: noop,
     onNewFile: noop,
     onNewFolder: noop,
+    onCopyPath: noop,
+    sort: { key: "name", dir: "asc" },
+    onSort: noop,
     ...overrides,
   };
 }
@@ -141,9 +144,11 @@ describe("buildFileBrowserActions", () => {
     render(buildFileBrowserActions(input()));
     await openFileBrowserMoreMenu();
     expect(menuLabels()).toEqual([
-      "Go to terminal working directory",
-      "Send cd for this folder to the terminal",
+      "Follow terminal folder",
+      "Copy path",
+      "Open this folder in terminal",
       "Paste",
+      "Sort by",
       "Show hidden files",
       "Open dual-pane transfer view",
       "Reveal in Finder",
@@ -152,6 +157,10 @@ describe("buildFileBrowserActions", () => {
     const menu = document.querySelector('[data-testid="file-browser-more-menu"]')!;
     expect(menu.getAttribute("role")).toBe("menu");
     expect(menu.querySelectorAll('[role="separator"]').length).toBe(4);
+    // The sort choice is a sub-menu, reachable at every width (#5671).
+    expect(
+      document.querySelector('[data-testid="file-browser-sort-menu"]')?.getAttribute("role")
+    ).toBe("menuitem");
     // The hidden-files toggle is a checkbox entry.
     const toggle = document.querySelector('[data-testid="file-browser-toggle-hidden"]')!;
     expect(toggle.getAttribute("role")).toBe("menuitemcheckbox");
@@ -184,5 +193,88 @@ describe("buildFileBrowserActions", () => {
     width.value = 20;
     render(buildFileBrowserActions(input()));
     expect(inlineIds()).toEqual(["file-browser-up", "file-browser-refresh"]);
+  });
+
+  it("uses distinct glyphs for Up and Upload (#5624)", () => {
+    render(buildFileBrowserActions(input({ mode: "session" })));
+    const glyph = (id: string) =>
+      container.querySelector(`[data-testid="${id}"] svg`)?.getAttribute("class") ?? "";
+    expect(glyph("file-browser-up")).toContain("lucide-corner-left-up");
+    expect(glyph("file-browser-upload")).toContain("lucide-upload");
+  });
+
+  it("runs Copy path from the menu (#5624)", async () => {
+    const onCopyPath = vi.fn();
+    render(buildFileBrowserActions(input({ onCopyPath })));
+    await openFileBrowserMoreMenu();
+    await act(async () => {
+      (document.querySelector('[data-testid="file-browser-copy-path"]') as HTMLElement).click();
+    });
+    expect(onCopyPath).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the menu right of the row's left edge (#5624)", async () => {
+    const realRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const left = (this as HTMLElement).dataset?.testid === "file-browser-actions" ? 57 : 0;
+      return {
+        width: 0,
+        height: 0,
+        top: 0,
+        left,
+        right: left,
+        bottom: 0,
+        x: left,
+        y: 0,
+      } as DOMRect;
+    };
+    try {
+      render(buildFileBrowserActions(input()));
+      await openFileBrowserMoreMenu();
+      const menu = document.querySelector('[data-testid="file-browser-more-menu"]')!;
+      expect(menu.getAttribute("data-collision-left")).toBe("57");
+    } finally {
+      Element.prototype.getBoundingClientRect = realRect;
+    }
+  });
+});
+
+describe("file sort sub-menu (#5671)", () => {
+  async function openSortMenu() {
+    await openFileBrowserMoreMenu();
+    const trigger = document.querySelector<HTMLElement>('[data-testid="file-browser-sort-menu"]')!;
+    await act(async () => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+  }
+
+  it("sorts by modified or size and flips the direction", async () => {
+    const onSort = vi.fn();
+    render(buildFileBrowserActions(input({ onSort })));
+    await openSortMenu();
+    const modified = document.querySelector<HTMLElement>(
+      '[data-testid="file-browser-sort-by-modified"]'
+    );
+    expect(modified?.getAttribute("role")).toBe("menuitemradio");
+    expect(
+      document
+        .querySelector('[data-testid="file-browser-sort-by-name"]')
+        ?.getAttribute("aria-checked")
+    ).toBe("true");
+    await act(async () => {
+      modified!.click();
+    });
+    expect(onSort).toHaveBeenCalledWith({ key: "modified", dir: "asc" });
+    await openSortMenu();
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-testid="file-browser-sort-dir-desc"]')!.click();
+    });
+    expect(onSort).toHaveBeenLastCalledWith({ key: "name", dir: "desc" });
+    await openSortMenu();
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-testid="file-browser-sort-by-size"]')!.click();
+    });
+    expect(onSort).toHaveBeenLastCalledWith({ key: "size", dir: "asc" });
   });
 });

@@ -254,6 +254,33 @@ describe("collapseCrumbs", () => {
     expect(hidden(75)).toEqual({ hiddenStart: 0, hiddenEnd: 4 });
   });
 
+  it("keeps the direct parent middle-truncated when enough room is left (#5624)", () => {
+    // root 10 + "…" 20 + leaf 50 = 80; "projects" needs 60, but 135 leaves 55.5.
+    const wide = [10, 40, 40, 160, 50];
+    expect(
+      collapseCrumbs({ available: 160, widths: wide, ellipsisWidth, minTruncatedWidth: 48 })
+    ).toEqual({ hiddenStart: 1, hiddenEnd: 3, parentWidth: 80 });
+  });
+
+  it("drops the parent when the room left is below the truncation minimum", () => {
+    const wide = [10, 40, 40, 160, 50];
+    expect(
+      collapseCrumbs({ available: 120, widths: wide, ellipsisWidth, minTruncatedWidth: 48 })
+    ).toEqual({ hiddenStart: 1, hiddenEnd: 4 });
+  });
+
+  it("gives the fold's room to the parent when nothing else would be hidden", () => {
+    // "/" + parent + leaf: no fold is needed once the parent truncates.
+    expect(
+      collapseCrumbs({
+        available: 120,
+        widths: [10, 200, 50],
+        ellipsisWidth,
+        minTruncatedWidth: 48,
+      })
+    ).toEqual({ hiddenStart: 1, hiddenEnd: 1, parentWidth: 60 });
+  });
+
   it("never folds a two-segment path (the leaf ellipsizes instead)", () => {
     expect(collapseCrumbs({ available: 10, widths: [10, 300], ellipsisWidth })).toEqual({
       hiddenStart: 0,
