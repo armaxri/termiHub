@@ -18,7 +18,7 @@ Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
   find no ``sh`` shows the "not supported on this host" state.
 * **Settings and themes.** Every settings category opens without a JavaScript
   error; the Updates build info shows the build date (#5652); the numeric
-  settings show the value in effect (#5554); every built-in
+  settings show the value in effect (#5554) as full-contrast text (#5632); every built-in
   theme is applied once, with captures of the main surfaces for the UI review
   and a text-contrast grade.
 """
@@ -625,3 +625,49 @@ class TestProductRunSettingsThemes(
             else:
                 problems.append(f"unexpected status {state!r}")
             assert not problems, "; ".join(problems)
+
+    def test_06_numeric_effective_value_contrast(self):
+        """The numeric settings' value in effect reads as real text (#5632).
+
+        The value is the input's own text at >= 4.5:1 against the field, never
+        placeholder grey; "Default" is only a tag on the label row, and an
+        overridden value offers a real "Reset to default" button instead.
+        """
+        for category, testid, key, label in NUMERIC_SETTINGS:
+            with self.step(
+                f"settings.numeric.{key}.contrast",
+                f"{label}: the value in effect is full-contrast text; Default is a tag, "
+                "Reset is a button (#5632)",
+                expect=f"Settings ▸ {category} with {label} showing its value in normal text "
+                "and a Default tag or a Reset to default button on the label row",
+            ):
+                self.open_settings_category(category)
+                field = f"{testid}-input"
+                self.wait(lambda: self.driver.exists(field), what=f"the {label} input")
+                time.sleep(0.5)
+                value = str(self.driver.get_value(field) or "").strip()
+                placeholder = self.driver.get_attribute(field, "placeholder") or ""
+                fg = self.style_color("color", field)
+                bg = self.opaque_background(field, self.root_color("--bg-primary"))
+                ratio = contrast(fg, bg)
+                has_tag = self.driver.exists(f"{testid}-default")
+                has_reset = self.driver.exists(f"{testid}-reset")
+                reset_type = (
+                    self.driver.get_attribute(f"{testid}-reset", "type") if has_reset else None
+                )
+                self.evidence(
+                    f"value {value!r}, placeholder {placeholder!r}, text contrast {ratio:.2f}:1, "
+                    f"Default tag {has_tag}, Reset button {has_reset} (type {reset_type!r})"
+                )
+                problems = []
+                if not value:
+                    problems.append("the field is empty — the value in effect is not its text")
+                if placeholder:
+                    problems.append(f"the field still carries a placeholder {placeholder!r}")
+                if ratio < 4.5:
+                    problems.append(f"value text contrast {ratio:.2f}:1 < 4.5:1")
+                if has_tag == has_reset:
+                    problems.append("want exactly one of the Default tag and the Reset button")
+                if has_reset and reset_type != "button":
+                    problems.append(f"the reset marker is not a button (type {reset_type!r})")
+                assert not problems, "; ".join(problems)
