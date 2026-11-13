@@ -63,7 +63,7 @@ const TRUST_WORDING: Record<SshHostKeyTrust, string> = {
 };
 
 /** The tooltip line for the target's accepted host key, e.g. `Host key: trusted (SHA256:…)`. */
-export function hostKeyTrustLine(event: SshHostKeyTrustedEvent): string {
+function hostKeyTrustLine(event: SshHostKeyTrustedEvent): string {
   return `Host key: ${TRUST_WORDING[event.trust]} (${event.fingerprint})`;
 }
 
