@@ -34,7 +34,7 @@ import {
   Folder,
   Palette,
 } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { currentConnectionsView } from "@/store/connectionsBridge";
@@ -64,6 +64,7 @@ import { useTreeSelection } from "@/hooks/useTreeSelection";
 import {
   useSidebarFollowsActiveTab,
   revealConnectionRow,
+  connectionAncestorFolderIds,
 } from "@/hooks/useSidebarFollowsActiveTab";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
@@ -144,6 +145,11 @@ interface ConnectionMoveActions {
 interface TreeNavProps {
   /** Active search filter, or `null` when no query is entered. */
   filter: ConnectionTreeFilter | null;
+  /**
+   * Folders enclosing the active tab's saved connection (#5706). A collapsed one
+   * is marked as containing the active connection.
+   */
+  activeConnectionFolderIds: ReadonlySet<string>;
   /** Roving-tabindex active index into the flattened visible node list. */
   activeIndex: number;
   /** Flattened-list index of a node by id (`-1` when not currently visible). */
@@ -202,6 +208,7 @@ function TreeNode({
   onConnectionClick,
   depth,
   filter,
+  activeConnectionFolderIds,
   activeIndex,
   getNodeIndex,
   getRowRef,
@@ -269,6 +276,11 @@ function TreeNode({
               tabIndex={rowIndex === activeIndex ? 0 : -1}
               dropOver={isConnectionOver}
               testId={`folder-toggle-${folder.id}`}
+              containsActiveLabel={
+                !expanded && activeConnectionFolderIds.has(folder.id)
+                  ? "Contains the active connection"
+                  : undefined
+              }
               onClick={() => onToggle(folder.id)}
               onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
               onFocus={() => onRowFocus(rowIndex)}
@@ -349,6 +361,7 @@ function TreeNode({
               onConnectionClick={onConnectionClick}
               depth={depth + 1}
               filter={filter}
+              activeConnectionFolderIds={activeConnectionFolderIds}
               activeIndex={activeIndex}
               getNodeIndex={getNodeIndex}
               getRowRef={getRowRef}
@@ -936,7 +949,23 @@ export function ConnectionList() {
     (id: string) => connections.some((c) => c.id === id),
     [connections]
   );
-  useSidebarFollowsActiveTab(isKnownConnection, selectConnectionSingle, revealConnectionRow);
+  // A connection inside a collapsed folder has no row (#5706): the folder's
+  // persisted expansion is left alone; instead the enclosing collapsed folder
+  // is marked and scrolled into view, and expanding it reveals the row.
+  const activeConnectionId = useAppStore((s) => getActiveTab(s)?.connectionId ?? null);
+  const activeConnectionAncestors = useMemo(
+    () => connectionAncestorFolderIds(activeConnectionId, connections, folders),
+    [activeConnectionId, connections, folders]
+  );
+  const activeConnectionFolderIds = useMemo(
+    () => new Set(activeConnectionAncestors),
+    [activeConnectionAncestors]
+  );
+  const revealConnection = useCallback(
+    (id: string) => revealConnectionRow(id, connectionAncestorFolderIds(id, connections, folders)),
+    [connections, folders]
+  );
+  useSidebarFollowsActiveTab(isKnownConnection, selectConnectionSingle, revealConnection);
 
   // Flat-list index lookup by node id, so each row can resolve its position in
   // the roving-nav item array (`treeNodes`) for tabindex and ref wiring.
@@ -1019,9 +1048,21 @@ export function ConnectionList() {
   const handleToggleFolder = useCallback(
     (folderId: string) => {
       if (filter) return;
+      const expanding = folders.find((f) => f.id === folderId)?.isExpanded === false;
       toggleFolder(folderId);
+      // Expanding a folder that hides the active connection shows its row (#5706).
+      if (expanding && activeConnectionId && activeConnectionFolderIds.has(folderId)) {
+        revealConnectionRow(activeConnectionId, activeConnectionAncestors);
+      }
     },
-    [filter, toggleFolder]
+    [
+      filter,
+      folders,
+      toggleFolder,
+      activeConnectionId,
+      activeConnectionFolderIds,
+      activeConnectionAncestors,
+    ]
   );
 
   // Activate a row: folders toggle, connections connect — shared by Enter (via
@@ -1706,6 +1747,7 @@ export function ConnectionList() {
               onConnectionClick={handleConnectionClick}
               onTreeAreaClick={handleTreeAreaClick}
               filter={filter}
+              activeConnectionFolderIds={activeConnectionFolderIds}
               activeIndex={activeIndex}
               getNodeIndex={getNodeIndex}
               getRowRef={getRowRef}
@@ -1944,6 +1986,7 @@ function RootDropZone({
   onConnectionClick,
   onTreeAreaClick,
   filter,
+  activeConnectionFolderIds,
   activeIndex,
   getNodeIndex,
   getRowRef,
@@ -2016,6 +2059,7 @@ function RootDropZone({
               onConnectionClick={onConnectionClick}
               depth={0}
               filter={filter}
+              activeConnectionFolderIds={activeConnectionFolderIds}
               activeIndex={activeIndex}
               getNodeIndex={getNodeIndex}
               getRowRef={getRowRef}
