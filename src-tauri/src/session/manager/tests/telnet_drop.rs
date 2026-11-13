@@ -48,8 +48,10 @@ async fn open_tab(
         .expect("telnet session should open");
     let (mut peer, _) = listener.accept().expect("accept");
     peer.set_read_timeout(Some(CEILING)).expect("read timeout");
-    // The opening negotiation offer (`IAC WILL NAWS`).
-    let mut offer = [0u8; 3];
+    // The whole opening negotiation offer (`IAC WILL NAWS`, `IAC DO SGA` in
+    // the default character mode). Read all of it: a socket closed with
+    // unread data resets instead of closing cleanly (#5696).
+    let mut offer = [0u8; 6];
     peer.read_exact(&mut offer).expect("read the opening offer");
     (session_id, peer)
 }
@@ -86,6 +88,11 @@ async fn server_close_folds_the_drop_and_a_reconnect_works() {
         "a server-side close must emit terminal-exit"
     );
     assert_eq!(
+        first.exits.lock().unwrap()[0].end_cause,
+        Some(SessionEndCause::RemoteClosed),
+        "a clean server close carries its cause (#5696)"
+    );
+    assert_eq!(
         first.session_drops.lock().unwrap().as_slice(),
         &[("tab-t".to_string(), DropFold::Dropped)],
         "the drop folds the tab to Disconnected (overlay with Reconnect)"
@@ -112,4 +119,27 @@ async fn server_close_folds_the_drop_and_a_reconnect_works() {
     );
     assert!(second.exits.lock().unwrap().is_empty());
     manager.close_session(&new_id).await.expect("close");
+}
+
+/// A reset link carries an I/O-error cause, so the tab reads "connection
+/// lost" rather than "closed by server" (#5696).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reset_link_carries_an_io_error_cause() {
+    let manager = telnet_manager();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let emitter = MockEventEmitter::new();
+    let (_session_id, peer) = open_tab(&manager, &listener, "tab-r:0", &emitter).await;
+    socket2::SockRef::from(&peer)
+        .set_linger(Some(Duration::ZERO))
+        .expect("set linger");
+    drop(peer);
+
+    assert!(
+        eventually(|| emitter.exits.lock().unwrap().len() == 1).await,
+        "a reset must emit terminal-exit"
+    );
+    assert_eq!(
+        emitter.exits.lock().unwrap()[0].end_cause,
+        Some(SessionEndCause::IoError)
+    );
 }

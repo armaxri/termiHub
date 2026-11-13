@@ -19,7 +19,7 @@ use serde::Serialize;
 use tauri::Emitter;
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{
-    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
+    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry, SessionEndCause,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
 use termihub_core::session::prompt_ready::wait_for_prompt;
@@ -110,6 +110,14 @@ where
 pub struct TerminalExitEvent {
     pub session_id: String,
     pub exit_code: Option<i32>,
+    /// Why the session's link ended on its own (#5696): the server closed it,
+    /// an I/O error or a timeout. `null` when the backend cannot tell or the
+    /// session was closed deliberately.
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"./SessionEndCause\").SessionEndCause | null")
+    )]
+    pub end_cause: Option<SessionEndCause>,
 }
 
 /// State change event emitted when a persistent session transitions state.
@@ -2684,9 +2692,16 @@ impl SessionManager {
             None
         };
 
+        let end_cause = {
+            let sessions = sessions.lock().await;
+            sessions
+                .get(session_id)
+                .and_then(|entry| entry.connection.end_cause())
+        };
         let exit_event = TerminalExitEvent {
             session_id: session_id.to_string(),
             exit_code: None,
+            end_cause,
         };
         emitter.emit_exit(&exit_event);
 
