@@ -89,7 +89,6 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
         }
         return;
       }
-      await refreshLastCheckTime();
       if (info.available) {
         const currentSettings = currentSettingsView();
         const skippedVersion = currentSettings.updates?.skippedVersion;
@@ -107,6 +106,8 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
       } else {
         set({ updateCheckState: "up-to-date", updateInfo: info });
       }
+      // After the skip fold above read the current settings view.
+      await refreshLastCheckTime();
     } catch {
       set({ updateCheckState: "error" });
       frontendLog("update", "Update check failed");
