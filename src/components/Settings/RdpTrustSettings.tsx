@@ -4,6 +4,7 @@ import { rdpTrustList, rdpTrustForget, type RdpTrustedHost } from "@/services/ap
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface RdpTrustSettingsProps {
   visibleFields?: Set<string>;
@@ -74,7 +75,7 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-rdp-trust">
-        <h3 className="settings-panel__section-title">Remembered RDP certificates</h3>
+        <SettingsSectionHeading>Remembered RDP certificates</SettingsSectionHeading>
         <p className="settings-panel__description">
           Hosts whose RDP server certificate you chose to trust ("Accept for host") are remembered
           here. Revoke a single fingerprint or forget a host to be prompted again on the next

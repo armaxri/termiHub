@@ -4,6 +4,7 @@ import { sshTrustList, sshTrustForget, type SshTrustedHost } from "@/services/ap
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SshTrustSettingsProps {
   visibleFields?: Set<string>;
@@ -74,7 +75,7 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-ssh-trust">
-        <h3 className="settings-panel__section-title">Remembered SSH host keys</h3>
+        <SettingsSectionHeading>Remembered SSH host keys</SettingsSectionHeading>
         <p className="settings-panel__description">
           Hosts whose SSH host key you chose to trust ("Accept for host") are remembered here.
           Revoke a single fingerprint or forget a host to be prompted again on the next connect.

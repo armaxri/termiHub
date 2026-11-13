@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  PackageSearch,
-  RefreshCw,
-  RotateCcw,
-  ShieldAlert,
-  ShieldCheck,
-  ShieldQuestion,
-} from "lucide-react";
+import { RefreshCw, RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { downloadPluginFromIndex, fetchPluginIndex } from "@/services/api";
@@ -28,6 +21,7 @@ import { PluginUrlInstall, urlFieldError } from "./PluginUrlInstall";
 import "./PluginCatalogSettings.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Shown when the index URL setting is unset — mirrors the backend default. */
 const DEFAULT_PLUGIN_INDEX_URL =
@@ -169,9 +163,7 @@ export function PluginCatalogSettings() {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-plugin-catalog">
-        <h3 className="settings-panel__section-title">
-          <PackageSearch size={16} aria-hidden="true" /> Browse plugins
-        </h3>
+        <SettingsSectionHeading>Browse plugins</SettingsSectionHeading>
         <p className="settings-panel__description">
           termiHub can list plugins from a curated plugin index. The index is only fetched when you
           click Load. Installing downloads the package, checks it against the index&apos;s SHA-256

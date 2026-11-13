@@ -2,6 +2,7 @@ import { AppSettings } from "@/types/connection";
 import { Toggle } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import type { SettingsUpdate } from "./GeneralSettings";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SafetyPromptSettingsProps {
   settings: AppSettings;
@@ -29,7 +30,7 @@ export function SafetyPromptSettings({
         show("confirmCloseLiveSession") ||
         show("confirmCloseAttachedTab")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Close confirmations</h3>
+          <SettingsSectionHeading>Close confirmations</SettingsSectionHeading>
 
           {show("confirmCloseTabOnShortcut") && (
             <SettingsField
@@ -80,7 +81,7 @@ export function SafetyPromptSettings({
 
       {show("confirmUndoableDelete") && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Delete confirmations</h3>
+          <SettingsSectionHeading>Delete confirmations</SettingsSectionHeading>
           <SettingsField
             label="Confirm before deletes that can be undone"
             hint="Ask for confirmation before deleting a connection folder, a custom theme, or an idle tunnel. The Undo toast appears either way."
@@ -98,7 +99,7 @@ export function SafetyPromptSettings({
 
       {(show("warnLargePortScan") || show("warnLargePingSweep")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Network operation warnings</h3>
+          <SettingsSectionHeading>Network operation warnings</SettingsSectionHeading>
 
           {show("warnLargePortScan") && (
             <SettingsField

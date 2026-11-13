@@ -3,6 +3,7 @@ import { isWindows } from "@/utils/platform";
 import { Toggle } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import type { SettingsUpdate } from "./GeneralSettings";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface XServerSettingsProps {
   settings: AppSettings;
@@ -24,7 +25,7 @@ export function XServerSettings({ settings, onChange, visibleFields }: XServerSe
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">X server</h3>
+      <SettingsSectionHeading>X server</SettingsSectionHeading>
 
       {show("provideXServerAutomatically") && (
         <SettingsField

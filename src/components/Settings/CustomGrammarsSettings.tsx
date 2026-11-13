@@ -8,6 +8,7 @@ import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
 import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
@@ -166,11 +167,11 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
     <div className="settings-panel__category" data-testid="custom-grammars-settings">
       {show("customLanguageGrammars") && (
         <>
-          <h3 className="settings-panel__category-title">Custom language grammars</h3>
+          <SettingsSectionHeading>Custom language grammars</SettingsSectionHeading>
 
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Imported grammars</h3>
+              <SettingsSectionHeading>Imported grammars</SettingsSectionHeading>
               {!draft && (
                 <div className="settings-panel__section-actions">
                   <Button

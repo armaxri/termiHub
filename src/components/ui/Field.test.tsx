@@ -131,6 +131,24 @@ describe("Field", () => {
     expect(hint?.classList.contains("ui-field__hint--warning")).toBe(true);
   });
 
+  it("marks a warning hint with a warning icon and keeps plain hints icon-free (#5634)", () => {
+    render(
+      <>
+        <Field data-testid="warn" label="Host" hint="Careful" hintVariant="warning">
+          <Input />
+        </Field>
+        <Field data-testid="plain" label="Port" hint="Default 22">
+          <Input />
+        </Field>
+      </>
+    );
+    const warn = document.querySelector('[data-testid="warn"] .ui-field__hint');
+    expect(warn?.querySelector(".ui-field__hint-icon")).not.toBeNull();
+    expect(warn?.textContent).toBe("Careful");
+    const plain = document.querySelector('[data-testid="plain"] .ui-field__hint');
+    expect(plain?.querySelector(".ui-field__hint-icon")).toBeNull();
+  });
+
   it("omits the hint element when no hint is provided", () => {
     render(
       <Field data-testid="field" label="Host" htmlFor="host">

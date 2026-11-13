@@ -17,6 +17,7 @@ import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import { errorMessage } from "@/utils/errorMessage";
 import { tf } from "@/i18n/catalog";
 import { switchConfirmCopy } from "./credentialSwitchCopy";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -336,12 +337,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     <div className="settings-panel__category">
       {show("credentialStorageMode") && (
         <div className="settings-panel__section">
-          <h3
-            className="settings-panel__section-title"
-            data-testid="security-credential-storage-title"
-          >
+          <SettingsSectionHeading data-testid="security-credential-storage-title">
             Credential storage
-          </h3>
+          </SettingsSectionHeading>
           <p className="settings-panel__description">
             Choose how connection passwords, SSH key passphrases, and other secrets are stored.
           </p>
@@ -462,7 +460,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         <>
           {show("credentialAutoLockMinutes") && (
             <div className="settings-panel__section">
-              <h3 className="settings-panel__section-title">Master password options</h3>
+              <SettingsSectionHeading>Master password options</SettingsSectionHeading>
 
               <SettingsField
                 label="Auto-lock timeout"
@@ -556,7 +554,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
       {show("workflowLocalProcess") && (
         <div className="settings-panel__section">
-          <h3 className="settings-panel__section-title">Workflow local process execution</h3>
+          <SettingsSectionHeading>Workflow local process execution</SettingsSectionHeading>
           <p className="settings-panel__description">
             The guarded <code>run-local-process</code> workflow step runs a program on this
             computer. This is off by default. When enabled, each not-yet-trusted program still

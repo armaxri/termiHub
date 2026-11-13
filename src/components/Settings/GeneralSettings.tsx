@@ -19,6 +19,7 @@ import { KeyPathInput } from "./KeyPathInput";
 import { CrashDiagnosticsFields } from "./CrashDiagnosticsFields";
 import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Human-readable labels for the file-log verbosity levels (OBS-009). */
 const LOG_LEVEL_LABELS: Record<string, string> = {
@@ -141,7 +142,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
   return (
     <>
       <div className="settings-panel__category">
-        <h3 className="settings-panel__category-title">General</h3>
+        <SettingsSectionHeading>General</SettingsSectionHeading>
 
         {show("defaultUser") && (
           <SettingsField
@@ -235,7 +236,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
       {show("defaultX11Forwarding") && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">New connection defaults</h3>
+          <SettingsSectionHeading>New connection defaults</SettingsSectionHeading>
 
           {show("defaultX11Forwarding") && (
             <SettingsField
@@ -256,7 +257,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
       {(show("fileLogLevel") || show("showCrashReportNotice")) && (
         <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Diagnostics</h3>
+          <SettingsSectionHeading>Diagnostics</SettingsSectionHeading>
 
           {show("fileLogLevel") && (
             <>

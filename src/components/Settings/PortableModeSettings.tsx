@@ -8,6 +8,7 @@ import { Button, Checkbox, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendWarn } from "@/utils/frontendLog";
 import "./PortableModeSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 const PORTABLE_FILES = [
   "connections.json",
@@ -213,7 +214,7 @@ export function PortableModeSettings() {
 
   return (
     <div className="settings-panel__category" data-testid="portable-mode-settings">
-      <h3 className="settings-panel__category-title">Portable mode</h3>
+      <SettingsSectionHeading>Portable mode</SettingsSectionHeading>
 
       <div className="portable-mode__kv-row">
         <span className="portable-mode__kv-label">Status</span>
@@ -248,7 +249,7 @@ export function PortableModeSettings() {
           </div>
 
           <div className="settings-panel__section">
-            <h4 className="settings-panel__section-title">Config files</h4>
+            <SettingsSectionHeading level={4}>Config files</SettingsSectionHeading>
             <ul className="portable-mode__file-list">
               {configFiles.map((f) => (
                 <li key={f.name} className="portable-mode__file-item">
@@ -290,7 +291,7 @@ export function PortableModeSettings() {
       )}
 
       <div className="settings-panel__section">
-        <h4 className="settings-panel__section-title">Config migration</h4>
+        <SettingsSectionHeading level={4}>Config migration</SettingsSectionHeading>
         <p className="settings-panel__description">
           Copy configuration between installed and portable mode. Use Export to move your config to
           a portable drive, or Import to bring it back.

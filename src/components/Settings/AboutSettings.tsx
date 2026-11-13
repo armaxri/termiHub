@@ -7,6 +7,7 @@ import { Button } from "@/components/ui";
 import { ThirdPartyNoticesDialog } from "./ThirdPartyNoticesDialog";
 import { errorMessage } from "@/utils/errorMessage";
 import "./AboutSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
 const LICENSE_URL = "https://github.com/armaxri/termiHub/blob/main/LICENSE";
@@ -40,7 +41,7 @@ export function AboutSettings() {
 
   return (
     <div className="settings-panel__category" data-testid="about-settings">
-      <h3 className="settings-panel__category-title">About</h3>
+      <SettingsSectionHeading>About</SettingsSectionHeading>
 
       <div className="about-settings__hero">
         <div className="about-settings__app-name">termiHub</div>

@@ -1,4 +1,5 @@
 import { SchedulesSection } from "@/components/Schedules";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Schedules (#4623): an always-available place to view, pause and
@@ -10,7 +11,7 @@ import { SchedulesSection } from "@/components/Schedules";
 export function SchedulesSettings() {
   return (
     <div className="settings-panel__section" data-testid="schedules-settings">
-      <h3 className="settings-panel__category-title">Schedules</h3>
+      <SettingsSectionHeading>Schedules</SettingsSectionHeading>
       <p className="settings-panel__description">
         Scheduled workflows and macros send input to their target hosts automatically while termiHub
         is running. Create a schedule, turn one off, pause them all, or delete one here.

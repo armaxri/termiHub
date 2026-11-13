@@ -17,6 +17,7 @@ import {
   isDevelopUpdate,
 } from "@/components/UpdateNotification/developUpdate";
 import "./UpdateSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface UpdateSettingsProps {
   visibleFields?: Set<string>;
@@ -115,7 +116,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
 
   return (
     <div className="settings-panel__category" data-testid="update-settings">
-      <h3 className="settings-panel__category-title">Updates</h3>
+      <SettingsSectionHeading>Updates</SettingsSectionHeading>
 
       {show("updateStatus") && (
         <div className="settings-panel__section">
@@ -235,9 +236,9 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
 
       {show("updateAutoCheck") && (
         <div className="settings-panel__section">
-          <h3 className="settings-panel__section-title" id="update-auto-check-title">
+          <SettingsSectionHeading id="update-auto-check-title">
             Auto-check for updates
-          </h3>
+          </SettingsSectionHeading>
           <RadioGroup
             variant="cards"
             className="settings-panel__radio-group"

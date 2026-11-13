@@ -1,9 +1,9 @@
 import { useCallback } from "react";
-import { ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Toggle } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Plugins → the experimental frontend-plugin gate (#2048).
@@ -34,9 +34,7 @@ export function FrontendPluginGateSettings() {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-frontend-plugin-gate">
-        <h3 className="settings-panel__section-title">
-          <ShieldAlert size={16} aria-hidden="true" /> Frontend plugins (experimental)
-        </h3>
+        <SettingsSectionHeading>Frontend plugins (experimental)</SettingsSectionHeading>
         <p className="settings-panel__description">
           Frontend plugins run untrusted JavaScript inside termiHub with full access to the app and
           your connections, and only weak isolation. Enable this only for plugins you trust. It is

@@ -134,7 +134,7 @@ describe("ShellIntegrationSettings", () => {
 
   it("titles the section File manager integration, not shell integration (#5616)", async () => {
     await render();
-    const title = document.querySelector(".settings-panel__section-title");
+    const title = document.querySelector(".settings-section__heading");
     expect(title?.textContent).toBe("File manager integration");
     expect(byTestId("settings-shell-integration")?.textContent).toContain("right-click menu");
   });

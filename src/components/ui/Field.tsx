@@ -1,5 +1,5 @@
 import React, { useId } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, TriangleAlert } from "lucide-react";
 import "./ui.css";
 
 /** Visual field style. `"settings"` renders the compact settings-panel field
@@ -261,8 +261,13 @@ export function Field({
     </>
   );
 
+  // Amber is the warning colour, so a warning hint also carries a warning icon
+  // (#5634): colour alone never signals a caution.
   const hintNode = hasHint ? (
     <span className={hintClasses} id={hintId} data-testid={hintTestId}>
+      {hintVariant === "warning" ? (
+        <TriangleAlert className="ui-field__hint-icon" aria-hidden="true" />
+      ) : null}
       {hint}
     </span>
   ) : null;

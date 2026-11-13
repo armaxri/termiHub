@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ShieldCheck } from "lucide-react";
 import { useTauriListener } from "@/hooks/useTauriListener";
 import { useAppStore } from "@/store/appStore";
 import { usePluginSandbox } from "@/store/usePluginSandbox";
@@ -17,6 +16,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsField } from "./SettingsField";
 import { NativePluginRow, openSessionsLabel } from "./NativePluginRow";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Plugins → the native plugin trust gate (SEC-002 / PLG-006 /
@@ -213,9 +213,7 @@ export function NativePluginGateSettings() {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-native-plugin-gate">
-        <h3 className="settings-panel__section-title">
-          <ShieldCheck size={16} aria-hidden="true" /> Native plugins
-        </h3>
+        <SettingsSectionHeading>Native plugins</SettingsSectionHeading>
         <p className="settings-panel__description" data-testid="native-plugin-disclosure">
           {trust?.disclosure ?? "Native plugins run in a separate, sandboxed process."}
         </p>

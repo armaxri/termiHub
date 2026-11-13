@@ -10,6 +10,7 @@ import {
 import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
 import { Button, Tooltip, EmptyState, SearchInput } from "@/components/ui";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface LanguagePackagesSettingsProps {
   visibleFields?: Set<string>;
@@ -100,12 +101,12 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
     <div className="settings-panel__category" data-testid="language-packages-settings">
       {show("installedLanguagePackages") && (
         <>
-          <h3 className="settings-panel__category-title">Language packages</h3>
+          <SettingsSectionHeading>Language packages</SettingsSectionHeading>
 
           {/* Installed packages */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Installed</h3>
+              <SettingsSectionHeading>Installed</SettingsSectionHeading>
             </div>
             <p className="settings-panel__description">
               Built-in packages are always active. User-installed packages are loaded on startup.
@@ -179,7 +180,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
           {/* Package browser */}
           <div className="settings-panel__section">
             <div className="settings-panel__section-header">
-              <h3 className="settings-panel__section-title">Available packages</h3>
+              <SettingsSectionHeading>Available packages</SettingsSectionHeading>
             </div>
             <p className="settings-panel__description">
               {ALL_LANGUAGE_PACKAGES.length} language packages from Shiki's TextMate grammar library
