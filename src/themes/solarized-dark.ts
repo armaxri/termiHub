@@ -100,4 +100,18 @@ export const solarizedDarkTheme: ThemeDefinition = {
     scrollbarThumb: "rgba(88, 110, 117, 0.5)",
     scrollbarThumbHover: "rgba(88, 110, 117, 0.7)",
   },
+
+  // #5582: an 18% accent tint over the base02 sidebar painted an off-palette
+  // blue-grey. The sidebar already is base02, so the selected row steps down
+  // the ramp to base03, the same surface as the active tab and the editor,
+  // and gains the canonical blue left bar of the activity bar. Hovering a
+  // selected row lifts it to the theme's hover tone, as on unselected rows.
+  // base2 text: 12.25:1 selected, 9.34:1 hovered. Bar: 4.08:1 on base03,
+  // 3.11:1 on the hover tone, 3.53:1 against the base02 sidebar.
+  // (accentColor #227bba is darkened for button labels: 3.30 / 2.51 / 2.85:1.)
+  selection: {
+    bg: "#002b36", // base03
+    bgHover: "#0d3f4d", // bgHover
+    indicator: "#268bd2", // blue, canonical (activityBarIndicator)
+  },
 };
