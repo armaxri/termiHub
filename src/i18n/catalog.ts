@@ -178,6 +178,17 @@ const en = {
   "process.kill.windowsOnly":
     "Windows has no POSIX signals, so a local process can only be terminated. SIGTERM and SIGKILL both end it; the other signals are not available.",
   "process.kill.sent": "Sent {signal} to {name} (pid {pid})",
+  // ── File manager integration (ShellIntegrationSettings, #5616) ─────────
+  // The actions follow the registration state: nothing to update or remove
+  // until the integration is installed.
+  "fileManagerIntegration.title": "File manager integration",
+  "fileManagerIntegration.description":
+    "Adds “Open in termiHub” to your file manager's right-click menu.",
+  "fileManagerIntegration.status.registered": "Registered",
+  "fileManagerIntegration.status.notRegistered": "Not registered",
+  "fileManagerIntegration.action.install": "Install",
+  "fileManagerIntegration.action.reinstall": "Reinstall / update",
+  "fileManagerIntegration.action.uninstall": "Uninstall",
 } as const;
 
 /** A stable id naming one catalog message. */

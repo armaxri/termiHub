@@ -101,7 +101,45 @@ describe("ShellIntegrationSettings", () => {
     expect(byTestId("shell-integration-stale-banner")).not.toBeNull();
   });
 
-  it("triggers registration when Reinstall is clicked", async () => {
+  it("offers only Install when nothing is registered (#5616)", async () => {
+    await render();
+    const primary = byTestId("shell-integration-reinstall");
+    expect(primary?.textContent).toBe("Install");
+    expect(byTestId("shell-integration-uninstall")).toBeNull();
+  });
+
+  it("offers Reinstall / update and Uninstall once registered (#5616)", async () => {
+    mockedApi.getShellIntegrationStatus.mockResolvedValue(status({ registered: true }));
+    await render();
+    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Reinstall / update");
+    const uninstall = byTestId("shell-integration-uninstall") as HTMLButtonElement | null;
+    expect(uninstall?.textContent).toBe("Uninstall");
+    expect(uninstall?.disabled).toBe(false);
+  });
+
+  it("switches the actions after Install and after Uninstall (#5616)", async () => {
+    await render();
+    await act(async () => {
+      byTestId("shell-integration-reinstall")?.click();
+    });
+    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Reinstall / update");
+    expect(byTestId("shell-integration-uninstall")).not.toBeNull();
+    await act(async () => {
+      byTestId("shell-integration-uninstall")?.click();
+    });
+    expect(mockedApi.uninstallShellIntegration).toHaveBeenCalledTimes(1);
+    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Install");
+    expect(byTestId("shell-integration-uninstall")).toBeNull();
+  });
+
+  it("titles the section File manager integration, not shell integration (#5616)", async () => {
+    await render();
+    const title = document.querySelector(".settings-panel__section-title");
+    expect(title?.textContent).toBe("File manager integration");
+    expect(byTestId("settings-shell-integration")?.textContent).toContain("right-click menu");
+  });
+
+  it("triggers registration when Install is clicked", async () => {
     await render();
     await act(async () => {
       byTestId("shell-integration-reinstall")?.click();
