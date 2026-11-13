@@ -254,10 +254,16 @@ fn unparseable_versions_are_refused() {
 #[test]
 fn bundle_types_map_to_install_kinds() {
     use tauri::utils::config::BundleType;
-    assert_eq!(InstallKind::from_bundle_type(BundleType::Dmg), InstallKind::App);
+    assert_eq!(
+        InstallKind::from_bundle_type(BundleType::Dmg),
+        InstallKind::App
+    );
     assert_eq!(
         InstallKind::from_bundle_type(BundleType::AppImage),
         InstallKind::AppImage
     );
-    assert_eq!(InstallKind::from_bundle_type(BundleType::Deb), InstallKind::Deb);
+    assert_eq!(
+        InstallKind::from_bundle_type(BundleType::Deb),
+        InstallKind::Deb
+    );
 }

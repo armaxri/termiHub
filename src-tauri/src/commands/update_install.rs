@@ -172,9 +172,7 @@ pub fn install_route(ctx: &InstallContext) -> UpdateInstallRoute {
         return Err(ReleasePageReason::Portable);
     }
     let kind = match ctx.install_kind {
-        Some(InstallKind::Deb | InstallKind::Rpm) => {
-            return Err(ReleasePageReason::PackageManager)
-        }
+        Some(InstallKind::Deb | InstallKind::Rpm) => return Err(ReleasePageReason::PackageManager),
         Some(kind) => kind,
         None => return Err(ReleasePageReason::UnsupportedInstall),
     };
@@ -197,7 +195,9 @@ pub fn install_route(ctx: &InstallContext) -> UpdateInstallRoute {
 }
 
 /// The method and reason the frontend shows for a route.
-pub fn route_summary(route: &UpdateInstallRoute) -> (UpdateInstallMethod, Option<ReleasePageReason>) {
+pub fn route_summary(
+    route: &UpdateInstallRoute,
+) -> (UpdateInstallMethod, Option<ReleasePageReason>) {
     match route {
         Ok(_) => (UpdateInstallMethod::InApp, None),
         Err(reason) => (UpdateInstallMethod::ReleasePage, Some(*reason)),
@@ -220,7 +220,8 @@ pub fn updater_pubkey_configured(updater_config: Option<&serde_json::Value>) -> 
 /// manifest that names a different version than the check is refused too.
 pub fn check_offered_version(running: &str, offered: &str, expected: &str) -> Result<(), String> {
     let parse = |v: &str| Version::parse(v.trim_start_matches('v'));
-    let running_v = parse(running).map_err(|e| format!("invalid running version {running}: {e}"))?;
+    let running_v =
+        parse(running).map_err(|e| format!("invalid running version {running}: {e}"))?;
     let offered_v = parse(offered).map_err(|e| format!("invalid update version {offered}: {e}"))?;
     let expected_v =
         parse(expected).map_err(|e| format!("invalid expected version {expected}: {e}"))?;
@@ -363,7 +364,10 @@ pub async fn download_app_update(
         .await
         .map_err(|e| format!("The update download failed: {e}"))?;
     info!(version = %update.version, bytes = bytes.len(), "In-app update downloaded and verified");
-    *pending.0.lock().map_err(|_| "update state poisoned".to_string())? = Some((update, bytes));
+    *pending
+        .0
+        .lock()
+        .map_err(|_| "update state poisoned".to_string())? = Some((update, bytes));
     Ok(())
 }
 
