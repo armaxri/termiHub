@@ -557,3 +557,79 @@ class TestProductRunAutomations(
             index += 1
         self.evidence(f"{index} collapsed step rows, each <= 48px")
         assert index == 5, f"expected the five authored steps, found {index}"
+
+    # ── macro row hints, preview and history polish (#5680) ──────────────────
+    def test_90_macro_row_polish(self):
+        with self.step(
+            "automations.macro.row-polish",
+            "A macro row shows the first line it types and its last run; the toolbar and "
+            "history read cleanly",
+            expect="the Macros sidebar at rest: the macro row shows its name, then "
+            "'echo PR_MACRO_EDITED_…' in the normal secondary text (no ⏎ glyphs, no step "
+            "count), then 'Last run: … on pr-auto-…'; the toolbar is a text 'New' plus icon-only "
+            "record dot, export and import; the history rows read 'Manual' / 'Palette' / "
+            "'Scheduled' in sentence case, each on one line (#5680)",
+        ):
+            self.require("automations.macro.edit")
+            mid = self.ids["macro"]
+            self.show_macros()
+            self.driver.force_hover(None)
+            self._grade_macro_row_polish(mid)
+            self._grade_macro_history_polish(mid)
+
+    def _grade_macro_row_polish(self, mid: str) -> None:
+        """Grade the macro row's preview, last-run line and toolbar (#5680).
+
+        R-112: the preview is the first line the macro types, in the row's
+        proportional secondary text, with no ⏎ glyph and no step count. R-113:
+        a "Last run: … on <terminal>" line names where it last played. R-079:
+        "Record new" is an icon-only record dot next to the text "New".
+        """
+        data = "".join(s.get("data", "") for s in (self.macro(mid) or {}).get("steps", []))
+        lines = [ln for ln in re.split(r"\r\n|\r|\n", data) if ln.strip()]
+        preview = self.driver.get_text(f"macro-preview-{mid}").strip()
+        font = self.driver.get_computed_style("font-family", f"macro-preview-{mid}")
+        self.evidence(f"preview {preview!r} (font {font}); first input line {lines[:1]!r}")
+        assert lines and preview == lines[0][:80].rstrip(), f"preview {preview!r} != {lines[:1]!r}"
+        assert "⏎" not in preview, f"the preview joins steps with ⏎: {preview!r}"
+        assert "mono" not in font.lower(), f"the preview is still monospace: {font}"
+        row = self.driver.get_text(f"macro-item-{mid}")
+        assert not re.search(r"\b\d+\s+steps?\b", row), f"a step count on the row: {row!r}"
+
+        self.wait(lambda: self.driver.exists(f"macro-last-run-{mid}"), what="the last-run line")
+        last = self.driver.get_text(f"macro-last-run-{mid}").strip()
+        self.evidence(f"last-run line: {last!r}")
+        assert last.startswith("Last run:"), f"last-run line: {last!r}"
+        assert re.search(r" on (pr-auto-|\d+ terminals)", last), f"no terminal named: {last!r}"
+
+        record = "macro-record-btn"
+        label = self.driver.get_attribute(record, "aria-label")
+        text = self.driver.get_text(record).strip()
+        new = self.driver.get_text("macro-new-btn").strip()
+        self.evidence(f"record aria-label {label!r}, text {text!r}; New text {new!r}")
+        assert label == "Record new macro", f"record action label: {label!r}"
+        assert text == "", f"record is not icon-only: {text!r}"
+        assert new == "New", f"the primary action is not a text 'New': {new!r}"
+        self.shot(label="row")
+
+    def _grade_macro_history_polish(self, mid: str) -> None:
+        """Grade the macro history meta (R-081 sentence case, R-082 one line)."""
+        runs = self.macro_runs(mid)
+        assert runs, "no macro runs recorded to grade the history with"
+        self.wait(lambda: self.driver.exists("macro-history-list"), what="the macro history")
+        labels = {"manual": "Manual", "palette": "Palette", "scheduled": "Scheduled",
+                  "workflow-step": "Workflow step"}
+        graded = 0
+        for run in runs[:5]:
+            meta_id = f"macro-run-meta-{run['id']}"
+            if not self.driver.exists(meta_id):
+                continue
+            meta = self.driver.get_text(meta_id).strip()
+            wrap = self.driver.get_computed_style("white-space", meta_id)
+            want = labels.get(run.get("origin", ""), "")
+            self.evidence(f"{meta_id}: {meta!r} (white-space {wrap}; origin {run.get('origin')})")
+            assert want and f"· {want}" in meta, f"origin not sentence case: {meta!r}"
+            assert wrap == "nowrap", f"the history meta wraps ({wrap}): {meta!r}"
+            graded += 1
+        assert graded, "no history row rendered a meta line"
+        self.shot(label="history")
