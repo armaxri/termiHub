@@ -419,6 +419,13 @@
   margin: var(--spacing-md) 0 var(--spacing-xs);
 }
 
+/* A setting that belongs to the one above it (#5633): indented under it. */
+.settings-panel__nested {
+  margin-left: var(--spacing-sm);
+  padding-left: var(--spacing-md);
+  border-left: 1px solid var(--border-secondary);
+}
+
 .settings-panel__add-row {
   display: flex;
   gap: var(--spacing-xs);

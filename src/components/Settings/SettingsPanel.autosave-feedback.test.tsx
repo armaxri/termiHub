@@ -16,7 +16,9 @@ import { AppSettings } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
 import { SettingsPanel } from "./SettingsPanel";
 
-vi.mock("@/themes", () => ({
+// Partial mock: Terminal ▸ syntax highlighting reads the real theme colours.
+vi.mock("@/themes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/themes")>()),
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
 }));
@@ -72,6 +74,14 @@ async function render() {
   await settle();
 }
 
+/** The shell-hook default, under Terminal ▸ Command marks (#5633): opens that page first. */
+function shellHookToggleEl(): HTMLElement | null {
+  act(() => {
+    container.querySelector<HTMLElement>("[data-testid='settings-nav-terminal']")?.click();
+  });
+  return container.querySelector<HTMLElement>("[data-testid='settings-default-shell-integration']");
+}
+
 function ackEl(): HTMLElement | null {
   return container.querySelector("[data-testid='settings-saved-ack']");
 }
@@ -116,9 +126,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
     // No acknowledgment before any change.
     expect(ackEl()?.textContent ?? "").not.toContain("Saved");
 
-    const toggle = container.querySelector<HTMLElement>(
-      "[data-testid='settings-default-shell-integration']"
-    );
+    const toggle = shellHookToggleEl();
     expect(toggle).not.toBeNull();
     await act(async () => {
       toggle!.click();
@@ -161,9 +169,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
 
   describe("debounced save through useDebouncedCallback (#3022)", () => {
     function toggleShellIntegration() {
-      const toggle = container.querySelector<HTMLElement>(
-        "[data-testid='settings-default-shell-integration']"
-      );
+      const toggle = shellHookToggleEl();
       expect(toggle).not.toBeNull();
       act(() => {
         toggle!.click();
@@ -270,9 +276,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
 
   describe("the acknowledgment shows near the edited control (#5562)", () => {
     function shellIntegrationToggle(): HTMLElement {
-      const toggle = container.querySelector<HTMLElement>(
-        "[data-testid='settings-default-shell-integration']"
-      );
+      const toggle = shellHookToggleEl();
       expect(toggle).not.toBeNull();
       return toggle!;
     }
@@ -354,9 +358,10 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       await render();
       // Pointing at the page heading (no field) and then changing the setting
       // without focus leaves no field to anchor to.
+      const toggle = shellIntegrationToggle();
       pointerDown(container.querySelector(".settings-panel__category-title")!);
       await act(async () => {
-        shellIntegrationToggle().click();
+        toggle.click();
       });
       await saveSettles();
 
