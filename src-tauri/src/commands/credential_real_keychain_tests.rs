@@ -315,7 +315,7 @@ fn an_update_signed_differently_can_replace_what_the_old_build_saved() {
         .args([
             UPDATE_HELPER,
             "--exact",
-            "--include-ignored",
+            "--ignored",
             "--test-threads=1",
         ])
         .env(UPDATE_DIR_ENV, dir.path())
@@ -336,7 +336,7 @@ fn an_update_signed_differently_can_replace_what_the_old_build_saved() {
 /// Run by [`an_update_signed_differently_can_replace_what_the_old_build_saved`]
 /// in the re-signed copy only; a no-op anywhere else.
 #[test]
-#[ignore = "run by an_update_signed_differently_can_replace_what_the_old_build_saved"]
+#[ignore = "helper: an_update_signed_differently_can_replace_what_the_old_build_saved"]
 fn update_helper_the_updated_build_saves_over_the_old_item() {
     let Some(dir) = std::env::var_os(UPDATE_DIR_ENV) else {
         return;
