@@ -122,6 +122,12 @@
   border-top: 1px solid var(--border-primary);
 }
 
+/* The destructive action reads as such on hover/focus without shouting at rest. */
+.workflow-history__clear:hover:not([disabled]),
+.workflow-history__clear:focus-visible {
+  color: var(--color-error);
+}
+
 .workflow-history__list {
   overflow-y: auto;
   padding: var(--spacing-xxs) 0;

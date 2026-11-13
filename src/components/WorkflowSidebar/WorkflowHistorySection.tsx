@@ -1,7 +1,15 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { History, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Tooltip, TruncatedText, toast, EmptyState } from "@/components/ui";
+import {
+  Button,
+  ConfirmDialog,
+  StatusDot,
+  Tooltip,
+  TruncatedText,
+  toast,
+  EmptyState,
+} from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
@@ -45,8 +53,9 @@ function runDuration(run: WorkflowRun): string {
 /**
  * The persisted workflow run-history panel (PROD-0046). Lists the most recent
  * runs — status, timing, step progress, what launched each and the terminal it
- * targeted (#5635) — beneath the
- * workflow library, with a single "Clear history" action. Metadata only: the
+ * targeted (#5635) — beneath the workflow library, with a single labelled
+ * "Clear…" action that asks for confirmation first (#5719, matching the macro
+ * history). Metadata only: the
  * runs' terminal output is never stored. Composed from the shared sidebar
  * list-item shell and UI primitives, tokens only. Lives inside
  * {@link "./WorkflowSidebar".WorkflowSidebar}, so it is gated by the same
@@ -61,7 +70,10 @@ export function WorkflowHistorySection() {
     void loadWorkflowRuns();
   }, [loadWorkflowRuns]);
 
+  const [confirmClear, setConfirmClear] = useState(false);
+
   const handleClear = useCallback(async () => {
+    setConfirmClear(false);
     try {
       await clearWorkflowRunHistory();
       toast.success("Cleared workflow run history");
@@ -80,19 +92,32 @@ export function WorkflowHistorySection() {
         title="History"
         icon={<History size={12} aria-hidden="true" />}
         actions={
-          <Tooltip content="Clear history" side="top">
+          <Tooltip content="Clear the run history of every workflow…" side="top">
             <Button
               variant="ghost"
               size="sm"
-              iconOnly
+              className="workflow-history__clear"
               aria-label="Clear history"
               data-testid="workflow-history-clear"
               icon={<Trash2 size={12} />}
               disabled={workflowRuns.length === 0}
-              onClick={() => void handleClear()}
-            />
+              onClick={() => setConfirmClear(true)}
+            >
+              Clear…
+            </Button>
           </Tooltip>
         }
+      />
+      <ConfirmDialog
+        open={confirmClear}
+        title="Clear workflow run history?"
+        variant="danger"
+        message="This removes the recorded runs of every workflow. It cannot be undone."
+        confirmLabel="Clear history"
+        confirmVariant="danger"
+        testIdBase="workflow-history-clear-confirm"
+        onConfirm={handleClear}
+        onCancel={() => setConfirmClear(false)}
       />
       {workflowRuns.length === 0 ? (
         <EmptyState title={t("runHistory.empty")} data-testid="workflow-history-empty" />
