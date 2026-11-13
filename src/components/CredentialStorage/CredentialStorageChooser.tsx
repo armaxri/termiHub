@@ -20,7 +20,7 @@ type Step = "choose" | "master_password";
 
 /** One confirmation per settled choice (#5630), naming where passwords go. */
 const CHOICE_CONFIRMATION: Record<CredentialStorageMode, string> = {
-  os_keychain: "Passwords will be stored in the OS keychain.",
+  os_keychain: "Passwords will be stored in the OS Keychain.",
   master_password: "Passwords will be stored in your master-password vault.",
   none: "termiHub will not save passwords.",
 };

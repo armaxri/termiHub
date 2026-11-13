@@ -70,13 +70,16 @@ export const solarizedLightTheme: ThemeDefinition = {
 
     // Status — #5399: canonical green / yellow / red / blue darkened along their
     // hue just until they reach AA (4.5:1) on every text surface.
-    colorSuccess: "#606e00", // green
+    // #5639: canonical green sat 23° of hue from the yellow, so "connected" read
+    // as a warning. Success starts from green rotated to OKLCH hue 140° (same
+    // lightness and chroma, #56a345), then takes the same minimal nudge.
+    colorSuccess: "#3e7532", // green
     colorWarning: "#846400", // yellow
     colorError: "#c42d2a", // red
     colorInfo: "#1e6ca4", // blue
 
     // State dots — #5399: nudged the same way to the 3:1 UI minimum.
-    stateConnected: "#7a8d00", // green
+    stateConnected: "#4e943f", // green (#5639: rotated, see colorSuccess)
     stateConnecting: "#a87f00", // yellow
     stateDisconnected: "#dc322f", // red, canonical (already 3.77:1)
 
@@ -110,11 +113,13 @@ export const solarizedLightTheme: ThemeDefinition = {
   },
 
   // #5562: an 18% accent tint over base3 painted off-palette greys (#d6e0dc
-  // selected, #e7eadf hovered). Selected rows use base2 with an accent left
-  // bar instead; hovering a selected row darkens it to the theme's hover tone.
+  // selected, #e7eadf hovered). Selected rows use a ramp tone with an accent
+  // left bar instead. #5639: base2 was only 1.14:1 on the base3 sidebar, so
+  // the bar alone marked the row; selected rows take the theme's active tone
+  // (1.44:1, bar 3.47:1) and hovering one steps darker again (1.12:1).
   selection: {
-    bg: "#eee8d5", // base2
-    bgHover: "#e2dcc9", // bgHover
+    bg: "#d5cfbd", // bgActive
+    bgHover: "#cac4b3", // borderPrimary tone
     indicator: "#1f6fa6", // accentColor
     // #5591: transfer panes paint base2 (bgSecondary), so a base2 selection
     // would vanish there. Rows on those panes step up to base3, the editor
@@ -124,5 +129,17 @@ export const solarizedLightTheme: ThemeDefinition = {
       bg: "#fdf6e3", // base3
       bgHover: "#e2dcc9", // bgHover
     },
+  },
+
+  // #5639: textSecondary is base02 (AA on base2 chrome), which made
+  // placeholders look like entered base03 text and drew a dark, "on"-looking
+  // knob on the off toggle. Placeholders take muted base01 (4.99:1 on the
+  // base3 input); the off toggle a base3 knob on a base00 track (4.13:1 each);
+  // secondary buttons a base1 border so they read as buttons.
+  controls: {
+    placeholder: "#586e75", // base01
+    toggleOffTrack: "#657b83", // base00
+    toggleOffThumb: "#fdf6e3", // base3
+    secondaryButtonBorder: "#93a1a1", // base1
   },
 };

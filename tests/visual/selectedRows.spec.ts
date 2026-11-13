@@ -4,7 +4,8 @@
  * pane row (on the `--bg-secondary` pane) paint the shared `--selected-row-*`
  * surfaces and the 2px indicator bar, in Dark (accent tint, no bar) and both
  * Solarized themes (palette surface + bar). In Solarized Light the pane is
- * base2, the sidebar's selection colour, so its rows use base3 instead.
+ * base2, so its rows step up to base3; sidebar rows use the theme's active
+ * tone (#5639). Expected colours come from the theme definitions.
  *
  * Screenshots land in the usual screens/ folder for human review.
  */
@@ -16,6 +17,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { VisualScenario } from "./harness/mockBackend";
 import type { VisualHandle } from "./harness/visualHandle";
 import { SCREENS } from "./surfaces";
+import { solarizedLightTheme } from "../../src/themes/solarized-light";
 
 declare global {
   interface Window {
@@ -25,14 +27,26 @@ declare global {
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
+/** `#rrggbb` as the `rgb(r, g, b)` string getComputedStyle reports. */
+function rgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+const SOL_LIGHT = solarizedLightTheme;
+
 /** Per theme: the expected opaque surfaces, or `null` for the accent tint. */
 const THEMES = [
   { theme: "dark", sidebar: null, pane: null, bar: null },
   {
     theme: "solarized-light",
-    sidebar: { row: "rgb(238, 232, 213)", under: "rgb(253, 246, 227)" }, // base2 on base3
-    pane: { row: "rgb(253, 246, 227)", under: "rgb(238, 232, 213)" }, // base3 on base2
-    bar: "rgb(31, 111, 166)", // accentColor
+    // #5639: the active tone on base3; base3 on the base2 pane.
+    sidebar: { row: rgb(SOL_LIGHT.selection!.bg), under: rgb(SOL_LIGHT.colors.sidebarBg) },
+    pane: {
+      row: rgb(SOL_LIGHT.selection!.secondary!.bg),
+      under: rgb(SOL_LIGHT.colors.bgSecondary),
+    },
+    bar: rgb(SOL_LIGHT.selection!.indicator), // accentColor
   },
   {
     theme: "solarized-dark",

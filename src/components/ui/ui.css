@@ -92,7 +92,7 @@
 .ui-btn--secondary {
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  border-color: var(--border-primary);
+  border-color: var(--btn-secondary-border);
 }
 .ui-btn--secondary:hover:not([aria-disabled="true"]) {
   background: var(--bg-hover);
@@ -147,7 +147,7 @@
 .ui-btn--secondary[aria-disabled="true"]:not([disabled]) {
   background: color-mix(in srgb, var(--bg-tertiary) 50%, transparent);
   color: color-mix(in srgb, var(--text-primary) 50%, transparent);
-  border-color: color-mix(in srgb, var(--border-primary) 50%, transparent);
+  border-color: color-mix(in srgb, var(--btn-secondary-border) 50%, transparent);
 }
 .ui-btn--ghost[aria-disabled="true"]:not([disabled]) {
   color: color-mix(in srgb, var(--text-secondary) 50%, transparent);
@@ -197,7 +197,7 @@
 }
 
 .ui-input::placeholder {
-  color: var(--text-secondary);
+  color: var(--input-placeholder);
 }
 
 .ui-input:focus {
@@ -286,7 +286,7 @@
 }
 
 .ui-textarea::placeholder {
-  color: var(--text-secondary);
+  color: var(--input-placeholder);
 }
 
 .ui-textarea:focus {
@@ -375,7 +375,7 @@
 }
 
 .ui-select__trigger[data-placeholder] {
-  color: var(--text-secondary);
+  color: var(--input-placeholder);
 }
 
 .ui-select__trigger:disabled {
@@ -585,7 +585,7 @@
   height: 20px;
   flex-shrink: 0;
   border-radius: var(--radius-xl);
-  background: var(--bg-active);
+  background: var(--toggle-off-track);
   border: 1px solid var(--border-primary);
   position: relative;
   cursor: pointer;
@@ -614,7 +614,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--text-secondary);
+  background: var(--toggle-off-thumb);
   transform: translateX(2px);
   transition:
     transform var(--transition-fast),
@@ -1738,13 +1738,13 @@
 }
 
 /* Field hint: spacing between fields comes from the field's own margin, so the
-   hint carries none of its own (it used to add a second, uneven gap). */
+   hint carries none of its own (it used to add a second, uneven gap). Upright,
+   not italic: small italic grey text was hard to read (#5632). */
 .settings-form__hint {
   display: block;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   margin: 0;
-  font-style: italic;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }

@@ -73,6 +73,19 @@ The button that throws away unsaved edits says **Discard changes**, everywhere.
 "Anyway" is fine where it is not about unsaved edits, for example "Connect anyway" after a
 warning, but say what is being overridden in the dialog text.
 
+## Credential storage names
+
+Name the credential storage options exactly as their option cards do, wherever text points at
+them: **OS Keychain**, **Master password** and **Don't save passwords**
+([#5685](https://github.com/armaxri/termiHub/issues/5685)). "OS Keychain" keeps its capital K
+everywhere ("stored in the OS Keychain"). Text that refers to the options takes the labels from
+`CREDENTIAL_STORAGE_CHOICES` (`src/utils/credentialStorageCopy.ts`) instead of retyping them.
+
+| Do                                           | Don't                                        |
+| -------------------------------------------- | -------------------------------------------- |
+| choose OS Keychain or Master password        | choose Master Password or OS Keychain        |
+| Passwords will be stored in the OS Keychain. | Passwords will be stored in the OS keychain. |
+
 ## Delete vs Remove
 
 - **Delete** destroys data: a saved connection, a key file, a credential. It cannot be undone

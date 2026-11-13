@@ -64,7 +64,7 @@ pub const MIN_EXPORT_PASSPHRASE_LEN: usize = 12;
 /// Prefix of the refusal when an OS-keychain export cannot be re-authenticated
 /// because OS user verification is unavailable here (#3433). The OS-specific
 /// reason follows it.
-pub const KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE: &str = "Exporting from the OS keychain requires \
+pub const KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE: &str = "Exporting from the OS Keychain requires \
      system authentication (Touch ID / Windows Hello / polkit), which is not available on this computer.";
 /// The prompt reason for export re-authentication; completes the OS sentence
 /// "termiHub is trying to …".

@@ -1,7 +1,7 @@
 import { useId, useRef, type ReactNode } from "react";
 import { AlertCircle, Power, Ban, Monitor, X } from "lucide-react";
 import { Button, ContentOverlay } from "@/components/ui";
-import { ConnectProgress, type ConnectStage } from "@/components/ui/ConnectProgress";
+import { ConnectProgress } from "@/components/ui/ConnectProgress";
 import { connectTypeLabel } from "@/utils/connectStages";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
@@ -21,12 +21,18 @@ import {
   restingConnectHeading,
   restingConnectPhase,
 } from "@/components/Terminal/ConnectFailure";
+import { graphicalStages } from "./graphicalStages";
 
 interface RemoteDesktopOverlayProps {
   state: GraphicalSessionState;
   host: string;
   /** `"rdp"` or `"vnc"`, for the type chip. */
   protocol?: string;
+  /**
+   * `user@host` of the SSH gateway for a tunnelled session, else `null`
+   * (#5626): adds the SSH tunnel step and a "via SSH" chip.
+   */
+  via?: string | null;
   reconnectAttempt: number;
   message: string | null;
   /** Cancel an in-progress auto-reconnect (tears the session down). */
@@ -68,16 +74,6 @@ function restingHeading(state: GraphicalSessionState): string {
   }
 }
 
-/** The graphical connect steps: Connect → Authenticate → Desktop (#5068). */
-function graphicalStages(state: GraphicalSessionState): ConnectStage[] {
-  const at = state === "authenticating" ? 1 : 0;
-  return ["Connect", "Authenticate", "Desktop"].map((label, i) => ({
-    id: label.toLowerCase(),
-    label,
-    state: i < at ? "done" : i === at ? "active" : "pending",
-  }));
-}
-
 /**
  * The one shared set of connection-state overlays for graphical remote-desktop
  * sessions (#1680): connecting (with Cancel, #4298), reconnecting (with attempt counter + Cancel)
@@ -97,6 +93,7 @@ export function RemoteDesktopOverlay({
   state,
   host,
   protocol = "rdp",
+  via = null,
   reconnectAttempt,
   message,
   onCancel,
@@ -118,18 +115,27 @@ export function RemoteDesktopOverlay({
     target: host,
     typeLabel: connectTypeLabel(protocol),
     typeIcon: <Monitor size={20} aria-hidden />,
+    details: via ? [`via SSH ${via}`] : undefined,
     startedAt,
   };
 
   if (state === "connecting" || state === "authenticating") {
-    const status = state === "authenticating" ? "Authenticating" : "Establishing connection";
+    const status =
+      state === "authenticating"
+        ? "Authenticating"
+        : via
+          ? `Opening the SSH tunnel via ${via}`
+          : "Establishing connection";
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
         <ConnectProgress
           {...common}
           phase="connecting"
           heading={`Connecting to ${host}…`}
-          stages={graphicalStages(state)}
+          stages={graphicalStages(
+            state === "authenticating" ? "authenticate" : "connect",
+            via !== null
+          )}
           status={status}
           announcement={`Connecting to ${host}… ${status}`}
           actions={

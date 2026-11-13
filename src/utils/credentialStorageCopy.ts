@@ -22,7 +22,7 @@ export const CREDENTIAL_STORAGE_OFF_TEXT =
  * (#5187): turning it on asks where to keep passwords.
  */
 export const CREDENTIAL_STORAGE_CHOOSE_TEXT =
-  "Turning this on asks once where termiHub should keep passwords — the OS keychain " +
+  "Turning this on asks once where termiHub should keep passwords — the OS Keychain " +
   "is recommended. You can change it later under Settings ▸ Security.";
 
 /** Under a live save box before any storage choice exists (#5187). */
@@ -135,3 +135,23 @@ export const CREDENTIAL_STORAGE_CHOICES: CredentialStorageChoiceCopy[] = [
     description: "You'll be asked for passwords each time you connect.",
   },
 ];
+
+/**
+ * The storing options by their exact option labels ("OS Keychain or Master
+ * password"), in chooser order, so text that points at them never drifts from
+ * the cards (#5685).
+ */
+function storingOptionLabels(): string {
+  return CREDENTIAL_STORAGE_CHOICES.filter((c) => c.mode !== "none")
+    .map((c) => c.label)
+    .join(" or ");
+}
+
+/**
+ * Settings ▸ Security line shown in place of a vault-dependent action while no
+ * credential storage is chosen (#5685), e.g. "Credential storage is off —
+ * choose OS Keychain or Master password above to use shared credentials."
+ */
+export function credentialStorageOffText(purpose: string): string {
+  return `Credential storage is off — choose ${storingOptionLabels()} above to ${purpose}.`;
+}

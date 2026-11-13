@@ -4,6 +4,7 @@ import {
   CREDENTIAL_STORAGE_CHOICES,
   CREDENTIAL_STORAGE_CHOOSE_TEXT,
   CREDENTIAL_STORAGE_OFF_TEXT,
+  credentialStorageOffText,
   credentialStorageParagraph,
   modeAwareSaveHelpText,
   withModeAwareSaveHelp,
@@ -82,5 +83,22 @@ describe("first-use storage chooser copy (#5187)", () => {
       expect(choice.description[0]).toBe(choice.description[0].toUpperCase());
       expect(choice.description.endsWith(".")).toBe(true);
     }
+  });
+});
+
+describe("storage-off copy in Settings ▸ Security (#5685)", () => {
+  it("names the storing options by their exact card labels, in chooser order", () => {
+    expect(credentialStorageOffText("use shared credentials")).toBe(
+      "Credential storage is off — choose OS Keychain or Master password above to use shared credentials."
+    );
+    const labels = CREDENTIAL_STORAGE_CHOICES.filter((c) => c.mode !== "none").map((c) => c.label);
+    const text = credentialStorageOffText("x");
+    for (const label of labels) expect(text).toContain(label);
+    expect(text).not.toContain("Master Password");
+  });
+
+  it("uses one casing for OS Keychain in the editor help text", () => {
+    expect(CREDENTIAL_STORAGE_CHOOSE_TEXT).toContain("OS Keychain");
+    expect(CREDENTIAL_STORAGE_CHOOSE_TEXT).not.toContain("OS keychain");
   });
 });

@@ -18,7 +18,7 @@ Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
   find no ``sh`` shows the "not supported on this host" state.
 * **Settings and themes.** Every settings category opens without a JavaScript
   error; the Updates build info shows the build date (#5652); the numeric
-  settings show the value in effect (#5554); every built-in
+  settings show the value in effect (#5554) as full-contrast text (#5632); every built-in
   theme is applied once, with captures of the main surfaces for the UI review
   and a text-contrast grade.
 """
@@ -214,6 +214,12 @@ class TestProductRunRemoteDesktop(
             self.wait(lambda: self.driver.exists("field-host"), what="the VNC fields")
             self.driver.type("field-host", SSH_HOST)
             self.driver.type("field-port", str(self.vnc.port))
+            # #5626: the SSH tunnel section sits right below Host / Port, above
+            # the display options, so it is visible without scrolling.
+            tunnel_y = self.driver.measure_element("field-useSshTunnel")["rect"]["y"]
+            display_y = self.driver.measure_element("field-scaleMode")["rect"]["y"]
+            self.evidence(f"tunnel toggle y={tunnel_y}, scale mode y={display_y}")
+            assert tunnel_y < display_y, "the SSH tunnel section is below the display options"
             self.driver.click("field-useSshTunnel")
             self.wait(lambda: self.driver.exists("field-sshHost"), what="the SSH tunnel fields")
             self.driver.type("field-sshHost", SSH_HOST)
@@ -230,6 +236,10 @@ class TestProductRunRemoteDesktop(
             self._wait_active()
             self._vnc_quadrants()
             assert self.vnc.connections() > before, "the tunnel reached no VNC server"
+            # #5626: the status bar says the session goes through the SSH tunnel.
+            status = self.driver.get_text(self.STATUS_SEGMENT)
+            self.evidence(f"status bar: {status!r}")
+            assert f"via SSH {native.target.username}@{SSH_HOST}" in status, status
         self.close_all_tabs()
 
     def test_03_rdp_scripted(self):
@@ -298,6 +308,40 @@ class TestProductRunRemoteDesktop(
     def test_04_real_hosts(self):
         self._real_host("vnc")
         self._real_host("rdp")
+
+    def test_05_vnc_first_frame_state(self):
+        with self.step(
+            "vnc.first-frame",
+            "A VNC session that is up but has painted nothing shows its stage, not a blank pane, "
+            "and the status bar claims no resolution until the first frame",
+            expect="a VNC tab with the 'Connected, waiting for the first frame…' overlay, "
+            "then the four-quadrant desktop",
+        ):
+            self._open()
+            self.vnc.hold_frames()
+            try:
+                self.create_vnc_connection(
+                    unique_name("pr-vnc-held"), host=SSH_HOST, port=self.vnc.port, scale_mode="fit"
+                )
+                self._wait_active()
+                self.wait(lambda: self.driver.exists(self.OVERLAY_FIRST_FRAME),
+                          what="the waiting-for-the-first-frame overlay")
+                status = self.driver.get_text(self.STATUS_SEGMENT)
+                self.evidence(f"status bar before the first frame: {status!r}")
+                assert f"{SSH_HOST}:{self.vnc.port}" in status, status
+                assert "×" not in status and "-bit" not in status, (
+                    f"the status bar claims a live session before any frame: {status!r}"
+                )
+                self.shot(label="waiting")
+            finally:
+                self.vnc.release_frames()
+            self._vnc_quadrants()
+            self.wait(lambda: not self.driver.exists(self.OVERLAY_FIRST_FRAME),
+                      what="the waiting overlay to go once the frame painted")
+            status = self.driver.get_text(self.STATUS_SEGMENT)
+            self.evidence(f"status bar after the first frame: {status!r}")
+            assert f"{self.vnc.width}×{self.vnc.height}" in status, status
+        self.close_all_tabs()
 
 
 # ── Monitoring ───────────────────────────────────────────────────────────────
@@ -454,7 +498,7 @@ class TestProductRunSettingsThemes(
                 errors += [f"{category}: {e.get('message', '')[:160]}" for e in new]
                 if category == "updates":
                     false_claims += self._update_currency_claims()
-                self.shot(label=category)
+                self.shot(label=category, expect="settings-panel-content")
             self.evidence(f"opened {len(SETTINGS_CATEGORIES) - len(missing)} categories")
             if missing:
                 self.evidence(f"not in the nav (hidden here): {missing}")
@@ -627,3 +671,49 @@ class TestProductRunSettingsThemes(
             else:
                 problems.append(f"unexpected status {state!r}")
             assert not problems, "; ".join(problems)
+
+    def test_06_numeric_effective_value_contrast(self):
+        """The numeric settings' value in effect reads as real text (#5632).
+
+        The value is the input's own text at >= 4.5:1 against the field, never
+        placeholder grey; "Default" is only a tag on the label row, and an
+        overridden value offers a real "Reset to default" button instead.
+        """
+        for category, testid, key, label in NUMERIC_SETTINGS:
+            with self.step(
+                f"settings.numeric.{key}.contrast",
+                f"{label}: the value in effect is full-contrast text; Default is a tag, "
+                "Reset is a button (#5632)",
+                expect=f"Settings ▸ {category} with {label} showing its value in normal text "
+                "and a Default tag or a Reset to default button on the label row",
+            ):
+                self.open_settings_category(category)
+                field = f"{testid}-input"
+                self.wait(lambda: self.driver.exists(field), what=f"the {label} input")
+                time.sleep(0.5)
+                value = str(self.driver.get_value(field) or "").strip()
+                placeholder = self.driver.get_attribute(field, "placeholder") or ""
+                fg = self.style_color("color", field)
+                bg = self.opaque_background(field, self.root_color("--bg-primary"))
+                ratio = contrast(fg, bg)
+                has_tag = self.driver.exists(f"{testid}-default")
+                has_reset = self.driver.exists(f"{testid}-reset")
+                reset_type = (
+                    self.driver.get_attribute(f"{testid}-reset", "type") if has_reset else None
+                )
+                self.evidence(
+                    f"value {value!r}, placeholder {placeholder!r}, text contrast {ratio:.2f}:1, "
+                    f"Default tag {has_tag}, Reset button {has_reset} (type {reset_type!r})"
+                )
+                problems = []
+                if not value:
+                    problems.append("the field is empty — the value in effect is not its text")
+                if placeholder:
+                    problems.append(f"the field still carries a placeholder {placeholder!r}")
+                if ratio < 4.5:
+                    problems.append(f"value text contrast {ratio:.2f}:1 < 4.5:1")
+                if has_tag == has_reset:
+                    problems.append("want exactly one of the Default tag and the Reset button")
+                if has_reset and reset_type != "button":
+                    problems.append(f"the reset marker is not a button (type {reset_type!r})")
+                assert not problems, "; ".join(problems)

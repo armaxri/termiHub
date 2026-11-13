@@ -55,6 +55,7 @@ describe("StatusBar — remote-desktop segment", () => {
     setActiveTab({
       config: { type: "rdp", config: { host: "kiosk", port: 5901, colorDepth: "32" } },
     });
+    act(() => useAppStore.getState().setRemoteDesktopResolution("s1", 800, 600));
 
     act(() => root.render(React.createElement(StatusBar)));
     await flushAsync();
@@ -85,6 +86,7 @@ describe("StatusBar — remote-desktop segment", () => {
     setActiveTab({
       config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
     });
+    act(() => useAppStore.getState().setRemoteDesktopResolution("s1", 800, 600));
 
     act(() => root.render(React.createElement(StatusBar)));
     await flushAsync();
@@ -99,6 +101,7 @@ describe("StatusBar — remote-desktop segment", () => {
     setActiveTab({
       config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "24" } },
     });
+    act(() => useAppStore.getState().setRemoteDesktopResolution("s1", 800, 600));
 
     act(() => root.render(React.createElement(StatusBar)));
     await flushAsync();
@@ -134,6 +137,37 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("kiosk:5901");
     expect(item!.textContent).not.toContain("×");
+    // Nothing claims a healthy session before a frame painted (#5626).
+    expect(item!.textContent).not.toContain("-bit");
+  });
+
+  it("names the SSH gateway of a tunnelled session (#5626)", async () => {
+    setActiveTab({
+      config: {
+        type: "vnc",
+        config: {
+          host: "127.0.0.1",
+          port: 5901,
+          useSshTunnel: true,
+          sshHost: "bastion",
+          sshUsername: "arne",
+        },
+      },
+    });
+
+    act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
+
+    expect(query()!.textContent).toContain("via SSH arne@bastion");
+  });
+
+  it("spaces the monitor icon from its text like the other items (#5626)", async () => {
+    setActiveTab({ config: { type: "vnc", config: { host: "kiosk", port: 5901 } } });
+
+    act(() => root.render(React.createElement(StatusBar)));
+    await flushAsync();
+
+    expect(query()!.classList.contains("status-bar__item--with-icon")).toBe(true);
   });
 
   it("renders nothing when the active tab is not a remote-desktop tab", async () => {

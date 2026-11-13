@@ -117,6 +117,9 @@ class ScriptedVncServer:
         self._lock = threading.Lock()
         self._connections = 0
         self._closed = threading.Event()
+        # Set: framebuffer updates wait (the client sees a connected session
+        # that has painted nothing yet, #5626) until :meth:`release_frames`.
+        self._hold = threading.Event()
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
@@ -138,6 +141,24 @@ class ScriptedVncServer:
     def _record(self, event: str) -> None:
         with self._lock:
             self._events.append(event)
+
+    # ── first-frame control (#5626) ─────────────────────────────────────────
+    def hold_frames(self) -> None:
+        """Answer no framebuffer update until :meth:`release_frames`."""
+        self._hold.set()
+
+    def release_frames(self) -> None:
+        """Send the held (and every later) framebuffer update again."""
+        self._hold.clear()
+
+    def _wait_while_held(self, number: int) -> None:
+        if not self._hold.is_set():
+            return
+        self._record(f"holding #{number}")
+        while self._hold.is_set():
+            if self._closed.wait(0.05):
+                raise ConnectionError("server closing")
+        self._record(f"released #{number}")
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def close(self) -> None:
@@ -228,6 +249,7 @@ class ScriptedVncServer:
                 self._record(f"encodings #{number} {list(encodings)}")
             elif kind == 3:  # FramebufferUpdateRequest
                 incremental, x, y, w, h = struct.unpack(">BHHHH", self._recv(conn, 9))
+                self._wait_while_held(number)
                 x, y = min(x, self.width), min(y, self.height)
                 w, h = min(w, self.width - x), min(h, self.height - y)
                 if incremental and sent_full:

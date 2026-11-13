@@ -11,6 +11,7 @@ import { isAutoReconnectEnabled, TERMINAL_AUTO_RECONNECT_TYPES } from "@/utils/a
 import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
+import { connectOverlayIdentity, type ConnectOverlayIdentity } from "@/utils/connectStages";
 import { useAppStore } from "./appStoreHandle";
 import { collectLiveTabs, getComposedLayout } from "./layoutHelpers";
 
@@ -121,6 +122,16 @@ function onReconnectCommandForTab(tab: TerminalTab | undefined): string | undefi
  */
 export function onReconnectCommandForTabId(tabId: string): string | undefined {
   return onReconnectCommandForTab(findTabById(tabId));
+}
+
+/**
+ * The connection identity (effective type, agent flag, target) of a tab, or
+ * `undefined` when the tab is gone. The reconnect strip words a drop per
+ * transport from it (#5619): an unplugged serial device is not a lost shell.
+ */
+export function connectionIdentityForTabId(tabId: string): ConnectOverlayIdentity | undefined {
+  const tab = findTabById(tabId);
+  return tab?.config ? connectOverlayIdentity(tab.config) : undefined;
 }
 
 /**

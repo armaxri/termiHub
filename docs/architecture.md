@@ -1058,7 +1058,11 @@ transport's own timeout (for example the agent's 45 s SSH connect timeout, or th
 graphical 30 s re-dial timeout), so every loop resolves in bounded time.
 
 **One wording for every surface.** Terminal and graphical tabs both show "Connection
-lost — reconnecting…" with "Attempt n of 10" (`src/utils/reconnectStatus.ts`). The
+lost — reconnecting…" with "Attempt n of 10" (`src/utils/reconnectStatus.ts`). A
+terminal tab names what dropped (`src/components/Terminal/dropCopy.ts`, #5619): a serial
+tab says "Device disconnected", a telnet tab "Connection closed", and the scrollback gets
+a timed "— connection lost —" / "— device disconnected —" line and, after the reconnect,
+"— reconnected hh:mm:ss —" instead of "[Process exited]". The
 monitoring status bar shows exactly one badge, by precedence: **Offline** (with Retry)
 over **Reconnecting…** over **Stale** over **Paused** — a link problem always outranks a
 user pause. Reconnecting, Stale and Paused dim the frozen numbers.

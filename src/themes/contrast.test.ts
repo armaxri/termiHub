@@ -62,6 +62,14 @@ const SOLARIZED_PALETTE: Record<string, string> = {
   green: "#859900",
 };
 
+/**
+ * #5639: canonical Solarized green (#859900, OKLCH hue 118.6°) sits 23° of HSL
+ * hue from the warning yellow, so success read as "connecting". The success
+ * roles start from green rotated to OKLCH hue 140° at the same lightness and
+ * chroma (graded in solarizedStates.test.ts).
+ */
+const SOLARIZED_SUCCESS_GREEN = "#56a345";
+
 /** sRGB-composite `fg` at `alpha` over the opaque `bg` (what color-mix + transparent paints). */
 function composite(fg: string, bg: string, alpha: number): string {
   const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
@@ -492,8 +500,9 @@ describe("solarized link and status colours (WCAG 2.2 AA, #5399)", () => {
     ["colorInfo", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
     ["colorError", SOLARIZED_PALETTE.red, AA_NORMAL_TEXT, TEXT_SURFACES],
     ["colorWarning", SOLARIZED_PALETTE.yellow, AA_NORMAL_TEXT, TEXT_SURFACES],
-    ["colorSuccess", SOLARIZED_PALETTE.green, AA_NORMAL_TEXT, TEXT_SURFACES],
-    ["stateConnected", SOLARIZED_PALETTE.green, UI_COMPONENT_MIN, DOT_SURFACES],
+    // #5639: success starts from green rotated clear of the warning yellow.
+    ["colorSuccess", SOLARIZED_SUCCESS_GREEN, AA_NORMAL_TEXT, TEXT_SURFACES],
+    ["stateConnected", SOLARIZED_SUCCESS_GREEN, UI_COMPONENT_MIN, DOT_SURFACES],
     ["stateConnecting", SOLARIZED_PALETTE.yellow, UI_COMPONENT_MIN, DOT_SURFACES],
     ["stateDisconnected", SOLARIZED_PALETTE.red, UI_COMPONENT_MIN, DOT_SURFACES],
     ["focusBorder", SOLARIZED_PALETTE.blue, UI_COMPONENT_MIN, FOCUS_SURFACES],
@@ -592,9 +601,9 @@ describe("solarized light selection and filled buttons (#5562)", () => {
   if (!selection) throw new Error("solarized light defines no selection surfaces");
   const TOKENS = ["textPrimary", "textSecondaryOnSelection", "textMutedOnSelection"] as const;
 
-  it("selected rows are base2, hovered selected rows the theme's hover tone", () => {
-    expect(selection.bg).toBe(SOLARIZED_PALETTE.base2);
-    expect(selection.bgHover).toBe(colors.bgHover);
+  it("selected rows are the active tone, hovered selected rows a step darker (#5639)", () => {
+    expect(selection.bg).toBe(colors.bgActive);
+    expect(selection.bgHover).toBe(colors.borderPrimary);
     expect(selection.indicator).toBe(colors.accentColor);
   });
 
@@ -839,8 +848,8 @@ describe("selected rows on every surface (#5591)", () => {
     }
   }
 
-  it("documents the gap the pane pair closes: Solarized Light's base2 is the pane", () => {
-    expect(solarizedLightTheme.selection?.bg).toBe(solarizedLightTheme.colors.bgSecondary);
+  it("Solarized Light's pane rows step up to base3, the editor surface", () => {
+    expect(solarizedLightTheme.colors.bgSecondary).toBe(SOLARIZED_PALETTE.base2);
     expect(solarizedLightTheme.selection?.secondary?.bg).toBe(SOLARIZED_PALETTE.base3);
   });
 

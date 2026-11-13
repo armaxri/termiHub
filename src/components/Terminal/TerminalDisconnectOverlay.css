@@ -11,14 +11,27 @@
   background: var(--overlay-content-bg);
   backdrop-filter: var(--overlay-blur-sm);
   color: var(--text-primary);
-  font-family: var(--font-mono);
+  /* UI typography, not the terminal's monospace (#5619): this is app chrome. */
+  font-family: var(--font-family);
   font-size: var(--font-size-sm);
+}
+
+/* The notice card (#5619): holds the body and its dismiss control together, so
+   the "x" belongs to the notice instead of floating at the pane's corner. */
+.terminal-disconnect-overlay__card {
+  position: relative;
+  max-width: 460px;
+  margin: var(--spacing-lg);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
 }
 
 .terminal-disconnect-overlay__dismiss {
   position: absolute;
-  top: var(--spacing-sm);
-  right: var(--spacing-sm);
+  top: var(--spacing-xs);
+  right: var(--spacing-xs);
   display: flex;
   align-items: center;
   justify-content: center;

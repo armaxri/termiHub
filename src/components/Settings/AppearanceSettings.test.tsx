@@ -108,20 +108,43 @@ describe("AppearanceSettings — numeric fields", () => {
     expect(fieldInput("Line height").type).toBe("number");
   });
 
-  it("shows a blank font size and line height when unset (#1453)", () => {
+  it("shows the effective default as full-contrast field text when unset (#5632)", () => {
     renderWith(defaultSettings);
-    expect(fieldInput("Font size").value).toBe("");
-    expect(fieldInput("Line height").value).toBe("");
+    // The value in effect is real text, not placeholder grey (R-045), and the
+    // line height is formatted like its hint ("1.0", R-124).
+    expect(fieldInput("Font size").value).toBe("14");
+    expect(fieldInput("Font size").placeholder).toBe("");
+    expect(fieldInput("Line height").value).toBe("1.0");
   });
 
-  it("shows the effective default font size and line height when unset (#5554)", () => {
+  it("puts the Default tag on the label row, not beside the control (#5632)", () => {
     renderWith(defaultSettings);
-    expect(fieldInput("Font size").placeholder).toBe("14");
-    expect(fieldInput("Line height").placeholder).toBe("1");
-    expect(container.querySelector('[data-testid="settings-font-size-default"]')?.textContent).toBe(
-      "Default"
-    );
+    const tag = container.querySelector('[data-testid="settings-font-size-default"]');
+    expect(tag?.textContent).toBe("Default");
+    expect(tag?.closest(".settings-form__label-row")).not.toBeNull();
+    expect(tag?.tagName).toBe("SPAN");
     expect(container.querySelector('[data-testid="settings-line-height-default"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-font-size-reset"]')).toBeNull();
+  });
+
+  it("treats a stored value equal to the default as the default (#5632)", () => {
+    renderWith({ ...defaultSettings, fontSize: 14 });
+    expect(container.querySelector('[data-testid="settings-font-size-default"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-font-size-reset"]')).toBeNull();
+  });
+
+  it("typing the default value back stores unset, so the default is followed (#5632)", () => {
+    const onChange = renderWith({ ...defaultSettings, fontSize: 18 });
+    setValue(fieldInput("Font size"), "14");
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: undefined }));
+  });
+
+  it("offers an explicit Reset to default button on the label row when overridden (#5632)", () => {
+    renderWith({ ...defaultSettings, fontSize: 18 });
+    const reset = container.querySelector('[data-testid="settings-font-size-reset"]');
+    expect(reset?.tagName).toBe("BUTTON");
+    expect(reset?.textContent).toContain("Reset to default");
+    expect(reset?.closest(".settings-form__label-row")).not.toBeNull();
   });
 
   it("resets a set font size back to the default (#5554)", () => {
@@ -373,6 +396,9 @@ describe("AppearanceSettings — font family (#5561)", () => {
     expect(input.value).toBe("");
     expect(input.placeholder).toBe("Default font chain");
     expect(byId("settings-font-family-default")?.textContent).toBe("Default");
+    expect(
+      byId("settings-font-family-default")?.closest(".settings-form__label-row")
+    ).not.toBeNull();
     expect(byId("settings-font-family-reset")).toBeNull();
     // The full chain is readable in the hint instead of crammed into the input.
     const hint = input.closest(".settings-form__field")?.textContent ?? "";

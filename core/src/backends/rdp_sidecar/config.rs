@@ -21,7 +21,7 @@ use crate::connection::graphical_monitors::{
 use crate::connection::graphical_resolution::{
     DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
 };
-use crate::connection::graphical_ssh_tunnel::ssh_tunnel_group;
+use crate::connection::graphical_ssh_tunnel::insert_ssh_tunnel_group;
 use crate::connection::proxy_settings::direct_proxy_group;
 use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::{
@@ -661,7 +661,8 @@ pub fn rdp_settings_schema() -> SettingsSchema {
     // Reach the server through an SSH local forward — the same group VNC has.
     // The host process runs the tunnel; the sidecar only ever sees the loopback
     // endpoint, never the gateway credentials (see `SidecarRdp::connect`).
-    groups.push(ssh_tunnel_group("RDP"));
+    // Placed right after Connection, next to Host / Port (#5626).
+    insert_ssh_tunnel_group(&mut groups, "RDP");
 
     // Outbound proxy for a direct connection (#4899), collapsed and shown only
     // with the SSH tunnel off. Like the tunnel, the host process dials it and
@@ -1243,10 +1244,10 @@ mod tests {
             keys,
             vec![
                 "connection",
+                "sshTunnel",
                 "display",
                 "features",
                 "rdp",
-                "sshTunnel",
                 "proxy"
             ]
         );

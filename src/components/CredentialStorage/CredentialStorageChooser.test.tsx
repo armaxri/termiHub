@@ -572,7 +572,7 @@ describe("CredentialStorageChooser (#5187)", () => {
       await openChooser();
       await click("credential-storage-chooser-continue");
       expect(toast.success).toHaveBeenCalledTimes(1);
-      expect(toast.success).toHaveBeenCalledWith("Passwords will be stored in the OS keychain.");
+      expect(toast.success).toHaveBeenCalledWith("Passwords will be stored in the OS Keychain.");
     });
 
     it("does not toast when the store could not be set up", async () => {

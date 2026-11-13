@@ -126,6 +126,24 @@ export interface ThemeDefinition {
    * only: custom and plugin themes always use the tint defaults.
    */
   selection?: ThemeSelection;
+  /**
+   * Optional form-control colours (#5639) for a theme whose plain tokens make
+   * placeholders, off toggles or secondary buttons hard to read. Each omitted
+   * entry falls back to its `variables.css` default. Built-in themes only.
+   */
+  controls?: ThemeControls;
+}
+
+/** Form-control colours a theme may supply in place of the plain-token defaults. */
+export interface ThemeControls {
+  /** Input, textarea and select placeholder text (`--input-placeholder`). */
+  placeholder?: string;
+  /** Off-state toggle track (`--toggle-off-track`). */
+  toggleOffTrack?: string;
+  /** Off-state toggle knob (`--toggle-off-thumb`). */
+  toggleOffThumb?: string;
+  /** Secondary button border (`--btn-secondary-border`). */
+  secondaryButtonBorder?: string;
 }
 
 /** Opaque selected-row surfaces a theme may supply in place of the accent tints. */
