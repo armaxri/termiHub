@@ -38,6 +38,14 @@ function setInput(testId: string, value: string) {
   });
 }
 
+/** Expand every collapsed step row (opened steps start collapsed, #5637). */
+function expandAllSteps() {
+  const toggle = document.querySelector<HTMLButtonElement>(
+    '[data-testid="workflow-editor-steps-toggle-all"]'
+  );
+  if (toggle && toggle.textContent === "Expand all") act(() => toggle.click());
+}
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -73,6 +81,7 @@ function render(workflow: Workflow = baseWorkflow) {
       )
     );
   });
+  expandAllSteps();
   return { onSave };
 }
 

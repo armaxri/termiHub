@@ -48,24 +48,36 @@ export function WorkflowStepErrorHandlingEditor({
 
   return (
     <div className="workflow-step__policy" data-testid={`workflow-editor-step-policy-${fieldId}`}>
-      <Field label="Continue on error" htmlFor={`workflow-step-continue-${fieldId}`}>
-        <Toggle
-          id={`workflow-step-continue-${fieldId}`}
-          checked={step.continueOnError ?? false}
-          onCheckedChange={setContinue}
-          aria-label={`Continue the workflow when step ${fieldId} fails`}
-          data-testid={`workflow-editor-step-continue-${fieldId}`}
-        />
-      </Field>
-      <Field label="Retry on failure" htmlFor={`workflow-step-retry-${fieldId}`}>
-        <Toggle
-          id={`workflow-step-retry-${fieldId}`}
-          checked={retry !== undefined}
-          onCheckedChange={setRetryEnabled}
-          aria-label={`Retry step ${fieldId} when it fails`}
-          data-testid={`workflow-editor-step-retry-${fieldId}`}
-        />
-      </Field>
+      {/* Both switches share one row, label beside the switch (#5637): stacked
+          label-over-toggle made every step card ~310px tall. */}
+      <div className="workflow-step__policy-toggles">
+        <Field
+          label="Continue on error"
+          htmlFor={`workflow-step-continue-${fieldId}`}
+          layout="checkbox"
+        >
+          <Toggle
+            id={`workflow-step-continue-${fieldId}`}
+            checked={step.continueOnError ?? false}
+            onCheckedChange={setContinue}
+            aria-label={`Continue the workflow when step ${fieldId} fails`}
+            data-testid={`workflow-editor-step-continue-${fieldId}`}
+          />
+        </Field>
+        <Field
+          label="Retry on failure"
+          htmlFor={`workflow-step-retry-${fieldId}`}
+          layout="checkbox"
+        >
+          <Toggle
+            id={`workflow-step-retry-${fieldId}`}
+            checked={retry !== undefined}
+            onCheckedChange={setRetryEnabled}
+            aria-label={`Retry step ${fieldId} when it fails`}
+            data-testid={`workflow-editor-step-retry-${fieldId}`}
+          />
+        </Field>
+      </div>
       {retry && (
         <div className="workflow-step__retry">
           <Field

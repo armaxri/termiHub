@@ -11,10 +11,12 @@ import type { ComponentType } from "react";
 import { Terminal, FileCode, Play, Clock, Cpu, GitBranch, Repeat, Eye } from "lucide-react";
 import type {
   WorkflowComparisonOp,
+  WorkflowCondition,
   WorkflowRunTrigger,
   WorkflowStep,
   WorkflowStepKind,
 } from "@/types/workflow";
+import type { Macro } from "@/types/macro";
 import { t } from "@/i18n/catalog";
 
 /** The step kinds, in the order they appear in the "Add step…" menu. */
@@ -154,4 +156,63 @@ export function newWorkflowStep(kind: WorkflowStepKind): WorkflowStep {
       // timeout until the author sets them.
       return { kind, pattern: "" };
   }
+}
+
+/** Shown in a collapsed step's summary when its main field is still empty. */
+export const EMPTY_STEP_SUMMARY = "Not set yet";
+
+/** `left op right` of a condition, for a one-line summary. */
+function conditionSummary(condition: WorkflowCondition): string {
+  return `${condition.left || "…"} ${conditionOpLabel(condition.op)} ${condition.right || "…"}`;
+}
+
+/** "1 step" / "3 steps". */
+function stepCount(n: number): string {
+  return `${n} step${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * One-line summary of a step's main value, shown on a collapsed step row in the
+ * workflow editor (#5637) so a long sequence reads at a glance: the command, the
+ * script's first line, the macro's name, the delay, and so on. `macros` resolves
+ * a run-macro step's id to its name.
+ */
+export function stepSummary(step: WorkflowStep, macros: readonly Macro[] = []): string {
+  switch (step.kind) {
+    case "send-command":
+      return step.command.trim() || EMPTY_STEP_SUMMARY;
+    case "run-script": {
+      if (step.sourcePath) return step.sourcePath.split(/[\\/]/).pop() || step.sourcePath;
+      const lines = step.script.split("\n").filter((l) => l.trim() !== "");
+      if (lines.length === 0) return EMPTY_STEP_SUMMARY;
+      return lines.length === 1 ? lines[0] : `${lines[0]} (+${lines.length - 1} more)`;
+    }
+    case "run-macro":
+      if (!step.macroId) return EMPTY_STEP_SUMMARY;
+      return macros.find((m) => m.id === step.macroId)?.name ?? "Unknown macro";
+    case "wait":
+      return `${step.delayMs} ms`;
+    case "run-local-process":
+      return [step.program, ...step.args].join(" ").trim() || EMPTY_STEP_SUMMARY;
+    case "conditional":
+      return `If ${conditionSummary(step.condition)} · ${stepCount(step.then.length)}`;
+    case "loop":
+      return step.loop.kind === "count"
+        ? `${step.loop.count}× · ${stepCount(step.body.length)}`
+        : `While ${conditionSummary(step.loop.condition)} · ${stepCount(step.body.length)}`;
+    case "wait-for-output":
+      if (!step.pattern) return EMPTY_STEP_SUMMARY;
+      return step.isRegex ? `/${step.pattern}/` : step.pattern;
+  }
+}
+
+/**
+ * The step's failure policy (PROD-045) as short sentence-case notes for the
+ * collapsed row — empty when the step uses no error handling.
+ */
+export function stepPolicySummary(step: WorkflowStep): string[] {
+  const notes: string[] = [];
+  if (step.continueOnError) notes.push("Continues on error");
+  if (step.retry) notes.push(`Retries ${step.retry.count}×`);
+  return notes;
 }

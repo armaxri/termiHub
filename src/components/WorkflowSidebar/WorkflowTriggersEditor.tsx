@@ -1,4 +1,5 @@
-import { Zap, Play, Keyboard, Unplug, ScanText } from "lucide-react";
+import type { ComponentType, ReactNode } from "react";
+import { Zap, Play, Keyboard, Unplug, ScanText, Check } from "lucide-react";
 import { Chip, Input, Field } from "@/components/ui";
 import type { WorkflowTrigger, WorkflowTriggerKind } from "@/types/workflow";
 import type { SavedConnection } from "@/types/connection";
@@ -29,6 +30,15 @@ function replace(
 ): WorkflowTrigger[] {
   const without = triggers.filter((t) => t.kind !== kind);
   return next ? [...without, next] : without;
+}
+
+/**
+ * A trigger chip's icon: a check mark while it is on, its kind icon while off.
+ * Several triggers can be on at once, so the chips read as a checklist rather
+ * than tabs of a segmented control (#5637).
+ */
+function chipIcon(on: boolean, Icon: ComponentType<{ size?: number | string }>): ReactNode {
+  return on ? <Check size={11} aria-hidden="true" /> : <Icon size={11} aria-hidden="true" />;
 }
 
 /**
@@ -84,38 +94,38 @@ export function WorkflowTriggersEditor({
 
   return (
     <div className="workflow-triggers" data-testid="workflow-editor-triggers">
-      <div className="workflow-triggers__chips">
+      <div className="workflow-triggers__chips" data-testid="workflow-editor-triggers-chips">
         <Chip
           label={triggerKindLabel("manual")}
-          icon={<Play size={11} />}
+          icon={chipIcon(manual !== undefined, Play)}
           pressed={manual !== undefined}
           onPressedChange={toggleManual}
           data-testid="workflow-trigger-manual"
         />
         <Chip
           label={triggerKindLabel("on-connect")}
-          icon={<Zap size={11} />}
+          icon={chipIcon(onConnect !== undefined, Zap)}
           pressed={onConnect !== undefined}
           onPressedChange={toggleOnConnect}
           data-testid="workflow-trigger-on-connect"
         />
         <Chip
           label={triggerKindLabel("hotkey")}
-          icon={<Keyboard size={11} />}
+          icon={chipIcon(hotkey !== undefined, Keyboard)}
           pressed={hotkey !== undefined}
           onPressedChange={toggleHotkey}
           data-testid="workflow-trigger-hotkey"
         />
         <Chip
           label={triggerKindLabel("on-disconnect")}
-          icon={<Unplug size={11} />}
+          icon={chipIcon(onDisconnect !== undefined, Unplug)}
           pressed={onDisconnect !== undefined}
           onPressedChange={toggleOnDisconnect}
           data-testid="workflow-trigger-on-disconnect"
         />
         <Chip
           label={triggerKindLabel("on-output-match")}
-          icon={<ScanText size={11} />}
+          icon={chipIcon(onOutputMatch !== undefined, ScanText)}
           pressed={onOutputMatch !== undefined}
           onPressedChange={toggleOnOutputMatch}
           data-testid="workflow-trigger-on-output-match"
