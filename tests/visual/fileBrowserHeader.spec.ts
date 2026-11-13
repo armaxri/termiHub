@@ -132,5 +132,21 @@ test("the file browser header keeps long paths legible and its actions on one ro
     });
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
+
+    // #5540: no pencil button; the empty bar space opens the editor in place,
+    // holding the full path at the bar's height, and Escape restores the crumbs.
+    await expect(gallery.locator('button[aria-label="Edit path"]')).toHaveCount(0);
+    const short = page.locator(`[data-testid=fbg-cell-${UNFOLDED}]`);
+    const bar = short.locator(".file-browser__path-bar");
+    const before = await bar.boundingBox();
+    await short.locator("[data-testid=file-browser-path-edit]").click();
+    const input = short.locator("[data-testid=file-browser-path-input]");
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue((await short.getAttribute("data-path"))!);
+    expect
+      .soft((await bar.boundingBox())?.height, `${theme}: editor keeps the bar height`)
+      .toBe(before?.height);
+    await page.keyboard.press("Escape");
+    await expect(short.locator("[data-testid=file-browser-current-path]")).toBeVisible();
   }
 });
