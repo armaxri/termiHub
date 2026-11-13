@@ -72,6 +72,9 @@ export function reconnectDetailFor(transport: DropTransport, target?: string): s
   }
 }
 
+/** Transports whose server can close the link (#5696; on an agent, #5732). */
+const SERVER_TRANSPORTS: ReadonlySet<DropTransport> = new Set(["ssh", "telnet", "agent"]);
+
 /** Local wall-clock time as `hh:mm:ss` (24-hour). */
 export function formatClock(at: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -83,8 +86,10 @@ export function formatClock(at: Date): string {
  * (no exit code, on a serial / network / agent transport) reads as
  * "— connection lost hh:mm:ss —" or "— device disconnected hh:mm:ss —"; an
  * SSH / Telnet server that closed the connection cleanly reads as
- * "— connection closed by server hh:mm:ss —" (#5696); any real process exit
- * keeps "[Process exited…]".
+ * "— connection closed by server hh:mm:ss —" (#5696) — also when that
+ * server served a session on a remote agent, which the agent reports with the
+ * session's end cause (#5732; a lost agent link never carries one); any real
+ * process exit keeps "[Process exited…]".
  */
 export function sessionEndSeparator(input: {
   transport: DropTransport;
@@ -98,7 +103,7 @@ export function sessionEndSeparator(input: {
   if (reason === "dropped" && exitCode === null && transport !== "other") {
     const time = formatClock(at);
     if (transport === "serial") return tf("drop.separator.serial", { time });
-    if (endCause === "remote_closed" && (transport === "ssh" || transport === "telnet")) {
+    if (endCause === "remote_closed" && SERVER_TRANSPORTS.has(transport)) {
       return tf("drop.separator.remoteClosed", { time });
     }
     return tf("drop.separator.network", { time });

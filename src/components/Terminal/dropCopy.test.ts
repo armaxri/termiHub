@@ -100,17 +100,34 @@ describe("scrollback separators", () => {
     }
   });
 
-  it("does not let a remote close reword an agent drop or a serial unplug (#5696)", () => {
-    const at = AT;
+  it("writes closed-by-server for a server close on an agent-hosted session (#5732)", () => {
     expect(
       sessionEndSeparator({
         transport: "agent",
         exitCode: null,
         reason: "dropped",
-        at,
+        at: AT,
         endCause: "remote_closed",
       })
-    ).toBe("— connection lost 09:05:07 —");
+    ).toBe("— connection closed by server 09:05:07 —");
+  });
+
+  it("keeps connection lost for a lost agent link without a cause (#5732)", () => {
+    for (const endCause of ["io_error", "timeout", null, undefined] as const) {
+      expect(
+        sessionEndSeparator({
+          transport: "agent",
+          exitCode: null,
+          reason: "dropped",
+          at: AT,
+          endCause,
+        })
+      ).toBe("— connection lost 09:05:07 —");
+    }
+  });
+
+  it("does not let a remote close reword a serial unplug (#5696)", () => {
+    const at = AT;
     expect(
       sessionEndSeparator({
         transport: "serial",
