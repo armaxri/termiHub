@@ -3,6 +3,13 @@
   flex-direction: column;
   height: 100%;
   position: relative;
+  /* The Modified / Size columns hide by the browser's own width (#5623). */
+  container-type: inline-size;
+  container-name: file-browser;
+  /* Data-column widths, in em of the 2xs caption font both the headers and the
+     cells use, so a header and its column share one width. */
+  --file-list-col-modified: 6.5em;
+  --file-list-col-size: 5em;
 }
 
 .file-browser__drag-overlay {
@@ -62,9 +69,9 @@
    establish a bounded scroll viewport — the list stopped scrolling and its
    overflow spilled up into `.sidebar__content` (regression from the 40px rows
    in #2798). `min-height: 0` lets it shrink to the available space so
-   `overflow-y: auto` actually scrolls. `overflow-x: auto` lets a filename wider
-   than the panel be reached by scrolling instead of being cut. The scrollbars
-   are styled globally in global.css. */
+   `overflow-y: auto` actually scrolls. The list never scrolls sideways: a
+   filename wider than its column ellipsizes, with the full name in its tooltip
+   (#5623). The scrollbars are styled globally in global.css. */
 .file-browser__list {
   /* Positioned so the inline rename editor (rendered outside the listbox, #4637)
      can sit over its row's slot and scroll with the rows. */
@@ -72,7 +79,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: auto;
+  overflow-x: hidden;
+  /* Room the visible data columns take at the row's right edge; the narrow
+     container queries zero a hidden column's share. */
+  --file-list-modified-space: calc(var(--file-list-col-modified) + var(--spacing-xs));
+  --file-list-size-space: calc(var(--file-list-col-size) + var(--spacing-xs));
 }
 
 /* Virtualized list (@tanstack/react-virtual): an inner spacer sized to the full
@@ -128,9 +139,9 @@
   width: 100%;
 }
 
-/* Single-line row: the icon and the full filename sit on one baseline; the
-   Modified / Size / permissions metadata is a hover-reveal overlay (below), not
-   a reserved column, so it never crushes or truncates the name. The fixed height
+/* Single-line row: the icon, the filename (ellipsized when too long) and the
+   Modified / Size columns sit on one baseline; permissions are a hover-reveal
+   overlay (below). The fixed height
    MUST equal ROW_HEIGHT in FileBrowser.tsx — the virtualizer sizes the scroll
    range from that constant, so the two drift the windowing math apart if they
    disagree. */
@@ -198,22 +209,33 @@
   min-width: 0;
 }
 
-/* The filename ALWAYS wins: it is rendered in full and is never truncated — no
-   `text-overflow: ellipsis`, no `overflow: hidden`. `flex-shrink: 0` keeps it at
-   its natural width so a name wider than the panel overflows into the list's
-   horizontal scroll (reachable, never cut) rather than being squeezed; the row
-   `title` is the guaranteed-readable fallback. */
+/* A filename wider than its room ends in "…" inside the panel — never a hard cut
+   at the panel edge, never a horizontal scrollbar (#5623). The span's `title`
+   carries the full name. */
 .file-browser__name {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-primary);
 }
 
-/* Metadata is hidden at rest and fades in only on row hover / selection. It is an
-   absolutely-positioned overlay pinned to the right edge, so it reserves no space
-   in the name area and can never crush or cut the filename. The gradient lets it
-   read cleanly over the tail of a long name; the right padding clears the kebab
-   menu that sits at the row's right edge. */
+/* Modified / Size cells, right-aligned under their headers. */
+.file-browser__cell {
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: var(--font-size-2xs);
+  color: var(--text-secondary);
+}
+
+/* Permissions are hidden at rest and fade in only on row hover / selection. The
+   overlay is absolutely positioned over the name's tail, left of the data
+   columns, so it reserves no space. The gradient lets it read cleanly over a
+   long name; the right padding clears the visible columns and the kebab menu. */
 .file-browser__meta {
   position: absolute;
   top: 0;
@@ -223,7 +245,10 @@
   align-items: center;
   gap: var(--spacing-md);
   padding-left: var(--spacing-xl);
-  padding-right: calc(var(--control-height-sm) + var(--spacing-sm));
+  padding-right: calc(
+    var(--control-height-sm) + var(--spacing-sm) + var(--file-list-modified-space) +
+      var(--file-list-size-space)
+  );
   font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   opacity: 0;
@@ -254,8 +279,43 @@
 
 .file-browser__size,
 .file-browser__modified {
-  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.file-browser__modified {
+  width: var(--file-list-col-modified);
+}
+
+.file-browser__size {
+  width: var(--file-list-col-size);
+}
+
+/* Below ~240px there is no room for a column beside the name: both columns hide
+   with their headers, so a header never shows without its column (#5623). */
+@container file-browser (max-width: 239px) {
+  .file-browser__col--modified,
+  .file-browser__col--size,
+  .file-browser__cell {
+    display: none;
+  }
+
+  .file-browser__list {
+    --file-list-modified-space: 0px;
+    --file-list-size-space: 0px;
+  }
+}
+
+/* Below ~320px only Size fits beside a readable name; Modified hides with its
+   header (its full timestamp stays in the cell tooltip at wider widths). */
+@container file-browser (max-width: 319px) {
+  .file-browser__col--modified,
+  .file-browser__modified {
+    display: none;
+  }
+
+  .file-browser__list {
+    --file-list-modified-space: 0px;
+  }
 }
 
 /* Keyboard focus ring for roving-tabindex list navigation. */
@@ -397,12 +457,33 @@
   border-bottom: 1px solid var(--border-secondary);
 }
 
-/* Sortable column headers */
+/* Sortable column headers, aligned with the row columns (#5623): Name takes the
+   row's name area; Modified / Size take their cell widths, and the right padding
+   matches the rows' kebab-menu gutter. */
 .file-browser__columns {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: 0 var(--spacing-xs);
+  gap: var(--spacing-xs);
+  padding-right: calc(var(--control-height-sm) + var(--spacing-xs));
+}
+
+.file-browser__col--name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.file-browser__col--modified,
+.file-browser__col--size {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.file-browser__col--modified {
+  width: var(--file-list-col-modified);
+}
+
+.file-browser__col--size {
+  width: var(--file-list-col-size);
 }
 
 .file-browser__col {
@@ -417,10 +498,6 @@
   cursor: pointer;
   transition: color var(--transition-fast);
 }
-
-/* Rows are two-line now, so the sort buttons no longer align to on-screen
-   columns — they cluster on the left as a compact sort-toggle group rather than
-   stretching Name to full width and reading as (misaligned) column headers. */
 
 .file-browser__col:hover {
   color: var(--text-primary);

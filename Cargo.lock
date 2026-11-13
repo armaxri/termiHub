@@ -7673,6 +7673,7 @@ dependencies = [
  "csv",
  "dirs 6.0.0",
  "drag",
+ "dunce",
  "encoding_rs",
  "gtk",
  "hex",

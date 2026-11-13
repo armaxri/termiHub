@@ -70,7 +70,7 @@ import { FileEntry } from "@/types/connection";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { isLocalConnectionConfig, isWslConnectionConfig } from "@/utils/typedConnectionConfig";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
-import { formatBytes, formatRelativeTime, formatAbsoluteTime } from "@/utils/formatters";
+import { formatBytes, formatCompactAge, formatAbsoluteTime } from "@/utils/formatters";
 import {
   sortEntries,
   filterEntries,
@@ -111,7 +111,9 @@ import { buildFileBrowserActions } from "./fileBrowserHeaderActions";
 import { useFileRowDnd } from "./fileBrowserDnd";
 import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import { useFileDragOut } from "@/hooks/useFileDragOut";
-import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
+import { useFileBookmarkScope, useFileBrowserOwnerTab } from "@/hooks/useFileBookmarkScope";
+import { fileBrowserHost } from "@/utils/fileBrowserHost";
+import { FileBrowserHostLabel } from "./FileBrowserHostLabel";
 import { useRemoteDesktopBrowseStore } from "@/store/remoteDesktopBrowseStore";
 import { RemoteDesktopBrowseRoute } from "@/components/RemoteDesktop/RemoteDesktopBrowseRoute";
 import "./FileBrowser.css";
@@ -124,9 +126,10 @@ import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
- * are a single line showing the filename in full; the Modified / Size /
- * permissions metadata is a hover-reveal overlay pinned to the right edge, so it
- * never reserves space or truncates the name. The list is virtualized
+ * are a single line: the filename (ellipsized when it does not fit, full name in
+ * its tooltip) followed by the Modified / Size columns, which hide together with
+ * their headers at narrow widths (#5623); permissions are a hover-reveal overlay.
+ * The list is virtualized
  * (@tanstack/react-virtual) so only the visible window of rows is mounted; a
  * uniform height keeps the windowing math exact and cheap — this constant MUST
  * stay in sync with `.file-browser__row`'s CSS height (28px).
@@ -163,6 +166,25 @@ interface FileRowProps {
    * a multi-selection, otherwise just the row (PROD-006).
    */
   dragEntries: FileEntry[];
+  /** Which data columns the listing shows (#5623); a column never shows without data. */
+  columns: FileListColumns;
+}
+
+/** Which of the Modified / Size columns the current listing shows (#5623). */
+export interface FileListColumns {
+  modified: boolean;
+  size: boolean;
+}
+
+/**
+ * Show a data column only when at least one listed entry has a value for it, so
+ * a header never promises a column of blanks (#5623).
+ */
+export function fileListColumns(entries: readonly FileEntry[]): FileListColumns {
+  return {
+    modified: entries.some((e) => !!e.modified),
+    size: entries.some((e) => !e.isDirectory && formatBytes(e.size) !== ""),
+  };
 }
 
 /**
@@ -555,6 +577,7 @@ function FileRow({
   tabIndex,
   rowRef,
   dragEntries,
+  columns,
 }: FileRowProps) {
   // Every row is a drag source for drag-to-move; directory rows are also drop
   // targets (PROD-006). A row being renamed is not rendered as a FileRow at all
@@ -591,38 +614,8 @@ function FileRow({
 
   // Files show a real byte size; directories show none. `formatBytes` returns an
   // empty string when the size is missing/invalid, so a file whose backend never
-  // populated `size` renders no size cell instead of the old "NaN GB" (#2798).
+  // populated `size` gets a blank cell instead of the old "NaN GB" (#2798).
   const sizeLabel = entry.isDirectory ? "" : formatBytes(entry.size);
-
-  // The hover-reveal metadata overlay — Modified, Size, permissions — built from
-  // only the parts that are present. They render as adjacent columns (no middot
-  // separators); a missing part simply isn't added.
-  const metaParts: React.ReactNode[] = [];
-  if (entry.modified) {
-    metaParts.push(
-      <span
-        key="modified"
-        className="file-browser__modified"
-        title={formatAbsoluteTime(entry.modified) || undefined}
-      >
-        {formatRelativeTime(entry.modified)}
-      </span>
-    );
-  }
-  if (sizeLabel) {
-    metaParts.push(
-      <span key="size" className="file-browser__size">
-        {sizeLabel}
-      </span>
-    );
-  }
-  if (entry.permissions) {
-    metaParts.push(
-      <span key="permissions" className="file-browser__permissions">
-        {entry.permissions}
-      </span>
-    );
-  }
   return (
     <ContextMenuRoot>
       <ContextMenuTrigger asChild>
@@ -684,11 +677,28 @@ function FileRow({
                 )}
               </span>
             </span>
+            {/* Data columns, aligned under the Modified / Size headers (#5623). A
+                cell stays (blank) when its entry has no value, so columns line up. */}
+            {columns.modified && (
+              <span
+                className="file-browser__cell file-browser__modified"
+                title={entry.modified ? formatAbsoluteTime(entry.modified) || undefined : undefined}
+              >
+                {entry.modified ? formatCompactAge(entry.modified) : ""}
+              </span>
+            )}
+            {columns.size && (
+              <span className="file-browser__cell file-browser__size">{sizeLabel}</span>
+            )}
           </button>
-          {/* Hover-reveal metadata overlay: a sibling of the row button (not
-              nested in it) so it can be absolutely positioned at the right edge
-              without ever reserving space in the filename area. */}
-          {metaParts.length > 0 && <span className="file-browser__meta">{metaParts}</span>}
+          {/* Hover-reveal permissions overlay: a sibling of the row button (not
+              nested in it) so it can be absolutely positioned over the name's
+              tail, left of the data columns, without reserving space. */}
+          {entry.permissions && (
+            <span className="file-browser__meta">
+              <span className="file-browser__permissions">{entry.permissions}</span>
+            </span>
+          )}
           <div className="file-browser__row-menu">
             <DropdownMenuRoot>
               <Tooltip content="Actions" side="top">
@@ -1208,6 +1218,8 @@ export function FileBrowser() {
     () => filterEntries(sortedEntries, filterQuery),
     [sortedEntries, filterQuery]
   );
+  // Columns follow the unfiltered listing so they do not jump while filtering.
+  const columns = useMemo(() => fileListColumns(visibleEntries), [visibleEntries]);
 
   // Scroll container for the row list; the virtualizer measures and scrolls it.
   const listRef = useRef<HTMLDivElement>(null);
@@ -1321,6 +1333,8 @@ export function FileBrowser() {
 
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const bookmarkScope = useFileBookmarkScope(mode, sessionFileBrowserId);
+  const ownerTab = useFileBrowserOwnerTab(mode, sessionFileBrowserId);
+  const host = useMemo(() => fileBrowserHost(mode, ownerTab), [mode, ownerTab]);
   // The overflow menu's bookmarks sub-menu unmounts on close, so its manage
   // dialog lives here (#5520).
   const [bookmarksManageOpen, setBookmarksManageOpen] = useState(false);
@@ -1971,6 +1985,7 @@ export function FileBrowser() {
         )}
         {mode === "session" && <RemoteDesktopBrowseRoute sessionId={sessionFileBrowserId} />}
         <div className="file-browser__toolbar">
+          <FileBrowserHostLabel host={host} />
           <FileBrowserPathBar
             ref={pathBarRef}
             currentPath={currentPath}
@@ -2004,20 +2019,24 @@ export function FileBrowser() {
               direction={sort.dir}
               onToggle={toggleSort}
             />
-            <SortHeader
-              label="Modified"
-              col="modified"
-              activeKey={sort.key}
-              direction={sort.dir}
-              onToggle={toggleSort}
-            />
-            <SortHeader
-              label="Size"
-              col="size"
-              activeKey={sort.key}
-              direction={sort.dir}
-              onToggle={toggleSort}
-            />
+            {columns.modified && (
+              <SortHeader
+                label="Modified"
+                col="modified"
+                activeKey={sort.key}
+                direction={sort.dir}
+                onToggle={toggleSort}
+              />
+            )}
+            {columns.size && (
+              <SortHeader
+                label="Size"
+                col="size"
+                activeKey={sort.key}
+                direction={sort.dir}
+                onToggle={toggleSort}
+              />
+            )}
           </div>
         </div>
 
@@ -2160,6 +2179,7 @@ export function FileBrowser() {
                             onShareVia={mode === "local" ? handleShareVia : undefined}
                             tabIndex={index === activeIndex ? 0 : -1}
                             rowRef={getRowRef(index)}
+                            columns={columns}
                             dragEntries={
                               selectedPaths.has(entry.path) && selectedEntries.length > 1
                                 ? selectedEntries
