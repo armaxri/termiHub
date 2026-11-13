@@ -160,14 +160,16 @@ impl OsKeychainStore {
     }
 
     /// Use `policy` instead of the build's own, so tests cover both arms.
-    #[cfg(test)]
+    // Only the macOS-gated keychain tests use it.
+    #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn set_item_policy_for_test(&mut self, policy: ItemPolicy) {
         self.policy = policy;
     }
 
     /// Replace the platform's [`UnreadItems`], so the `keyring` mock tests
     /// can exercise the paths that need it.
-    #[cfg(test)]
+    // Only the macOS-gated keychain tests use it.
+    #[cfg(all(test, target_os = "macos"))]
     pub(crate) fn set_unread_items_for_test(&mut self, unread: Box<dyn UnreadItems>) {
         self.unread = unread;
     }
