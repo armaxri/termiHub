@@ -12,6 +12,8 @@ import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
 import { flushAsync } from "@/test/flushAsync";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
@@ -79,8 +81,20 @@ function click(el: Element) {
   });
 }
 
+function makeAgent(): RemoteAgentDefinition {
+  return {
+    id: "agent-1",
+    name: "Build box",
+    config: { host: "10.0.0.1", port: 22, username: "user", authMethod: "password" },
+    connectionState: "disconnected",
+    isExpanded: false,
+    agentSettings: DEFAULT_AGENT_SETTINGS,
+  };
+}
+
 setupConnectionsRegion();
 setupSettingsRegion();
+setupAgentsRegion();
 
 describe("ConnectionList — first-run empty state", () => {
   let container: HTMLDivElement;
@@ -167,5 +181,67 @@ describe("ConnectionList — first-run empty state", () => {
     await render(root);
 
     expect(container.querySelector('[data-testid="connections-empty-state"]')).toBeNull();
+  });
+
+  // R-077 / R-122 (#5702): the first-run card is one sentence + the button,
+  // with the experimental signpost as a smaller secondary line.
+  it("keeps the full card to one sentence, a button and a secondary hint", async () => {
+    await render(root);
+
+    const card = container.querySelector('[data-testid="connections-empty-state"]')!;
+    expect(card.querySelector(".ui-empty__description")?.textContent).toBe(
+      "Create your first connection to get started."
+    );
+    const hint = card.querySelector('[data-testid="connections-empty-experimental-hint"]');
+    expect(hint).not.toBeNull();
+    expect(hint!.className).toContain("connections-empty__hint");
+    expect(
+      hint!.contains(card.querySelector('[data-testid="connections-empty-experimental-link"]'))
+    ).toBe(true);
+    // The hint ends on the link: no orphaned period (#5621).
+    expect(hint!.textContent!.trim().endsWith(".")).toBe(false);
+  });
+
+  describe("when Remote agents has content", () => {
+    beforeEach(() => {
+      seedSettings({ ...baseSettings, experimentalFeaturesEnabled: true });
+      seedAgentsRegion({ remoteAgents: [makeAgent()] });
+    });
+
+    it("collapses to one compact line with a New connection link", async () => {
+      await render(root);
+
+      const empty = container.querySelector('[data-testid="connections-empty-state"]');
+      expect(empty).not.toBeNull();
+      expect(empty!.getAttribute("data-compact")).toBe("true");
+      // No icon badge, no card, no big button — a single inline line.
+      expect(empty!.className).toContain("ui-empty--inline");
+      expect(empty!.querySelector(".ui-empty__icon")).toBeNull();
+      expect(empty!.querySelector(".ui-btn")).toBeNull();
+      const cta = empty!.querySelector('[data-testid="connections-empty-new-connection"]');
+      expect(cta?.className).toContain("connections-empty__link");
+      expect(cta?.textContent).toBe("New connection");
+      expect(empty!.textContent).toBe("No saved connections. New connection");
+    });
+
+    it("the compact link opens the new-connection editor", async () => {
+      const openConnectionEditorTab = vi.fn();
+      useAppStore.setState({ openConnectionEditorTab });
+      await render(root);
+
+      click(container.querySelector('[data-testid="connections-empty-new-connection"]')!);
+
+      expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
+    });
+  });
+
+  it("keeps the full card when Remote agents is empty", async () => {
+    seedSettings({ ...baseSettings, experimentalFeaturesEnabled: true });
+    seedAgentsRegion({ remoteAgents: [] });
+    await render(root);
+
+    const empty = container.querySelector('[data-testid="connections-empty-state"]');
+    expect(empty?.getAttribute("data-compact")).toBe("false");
+    expect(empty?.className).toContain("ui-empty--card");
   });
 });
