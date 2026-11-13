@@ -6,7 +6,10 @@ import {
   checkForUpdates as apiCheckForUpdates,
   skipUpdateVersion as apiSkipUpdateVersion,
   clearSkippedVersion as apiClearSkippedVersion,
+  downloadAppUpdate as apiDownloadAppUpdate,
+  installAppUpdateAndRestart as apiInstallAppUpdateAndRestart,
 } from "@/services/api";
+import { onAppUpdateDownloadProgress } from "@/services/events";
 import { currentSettingsView, mirrorSettingsIntent } from "../settingsBridge";
 import { getSettings } from "@/services/storage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -27,6 +30,26 @@ import { errorMessage } from "@/utils/errorMessage";
  * {@link AppState}, so the public store shape and behavior are unchanged. Mirrors
  * the credential-store / SSH tunnel / password-prompt / etc. slices.
  */
+/** Where an in-app update install stands (#5758). */
+export type AppUpdateInstallPhase = "idle" | "downloading" | "ready" | "restarting";
+
+/** In-app update install state: phase plus download progress in bytes. */
+export interface AppUpdateInstallState {
+  phase: AppUpdateInstallPhase;
+  /** The version being downloaded / ready to install, or `null` when idle. */
+  version: string | null;
+  downloaded: number;
+  /** Total bytes, when the server sent a size. */
+  total: number | null;
+}
+
+const IDLE_INSTALL: AppUpdateInstallState = {
+  phase: "idle",
+  version: null,
+  downloaded: 0,
+  total: null,
+};
+
 export interface UpdateCheckerSlice {
   // Update checker
   updateCheckState: "idle" | "checking" | "up-to-date" | "available" | "error";
@@ -38,6 +61,16 @@ export interface UpdateCheckerSlice {
   dismissUpdateNotification: () => void;
   skipUpdate: () => Promise<void>;
   clearSkippedUpdateVersion: () => Promise<void>;
+  /** In-app update install state (#5758). */
+  appUpdateInstall: AppUpdateInstallState;
+  /**
+   * Download and verify the available update in the background (#5758). Only
+   * for an update whose `installMethod` is `inApp`; rejects with the reason
+   * when the download or its signature check fails. Installs nothing.
+   */
+  downloadAppUpdate: () => Promise<void>;
+  /** Install the downloaded update and restart termiHub (#5758). */
+  restartToInstallUpdate: () => Promise<void>;
 }
 
 /**
@@ -63,6 +96,7 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
   updateInfo: null,
   updateCheckFailureReason: null,
   updateNotificationDismissed: false,
+  appUpdateInstall: IDLE_INSTALL,
   checkForUpdates: async (force: boolean) => {
     const previousState = get().updateCheckState;
     set({ updateCheckState: "checking" });
@@ -133,6 +167,43 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
       mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
     } catch (err) {
       frontendLog("update", `Failed to skip version: ${errorMessage(err)}`);
+    }
+  },
+  downloadAppUpdate: async () => {
+    const info = get().updateInfo;
+    if (!info?.available || info.installMethod !== "inApp") {
+      throw new Error("No in-app update is available for this install.");
+    }
+    const version = info.latestVersion;
+    set({ appUpdateInstall: { ...IDLE_INSTALL, phase: "downloading", version } });
+    const unlisten = await onAppUpdateDownloadProgress(({ downloaded, total }) => {
+      if (get().appUpdateInstall.phase !== "downloading") return;
+      set({ appUpdateInstall: { phase: "downloading", version, downloaded, total } });
+    });
+    try {
+      await apiDownloadAppUpdate(version);
+    } catch (err) {
+      set({ appUpdateInstall: IDLE_INSTALL });
+      frontendLog("update", `In-app update download failed: ${errorMessage(err)}`);
+      throw err;
+    } finally {
+      unlisten();
+    }
+    set({ appUpdateInstall: { ...get().appUpdateInstall, phase: "ready", version } });
+  },
+  restartToInstallUpdate: async () => {
+    if (get().appUpdateInstall.phase !== "ready") {
+      throw new Error("No downloaded update to install.");
+    }
+    set({ appUpdateInstall: { ...get().appUpdateInstall, phase: "restarting" } });
+    try {
+      // On success the app exits and restarts on the new version.
+      await apiInstallAppUpdateAndRestart();
+    } catch (err) {
+      // The backend consumed the download; start over from a fresh download.
+      set({ appUpdateInstall: IDLE_INSTALL });
+      frontendLog("update", `In-app update install failed: ${errorMessage(err)}`);
+      throw err;
     }
   },
   clearSkippedUpdateVersion: async () => {

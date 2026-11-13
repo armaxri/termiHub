@@ -16,6 +16,8 @@ import {
   describeDevelopBuild,
   isDevelopUpdate,
 } from "@/components/UpdateNotification/developUpdate";
+import { AppUpdateInstallActions } from "@/components/UpdateNotification/AppUpdateInstallActions";
+import { isInAppUpdate, releasePageHint } from "@/components/UpdateNotification/installRoute";
 import "./UpdateSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
@@ -56,6 +58,11 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const isDevelop = isDevelopUpdate(updateInfo);
   // The backend says so explicitly (#5651) — never inferred from other fields.
   const notChecked = updateInfo?.outcome === "notChecking";
+  const showUpdateActions = updateCheckState === "available" && updateInfo?.available === true;
+  // In place through the signed updater where it applies (#5758); otherwise
+  // the downloads page, with a hint when the reason is worth knowing.
+  const inApp = showUpdateActions && isInAppUpdate(updateInfo);
+  const installHint = showUpdateActions ? releasePageHint(updateInfo?.releasePageReason) : null;
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -226,9 +233,10 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
             >
               {isChecking ? "Checking…" : "Check now"}
             </Button>
-            {updateCheckState === "available" && updateInfo?.available && (
+            {inApp && <AppUpdateInstallActions testIdPrefix="update-install" />}
+            {showUpdateActions && (
               <Button
-                variant="primary"
+                variant={inApp ? "secondary" : "primary"}
                 size="sm"
                 onClick={handleOpenDownloads}
                 data-testid="update-open-downloads"
@@ -237,6 +245,11 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
               </Button>
             )}
           </div>
+          {installHint && (
+            <p className="update-settings__install-hint" data-testid="update-install-hint">
+              {installHint}
+            </p>
+          )}
         </div>
       )}
 

@@ -8,6 +8,7 @@
  * (`src/test/fixtures/wire/events.json`, TFE2-006 / #4344).
  */
 export const TAURI_EVENT = {
+  appUpdateDownloadProgress: "app-update-download-progress",
   terminalOutput: "terminal-output",
   remoteDesktopClipboard: "remote-desktop-clipboard",
   remoteDesktopState: "remote-desktop-state",

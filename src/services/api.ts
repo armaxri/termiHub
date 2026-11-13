@@ -3323,6 +3323,21 @@ export async function checkForUpdates(force: boolean): Promise<UpdateInfo> {
   return await invoke<UpdateInfo>("check_for_updates", { force });
 }
 
+/**
+ * Download and verify the in-app update to `expectedVersion` (#5758). Rejects
+ * when this install updates from the release page, when the signed manifest
+ * offers another version, or when the signature does not verify. Installs
+ * nothing.
+ */
+export async function downloadAppUpdate(expectedVersion: string): Promise<void> {
+  await invoke("download_app_update", { expectedVersion });
+}
+
+/** Install the downloaded update and restart termiHub (#5758). */
+export async function installAppUpdateAndRestart(): Promise<void> {
+  await invoke("install_app_update_and_restart");
+}
+
 /** Persist the user's choice to skip a specific release version. */
 export async function skipUpdateVersion(version: string): Promise<void> {
   await invoke("skip_update_version", { version });

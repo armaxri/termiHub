@@ -13,6 +13,8 @@ import {
   describeDevelopBuild,
   isDevelopUpdate,
 } from "./developUpdate";
+import { AppUpdateInstallActions } from "./AppUpdateInstallActions";
+import { isInAppUpdate } from "./installRoute";
 import "./UpdateNotification.css";
 
 /**
@@ -24,8 +26,10 @@ import "./UpdateNotification.css";
  * chip.
  *
  * Develop-branch builds get develop wording (#5023): the newer build's date and
- * commit, and a button that opens its download page. Notify only — nothing is
- * downloaded or installed.
+ * commit, and a button that opens its download page.
+ *
+ * Where the signed in-app updater applies (#5758), "Download and install" and
+ * then "Restart to update" come first; each needs its own click.
  */
 export function UpdateNotification() {
   const updateInfo = useAppStore((s) => s.updateInfo);
@@ -48,6 +52,7 @@ export function UpdateNotification() {
 
   const isSecurity = updateInfo.isSecurity;
   const isDevelop = isDevelopUpdate(updateInfo);
+  const inApp = isInAppUpdate(updateInfo);
   const skippedVersion = settings.updates?.skippedVersion;
   // For non-security updates: don't show the popup if the user already
   // skipped this exact version (the dot still appears).
@@ -140,8 +145,9 @@ export function UpdateNotification() {
             {showNotes ? "Hide" : "What's new"}
           </Button>
         )}
+        {inApp && <AppUpdateInstallActions testIdPrefix="update-notification-install" />}
         <Button
-          variant="primary"
+          variant={inApp ? "secondary" : "primary"}
           size="sm"
           onClick={handleOpenDownloads}
           data-testid="update-notification-open-downloads"
