@@ -3508,8 +3508,12 @@ terminal sessions for people who expect nothing to leave their machine.
   keys and tokens, hostnames, IP addresses, MAC addresses, usernames and home-directory paths,
   biased toward over-redaction.
 - **The user decides what leaves the machine.** On the next start after a crash, a non-blocking
-  notice offers to view the report or export diagnostics (dismissible; "Don't show again" persists
-  `showCrashReportNotice: false`). **Export diagnostics** (settings menu, or Settings → General →
+  bottom banner (the shared `BottomBanner`, which outranks every other bottom banner) says a crash
+  report was saved locally and nothing was sent. Its actions are **Don't show again** (persists
+  `showCrashReportNotice: false`, re-enabled in Settings → General), **Close** and **View report**
+  (#5558, #5638). Any action marks the report as seen, so the notice appears once per crash.
+  Exporting is not offered on the banner: it lives in the report viewer, where the user has seen
+  what they would export. **Export diagnostics** (settings menu, or Settings → General →
   Diagnostics) shows the exact file list first, then writes a redacted zip (logs, crash reports,
   version/platform info) only to a path the user picks in the save dialog.
 - **Remote agent reports are pulled only on request, only from connected agents** (#3574). When
