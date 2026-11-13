@@ -52,7 +52,7 @@ import { mergeMovedDraft } from "@/utils/mergeFormDraft";
 import { toast } from "@/components/ui";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
-import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
+import { SettingsCategory, CATEGORIES, CATEGORY_GROUPS } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
 import { SettingsNav } from "./SettingsNav";
 import { SettingsSearch } from "./SettingsSearch";
@@ -546,6 +546,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         <SettingsNav
           categories={CATEGORIES}
           iconMap={SETTINGS_ICONS}
+          groups={CATEGORY_GROUPS}
           activeCategory={activeCategory}
           onCategoryChange={handleCategoryChange}
           highlightedCategories={highlightedCategories}
