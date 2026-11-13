@@ -24,6 +24,7 @@ import {
   skipUpdateVersion as apiSkipUpdateVersion,
   clearSkippedVersion as apiClearSkippedVersion,
 } from "@/services/api";
+import { getSettings } from "@/services/storage";
 import { currentSettingsView, mirrorSettingsIntent } from "../settingsBridge";
 import { createUpdateCheckerSlice, type UpdateCheckerSlice } from "./updateCheckerSlice";
 
@@ -32,6 +33,7 @@ const mockedSkip = vi.mocked(apiSkipUpdateVersion);
 const mockedClear = vi.mocked(apiClearSkippedVersion);
 const mockedView = vi.mocked(currentSettingsView);
 const mockedMirror = vi.mocked(mirrorSettingsIntent);
+const mockedGetSettings = vi.mocked(getSettings);
 
 const makeStore = () =>
   create<UpdateCheckerSlice>()(
@@ -110,6 +112,45 @@ describe("updateCheckerSlice", () => {
     mockedCheck.mockResolvedValueOnce(info({ available: false }));
     await store.getState().checkForUpdates(true);
     expect(store.getState().updateCheckState).toBe("up-to-date");
+  });
+
+  it("mirrors the refreshed settings after a completed check so lastCheckTime shows (#5615)", async () => {
+    const refreshed = { updates: { lastCheckTime: "2026-11-13T08:00:00Z" } };
+    mockedGetSettings.mockResolvedValueOnce(refreshed as Awaited<ReturnType<typeof getSettings>>);
+    mockedCheck.mockResolvedValueOnce(info({ available: false }));
+    await store.getState().checkForUpdates(false);
+    expect(mockedMirror).toHaveBeenCalledWith("settings.replace", { settings: refreshed });
+  });
+
+  it("does not claim up-to-date when a startup check was skipped without consulting a feed (#5615)", async () => {
+    // Auto-check off / rate-limited: the backend returns a feed-less result.
+    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "" }));
+    await store.getState().checkForUpdates(false);
+    expect(store.getState().updateCheckState).toBe("idle");
+    expect(store.getState().updateInfo).toBeNull();
+  });
+
+  it("keeps the previous result when a skipped check follows a real one (#5615)", async () => {
+    mockedCheck.mockResolvedValueOnce(info({ available: false }));
+    await store.getState().checkForUpdates(true);
+    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "" }));
+    await store.getState().checkForUpdates(false);
+    expect(store.getState().updateCheckState).toBe("up-to-date");
+    expect(store.getState().updateInfo?.releaseUrl).toBe("https://example/0.2.0");
+  });
+
+  it("reports a failed manual check as an error, not up-to-date (#5615)", async () => {
+    // The backend swallows feed errors into a feed-less "no update" result.
+    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "" }));
+    await store.getState().checkForUpdates(true);
+    expect(store.getState().updateCheckState).toBe("error");
+  });
+
+  it("keeps the no-check build result so the page can say so", async () => {
+    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "", channel: "none" }));
+    await store.getState().checkForUpdates(true);
+    expect(store.getState().updateCheckState).toBe("up-to-date");
+    expect(store.getState().updateInfo?.channel).toBe("none");
   });
 
   it("sets error state when the check throws", async () => {

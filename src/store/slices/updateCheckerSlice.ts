@@ -38,6 +38,30 @@ export interface UpdateCheckerSlice {
   clearSkippedUpdateVersion: () => Promise<void>;
 }
 
+/**
+ * Whether the backend actually read a release feed for this result. Every
+ * feed-backed result carries the release page URL; the backend's feed-less
+ * "no update" placeholder (rate limit, auto-check off, feed error, or a build
+ * that does not check) leaves it empty.
+ */
+function consultedFeed(info: UpdateInfo): boolean {
+  return info.available || info.releaseUrl !== "";
+}
+
+/**
+ * The backend persists `updates.lastCheckTime` after a real check but does not
+ * push it into the settings region, so pull the refreshed document in — else
+ * the page keeps reading "Last checked: Never" after a check (#5615).
+ */
+async function refreshLastCheckTime(): Promise<void> {
+  try {
+    const updatedSettings = await getSettings();
+    mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
+  } catch (err) {
+    frontendLog("update", `Failed to refresh the last check time: ${errorMessage(err)}`);
+  }
+}
+
 export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateCheckerSlice> = (
   set,
   get
@@ -47,9 +71,24 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
   updateInfo: null,
   updateNotificationDismissed: false,
   checkForUpdates: async (force: boolean) => {
+    const previousState = get().updateCheckState;
     set({ updateCheckState: "checking" });
     try {
       const info = await apiCheckForUpdates(force);
+      if (!consultedFeed(info)) {
+        // No release feed was read (#5615): auto-check off, rate-limited, a
+        // build that does not check, or a swallowed feed error. That is not
+        // a check, so it must never turn into "Up to date".
+        if (info.channel === "none") {
+          set({ updateCheckState: "up-to-date", updateInfo: info });
+        } else if (force) {
+          set({ updateCheckState: "error" });
+          frontendLog("update", "Update check did not reach the release feed");
+        } else {
+          set({ updateCheckState: previousState === "checking" ? "idle" : previousState });
+        }
+        return;
+      }
       if (info.available) {
         const currentSettings = currentSettingsView();
         const skippedVersion = currentSettings.updates?.skippedVersion;
@@ -67,6 +106,8 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
       } else {
         set({ updateCheckState: "up-to-date", updateInfo: info });
       }
+      // After the skip fold above read the current settings view.
+      await refreshLastCheckTime();
     } catch {
       set({ updateCheckState: "error" });
       frontendLog("update", "Update check failed");
