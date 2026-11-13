@@ -13,7 +13,8 @@ Steps (in order): macro create, edit, play on the local shell, play on SSH;
 workflow create (send-command, wait, a delayed output, wait-for-output,
 send-command), edit, run on both terminals at once ("Run on…"); an
 on-output-match trigger fired by real terminal output; macro and workflow run
-history; the command palette; a 1-minute schedule that fires on the local
+history; workflow rows naming trigger, target and armed state (#5635); the
+command palette; a 1-minute schedule that fires on the local
 connection (Settings -> Schedules), then is switched off.
 """
 
@@ -301,6 +302,41 @@ class TestProductRunAutomations(
             self.evidence(f"workflow history text: {shown[:200]!r}")
             assert "Deploy smoke" in shown and "Answer on match" in shown, shown
             self.shot(label="workflows")
+
+    def test_45_workflow_rows(self):
+        """Workflow rows and history show trigger, target and armed state (#5635)."""
+        t = self.tag
+        with self.step(
+            "automations.workflow.rows",
+            "Workflow rows say how each runs and which terminal each history run went to",
+            expect="the Workflows sidebar: 'Deploy smoke' with 'Manual' under its name; "
+            "'Answer on match' with an 'Armed' marker and 'On output match · pr-auto-local…' "
+            "under its name; the two Deploy smoke history rows name different terminals",
+        ):
+            self.require("automations.workflow.run-on", "automations.trigger.output-match")
+            self.open_workflows_sidebar()
+            manual = self.ids["workflow"]
+            armed = self.workflow_id(f"Answer on match {t}")
+            self.wait(lambda: self.driver.exists(f"workflow-summary-{armed}"),
+                      what="the workflow rows' second line")
+            manual_line = self.driver.get_text(f"workflow-summary-{manual}").strip()
+            armed_line = self.driver.get_text(f"workflow-summary-{armed}").strip()
+            self.evidence(f"Deploy smoke line: {manual_line!r}; Answer on match line: {armed_line!r}")
+            assert manual_line == "Manual", f"manual workflow line: {manual_line!r}"
+            assert not self.driver.exists(f"workflow-armed-{manual}"), "a manual workflow is marked armed"
+            assert self.driver.exists(f"workflow-armed-{armed}"), "the armed workflow has no marker"
+            assert armed_line.startswith("On output match"), f"trigger missing: {armed_line!r}"
+            assert f"pr-auto-local-{t}" in armed_line, f"watched connection missing: {armed_line!r}"
+            assert "step" not in armed_line.lower(), f"step count on the row: {armed_line!r}"
+            fresh = sorted(self.workflow_runs(manual), key=lambda r: r["startedAt"])[-2:]
+            targets = []
+            for run in fresh:
+                testid = f"workflow-run-target-{run['id']}"
+                self.wait(lambda tid=testid: self.driver.exists(tid), what=f"{testid}")
+                targets.append(self.driver.get_text(testid).strip())
+            self.evidence(f"history targets: {targets}; labels {[r.get('targetLabel') for r in fresh]}")
+            assert len(targets) == 2 and all(targets), f"history rows do not name a target: {targets}"
+            assert targets[0] != targets[1], f"both runs show the same target: {targets}"
 
     def test_50_palette(self):
         t = self.tag

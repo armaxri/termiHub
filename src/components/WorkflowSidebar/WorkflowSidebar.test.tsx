@@ -151,11 +151,16 @@ describe("WorkflowSidebar", () => {
     expect(query("workflow-name-workflow-1")?.textContent).toBe("Prod login");
   });
 
-  it("marks on-connect-triggered workflows", async () => {
+  it("marks armed workflows and names the watched connection (#5635)", async () => {
+    seedConnectionsRegion({
+      connections: [{ id: "conn-1", name: "prod-web", config: {} as never, folderId: null }],
+    });
     useAppStore.setState({ workflows: sampleWorkflows });
     await render();
-    expect(query("workflow-on-connect-workflow-2")).not.toBeNull();
-    expect(query("workflow-on-connect-workflow-1")).toBeNull();
+    expect(query("workflow-armed-workflow-2")).not.toBeNull();
+    expect(query("workflow-armed-workflow-1")).toBeNull();
+    expect(query("workflow-summary-workflow-2")?.textContent).toBe("On connect · prod-web");
+    expect(query("workflow-summary-workflow-1")?.textContent).toBe("Manual");
   });
 
   it("filters the list by the search query across name/description/tags", async () => {

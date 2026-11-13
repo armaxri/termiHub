@@ -98,6 +98,7 @@ mod tests {
             error: None,
             continued_failures: None,
             tab_id: Some("tab-1".to_string()),
+            target_label: None,
             triggered_by: WorkflowRunTrigger::Manual,
         }
     }

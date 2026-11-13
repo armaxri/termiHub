@@ -94,6 +94,12 @@ pub struct WorkflowRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub tab_id: Option<String>,
+    /// Display label (tab title) of the terminal the run targeted, so history
+    /// can tell two runs on different terminals apart (#5635). Omitted when
+    /// unknown, so older records round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub target_label: Option<String>,
     /// What launched the run.
     pub triggered_by: WorkflowRunTrigger,
 }
@@ -150,6 +156,7 @@ mod tests {
             error: None,
             continued_failures: None,
             tab_id: Some("tab-1".to_string()),
+            target_label: None,
             triggered_by: WorkflowRunTrigger::Manual,
         }
     }
@@ -197,6 +204,21 @@ mod tests {
         assert!(json.contains("\"triggeredBy\":\"on-connect\""));
         let parsed: WorkflowRun = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, run);
+    }
+
+    #[test]
+    fn target_label_round_trips_and_is_omitted_when_absent() {
+        let run = WorkflowRun {
+            target_label: Some("prod-web".to_string()),
+            ..sample_run("run-labelled")
+        };
+        let json = serde_json::to_string(&run).unwrap();
+        assert!(json.contains("\"targetLabel\":\"prod-web\""));
+        let parsed: WorkflowRun = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, run);
+
+        let plain = serde_json::to_string(&sample_run("run-plain")).unwrap();
+        assert!(!plain.contains("targetLabel"));
     }
 
     #[test]

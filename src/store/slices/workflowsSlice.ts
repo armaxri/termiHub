@@ -404,6 +404,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
         ...base,
         targetTabId: target.id,
         targetSessionId: target.sessionId,
+        targetLabel: target.title,
       });
       return;
     }
