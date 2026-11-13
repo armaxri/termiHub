@@ -552,6 +552,9 @@ pub fn run() -> anyhow::Result<()> {
 
     builder
         .setup(move |app| {
+            // The in-app updater (#5758): registered only when the release
+            // config gave this build an updater public key.
+            commands::update_install::register(app);
             // The phases run in the order fixed (and documented) by
             // `boot::sequence::run_setup_phases`.
             boot::sequence::run_setup_phases(&mut boot::sequence::LivePhases {
@@ -993,6 +996,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::update::skip_update_version,
             commands::update::clear_skipped_version,
             commands::update::set_update_auto_check,
+            // In-app updater (#5758): download + verify, then install + restart
+            commands::update_install::download_app_update,
+            commands::update_install::install_app_update_and_restart,
             // X server provisioning
             commands::xserver::x_server_status,
             commands::xserver::x_server_ensure,

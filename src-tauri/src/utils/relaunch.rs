@@ -173,6 +173,13 @@ fn identity_names(env: &[(OsString, OsString)]) -> Vec<String> {
     names
 }
 
+/// The names of the identity (`TERMIHUB_*`) variables in `env`: non-empty for a
+/// dev or test instance that runs on an isolated profile (#5758 refuses an
+/// in-app update whose installer would relaunch such an instance without them).
+pub fn instance_identity_vars(env: &[(OsString, OsString)]) -> Vec<String> {
+    identity_names(env)
+}
+
 /// The `TERMIHUB_*` variables of `parent_env` that `command` does not pass on
 /// with the same value. Empty when the relaunch keeps the instance's identity.
 pub fn identity_not_kept(
@@ -387,10 +394,21 @@ pub fn resolve_executable(
 /// (see [`relaunch_pending`]). A failed spawn is returned and the app keeps
 /// running.
 pub fn relaunch_app(app: &tauri::AppHandle, spawner: &dyn Spawner) -> io::Result<()> {
+    let program = resolve_executable(std::env::current_exe)?;
+    relaunch_app_as(app, spawner, program)
+}
+
+/// [`relaunch_app`] with an explicit `program` to start instead of the running
+/// executable — the AppImage file after an in-app update (#5758), whose running
+/// binary lives in the old image's mount that is gone once this process exits.
+pub fn relaunch_app_as(
+    app: &tauri::AppHandle,
+    spawner: &dyn Spawner,
+    program: PathBuf,
+) -> io::Result<()> {
     use tauri::Manager;
 
     let env = app.env();
-    let program = resolve_executable(std::env::current_exe)?;
     let args = env.args_os.iter().skip(1).cloned().collect::<Vec<_>>();
     spawn_relaunch(
         spawner,
