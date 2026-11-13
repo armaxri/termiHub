@@ -189,6 +189,20 @@ export function selectionVariables(theme: ThemeDefinition): Record<string, strin
   };
 }
 
+/**
+ * The form-control CSS variables a theme sets (#5639), or `null` for each one
+ * that falls back to its `variables.css` default (the plain tokens).
+ */
+export function controlVariables(theme: ThemeDefinition): Record<string, string | null> {
+  const ctl = theme.controls;
+  return {
+    "--input-placeholder": ctl?.placeholder ?? null,
+    "--toggle-off-track": ctl?.toggleOffTrack ?? null,
+    "--toggle-off-thumb": ctl?.toggleOffThumb ?? null,
+    "--btn-secondary-border": ctl?.secondaryButtonBorder ?? null,
+  };
+}
+
 /** Write all theme colors as CSS custom properties on the document root. */
 function setCssVariables(theme: ThemeDefinition): void {
   if (typeof document === "undefined") return;
@@ -205,7 +219,9 @@ function setCssVariables(theme: ThemeDefinition): void {
   // Selected-row surfaces (#5562, #5591): a theme's opaque palette colours,
   // or (removed) the accent-tint defaults from variables.css. Cleared on every
   // apply so switching away from such a theme restores the tints.
-  for (const [token, value] of Object.entries(selectionVariables(theme))) {
+  // Form-control overrides (#5639) are cleared the same way.
+  const overrides = { ...selectionVariables(theme), ...controlVariables(theme) };
+  for (const [token, value] of Object.entries(overrides)) {
     if (value === null) root.style.removeProperty(token);
     else root.style.setProperty(token, value);
   }
