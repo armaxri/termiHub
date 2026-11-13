@@ -34,7 +34,7 @@ use tracing::{debug, warn};
 pub use super::attempt::STALL_TIMEOUT;
 use super::attempt::{
     apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
-    local_fingerprint, local_size, map_copy_outcome, open_local_dest, open_local_read,
+    local_fingerprint, local_partial_size, map_copy_outcome, open_local_dest, open_local_read,
     probe_timed_out, rehydrate_start_offset, settle_attempt, settle_writer, stop_reason,
     AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor, StopReason,
 };
@@ -240,7 +240,7 @@ async fn run_attempts(
                     TransferDirection::Download => (
                         channel.remote_fingerprint(remote_path).await,
                         if resuming {
-                            local_size(local_path).await
+                            local_partial_size(local_path, cursor.offset).await
                         } else {
                             None
                         },

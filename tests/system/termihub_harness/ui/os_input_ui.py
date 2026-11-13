@@ -87,9 +87,14 @@ class OsInputUi(HarnessMixin):
         fx: float = 0.5,
         fy: float = 0.5,
     ) -> None:
-        """A real OS click on the element tagged ``test_id``."""
+        """A real OS click on the element tagged ``test_id``.
+
+        At ``(fx, fy)`` of its box, or the nearest point there that nothing
+        (a toast, a notice) is laid over, so the click reaches the element.
+        """
         screen = screen or self.screen()
-        self.os_input().click(*screen.point(test_id, fx, fy), button=button, count=count)
+        point = screen.exposed_point(test_id, fx, fy)
+        self.os_input().click(*point, button=button, count=count)
 
     def trusted_events(self, driver: Optional[Driver] = None, kind: Optional[str] = None) -> list:
         """The OS-delivered (``isTrusted``) events ``driver``'s window recorded."""

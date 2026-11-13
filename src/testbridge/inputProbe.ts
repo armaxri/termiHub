@@ -14,7 +14,7 @@
  * runs in a test-bridge build.
  */
 
-import type { OsInputProbeEvent } from "./protocol";
+import type { OsInputProbeEvent, OsInputProbeHit } from "./protocol";
 
 /** How many recent events the probe keeps (oldest dropped first). */
 export const INPUT_PROBE_CAPACITY = 64;
@@ -70,6 +70,19 @@ export function describeInputEvent(event: Event): OsInputProbeEvent {
     record.capsLock = modifierState(mouse, "CapsLock");
   }
   return record;
+}
+
+/**
+ * What a real click at client point `(x, y)` would land on, relative to `el`
+ * (#5610). A toast or notice laid over a terminal takes such a click, and the
+ * terminal never gets the focus; the harness picks a point where `inside`.
+ */
+export function hitTest(doc: Document, el: Element, x: number, y: number): OsInputProbeHit {
+  const top = doc.elementFromPoint(x, y);
+  const hit: OsInputProbeHit = { inside: top !== null && el.contains(top) };
+  const testId = top?.closest?.("[data-testid]")?.getAttribute("data-testid");
+  if (testId) hit.testId = testId;
+  return hit;
 }
 
 /** Arm the probe on `doc` (idempotent); `reset` clears what it recorded so far. */
