@@ -633,3 +633,40 @@ class TestProductRunAutomations(
             graded += 1
         assert graded, "no history row rendered a meta line"
         self.shot(label="history")
+
+    # ── workflow history clear confirmation (#5719) ──────────────────────────
+    def test_95_workflow_history_clear_confirm(self):
+        with self.step(
+            "automations.workflow.history-clear",
+            "Clearing the workflow run history asks first, like the macro history",
+            expect="the Workflows sidebar with a danger confirmation open: 'Clear workflow run "
+            "history?' with 'This removes the recorded runs of every workflow. It cannot be "
+            "undone.' and a red 'Clear history' button; the history header's action reads "
+            "'Clear…' (#5719)",
+            screenshot=False,
+        ):
+            self.require("automations.workflow.run-on")
+            self.open_workflows_sidebar()
+            self.wait(
+                lambda: self.driver.exists("workflow-history-list"), what="the workflow history"
+            )
+            label = self.driver.get_text("workflow-history-clear").strip()
+            self.evidence(f"clear action text: {label!r}")
+            assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
+            before = len(self._state_list("workflowRuns"))
+            assert before, "no workflow runs recorded to protect"
+            self.driver.click("workflow-history-clear")
+            self.wait(
+                lambda: self.driver.exists("workflow-history-clear-confirm-cancel"),
+                what="the clear-history confirmation",
+            )
+            self.shot(label="confirm")
+            self.driver.click("workflow-history-clear-confirm-cancel")
+            self.wait(
+                lambda: not self.driver.exists("workflow-history-clear-confirm-cancel"),
+                what="the confirmation to close",
+            )
+            after = len(self._state_list("workflowRuns"))
+            self.evidence(f"workflow runs before {before}, after cancel {after}")
+            assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
+            assert self.driver.exists("workflow-history-list"), "the history list disappeared"
