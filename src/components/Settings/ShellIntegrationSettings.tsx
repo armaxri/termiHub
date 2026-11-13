@@ -38,6 +38,7 @@ import {
 import { INSTALL_TOAST, UNINSTALL_TOAST, syncRegistrationFacts } from "./shellIntegrationStore";
 import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
 import { errorMessage } from "@/utils/errorMessage";
+import { t } from "@/i18n/catalog";
 import "./ShellIntegrationSettings.css";
 
 /** The Linux file managers rendered as install toggles, with their detection id. */
@@ -52,8 +53,10 @@ const LINUX_MANAGERS: {
 ];
 
 /**
- * Settings section for the shell context-menu integration: registration status
- * with Reinstall / Uninstall actions, a draggable Quick-Access entry list, the
+ * Settings section for the file manager integration ("Open in termiHub" in the
+ * right-click menu; not the OSC 133 terminal shell integration): registration
+ * status with actions that follow it (Install when not registered, Reinstall /
+ * update + Uninstall once registered, #5616), a draggable Quick-Access entry list, the
  * no-match fallback, the new-window behaviour, and Linux per-file-manager
  * install toggles.
  */
@@ -95,7 +98,9 @@ export function ShellIntegrationSettings() {
         setStatus(await updateShellIntegration(nextSi));
       } catch (e) {
         frontendLog("shell_integration", `save failed: ${errorMessage(e)}`);
-        toast.error("Failed to save shell integration settings", { description: errorMessage(e) });
+        toast.error("Failed to save file manager integration settings", {
+          description: errorMessage(e),
+        });
       }
     },
     [updateShellIntegration]
@@ -113,6 +118,8 @@ export function ShellIntegrationSettings() {
       ),
     []
   );
+
+  const registered = status?.registered === true;
 
   const handleReinstall = useCallback(
     () => runRegistration(installShellIntegration, INSTALL_TOAST),
@@ -184,15 +191,20 @@ export function ShellIntegrationSettings() {
   return (
     <div className="settings-panel__section" data-testid="settings-shell-integration">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">Shell integration</h3>
+        <h3 className="settings-panel__section-title">{t("fileManagerIntegration.title")}</h3>
       </div>
+      <p className="settings-panel__description" data-testid="shell-integration-description">
+        {t("fileManagerIntegration.description")}
+      </p>
 
       {/* Registration status + actions */}
       <div className="shell-integration__card" data-testid="shell-integration-status-card">
         <div className="shell-integration__status-line">
-          <StatusDot tone={status?.registered ? "success" : "disabled"} size="lg" ariaHidden />
+          <StatusDot tone={registered ? "success" : "disabled"} size="lg" ariaHidden />
           <span data-testid="shell-integration-status-text">
-            {status?.registered ? "Registered" : "Not registered"}
+            {registered
+              ? t("fileManagerIntegration.status.registered")
+              : t("fileManagerIntegration.status.notRegistered")}
           </span>
           {status?.stale && !status.portable && (
             <span className="shell-integration__stale" data-testid="shell-integration-stale-badge">
@@ -202,27 +214,33 @@ export function ShellIntegrationSettings() {
         </div>
         {status?.stale && !status.portable && (
           <p className="settings-panel__description" data-testid="shell-integration-stale-banner">
-            Shell integration points to <code>{status.registeredExePath}</code>, but termiHub now
-            runs from <code>{status.currentExePath}</code>. Reinstall to update the context-menu
-            entries.
+            The file manager integration points to <code>{status.registeredExePath}</code>, but
+            termiHub now runs from <code>{status.currentExePath}</code>. Reinstall to update the
+            context-menu entries.
           </p>
         )}
         <div className="shell-integration__actions">
+          {/* The actions follow the state (#5616): nothing to update or remove
+              until it is installed. The testid stays stable across both labels. */}
           <Button
             variant="primary"
             onClick={handleReinstall}
             data-testid="shell-integration-reinstall"
+            data-registered={registered ? "true" : "false"}
           >
-            Reinstall / update
+            {registered
+              ? t("fileManagerIntegration.action.reinstall")
+              : t("fileManagerIntegration.action.install")}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={handleUninstall}
-            disabled={!status?.registered}
-            data-testid="shell-integration-uninstall"
-          >
-            Uninstall
-          </Button>
+          {registered && (
+            <Button
+              variant="secondary"
+              onClick={handleUninstall}
+              data-testid="shell-integration-uninstall"
+            >
+              {t("fileManagerIntegration.action.uninstall")}
+            </Button>
+          )}
         </div>
       </div>
 

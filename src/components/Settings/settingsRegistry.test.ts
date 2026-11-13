@@ -247,4 +247,18 @@ describe("settingsRegistry", () => {
       expect(new Set(labels).size).toBe(3);
     });
   });
+
+  describe("file manager integration category (#5616)", () => {
+    it("is named for the file manager, not OSC 133 shell integration", () => {
+      expect(CATEGORIES.find((c) => c.id === "shell-integration")?.label).toBe(
+        "File manager integration"
+      );
+    });
+
+    it("is found by both its new and its old name", () => {
+      for (const query of ["file manager integration", "shell integration"]) {
+        expect(getMatchingCategories(query).has("shell-integration")).toBe(true);
+      }
+    });
+  });
 });
