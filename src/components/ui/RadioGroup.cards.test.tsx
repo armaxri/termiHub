@@ -112,6 +112,29 @@ describe("RadioGroup cards variant", () => {
     expect(byTestId("card-b").getAttribute("aria-checked")).toBe("true");
   });
 
+  it("moves focus with a click selection, so one card carries the emphasis (#5630)", () => {
+    act(() => root.render(<Harness />));
+    act(() => byTestId("card-a").focus());
+    // WebKit does not focus a button on click; jsdom's .click() does not either.
+    act(() => byTestId("card-b").click());
+    expect(byTestId("card-b").getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(byTestId("card-b"));
+  });
+
+  it("does not pull focus into the group when focus is elsewhere (#5630)", () => {
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    try {
+      act(() => root.render(<Harness />));
+      act(() => outside.focus());
+      act(() => byTestId("card-c").click());
+      expect(byTestId("card-c").getAttribute("aria-checked")).toBe("true");
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+    }
+  });
+
   it("moves with Left/Right when horizontal", async () => {
     const onChange = vi.fn();
     act(() => root.render(<Harness onChange={onChange} orientation="horizontal" />));

@@ -130,4 +130,31 @@ describe("ConnectionSettingsForm first-use storage chooser (#5187)", () => {
     expect(help).toContain("asks once where termiHub should keep passwords");
     expect(help).not.toContain("Credential storage is off");
   });
+
+  it("keeps Save credentials in view: focused before the chooser opens, scrolled to after (#5630)", async () => {
+    const scrolled: Element[] = [];
+    const original = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      scrolled.push(this);
+    };
+    try {
+      render();
+      const toggle = query("field-savePassword")!;
+      // A synthetic click (and WebKit's mouse click) does not focus the button.
+      expect(document.activeElement).not.toBe(toggle);
+      await toggleOn();
+      // Focused before the chooser opens, so the dialog returns focus here.
+      expect(document.activeElement).toBe(toggle);
+
+      await act(async () => {
+        useAppStore.getState().resolveStorageChoice("os_keychain");
+      });
+      await act(async () => {
+        await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+      });
+      expect(scrolled).toContain(toggle);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = original;
+    }
+  });
 });

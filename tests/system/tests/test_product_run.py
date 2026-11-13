@@ -11,7 +11,9 @@ The checklist (supersedes the hand-run kit and #5516):
 2. First-save credential chooser (#5409, #5484): OS Keychain pre-selected with
    *Recommended* and the change-later hint; master-password footers
    Cancel·Continue → Cancel·Back·Create vault; Back; OS Keychain + Continue
-   closes it with Save credentials still on; it is shown only once.
+   closes it with Save credentials still on (and in view, #5630); it is shown
+   only once. Before that, #5630 grades one emphasised card, a disabled Create
+   vault on empty fields and the vault step's spacing, then cancels.
 3. Startup question in zsh (#5456/#5458): ``read -q`` before the first prompt
    stays unanswered for 5 s; ``y`` lets startup and the initial command run;
    ``false`` / ``true`` get OSC 133 error / success marks (#5515).
@@ -75,6 +77,13 @@ CHOOSER_CANCEL = "credential-storage-chooser-cancel"
 CHOOSER_BACK = "credential-storage-chooser-back"
 CHOOSER_CONTINUE = "credential-storage-chooser-continue"
 CHOOSER_HINT = "credential-storage-chooser-change-later"
+CHOOSER_BODY = "credential-storage-chooser-body"
+CHOOSER_MP = "credential-storage-chooser-master-password"
+CHOOSER_MODES = ("os_keychain", "master_password", "none")
+#: Smallest gap between the vault step's warning and field groups (#5630).
+MIN_FIELD_GAP = 12.0
+#: Most empty space allowed under the last field, above the footer (#5630).
+MAX_BODY_SLACK = 24.0
 SAVE_CREDENTIALS = "field-savePassword"
 AA_TEXT = 4.5
 SOLARIZED_BASE3 = "#fdf6e3"
@@ -235,6 +244,72 @@ class TestProductRunChecklist(
     def _save_credentials_on(self) -> bool:
         return self.driver.get_attribute(SAVE_CREDENTIALS, "aria-checked") == "true"
 
+    def _bottom(self, test_id: str) -> float:
+        rect = self.driver.measure_element(test_id)["rect"]
+        return rect["y"] + rect["height"]
+
+    def _top(self, test_id: str) -> float:
+        return self.driver.measure_element(test_id)["rect"]["y"]
+
+    def test_02_chooser_states(self):
+        """The chooser's selection, spacing and Create vault state (#5630).
+
+        Runs before the checklist chooser steps and cancels, so nothing is
+        chosen and :meth:`test_02_credential_chooser` still sees a fresh chooser.
+        """
+        with self.step(
+            "checklist.chooser.one-emphasis",
+            "Picking Master password leaves exactly one card emphasised (#5630)",
+            expect="the chooser with only the Master password card selected and ringed",
+        ):
+            self.require("checklist.profile")
+            self.switch_to_connections_sidebar()
+            self.connection_context_action(CHOOSER_CONN, self.CTX_EDIT)
+            self.wait(lambda: self.driver.exists(SAVE_CREDENTIALS), what="the SSH editor")
+            self.driver.click(SAVE_CREDENTIALS)
+            self.wait(lambda: self.driver.exists(CHOOSER), what="the storage chooser")
+            self.driver.click(CHOOSER_OPTION + "master_password")
+            self.wait(lambda: self._option_checked("master_password"), what="Master password")
+            ringed = [
+                mode
+                for mode in CHOOSER_MODES
+                if self.driver.get_computed_style("box-shadow", CHOOSER_OPTION + mode)
+                not in ("", "none")
+            ]
+            checked = [mode for mode in CHOOSER_MODES if self._option_checked(mode)]
+            self.evidence(f"checked: {checked}; focus-ringed: {ringed}")
+            assert checked == ["master_password"], checked
+            assert set(ringed) <= {"master_password"}, f"a second card is ringed: {ringed}"
+        with self.step(
+            "checklist.chooser.vault-step-states",
+            "Vault step: Create vault disabled when empty, even spacing, no empty band (#5630)",
+            expect="the 'Set a master password' step, evenly spaced, Create vault greyed out",
+        ):
+            self.require("checklist.chooser.one-emphasis")
+            self.driver.click(CHOOSER_CONTINUE)
+            self.wait(lambda: self.driver.exists(f"{CHOOSER_MP}-input"), what="the vault step")
+            disabled = self.driver.get_attribute(CHOOSER_CONTINUE, "disabled")
+            self.evidence(f"Create vault disabled attribute: {disabled!r}")
+            assert disabled is not None, "Create vault is enabled with both fields empty"
+            warning_gap = self._top(f"{CHOOSER_MP}-field") - self._bottom(f"{CHOOSER_MP}-warning")
+            field_gap = self._top(f"{CHOOSER_MP}-confirm-field") - self._bottom(
+                f"{CHOOSER_MP}-field"
+            )
+            slack = self._bottom(CHOOSER_BODY) - self._bottom(f"{CHOOSER_MP}-confirm-field")
+            self.evidence(
+                f"warning→field {warning_gap:.0f}px, field→field {field_gap:.0f}px, "
+                f"empty under the fields {slack:.0f}px"
+            )
+            assert warning_gap >= MIN_FIELD_GAP, f"warning sits {warning_gap:.0f}px above the field"
+            assert field_gap >= MIN_FIELD_GAP, f"the fields sit {field_gap:.0f}px apart"
+            assert slack <= MAX_BODY_SLACK, f"{slack:.0f}px of empty space above the footer"
+        try:
+            if self.driver.exists(CHOOSER):
+                self.driver.click(CHOOSER_CANCEL)
+                self._chooser_closed(within=5.0)
+        finally:
+            self._leave_editor()
+
     def test_02_credential_chooser(self):
         with self.step(
             "checklist.chooser.opens",
@@ -309,6 +384,23 @@ class TestProductRunChecklist(
             self.evidence(f"credential store mode: {status}")
             assert status == "os_keychain", f"store mode is {status!r}"
             assert self._save_credentials_on(), "Save credentials was unticked"
+        with self.step(
+            "checklist.chooser.save-in-view",
+            "After the chooser, Save credentials is still in view (#5630)",
+            expect=(
+                "the SSH editor scrolled to Save credentials, "
+                "a 'stored in the OS keychain' toast"
+            ),
+        ):
+            self.require("checklist.chooser.os-keychain")
+            toggle = self.driver.measure_element(SAVE_CREDENTIALS)["rect"]
+            footer_top = self._top(self.EDITOR_CANCEL)
+            self.evidence(
+                f"Save credentials at y={toggle['y']:.0f}, editor footer at {footer_top:.0f}"
+            )
+            assert toggle["y"] >= 0, "Save credentials is scrolled above the editor"
+            bottom = toggle["y"] + toggle["height"]
+            assert bottom <= footer_top, "Save credentials is below the fold"
         with self.step(
             "checklist.chooser.once",
             "Unticking and re-ticking Save credentials does not ask again",

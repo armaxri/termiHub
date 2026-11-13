@@ -10,6 +10,16 @@ import { expectedStorageCards, readStorageCards } from "@/test/credentialStorage
 import { pressRadioArrow } from "@/test/radioKeyboard";
 import { MASTER_PASSWORD_NOT_RECOVERABLE_TEXT } from "@/utils/credentialStorageCopy";
 
+vi.mock("@/components/ui", async () => {
+  const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
+  return {
+    ...actual,
+    toast: { ...actual.toast, success: vi.fn() },
+  };
+});
+
+import { toast } from "@/components/ui";
+
 const mockedInvoke = vi.mocked(invoke);
 
 let container: HTMLDivElement;
@@ -478,7 +488,7 @@ describe("CredentialStorageChooser (#5187)", () => {
       expect(option("none").getAttribute("aria-checked")).toBe("true");
     });
 
-    it("keeps the body at its tallest height across steps", async () => {
+    it("lets the body shrink to each step's content (#5630)", async () => {
       // jsdom has no layout: the choose step measures 400px, the vault step 260px.
       const spy = vi
         .spyOn(HTMLElement.prototype, "offsetHeight", "get")
@@ -489,18 +499,87 @@ describe("CredentialStorageChooser (#5187)", () => {
       try {
         await openChooser();
         const body = () => query("credential-storage-chooser-body")!;
-        expect(body().style.minHeight).toBe("400px");
-
         await click("credential-storage-chooser-option-master_password");
         await click("credential-storage-chooser-continue");
         expect(query("credential-storage-chooser-master-password-setup")).not.toBeNull();
-        expect(body().style.minHeight).toBe("400px");
-
-        await click("credential-storage-chooser-back");
-        expect(body().style.minHeight).toBe("400px");
+        // No min-height carried over from the taller choose step: no empty band
+        // above the footer.
+        expect(body().style.minHeight).toBe("");
       } finally {
         spy.mockRestore();
       }
+    });
+  });
+
+  describe("states (#5630)", () => {
+    const option = (mode: string) => query(`credential-storage-chooser-option-${mode}`)!;
+    const createVault = () => query("credential-storage-chooser-continue") as HTMLButtonElement;
+    const input = (suffix: string) =>
+      query(`credential-storage-chooser-master-password-${suffix}`) as HTMLInputElement;
+    async function openVaultStep() {
+      const opened = await openChooser();
+      await click("credential-storage-chooser-option-master_password");
+      await click("credential-storage-chooser-continue");
+      return opened;
+    }
+
+    it("moves focus with the selection, so only one card is emphasised", async () => {
+      await openChooser();
+      expect(document.activeElement).toBe(option("os_keychain"));
+
+      await click("credential-storage-chooser-option-master_password");
+
+      expect(option("master_password").getAttribute("aria-checked")).toBe("true");
+      expect(document.activeElement).toBe(option("master_password"));
+      const checked = document.querySelectorAll('[role="radio"][data-state="checked"]');
+      expect(checked).toHaveLength(1);
+    });
+
+    it("keeps Create vault disabled until both fields are valid and match", async () => {
+      await openVaultStep();
+      expect(createVault().textContent).toBe("Create vault");
+      expect(createVault().disabled).toBe(true);
+
+      await act(async () => setInputValue(input("input"), "correct horse"));
+      expect(createVault().disabled).toBe(true);
+
+      await act(async () => setInputValue(input("confirm-input"), "correct cow"));
+      expect(createVault().disabled).toBe(true);
+
+      await act(async () => setInputValue(input("confirm-input"), "correct horse"));
+      expect(createVault().disabled).toBe(false);
+
+      await act(async () => setInputValue(input("input"), "short"));
+      expect(createVault().disabled).toBe(true);
+    });
+
+    it("Enter on an empty vault step does nothing", async () => {
+      const { outcome } = await openVaultStep();
+      await act(async () => {
+        input("input").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+      expect(calls("switch_credential_store")).toHaveLength(0);
+      expect(outcome()).toBeUndefined();
+    });
+
+    it("spaces the warning and the field groups with the body's rhythm", async () => {
+      await openVaultStep();
+      const setup = query("credential-storage-chooser-master-password-setup")!;
+      expect(setup.classList.contains("credential-storage-chooser__setup")).toBe(true);
+    });
+
+    it("confirms the chosen store with one success toast", async () => {
+      await openChooser();
+      await click("credential-storage-chooser-continue");
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(toast.success).toHaveBeenCalledWith("Passwords will be stored in the OS keychain.");
+    });
+
+    it("does not toast when the store could not be set up", async () => {
+      switchSucceeds = false;
+      await openChooser();
+      await click("credential-storage-chooser-continue");
+      expect(toast.success).not.toHaveBeenCalled();
     });
   });
 });
