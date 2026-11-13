@@ -596,21 +596,17 @@ impl SshConnector for RusshSshConnector {
         if let Some(line) = integration_line {
             setup.push(("shell integration", line));
         }
-        // A POSIX host with integration types its setup as one line at the
-        // first prompt and hides that line's echo (#5009) — not a POSIX
-        // shell on Windows, whose ConPTY must see every byte (#5015). A fish
-        // host does so for any setup (#5094): its line carries the done mark.
+        // A POSIX or fish host types its setup as one line at the first
+        // prompt and hides that line's echo (#5009, #5094) — not a shell on
+        // Windows, whose ConPTY must see every byte (#5015). The joined line
+        // ends with the done mark, which a hook-free setup (env / X11 only,
+        // #5555) prints itself.
         let is_fish = matches!(remote_shell, RemoteShell::Fish { .. });
         let hide_echo =
             remote_shell::hides_setup_echo(remote_shell, integration_typed, !setup.is_empty());
         if hide_echo {
             let lines: Vec<String> = setup.drain(..).map(|(_, line)| line).collect();
-            let joined = if is_fish {
-                remote_shell::join_fish_setup(&lines)
-            } else {
-                remote_shell::join_posix_setup(&lines)
-            };
-            setup.push(("session setup", joined));
+            setup.push(("session setup", remote_shell::join_marked_setup(&lines)));
         }
         // A PowerShell host with the (opt-in) hook types its setup as one
         // line too, which ends by erasing its own echo (#5044): ConPTY must

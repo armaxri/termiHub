@@ -65,3 +65,43 @@ describe("buildTypeDefaults — shell hook (#5042)", () => {
     );
   });
 });
+
+function sshWithX11(): ConnectionTypeInfo {
+  const base = typeWithHook("ssh");
+  return {
+    ...base,
+    schema: {
+      groups: [
+        {
+          key: "advanced",
+          label: "Advanced",
+          fields: [
+            {
+              key: "enableX11Forwarding",
+              label: "X11 forwarding",
+              fieldType: { type: "boolean" },
+              required: false,
+              default: false,
+            },
+          ],
+        },
+      ],
+    },
+  } as ConnectionTypeInfo;
+}
+
+describe("buildTypeDefaults — X11 forwarding (#5555)", () => {
+  it("a new SSH connection has X11 forwarding off with default settings", () => {
+    expect(buildTypeDefaults(sshWithX11(), {}).enableX11Forwarding).toBe(false);
+  });
+
+  it("an explicit opt-in in Settings pre-enables X11 forwarding", () => {
+    const defaults = buildTypeDefaults(sshWithX11(), { defaultX11Forwarding: true });
+    expect(defaults.enableX11Forwarding).toBe(true);
+  });
+
+  it("an explicit off in Settings keeps it off", () => {
+    const defaults = buildTypeDefaults(sshWithX11(), { defaultX11Forwarding: false });
+    expect(defaults.enableX11Forwarding).toBe(false);
+  });
+});

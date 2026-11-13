@@ -466,7 +466,7 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
 
     Moved out of the guided-manual ``test_external_app.py`` X11 test: the
     ``ssh-x11`` fixture ships ``X11Forwarding yes`` + ``xauth``, so a session
-    opened with X11 forwarding on (the SSH default) must export
+    opened with X11 forwarding on (opt-in since #5555) must export
     ``DISPLAY=localhost:N.0`` in the remote shell — no operator needed. Only the
     "an X window appears" step stays manual.
     """
@@ -478,14 +478,15 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
             pytest.skip("no local X server to forward to (DISPLAY unset, no /tmp/.X11-unix)")
 
         name = unique_name("x11-display")
-        # SSH connections default X11 forwarding ON (test_ssh_x11_defaults_on),
-        # so the default form is what negotiates forwarding here.
+        # X11 forwarding is opt-in (#5555, test_ssh_x11_defaults_off), so
+        # the test turns it on.
         self.create_ssh_connection(
             name,
             host=HOST,
             port=SSH_X11_PORT,
             username=SSH_USERNAME,
             connect=True,
+            x11_forwarding=True,
         )
         self.handle_password_prompt()
         self.accept_host_key_prompt()
@@ -518,7 +519,12 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
 
         name = unique_name("x11-adopt")
         self.create_ssh_connection(
-            name, host=HOST, port=SSH_X11_PORT, username=SSH_USERNAME, connect=True
+            name,
+            host=HOST,
+            port=SSH_X11_PORT,
+            username=SSH_USERNAME,
+            connect=True,
+            x11_forwarding=True,
         )
         self.handle_password_prompt()
         self.accept_host_key_prompt()
@@ -567,7 +573,12 @@ class TestSshX11Display(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Sys
 
         name = unique_name("x11-window")
         self.create_ssh_connection(
-            name, host=HOST, port=SSH_X11_PORT, username=SSH_USERNAME, connect=True
+            name,
+            host=HOST,
+            port=SSH_X11_PORT,
+            username=SSH_USERNAME,
+            connect=True,
+            x11_forwarding=True,
         )
         self.handle_password_prompt()
         self.accept_host_key_prompt()

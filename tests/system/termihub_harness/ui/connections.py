@@ -339,6 +339,7 @@ class ConnectionsUi(HarnessMixin):
         auto_reconnect: bool = True,
         connect: bool = False,
         before_save: Optional[Callable[[], None]] = None,
+        x11_forwarding: bool = False,
     ) -> None:
         """Fill the editor for an SSH connection and save (or Save and connect).
 
@@ -361,6 +362,8 @@ class ConnectionsUi(HarnessMixin):
         ``before_save`` runs after the SSH fields are filled and before the save
         click — the hook :class:`~termihub_harness.ui.JumpHostUi` uses to fill the
         Jump Host section of the same form.
+        ``x11_forwarding=True`` turns the default-off X11 forwarding toggle on
+        (#5555), for a test against the ``ssh-x11`` fixture.
         """
         self.fill_ssh_connection_form(
             name,
@@ -373,6 +376,12 @@ class ConnectionsUi(HarnessMixin):
             save_password=save_password,
             auto_reconnect=auto_reconnect,
         )
+        if x11_forwarding:
+            self.wait(
+                lambda: self.driver.exists("field-enableX11Forwarding"),
+                what="the X11-forwarding toggle",
+            )
+            self.driver.click("field-enableX11Forwarding")  # off → on
         if before_save is not None:
             before_save()
         self._click_editor_save(connect)
