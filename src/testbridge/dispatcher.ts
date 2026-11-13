@@ -25,6 +25,7 @@ import { isComposableControl, replayComposition } from "./composition";
 import { frontendDurableInfo } from "@/utils/frontendLog";
 import { armInputProbe, hitTest, inputProbeEvents } from "./inputProbe";
 import { clearForcedHover, forceHover } from "./forcedHover";
+import { renderSettled } from "./renderSettled";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -794,6 +795,14 @@ export async function dispatchCommand(
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("measureElement", `no element with data-testid="${command.testId}"`);
       return ok("measureElement", measureElement(el, command.descendants));
+    }
+
+    case "renderSettled": {
+      try {
+        return ok("renderSettled", await renderSettled(deps.root, command));
+      } catch (error) {
+        return fail("renderSettled", errorMessage(error));
+      }
     }
 
     case "sampleCanvas": {
