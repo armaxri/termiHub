@@ -178,6 +178,12 @@ tauri-plugin-cli = "2"
 # dev-checkout workflow keeps running many debug copies, and skipped at runtime in
 # portable mode where separate data dirs mean separate copies legitimately coexist.
 tauri-plugin-single-instance = "2"
+# In-app updater (#5758): checks the signed `latest.json` of the latest release,
+# verifies the minisign signature of the bundle against the public key in the
+# release config (`tauri.updater.conf.json`) and installs it in place. Used only
+# from Rust (`commands/update_install.rs`); no frontend plugin package, no
+# capability. Default features keep rustls (`rustls-tls`) and zip support.
+tauri-plugin-updater = "2"
 # Native error dialog shown *before* the Tauri event loop exists, when a portable
 # data dir is already locked by another instance (#3100). Already in the tree via
 # `tauri-plugin-dialog` (same version); default features off to match it — its
