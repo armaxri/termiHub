@@ -7,6 +7,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { TooltipProvider } from "@/components/ui";
 import { FileTypeSettings } from "./FileTypeSettings";
+import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -281,6 +282,60 @@ describe("FileTypeSettings", () => {
     expect(query("file-type-overridden-badge-Dockerfile")).not.toBeNull();
     // A non-overridden row should not have the badge
     expect(query("file-type-overridden-badge-Makefile")).toBeNull();
+  });
+
+  describe("built-in defaults table (#5713)", () => {
+    const builtInCount =
+      Object.keys(BUILT_IN_FILENAME_MAPPINGS).length +
+      Object.keys(BUILT_IN_EXTENSION_MAPPINGS).length;
+
+    it("renders the built-in defaults as a table with Pattern and Language columns", async () => {
+      await render();
+      const table = query("file-type-builtin-table");
+      expect(table?.tagName).toBe("TABLE");
+      const headers = Array.from(table!.querySelectorAll("thead th")).map((th) =>
+        th.textContent?.trim()
+      );
+      expect(headers.slice(0, 2)).toEqual(["Pattern", "Language"]);
+      expect(headers).toHaveLength(3);
+      // The action column header has an accessible name even though it is visually hidden.
+      expect(headers[2]).toBe("Actions");
+    });
+
+    it("renders one row per built-in mapping, each with pattern, language and action cells", async () => {
+      await render();
+      const rows = container.querySelectorAll('[data-testid="file-type-builtin-table"] tbody tr');
+      expect(rows).toHaveLength(builtInCount);
+      for (const row of Array.from(rows)) {
+        expect(row.querySelectorAll("td")).toHaveLength(3);
+      }
+      expect(query("file-type-builtin-row-Dockerfile")?.tagName).toBe("TR");
+    });
+
+    it("shows the mapped language as plain readable text, not disabled grey", async () => {
+      await render();
+      const pattern = query("file-type-builtin-pattern-.babelrc");
+      const language = query("file-type-builtin-language-.babelrc");
+      expect(pattern?.textContent).toBe(".babelrc");
+      expect(language?.textContent).toBe("json");
+      expect(language?.className).toContain("file-type-settings__language");
+      expect(language?.className).not.toContain("--disabled");
+    });
+
+    it("marks an overridden built-in row and keeps its badge inside the table", async () => {
+      seedSettings({ fileLanguageMappings: { Dockerfile: "groovy" } });
+      await render();
+      const row = query("file-type-builtin-row-Dockerfile");
+      expect(row?.getAttribute("data-overridden")).toBe("true");
+      expect(row?.contains(query("file-type-overridden-badge-Dockerfile"))).toBe(true);
+      expect(query("file-type-builtin-row-Makefile")?.hasAttribute("data-overridden")).toBe(false);
+    });
+
+    it("keeps the copy action inside its row", async () => {
+      await render();
+      const row = query("file-type-builtin-row-Dockerfile");
+      expect(row?.contains(query("file-type-copy-Dockerfile"))).toBe(true);
+    });
   });
 
   it("hides all content when fileLanguageMappings not in visibleFields", async () => {

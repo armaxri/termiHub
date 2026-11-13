@@ -65,6 +65,10 @@
      toward the min only when the strip is full. */
   --tab-min-width: 120px;
   --tab-max-width: 240px;
+  /* Form sizing (#5641): forms such as the connection editor stop growing at
+     a readable line length; short numeric inputs (port, timeout) stay narrow. */
+  --form-max-width: 560px;
+  --form-input-narrow-width: 160px;
   /* OSC 133 command-mark gutter bar width (#5563). */
   --terminal-command-mark-width: 3px;
   /* Command-mark geometry (#5640): the bar sits --terminal-command-mark-inset
