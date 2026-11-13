@@ -16,6 +16,7 @@ import { credentialStorageRadioOptions } from "@/components/CredentialStorage/cr
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import { errorMessage } from "@/utils/errorMessage";
 import { tf } from "@/i18n/catalog";
+import { switchConfirmCopy } from "./credentialSwitchCopy";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -156,6 +157,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const [changePasswordError, setChangePasswordError] = useState("");
 
   const currentMode = credentialStoreStatus?.mode ?? "none";
+  const switchCopy = confirmSwitch ? switchConfirmCopy(currentMode, confirmSwitch) : null;
 
   const show = (field: string): boolean => !visibleFields || visibleFields.has(field);
 
@@ -241,21 +243,11 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       setNewPassword("");
       setConfirmPassword("");
       await loadCredentialStoreStatus();
-      // A partial migration is informational (the switch happened); a total
-      // failure is an error and was rolled back, so nothing changed — neither
-      // may be reported as a clean success (#2839, #3323).
-      const summary = migrationSummary(view);
-      if (result.status === "failed") {
-        toast.error(summary);
-      } else if (result.status === "partial") {
-        toast.info(summary);
-      } else {
-        toast.success(summary);
-      }
+      // The outcome is confirmed once, by the inline migration-result banner
+      // (status/alert role by outcome) — never a toast on top of it (#5629).
     } catch (err) {
-      const message = errorMessage(err);
-      setPasswordError(message);
-      toast.error(`Failed to switch credential store: ${message}`);
+      // Shown inline in the still-open confirmation; no toast on top (#5629).
+      setPasswordError(errorMessage(err));
       throw err; // keep the async Button in its error path (no success flash)
     } finally {
       setSwitching(false);
@@ -367,10 +359,8 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           {masterPasswordSetup && confirmSwitch === "master_password" && (
             <form className="settings-panel__inline-dialog" data-testid="master-password-setup">
-              <h4 className="settings-panel__inline-dialog-title">Set master password</h4>
-              <p className="settings-panel__inline-dialog-text">
-                Choose a strong password to encrypt your credentials.
-              </p>
+              <h4 className="settings-panel__inline-dialog-title">{switchCopy?.title}</h4>
+              <p className="settings-panel__inline-dialog-text">{switchCopy?.text}</p>
               <MasterPasswordSetupFields
                 password={newPassword}
                 confirm={confirmPassword}
@@ -394,7 +384,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   pendingLabel="Switching…"
                   data-testid="master-password-confirm-btn"
                 >
-                  Confirm
+                  {switchCopy?.action}
                 </Button>
               </div>
             </form>
@@ -402,23 +392,22 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           {confirmSwitch && confirmSwitch !== "master_password" && (
             <div className="settings-panel__inline-dialog" data-testid="confirm-switch-dialog">
-              <h4 className="settings-panel__inline-dialog-title">
-                Switch to {modeLabel(confirmSwitch)}?
-              </h4>
-              <p className="settings-panel__inline-dialog-text">
-                {confirmSwitch === "none"
-                  ? "This permanently deletes all saved credentials and cannot be undone. You'll be prompted for passwords each time you connect."
-                  : "Existing credentials will be migrated to the OS credential store."}
-              </p>
+              <h4 className="settings-panel__inline-dialog-title">{switchCopy?.title}</h4>
+              <p className="settings-panel__inline-dialog-text">{switchCopy?.text}</p>
               {passwordError && (
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
-                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={resetSwitchDialogs}
+                  data-testid="confirm-switch-cancel-btn"
+                >
                   Cancel
                 </Button>
                 <Button
-                  variant="primary"
+                  variant={switchCopy?.destructive ? "danger" : "primary"}
                   size="sm"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
@@ -426,7 +415,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   pendingLabel="Switching…"
                   data-testid="confirm-switch-confirm-btn"
                 >
-                  Confirm
+                  {switchCopy?.action}
                 </Button>
               </div>
             </div>
