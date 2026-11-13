@@ -432,3 +432,63 @@ class TestProductRunAutomations(
         assert "sidebar-list-item--actions-visible" in row, f"row actions hidden behind hover: {row}"
         for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
             assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
+
+    # ── macro row + history header grade (#5636) ─────────────────────────────
+    def test_70_macro_row_actions(self):
+        with self.step(
+            "automations.macro.row-actions",
+            "A macro row offers Play without a hover, and the history header labels and "
+            "separates its actions",
+            expect="the Macros sidebar at rest: the macro row's Play button visible after its "
+            "name; the history filtered to the macro, the filter a removable chip on its own row "
+            "below the header, and a labelled 'Clear…' action in the header (#5636)",
+            screenshot=False,
+        ):
+            self.require("automations.macro.create")
+            mid = self.ids["macro"]
+            self.show_macros()
+            self.driver.force_hover(None)
+            row = self.driver.get_attribute(f"macro-item-{mid}", "class") or ""
+            self.evidence(f"row classes: {row}")
+            assert "sidebar-list-item--actions-visible" in row, f"Play hides behind hover: {row}"
+            name = self.driver.measure_element(f"macro-name-{mid}")["rect"]
+            play = self.driver.measure_element(f"macro-play-{mid}")["rect"]
+            more = self.driver.measure_element(f"macro-more-{mid}")["rect"]
+            self.evidence(f"name {name}, play {play}, more {more}")
+            assert play["width"] > 0 and play["height"] > 0, "the Play button is not laid out"
+            assert play["x"] >= name["x"] + name["width"] - 1, f"Play {play} leads the name {name}"
+            inside_more = more["x"] <= play["x"] and play["x"] + play["width"] <= more["x"] + more[
+                "width"
+            ]
+            assert not inside_more, "Play sits in the hover-revealed group"
+            assert self.driver.get_computed_style("opacity", f"macro-more-{mid}") == "0", (
+                "the secondary actions show at rest and crowd the name"
+            )
+            self.shot(label="row")
+
+            self.driver.click(f"macro-history-{mid}")
+            self.wait(lambda: self.driver.exists("macro-history-filter"), what="the macro filter")
+            header = self.driver.measure_element("macro-history-header")["rect"]
+            chip = self.driver.measure_element("macro-history-show-all")["rect"]
+            self.evidence(f"history header {header}, filter clear {chip}")
+            assert chip["y"] >= header["y"] + header["height"] - 1, (
+                "the filter's clear button sits in the header beside Clear history"
+            )
+            label = self.driver.get_text("macro-history-clear").strip()
+            self.evidence(f"clear action text: {label!r}")
+            assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
+            before = len(self.macro_runs(mid))
+            self.driver.click("macro-history-clear")
+            self.wait(
+                lambda: self.driver.exists("macro-history-clear-confirm-cancel"),
+                what="the clear-history confirmation",
+            )
+            self.shot(label="confirm")
+            self.driver.click("macro-history-clear-confirm-cancel")
+            self.wait(
+                lambda: not self.driver.exists("macro-history-clear-confirm-cancel"),
+                what="the confirmation to close",
+            )
+            after = len(self.macro_runs(mid))
+            assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
+            self.driver.click("macro-history-show-all")

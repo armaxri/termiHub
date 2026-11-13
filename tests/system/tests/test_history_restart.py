@@ -325,6 +325,12 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
         assert restored.get("origin") == "manual"
 
         self.driver.click("macro-history-clear")
+        # Clearing every macro's history asks first (#5636).
+        self.wait(
+            lambda: self.driver.exists("macro-history-clear-confirm-confirm"),
+            what="the clear-history confirmation",
+        )
+        self.driver.click("macro-history-clear-confirm-confirm")
         self.wait(lambda: self.driver.exists("macro-history-empty"), what="the history to clear")
         assert not self.driver.get_state("macroRuns")
         self.wait(
