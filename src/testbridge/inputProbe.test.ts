@@ -103,6 +103,46 @@ describe("osInputProbe command", () => {
     expect(typeof value.hasFocus).toBe("boolean");
   });
 
+  it("hit-tests points against the element, naming what covers it (#5610)", async () => {
+    document.body.innerHTML = `
+      <div data-testid="target"><span id="cell"></span></div>
+      <div data-testid="toast"><span id="text"></span></div>`;
+    const cell = document.getElementById("cell") as HTMLElement;
+    const text = document.getElementById("text") as HTMLElement;
+    const elementFromPoint = (x: number, y: number) => (x < 0 ? null : y > 50 ? text : cell);
+    Object.defineProperty(document, "elementFromPoint", {
+      value: elementFromPoint,
+      configurable: true,
+    });
+    try {
+      const response = await dispatchCommand(
+        {
+          action: "osInputProbe",
+          testId: "target",
+          points: [
+            { x: 10, y: 10 },
+            { x: 10, y: 90 },
+            { x: -1, y: 10 },
+          ],
+        },
+        deps()
+      );
+      expect((response.value as OsInputProbeResult).hits).toEqual([
+        { inside: true, testId: "target" },
+        { inside: false, testId: "toast" },
+        { inside: false },
+      ]);
+    } finally {
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+    }
+  });
+
+  it("omits hits without points", async () => {
+    document.body.innerHTML = `<div data-testid="target"></div>`;
+    const response = await dispatchCommand({ action: "osInputProbe", testId: "target" }, deps());
+    expect((response.value as OsInputProbeResult).hits).toBeUndefined();
+  });
+
   it("fails on an unknown testid", async () => {
     const response = await dispatchCommand({ action: "osInputProbe", testId: "missing" }, deps());
     expect(response.ok).toBe(false);

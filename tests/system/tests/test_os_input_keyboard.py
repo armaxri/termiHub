@@ -536,16 +536,18 @@ class TestOsKeyboardGrades(
 
         Window A is pinned always-on-top (#957), so only the part of B's shell
         outside A's frame takes a click; B's new shell may not hold B's
-        keyboard focus on its own.
+        keyboard focus on its own. Nor does a toast laid over B's shell (its
+        "Connected" toast sits in the bottom-right corner, #5610).
         """
         renderer = f"terminal-renderer-{tab_id}"
-        for fy in (0.9, 0.5, 0.1):
-            for fx in (0.95, 0.75, 0.5, 0.25, 0.05):
-                point = screen.point(renderer, fx, fy)
-                if not cover.contains(*point):
-                    osi.click(*point)
-                    return
-        raise AssertionError(f"window A {cover} covers all of window B's shell {screen.window}")
+        try:
+            point = screen.exposed_point(renderer, 0.95, 0.9, avoid=cover.contains)
+        except AssertionError as exc:
+            raise AssertionError(
+                f"window A {cover} or a toast covers all of window B's shell {screen.window}: "
+                f"{exc}"
+            ) from None
+        osi.click(*point)
 
     def _raise(self, osi: OsInput, window: OsWindow, focused: Driver, other: Driver) -> None:
         """Raise ``window`` by its OS handle and prove its webview has the focus."""

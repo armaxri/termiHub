@@ -1061,6 +1061,20 @@ export interface OsInputProbeCommand {
   testId?: string;
   /** Clear the events recorded so far (after returning nothing older). */
   reset?: boolean;
+  /**
+   * Client points (CSS pixels) to hit-test against `testId`'s element (#5610):
+   * the value's `hits` says, per point, whether a real click there would land
+   * on the element, or on something laid over it (a toast, a notice).
+   */
+  points?: { x: number; y: number }[];
+}
+
+/** What a real click at one {@link OsInputProbeCommand} point would land on. */
+export interface OsInputProbeHit {
+  /** `true` when the topmost element there is the element or inside it. */
+  inside: boolean;
+  /** `data-testid` of the nearest tagged ancestor of the topmost element. */
+  testId?: string;
 }
 
 /** One key/pointer event the {@link OsInputProbeCommand} recorder saw. */
@@ -1095,6 +1109,8 @@ export interface OsInputProbeResult {
   /** Whether the document currently has OS focus (`document.hasFocus()`). */
   hasFocus: boolean;
   rect?: { left: number; top: number; width: number; height: number };
+  /** One entry per requested point, when `testId` and `points` were given. */
+  hits?: OsInputProbeHit[];
 }
 
 /**

@@ -23,7 +23,7 @@ import type {
 import { errorMessage } from "@/utils/errorMessage";
 import { isComposableControl, replayComposition } from "./composition";
 import { frontendDurableInfo } from "@/utils/frontendLog";
-import { armInputProbe, inputProbeEvents } from "./inputProbe";
+import { armInputProbe, hitTest, inputProbeEvents } from "./inputProbe";
 import { clearForcedHover, forceHover } from "./forcedHover";
 
 /**
@@ -1401,11 +1401,13 @@ export async function dispatchCommand(
       const doc = ownerDocument(deps.root);
       const view = doc.defaultView ?? window;
       let rect: OsInputProbeResult["rect"];
+      let hits: OsInputProbeResult["hits"];
       if (command.testId != null) {
         const el = findByTestId(deps.root, command.testId);
         if (!el) return fail("osInputProbe", `no element with data-testid="${command.testId}"`);
         const r = (el as HTMLElement).getBoundingClientRect();
         rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+        if (command.points) hits = command.points.map(({ x, y }) => hitTest(doc, el, x, y));
       }
       const events = inputProbeEvents();
       armInputProbe(doc, command.reset === true);
@@ -1416,6 +1418,7 @@ export async function dispatchCommand(
         innerHeight: view.innerHeight,
         hasFocus: doc.hasFocus(),
         ...(rect ? { rect } : {}),
+        ...(hits ? { hits } : {}),
       };
       return ok("osInputProbe", result);
     }
