@@ -778,3 +778,7 @@ mod interrupt_tests;
 #[cfg(test)]
 #[path = "early_output_tests.rs"]
 mod early_output_tests;
+
+#[cfg(test)]
+#[path = "eof_tests.rs"]
+mod eof_tests;

@@ -96,7 +96,7 @@ fn run(mut ctx: ReaderContext) {
 /// [`Drop`] guard. Then the sender is left alone: by the time this thread
 /// notices, the same `Telnet` may already be connected again, and the sender
 /// in `output_tx` would belong to that new connection.
-fn end_session(ctx: &ReaderContext) {
+pub(super) fn end_session(ctx: &ReaderContext) {
     if !ctx.alive.swap(false, Ordering::SeqCst) {
         return;
     }
