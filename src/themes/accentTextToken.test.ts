@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "fs";
-import { join, dirname, relative } from "path";
+import { join, dirname, relative, sep } from "path";
 import { fileURLToPath } from "url";
 import { contrastRatio } from "./contrast";
 import { darkTheme } from "./dark";
@@ -62,7 +62,7 @@ function accentForegroundRules(): string[] {
   return cssFiles(SRC_DIR).flatMap((file) =>
     rules(readFileSync(file, "utf8"))
       .filter((r) => ACCENT_FOREGROUND.test(r.body))
-      .map((r) => `${relative(SRC_DIR, file)} :: ${r.selector}`)
+      .map((r) => `${relative(SRC_DIR, file).split(sep).join("/")} :: ${r.selector}`)
   );
 }
 
