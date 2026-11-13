@@ -520,7 +520,11 @@ async fn upload_relaunch_past_the_checkpoint_restarts_with_a_reason() {
     assert_eq!(handle.state().tag(), TransferStateTag::Completed);
     assert_eq!(server.get(REMOTE).expect("uploaded"), data, "byte-exact");
     assert_eq!(server.transfers(), vec![stor(0)]);
-    assert_eq!(server.rest_commands(), 0, "never resumed past the checkpoint");
+    assert_eq!(
+        server.rest_commands(),
+        0,
+        "never resumed past the checkpoint"
+    );
     assert!(
         messages(&events)
             .iter()

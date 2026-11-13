@@ -33,8 +33,8 @@ use crate::files::{FileEntry, RangedFileAccess};
 use super::attempt::{
     apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
     local_partial_size, open_local_dest, open_local_read, probe_timed_out, rehydrate_start_offset,
-    settle_attempt, stop_reason, trim_remote_partial, AttemptOutcome, AttemptsResult,
-    PartialProbe, Probed, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
+    settle_attempt, stop_reason, trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe,
+    Probed, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;

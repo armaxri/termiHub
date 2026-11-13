@@ -1603,10 +1603,8 @@ mod tests {
     /// so the gate restarts from zero — and the row says why.
     #[tokio::test]
     async fn an_untrimmable_remote_partial_restarts_with_a_reason() {
-        let partial = trim_remote_partial(Some(900), 600, |_| async {
-            Err(FileError::NotSupported)
-        })
-        .await;
+        let partial =
+            trim_remote_partial(Some(900), 600, |_| async { Err(FileError::NotSupported) }).await;
         assert_eq!(partial.present, Some(900));
         let (handle, sink, messages) = harness();
         let mut cursor = ResumeCursor {

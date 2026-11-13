@@ -2767,7 +2767,19 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   every attempt the executor probes the server: `FEAT` says whether `REST
 STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   file. Without `REST STREAM` the transfer restarts from zero; without `MDTM`
-  a resume is checked against the size only. A **remote-to-remote** copy
+  a resume is checked against the size only.
+  A relaunch after a **crash** finds the destination partial past the last
+  persisted checkpoint (the copy kept writing after it), and the resume gate
+  restarts a partial longer than the checkpoint from zero. So every executor
+  first trims the partial back to the checkpoint (#5609, #5611): a download's
+  local file with `set_len`, an SFTP upload's remote file with a size-only
+  `setstat` (re-checked with `stat`), a Docker upload's with `truncate` or
+  `dd` in the container, and a ranged upload's through
+  `RangedTransferTarget::truncate`. FTP has no command to shorten a remote
+  file and the agent's `write_range` cannot either, so such an upload restarts
+  from zero and the row says why ("remote partial is past the last checkpoint
+  and cannot be trimmed"); a failed trim restarts the same way with the error.
+  A **remote-to-remote** copy
   streams between two sessions with no local staging file
   (`core/src/files/transfer/remote_copy.rs`); either end may be SFTP (a
   dedicated channel per attempt), Docker (a streaming `docker exec` per

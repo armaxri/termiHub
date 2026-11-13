@@ -41,15 +41,15 @@ use tracing::{debug, info};
 
 use super::attempt::{
     apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
-    local_fingerprint, local_partial_size, probe_timed_out, rehydrate_start_offset,
-    settle_attempt, stop_reason, trim_remote_partial, AttemptOutcome, AttemptsResult,
-    PartialProbe, Probed, ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
+    local_fingerprint, local_partial_size, probe_timed_out, rehydrate_start_offset, settle_attempt,
+    stop_reason, trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe, Probed,
+    ProgressReporter, ResumeCursor, StopReason, STALL_TIMEOUT,
 };
-use crate::errors::FileError;
 use super::registry::{TransferHandle, TransferRegistry};
 use super::retry::SourceFingerprint;
 use super::state::TransferEvent;
 use super::{ProgressSink, TransferPhase};
+use crate::errors::FileError;
 
 /// Log label for the shared attempt orchestration.
 const BACKEND: &str = "FTP";
@@ -106,10 +106,8 @@ async fn probe_endpoints(
         FtpDirection::Upload => Endpoints {
             caps,
             source: local_fingerprint(local_path).await,
-            partial: trim_remote_partial(size, offset, |_| async {
-                Err(FileError::NotSupported)
-            })
-            .await,
+            partial: trim_remote_partial(size, offset, |_| async { Err(FileError::NotSupported) })
+                .await,
         },
     })
 }
