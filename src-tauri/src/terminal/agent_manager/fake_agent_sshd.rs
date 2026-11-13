@@ -72,6 +72,9 @@ pub(super) enum InitBehavior {
     /// handshake times out (#4404). Unix-only, like the transport sever.
     #[cfg(unix)]
     StallOnReconnect,
+    /// No agent installed: the exec "succeeds", the remote shell prints
+    /// `not found` on stderr, exits 127 and closes the channel (#5608).
+    NotInstalled,
 }
 
 /// The agent version the rich `initialize` answer reports (#4440).
@@ -337,7 +340,7 @@ impl FakeAgentHandler {
                     let _ = session.data(channel, initialize_answer(id).into_bytes());
                 }
             }
-            InitBehavior::Stall => {}
+            InitBehavior::Stall | InitBehavior::NotInstalled => {}
             InitBehavior::Answer => {
                 let _ = session.data(channel, initialize_answer(id).into_bytes());
             }
@@ -393,6 +396,13 @@ impl russh::server::Handler for FakeAgentHandler {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)?;
+        if self.behavior == InitBehavior::NotInstalled {
+            let not_found = b"sh: 1: /opt/fake/termihub-agent: not found\n".to_vec();
+            session.extended_data(channel, 1, not_found)?;
+            session.eof(channel)?;
+            session.exit_status_request(channel, 127)?;
+            session.close(channel)?;
+        }
         Ok(())
     }
 

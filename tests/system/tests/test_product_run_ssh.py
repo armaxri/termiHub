@@ -246,6 +246,14 @@ class TestProductRunSsh(
             self.connect_connection(name)
             self.wait(self.password_prompt_open, what="the key passphrase prompt")
             self.shot(label="passphrase-prompt")
+            # Sentence case, and the prompt names the key it unlocks (#5617).
+            title = self.password_prompt_title()
+            description = self.password_prompt_description()
+            self.evidence(f"prompt title: {title!r}; description: {description!r}")
+            assert title == "SSH key passphrase", f"the passphrase prompt is titled {title!r}"
+            assert SSH_KEY_PASSPHRASE_PATH.name in description, (
+                f"the passphrase prompt does not name the key: {description!r}"
+            )
             self.handle_password_prompt(SSH_KEY_PASSPHRASE)
             self.accept_all_hostkeys(timeout=5.0)
             tab_id = self.tab_id_of(name)
@@ -289,6 +297,10 @@ class TestProductRunSsh(
             )
             self.wait(self.password_prompt_open, what="the password prompt")
             self.shot(label="password-prompt")
+            # Titled after the transport, sentence case (#5617).
+            title = self.password_prompt_title()
+            self.evidence(f"prompt title: {title!r}")
+            assert title == "SSH password", f"the SSH password prompt is titled {title!r}"
             self.handle_password_prompt(SSH_PASSWORD)
             self.accept_all_hostkeys(timeout=10.0)
             tab_id = self.tab_id_of(name)

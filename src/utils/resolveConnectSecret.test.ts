@@ -132,7 +132,10 @@ describe("resolveConnectSecret", () => {
       connectionId: "c1",
       requestPassword,
     });
-    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "key_passphrase");
+    // The prompt names the key the passphrase unlocks (#5617).
+    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "key_passphrase", {
+      keyPath: "/k",
+    });
     expect(r).toEqual({
       status: "resolved",
       passwordKey: "password",
@@ -351,6 +354,22 @@ describe("resolveConnectSecret — telnet auto-login schema", () => {
       source: "stored",
       credentialType: "password",
       shouldSave: false,
+    });
+  });
+
+  it("titles the auto-login prompt after telnet, not SSH (#5617)", async () => {
+    requestPassword.mockResolvedValue({ password: "pw", shouldSave: false });
+    await resolveConnectSecret({
+      schema: TELNET_SCHEMA,
+      settings: { host: "sw1", port: 23, authMethod: "password", username: "admin" },
+      connectionId: null,
+      requestPassword,
+      label: "Lab switch",
+      transport: "Telnet",
+    });
+    expect(requestPassword).toHaveBeenCalledWith("sw1", "admin", "", "password", {
+      label: "Lab switch",
+      transport: "Telnet",
     });
   });
 });

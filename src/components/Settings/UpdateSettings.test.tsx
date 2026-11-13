@@ -153,6 +153,58 @@ describe("UpdateSettings", () => {
     expect(query("update-latest-version")?.textContent).toBe("Not checked for this build");
   });
 
+  it("says 'Not checked yet' before any check has run (#5615)", async () => {
+    await render();
+    expect(query("update-latest-version")?.textContent).toBe("Not checked yet");
+    expect(query("update-last-checked")?.textContent).toBe("Never");
+  });
+
+  it("never says 'Up to date' while last checked is 'Never' (#5615)", async () => {
+    useAppStore.setState({
+      updateCheckState: "up-to-date",
+      updateInfo: {
+        available: false,
+        latestVersion: "0.1.0",
+        releaseUrl: "https://example/0.1.0",
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "stable",
+      },
+    });
+    await render();
+    expect(query("update-last-checked")?.textContent).toBe("Never");
+    expect(query("update-latest-version")?.textContent).toBe("Not checked yet");
+  });
+
+  it("says 'Up to date' once a completed check recorded a time (#5615)", async () => {
+    seedSettings({ updates: { autoCheck: true, lastCheckTime: "2026-11-13T08:00:00Z" } });
+    useAppStore.setState({
+      updateCheckState: "up-to-date",
+      updateInfo: {
+        available: false,
+        latestVersion: "0.1.0",
+        releaseUrl: "https://example/0.1.0",
+        releaseNotes: "",
+        isSecurity: false,
+        channel: "stable",
+      },
+    });
+    await render();
+    expect(query("update-last-checked")?.textContent).not.toBe("Never");
+    expect(query("update-latest-version")?.textContent).toBe("Up to date");
+  });
+
+  it("does not reuse a previous session's result before this launch checked (#5615)", async () => {
+    seedSettings({ updates: { autoCheck: true, lastCheckTime: "2026-11-13T08:00:00Z" } });
+    await render();
+    expect(query("update-latest-version")?.textContent).toBe("Not checked since launch");
+  });
+
+  it("names the manual-check button as it is labelled (#5615)", async () => {
+    await render();
+    expect(container.textContent).toContain("Use \u201cCheck now\u201d to check manually.");
+  });
+
   it("does not hand a disallowed-scheme release URL to the OS opener (SEC-012)", async () => {
     useAppStore.setState({
       updateCheckState: "available",

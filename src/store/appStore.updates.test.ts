@@ -65,10 +65,12 @@ const MOCK_SECURITY_UPDATE: UpdateInfo = {
   channel: "stable",
 };
 
+// A feed-backed "no update" result carries the release page URL; only the
+// backend's feed-less placeholder leaves it empty (#5615).
 const MOCK_NO_UPDATE: UpdateInfo = {
   available: false,
   latestVersion: "0.1.0",
-  releaseUrl: "",
+  releaseUrl: "https://github.com/armaxri/termiHub/releases/tag/v0.1.0",
   releaseNotes: "",
   isSecurity: false,
   channel: "stable",

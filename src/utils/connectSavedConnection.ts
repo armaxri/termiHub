@@ -54,6 +54,7 @@ import {
   storeCredential,
 } from "@/services/api";
 import { currentAgentsView } from "@/store/agentsBridge";
+import { mirrorSessionAlreadyConnected } from "@/store/sessionBridge";
 import { useAppStore, type AddTabOptions } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
 import type { ConnectionConfig } from "@/types/terminal";
@@ -86,6 +87,7 @@ import {
   stashPreconnectFailure,
   untilAborted,
 } from "@/utils/preconnect";
+import { connectionTypeDisplayName } from "@/utils/connectionTypeDisplayName";
 import type { PasswordPromptKind } from "@/store/slices/passwordPromptSlice";
 
 /** Options for {@link connectSavedConnection}. */
@@ -209,6 +211,8 @@ export async function connectSavedConnection(
 ): Promise<ConnectSavedConnectionResult> {
   const unattended = options.unattended === true;
   const { addTab, requestPassword } = useAppStore.getState();
+  // Display name of the connection type, for the password prompt's title (#5617).
+  const transport = connectionTypeDisplayName(connection.config.type);
 
   // A connection whose plugin is missing, disabled or not trusted cannot
   // connect (#3344): say why, with the same wording as the sidebar marker,
@@ -305,6 +309,13 @@ export async function connectSavedConnection(
       connectionId: connection.id,
       ...opts,
     });
+    // A tab opened on a session that already connected (the saved-credential
+    // pre-connect, an unattended connect) never runs the terminal's own connect,
+    // so the backend lifecycle region would not know it — no live status, no
+    // reconnect on a drop (#5608). Register it there as connected.
+    if (opts.sessionId && (opts.contentType ?? "terminal") === "terminal") {
+      mirrorSessionAlreadyConnected(tabId);
+    }
     return { status: "opened", tabId, sessionId: opts.sessionId ?? null };
   };
 
@@ -369,6 +380,7 @@ export async function connectSavedConnection(
       settings: cfg as Record<string, unknown>,
       requestPassword,
       label: connection.name,
+      ...(transport ? { transport } : {}),
     });
     if (resolved.status === "canceled") {
       toast.info(CONNECT_CANCELED_MESSAGE);
@@ -599,6 +611,8 @@ export async function connectSavedConnection(
       allowSave: !sharedCredential && !isGraphical && !storeStaysLocked,
       label: connection.name,
       ...(savedRejected ? { savedRejected: true } : {}),
+      // Titled after the real transport, never "SSH" for telnet (#5617).
+      ...(transport ? { transport } : {}),
     };
     if (authMethod === "password") {
       const host = readConfigString(connection.config, "host") ?? "";
@@ -635,12 +649,14 @@ export async function connectSavedConnection(
       // The prompt modal is now the feedback surface — clear the pre-connect
       // indicator before it appears (UX-011).
       dismissConnecting();
+      const keyPath = readConfigString(connection.config, "keyPath") ?? "";
       const answer = await requestPassword(
         host,
         username,
         rejectedCredentialNotice,
         "key_passphrase",
-        promptOptions
+        // Name the key the passphrase unlocks (#5617).
+        keyPath.trim() ? { ...promptOptions, keyPath } : promptOptions
       );
       if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.

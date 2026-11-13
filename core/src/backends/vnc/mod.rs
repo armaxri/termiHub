@@ -1632,7 +1632,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rgba_raw_image_is_passed_through_unchanged() {
+    async fn rgba_raw_image_keeps_its_colours_and_is_opaque() {
         let frames = frames_for(
             PixelFormat::rgba(),
             vec![
@@ -1641,7 +1641,7 @@ mod tests {
             ],
         )
         .await;
-        assert_eq!(frames.last().unwrap().rects[0].data, vec![1, 2, 3, 0]);
+        assert_eq!(frames.last().unwrap().rects[0].data, vec![1, 2, 3, 255]);
     }
 
     #[test]

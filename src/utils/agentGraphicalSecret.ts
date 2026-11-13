@@ -36,6 +36,8 @@ export interface ResolveAgentGraphicalSettingsOptions {
   requestPassword: RequestPassword;
   /** The definition's name, shown in the prompt title (#4475). */
   label?: string;
+  /** Display name of the connection type, for the prompt's title (#5617). */
+  transport?: string;
 }
 
 /**
@@ -48,11 +50,13 @@ export function resolveAgentGraphicalSettings({
   settings,
   requestPassword,
   label,
+  transport,
 }: ResolveAgentGraphicalSettingsOptions): Promise<AgentGraphicalSettingsResult> {
   return resolveGraphicalSettings({
     credentialId: definitionId === null ? null : agentGraphicalCredentialId(agentId, definitionId),
     settings,
     requestPassword,
     ...(label ? { label } : {}),
+    ...(transport ? { transport } : {}),
   });
 }

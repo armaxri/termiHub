@@ -72,11 +72,16 @@ class SshPhaseUi(HarnessMixin):
         return tab["id"]
 
     def wait_connected(self, tab_id: str, *, timeout: float = 90.0) -> None:
-        self.wait(
-            lambda: self.session_status(tab_id) == "connected",
-            timeout=timeout,
-            what=f"tab {tab_id} to be connected",
-        )
+        try:
+            self.wait(
+                lambda: self.session_status(tab_id) == "connected",
+                timeout=timeout,
+                what=f"tab {tab_id} to be connected",
+            )
+        except AssertionError as exc:
+            sessions = self.projection_region_cache(SESSION_LIFECYCLE_REGION).get("sessions")  # type: ignore[attr-defined]
+            tabs = [(t.get("id"), t.get("title"), t.get("sessionId")) for t in self._all_tabs()]  # type: ignore[attr-defined]
+            raise AssertionError(f"{exc}; lifecycle sessions={sessions!r}; tabs={tabs!r}") from exc
 
     def echo_round_trip(self, tab_id: str, marker: str, *, timeout: float = 60.0) -> str:
         """Type ``echo <marker>`` (split, so only the output matches) until it shows."""
