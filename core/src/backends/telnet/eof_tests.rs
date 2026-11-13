@@ -29,13 +29,26 @@ async fn connect_to_server() -> (Telnet, TcpStream) {
     (telnet, peer)
 }
 
-/// Read the client's opening negotiation offer (`IAC WILL NAWS`), so the
-/// server has finished negotiating and has no unread data when it closes.
+/// Read the client's whole opening negotiation offer (`IAC WILL NAWS` and, in
+/// the default character mode, `IAC DO SGA`), so the server has finished
+/// negotiating and has no unread data when it closes.
+///
+/// All of it must be read: a socket closed with unread received data sends
+/// RST instead of FIN, and Windows then discards the data the client had not
+/// read yet — the close under test would silently become a reset.
 fn read_opening_offer(peer: &mut TcpStream) {
     peer.set_read_timeout(Some(CEILING)).expect("read timeout");
-    let mut offer = [0u8; 3];
+    let expected = [
+        IAC,
+        WILL,
+        negotiation::OPT_NAWS,
+        IAC,
+        DO,
+        negotiation::OPT_SGA,
+    ];
+    let mut offer = [0u8; 6];
     peer.read_exact(&mut offer).expect("read the opening offer");
-    assert_eq!(offer, [IAC, WILL, negotiation::OPT_NAWS]);
+    assert_eq!(offer, expected);
 }
 
 /// Wait until the output stream ends. Output before the end is discarded.
