@@ -28,6 +28,14 @@
 //!    against that path, both built by `windows_agent_command`
 //!    (`cmd /c "<path>" <args>`), and round-trip shell I/O through it.
 //!
+//! 5. **Git Bash `DefaultShell` (#5523)** — steps 1–3 with Git Bash as the
+//!    login shell: the deploy runs every step as an encoded `powershell.exe`
+//!    command (#5449); its forward-slash install path (`C:/…`) is stored as
+//!    the agent path through the `ConnectionManager` (#5522) and launched from
+//!    Git Bash as is. Step 0 is graded by `core/tests/ssh_native.rs` in the
+//!    same lane leg, and step 4 does not apply: the encoded deploy refuses an
+//!    install path with a space.
+//!
 //! Binary *resolution* (cache → bundled → download, plus the release-signature
 //! check) needs a Tauri `AppHandle` and a signed release asset, so the lane
 //! uploads a locally built `termihub-agent.exe` instead; everything from the
@@ -38,7 +46,7 @@
 //! The host is the **native sshd fixture** (`scripts/internal/native-sshd-fixture.sh`
 //! → `native-sshd-fixture.ps1` on Windows: Win32-OpenSSH on a loopback port,
 //! the key-auth local user `termihubssh`). The recipe
-//! `scripts/internal/run-windows-ssh-host-suite.sh <cmd|powershell>` sets
+//! `scripts/internal/run-windows-ssh-host-suite.sh <cmd|powershell|bash>` sets
 //! `HKLM\SOFTWARE\OpenSSH\DefaultShell`, brings the fixture up and runs the
 //! matching test; the `Windows SSH Host` workflow
 //! (`.github/workflows/windows-ssh-host.yml`) runs it once per shell. Inputs:
@@ -47,7 +55,7 @@
 //! | --- | --- |
 //! | `TERMIHUB_NATIVE_SSHD_PORT` / `_USER` / `_KEY` | the fixture's port, login user, client key |
 //! | `TERMIHUB_NATIVE_SSHD_AGENT_BIN` (or `TERMIHUB_TEST_AGENT_BIN`) | the `termihub-agent.exe` to deploy |
-//! | `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL` | `cmd` or `powershell` — the configured `DefaultShell` |
+//! | `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL` | `cmd`, `powershell` or `bash` — the configured `DefaultShell` |
 //! | `TERMIHUB_REQUIRE_WINDOWS_SSH` | truthy → a missing fixture fails instead of skipping |
 //!
 //! Without them (every local and per-PR run, and the macOS/Linux native-sshd
@@ -70,8 +78,9 @@ use crate::connection::config::AgentSettings;
 use crate::terminal::agent_binary::is_windows_os;
 use crate::terminal::agent_deploy::{install_agent_bytes, probe_remote_agent, AgentDeployResult};
 use crate::terminal::agent_install::{
-    detect_windows_shell, windows_install_plan, WindowsShell, WINDOWS_AGENT_EXE,
-    WINDOWS_UPLOAD_NAME,
+    detect_windows_deploy_shell, is_managed_windows_install_path, parse_encoded_install_path,
+    powershell_encoded_command, windows_deploy_install_plan, windows_install_plan,
+    WindowsDeployShell, WindowsShell, WINDOWS_AGENT_EXE, WINDOWS_UPLOAD_NAME,
 };
 use crate::terminal::backend::{RemoteAgentConfig, SshConfig};
 use crate::terminal::jsonrpc;
@@ -112,11 +121,25 @@ struct Fixture {
     port: u16,
     user: String,
     key: String,
-    default_shell: WindowsShell,
+    /// How the deploy runs commands under the configured `DefaultShell`:
+    /// natively for cmd.exe / PowerShell, as encoded PowerShell for Git Bash.
+    default_shell: WindowsDeployShell,
     agent_bin: PathBuf,
 }
 
 impl Fixture {
+    /// The native `DefaultShell` the #5219 / #5254 / #4067 steps write their
+    /// probes for. Those run only on the cmd.exe / PowerShell legs, after their
+    /// gate checked the shell, so a Git Bash fixture here is a test bug.
+    fn native_shell(&self) -> WindowsShell {
+        match self.default_shell {
+            WindowsDeployShell::Native(shell) => shell,
+            WindowsDeployShell::EncodedPowerShell => {
+                panic!("this step has no Git Bash DefaultShell variant (#5523)")
+            }
+        }
+    }
+
     fn ssh_config(&self) -> SshConfig {
         SshConfig {
             host: FIXTURE_HOST.to_string(),
@@ -141,11 +164,15 @@ impl Fixture {
     }
 }
 
-/// Parse a `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL` value.
-fn parse_default_shell(value: &str) -> Option<WindowsShell> {
+/// Parse a `TERMIHUB_WINDOWS_SSH_DEFAULT_SHELL` value: `cmd`, `powershell`
+/// or `bash` (Git Bash, which the deploy drives with encoded PowerShell, #5523).
+fn parse_default_shell(value: &str) -> Option<WindowsDeployShell> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "cmd" | "cmd.exe" => Some(WindowsShell::Cmd),
-        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => Some(WindowsShell::PowerShell),
+        "cmd" | "cmd.exe" => Some(WindowsDeployShell::Native(WindowsShell::Cmd)),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => {
+            Some(WindowsDeployShell::Native(WindowsShell::PowerShell))
+        }
+        "bash" | "bash.exe" | "gitbash" | "git-bash" => Some(WindowsDeployShell::EncodedPowerShell),
         _ => None,
     }
 }
@@ -173,7 +200,7 @@ fn resolve_fixture(
     let key = need(KEY_ENV)?;
     let shell_raw = need(DEFAULT_SHELL_ENV)?;
     let default_shell = parse_default_shell(&shell_raw).ok_or_else(|| {
-        format!("{DEFAULT_SHELL_ENV}={shell_raw:?} is neither `cmd` nor `powershell`")
+        format!("{DEFAULT_SHELL_ENV}={shell_raw:?} is not `cmd`, `powershell` or `bash`")
     })?;
     let agent_bin = get(FIXTURE_AGENT_BIN_ENV)
         .or_else(|| get(AGENT_BIN_ENV))
@@ -241,6 +268,18 @@ pub(super) fn trust_all_host_keys() {
     let _ = set_host_key_verifier(Arc::new(TrustAll));
 }
 
+/// `build`'s probe for the host's `DefaultShell`: in its own syntax for
+/// cmd.exe / PowerShell; for Git Bash the PowerShell probe as the same encoded
+/// `powershell.exe` command line the deploy runs (#5523).
+fn in_shell(shell: WindowsDeployShell, build: impl FnOnce(WindowsShell) -> String) -> String {
+    match shell {
+        WindowsDeployShell::Native(shell) => build(shell),
+        WindowsDeployShell::EncodedPowerShell => {
+            powershell_encoded_command(&build(WindowsShell::PowerShell))
+        }
+    }
+}
+
 /// A command (in the host's `DefaultShell` syntax) printing whether the SFTP
 /// upload temp file is still in the user's home.
 fn upload_leftover_probe(shell: WindowsShell) -> String {
@@ -258,7 +297,7 @@ fn upload_leftover_probe(shell: WindowsShell) -> String {
 #[derive(Debug)]
 struct DeployOutcome {
     remote_os: String,
-    detected_shell: WindowsShell,
+    detected_shell: WindowsDeployShell,
     result: AgentDeployResult,
     progress_steps: Vec<String>,
     upload_leftover: String,
@@ -314,19 +353,34 @@ fn exec_detailed(
 /// did sshd launch the shell.
 fn verify_diagnostics(
     session: &termihub_core::backends::ssh::handler::SshSession,
-    shell: WindowsShell,
+    deploy_shell: WindowsDeployShell,
 ) -> String {
+    let verify_command = windows_deploy_install_plan(deploy_shell).verify_command;
+    let (shell, wrap): (WindowsShell, fn(String) -> String) = match deploy_shell {
+        WindowsDeployShell::Native(shell) => (shell, |c| c),
+        WindowsDeployShell::EncodedPowerShell => {
+            (WindowsShell::PowerShell, |c| powershell_encoded_command(&c))
+        }
+    };
     let plan = windows_install_plan(shell);
-    let mut probes: Vec<(&str, String)> = vec![("verify command", plan.verify_command.clone())];
+    let mut probes: Vec<(&str, String)> = vec![("verify command", verify_command)];
+    if deploy_shell == WindowsDeployShell::EncodedPowerShell {
+        // Unwrapped: what the login shell itself is and where powershell.exe is.
+        probes.push((
+            "login shell",
+            "echo \"$0 $BASH_VERSION\"; uname -s; command -v powershell.exe".to_string(),
+        ));
+    }
+    let mut native: Vec<(&str, String)> = Vec::new();
     match shell {
-        WindowsShell::Cmd => probes.extend([
+        WindowsShell::Cmd => native.extend([
             (
                 "installed exe present",
                 format!(r#"if exist "{}" (echo PRESENT) else (echo ABSENT)"#, plan.install_path),
             ),
             ("shell command line", "echo %CMDCMDLINE%".to_string()),
         ]),
-        WindowsShell::PowerShell => probes.extend([
+        WindowsShell::PowerShell => native.extend([
             (
                 "installed exe present",
                 format!(r#"Test-Path "{}""#, plan.install_path),
@@ -351,6 +405,7 @@ fn verify_diagnostics(
             ),
         ]),
     }
+    probes.extend(native.into_iter().map(|(label, c)| (label, wrap(c))));
     probes
         .into_iter()
         .map(|(label, command)| {
@@ -384,7 +439,9 @@ fn deploy_bytes(
     bytes: &[u8],
 ) -> Result<DeployOutcome, TerminalError> {
     let (remote_os, _arch) = detect_remote_info(session)?;
-    let detected_shell = detect_windows_shell(session);
+    // The production classification `install_agent_bytes` makes itself, so the
+    // Git Bash leg's probes below use the encoded form it chose.
+    let detected_shell = detect_windows_deploy_shell(session)?;
     let steps = Mutex::new(Vec::new());
     let progress = |step: &str, _message: &str, _pct: f64| {
         steps
@@ -400,7 +457,8 @@ fn deploy_bytes(
         &progress,
         None,
     )?;
-    let upload_leftover = run_remote_command(session, &upload_leftover_probe(detected_shell))?;
+    let upload_leftover =
+        run_remote_command(session, &in_shell(detected_shell, upload_leftover_probe))?;
     let diagnostics = match &result {
         AgentDeployResult::Deployed {
             installed_version: None,
@@ -421,8 +479,9 @@ fn deploy_bytes(
 }
 
 /// Assert the deploy matched MT-AGENT-18/19's expected results and return the
-/// absolute install path.
-fn assert_deployed(outcome: &DeployOutcome, want: WindowsShell) -> String {
+/// absolute install path: `C:\…` for cmd.exe / PowerShell, the forward-slash
+/// `C:/…` launch form for Git Bash (#5523).
+fn assert_deployed(outcome: &DeployOutcome, want: WindowsDeployShell) -> String {
     assert!(
         is_windows_os(&outcome.remote_os),
         "host not detected as Windows: remote_os={:?}",
@@ -462,19 +521,48 @@ fn assert_deployed(outcome: &DeployOutcome, want: WindowsShell) -> String {
     let path = installed_path
         .clone()
         .unwrap_or_else(|| panic!("no installed path: {:?}", outcome.result));
+    // Git Bash runs the stored path unquoted, so it is the forward-slash form.
+    let sep = match want {
+        WindowsDeployShell::Native(_) => '\\',
+        WindowsDeployShell::EncodedPowerShell => '/',
+    };
     let bytes = path.as_bytes();
     assert!(
-        bytes.len() > 3 && bytes[0].is_ascii_alphabetic() && &path[1..3] == ":\\",
-        "install path is not an absolute drive path: {path:?}"
+        bytes.len() > 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && char::from(bytes[2]) == sep,
+        "install path is not an absolute {sep:?}-separated drive path: {path:?}"
     );
     assert!(
         !path.contains('%') && !path.contains("$env:"),
         "install path still carries an unexpanded variable: {path:?}"
     );
-    let suffix = format!(r"\appdata\local\termihub\agent\{WINDOWS_AGENT_EXE}");
+    let suffix = format!(r"\appdata\local\termihub\agent\{WINDOWS_AGENT_EXE}")
+        .replace('\\', &sep.to_string());
     assert!(
         path.to_ascii_lowercase().ends_with(&suffix),
         "agent not installed under %LOCALAPPDATA%\\termiHub\\agent: {path:?}"
+    );
+    if want == WindowsDeployShell::EncodedPowerShell {
+        assert!(
+            !path.contains('\\') && !path.contains(' '),
+            "the Git Bash launch path must have no backslash or space: {path:?}"
+        );
+        assert_eq!(
+            parse_encoded_install_path(&path).ok().as_deref(),
+            Some(path.as_str()),
+            "the Git Bash launch path is not in the validated encoded-deploy form"
+        );
+    }
+    assert!(
+        is_managed_windows_install_path(&path),
+        "install path is not recognised as the managed Windows install: {path:?}"
+    );
+    assert_eq!(
+        outcome.result.launchable_install_path(),
+        Some(path.as_str()),
+        "a verified install must report its path as the agent path to store (#5522)"
     );
     assert_eq!(
         outcome.upload_leftover.trim(),
@@ -482,6 +570,52 @@ fn assert_deployed(outcome: &DeployOutcome, want: WindowsShell) -> String {
         "the SFTP upload was not moved into place (temp file left in %USERPROFILE%)"
     );
     path
+}
+
+/// Record `installed` as a saved agent's `agentPath` through the production
+/// [`ConnectionManager::record_agent_install_path`] (#5522, what a deploy from
+/// the app does with [`AgentDeployResult::launchable_install_path`]) and return
+/// the path the manager stored, read back from disk, which the connect then
+/// launches. The saved agent starts with no `agentPath`, like a new one.
+///
+/// [`ConnectionManager::record_agent_install_path`]: crate::connection::manager::ConnectionManager::record_agent_install_path
+fn record_agent_path(fixture: &Fixture, installed: &str) -> String {
+    use crate::connection::config::SavedRemoteAgent;
+    use crate::connection::manager::ConnectionManager;
+    use crate::credential::null::NullStore;
+
+    let dir = tempfile::tempdir().expect("temp config dir");
+    let manager = ConnectionManager::new_for_test(dir.path(), Arc::new(NullStore))
+        .expect("connection manager");
+    let agent: SavedRemoteAgent = serde_json::from_value(serde_json::json!({
+        "id": "win-host",
+        "name": "Windows SSH host",
+        "config": {
+            "host": FIXTURE_HOST,
+            "port": fixture.port,
+            "username": fixture.user,
+            "authMethod": "key",
+            "keyPath": fixture.key,
+        },
+    }))
+    .expect("saved agent");
+    manager.save_agent(agent).expect("save the agent");
+    assert!(
+        manager
+            .record_agent_install_path("win-host", installed)
+            .expect("record the install path"),
+        "the deploy's install path {installed:?} was not stored as the agent path"
+    );
+    let reloaded = ConnectionManager::new_for_test(dir.path(), Arc::new(NullStore))
+        .expect("reload the connection manager");
+    reloaded
+        .load_unified_view()
+        .expect("load the saved agents")
+        .agents
+        .into_iter()
+        .find(|a| a.id == "win-host")
+        .and_then(|a| a.config.agent_path)
+        .unwrap_or_else(|| panic!("no agent path stored after recording {installed:?}"))
 }
 
 /// Strip ANSI CSI / OSC escape sequences so text matching is not broken by the
@@ -670,7 +804,7 @@ fn copy_agent_probe(shell: WindowsShell, installed: &str, dest: &str) -> String 
 /// printed. Blocking, like [`deploy`].
 fn copy_agent_to(fixture: &Fixture, installed: &str, dest: &str) -> Result<String, TerminalError> {
     let session = connect_and_authenticate(&fixture.ssh_config())?;
-    let command = copy_agent_probe(fixture.default_shell, installed, dest);
+    let command = copy_agent_probe(fixture.native_shell(), installed, dest);
     let out = run_remote_command(&session, &command)?;
     if out.trim() == "PRESENT" {
         Ok(out)
@@ -848,7 +982,7 @@ async fn ssh_terminal_first_command_with_shell_integration(fixture: &Fixture, sh
     eprintln!("SSH terminal with shell integration ran the first command via {shell:?}");
 }
 
-async fn deploy_install_connect_reattach(want: WindowsShell) {
+async fn deploy_install_connect_reattach(want: WindowsDeployShell) {
     let Some(fixture) = live_fixture() else {
         return;
     };
@@ -863,7 +997,14 @@ async fn deploy_install_connect_reattach(want: WindowsShell) {
     trust_all_host_keys();
 
     // ── #4143: an SSH terminal with shell integration on runs the first command.
-    ssh_terminal_first_command_with_shell_integration(&fixture, want).await;
+    // The Git Bash leg grades its terminal with core/tests/ssh_native.rs's
+    // native_05c/05d first (run-windows-ssh-host-suite.sh), as a POSIX shell.
+    match want {
+        WindowsDeployShell::Native(shell) => {
+            ssh_terminal_first_command_with_shell_integration(&fixture, shell).await;
+        }
+        WindowsDeployShell::EncodedPowerShell => {}
+    }
 
     // ── MT-AGENT-18/19: deploy + install through the configured DefaultShell.
     let deploy_fixture = fixture.clone();
@@ -871,12 +1012,32 @@ async fn deploy_install_connect_reattach(want: WindowsShell) {
         .await
         .expect("deploy thread panicked")
         .unwrap_or_else(|e| panic!("deploy to the Windows host failed: {e}"));
-    let agent_path = assert_deployed(&outcome, want);
-    eprintln!("deployed agent to {agent_path} via {want:?}");
+    let installed = assert_deployed(&outcome, want);
+    eprintln!("deployed agent to {installed} via {want:?}");
+
+    // ── #5522: the app stores the install path as the agent path; the connect
+    // below launches what was stored, as the next connect from the app does.
+    let agent_path = record_agent_path(&fixture, &installed);
+    assert_eq!(
+        agent_path, installed,
+        "the stored agent path differs from the install path"
+    );
+    let config = fixture.agent_config(&agent_path);
+    if want == WindowsDeployShell::EncodedPowerShell {
+        // Git Bash runs it as a plain `<C:/…> --stdio`, never through `cmd /c`.
+        assert_eq!(
+            config.agent_exec_command(),
+            format!("{agent_path} --stdio"),
+            "the Git Bash launch command is not the bare forward-slash path"
+        );
+    }
+    eprintln!(
+        "stored agent path {agent_path}; launch: {}",
+        config.agent_exec_command()
+    );
 
     // ── MT-AGENT-20: connect to the freshly installed agent over SSH exec
     // `--stdio` (through the same DefaultShell) and round-trip shell I/O.
-    let config = fixture.agent_config(&agent_path);
     let mut request_id = 0u64;
     let (session, mut channel) = establish(&config, &mut request_id).await;
     let sid = create_powershell_session(&mut channel, &mut request_id, "mt-agent-20").await;
@@ -982,21 +1143,34 @@ async fn deploy_install_connect_reattach(want: WindowsShell) {
     drop(session2);
 
     // ── #4067: the same probe + launch from an install path with a space.
-    spaced_path_probe_and_launch(&fixture, &agent_path).await;
+    // Not under Git Bash: the encoded deploy refuses a launch path with a space
+    // (parse_encoded_install_path), so there is no spaced form to launch.
+    if want != WindowsDeployShell::EncodedPowerShell {
+        spaced_path_probe_and_launch(&fixture, &agent_path).await;
+    }
 }
 
 /// MT-AGENT-18 + 20 + 24 (+ the #4067 spaced path) with the OpenSSH
 /// `DefaultShell` left at `cmd.exe`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cmd_default_shell_deploy_install_connect_reattach() {
-    deploy_install_connect_reattach(WindowsShell::Cmd).await;
+    deploy_install_connect_reattach(WindowsDeployShell::Native(WindowsShell::Cmd)).await;
 }
 
 /// MT-AGENT-19 + 20 + 24 (+ the #4067 spaced path) with the OpenSSH
 /// `DefaultShell` set to PowerShell.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn powershell_default_shell_deploy_install_connect_reattach() {
-    deploy_install_connect_reattach(WindowsShell::PowerShell).await;
+    deploy_install_connect_reattach(WindowsDeployShell::Native(WindowsShell::PowerShell)).await;
+}
+
+/// #5523: MT-AGENT-18/19's deploy + 20 + 24 with the OpenSSH `DefaultShell` set
+/// to Git Bash. The deploy runs every step as an encoded `powershell.exe`
+/// command (#5449), records the forward-slash launch path (#5522), and the
+/// agent is then launched from Git Bash with that path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bash_default_shell_deploy_install_connect_reattach() {
+    deploy_install_connect_reattach(WindowsDeployShell::EncodedPowerShell).await;
 }
 
 // ── Gate unit tests (run everywhere) ───────────────────────────────────
@@ -1048,7 +1222,10 @@ fn resolve_fixture_reads_the_native_sshd_environment() {
     assert_eq!(fixture.port, 22400);
     assert_eq!(fixture.user, "termihubssh");
     assert!(fixture.key.ends_with("client_ed25519_key"));
-    assert_eq!(fixture.default_shell, WindowsShell::PowerShell);
+    assert_eq!(
+        fixture.default_shell,
+        WindowsDeployShell::Native(WindowsShell::PowerShell)
+    );
     assert!(fixture
         .agent_bin
         .to_string_lossy()
@@ -1058,7 +1235,16 @@ fn resolve_fixture_reads_the_native_sshd_environment() {
     assert_eq!(config.auth_method, "key");
 
     let cmd = resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, Some("cmd"))), |_| true);
-    assert_eq!(cmd.expect("fixture").default_shell, WindowsShell::Cmd);
+    assert_eq!(
+        cmd.expect("fixture").default_shell,
+        WindowsDeployShell::Native(WindowsShell::Cmd)
+    );
+
+    let bash = resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, Some("bash"))), |_| true);
+    assert_eq!(
+        bash.expect("fixture").default_shell,
+        WindowsDeployShell::EncodedPowerShell
+    );
 }
 
 #[test]
@@ -1081,8 +1267,11 @@ fn resolve_fixture_names_the_missing_piece() {
     let err = resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, None)), |_| true).unwrap_err();
     assert!(err.contains(DEFAULT_SHELL_ENV), "{err}");
     let err =
-        resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, Some("bash"))), |_| true).unwrap_err();
-    assert!(err.contains("neither"), "{err}");
+        resolve_fixture(env_of(&env_with(DEFAULT_SHELL_ENV, Some("fish"))), |_| true).unwrap_err();
+    assert!(
+        err.contains("is not `cmd`, `powershell` or `bash`"),
+        "{err}"
+    );
     let err = resolve_fixture(env_of(&env_with(PORT_ENV, Some("ssh"))), |_| true).unwrap_err();
     assert!(err.contains("not a port number"), "{err}");
     let err =
@@ -1108,8 +1297,18 @@ fn parse_required_and_default_shell_values() {
     }
     assert!(!parse_required(None));
     assert!(!parse_required(Some("0")));
-    assert_eq!(parse_default_shell("cmd.exe"), Some(WindowsShell::Cmd));
-    assert_eq!(parse_default_shell("pwsh"), Some(WindowsShell::PowerShell));
+    assert_eq!(
+        parse_default_shell("cmd.exe"),
+        Some(WindowsDeployShell::Native(WindowsShell::Cmd))
+    );
+    assert_eq!(
+        parse_default_shell("pwsh"),
+        Some(WindowsDeployShell::Native(WindowsShell::PowerShell))
+    );
+    assert_eq!(
+        parse_default_shell("Bash"),
+        Some(WindowsDeployShell::EncodedPowerShell)
+    );
     assert_eq!(parse_default_shell(""), None);
 }
 
@@ -1140,6 +1339,19 @@ fn upload_leftover_probe_uses_each_shells_syntax() {
 }
 
 #[test]
+fn in_shell_wraps_the_powershell_probe_for_git_bash() {
+    let native = WindowsDeployShell::Native(WindowsShell::Cmd);
+    assert_eq!(
+        in_shell(native, upload_leftover_probe),
+        upload_leftover_probe(WindowsShell::Cmd)
+    );
+    assert_eq!(
+        in_shell(WindowsDeployShell::EncodedPowerShell, upload_leftover_probe),
+        powershell_encoded_command(&upload_leftover_probe(WindowsShell::PowerShell))
+    );
+}
+
+#[test]
 fn spaced_agent_path_is_a_sibling_dir_with_a_space() {
     let installed = r"C:\Users\termihubssh\AppData\Local\termiHub\agent\termihub-agent.exe";
     assert_eq!(
@@ -1160,4 +1372,56 @@ fn copy_agent_probe_uses_each_shells_syntax() {
     let ps = copy_agent_probe(WindowsShell::PowerShell, from, to);
     assert!(ps.starts_with(r#"New-Item -ItemType Directory -Force -Path "C:\a\agent with space""#));
     assert!(ps.contains("Copy-Item -Force -LiteralPath"), "{ps}");
+}
+
+/// A verified deploy's outcome for `assert_deployed`, installed at `path`.
+fn deployed_outcome(shell: WindowsDeployShell, path: &str) -> DeployOutcome {
+    DeployOutcome {
+        remote_os: "MINGW64_NT-10.0-20348".to_string(),
+        detected_shell: shell,
+        result: AgentDeployResult::Deployed {
+            success: true,
+            installed_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            installed_path: Some(path.to_string()),
+        },
+        progress_steps: ["uploading", "installing", "verifying", "done"]
+            .map(String::from)
+            .to_vec(),
+        upload_leftover: "ABSENT\r\n".to_string(),
+        diagnostics: String::new(),
+    }
+}
+
+const GIT_BASH_PATH: &str = "C:/Users/termihubssh/AppData/Local/termiHub/agent/termihub-agent.exe";
+const NATIVE_PATH: &str = r"C:\Users\termihubssh\AppData\Local\termiHub\agent\termihub-agent.exe";
+
+#[test]
+fn assert_deployed_takes_each_shells_path_form() {
+    let bash = WindowsDeployShell::EncodedPowerShell;
+    let path = assert_deployed(&deployed_outcome(bash, GIT_BASH_PATH), bash);
+    assert_eq!(path, GIT_BASH_PATH);
+    let ps = WindowsDeployShell::Native(WindowsShell::PowerShell);
+    assert_eq!(
+        assert_deployed(&deployed_outcome(ps, NATIVE_PATH), ps),
+        NATIVE_PATH
+    );
+}
+
+#[test]
+fn assert_deployed_rejects_a_backslash_path_under_git_bash() {
+    let bash = WindowsDeployShell::EncodedPowerShell;
+    let outcome = deployed_outcome(bash, NATIVE_PATH);
+    let result = std::panic::catch_unwind(|| assert_deployed(&outcome, bash));
+    assert!(result.is_err(), "Git Bash cannot launch a backslash path");
+}
+
+#[test]
+fn record_agent_path_stores_the_git_bash_install_path() {
+    let fixture = resolve_fixture(env_of(FULL_ENV), |_| true).expect("fixture");
+    let stored = record_agent_path(&fixture, GIT_BASH_PATH);
+    assert_eq!(stored, GIT_BASH_PATH);
+    assert_eq!(
+        fixture.agent_config(&stored).agent_exec_command(),
+        format!("{GIT_BASH_PATH} --stdio")
+    );
 }

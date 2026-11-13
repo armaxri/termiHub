@@ -1622,15 +1622,24 @@ runs one walkthrough per OpenSSH `DefaultShell` (`cmd.exe` and PowerShell):
    install path and still running. A leftover `termihub-agent.previous.exe`
    next to a broken install must be restored by the next deploy.
 
+A third walkthrough, `bash_default_shell_deploy_install_connect_reattach`
+(#5523), runs steps 1 to 3 with Git Bash as the `DefaultShell`. The deploy
+must run every step as an encoded `powershell.exe` command (#5449). The
+install path it reports is stored as the agent path through the
+`ConnectionManager` (#5522), in the forward-slash `C:/…` form, and the
+connect then launches the stored path from Git Bash. This leg has no
+spaced-path step: the encoded deploy refuses an install path with a space.
+
 Binary resolution (cache, bundle or download, plus the release-signature
 check) needs a Tauri `AppHandle`. The test therefore uploads a locally built
 `termihub-agent.exe`, and everything from the upload on is the production path.
 
 [`scripts/internal/run-windows-ssh-host-suite.sh`](../scripts/internal/run-windows-ssh-host-suite.sh)
-`<cmd|powershell>` builds the agent and sets
+`<cmd|powershell|bash>` builds the agent and sets
 `HKLM\SOFTWARE\OpenSSH\DefaultShell`. It then brings the fixture up
 (`--agent-binary`) and runs that shell's test with
-`TERMIHUB_REQUIRE_WINDOWS_SSH=1`, then the agent-side suite below. It fails
+`TERMIHUB_REQUIRE_WINDOWS_SSH=1`, then the agent-side suite below (not on the
+`bash` leg, which runs its core SSH tests and the deploy test only). It fails
 when an expected test skipped or did not run. On exit it removes the key from
 the `ssh-agent` service and restores the service, tears the fixture down and
 restores the previous `DefaultShell`.
