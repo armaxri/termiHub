@@ -48,7 +48,8 @@ export function buildTypeDefaults(
   }
   for (const group of typeInfo.schema.groups) {
     if (group.fields.some((f) => f.key === "enableX11Forwarding")) {
-      defaults.enableX11Forwarding = appSettings.defaultX11Forwarding ?? true;
+      // Opt-in, like OpenSSH's `ForwardX11 no` (#5555).
+      defaults.enableX11Forwarding = appSettings.defaultX11Forwarding ?? false;
       break;
     }
   }

@@ -480,6 +480,42 @@ async fn native_05d_env_vars_apply_in_the_login_shell_and_first_command_runs() {
     ssh.disconnect().await.expect("disconnect cleanly");
 }
 
+/// #5555: with the hook off, a POSIX login shell still gets its env (and
+/// X11 `DISPLAY` / `xauth`) setup typed, joined into one line that ends with
+/// the setup-done mark — and that line is hidden like the hooked setup, so no
+/// `export …` (or X11 cookie) is shown. Its values still reach the shell.
+#[tokio::test]
+async fn native_05k_hook_free_posix_setup_is_hidden() {
+    let sshd = require_native_sshd!();
+    let shell = fixture_shell();
+    if shell != RemoteShell::Posix {
+        eprintln!("skipping: the fixture's login shell is {shell:?}, not POSIX");
+        return;
+    }
+
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(false);
+    let value = "it's a $HOME value";
+    settings["env"] = serde_json::json!({ "TH_5555_VAR": value });
+    ssh.connect(settings).await.expect("shell session connects");
+
+    let expect = format!("[{value}]");
+    let (done, seen) = type_and_wait(&mut ssh, "echo \"[$TH_5555_VAR]\"\n", |seen| {
+        seen.contains(&expect)
+    })
+    .await;
+    assert!(
+        done,
+        "the env var did not reach the shell (or the command did not run): {seen:?}"
+    );
+    for leak in ["TH_5555_VAR=", "export ", "6973;"] {
+        assert!(!seen.contains(leak), "setup text {leak:?} shown: {seen:?}");
+    }
+
+    ssh.disconnect().await.expect("disconnect cleanly");
+}
+
 /// #5009: with default settings nothing is typed into the remote shell — no
 /// setup text, no function, `PROMPT_COMMAND` / `precmd` / `PS1` untouched —
 /// and the file browser still follows the shell: OSC 7 for the start

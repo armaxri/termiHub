@@ -114,6 +114,27 @@ describe("AppearanceSettings — numeric fields", () => {
     expect(fieldInput("Line height").value).toBe("");
   });
 
+  it("shows the effective default font size and line height when unset (#5554)", () => {
+    renderWith(defaultSettings);
+    expect(fieldInput("Font size").placeholder).toBe("14");
+    expect(fieldInput("Line height").placeholder).toBe("1");
+    expect(container.querySelector('[data-testid="settings-font-size-default"]')?.textContent).toBe(
+      "Default"
+    );
+    expect(container.querySelector('[data-testid="settings-line-height-default"]')).not.toBeNull();
+  });
+
+  it("resets a set font size back to the default (#5554)", () => {
+    const onChange = renderWith({ ...defaultSettings, fontSize: 18 });
+    expect(container.querySelector('[data-testid="settings-font-size-default"]')).toBeNull();
+    const reset = container.querySelector(
+      '[data-testid="settings-font-size-reset"]'
+    ) as HTMLButtonElement;
+    expect(reset.getAttribute("aria-label")).toBe("Reset font size to the default (14)");
+    act(() => reset.click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fontSize: undefined }));
+  });
+
   it("reflects the configured font size and line height", () => {
     renderWith({ ...defaultSettings, fontSize: 18, lineHeight: 1.4 });
     expect(fieldInput("Font size").value).toBe("18");
