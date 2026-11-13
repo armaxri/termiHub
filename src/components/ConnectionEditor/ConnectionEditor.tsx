@@ -1066,11 +1066,20 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   ]);
 
   /**
+   * Set while Save and connect saves (#5665): the tab — or the prompt or
+   * host-key dialog — that opens at once is the feedback, so the store's
+   * "Saved …" toast is skipped. A failed save is still toasted.
+   */
+  const quietSaveRef = useRef(false);
+
+  /**
    * Save the connection (or agent transport) and return the saved entry, with
    * the id the backend stores it under (`persistedId`, #5257): it is
    * recomputed from folder + name, so a new connection's optimistic `conn-<ulid>`
    * id and a renamed connection's old id are not it. Resolves `null` when the
    * persist failed (the store already toasted it).
+   *
+   * While {@link quietSaveRef} is set the store's "Saved …" toast is skipped.
    */
   const saveConnection = useCallback(async (): Promise<SavedEntry | null> => {
     if (!name.trim()) return null;
@@ -1148,11 +1157,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // connection lands in the target exactly once, with the edit (#3590).
       const originalSource = existingConnection.sourceFile ?? null;
       if (originalSource !== sourceFile) {
-        const moved = await saveConnectionToFile(saved, originalSource);
+        const moved = await (quietSaveRef.current
+          ? saveConnectionToFile(saved, originalSource, { quiet: true })
+          : saveConnectionToFile(saved, originalSource));
         return moved ? { entry: moved, persistedId: Promise.resolve(moved.id) } : null;
       }
 
-      return { entry: saved, persistedId: updateConnection(saved) };
+      const persistedId = quietSaveRef.current
+        ? updateConnection(saved, { quiet: true })
+        : updateConnection(saved);
+      return { entry: saved, persistedId };
     } else {
       const saved: SavedConnection = {
         id: newId("conn"),
@@ -1165,7 +1179,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         iconEmoji,
         sourceFile,
       };
-      return { entry: saved, persistedId: addConnection(saved) };
+      const persistedId = quietSaveRef.current
+        ? addConnection(saved, { quiet: true })
+        : addConnection(saved);
+      return { entry: saved, persistedId };
     }
   }, [
     currentTypeInfo?.schema,
@@ -1343,7 +1360,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
 
-    const result = await saveConnection();
+    quietSaveRef.current = true;
+    let result: SavedEntry | null;
+    try {
+      result = await saveConnection();
+    } finally {
+      quietSaveRef.current = false;
+    }
     if (!result || "connectionState" in result.entry) return;
     const saved = result.entry;
     // Bind the tab to the saved connection the way a sidebar connect does
