@@ -239,8 +239,8 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
           {show("defaultShellIntegration") && (
             <SettingsField
-              label="Command marks (shell hook) by default"
-              hint="Pre-enable command marks for new local, SSH and WSL connections. Off by default: the hook is typed into the shell, so nothing is typed unless you turn this on."
+              label="Command marks by default"
+              hint="Adds a small shell hook to new local, SSH and WSL sessions so each command gets a success/failure mark. Off by default because it sends one line of shell code when a session starts."
             >
               <Toggle
                 checked={settings.defaultShellIntegration ?? false}

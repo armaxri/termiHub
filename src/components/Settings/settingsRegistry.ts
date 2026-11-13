@@ -93,7 +93,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "defaultShellIntegration",
-    label: "Command marks (shell hook) by default",
+    label: "Command marks by default",
     description:
       "Pre-enable command marks (OSC 133, a small hook typed into the shell) for new local, SSH and WSL connections",
     category: "general",
@@ -184,7 +184,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "defaultLineEnding",
-    label: "Line ending (Enter & paste)",
+    label: "Line ending",
     description: "Line ending sent on Enter and used to normalize pasted text",
     category: "terminal",
     keywords: [

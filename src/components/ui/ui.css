@@ -1634,11 +1634,13 @@
   margin-bottom: var(--spacing-md);
 }
 
+/* Sentence-case field labels in the muted label weight, matching
+   `.ui-field__label` and the design system (#5561). Never uppercase: long caps
+   labels with parentheses read measurably slower. */
 .settings-form__label {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  font-weight: var(--font-weight-medium);
 }
 
 /* Row holding a field label next to its optional "?" help affordance (UX-009).

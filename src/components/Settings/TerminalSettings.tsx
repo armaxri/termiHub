@@ -95,7 +95,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         )}
         {show("defaultLineEnding") && (
           <SettingsField
-            label="Line ending (Enter & paste)"
+            label="Line ending"
             hint="Sequence sent when pressing Enter and used to normalize line endings in pasted text. Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can be overridden per connection."
           >
             <Select
