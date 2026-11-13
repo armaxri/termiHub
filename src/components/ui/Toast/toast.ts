@@ -102,6 +102,7 @@ function cancelRedismiss(id: string | number | undefined): void {
 /** Dismiss `id` now and once more after any pending mount of it has landed. */
 function dismissById(id: string | number): void {
   cancelRedismiss(id);
+  shownTransient.delete(id);
   sonnerToast.dismiss(id);
   pendingRedismiss.set(
     id,
@@ -153,6 +154,105 @@ function trackModalStale(id: string | number | undefined, stale: boolean | undef
   }
 }
 
+/** A success/info toast, kept so it can be taken down and shown again later. */
+interface TransientSpec {
+  kind: "success" | "info";
+  message: string;
+  opts: ToastOptions & { id: string | number };
+}
+
+/**
+ * The success/info toasts on screen, by id (#5715): what
+ * {@link setTransientDeferred} takes down and queues when the stack docks. A
+ * toast leaves the map when it closes or is dismissed.
+ */
+const shownTransient = new Map<string | number, TransientSpec>();
+
+/**
+ * Success/info toasts waiting for the docked stack to undock (#5715), oldest
+ * first. Keyed by id, so a newer toast with the same id replaces the older.
+ */
+const deferredTransient = new Map<string | number, TransientSpec>();
+
+/** At most this many deferred toasts are kept; the oldest are dropped. */
+const MAX_DEFERRED = 10;
+
+/** Whether success/info toasts are deferred right now (#5715). */
+let deferring = false;
+
+/** Counter for ids given to toasts raised without one. */
+let nextTransientId = 0;
+
+/** `opts` with an id, generated when the caller gave none. */
+function withId(opts: ToastOptions | undefined): ToastOptions & { id: string | number } {
+  return { ...opts, id: opts?.id ?? `th-toast-${++nextTransientId}` };
+}
+
+/** Show (or, while deferring, queue) a success/info toast. Returns its id. */
+function showTransient(spec: TransientSpec): string | number {
+  const { id } = spec.opts;
+  cancelRedismiss(id);
+  trackTransient(id, true);
+  trackModalStale(id, spec.opts.dismissOnModal);
+  if (deferring) {
+    deferredTransient.delete(id);
+    deferredTransient.set(id, spec);
+    if (deferredTransient.size > MAX_DEFERRED) {
+      const oldest = deferredTransient.keys().next().value;
+      if (oldest !== undefined) deferredTransient.delete(oldest);
+    }
+    // Take down whatever shows under this id (a loading toast resolving into
+    // this one, an older copy of it).
+    dismissById(id);
+    return id;
+  }
+  shownTransient.set(id, spec);
+  const forget = () => {
+    if (shownTransient.get(id) === spec) shownTransient.delete(id);
+  };
+  const show = spec.kind === "success" ? sonnerToast.success : sonnerToast.info;
+  show(spec.message, {
+    id,
+    description: spec.opts.description,
+    duration: spec.opts.duration,
+    action: sonnerAction(spec.opts.action),
+    testId: spec.opts.testId,
+    onDismiss: forget,
+    onAutoClose: forget,
+  });
+  return id;
+}
+
+/** Stop tracking `id` as a success/info toast (it was dismissed or replaced). */
+function forgetTransientSpec(id: string | number | undefined): void {
+  if (id === undefined) return;
+  deferredTransient.delete(id);
+  shownTransient.delete(id);
+}
+
+/**
+ * Defer success/info toasts while the toast stack is docked over a tall dialog
+ * (#5715), and show them once it is not. Turning it on takes the success/info
+ * toasts on screen down and queues them with the new ones; errors and loading
+ * toasts stay visible throughout. Turning it off shows the queue, oldest
+ * first. Called by the toast hub's layout hook.
+ */
+export function setTransientDeferred(on: boolean): void {
+  if (on === deferring) return;
+  deferring = on;
+  if (on) {
+    for (const [id, spec] of Array.from(shownTransient)) {
+      deferredTransient.delete(id);
+      deferredTransient.set(id, spec);
+      dismissById(id);
+    }
+    return;
+  }
+  const queued = Array.from(deferredTransient.values());
+  deferredTransient.clear();
+  for (const spec of queued) showTransient(spec);
+}
+
 /**
  * Dismiss every toast raised with {@link ToastOptions.dismissOnModal}. Called
  * by the toast hub when a dialog opens (#5665).
@@ -162,6 +262,7 @@ export function dismissModalStaleToasts(): void {
   modalStaleIds.clear();
   for (const id of ids) {
     transientIds.delete(id);
+    forgetTransientSpec(id);
     dismissById(id);
   }
 }
@@ -171,7 +272,8 @@ export function dismissModalStaleToasts(): void {
  * async user action that resolves in the background should surface one of these
  * so nothing resolves silently (the "reactive" pillar).
  *
- * - `success` / `info` auto-dismiss.
+ * - `success` / `info` auto-dismiss. While the stack is docked over a tall
+ *   dialog they wait until it closes (#5715).
  * - `error` persists until dismissed.
  * - `loading` resolves in place into success/error via `loading().then(...)`
  *   or the {@link ToastApi.promise} helper — ideal for agent deploy, tunnel
@@ -214,21 +316,12 @@ export interface ToastApi {
  */
 export const toast: ToastApi = {
   success(message, opts) {
-    cancelRedismiss(opts?.id);
-    const id = sonnerToast.success(message, {
-      id: opts?.id,
-      description: opts?.description,
-      duration: opts?.duration,
-      action: sonnerAction(opts?.action),
-      testId: opts?.testId,
-    });
-    trackTransient(id ?? opts?.id, true);
-    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
-    return id;
+    return showTransient({ kind: "success", message, opts: withId(opts) });
   },
 
   error(message, opts) {
     cancelRedismiss(opts?.id);
+    forgetTransientSpec(opts?.id);
     const id = sonnerToast.error(message, {
       id: opts?.id,
       description: opts?.description,
@@ -242,21 +335,12 @@ export const toast: ToastApi = {
   },
 
   info(message, opts) {
-    cancelRedismiss(opts?.id);
-    const id = sonnerToast.info(message, {
-      id: opts?.id,
-      description: opts?.description,
-      duration: opts?.duration,
-      action: sonnerAction(opts?.action),
-      testId: opts?.testId,
-    });
-    trackTransient(id ?? opts?.id, true);
-    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
-    return id;
+    return showTransient({ kind: "info", message, opts: withId(opts) });
   },
 
   loading(message, opts) {
     cancelRedismiss(opts?.id);
+    forgetTransientSpec(opts?.id);
     const id = sonnerToast.loading(message, {
       id: opts?.id,
       description: opts?.description,
@@ -275,8 +359,7 @@ export const toast: ToastApi = {
       (value) => {
         const msg =
           typeof messages.success === "function" ? messages.success(value) : messages.success;
-        sonnerToast.success(msg, { id });
-        trackTransient(id, true);
+        showTransient({ kind: "success", message: msg, opts: { id } });
       },
       (error: unknown) => {
         const msg = typeof messages.error === "function" ? messages.error(error) : messages.error;
@@ -290,17 +373,21 @@ export const toast: ToastApi = {
     if (id === undefined) {
       transientIds.clear();
       modalStaleIds.clear();
+      deferredTransient.clear();
+      shownTransient.clear();
       sonnerToast.dismiss();
       return;
     }
     transientIds.delete(id);
     modalStaleIds.delete(id);
+    forgetTransientSpec(id);
     dismissById(id);
   },
 
   dismissTransient() {
     const ids = Array.from(transientIds);
     transientIds.clear();
+    deferredTransient.clear();
     for (const id of ids) dismissById(id);
   },
 };

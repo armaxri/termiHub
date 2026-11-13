@@ -29,6 +29,45 @@
 }
 
 /*
+ * Docked over a tall dialog (#5715): no room above the dialog nor beside it,
+ * so the stack sits top-centre (over the dialog head, clear of its close
+ * button) and each toast collapses to one line — icon, ellipsized title,
+ * action, close. The description stays in the accessibility tree (visually
+ * hidden), so a screen reader still announces the whole message.
+ */
+:root.th-toast-docked [data-sonner-toaster] {
+  --width: min(340px, calc(100vw - var(--spacing-xl) * 2)) !important;
+}
+:root.th-toast-docked .th-toast {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+:root.th-toast-docked .th-toast [data-icon] {
+  margin-top: 0;
+}
+:root.th-toast-docked .th-toast [data-title] {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+:root.th-toast-docked .th-toast [data-description] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+:root.th-toast-docked .th-toast [data-button] {
+  grid-column: 3;
+  grid-row: 1;
+}
+:root.th-toast-docked .th-toast [data-close-button] {
+  grid-column: 4;
+}
+
+/*
  * Grid, not flex: icon | message | close on the first row, and the optional
  * action button on its own row under the message (#5079). Inline, a long
  * action label ("Install XWayland…") squeezed the message and wrapped the

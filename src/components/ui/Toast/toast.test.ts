@@ -100,7 +100,7 @@ describe("toast API", () => {
 
     expect(loading).toHaveBeenCalledWith("Load");
     // success updates the SAME toast id (in place)
-    expect(success).toHaveBeenCalledWith("OK", { id: "toast-id" });
+    expect(success).toHaveBeenCalledWith("OK", expect.objectContaining({ id: "toast-id" }));
     expect(error).not.toHaveBeenCalled();
   });
 
@@ -121,7 +121,7 @@ describe("toast API", () => {
       success: (v) => `got ${v}`,
       error: "e",
     });
-    expect(success).toHaveBeenCalledWith("got 3", { id: "toast-id" });
+    expect(success).toHaveBeenCalledWith("got 3", expect.objectContaining({ id: "toast-id" }));
 
     await toast
       .promise(Promise.reject(new Error("x")), {
