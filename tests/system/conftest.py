@@ -983,7 +983,9 @@ def traceroute_fixtures():
 @tool_preflight.fixture_needs("docker")
 def remote_agent_fixtures():
     """Deployed-agent SSH container (compose profile ``agent``, port 2211), or
-    on the macOS native target the native sshd with a host agent installed.
+    on the macOS and Windows native targets the native sshd with a host agent
+    installed (on Windows where the app's PowerShell deploy step puts it, see
+    :func:`~termihub_harness.deployed_agent_path`).
 
     Unlike ``ssh_fixtures``, this bakes a freshly-built ``termihub-agent`` binary
     into the image, so a live connect finds the agent already installed (#995).
@@ -994,8 +996,9 @@ def remote_agent_fixtures():
     toolchain (or without Docker) stay green.
     """
     if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
-        # macOS native target (#5424): a host-OS test-hooks agent installed for
-        # the native sshd's user stands in for the container's baked-in one.
+        # macOS / Windows native target (#5424, #5511): a host-OS test-hooks
+        # agent installed for the native sshd's user stands in for the
+        # container's baked-in one.
         try:
             install_native_agent(NATIVE_SSH_TARGET)
         except ContainerRuntimeUnavailable as exc:
@@ -1025,7 +1028,7 @@ def remote_agent_pending_fixtures():
     binary staging, and skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
-    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
         # macOS native target (#5444): the fixture's armed agent-host variant.
         try:
             return native_pending_variant(NATIVE_SSH_TARGET)
@@ -1064,7 +1067,7 @@ def remote_agent_update_swap_fixtures():
     reset the same way per attempt (#5444). Skips cleanly on the same contract as
     :func:`remote_agent_fixtures`.
     """
-    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
         # macOS native target (#5444): the swap variant, reset per attempt.
         try:
             return native_swap_host(NATIVE_SSH_TARGET)
@@ -1096,7 +1099,7 @@ def remote_agent_kbdint_fixtures():
     reads sshd's accept lines from (``logs()``): the container, or on the
     macOS native target the ``kbdint`` variant (#5444).
     """
-    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent():
+    if NATIVE_SSH_TARGET is not None and native_ssh.serves_agent_variants():
         # macOS native target (#5444): the keyboard-interactive variant (CI's
         # root sshd only). Its ``logs()`` carry sshd's accept lines.
         try:

@@ -5,6 +5,8 @@ The per-agent deferred-update banner (``AgentUpdateBanner``) renders only under 
 so this suite drives the real ``remote-agent`` container (compose profile
 ``agent``, port 2211) exactly like :mod:`test_remote_agent_live` — and skips
 cleanly when no container runtime or agent cross-build toolchain is available.
+On the macOS and Windows lanes the host is the native sshd fixture with a host
+agent installed (#5424, #5511).
 
 ## Why the event has to be injected
 
@@ -62,6 +64,7 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
+    deployed_agent_path,
     unique_name,
 )
 
@@ -69,7 +72,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("remote_agent_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestAgentUpdateBannerLive(
     AgentUi,
     PasswordPromptUi,
@@ -97,7 +100,11 @@ class TestAgentUpdateBannerLive(
         """Create a password-auth agent definition against the deployed-agent container."""
         name = unique_name(label)
         return self.create_remote_agent(
-            name, host=SSH_HOST, port=REMOTE_AGENT_PORT, username=SSH_USERNAME
+            name,
+            host=SSH_HOST,
+            port=REMOTE_AGENT_PORT,
+            username=SSH_USERNAME,
+            agent_path=deployed_agent_path(),
         )
 
     def _create_and_connect(self, label: str) -> dict:

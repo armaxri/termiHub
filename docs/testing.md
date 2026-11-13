@@ -1431,7 +1431,7 @@ elevated PowerShell fixture lists them (`sessions`, as JSON) and ends them
 counts when a non-sshd process runs below it and none carries the twin's own
 exec marker.
 
-**Deployed agent (#5424, macOS).** `remote_agent_fixtures` builds the
+**Deployed agent (#5424 macOS, #5511 Windows).** `remote_agent_fixtures` builds the
 `--features test-hooks` agent for the host
 (`scripts/internal/build-system-test-agent.sh --host`, into
 `target/system-test-agent/`) and installs it as the fixture user's
@@ -1443,8 +1443,24 @@ points at the native sshd. The plain agent suites (`test_remote_agent_live.py`,
 half of `test_file_browser_remote_to_local.py`, most of `test_remote_agent.py`)
 run there. The crash notice seeds reports into the agent's real config dir,
 which `agent_crash_dir()` resolves (`~/Library/Application Support` on macOS
-unless `XDG_CONFIG_HOME` is set). On Windows the agent suites keep the
-container skip.
+unless `XDG_CONFIG_HOME` is set).
+
+On Windows (#5511) the same build makes `termihub-agent.exe` (the harness runs
+the script with Git Bash, never a `bash` that could be WSL's). The twin installs
+it where the app's encoded PowerShell deploy step puts it,
+`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, and resolves that path in
+the forward-slash form the app stores for a Git Bash login shell
+(`C:/Users/…/termihub-agent.exe`). The binary goes raw to a `cat >tmp` exec
+beside it (a quote-free command that carries the exec marker), then a script
+renames it into place. Inlining it as base64 in the `sh -s` script, as the
+small writes are, would be read a byte at a time and take minutes. A running
+`.exe` cannot be overwritten, so the old one is renamed aside first. The editor has no agent-path
+field, so `AgentUi.create_remote_agent(agent_path=…)` writes the path into the
+saved agent in `connections.json`, as a parallel instance would; the app's file
+watcher reloads it within a second. The agent's shells on Windows are
+PowerShell, so the agent half of `test_file_browser_remote_to_local.py` seeds
+its files with `Set-Content`. Crash reports go to `%APPDATA%\termihub-agent`.
+The agent-host variants stay macOS only.
 
 **Agent-host variants (#5444, macOS).** The armed (Apply Now), real-swap and
 keyboard-interactive agent suites log in to extra sshds of the fixture,
@@ -1484,12 +1500,13 @@ and only the fixed paths and names it recorded in the state dir.
 
 Which suites run where:
 
-| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | macOS                                                                                           | Windows                                                                                                                                                                                                                                                                                       |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth, session output, server disconnect), `test_ssh_tunnels.py`, `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, SSH connect flash, jump host, `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py` | yes                                                                                             | yes                                                                                                                                                                                                                                                                                           |
-| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)                                                                                                                                                                                                                                                                                                                                                                                       | yes: the stats command detects macOS and reads `sysctl`, `vm_stat`, `top` and `netstat` (#5471) | yes: the MSYS runtime behind the Git Bash login emulates `/proc`                                                                                                                                                                                                                              |
-| SFTP VS Code handoff, `test_ssh_sftp_cwd.py`, `test_file_browser_remote_to_local.py`, deployed-agent suites (see below)                                                                                                                                                                                                                                                                                                                                                       | yes                                                                                             | no (#5449): the browser following a `cd` (a Windows host is followed only through the shell hook), or a deployed host agent (the app deploys to this lane's Git Bash `DefaultShell` through the encoded PowerShell step since #5449; the fixture does not install a Windows agent yet, #5511) |
-| `test_editor_permissions_live.py`, `test_ssh_banner.py`, `test_sftp_only_host_live.py`                                                                                                                                                                                                                                                                                                                                                                                        | yes                                                                                             | no: no sudo, banner or SFTP-only host on the Windows fixture yet                                                                                                                                                                                                                              |
+| Suite(s)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | macOS                                                                                           | Windows                                                                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_credential_store.py`, `test_ssh_keys.py`, `test_ssh_extended.py`, `test_ssh_password_extended.py`, `test_ssh_env_vars.py`, `test_ssh.py` (password, prompt flow, key auth, session output, server disconnect), `test_ssh_tunnels.py`, `test_ssh_baseline.py`, `test_sftp_infra.py`, `test_ssh_agent_error.py`, SSH connect flash, jump host, `test_transfer_view_live.py`, `test_transfer_relaunch.py`, `test_transfer_queue.py`, `test_file_browser_drag_sftp_live.py` | yes                                                                                             | yes                                                                                                                                                                 |
+| `test_ssh_monitoring.py`, `test_ssh_monitoring_settings.py`, `test_ssh.py` (monitoring)                                                                                                                                                                                                                                                                                                                                                                                       | yes: the stats command detects macOS and reads `sysctl`, `vm_stat`, `top` and `netstat` (#5471) | yes: the MSYS runtime behind the Git Bash login emulates `/proc`                                                                                                    |
+| `test_file_browser_remote_to_local.py`, `test_remote_agent_live.py`, `test_agent_update_banner_live.py`, `test_agent_crash_notice_live.py`                                                                                                                                                                                                                                                                                                                                    | yes                                                                                             | yes (#5511): a host agent at the app's deploy location; the agent definitions carry its path                                                                        |
+| SFTP VS Code handoff, `test_ssh_sftp_cwd.py`, the agent-host variants (Apply Now, real swap, keyboard-interactive)                                                                                                                                                                                                                                                                                                                                                            | yes                                                                                             | no (#5449): the browser following a `cd` (a Windows host is followed only through the shell hook), or extra sshds of the fixture that only the macOS fixture starts |
+| `test_editor_permissions_live.py`, `test_ssh_banner.py`, `test_sftp_only_host_live.py`                                                                                                                                                                                                                                                                                                                                                                                        | yes                                                                                             | no: no sudo, banner or SFTP-only host on the Windows fixture yet                                                                                                    |
 
 **What stays on the Linux lane in `tests/system/`.** These suites still skip on
 macOS and Windows. Each skip reason has a capped fragment in
@@ -2832,9 +2849,11 @@ lane that is the **ubuntu** leg only: it builds the agent with
 `build-system-test-agent.sh --install-cross` (pinned cross-rs, stock image, as in
 `agent.yml`), and with `CI` set a failed build **errors** rather than skipping —
 before #4092 a missing `cross` silently skipped every one of these suites there.
-The macOS and Windows legs skip them up front with "no container runtime" /
-"daemon runs windows containers": the hosted macOS runner has no Docker and the
-Windows runner's daemon runs Windows containers. Locally, any host with Docker or
+Without the native sshd fixture the macOS and Windows legs skip them up front
+with "no container runtime" / "daemon runs windows containers": the hosted
+macOS runner has no Docker and the Windows runner's daemon runs Windows
+containers. With it, the plain suites run against a host agent instead
+(#5424, #5511), and the variants on macOS (#5444). Locally, any host with Docker or
 Podman and `cross` (`scripts/setup-agent-cross.sh`) runs them.
 
 The applier's tab close in the real-swap test is the `connection.close` that lets
