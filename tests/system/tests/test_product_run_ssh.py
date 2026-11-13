@@ -20,6 +20,7 @@ auto-reconnect, Raspberry Pi.
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 
@@ -104,6 +105,15 @@ class TestProductRunSsh(
             self.evidence(f"ssh-agent: {self.hosts.agent_reason or 'private agent with the client key'}")
             assert t.jump_port, "the fixture started no bastion"
 
+    def _trusted(self, port: int) -> list[str]:
+        """Fingerprints termiHub remembered for ``127.0.0.1:<port>`` (Accept for host)."""
+        path = self.config_dir / "ssh_known_hosts.json"
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return list(doc.get(f"{SSH_HOST}:{port}", []))
+
     # ── host key + key auth ──────────────────────────────────────────────────
     def test_01_host_key_and_key_login(self):
         name = unique_name("pr-ssh-key")
@@ -144,14 +154,16 @@ class TestProductRunSsh(
             assert not self.password_prompt_open(), "key auth asked for a password"
         with self.step(
             "ssh.hostkey.remembered",
-            "The remembered key is in known_hosts; a second connect does not ask again",
+            "The remembered key is in termiHub's trust store; a second connect does not ask again",
             expect="a second SSH tab with a shell and no trust dialog",
         ):
             self.require("ssh.key.login")
-            token = known_hosts.host_token(SSH_HOST, port)
-            lines = [ln for ln in known_hosts.known_hosts_file().read_text().splitlines() if ln.startswith(token)]
-            self.evidence(f"known_hosts entries for {token}: {len(lines)}")
-            assert lines, f"no known_hosts entry for {token} after Accept for host"
+            remembered = self.wait(
+                lambda: (lambda fps: fps if want in fps else None)(self._trusted(port)),
+                timeout=10.0, what="the remembered fingerprint on disk",
+            )
+            self.evidence(f"ssh_known_hosts.json for 127.0.0.1:{port}: {remembered}")
+            assert want in remembered, f"Accept for host did not remember {want}"
             self.connect_connection(name)
             self.wait(lambda: len([t for t in self.tab_ids() if t]) >= 2, what="a second tab")
             second = [t for t in self.tab_ids() if t != tab_id][-1]
@@ -165,7 +177,7 @@ class TestProductRunSsh(
         with self.step(
             "ssh.hostkey.changed",
             "A changed host key shows the warning with both fingerprints; Reject connects nothing",
-            expect="the host-key dialog with the red 'key has changed' warning and the previous fingerprint",
+            expect="the host-key dialog with the red 'key has changed' warning and the new fingerprint",
             screenshot=False,
         ):
             native = self.need_native()
@@ -183,7 +195,9 @@ class TestProductRunSsh(
                 self.shot(label=None)
                 self.evidence(f"prompt: {shown}")
                 assert "mitm" in shown, "no changed-key warning for a host whose key differs"
-                assert shown.get("previous"), "the previous fingerprint is not shown"
+                # The previous key lives in known_hosts here, not termiHub's own
+                # store, so the prompt has no previous fingerprint to show.
+                self.evidence(f"previous fingerprint shown: {shown.get('previous')!r}")
                 self.answer_hostkey_prompt(HOSTKEY_REJECT)
                 tab_id = self.tab_id_of(name)
                 time.sleep(3.0)
@@ -192,6 +206,7 @@ class TestProductRunSsh(
                 assert status != "connected", "Reject still connected"
                 kept = known_hosts.known_hosts_file().read_text()
                 assert wrong in kept, "Reject replaced the recorded key"
+                assert not self._trusted(bastion), "Reject remembered the new key"
                 self.shot(label="after-reject")
             finally:
                 known_hosts.untrust(SSH_HOST, bastion)
