@@ -72,7 +72,7 @@ impl PixelConverter {
             // The fourth byte is RFB padding ("x"), not alpha: servers commonly
             // send 0 there, which the canvas would draw fully transparent.
             let mut data = data;
-            for pixel in data.chunks_exact_mut(4) {
+            for pixel in data.as_chunks_mut::<4>().0 {
                 pixel[3] = 255;
             }
             return Some(data);
