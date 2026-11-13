@@ -4,6 +4,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox } from "@/components/ui";
 import "./PasswordPrompt.css";
 import { isImeComposing } from "@/utils/imeComposition";
+import { t, tf } from "@/i18n/catalog";
 import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
 import {
   CREDENTIAL_STORAGE_CHOOSE_HINT,
@@ -37,9 +38,14 @@ import {
  * password" instead — ticked, a new secret replaces it once it connects;
  * unticked, the typed one is used for this connect only.
  *
- * Concurrent requests queue (#4312): the dialog shows the oldest one, titled
- * with the connection it is for, says how many more are waiting, and resets its
+ * Concurrent requests queue (#4312): the dialog shows the oldest one, names
+ * the connection it is for, says how many more are waiting, and resets its
  * fields when it advances to the next request.
+ *
+ * The title follows the connection's transport (#5617): "Telnet password",
+ * "SSH password", "SSH key passphrase" — never "SSH" for a telnet password,
+ * which travels unencrypted. The connection name sits on its own truncating
+ * line rather than in the title, and a key passphrase prompt names its key.
  */
 export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
@@ -53,6 +59,8 @@ export function PasswordPrompt() {
 
   const allowSave = useAppStore((s) => s.passwordPromptAllowSave);
   const label = useAppStore((s) => s.passwordPromptLabel);
+  const transport = useAppStore((s) => s.passwordPromptTransport);
+  const keyPath = useAppStore((s) => s.passwordPromptKeyPath);
   const savedRejected = useAppStore((s) => s.passwordPromptSavedRejected);
   const requestId = useAppStore((s) => s.passwordPromptQueue[0]?.id ?? null);
   const waiting = useAppStore((s) => Math.max(0, s.passwordPromptQueue.length - 1));
@@ -69,14 +77,22 @@ export function PasswordPrompt() {
   // A key passphrase unlocks a private key file — it is not the remote account
   // password, so label the prompt accordingly (UX-010).
   const isPassphrase = kind === "key_passphrase";
-  const baseTitle = isPassphrase ? "SSH Key Passphrase" : "SSH Password";
-  const title = label ? `${baseTitle} — ${label}` : baseTitle;
+  // No transport given: every such caller prompts for an SSH login.
+  const transportName = transport || "SSH";
+  const title = isPassphrase
+    ? t("passwordPrompt.title.keyPassphrase")
+    : tf("passwordPrompt.title.password", { transport: transportName });
   const waitingText = `${waiting} more password ${waiting === 1 ? "prompt" : "prompts"} waiting`;
+  const target = `${username}@${host}`;
   const description = isPassphrase
-    ? `Enter the passphrase for the SSH key used by ${username}@${host}`
-    : `Enter password for ${username}@${host}`;
+    ? keyPath
+      ? tf("passwordPrompt.description.keyPassphraseWithPath", { keyPath, target })
+      : tf("passwordPrompt.description.keyPassphrase", { target })
+    : tf("passwordPrompt.description.password", { target });
   const inputPlaceholder = isPassphrase ? "Passphrase" : "Password";
-  const inputAriaLabel = isPassphrase ? "SSH key passphrase" : "SSH password";
+  const inputAriaLabel = isPassphrase
+    ? t("passwordPrompt.input.keyPassphrase")
+    : tf("passwordPrompt.input.password", { transport: transportName });
   const secretNoun = isPassphrase ? "passphrase" : "password";
   const saveLabel = savedRejected ? `Replace saved ${secretNoun}` : `Save ${secretNoun}`;
   const saveHint = savedRejected
@@ -145,6 +161,15 @@ export function PasswordPrompt() {
       {/* Spacing container (#4710): separate blocks so the input's focus ring
           never overlaps the description above it. */}
       <div className="password-prompt__body" data-testid="password-prompt-body">
+        {label && (
+          <p
+            className="password-prompt__connection"
+            title={label}
+            data-testid="password-prompt-connection"
+          >
+            {tf("passwordPrompt.connection", { name: label })}
+          </p>
+        )}
         {notice && (
           <p className="password-prompt__notice" role="alert" data-testid="password-prompt-notice">
             {notice}
