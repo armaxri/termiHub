@@ -15,6 +15,7 @@ import {
 import { CustomRuleEditor } from "./CustomRuleEditor";
 import { SettingsField } from "./SettingsField";
 import "./SyntaxHighlightingSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Short, representative sample text per built-in rule id. Rendered in the rule's
@@ -101,7 +102,7 @@ export function SyntaxHighlightingSettings({
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">Syntax highlighting</h3>
+      <SettingsSectionHeading>Syntax highlighting</SettingsSectionHeading>
       <SettingsField
         label="Enable syntax highlighting"
         hint="Colorize recognizable patterns (errors, URLs, paths, IPs, …) in plain terminal output. Colors the remote server already set via ANSI are never overridden."

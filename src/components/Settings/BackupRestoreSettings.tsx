@@ -4,6 +4,7 @@ import { Button } from "@/components/ui";
 import { BackupExportDialog } from "./BackupExportDialog";
 import { BackupRestoreDialog } from "./BackupRestoreDialog";
 import "./CredentialVault.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Backup & restore (PROD-068): back up all app data — connections,
@@ -17,7 +18,7 @@ export function BackupRestoreSettings() {
 
   return (
     <div className="settings-panel__section" data-testid="backup-restore-settings">
-      <h3 className="settings-panel__section-title">Backup &amp; restore</h3>
+      <SettingsSectionHeading>Backup &amp; restore</SettingsSectionHeading>
       <p className="settings-panel__description">
         Save everything — connections, settings, themes, keyboard shortcuts, workspaces, macros,
         workflows, tunnels, trusted host keys, plugins and optionally your saved credentials — to

@@ -1,9 +1,9 @@
 import { useCallback } from "react";
-import { RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Toggle } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Plugins → the opt-in periodic plugin update check (PROD-051).
@@ -30,9 +30,7 @@ export function PluginUpdateCheckSettings() {
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section" data-testid="settings-plugin-update-check">
-        <h3 className="settings-panel__section-title">
-          <RefreshCw size={16} aria-hidden="true" /> Plugin updates
-        </h3>
+        <SettingsSectionHeading>Plugin updates</SettingsSectionHeading>
         <p className="settings-panel__description">
           “Check for updates” in the Plugins view checks plugins that publish an update URL and
           plugins listed in the plugin index, and marks the ones with a newer, compatible version.

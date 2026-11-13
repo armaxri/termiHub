@@ -1,0 +1,27 @@
+/* === Settings section heading (#5634) ===
+   One heading style for every Settings category: sentence case, primary text,
+   semibold, with a divider underneath. Tokens only. */
+.settings-section__heading {
+  margin: 0 0 var(--spacing-md);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--border-secondary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-heading);
+  color: var(--text-primary);
+  text-transform: none;
+}
+
+/* A heading that shares a row with actions or a badge: the row carries the
+   divider so it spans the full width, and the heading drops its own. */
+.settings-panel__section-header:has(> .settings-section__heading) {
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.settings-panel__section-header > .settings-section__heading {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}

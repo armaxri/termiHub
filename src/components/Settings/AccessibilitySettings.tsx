@@ -1,6 +1,7 @@
 import { AppSettings } from "@/types/connection";
 import { Toggle } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface AccessibilitySettingsProps {
   settings: AppSettings;
@@ -22,7 +23,7 @@ export function AccessibilitySettings({
 
   return (
     <div className="settings-panel__category">
-      <h3 className="settings-panel__category-title">Accessibility</h3>
+      <SettingsSectionHeading>Accessibility</SettingsSectionHeading>
       {show("screenReaderMode") && (
         <SettingsField
           label="Screen reader mode"

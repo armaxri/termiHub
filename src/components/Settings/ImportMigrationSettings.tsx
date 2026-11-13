@@ -15,6 +15,7 @@ import { BulkSshImportDialog } from "@/components/Sidebar/BulkSshImportDialog";
 import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
 import "./CredentialVault.css";
 import "./ImportMigrationSettings.css";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 type Discovery = { status: "checking" } | { status: "found"; path: string } | { status: "none" };
 
@@ -107,7 +108,7 @@ export function ImportMigrationSettings() {
   return (
     <div className="settings-panel__section" data-testid="import-migration-settings">
       <section className="import-migration__group" data-testid="import-migration-ssh-config">
-        <h3 className="settings-panel__section-title">Import from ~/.ssh/config</h3>
+        <SettingsSectionHeading>Import from ~/.ssh/config</SettingsSectionHeading>
         <p className="settings-panel__description">
           Create saved SSH connections from the hosts in your OpenSSH client config, including keys
           and jump-host chains. You choose which hosts to import and the target folder.
@@ -126,7 +127,7 @@ export function ImportMigrationSettings() {
       </section>
 
       <section className="import-migration__group" data-testid="import-migration-inventory">
-        <h3 className="settings-panel__section-title">Onboard hosts from a CSV / inventory</h3>
+        <SettingsSectionHeading>Onboard hosts from a CSV / inventory</SettingsSectionHeading>
         <p className="settings-panel__description">
           Create many saved connections at once from a CSV, TSV or plain-text inventory file, based
           on an existing connection as a template.
@@ -145,7 +146,7 @@ export function ImportMigrationSettings() {
       </section>
 
       <section className="import-migration__group" data-testid="import-migration-json">
-        <h3 className="settings-panel__section-title">Import / export connections</h3>
+        <SettingsSectionHeading>Import / export connections</SettingsSectionHeading>
         <p className="settings-panel__description">
           Move saved connections and folders between termiHub installs as a JSON file, optionally
           with encrypted credentials.
@@ -173,7 +174,7 @@ export function ImportMigrationSettings() {
       </section>
 
       <section className="import-migration__group" data-testid="import-migration-mobaxterm">
-        <h3 className="settings-panel__section-title">Import from MobaXterm</h3>
+        <SettingsSectionHeading>Import from MobaXterm</SettingsSectionHeading>
         <p className="settings-panel__description">
           Bring your saved MobaXterm sessions into termiHub, folders included: SSH (with keys and
           jump hosts), Telnet, Serial, {experimental && "RDP, VNC, "}FTP, local shell and WSL
@@ -204,7 +205,7 @@ export function ImportMigrationSettings() {
       </section>
 
       <section className="import-migration__group" data-testid="import-migration-backup">
-        <h3 className="settings-panel__section-title">Back up or move everything</h3>
+        <SettingsSectionHeading>Back up or move everything</SettingsSectionHeading>
         <p className="settings-panel__description">
           To move all app data — settings, connections, credentials, plugins and host keys — to a
           new machine, use Backup &amp; restore.

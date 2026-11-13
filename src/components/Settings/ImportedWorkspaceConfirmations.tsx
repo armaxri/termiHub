@@ -13,6 +13,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { compareNames } from "@/utils/locale";
 import type { WorkspaceSummary } from "@/types/workspace";
+import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /** Where a confirmed key is held in a saved workspace. */
 interface KeyUsage {
@@ -176,7 +177,7 @@ export function ImportedWorkspaceConfirmations() {
   return (
     <div className="settings-panel__section" data-testid="imported-confirmations">
       <div className="settings-panel__section-header">
-        <h3 className="settings-panel__section-title">Imported workspace confirmations</h3>
+        <SettingsSectionHeading>Imported workspace confirmations</SettingsSectionHeading>
         {hasEntries && (
           <div className="settings-panel__section-actions">
             <Button
