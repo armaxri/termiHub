@@ -1747,13 +1747,13 @@
 }
 
 /* Field hint: spacing between fields comes from the field's own margin, so the
-   hint carries none of its own (it used to add a second, uneven gap). */
+   hint carries none of its own (it used to add a second, uneven gap). Upright,
+   not italic: small italic grey text was hard to read (#5632). */
 .settings-form__hint {
   display: block;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   margin: 0;
-  font-style: italic;
   line-height: 1.4;
   overflow-wrap: anywhere;
 }

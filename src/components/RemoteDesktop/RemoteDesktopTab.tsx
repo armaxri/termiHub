@@ -27,6 +27,8 @@ import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
 import { useRemoteDesktopFailureActions } from "./useRemoteDesktopFailureActions";
 import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
+import { RemoteDesktopFirstFrameOverlay } from "./RemoteDesktopFirstFrameOverlay";
+import { sshTunnelVia } from "./graphicalStages";
 import { monitorLabel, viewportsFor } from "./monitorLayout";
 import "./RemoteDesktopTab.css";
 
@@ -82,6 +84,12 @@ function filesButtonFor(
       return { state: "active", title: "Files" };
   }
 }
+
+/**
+ * How long a connected session may show no picture before the tab rests on the
+ * "No picture from the remote desktop" error with Retry (#5626).
+ */
+export const FIRST_FRAME_TIMEOUT_MS = 20_000;
 
 interface RemoteDesktopTabProps {
   tabId: string;
@@ -202,6 +210,52 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const setRemoteDesktopResolution = useAppStore((s) => s.setRemoteDesktopResolution);
   const clearRemoteDesktopResolution = useAppStore((s) => s.clearRemoteDesktopResolution);
 
+  // The session whose canvas has painted a frame (#5626). Until then the tab
+  // shows the "waiting for the first frame" overlay, not a blank pane, and the
+  // status bar gets no resolution — nothing claims a healthy session early.
+  const [paintedSessionId, setPaintedSessionId] = useState<string | null>(null);
+  const paintedSessionRef = useRef<string | null>(null);
+  // A framebuffer size reported before the first frame painted, held back.
+  const pendingDimsRef = useRef<{ width: number; height: number } | null>(null);
+  // The session that hit the first-frame timeout.
+  const [frameTimedOutFor, setFrameTimedOutFor] = useState<string | null>(null);
+  const awaitingFrame =
+    !evicted &&
+    sessionLive &&
+    session.sessionId !== null &&
+    paintedSessionId !== session.sessionId &&
+    // A cross-window adoption shows its own "reconnecting view…" placeholder.
+    !session.awaitingFirstFrame;
+  const frameTimedOut = awaitingFrame && frameTimedOutFor === session.sessionId;
+  useEffect(() => {
+    const id = session.sessionId;
+    if (!awaitingFrame || !id) return;
+    const timer = setTimeout(() => setFrameTimedOutFor(id), FIRST_FRAME_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [awaitingFrame, session.sessionId]);
+
+  const handleDimensions = (width: number, height: number) => {
+    setResolution({ width, height });
+    const id = session.sessionId;
+    if (!id) return;
+    if (paintedSessionRef.current === id) {
+      setRemoteDesktopResolution(id, width, height);
+    } else {
+      pendingDimsRef.current = { width, height };
+    }
+  };
+
+  const handleFirstFrame = () => {
+    session.noteFirstFrame();
+    const id = session.sessionId;
+    if (!id) return;
+    paintedSessionRef.current = id;
+    setPaintedSessionId(id);
+    const dims = pendingDimsRef.current;
+    pendingDimsRef.current = null;
+    if (dims) setRemoteDesktopResolution(id, dims.width, dims.height);
+  };
+
   // Surface the live framebuffer resolution to the store (keyed by session id)
   // for the shared status-bar segment (#1709); drop it when the session ends.
   useEffect(() => {
@@ -255,6 +309,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   // "rdp" / "vnc", for the connect overlay's type chip (#5068).
   const protocol = useAppStore(
     (s) => activeTreeTabs(s).find((t) => t.id === tabId)?.config.type ?? "rdp"
+  );
+  // The SSH gateway of a tunnelled session, for the connect stages (#5626).
+  const via = useAppStore((s) =>
+    sshTunnelVia(activeTreeTabs(s).find((t) => t.id === tabId)?.config)
   );
 
   const handleCtrlAltDel = useCallback(() => {
@@ -382,13 +440,8 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onInput={session.sendInput}
           onReleaseAll={session.releaseInput}
           onResize={session.resize}
-          onDimensions={(width, height) => {
-            setResolution({ width, height });
-            if (session.sessionId) {
-              setRemoteDesktopResolution(session.sessionId, width, height);
-            }
-          }}
-          onFirstFrame={session.noteFirstFrame}
+          onDimensions={handleDimensions}
+          onFirstFrame={handleFirstFrame}
           viewport={viewport}
           label={title || host}
         />
@@ -438,6 +491,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           state={session.state}
           host={host}
           protocol={protocol}
+          via={via}
           reconnectAttempt={session.reconnectAttempt}
           message={session.message}
           onCancel={session.cancelReconnect}
@@ -446,6 +500,19 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           errorKind={session.errorKind}
           aborted={session.aborted}
           {...failureActions}
+          isActive={isVisible}
+        />
+      )}
+
+      {awaitingFrame && (
+        <RemoteDesktopFirstFrameOverlay
+          host={host}
+          protocol={protocol}
+          via={via}
+          timedOut={frameTimedOut}
+          onRetry={session.reconnect}
+          onEditConnection={failureActions.onEditConnection}
+          onCloseTab={failureActions.onCloseTab}
           isActive={isVisible}
         />
       )}

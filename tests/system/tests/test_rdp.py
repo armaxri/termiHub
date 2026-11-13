@@ -188,9 +188,11 @@ class TestRdpSession(_RdpSuite):
         text = self.wait(
             lambda: (
                 self.driver.exists("status-bar-remote-desktop")
+                # The resolution shows once a frame painted (#5626).
+                and "×" in (self.driver.get_text("status-bar-remote-desktop") or "")
                 and self.driver.get_text("status-bar-remote-desktop")
             ),
-            what="the remote-desktop status-bar segment",
+            what="the remote-desktop status-bar segment with the resolution",
         )
         assert f"{RDP_HOST}:{RDP_PORT}" in text, text
         assert f"{size[0]}×{size[1]}" in text, text
@@ -356,9 +358,11 @@ class TestRdpFixedResolution(_RdpSuite):
         text = self.wait(
             lambda: (
                 self.driver.exists("status-bar-remote-desktop")
+                # The resolution shows once a frame painted (#5626).
+                and "×" in (self.driver.get_text("status-bar-remote-desktop") or "")
                 and self.driver.get_text("status-bar-remote-desktop")
             ),
-            what="the remote-desktop status-bar segment",
+            what="the remote-desktop status-bar segment with the resolution",
         )
         assert f"{FIXED_SIZE[0]}×{FIXED_SIZE[1]}" in text, text
         assert "16-bit" in text, text

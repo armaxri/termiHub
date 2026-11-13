@@ -108,3 +108,36 @@ def test_handshake_frame_and_input_events():
         assert server.connections() == 1
     finally:
         server.close()
+
+
+def _handshake_and_request(sock: socket.socket, width: int, height: int) -> None:
+    assert _recv(sock, 12) == b"RFB 003.008\n"
+    sock.sendall(b"RFB 003.008\n")
+    _recv(sock, 2)
+    sock.sendall(bytes([1]))
+    _recv(sock, 4)
+    sock.sendall(bytes([1]))
+    _recv(sock, 4 + 16)
+    (name_len,) = struct.unpack(">I", _recv(sock, 4))
+    _recv(sock, name_len)
+    sock.sendall(struct.pack(">BBHHHH", 3, 0, 0, 0, width, height))
+
+
+def test_held_frames_wait_until_released():
+    """#5626: a held server is connected but paints nothing until released."""
+    server = ScriptedVncServer(width=8, height=4)
+    server.hold_frames()
+    try:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=5) as sock:
+            _handshake_and_request(sock, 8, 4)
+            sock.settimeout(0.5)
+            with pytest.raises(socket.timeout):
+                sock.recv(4)
+            assert "holding #1" in server.events()
+            server.release_frames()
+            sock.settimeout(5)
+            assert struct.unpack(">BxH", _recv(sock, 4)) == (0, 1)
+        assert "released #1" in server.events()
+        assert "frame #1 8x4" in server.events()
+    finally:
+        server.close()

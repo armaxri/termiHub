@@ -89,6 +89,7 @@ import {
   monitorOfflineReasonText,
 } from "@/utils/monitorStatusReason";
 import { MonitoringStopped, MonitoringUnsupported } from "./MonitoringStateChips";
+import { sshTunnelVia } from "@/components/RemoteDesktop/graphicalStages";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import { errorMessage } from "@/utils/errorMessage";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
@@ -271,10 +272,12 @@ function effectiveColorDepth(type: string, value: unknown): string | undefined {
 /**
  * Shared status-bar segment for the active graphical remote-desktop tab (#1709).
  *
- * Shows `<monitor> host:port · WxH · N-bit` while a `remote-desktop` tab is
- * active: `host:port` and (RDP / VNC) colour depth come from the connection config, and the
+ * Shows `<monitor> host:port · via SSH user@host · WxH · N-bit` while a
+ * `remote-desktop` tab is active: `host:port`, the SSH gateway of a tunnelled
+ * session and (RDP / VNC) colour depth come from the connection config, and the
  * live `WxH` resolution comes from the framebuffer surfaced to the store
- * (`remoteDesktopResolutions`, keyed by session id). Renders nothing for any
+ * (`remoteDesktopResolutions`, keyed by session id) once a frame painted —
+ * the depth shows only with it (#5626). Renders nothing for any
  * other active tab, so it disappears the moment a non-graphical tab is focused.
  */
 function RemoteDesktopStatus() {
@@ -295,14 +298,21 @@ function RemoteDesktopStatus() {
   const hostPort = port !== undefined && port !== null && port !== "" ? `${host}:${port}` : host;
   const colorDepth = effectiveColorDepth(activeTab.config.type, cfg.colorDepth);
 
+  const via = sshTunnelVia(activeTab.config);
+
   const parts = [hostPort];
-  if (resolution) parts.push(`${resolution.width}×${resolution.height}`);
-  if (colorDepth !== undefined) parts.push(`${colorDepth}-bit`);
+  if (via) parts.push(`via SSH ${via}`);
+  // The live session details (resolution, depth) show only once the canvas
+  // painted a frame — the tab surfaces the resolution no earlier (#5626).
+  if (resolution) {
+    parts.push(`${resolution.width}×${resolution.height}`);
+    if (colorDepth !== undefined) parts.push(`${colorDepth}-bit`);
+  }
   const label = parts.join(" · ");
 
   return (
     <span
-      className="status-bar__item"
+      className="status-bar__item status-bar__item--with-icon"
       data-testid="status-bar-remote-desktop"
       title={`Remote desktop: ${label}`}
     >

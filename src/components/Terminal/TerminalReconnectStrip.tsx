@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WifiOff } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { connectionIdentityForTabId, useAppStore } from "@/store/appStore";
 import { useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, LiveRegion, Spinner } from "@/components/ui";
-import { RECONNECTING_HEADING, reconnectAttemptLabel } from "@/utils/reconnectStatus";
+import { reconnectAttemptLabel } from "@/utils/reconnectStatus";
+import {
+  dropTransportOf,
+  reconnectDetailFor,
+  reconnectHeadingFor,
+  reconnectStatusFor,
+} from "./dropCopy";
 import "./TerminalReconnectStrip.css";
 
 interface TerminalReconnectStripProps {
@@ -60,6 +66,10 @@ export function TerminalReconnectStrip({
   // The loop drops typed input; a plain (agent) reconnect may not, so only the
   // loop variant makes the input claim.
   const inLoop = auto !== undefined;
+  // What dropped decides the wording (#5619): a serial device, a network link
+  // or a session on a termiHub remote agent. A tab's type never changes.
+  const identity = connectionIdentityForTabId(tabId);
+  const transport = dropTransportOf(identity);
 
   // Tick so the countdown stays live; only while a backoff window is open. A new
   // window (the strip stays mounted across attempts) re-reads the clock at once,
@@ -124,9 +134,9 @@ export function TerminalReconnectStrip({
   const reasonNote =
     reasonNews.speak && lastAttemptError ? `${LAST_ATTEMPT_PREFIX} ${lastAttemptError}` : null;
 
-  const heading = inLoop ? RECONNECTING_HEADING : "Reconnecting…";
+  const heading = inLoop ? reconnectHeadingFor(transport) : "Reconnecting…";
   const status = !auto
-    ? "Connection lost. Attempting to reconnect automatically."
+    ? reconnectStatusFor(transport)
     : waiting && secondsLeft > 0
       ? `Retrying in ${secondsLeft}s · ${attemptLabel}`
       : `Reconnecting… · ${attemptLabel}`;
@@ -180,6 +190,9 @@ export function TerminalReconnectStrip({
         )}
         {inLoop && (
           <div className="terminal-reconnect-strip__line terminal-reconnect-strip__note">
+            <span data-testid="terminal-reconnect-detail">
+              {reconnectDetailFor(transport, identity?.target)}
+            </span>{" "}
             <span
               className={
                 typedWhilePaused
@@ -189,10 +202,6 @@ export function TerminalReconnectStrip({
               data-testid="terminal-reconnect-input-paused"
             >
               {INPUT_PAUSED_NOTE}
-            </span>{" "}
-            <span>
-              Local scrollback is preserved. Without an agent, the remote shell state is not
-              restored — a fresh shell opens.
             </span>
             {auto.onReconnectCommand && (
               <span data-testid="terminal-auto-reconnect-command">

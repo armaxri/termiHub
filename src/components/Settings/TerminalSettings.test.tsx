@@ -131,19 +131,21 @@ describe("TerminalSettings", () => {
     expect(input).not.toBeNull();
   });
 
-  it("shows a blank field when scrollbackBuffer is undefined (#1453)", () => {
+  it("shows the effective default scrollback as field text with a Default tag (#5632)", () => {
     renderWith(defaultSettings);
-    // An unset value now reads blank instead of coercing to the built-in default.
-    expect(scrollbackInput().value).toBe("");
+    expect(scrollbackInput().value).toBe("10000");
+    expect(scrollbackInput().placeholder).toBe("");
+    const tag = container.querySelector('[data-testid="settings-scrollback-buffer-default"]');
+    expect(tag?.textContent).toBe("Default");
+    expect(tag?.closest(".settings-form__label-row")).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-scrollback-buffer-reset"]')).toBeNull();
   });
 
-  it("shows the effective default scrollback with a Default marker when unset (#5554)", () => {
+  it("formats the scrollback hint the way the field shows numbers (#5632)", () => {
     renderWith(defaultSettings);
-    expect(scrollbackInput().placeholder).toBe("10000");
-    expect(
-      container.querySelector('[data-testid="settings-scrollback-buffer-default"]')?.textContent
-    ).toBe("Default");
-    expect(container.querySelector('[data-testid="settings-scrollback-buffer-reset"]')).toBeNull();
+    const hint = scrollbackInput().closest(".settings-form__field")?.textContent ?? "";
+    expect(hint).toContain("1000000");
+    expect(hint).not.toMatch(/\d \d{3}/);
   });
 
   it("resets a custom scrollback back to the default (#5554)", () => {

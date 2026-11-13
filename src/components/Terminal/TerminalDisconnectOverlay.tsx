@@ -1,10 +1,12 @@
 import { useCallback, useId } from "react";
-import { WifiOff, RefreshCw, X, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
+import { WifiOff, RefreshCw, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, ContentOverlay, Tooltip } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
+import { t } from "@/i18n/catalog";
 import { CredentialReentry } from "./CredentialReentry";
+import { DisconnectOverlayCard } from "./DisconnectOverlayCard";
 import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import { TerminalReconnectStrip } from "./TerminalReconnectStrip";
@@ -19,6 +21,12 @@ interface TerminalDisconnectOverlayProps {
    */
   isActive?: boolean;
 }
+
+/**
+ * The scrollback sits dimmed behind the overlay, not "below" it (#5666): say it
+ * is kept and point at the action that reveals it.
+ */
+const SCROLLBACK_KEPT = t("drop.overlay.scrollbackKept");
 
 /** Heading + subheading shown in the default (disconnected) overlay variant. */
 interface DisconnectCopy {
@@ -37,7 +45,7 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
     const codeSuffix = info.code === null ? "" : ` (exit code ${info.code})`;
     return {
       heading: "Session ended",
-      subheading: `The session ended normally${codeSuffix}. Scrollback is preserved below.`,
+      subheading: `The session ended normally${codeSuffix}. ${SCROLLBACK_KEPT}`,
       clean: true,
     };
   }
@@ -45,15 +53,15 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
   if (info?.reason === "dropped") {
     const subheading =
       info.code === null
-        ? "The connection was lost. Scrollback is preserved below."
-        : `The remote process exited unexpectedly (exit code ${info.code}). Scrollback is preserved below.`;
+        ? `The connection was lost. ${SCROLLBACK_KEPT}`
+        : `The remote process exited unexpectedly (exit code ${info.code}). ${SCROLLBACK_KEPT}`;
     return { heading: "Session disconnected", subheading, clean: false };
   }
 
   // Legacy fallback: no exit info was recorded.
   return {
     heading: "Session disconnected",
-    subheading: "The remote process has exited. Scrollback is preserved below.",
+    subheading: `The remote process has exited. ${SCROLLBACK_KEPT}`,
     clean: false,
   };
 }
@@ -135,66 +143,57 @@ export function TerminalDisconnectOverlay({
         className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
         data-testid="terminal-disconnect-overlay"
       >
-        <Tooltip content="View scrollback" side="bottom">
-          <button
-            className="terminal-disconnect-overlay__dismiss"
-            onClick={handleDismiss}
-            aria-label="Dismiss and view scrollback"
-            data-testid="terminal-disconnect-dismiss-btn"
+        <DisconnectOverlayCard onDismiss={handleDismiss}>
+          <ContentOverlay
+            className="terminal-disconnect-overlay__body"
+            data-testid="terminal-session-lost"
+            icon={
+              <Unplug
+                size={32}
+                className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+              />
+            }
+            heading="Session lost"
+            subheading={`The connection was restored, but the live session could not be recovered. Its process has ended. ${SCROLLBACK_KEPT}`}
+            announce="assertive"
+            // Without a backend cause, the heading + subheading are announced.
+            announcement={sessionLostError ? `Session lost. ${sessionLostError}` : undefined}
+            describedBy={sessionLostError ? errorTextId : undefined}
+            autoFocusPrimaryAction={isActive}
+            actions={
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<Plus size={14} />}
+                  onClick={handleStartNewShell}
+                  data-testid="terminal-session-lost-new-shell-btn"
+                >
+                  Start new shell
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDismiss}
+                  data-testid="terminal-disconnect-view-btn"
+                >
+                  View scrollback
+                </Button>
+              </>
+            }
           >
-            <X size={14} />
-          </button>
-        </Tooltip>
-
-        <ContentOverlay
-          className="terminal-disconnect-overlay__body"
-          data-testid="terminal-session-lost"
-          icon={
-            <Unplug
-              size={32}
-              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
-            />
-          }
-          heading="Session lost"
-          subheading="The connection was restored, but the live session could not be recovered. Its process has ended. Scrollback is preserved below."
-          announce="assertive"
-          // Without a backend cause, the heading + subheading are announced.
-          announcement={sessionLostError ? `Session lost. ${sessionLostError}` : undefined}
-          describedBy={sessionLostError ? errorTextId : undefined}
-          autoFocusPrimaryAction={isActive}
-          actions={
-            <>
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<Plus size={14} />}
-                onClick={handleStartNewShell}
-                data-testid="terminal-session-lost-new-shell-btn"
+            {sessionLostError && (
+              <div
+                className="terminal-disconnect-overlay__error-box"
+                data-testid="terminal-session-lost-error-box"
               >
-                Start new shell
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDismiss}
-                data-testid="terminal-disconnect-view-btn"
-              >
-                View scrollback
-              </Button>
-            </>
-          }
-        >
-          {sessionLostError && (
-            <div
-              className="terminal-disconnect-overlay__error-box"
-              data-testid="terminal-session-lost-error-box"
-            >
-              <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
-                {sessionLostError}
-              </span>
-            </div>
-          )}
-        </ContentOverlay>
+                <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
+                  {sessionLostError}
+                </span>
+              </div>
+            )}
+          </ContentOverlay>
+        </DisconnectOverlayCard>
       </div>
     );
   }
@@ -224,35 +223,85 @@ export function TerminalDisconnectOverlay({
         className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
         data-testid="terminal-disconnect-overlay"
       >
-        <Tooltip content="View scrollback" side="bottom">
-          <button
-            className="terminal-disconnect-overlay__dismiss"
-            onClick={handleDismiss}
-            aria-label="Dismiss and view scrollback"
-            data-testid="terminal-disconnect-dismiss-btn"
+        <DisconnectOverlayCard onDismiss={handleDismiss}>
+          <ContentOverlay
+            className="terminal-disconnect-overlay__body"
+            icon={
+              <AlertTriangle
+                size={32}
+                className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+              />
+            }
+            heading={errorHeading}
+            announce="assertive"
+            announcement={`${errorHeading}. ${disconnectError}`}
+            describedBy={errorTextId}
+            autoFocusPrimaryAction={isActive}
+            subheading={
+              isAuthFailed
+                ? `Check your credentials, then reconnect. ${SCROLLBACK_KEPT}`
+                : `All reconnect attempts were exhausted. ${SCROLLBACK_KEPT}`
+            }
+            actions={
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={<RefreshCw size={14} />}
+                  onClick={handleReconnect}
+                  data-testid="terminal-disconnect-reconnect-btn"
+                >
+                  Try again
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleDismiss}
+                  data-testid="terminal-disconnect-view-btn"
+                >
+                  View scrollback
+                </Button>
+              </>
+            }
           >
-            <X size={14} />
-          </button>
-        </Tooltip>
+            <div
+              className="terminal-disconnect-overlay__error-box"
+              data-testid="terminal-disconnect-error-box"
+            >
+              <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
+                {disconnectError}
+              </span>
+            </div>
+            {/* A rejected credential (SM-005): offer to enter a new one inline
+                rather than only re-sending the rejected one (#3089). */}
+            {isAuthFailed && <CredentialReentry tabId={tabId} />}
+          </ContentOverlay>
+        </DisconnectOverlayCard>
+      </div>
+    );
+  }
 
+  const copy = disconnectCopyFor(exitInfo);
+
+  return (
+    <div className="terminal-disconnect-overlay" data-testid="terminal-disconnect-overlay">
+      <DisconnectOverlayCard
+        onDismiss={handleDismiss}
+        dismissLabel="Dismiss disconnect overlay and view scrollback"
+      >
         <ContentOverlay
           className="terminal-disconnect-overlay__body"
           icon={
-            <AlertTriangle
-              size={32}
-              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
-            />
+            copy.clean ? (
+              <CheckCircle2 size={32} className="terminal-disconnect-overlay__icon" />
+            ) : (
+              <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
+            )
           }
-          heading={errorHeading}
-          announce="assertive"
-          announcement={`${errorHeading}. ${disconnectError}`}
-          describedBy={errorTextId}
+          heading={copy.heading}
+          subheading={copy.subheading}
+          announce="polite"
           autoFocusPrimaryAction={isActive}
-          subheading={
-            isAuthFailed
-              ? "Check your credentials, then reconnect. Scrollback is preserved below."
-              : "All reconnect attempts were exhausted. Scrollback is preserved below."
-          }
           actions={
             <>
               <Button
@@ -262,7 +311,7 @@ export function TerminalDisconnectOverlay({
                 onClick={handleReconnect}
                 data-testid="terminal-disconnect-reconnect-btn"
               >
-                Try again
+                Reconnect
               </Button>
               <Button
                 variant="secondary"
@@ -274,73 +323,8 @@ export function TerminalDisconnectOverlay({
               </Button>
             </>
           }
-        >
-          <div
-            className="terminal-disconnect-overlay__error-box"
-            data-testid="terminal-disconnect-error-box"
-          >
-            <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
-              {disconnectError}
-            </span>
-          </div>
-          {/* A rejected credential (SM-005): offer to enter a new one inline
-              rather than only re-sending the rejected one (#3089). */}
-          {isAuthFailed && <CredentialReentry tabId={tabId} />}
-        </ContentOverlay>
-      </div>
-    );
-  }
-
-  const copy = disconnectCopyFor(exitInfo);
-
-  return (
-    <div className="terminal-disconnect-overlay" data-testid="terminal-disconnect-overlay">
-      <Tooltip content="View scrollback" side="bottom">
-        <button
-          className="terminal-disconnect-overlay__dismiss"
-          onClick={handleDismiss}
-          aria-label="Dismiss disconnect overlay and view scrollback"
-          data-testid="terminal-disconnect-dismiss-btn"
-        >
-          <X size={14} />
-        </button>
-      </Tooltip>
-
-      <ContentOverlay
-        className="terminal-disconnect-overlay__body"
-        icon={
-          copy.clean ? (
-            <CheckCircle2 size={32} className="terminal-disconnect-overlay__icon" />
-          ) : (
-            <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
-          )
-        }
-        heading={copy.heading}
-        subheading={copy.subheading}
-        announce="polite"
-        autoFocusPrimaryAction={isActive}
-        actions={
-          <>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<RefreshCw size={14} />}
-              onClick={handleReconnect}
-              data-testid="terminal-disconnect-reconnect-btn"
-            >
-              Reconnect
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleDismiss}
-              data-testid="terminal-disconnect-view-btn"
-            >
-              View scrollback
-            </Button>
-          </>
-        }
-      />
+        />
+      </DisconnectOverlayCard>
     </div>
   );
 }

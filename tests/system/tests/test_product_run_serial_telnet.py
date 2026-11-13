@@ -172,6 +172,10 @@ class TestProductRunSerial(_PhaseBase):
             self.device.unplug()
             got = self.wait_status(tab, lambda s: s not in (None, "connected"), timeout=30.0)
             self.evidence(f"after unplug: {got}; overlay shown: {self.driver.exists(OVERLAY)}")
+            # #5619: a serial notice speaks of the device, never a shell or agent,
+            # and the scrollback says the device went away, not "[Process exited]".
+            self.assert_reconnect_wording(serial=True)
+            self.assert_drop_marked(tab, "serial", reconnected=False)
         with self.step(
             "serial.virtual.replug",
             "Plugging it back in at the same path reconnects the tab by itself",
@@ -191,6 +195,7 @@ class TestProductRunSerial(_PhaseBase):
             # #5620: the buffer held these lines while the pane painted blank —
             # grade what is rendered: the pre-unplug line and the device's answer.
             self.assert_terminal_painted(tab, "PR-DEVICE READY", DEVICE_ID)
+            self.assert_drop_marked(tab, "serial")
         self.close_all_tabs()
 
     def test_20_physical_adapter(self):
@@ -394,6 +399,7 @@ class TestProductRunTelnet(_PhaseBase):
                 ) from None
             self.wait(lambda: self.driver.exists(OVERLAY), timeout=20.0, what="the overlay")
             assert self.driver.exists(RECONNECT_BTN), "no Reconnect button"
+            self.assert_reconnect_wording()
         with self.step(
             "telnet.reconnect",
             "Reconnect opens a fresh session at the login prompt",
@@ -409,4 +415,6 @@ class TestProductRunTelnet(_PhaseBase):
             self.wait(lambda: self.driver.read_terminal(tab).count("login:") >= 2
                       or not self.driver.exists(OVERLAY), timeout=15.0, what="the new session")
             self.evidence(f"terminal: {self.tail(tab)}")
+            # #5619/#5660: the server's close reads as a lost connection, then a reconnect.
+            self.assert_drop_marked(tab, "network")
         self.close_all_tabs()

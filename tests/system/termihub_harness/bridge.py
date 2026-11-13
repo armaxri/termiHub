@@ -689,6 +689,7 @@ class Driver:
                        "hscrollBarHeight",                 # laid-out bar
                        "hscrollReserve"},                  # its strip (#5280)
              "decorations": [{"classes", "background",  # OSC 133 bars,
+                              "maskImage", "gapToText",  # shape, gutter (#5640)
                               "top", "left", "width", "height"}, ...],  # flash
              "screenRect": {"left", "top", "width", "height"} | None,  # grid, page px
              "visibleRect": {"left", "top", "width", "height"} | None,  # clip, page px

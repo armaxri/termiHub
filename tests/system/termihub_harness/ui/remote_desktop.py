@@ -124,6 +124,10 @@ class RemoteDesktopUi(HarnessMixin):
     OVERLAY_CONNECTING = "remote-desktop-overlay-connecting"
     OVERLAY_RECONNECTING = "remote-desktop-overlay-reconnecting"
     OVERLAY_ERROR = "remote-desktop-overlay-error"
+    # A session that is up but has painted no frame yet, and its timeout (#5626).
+    OVERLAY_FIRST_FRAME = "remote-desktop-overlay-first-frame"
+    OVERLAY_NO_FRAME = "remote-desktop-overlay-no-frame"
+    STATUS_SEGMENT = "status-bar-remote-desktop"
     RECONNECT = "remote-desktop-reconnect"
     # A failed / aborted connect rests on the terminal's failure screen (#5377).
     RETRY = "remote-desktop-retry"

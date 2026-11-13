@@ -14,7 +14,9 @@
   padding: var(--spacing-xxs) var(--spacing-md);
   background: color-mix(in srgb, var(--color-warning) 12%, var(--terminal-bg));
   border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
-  font-family: var(--font-mono);
+  /* UI typography, not the terminal's monospace (#5619): the strip is app
+     chrome, like the other banners. */
+  font-family: var(--font-family);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
@@ -42,6 +44,7 @@
 
 .terminal-reconnect-strip__heading {
   color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .terminal-reconnect-strip__status {

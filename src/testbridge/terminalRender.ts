@@ -147,17 +147,34 @@ function bottomPaddingOf(el: HTMLElement | null): number {
  */
 function measureDecorations(element: HTMLElement): TerminalDecoration[] {
   const box = element.getBoundingClientRect();
+  const screen = element.querySelector<HTMLElement>(".xterm-screen")?.getBoundingClientRect();
   return Array.from(element.querySelectorAll<HTMLElement>(".xterm-decoration")).map((el) => {
     const rect = el.getBoundingClientRect();
     return {
       classes: Array.from(el.classList),
       background: backgroundOf(el),
+      maskImage: maskImageOf(el),
+      gapToText: screen ? screen.left - rect.right : null,
       top: rect.top - box.top,
       left: rect.left - box.left,
       width: rect.width,
       height: rect.height,
     };
   });
+}
+
+/**
+ * An element's computed mask image (#5640), `"none"` when unset: the failure
+ * command mark is masked into dashes so it differs from success by shape.
+ * Reads the prefixed property too, for engines that only apply that one.
+ */
+function maskImageOf(el: Element): string {
+  const style = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
+  const value = [
+    style.getPropertyValue("mask-image"),
+    style.getPropertyValue("-webkit-mask-image"),
+  ].find((v) => v && v !== "none");
+  return value ?? "none";
 }
 
 /** The cell grid's rect in the page, or `null` before xterm has a screen (#4937). */
