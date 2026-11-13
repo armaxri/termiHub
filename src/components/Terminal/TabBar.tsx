@@ -12,7 +12,7 @@ import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { resolveControllingWindow } from "@/utils/tabOwnership";
 import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
-import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
+import { getTabDisplayTitle } from "@/utils/editorTabTitle";
 import { deriveTabStatus } from "@/utils/tabStatus";
 import { macroReceivingInfo } from "@/utils/macroTabMarker";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
@@ -276,7 +276,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
                   ? () => splitPanelWithTab(tab.id, panelId, panelId, "right")
                   : undefined
               }
-              displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
+              displayTitle={getTabDisplayTitle(tab, allTabs)}
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
               macroReceiving={macroReceivingInfo(macroPlayback, tab.id)}
               controlledByWindow={resolveControllingWindow({
