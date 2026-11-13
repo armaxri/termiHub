@@ -993,6 +993,61 @@ describe("ansi palettes keep their canonical values (#5309)", () => {
 });
 
 /**
+ * Credential-storage chooser polish (#5560). The "Recommended" badge was accent
+ * text on the selected card's accent tint (~3.5:1); it is now a filled accent
+ * badge with `--text-on-accent`. The master-password warning callout puts
+ * primary text on `--bg-warning` over the dialog surface. Both are read from
+ * the shipped stylesheet so a later CSS edit cannot silently swap the tokens.
+ */
+describe("credential-storage chooser contrast (WCAG 2.2 AA, #5560)", () => {
+  const css = readFileSync(
+    join(SRC_DIR, "components/CredentialStorage/CredentialStorageChooser.css"),
+    "utf8"
+  );
+  /** The declarations of the first rule whose selector is exactly `selector`. */
+  function rule(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    if (!m) throw new Error(`no ${selector} rule in CredentialStorageChooser.css`);
+    return m[1];
+  }
+
+  it("the Recommended badge is a filled accent badge with on-accent text", () => {
+    const badge = rule(".credential-storage-option__badge");
+    expect(badge).toMatch(/(?:^|\n)\s*color:\s*var\(--text-on-accent\);/);
+    expect(badge).toMatch(/background:\s*var\(--accent-color\);/);
+  });
+
+  it("the warning callout paints primary text on the warning surface", () => {
+    const warning = rule(".credential-storage-warning");
+    expect(warning).toMatch(/(?:^|\n)\s*color:\s*var\(--text-primary\);/);
+    expect(warning).toMatch(/background:\s*var\(--bg-warning\);/);
+  });
+
+  const varsCss = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+  const warnMix =
+    /--bg-warning:\s*color-mix\(in srgb, var\(--color-warning\) (\d+)%, transparent\)/.exec(
+      varsCss
+    );
+  const BG_WARNING_ALPHA = Number(warnMix?.[1] ?? NaN) / 100;
+
+  for (const theme of BUILT_IN_THEMES) {
+    const c = theme.colors;
+    it(`${theme.id} badge text (${c.textOnAccent}) meets AA on ${c.accentColor}`, () => {
+      expect(contrastRatio(c.textOnAccent, c.accentColor)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+
+    it(`${theme.id} warning callout text meets AA on --bg-warning`, () => {
+      expect(Number.isFinite(BG_WARNING_ALPHA)).toBe(true);
+      for (const surface of [c.bgSecondary, c.bgPrimary]) {
+        const bg = composite(c.colorWarning, surface, BG_WARNING_ALPHA);
+        expect(contrastRatio(c.textPrimary, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      }
+    });
+  }
+});
+
+/**
  * OSC 133 command marks (#5563): the success/failure gutter bar is a non-text
  * indicator on the terminal background, so it needs 3:1 (SC 1.4.11). It used to
  * paint the tokens at 75% opacity, which dropped Dark's failure red to ~3.7:1 —

@@ -150,10 +150,9 @@
 }
 
 .jump-host__path-label {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  font-weight: var(--font-weight-medium);
 }
 
 .jump-host__path-chain {

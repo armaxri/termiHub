@@ -172,7 +172,7 @@ describe("SettingsField", () => {
   });
   it("renders a Toggle as an inline row: label + hint left, control right", () => {
     render(
-      <SettingsField label="Allow Experimental Features" hint="Enables hidden features.">
+      <SettingsField label="Allow experimental features" hint="Enables hidden features.">
         <Toggle checked={false} onCheckedChange={() => {}} data-testid="toggle" />
       </SettingsField>
     );

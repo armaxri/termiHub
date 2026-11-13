@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import { act, createRef } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { FileBrowserPathBar } from "./FileBrowserPathBar";
+import {
+  FileBrowserPathBar,
+  isEditPathShortcut,
+  type FileBrowserPathBarHandle,
+} from "./FileBrowserPathBar";
 import { TooltipProvider } from "@/components/ui";
 
 let container: HTMLDivElement;
@@ -16,15 +20,37 @@ function crumbsAll(): HTMLElement[] {
   return Array.from(container.querySelectorAll('[data-testid^="file-browser-crumb-"]'));
 }
 
-function render(currentPath: string, onNavigate = vi.fn()) {
+const handle = createRef<FileBrowserPathBarHandle>();
+
+function render(currentPath: string, onNavigate = vi.fn(), disabled = false) {
   act(() => {
     root.render(
       <TooltipProvider>
-        <FileBrowserPathBar currentPath={currentPath} onNavigate={onNavigate} />
+        <FileBrowserPathBar
+          ref={handle}
+          currentPath={currentPath}
+          onNavigate={onNavigate}
+          disabled={disabled}
+        />
       </TooltipProvider>
     );
   });
   return onNavigate;
+}
+
+/** Run `fn` with a macOS user agent (the keybinding defaults are per platform). */
+function asMac<T>(fn: () => T): T {
+  const original = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+  Object.defineProperty(navigator, "userAgent", {
+    value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    configurable: true,
+  });
+  try {
+    return fn();
+  } finally {
+    if (original) Object.defineProperty(navigator, "userAgent", original);
+    else delete (navigator as { userAgent?: string }).userAgent;
+  }
 }
 
 function keyDown(el: HTMLElement, key: string) {
@@ -75,16 +101,20 @@ describe("FileBrowserPathBar", () => {
     expect(onNavigate).toHaveBeenCalledWith("/usr");
   });
 
-  it("disables the crumb for the current path (no navigation on click)", () => {
+  it("edits the path, not navigates, when the current (leaf) folder is clicked", () => {
     const onNavigate = render("/usr/local");
     const crumbs = crumbsAll();
     const last = crumbs[crumbs.length - 1] as HTMLButtonElement;
-    expect(last.disabled).toBe(true);
+    // Still a focusable button, so the keyboard reaches the editor too.
+    expect(last.disabled).toBe(false);
+    expect(last.getAttribute("aria-current")).toBe("location");
     act(() => last.click());
     expect(onNavigate).not.toHaveBeenCalled();
+    const input = query("file-browser-path-input") as HTMLInputElement | null;
+    expect(input?.value).toBe("/usr/local");
   });
 
-  it("switches to a pre-filled text input when the edit affordance is clicked", () => {
+  it("switches to a pre-filled text input when the empty part of the bar is clicked", () => {
     render("/etc");
     act(() => query("file-browser-path-edit")?.click());
     const input = query("file-browser-path-input") as HTMLInputElement | null;
@@ -92,6 +122,48 @@ describe("FileBrowserPathBar", () => {
     expect(input?.value).toBe("/etc");
     // Breadcrumbs are replaced by the editor.
     expect(query("file-browser-current-path")).toBeNull();
+  });
+
+  it("has no separate edit button", () => {
+    render("/etc");
+    expect(container.querySelector('button[aria-label="Edit path"]')).toBeNull();
+    // The empty-space trigger is pointer-only; it is not a tab stop.
+    expect(query("file-browser-path-edit")?.tagName).toBe("SPAN");
+  });
+
+  it("selects the full path when the editor opens", async () => {
+    render("/var/www/vhosts/example.com");
+    act(() => handle.current?.startEditing());
+    await act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+    const input = query("file-browser-path-input") as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("/var/www/vhosts/example.com".length);
+  });
+
+  it("opens the editor through the imperative handle (the shortcut path)", () => {
+    render("/etc");
+    act(() => handle.current?.startEditing());
+    expect((query("file-browser-path-input") as HTMLInputElement).value).toBe("/etc");
+  });
+
+  it("stays read-only while disabled", () => {
+    render("/etc", vi.fn(), true);
+    expect(query("file-browser-path-edit")).toBeNull();
+    act(() => handle.current?.startEditing());
+    expect(query("file-browser-path-input")).toBeNull();
+  });
+
+  it("cancels editing on blur", () => {
+    const onNavigate = render("/etc");
+    act(() => query("file-browser-path-edit")?.click());
+    const input = query("file-browser-path-input") as HTMLInputElement;
+    typeInto(input, "/tmp");
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(query("file-browser-current-path")).not.toBeNull();
   });
 
   it("navigates to the typed path on Enter", () => {
@@ -121,5 +193,27 @@ describe("FileBrowserPathBar", () => {
     const input = query("file-browser-path-input") as HTMLInputElement;
     keyDown(input, "Enter");
     expect(onNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("isEditPathShortcut (#5540)", () => {
+  const key = (init: KeyboardEventInit) =>
+    new KeyboardEvent("keydown", { key: "l", code: "KeyL", ...init });
+
+  it("matches Ctrl+L on Windows/Linux", () => {
+    expect(isEditPathShortcut(key({ ctrlKey: true }))).toBe(true);
+    expect(isEditPathShortcut(key({}))).toBe(false);
+    expect(isEditPathShortcut(key({ metaKey: true }))).toBe(false);
+  });
+
+  it("matches Cmd+L on macOS", () => {
+    asMac(() => {
+      expect(isEditPathShortcut(key({ metaKey: true }))).toBe(true);
+      expect(isEditPathShortcut(key({ ctrlKey: true }))).toBe(false);
+    });
+  });
+
+  it("ignores a key typed while an IME composes", () => {
+    expect(isEditPathShortcut(key({ ctrlKey: true, isComposing: true }))).toBe(false);
   });
 });

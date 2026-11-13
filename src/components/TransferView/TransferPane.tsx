@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { ArrowUp, File, Folder, RefreshCw } from "lucide-react";
-import { Button, EmptyState, Input, Spinner, Tooltip } from "@/components/ui";
+import { Button, EmptyState, Spinner, Tooltip } from "@/components/ui";
 import { FileBookmarksMenu } from "@/components/Sidebar/FileBookmarksMenu";
+import {
+  FileBrowserPathBar,
+  isEditPathShortcut,
+  type FileBrowserPathBarHandle,
+} from "@/components/Sidebar/FileBrowserPathBar";
 import type { PaneSide } from "@/services/paneTransfer";
 import type { FileEntry } from "@/types/connection";
 import { eventKeyMatches } from "@/services/keybindings";
 import { formatBytes } from "@/utils/formatters";
 import { isRootPath, type PaneListing } from "./usePaneListing";
 import { nextPaneCursor, rangeSelection } from "./paneSelection";
-import { isImeComposing } from "@/utils/imeComposition";
 
 /** What a dragged pane row carries (dnd-kit `data`). */
 export interface PaneDragData {
@@ -106,9 +110,11 @@ function PaneRow({
 }
 
 /**
- * One side of the dual-pane transfer view (PROD-007, #3558): a path field,
- * Up / Refresh, and a keyboard-driven multi-select listbox whose rows can be
- * dragged onto the other pane.
+ * One side of the dual-pane transfer view (PROD-007, #3558): the sidebar's
+ * folding breadcrumb path bar (#5541; click the current folder or the empty
+ * space after it, or press Cmd/Ctrl+L, to type a path), Up / Refresh, and a
+ * keyboard-driven multi-select listbox whose rows can be dragged onto the
+ * other pane.
  *
  * Keys (with the list focused): ↑/↓ move (Shift extends, Ctrl/Cmd moves the
  * cursor only), Home/End, Space toggles, Ctrl/Cmd+A selects all, Enter opens a
@@ -130,8 +136,8 @@ export function TransferPane({
   const baseId = useId();
   const [active, setActive] = useState(0);
   const [anchor, setAnchor] = useState(0);
-  const [pathDraft, setPathDraft] = useState(path);
   const listRef = useRef<HTMLDivElement>(null);
+  const pathBarRef = useRef<FileBrowserPathBarHandle>(null);
   const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `transfer-pane-${side}`,
     data: { side } satisfies PaneDropData,
@@ -141,7 +147,6 @@ export function TransferPane({
   useEffect(() => {
     setActive(0);
     setAnchor(0);
-    setPathDraft(path);
     onSelectedChange(new Set());
   }, [path, onSelectedChange]);
 
@@ -227,6 +232,11 @@ export function TransferPane({
       ref={setDropRef}
       className={`transfer-pane${isOver ? " transfer-pane--drop-target" : ""}`}
       aria-label={`${title} files`}
+      onKeyDown={(e) => {
+        if (!isEditPathShortcut(e)) return;
+        e.preventDefault();
+        pathBarRef.current?.startEditing();
+      }}
       data-testid={`transfer-pane-${side}`}
     >
       <div className="transfer-pane__header">
@@ -245,20 +255,17 @@ export function TransferPane({
             data-testid={`transfer-pane-${side}-up`}
           />
         </Tooltip>
-        <Input
-          size="sm"
-          className="transfer-pane__path"
-          value={pathDraft}
-          aria-label={`${title} path`}
-          disabled={!!placeholder}
-          onChange={(e) => setPathDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (isImeComposing(e)) return;
-            if (e.key === "Enter" && pathDraft.trim()) void listing.navigate(pathDraft.trim());
-            if (e.key === "Escape") setPathDraft(path);
-          }}
-          data-testid={`transfer-pane-${side}-path`}
-        />
+        <div className="transfer-pane__path">
+          <FileBrowserPathBar
+            ref={pathBarRef}
+            currentPath={path}
+            onNavigate={(target) => void listing.navigate(target)}
+            testIdPrefix={`transfer-pane-${side}`}
+            label={`${title} path`}
+            disabled={!!placeholder || !path}
+            dropTargets={false}
+          />
+        </div>
         <Tooltip content="Refresh" side="top">
           <Button
             variant="ghost"

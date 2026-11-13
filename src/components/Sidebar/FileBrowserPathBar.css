@@ -1,0 +1,114 @@
+/* Path bar shared by the sidebar file browser and the transfer view's panes
+   (#5521, #5540, #5541). Imported by FileBrowserPathBar.tsx, so every surface
+   that renders the bar gets its styles. */
+
+/* Editable breadcrumb path bar (#5521). One fixed-height row in both states,
+   so switching to the input never shifts the list below. A path wider than
+   the bar collapses its middle segments into "…"; the leaf stays visible and
+   ellipsizes only when it alone is wider than the bar. Never scrolls or clips. */
+.file-browser__path-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-md);
+}
+
+.file-browser__breadcrumbs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.file-browser__crumb-group {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* The leaf segment is the only one allowed to shrink (and ellipsize). */
+.file-browser__crumb-group--leaf {
+  flex-shrink: 1;
+}
+
+.file-browser__crumb-sep {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.file-browser__crumb {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  padding: 0 var(--spacing-xxs);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.file-browser__crumb:hover:not(:disabled) {
+  color: var(--text-accent);
+}
+
+.file-browser__crumb:disabled {
+  color: var(--text-primary);
+  cursor: default;
+}
+
+/* The leaf (current folder) edits the path on click (#5540): it reads as the
+   current location, and its text cursor says "click to type a path". */
+.file-browser__crumb--edit {
+  color: var(--text-primary);
+  cursor: text;
+}
+
+.file-browser__crumb.file-browser__crumb--edit:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* The empty space after the segments: clicking it edits the path (#5540). */
+.file-browser__crumb-fill {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  cursor: text;
+}
+
+.file-browser__path-bar--disabled {
+  opacity: 0.5;
+}
+
+/* Inset the global focus ring: the breadcrumb row clips its overflow. */
+.file-browser__crumb:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus-border);
+}
+
+/* Invisible copy of every segment the collapse measures its natural widths on. */
+.file-browser__crumb-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  display: flex;
+  width: max-content;
+  white-space: nowrap;
+  top: 0;
+  left: 0;
+}
+
+.file-browser__path-input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}

@@ -88,6 +88,9 @@ export function useKeyboardShortcuts() {
       if (scope === "yields-to-terminal" && isEventFromTerminal(e)) {
         return;
       }
+      // The focused file browser / transfer pane matches its own shortcuts
+      // (edit path, #5540); elsewhere the key stays with its target.
+      if (scope === "file-browser") return;
 
       // Context-aware routing: when an editor or input surface owns this combo,
       // step aside (no preventDefault) so the focused widget handles it. The

@@ -35,13 +35,16 @@ export type ShortcutCategory =
  * - `remote-desktop` — never fires through the global shortcut engine; the
  *   focused remote-desktop canvas reads the binding directly (the keyboard
  *   release chord, #4524), because the canvas swallows every key first.
+ * - `file-browser` — never fires through the global shortcut engine; a focused
+ *   file browser or transfer pane matches it itself (edit path, #5540).
  */
 export type ShortcutScope =
   | "global"
   | "terminal"
   | "editor-delegated"
   | "yields-to-terminal"
-  | "remote-desktop";
+  | "remote-desktop"
+  | "file-browser";
 
 /** A default keybinding definition with platform-specific defaults. */
 export interface KeyBinding {

@@ -104,6 +104,12 @@ interface ConnectionSettingsFormProps {
    * is shown — e.g. the shared-credential picker after `authMethod` (#3557).
    */
   afterField?: { key: string; node: React.ReactNode };
+  /**
+   * A section-level note rendered under the first shown group's heading,
+   * above its fields — e.g. the `${VAR}` expansion hint, which applies to the
+   * connection fields rather than to the editor's Type select (#5560).
+   */
+  leadNote?: React.ReactNode;
 }
 
 /**
@@ -130,6 +136,7 @@ export function ConnectionSettingsForm({
   onValidityChange,
   hiddenFieldKeys,
   afterField,
+  leadNote,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
@@ -346,13 +353,18 @@ export function ConnectionSettingsForm({
     onValidityChange?.(validity.valid, validity.errors);
   }, [validity, onValidityChange]);
 
+  // The lead note goes to the first group that renders at all.
+  let leadNoteShown = false;
   return (
     <div data-testid="connection-settings-form">
       {schema.groups.map((group) => {
         const visibleFields = group.fields.filter(isShown);
         if (visibleFields.length === 0) return null;
+        const isLeadGroup = !leadNoteShown;
+        leadNoteShown = true;
         return (
           <FormGroupSection key={group.key} group={group}>
+            {isLeadGroup && leadNote}
             {visibleFields.map((field) => (
               <React.Fragment key={field.key}>
                 {

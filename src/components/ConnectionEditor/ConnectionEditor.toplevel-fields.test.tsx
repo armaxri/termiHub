@@ -579,3 +579,27 @@ describe("ConnectionEditor top-level fields — cancel discards", () => {
     expect(addConnection).not.toHaveBeenCalled();
   });
 });
+
+describe("ConnectionEditor ${VAR} hint placement (#5560)", () => {
+  it("sits under the first connection section heading, not under the Type select", async () => {
+    const existing: SavedConnection = {
+      id: "conn-ssh",
+      name: "Box",
+      config: { type: "ssh", config: { host: "example.com" } },
+      folderId: null,
+    };
+    seedConnectionsRegion({ connections: [existing] });
+    renderEditor("conn-ssh");
+    await flush();
+
+    const hint = q("connection-editor-env-var-hint");
+    expect(hint?.textContent).toBe("Use ${VAR} for environment variables, e.g. ${USER}");
+    const section = q("form-group-conn")!;
+    expect(section.contains(hint)).toBe(true);
+    // Heading first, then the hint, then the fields it applies to.
+    expect(section.querySelector("h3")?.nextElementSibling).toBe(hint);
+    // Nothing about ${VAR} is left next to the Type select.
+    const typeField = q("connection-editor-type-select")!.closest(".settings-form__field, div")!;
+    expect(typeField.parentElement?.textContent ?? "").not.toContain("environment variables");
+  });
+});

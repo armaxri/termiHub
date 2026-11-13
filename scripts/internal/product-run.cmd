@@ -11,6 +11,7 @@ REM   --build          (re)build the test app first
 REM   --no-open        do not open the progress page in the browser
 REM   --unattended     nobody is watching: human steps become "not tested" at once
 REM   --keep-serving   keep serving the progress page after the run until Ctrl-C
+REM   --real-pointer   hover grades use the real OS pointer (moves your mouse)
 REM   --help, -h       Show the help message
 REM
 REM Prerequisites: Git for Windows (Git Bash) or WSL to provide bash; uv; the

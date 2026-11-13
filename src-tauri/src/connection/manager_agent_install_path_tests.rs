@@ -92,3 +92,43 @@ fn an_unknown_agent_is_an_error() {
     let (_dir, manager) = manager_with_agent(None);
     assert!(manager.record_agent_install_path("nope", ENCODED).is_err());
 }
+
+// ── POSIX setup wizard (#5532) ──────────────────────────────────────────
+
+#[test]
+fn a_custom_setup_path_is_saved_and_the_next_connect_runs_it() {
+    let (_dir, manager) = manager_with_agent(None);
+    assert!(manager
+        .record_agent_setup_path("a1", "/opt/termihub-agent")
+        .unwrap());
+    let config = stored_config(&manager);
+    assert_eq!(config.agent_path.as_deref(), Some("/opt/termihub-agent"));
+    assert_eq!(config.agent_exec_command(), "/opt/termihub-agent --stdio");
+}
+
+#[test]
+fn a_home_relative_setup_path_is_launched_through_home() {
+    let (_dir, manager) = manager_with_agent(None);
+    manager
+        .record_agent_setup_path("a1", "~/bin/termihub-agent")
+        .unwrap();
+    assert_eq!(
+        stored_config(&manager).agent_exec_command(),
+        "$HOME/bin/termihub-agent --stdio"
+    );
+}
+
+#[test]
+fn a_default_setup_path_leaves_an_unset_agent_path_alone() {
+    let (_dir, manager) = manager_with_agent(None);
+    assert!(!manager
+        .record_agent_setup_path("a1", "~/.local/bin/termihub-agent")
+        .unwrap());
+    assert_eq!(stored_config(&manager).agent_path, None);
+}
+
+#[test]
+fn a_setup_for_an_unknown_agent_is_an_error() {
+    let (_dir, manager) = manager_with_agent(None);
+    assert!(manager.record_agent_setup_path("nope", "/opt/x").is_err());
+}

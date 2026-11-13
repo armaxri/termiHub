@@ -1851,6 +1851,29 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     expect(currentFileBrowsersView().local.path).toBe("/home");
   });
 
+  it("edits the path on Ctrl+L from the focused list (#5540)", async () => {
+    await renderLocalAt("/home");
+    const list = container.querySelector('[data-testid="file-browser-list"]') as HTMLElement;
+    await act(async () => {
+      list.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "l", code: "KeyL", ctrlKey: true, bubbles: true })
+      );
+    });
+    const input = container.querySelector(
+      '[data-testid="file-browser-path-input"]'
+    ) as HTMLInputElement;
+    expect(input?.value).toBe("/home");
+  });
+
+  it("edits the path when the current folder's segment is clicked (#5540)", async () => {
+    await renderLocalAt("/home");
+    await act(async () => {
+      (container.querySelector('[data-testid="file-browser-crumb-home"]') as HTMLElement).click();
+    });
+    expect(currentFileBrowsersView().local.path).toBe("/home");
+    expect(container.querySelector('[data-testid="file-browser-path-input"]')).toBeTruthy();
+  });
+
   it("filters the list by name", async () => {
     await renderLocalAt("/home");
     const filter = container.querySelector(

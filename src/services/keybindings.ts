@@ -78,7 +78,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts",
-    label: "Keyboard shortcuts",
+    label: "Show keyboard shortcuts",
     category: "general",
     macDefault: [
       { key: "k", meta: true },
@@ -92,7 +92,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts-outside-terminal",
-    label: "Keyboard shortcuts (outside terminals)",
+    label: "Show keyboard shortcuts outside terminals",
     category: "general",
     // Bare F1 is the long-standing "help" key, but terminal programs own it
     // (htop, mc, nano, vim, …): a focused terminal keeps it, the same as F6
@@ -420,6 +420,20 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "[", meta: true, shift: true },
     winLinuxDefault: { key: "[", ctrl: true, shift: true },
     configurable: true,
+  },
+
+  // File browser
+  {
+    action: "edit-file-browser-path",
+    label: "Edit file browser path",
+    category: "navigation",
+    // Cmd/Ctrl+L focuses the location field in file managers and browsers
+    // (#5540). Scoped to a focused file browser or transfer pane, which match
+    // it themselves, so a terminal keeps Ctrl+L (clear screen).
+    macDefault: { key: "l", meta: true },
+    winLinuxDefault: { key: "l", ctrl: true },
+    configurable: true,
+    scope: "file-browser",
   },
 
   // Remote desktop
@@ -750,6 +764,22 @@ export function getEffectiveCombo(action: string): KeyCombo | KeyCombo[] | null 
   if (!binding) return null;
 
   return isMac() ? binding.macDefault : binding.winLinuxDefault;
+}
+
+/**
+ * Whether the user changed an action's shortcut: it has an override whose
+ * binding differs from the platform default (#5561). An explicit unbind counts
+ * as changed. An override that equals the default does not, so the Keyboard
+ * settings only offer "Reset to default" when a reset would change something.
+ */
+export function isActionCustomized(action: string): boolean {
+  const override = overrides.find((o) => o.action === action);
+  if (!override) return false;
+  const binding = DEFAULT_BINDINGS.find((b) => b.action === action);
+  if (!binding) return true;
+  const platformDefault = isMac() ? binding.macDefault : binding.winLinuxDefault;
+  if (!platformDefault) return !isUnboundCombo(override.combo);
+  return serializeBinding(override.combo) !== serializeBinding(platformDefault);
 }
 
 /**

@@ -72,4 +72,5 @@ case "$(uname -s)" in
     ;;
 esac
 
-cargo test -p termihub-core --features ssh --test ssh_native "$@"
+# ssh_x11_req_native: X11 over x11-req against the same sshd (#5570).
+cargo test -p termihub-core --features ssh --test ssh_native --test ssh_x11_req_native "$@"

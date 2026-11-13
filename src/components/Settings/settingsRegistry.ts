@@ -39,26 +39,71 @@ export interface SettingDefinition {
   experimental?: boolean;
 }
 
+/**
+ * A heading in the Settings navigation (#5561). Nineteen flat categories did not
+ * fit a 1280×800 window and gave rare pages the weight of General, so the nav
+ * groups them; a `collapsible` group starts folded and opens on demand (and on
+ * its own when one of its categories is active or matches a search).
+ */
+export interface CategoryGroupDefinition {
+  id: string;
+  label: string;
+  categories: SettingsCategory[];
+  collapsible?: boolean;
+}
+
+/** Navigation groups, in display order. Every category belongs to exactly one. */
+export const CATEGORY_GROUPS: CategoryGroupDefinition[] = [
+  {
+    id: "general",
+    label: "General",
+    categories: ["general", "appearance", "accessibility", "keyboard", "updates"],
+  },
+  {
+    id: "terminal",
+    label: "Terminal",
+    categories: ["terminal", "shell-integration", "sessions", "editor"],
+  },
+  { id: "connections", label: "Connections", categories: ["serial", "external-files"] },
+  {
+    id: "security",
+    label: "Security and data",
+    categories: ["security", "safety-prompts", "backup"],
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    categories: ["plugins", "import", "schedules", "portable", "x-server"],
+    collapsible: true,
+  },
+];
+
+/**
+ * Every category in navigation order (group by group), so search results follow
+ * the nav. Kept a literal: the system-test testid catalog reads its ids
+ * (`tests/system/testid-templates.json`). `SettingsNav.groups.test.tsx` checks
+ * it lists exactly the {@link CATEGORY_GROUPS} categories, in their order.
+ */
 export const CATEGORIES: CategoryDefinition[] = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
-  { id: "terminal", label: "Terminal" },
-  { id: "serial", label: "Serial" },
   { id: "accessibility", label: "Accessibility" },
-  { id: "shell-integration", label: "Shell integration" },
   { id: "keyboard", label: "Keyboard" },
+  { id: "updates", label: "Updates" },
+  { id: "terminal", label: "Terminal" },
+  { id: "shell-integration", label: "Shell integration" },
   { id: "sessions", label: "Sessions" },
-  { id: "safety-prompts", label: "Safety prompts" },
-  { id: "x-server", label: "X server" },
-  { id: "security", label: "Security" },
-  { id: "external-files", label: "External files" },
   { id: "editor", label: "Editor" },
-  { id: "plugins", label: "Plugins" },
+  { id: "serial", label: "Serial" },
+  { id: "external-files", label: "External files" },
+  { id: "security", label: "Security" },
+  { id: "safety-prompts", label: "Safety prompts" },
   { id: "backup", label: "Backup & restore" },
+  { id: "plugins", label: "Plugins" },
   { id: "import", label: "Import & migration" },
   { id: "schedules", label: "Schedules" },
   { id: "portable", label: "Portable mode" },
-  { id: "updates", label: "Updates" },
+  { id: "x-server", label: "X server" },
 ];
 
 /**
@@ -93,7 +138,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "defaultShellIntegration",
-    label: "Command marks (shell hook) by default",
+    label: "Command marks by default",
     description:
       "Pre-enable command marks (OSC 133, a small hook typed into the shell) for new local, SSH and WSL connections",
     category: "general",
@@ -103,6 +148,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "wsl",
       "defaults",
       "command marks",
+      // The label before #5561, so a search for it still lands here.
+      "command marks (shell hook) by default",
       "shell hook",
       "shell integration",
       "osc 133",
@@ -184,7 +231,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "defaultLineEnding",
-    label: "Line ending (Enter & paste)",
+    label: "Line ending",
     description: "Line ending sent on Enter and used to normalize pasted text",
     category: "terminal",
     keywords: [

@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -110,10 +111,24 @@ class FakeSockets:
     def __init__(self) -> None:
         self.now: set[eg.Endpoint] = set()
         self.pids: list = []
+        self._answered = threading.Condition()
+        self._answers: list[set[eg.Endpoint]] = []
 
     def __call__(self, pid):
         self.pids.append(pid)
-        return set(self.now) if pid is not None else set()
+        answer = set(self.now) if pid is not None else set()
+        with self._answered:
+            self._answers.append(answer)
+            self._answered.notify_all()
+        return answer
+
+    def wait_until_answered(self, endpoint: eg.Endpoint, timeout: float = 10.0) -> None:
+        """Block until a sample has returned ``endpoint`` (#5543: no sleep race)."""
+        with self._answered:
+            seen = self._answered.wait_for(
+                lambda: any(endpoint in answer for answer in self._answers), timeout
+            )
+        assert seen, f"the sampler thread never sampled {endpoint}"
 
 
 def test_sampler_unions_samples_and_diffs_against_its_baseline():
@@ -122,7 +137,10 @@ def test_sampler_unions_samples_and_diffs_against_its_baseline():
     sockets.now = {held, _GITHUB}
     sampler = eg.Sampler(lambda: 42, lister=sockets, interval=0.01)
     sockets.now = {held, _DOC}
-    time.sleep(0.1)
+    # Wait for the sampler thread itself to see _DOC — a fixed sleep lost that
+    # race on a loaded host (#5543). ``stop`` joins the thread, so the union of
+    # that sample into ``observed`` is complete before the final diff.
+    sockets.wait_until_answered(_DOC)
     sockets.now = {held}  # the _DOC connection closed before the test ended
     assert sampler.stop() == [_DOC]
     assert set(sockets.pids) == {42}

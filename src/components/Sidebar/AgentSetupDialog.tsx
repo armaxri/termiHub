@@ -76,6 +76,22 @@ const POSIX_INSTALL_PATH = "~/.local/bin/termihub-agent";
  */
 const WINDOWS_INSTALL_PATH = "%LOCALAPPDATA%\\termiHub\\agent\\termihub-agent.exe";
 
+/**
+ * The POSIX install path the wizard starts with: the agent's saved custom
+ * `agentPath` when it has one, so an untouched field installs where the next
+ * connect runs the agent (#5532); otherwise the default. A saved Windows path
+ * (drive letter, backslash, `%VAR%`, `$env:`) does not apply to a POSIX host.
+ */
+function initialPosixInstallPath(agentPath: string | undefined): string {
+  const path = agentPath?.trim() ?? "";
+  const isWindowsPath =
+    /^[A-Za-z]:([\\/]|$)/.test(path) ||
+    path.includes("\\") ||
+    path.includes("%") ||
+    path.startsWith("$env:");
+  return path === "" || isWindowsPath ? POSIX_INSTALL_PATH : path;
+}
+
 function isKnownSuffix(s: string | null): s is ArchSuffix {
   return ARCH_OPTIONS.some((o) => o.suffix === s);
 }
@@ -97,7 +113,8 @@ function assetFileTail(s: ArchSuffix): string {
 export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSetupDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: "detecting" });
   const [selectedArch, setSelectedArch] = useState<ArchSuffix>("linux-x64");
-  const [remotePath, setRemotePath] = useState("~/.local/bin/termihub-agent");
+  const posixInstallPath = initialPosixInstallPath(agent.config.agentPath);
+  const [remotePath, setRemotePath] = useState(posixInstallPath);
   const [installService, setInstallService] = useState(false);
   const [binarySource, setBinarySource] = useState<"github" | "branch" | "local">("github");
   const [branchName, setBranchName] = useState("");
@@ -159,9 +176,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   // Keep the install-path field in sync with the selected target OS: Windows
   // installs to a fixed `%LOCALAPPDATA%` location, POSIX to `~/.local/bin`.
   useEffect(() => {
-    setRemotePath(isWindows ? WINDOWS_INSTALL_PATH : POSIX_INSTALL_PATH);
+    setRemotePath(isWindows ? WINDOWS_INSTALL_PATH : posixInstallPath);
     if (isWindows) setInstallService(false);
-  }, [isWindows]);
+  }, [isWindows, posixInstallPath]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -170,7 +187,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       progressToastIdRef.current = null;
       return;
     }
-    setRemotePath(POSIX_INSTALL_PATH);
+    setRemotePath(posixInstallPath);
     setInstallService(false);
     setBinarySource("github");
     setBranchName("");

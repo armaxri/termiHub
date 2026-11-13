@@ -279,7 +279,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     const checkbox = findShellIntegrationCheckbox();
     expect(checkbox).not.toBeNull();
     expect(isChecked(checkbox!)).toBe(false);
-    expect(container.textContent).toContain("Command marks (shell hook) by default");
+    expect(container.textContent).toContain("Command marks by default");
     expect(container.textContent).not.toContain("Shell integration by Default");
   });
 });

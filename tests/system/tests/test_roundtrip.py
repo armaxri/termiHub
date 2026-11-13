@@ -5,11 +5,11 @@ correlation, the synchronous Driver, and sequential-connection / restart
 support) without depending on a real build, so they run anywhere and fast.
 """
 
-import time
+import threading
 
 import pytest
 
-from termihub_harness import LIVE_CONNECT_REQUEST_TIMEOUT, BridgeError
+from termihub_harness import LIVE_CONNECT_REQUEST_TIMEOUT, BridgeError, deadlines
 from fake_app import FakeApp, dispatcher_like
 
 
@@ -428,17 +428,36 @@ def test_request_timeout_sets_the_driver_default(bridge):
         assert driver._timeout == LIVE_CONNECT_REQUEST_TIMEOUT
 
 
-def test_per_call_timeout_override_is_honored(bridge):
-    # A slow handler lets a tight per-call timeout fire while the driver default
-    # comfortably outlasts it — the mechanism the failure-artifact probes use to
+def test_per_call_timeout_override_is_honored(bridge, monkeypatch):
+    # A handler the test holds lets a tight per-call timeout fire while the driver
+    # default rides it out — the mechanism the failure-artifact probes use to
     # capture evidence with a longer timeout than the live path (#2460).
-    def slow_handler(command):
-        time.sleep(0.4)
+    #
+    # Deterministic by construction (#5543): no answer can reach the driver until
+    # the test releases the handler, so the 0.05 s call times out however loaded
+    # the host is — there is no sleep-vs-timeout margin to lose. The contended
+    # budget is pinned off: on a parallel macOS/Windows worker ``ui_budget`` would
+    # otherwise raise the 0.05 s override to the op's contended deadline (20 s for
+    # getState), which made this test fail on every ``-n`` run there.
+    monkeypatch.setattr(deadlines, "CONTENDED", False)
+    monkeypatch.setattr(deadlines, "DEBUG_SCALE", 1.0)
+    release = threading.Event()
+    received = []
+
+    def held_handler(command):
+        received.append(command.get("action"))
+        # Bounded so a broken test can never wedge the fake app's loop forever.
+        release.wait(10)
         return {"ok": True, "action": command.get("action"), "value": {}}
 
-    with FakeApp(bridge.port, slow_handler):
+    with FakeApp(bridge.port, held_handler):
         driver = bridge.wait_for_app(timeout=5)
-        with pytest.raises(BridgeError):
-            driver.get_state(timeout=0.05)
-        # The generous default (10s) rides out the same slow handler.
+        try:
+            with pytest.raises(BridgeError, match="timed out after 0.05s"):
+                driver.get_state(timeout=0.05)
+        finally:
+            release.set()
+        # The generous default (10s) gets the next answer; the late reply to the
+        # timed-out request is dropped instead of being mis-correlated to it.
         assert driver.get_state() == {}
+    assert received == ["getState", "getState"]

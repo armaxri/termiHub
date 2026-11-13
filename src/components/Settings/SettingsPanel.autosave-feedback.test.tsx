@@ -371,7 +371,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       );
     });
 
-    it("keeps the build-info footer free of the transient acknowledgment", async () => {
+    it("renders no build-info footer, so the ack has no footer to land in (#5561)", async () => {
       await render();
       const toggle = shellIntegrationToggle();
       pointerDown(toggle);
@@ -379,9 +379,9 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
         toggle.click();
       });
       await saveSettles();
-      const footer = container.querySelector(".settings-panel__footer")!;
-      expect(footer.querySelector("[data-testid='settings-saved-ack']")).toBeNull();
-      expect(footer.textContent).not.toContain("Saved");
+      expect(container.querySelector(".settings-panel__footer")).toBeNull();
+      const content = container.querySelector("[data-testid='settings-panel-content']")!;
+      expect(content.querySelector("[data-testid='settings-saved-ack']")).not.toBeNull();
     });
   });
 });

@@ -17,7 +17,7 @@ The checklist (supersedes the hand-run kit and #5516):
    ``false`` / ``true`` get OSC 133 error / success marks (#5515).
 4. Settings wording (#5447/#5448/#5483): sentence-case labels and headings.
 5. Solarized Light (#5460): sidebar is base3; selected and hovered-selected
-   row text reaches AA.
+   row text reaches AA (the row is really hovered, #5538).
 
 The profile is seeded on disk before the first launch (a seeded, clearly
 labelled fake crash report and two connections in the *current*
@@ -92,6 +92,8 @@ ALL_CATEGORIES = (
     "safety-prompts x-server security external-files editor plugins backup import "
     "schedules portable updates"
 ).split()
+#: Always-open Settings nav headings (``settingsRegistry.ts`` CATEGORY_GROUPS, #5561).
+SETTINGS_NAV_GROUPS = ("general", "terminal", "connections", "security")
 #: Keyboard shortcut groups (``KeyboardSettings.tsx`` CATEGORY_ORDER).
 KEYBOARD_GROUPS = ("general", "clipboard", "terminal", "navigation", "tab-groups", "remote-desktop")
 
@@ -439,6 +441,15 @@ class TestProductRunChecklist(
                 assert labels[cat] == want, f"{cat} reads {labels[cat]!r}, want {want!r}"
             bad = [label for label in labels.values() if not is_sentence_case(label)]
             assert not bad, f"not sentence case: {bad}"
+            # #5561: the categories sit under a few headings; rare ones fold under Advanced.
+            headings = [
+                self.driver.get_text(f"settings-navgroup-{group}").strip()
+                for group in SETTINGS_NAV_GROUPS
+            ] + [self.driver.get_text("settings-navgroup-advanced-toggle").strip()]
+            self.evidence("nav groups: " + ", ".join(headings))
+            assert all(is_sentence_case(h) for h in headings), headings
+            folded = self.driver.get_attribute("settings-nav-portable", "data-group-collapsed")
+            assert folded == "true", "Portable mode is not folded under Advanced"
         for cat, want, wrong in (
             ("appearance", ["Font family"], ["Font Family"]),
             ("terminal", ["Cursor style", "Right-click behavior"], ["Cursor Style", "Right-Click Behavior"]),
@@ -511,7 +522,7 @@ class TestProductRunChecklist(
         with self.step(
             "checklist.solarized.selected-row",
             "Selected and hovered-selected row text reaches AA",
-            expect="Solarized Light with one connection row selected",
+            expect="Solarized Light with one connection row selected (the --hovered capture: hovered)",
         ):
             self.require("checklist.solarized.sidebar")
             conn = self.require_connection(CHOOSER_CONN)
@@ -523,21 +534,35 @@ class TestProductRunChecklist(
             )
             sidebar = self.opaque_background("sidebar", self.root_color("--bg-primary"))
             rest = composite(self._settled_background(item), sidebar)
-            # #5562: the connection tree paints the sidebar selection tokens.
-            hover_token = self.driver.get_computed_style("--sidebar-selected-hover-bg")
-            hover = composite(mix_with_transparent(hover_token, self._resolve), sidebar)
             texts = {
                 "primary": self.style_color("color", item),
                 "secondary": parse_color(self.driver.get_computed_style("--text-secondary", item)),
             }
-            for state, bg in (("selected", rest), ("hovered selected", hover)):
-                for role, fg in texts.items():
-                    ratio = contrast(fg, bg)
-                    self.evidence(f"{state} {role}: {fg.hex()} on {bg.hex()} = {ratio:.2f}:1")
-                    assert ratio >= AA_TEXT, f"{state} {role} text {ratio:.2f}:1 < AA"
-            self.evidence(
-                "hover background computed from --sidebar-selected-hover-bg (no real pointer)"
-            )
+            self._grade_contrast("selected", rest, texts)
+            # #5538: hover the row for real (OS pointer, else the bridge paints the
+            # app's :hover rules) and grade the background the browser rendered.
+            with self.hovered(item):
+                hover = composite(self._settled_background(item), sidebar)
+                # #5562: the connection tree paints the sidebar selection tokens.
+                token = composite(
+                    mix_with_transparent(
+                        self.driver.get_computed_style("--sidebar-selected-hover-bg"),
+                        self._resolve,
+                    ),
+                    sidebar,
+                )
+                self.evidence(
+                    f"rendered hover {hover.hex()}, --sidebar-selected-hover-bg {token.hex()}"
+                )
+                self.shot(label="hovered")
+                assert not same_color(hover, rest), "the row did not change on hover"
+                self._grade_contrast("hovered selected", hover, texts)
+
+    def _grade_contrast(self, state: str, bg: Rgba, texts: dict[str, Rgba]) -> None:
+        for role, fg in texts.items():
+            ratio = contrast(fg, bg)
+            self.evidence(f"{state} {role}: {fg.hex()} on {bg.hex()} = {ratio:.2f}:1")
+            assert ratio >= AA_TEXT, f"{state} {role} text {ratio:.2f}:1 < AA"
 
     def _settled_background(self, testid: str) -> Rgba:
         """The element's background once its colour transition has finished."""
@@ -557,7 +582,6 @@ class TestProductRunChecklist(
     def test_99_inputs_for_later_phases(self):
         """Record what this run could not cover, so the page never implies more."""
         for section, title, issue in (
-            ("serial", "Serial unplug/replug auto-reconnect (physical adapter)", 5536),
             ("raspberry_pi", "Raspberry Pi SSH host", 5535),
             ("rdp", "RDP host", 5537),
             ("vnc", "VNC host", 5537),

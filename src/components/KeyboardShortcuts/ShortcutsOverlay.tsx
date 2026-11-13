@@ -26,6 +26,7 @@ const SCOPE_HINTS: Record<ShortcutScope, string> = {
   "editor-delegated": "Yields to editors & inputs",
   "yields-to-terminal": "Outside terminals",
   "remote-desktop": "Focused remote desktop",
+  "file-browser": "Focused file browser",
 };
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {

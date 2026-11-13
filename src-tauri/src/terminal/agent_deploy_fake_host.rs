@@ -16,7 +16,8 @@
 //!   step by step with `&&` short-circuiting;
 //! * the previous-binary backup / restore / discard (`cp -pf`, `mv -f`, `rm -f`
 //!   on `<path>.previous`, #5207);
-//! * `<path> --version 2>/dev/null` (`$HOME/…` paths too) → runs the "binary": a file whose first line
+//! * `test -e <path>` → exit 0 when a file or dir is there, else 1 (#5532);
+//! * `<path> --version 2>/dev/null` (`$HOME/…` and `~/…` paths too) → runs the "binary": a file whose first line
 //!   is `termihub-agent <ver>` prints that line, anything else fails like a
 //!   binary that refuses to start.
 //!
@@ -237,7 +238,10 @@ fn fail(stderr: impl Into<String>, status: u32) -> ExecResult {
 fn resolve(path: &str) -> String {
     if path.starts_with('/') {
         path.to_string()
-    } else if let Some(rest) = path.strip_prefix("$HOME/") {
+    } else if let Some(rest) = path
+        .strip_prefix("$HOME/")
+        .or_else(|| path.strip_prefix("~/"))
+    {
         format!("{HOME}/{rest}")
     } else {
         format!("{HOME}/{path}")
@@ -280,6 +284,14 @@ fn run_exec(st: &mut HostState, command: &str) -> ExecResult {
         );
         st.dirs.push(dir.clone());
         return ok(format!("{dir}\n"));
+    }
+    if let Some(target) = command.strip_prefix("test -e ") {
+        let target = resolve(target);
+        let dir_prefix = format!("{target}/");
+        let exists = st.files.contains_key(&target)
+            || st.dirs.contains(&target)
+            || st.files.keys().any(|p| p.starts_with(&dir_prefix));
+        return if exists { ok("") } else { fail("", 1) };
     }
     if let Some(binary) = command.strip_suffix(" --version 2>/dev/null") {
         return run_binary(st, &resolve(binary));

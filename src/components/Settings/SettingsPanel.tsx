@@ -52,7 +52,7 @@ import { mergeMovedDraft } from "@/utils/mergeFormDraft";
 import { toast } from "@/components/ui";
 import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
-import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
+import { SettingsCategory, CATEGORIES, CATEGORY_GROUPS } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
 import { SettingsNav } from "./SettingsNav";
 import { SettingsSearch } from "./SettingsSearch";
@@ -86,7 +86,6 @@ import { PluginCatalogSettings } from "./PluginCatalogSettings";
 import { NativePluginGateSettings } from "./NativePluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { UpdateSettings } from "./UpdateSettings";
-import { useAppInfo } from "@/hooks/useAppInfo";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./SettingsPanel.css";
 
@@ -132,8 +131,10 @@ interface SettingsPanelProps {
 }
 
 /**
- * Two-panel settings layout with categorized navigation, search, and version footer.
- * Auto-save feedback shows beside the edited field, not in the footer (#5562).
+ * Two-panel settings layout with grouped category navigation and search.
+ * Auto-save feedback shows beside the edited field (#5562). Version and build
+ * info live once, in Updates (and the About dialog), not in a per-page footer
+ * (#5561).
  */
 export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const settings = useProjectedSettings();
@@ -151,7 +152,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const [focusPluginId, setFocusPluginId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isCompact, setIsCompact] = useState(false);
-  const appInfo = useAppInfo();
   const [showSavedAck, setShowSavedAck] = useState(false);
   // The SettingsField that shows the "Saved" tick, or null when the edit came
   // from a control outside any field: then the panel's own pill shows it.
@@ -546,6 +546,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         <SettingsNav
           categories={CATEGORIES}
           iconMap={SETTINGS_ICONS}
+          groups={CATEGORY_GROUPS}
           activeCategory={activeCategory}
           onCategoryChange={handleCategoryChange}
           highlightedCategories={highlightedCategories}
@@ -586,14 +587,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             )}
           </span>
         </div>
-      </div>
-      <div className="settings-panel__footer">
-        termiHub {appInfo ? `v${appInfo.version}` : ""} [DEV]
-        {appInfo && (
-          <span className="settings-panel__footer-hash" title="Git commit hash">
-            {appInfo.gitHash}
-          </span>
-        )}
       </div>
     </div>
   );

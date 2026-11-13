@@ -47,8 +47,14 @@ def _tftp_server(root: Path):
         daemon=True,
     )
     thread.start()
-    # Give the server a moment to bind its socket before clients connect.
-    time.sleep(0.3)
+    # Wait until ``listen`` has actually bound the socket (tftpy sets
+    # ``listenport`` right after ``bind``). A fixed sleep raced it on a loaded
+    # host: an RRQ sent before the bind is lost to a closed UDP port (#5543).
+    deadline = time.monotonic() + 10
+    while server.listenport != port:
+        assert thread.is_alive(), "the TFTP server thread died before binding"
+        assert time.monotonic() < deadline, "the TFTP server never bound its port"
+        time.sleep(0.01)
     try:
         yield port
     finally:
