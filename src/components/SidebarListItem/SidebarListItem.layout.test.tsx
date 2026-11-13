@@ -93,6 +93,12 @@ describe("SidebarListItem — names get the full row width (#4709)", () => {
     expect(err).toMatch(/opacity:\s*1/);
   });
 
+  it("keeps an actionsVisible row's actions in the flow and visible (#5612)", () => {
+    const visible = rule(".sidebar-list-item--actions-visible .sidebar-list-item__actions");
+    expect(visible).toMatch(/position:\s*static/);
+    expect(visible).toMatch(/opacity:\s*1/);
+  });
+
   it("renders the name as the only flex child besides the overlay", () => {
     renderRow(<button aria-label="Launch">L</button>);
     const header = container.querySelector(".sidebar-list-item__header") as HTMLElement;

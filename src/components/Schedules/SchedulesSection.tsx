@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { CalendarClock, ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, StatusDot, Toggle, Tooltip, toast, EmptyState } from "@/components/ui";
+import type { StatusTone } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
@@ -29,6 +30,18 @@ function scheduleStatus(s: ScheduleView, paused: boolean): string {
   if (s.running) return "Running now";
   if (paused) return "Paused";
   return s.nextRunAt ? `Next: ${formatNextRun(s.nextRunAt)}` : "Not scheduled";
+}
+
+/**
+ * Tone of a schedule row's leading dot: whether the schedule is on (#5612).
+ * The last run's outcome has its own dot on the "Last: …" line — a disabled
+ * schedule whose last run completed must not read as active.
+ */
+export function scheduleTone(s: ScheduleView, paused: boolean): StatusTone {
+  if (!s.enabled) return "disabled";
+  if (s.running) return "connecting";
+  if (paused) return "warning";
+  return s.nextRunAt ? "success" : "neutral";
 }
 
 /**
@@ -161,22 +174,22 @@ export function SchedulesSection({ editable = true }: SchedulesSectionProps) {
             const result = s.lastResult;
             const attempts = s.history ?? [];
             const open = expanded.has(s.id);
+            const status = scheduleStatus(s, paused);
             return (
               <SidebarListItem
                 key={s.id}
                 testId={`schedule-item-${s.id}`}
                 name={s.name}
+                nameTestId={`schedule-name-${s.id}`}
+                actionsVisible
                 status={
-                  result ? (
-                    <StatusDot
-                      tone={outcomeTone(result.outcome)}
-                      label={`Last run ${result.outcome}`}
-                      title={result.message ?? result.outcome}
-                    />
-                  ) : undefined
+                  <StatusDot
+                    tone={scheduleTone(s, paused)}
+                    pulse={s.running}
+                    label={status}
+                    testId={`schedule-dot-${s.id}`}
+                  />
                 }
-                badge={scheduleStatus(s, paused)}
-                badgeTestId={`schedule-status-${s.id}`}
                 actions={
                   <>
                     <Toggle
@@ -213,12 +226,25 @@ export function SchedulesSection({ editable = true }: SchedulesSectionProps) {
                 }
                 details={
                   <>
+                    <span className="schedules__meta" data-testid={`schedule-status-${s.id}`}>
+                      {status}
+                    </span>
                     <span className="schedules__meta" data-testid={`schedule-summary-${s.id}`}>
                       {describeRule(s.rule)} · {labels.actionLabel(s.action)} on{" "}
                       {labels.targets(s.targets).label}
                     </span>
                     {result ? (
-                      <span className="schedules__meta" data-testid={`schedule-last-${s.id}`}>
+                      <span
+                        className="schedules__meta schedules__last"
+                        data-testid={`schedule-last-${s.id}`}
+                      >
+                        <StatusDot
+                          tone={outcomeTone(result.outcome)}
+                          size="sm"
+                          ariaHidden
+                          title={result.message ?? result.outcome}
+                          testId={`schedule-last-dot-${s.id}`}
+                        />
                         Last:{" "}
                         <time dateTime={result.at} title={formatAbsoluteTime(result.at)}>
                           {formatRelativeTime(result.at)}
