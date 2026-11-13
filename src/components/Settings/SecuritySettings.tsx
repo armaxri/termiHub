@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { Shield, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import type { CredentialStorageMode, SwitchCredentialStoreResult } from "@/types/credential";
@@ -12,6 +12,7 @@ import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { ImportedWorkspaceConfirmations } from "./ImportedWorkspaceConfirmations";
 import { MasterPasswordSetupFields } from "@/components/CredentialStorage/MasterPasswordSetupFields";
+import { credentialStorageRadioOptions } from "@/components/CredentialStorage/credentialStorageOptions";
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import { errorMessage } from "@/utils/errorMessage";
 import { tf } from "@/i18n/catalog";
@@ -20,40 +21,34 @@ interface SecuritySettingsProps {
   visibleFields?: Set<string>;
 }
 
-interface StorageModeOption {
-  value: CredentialStorageMode;
-  label: string;
-  badge?: string;
-  description: string;
-  testId: string;
+/**
+ * Settings ▸ Security test id of each storage-mode card. The cards themselves
+ * (order, names, descriptions, badge) come from the shared option list the
+ * first-use chooser renders too (#5553).
+ */
+const STORAGE_MODE_TEST_IDS: { mode: CredentialStorageMode; testId: string }[] = [
+  { mode: "os_keychain", testId: "storage-mode-os-keychain" },
+  { mode: "master_password", testId: "storage-mode-master-password" },
+  { mode: "none", testId: "storage-mode-none" },
+];
+
+function storageModeTestId(mode: CredentialStorageMode): string {
+  return STORAGE_MODE_TEST_IDS.find((o) => o.mode === mode)?.testId ?? mode;
 }
 
-const STORAGE_MODE_OPTIONS: StorageModeOption[] = [
-  {
-    value: "master_password",
-    label: "Master password",
-    description:
-      "Encrypt credentials with a master password. You'll need to enter it when the app starts or after a timeout.",
-    testId: "storage-mode-master-password",
-  },
-  {
-    value: "os_keychain",
-    label: "OS Keychain",
-    description:
-      "Store credentials in the native OS credential store (macOS Keychain, Windows Credential Manager, or Linux Secret Service). The OS manages access — no master password needed.",
-    testId: "storage-mode-os-keychain",
-  },
-  {
-    value: "none",
-    label: "None",
-    description: "Don't store credentials. You'll be prompted for passwords each time you connect.",
-    testId: "storage-mode-none",
-  },
-];
+/**
+ * Short name of a storage mode for sentences in the switch dialogs and
+ * migration messages ("Switch to None?"), where the option label would not read.
+ */
+const STORAGE_MODE_NAMES: Record<CredentialStorageMode, string> = {
+  os_keychain: "OS Keychain",
+  master_password: "Master password",
+  none: "None",
+};
 
 /** Human-readable label for a credential storage mode, used in dialog copy. */
 function modeLabel(mode: CredentialStorageMode): string {
-  return STORAGE_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode;
+  return STORAGE_MODE_NAMES[mode] ?? mode;
 }
 
 /** Pluralize "credential" for a count. */
@@ -362,20 +357,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             disabled={switching}
             aria-label="Storage mode"
             data-testid="storage-mode-group"
-            options={STORAGE_MODE_OPTIONS.map((option) => ({
-              value: option.value,
-              label: (
-                <>
-                  <Shield size={14} aria-hidden="true" />
-                  <span>{option.label}</span>
-                  {option.badge && (
-                    <span className="settings-panel__radio-option-badge">{option.badge}</span>
-                  )}
-                </>
-              ),
-              description: option.description,
-              "data-testid": option.testId,
-            }))}
+            options={credentialStorageRadioOptions(storageModeTestId)}
           />
 
           {masterPasswordSetup && confirmSwitch === "master_password" && (
