@@ -322,6 +322,17 @@ class Driver:
         """
         return self._call({"action": "osInputProbe", "testId": test_id, "reset": reset or None})
 
+    def force_hover(self, test_id: Optional[str]) -> int:
+        """Render ``test_id`` as hovered without the OS pointer (#5538); ``None`` clears.
+
+        The ``forceHover`` verb clones the app's ``:hover`` rules onto an
+        attribute set on the element and its ancestors, so the browser paints
+        and computes the real hover styles (a synthetic event never sets
+        ``:hover``). Returns how many ``:hover`` rules were cloned.
+        """
+        value = self._call({"action": "forceHover", "testId": test_id})
+        return int((value or {}).get("rules", 0))
+
     def _call(self, command: Command, *, timeout: Optional[float] = None) -> Any:
         # Drop None-valued keys so the wire form matches the in-process client:
         # JSON.stringify omits `undefined`, and the dispatcher distinguishes an
