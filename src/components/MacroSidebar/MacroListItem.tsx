@@ -23,8 +23,8 @@ interface MacroListItemProps {
 }
 
 /**
- * A single macro row in the manager sidebar: name, a step-count badge, a
- * one-line preview of the recorded input, and the Play / Edit / Duplicate /
+ * A single macro row in the manager sidebar: the name first (it is what users
+ * scan and search for, #5519; no leading step-count badge), a one-line preview of the recorded input, and the Play / Edit / Duplicate /
  * Delete actions. Double-click plays the macro (matching the workspace row's
  * double-click-to-launch affordance). Composed from the shared list-item shell.
  */
@@ -40,7 +40,6 @@ export function MacroListItem({
   rowRef,
   rowProps,
 }: MacroListItemProps) {
-  const stepCount = macro.steps.length;
   const preview = summariseMacroSteps(macro.steps);
 
   return (
@@ -50,8 +49,6 @@ export function MacroListItem({
       testId={`macro-item-${macro.id}`}
       nameTestId={`macro-name-${macro.id}`}
       name={macro.name}
-      badge={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
-      badgeTestId={`macro-steps-${macro.id}`}
       onDoubleClick={() => onPlay(macro.id)}
       actions={
         <>
