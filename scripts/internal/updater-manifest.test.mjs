@@ -92,9 +92,7 @@ describe("verifySignature", () => {
 
   it("rejects a signature from another key", () => {
     const other = makeSigner();
-    expect(() => verifySignature(TAURI_SIG, TAURI_PAYLOAD, other.pubkey)).toThrow(
-      /different key/
-    );
+    expect(() => verifySignature(TAURI_SIG, TAURI_PAYLOAD, other.pubkey)).toThrow(/different key/);
   });
 
   it("rejects a tampered trusted comment (a re-labelled version)", () => {
@@ -114,7 +112,12 @@ describe("verifySignature", () => {
 describe("buildManifest + manifestProblems", () => {
   it("writes a manifest that passes the check", () => {
     stage();
-    const manifest = buildManifest({ version: VERSION, dir, platforms, pubDate: "2026-11-14T00:00:00Z" });
+    const manifest = buildManifest({
+      version: VERSION,
+      dir,
+      platforms,
+      pubDate: "2026-11-14T00:00:00Z",
+    });
     expect(Object.keys(manifest.platforms).sort()).toEqual(
       platforms.platforms.map((p) => p.target).sort()
     );
@@ -209,7 +212,9 @@ describe("CLI", () => {
   it("fails the check of a tampered bundle", () => {
     stage();
     const config = configWith(signer.pubkey);
-    expect(main(["write", "--version", VERSION, "--dir", dir, "--config", config], quiet())).toBe(0);
+    expect(main(["write", "--version", VERSION, "--dir", dir, "--config", config], quiet())).toBe(
+      0
+    );
     writeFileSync(path.join(dir, `termiHub-${VERSION}-linux-x64.AppImage`), "evil");
     const out = quiet();
     expect(main(["check", "--version", VERSION, "--dir", dir, "--config", config], out)).toBe(1);
@@ -218,7 +223,9 @@ describe("CLI", () => {
 
   it("fails without a configured key and on bad arguments", () => {
     const config = configWith("");
-    expect(main(["check", "--version", VERSION, "--dir", dir, "--config", config], quiet())).toBe(1);
+    expect(main(["check", "--version", VERSION, "--dir", dir, "--config", config], quiet())).toBe(
+      1
+    );
     expect(main(["check", "--dir", dir], quiet())).toBe(2);
     expect(main(["sign"], quiet())).toBe(2);
   });
