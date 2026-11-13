@@ -824,7 +824,7 @@ describe("SecuritySettings", () => {
       expect(panel.textContent).toContain("Switch failed, nothing changed");
       expect(panel.textContent).toContain("none of your 1 credential could be removed");
       expect(query("migration-remaining")?.textContent).toContain("conn-9:password");
-      expect(mockedToast.error).toHaveBeenCalledTimes(1);
+      expect(mockedToast.error).not.toHaveBeenCalled();
     });
   });
 
