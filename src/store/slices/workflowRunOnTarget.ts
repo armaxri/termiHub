@@ -7,6 +7,11 @@
  * and surfaces progress, retries (PROD-045), and the outcome as a toast.
  */
 import { toast } from "@/components/ui";
+import {
+  claimWorkflowRunToast,
+  collapseWorkflowRunOutcome,
+  keepWorkflowRunFailure,
+} from "./workflowRunToasts";
 import { localReadFile } from "@/services/api";
 import { isScriptSourceConfirmed } from "@/services/workflowScriptSources";
 import {
@@ -156,7 +161,10 @@ export interface WorkflowTargetRun {
   sessionless?: boolean;
 }
 
-/** Show the terminal toast for a single-target run's outcome. */
+/**
+ * Show the terminal toast for a single-target run's outcome. A clean outcome
+ * replaces the previous run's clean outcome; a failure stays (#5675).
+ */
 export function toastRunOutcome(
   workflowName: string,
   result: WorkflowRunResult,
@@ -166,6 +174,7 @@ export function toastRunOutcome(
   const tolerated = result.continuedFailures ?? [];
   if (result.status === "completed" && tolerated.length === 0) {
     toast.success(`Ran workflow "${workflowName}"`, { id: toastId });
+    collapseWorkflowRunOutcome(toastId);
   } else if (result.status === "completed") {
     // Completed, but some steps failed and were tolerated via continue-on-error
     // (PROD-045) — say so rather than reporting a clean success.
@@ -175,17 +184,20 @@ export function toastRunOutcome(
         (tolerated.length === 1 ? "" : "s"),
       { id: toastId, description: `Step ${first.stepIndex + 1}: ${first.error}` }
     );
+    keepWorkflowRunFailure(toastId);
   } else if (result.status === "cancelled") {
     toast.info(`Workflow "${workflowName}" canceled`, {
       id: toastId,
       description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
     });
+    collapseWorkflowRunOutcome(toastId);
   } else {
     const stepNumber = (result.failedStepIndex ?? result.stepsCompleted) + 1;
     toast.error(`Workflow "${workflowName}" failed at step ${stepNumber}`, {
       id: toastId,
       description: result.error,
     });
+    keepWorkflowRunFailure(toastId);
   }
 }
 
@@ -457,6 +469,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // real run duration; `triggeredBy` defaults to a manual launch.
   const startedAt = new Date().toISOString();
   if (!fanout) {
+    claimWorkflowRunToast(toastId);
     toast.loading(`Running workflow "${workflow.name}"…`, {
       id: toastId,
       description: `0 / ${total} steps`,
