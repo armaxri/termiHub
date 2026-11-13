@@ -1,15 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { save } from "@/services/nativeDialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { exportBackup, isVaultError, listBackupSections } from "@/services/api";
+import { exportBackup, isVaultError, listBackupSections, localOpenFolder } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import type { BackupSectionInfo } from "@/types/backup";
 import type { CredentialStorageMode, OsAuthInfo } from "@/types/credential";
 import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Modal, Button, Checkbox, Toggle, toast } from "@/components/ui";
+import { Modal, Button, Checkbox, Field, Toggle, toast } from "@/components/ui";
+import type { ToastOptions } from "@/components/ui";
 import { MIN_EXPORT_PASSPHRASE_LENGTH, ratePassphrase } from "@/utils/passphraseStrength";
 import { errorMessage } from "@/utils/errorMessage";
+import { getBasename, parentDir } from "@/utils/paths";
+import { fileManagerActionLabel } from "@/utils/platform";
 import { keychainExportReason } from "./CredentialVaultBackup";
 import "./CredentialVault.css";
 import "./BackupRestore.css";
@@ -45,6 +48,50 @@ export function credentialsExportBlockedReason(
   if (mode === "os_keychain") return keychainExportReason(osAuth);
   if (status === "unavailable") return "No master password has been set up yet.";
   return null;
+}
+
+/** Lower-case a label's first letter for mid-sentence use, keeping acronyms ("SSH …"). */
+function midSentence(label: string): string {
+  if (label.length > 1 && label[1] === label[1].toUpperCase() && /[A-Z]/.test(label[1])) {
+    return label;
+  }
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+/** Join items as "a, b and c". */
+function joinList(items: readonly string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * The success toast after a backup: names the file and what went into it, e.g.
+ * "Backup saved to termihub-backup.json — connections, settings and 1 credential."
+ */
+export function backupSavedMessage(
+  fileName: string,
+  sectionLabels: readonly string[],
+  credentialCount: number | null
+): string {
+  const items = sectionLabels.map(midSentence);
+  if (credentialCount !== null) {
+    items.push(`${credentialCount} credential${credentialCount === 1 ? "" : "s"}`);
+  }
+  return items.length > 0
+    ? `Backup saved to ${fileName} — ${joinList(items)}.`
+    : `Backup saved to ${fileName}.`;
+}
+
+/** Toast action that reveals the folder holding the saved backup. */
+function revealAction(filePath: string): NonNullable<ToastOptions["action"]> {
+  return {
+    label: fileManagerActionLabel(),
+    onClick: () => {
+      localOpenFolder(parentDir(filePath)).catch((err: unknown) => {
+        toast.error(`Could not open the folder: ${errorMessage(err)}`);
+      });
+    },
+  };
 }
 
 interface ExportForm {
@@ -191,17 +238,23 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
         return;
       }
       await writeTextFile(filePath, result.json);
-      const parts = [`${result.sections.length} part${result.sections.length === 1 ? "" : "s"}`];
-      if (result.credentialCount !== null) parts.push(`${result.credentialCount} credentials`);
+      const labelOf = (id: string) => sections?.find((sec) => sec.id === id)?.label ?? id;
+      const message = backupSavedMessage(
+        getBasename(filePath),
+        result.sections.map(labelOf),
+        result.credentialCount
+      );
+      const action = revealAction(filePath);
       if (result.warnings.length > 0) {
         // Something was left out (e.g. a plugin over the size cap): keep the
         // explanation on screen long enough to read.
-        toast.info(`Backup saved (${parts.join(", ")}), but some items were left out.`, {
+        toast.info(`${message} Some items were left out.`, {
           description: result.warnings.join("\n"),
           duration: WARNING_TOAST_MS,
+          action,
         });
       } else {
-        toast.success(`Backup saved (${parts.join(", ")}).`);
+        toast.success(message, { action });
       }
       onOpenChange(false);
     } catch (err) {
@@ -211,6 +264,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
   }, [
     mode,
     status,
+    sections,
     selected,
     includeCredentials,
     encrypt,
@@ -221,6 +275,35 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
     requestUnlock,
     onOpenChange,
   ]);
+
+  // Connections first, then Credentials (security-relevant, so never below the
+  // fold), then the other sections that hold something; empty ones collapse
+  // into one line (#5613).
+  const present = sections?.filter((sec) => sec.present) ?? [];
+  const firstSections = present.filter((sec) => sec.id === "connections");
+  const otherSections = present.filter((sec) => sec.id !== "connections");
+  const emptySections = sections?.filter((sec) => !sec.present) ?? [];
+
+  const renderSection = (sec: BackupSectionInfo) => {
+    const disabled = sec.requiresEncryption && !encrypt;
+    return (
+      <li key={sec.id} className="backup-restore__row">
+        <Checkbox
+          id={`backup-export-${sec.id}`}
+          checked={selected.has(sec.id)}
+          onCheckedChange={(checked) => toggleSection(sec.id, checked)}
+          disabled={disabled}
+          data-testid={`backup-export-section-${sec.id}`}
+        />
+        <label htmlFor={`backup-export-${sec.id}`} className="backup-restore__label">
+          <span className="backup-restore__name">{sec.label}</span>
+          <span className="backup-restore__detail">
+            {disabled ? encryptionReason(sec) : sec.description}
+          </span>
+        </label>
+      </li>
+    );
+  };
 
   return (
     <Modal
@@ -250,31 +333,8 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
       <form id="backup-export-form" className="credential-vault__form">
         <p className="credential-vault__note">Choose what to include in the backup file.</p>
         <ul className="backup-restore__list" data-testid="backup-export-sections">
-          {sections?.map((s) => {
-            const disabled = !s.present || (s.requiresEncryption && !encrypt);
-            return (
-              <li key={s.id} className="backup-restore__row">
-                <Checkbox
-                  id={`backup-export-${s.id}`}
-                  checked={selected.has(s.id)}
-                  onCheckedChange={(checked) => toggleSection(s.id, checked)}
-                  disabled={disabled}
-                  data-testid={`backup-export-section-${s.id}`}
-                />
-                <label htmlFor={`backup-export-${s.id}`} className="backup-restore__label">
-                  <span className="backup-restore__name">{s.label}</span>
-                  <span className="backup-restore__detail">
-                    {!s.present
-                      ? "Nothing saved yet"
-                      : s.requiresEncryption && !encrypt
-                        ? encryptionReason(s)
-                        : s.description}
-                  </span>
-                </label>
-              </li>
-            );
-          })}
-          <li className="backup-restore__row">
+          {firstSections.map(renderSection)}
+          <li className="backup-restore__row" data-testid="backup-export-credentials-row">
             <Checkbox
               id="backup-export-credentials"
               checked={includeCredentials}
@@ -282,19 +342,44 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
               disabled={credentialsBlocked !== null}
               data-testid="backup-export-credentials"
             />
-            <label htmlFor="backup-export-credentials" className="backup-restore__label">
-              <span className="backup-restore__name">Credentials</span>
-              <span
-                className="backup-restore__detail"
-                data-testid="backup-export-credentials-detail"
-              >
-                {credentialsBlocked ??
-                  (mode === "os_keychain" && osAuth
-                    ? `Saved passwords and key passphrases, always encrypted with the passphrase. You'll confirm with ${osAuth.exportReauth.methodLabel}.`
-                    : "Saved passwords and key passphrases, always encrypted with the passphrase.")}
-              </span>
-            </label>
+            <div className="backup-export__row-body">
+              <label htmlFor="backup-export-credentials" className="backup-restore__label">
+                <span className="backup-restore__name">Credentials</span>
+                <span
+                  className="backup-restore__detail"
+                  data-testid="backup-export-credentials-detail"
+                >
+                  {credentialsBlocked ??
+                    (mode === "os_keychain" && osAuth
+                      ? `Saved passwords and key passphrases, always encrypted with the passphrase. You'll confirm with ${osAuth.exportReauth.methodLabel}.`
+                      : "Saved passwords and key passphrases, always encrypted with the passphrase.")}
+                </span>
+              </label>
+              {includeCredentials && mode === "master_password" && (
+                <Field
+                  label="Current master password"
+                  htmlFor="backup-export-master-password"
+                  labelTestId="backup-export-master-password-label"
+                  hint="Needed to include your saved credentials."
+                  data-testid="backup-export-master-password-field"
+                >
+                  <PasswordInput
+                    id="backup-export-master-password"
+                    className="ui-input"
+                    value={masterPassword}
+                    onChange={(e) => setMasterPassword(e.target.value)}
+                    data-testid="backup-export-master-password"
+                  />
+                </Field>
+              )}
+            </div>
           </li>
+          {otherSections.map(renderSection)}
+          {emptySections.length > 0 && (
+            <li className="backup-restore__detail" data-testid="backup-export-empty-sections">
+              {`Nothing saved yet: ${emptySections.map((sec) => midSentence(sec.label)).join(", ")}`}
+            </li>
+          )}
         </ul>
         <div className="backup-restore__toggle-row">
           <Toggle
@@ -311,43 +396,49 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
             and settings.
           </p>
         )}
-        {includeCredentials && mode === "master_password" && (
-          <PasswordInput
-            className="ui-input"
-            value={masterPassword}
-            onChange={(e) => setMasterPassword(e.target.value)}
-            placeholder="Current master password"
-            aria-label="Current master password"
-            data-testid="backup-export-master-password"
-          />
-        )}
         {needsPassphrase && (
           <>
-            <PasswordInput
-              className="ui-input"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              placeholder={`Backup passphrase (min ${MIN_EXPORT_PASSPHRASE_LENGTH} characters)`}
-              aria-label="Backup passphrase"
-              data-testid="backup-export-passphrase"
-            />
-            {passphrase.length > 0 && (
-              <p
-                className={`credential-vault__strength credential-vault__strength--${strength.strength}`}
-                data-testid="backup-export-strength"
-                aria-live="polite"
-              >
-                {strength.hint}
-              </p>
-            )}
-            <PasswordInput
-              className="ui-input"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder="Confirm backup passphrase"
-              aria-label="Confirm backup passphrase"
-              data-testid="backup-export-confirm"
-            />
+            <Field
+              label="Backup passphrase"
+              htmlFor="backup-export-passphrase"
+              labelTestId="backup-export-passphrase-label"
+              data-testid="backup-export-passphrase-field"
+              hint={
+                passphrase.length > 0 ? (
+                  <span
+                    className={`credential-vault__strength credential-vault__strength--${strength.strength}`}
+                    data-testid="backup-export-strength"
+                    aria-live="polite"
+                  >
+                    {strength.hint}
+                  </span>
+                ) : (
+                  `At least ${MIN_EXPORT_PASSPHRASE_LENGTH} characters.`
+                )
+              }
+            >
+              <PasswordInput
+                id="backup-export-passphrase"
+                className="ui-input"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                data-testid="backup-export-passphrase"
+              />
+            </Field>
+            <Field
+              label="Repeat backup passphrase"
+              htmlFor="backup-export-confirm"
+              labelTestId="backup-export-confirm-label"
+              data-testid="backup-export-confirm-field"
+            >
+              <PasswordInput
+                id="backup-export-confirm"
+                className="ui-input"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                data-testid="backup-export-confirm"
+              />
+            </Field>
             <p className="credential-vault__note">
               You need this passphrase to restore the backup. If you forget it, the backup cannot be
               recovered.
