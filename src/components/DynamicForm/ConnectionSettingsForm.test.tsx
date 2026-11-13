@@ -742,3 +742,50 @@ describe("ConnectionSettingsForm", () => {
     expect(query("field-host-error")).toBeNull();
   });
 });
+
+describe("ConnectionSettingsForm leadNote (#5560)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("renders the note once, under the first shown group's heading", () => {
+    act(() => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={SSH_SCHEMA}
+          settings={{ host: "", port: 22, authMethod: "key" }}
+          onChange={() => {}}
+          leadNote={<p data-testid="lead-note">note</p>}
+        />
+      );
+    });
+    expect(queryAll("lead-note")).toHaveLength(1);
+    const first = query("form-group-connection")!;
+    expect(first.querySelector("h3")?.nextElementSibling).toBe(query("lead-note"));
+  });
+
+  it("goes to the next group when the first has no shown fields", () => {
+    const schema: SettingsSchema = {
+      groups: [{ key: "empty", label: "Empty", fields: [] }, ...SSH_SCHEMA.groups],
+    };
+    act(() => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={schema}
+          settings={{ host: "", port: 22, authMethod: "key" }}
+          onChange={() => {}}
+          leadNote={<p data-testid="lead-note">note</p>}
+        />
+      );
+    });
+    expect(queryAll("lead-note")).toHaveLength(1);
+    expect(query("form-group-connection")!.contains(query("lead-note"))).toBe(true);
+  });
+});

@@ -1818,12 +1818,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             </Select>
           </Field>
         )}
-        {!isAgentTransportMode && (
-          <p className="settings-form__hint">
-            Use {"${VAR}"} for environment variables, e.g. {"${USER}"}
-            {isAgentDefinitionMode && " (resolved on the remote machine)"}
-          </p>
-        )}
         {isAgentTunnelledGraphical && (
           <p className="settings-form__hint" data-testid="connection-editor-agent-tunnel-hint">
             Runs on this computer and connects through the agent&apos;s port forwarding — the host
@@ -1901,6 +1895,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                   ),
                 }
               : undefined
+          }
+          leadNote={
+            // Under the first connection section, where the fields that expand
+            // ${VAR} live, not under the Type select (#5560).
+            !isAgentTransportMode && (
+              <p className="settings-form__hint" data-testid="connection-editor-env-var-hint">
+                Use {"${VAR}"} for environment variables, e.g. {"${USER}"}
+                {isAgentDefinitionMode && " (resolved on the remote machine)"}
+              </p>
+            )
           }
           credentialSavedHint={credentialSavedHint}
           credentialStorageOff={credentialStoreStatus?.mode === "none" && !credentialStorageChoose}

@@ -755,10 +755,12 @@
 }
 
 .ui-radio-card {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--spacing-xs);
+  /* Radio mark in the first column; label and description stack in the second. */
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--spacing-sm);
+  row-gap: var(--spacing-xs);
   margin: 0;
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border-primary);
@@ -798,7 +800,36 @@
   cursor: not-allowed;
 }
 
+/* The selected-state mark (#5560): the same circle + dot as the plain radio,
+   so a selected card is told apart by shape, not by the accent tint alone. */
+.ui-radio-card__mark {
+  grid-column: 1;
+  grid-row: 1;
+  width: 14px;
+  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--text-secondary);
+  background: var(--bg-active);
+  transition: border-color var(--transition-fast);
+}
+
+.ui-radio-card[data-state="checked"] > .ui-radio-card__mark {
+  border-color: var(--accent-color);
+}
+
+.ui-radio-card[data-state="checked"] > .ui-radio-card__mark::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-color);
+}
+
 .ui-radio-card__label {
+  grid-column: 2;
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
@@ -808,13 +839,15 @@
 }
 
 .ui-radio-card__desc {
+  grid-column: 2;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   line-height: 1.4;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ui-radio-card {
+  .ui-radio-card,
+  .ui-radio-card__mark {
     transition: none;
   }
 }

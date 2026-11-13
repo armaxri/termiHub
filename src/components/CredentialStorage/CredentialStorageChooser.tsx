@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode } from "@/types/credential";
 import { markCredentialStorageChosen, switchCredentialStore } from "@/services/api";
@@ -48,6 +48,13 @@ export function CredentialStorageChooser() {
   const [error, setError] = useState("");
   const [shownOpen, setShownOpen] = useState(open);
   const primaryRef = useRef<HTMLButtonElement>(null);
+  // The tallest the body has been since the chooser opened. Both steps keep
+  // it as their min-height, so the centred dialog's title, close button and
+  // footer stay put when moving between steps instead of jumping (#5560).
+  // A callback ref kept in state: the Radix portal mounts the body after this
+  // component's own commit, so a plain ref would be read too early.
+  const [bodyEl, setBodyEl] = useState<HTMLDivElement | null>(null);
+  const [bodyMinHeight, setBodyMinHeight] = useState(0);
 
   // Reset whenever the chooser opens, during render so a stale choice or a
   // typed master password never shows for a frame.
@@ -59,8 +66,25 @@ export function CredentialStorageChooser() {
       setPassword("");
       setConfirm("");
       setError("");
+      setBodyMinHeight(0);
     }
   }
+
+  // Measured after every render (step change, inline error) and on resize
+  // (late font load). The value only ever grows, so there is no loop.
+  const growBodyMinHeight = useCallback((el: HTMLElement) => {
+    const height = el.offsetHeight;
+    setBodyMinHeight((prev) => (height > prev ? height : prev));
+  }, []);
+  useLayoutEffect(() => {
+    if (bodyEl) growBodyMinHeight(bodyEl);
+  });
+  useLayoutEffect(() => {
+    if (!bodyEl || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => growBodyMinHeight(bodyEl));
+    observer.observe(bodyEl);
+    return () => observer.disconnect();
+  }, [bodyEl, growBodyMinHeight]);
 
   const cancel = useCallback(() => resolveStorageChoice("canceled"), [resolveStorageChoice]);
 
@@ -166,12 +190,17 @@ export function CredentialStorageChooser() {
         </>
       }
     >
-      <div className="credential-storage-chooser">
+      <div
+        ref={setBodyEl}
+        className="credential-storage-chooser"
+        style={bodyMinHeight > 0 ? { minHeight: bodyMinHeight } : undefined}
+        data-testid="credential-storage-chooser-body"
+      >
         {settingUpVault ? (
           <>
             <p className="credential-storage-chooser__text">
               Choose a strong password to encrypt your saved passwords. termiHub asks for it once
-              per session to unlock the vault. It cannot be recovered if you forget it.
+              per session to unlock the vault.
             </p>
             <div data-testid="credential-storage-chooser-master-password-setup">
               <MasterPasswordSetupFields

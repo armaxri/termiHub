@@ -26,8 +26,10 @@ export interface RadioGroupOption {
  * - `default` — a small radio circle beside each label.
  * - `cards` — each option is a bordered card (label + optional description);
  *   the whole card is the radio, and the selected card gets the accent border
- *   plus an accent tint. This is the one shared "pick one of N described
- *   options" selector (UISF2-002 / UI2-006).
+ *   plus an accent tint. A radio mark (circle, filled when selected) leads each
+ *   card, so the choice is also shown by shape, not by colour alone (#5560).
+ *   This is the one shared "pick one of N described options" selector
+ *   (UISF2-002 / UI2-006).
  */
 export type RadioGroupVariant = "default" | "cards";
 
@@ -140,6 +142,8 @@ function RadioCard({ option, idPrefix }: RadioCardProps): React.ReactElement {
       aria-describedby={hasDescription ? descId : undefined}
       data-testid={option["data-testid"]}
     >
+      {/* Decorative: the card itself is the radio and carries aria-checked. */}
+      <span className="ui-radio-card__mark" aria-hidden="true" />
       <span className="ui-radio-card__label" id={labelId}>
         {option.label}
       </span>

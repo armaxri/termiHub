@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { TriangleAlert } from "lucide-react";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Field } from "@/components/ui";
 import {
@@ -6,6 +7,8 @@ import {
   masterPasswordRequirementHint,
   showMasterPasswordMismatch,
 } from "@/utils/masterPasswordValidation";
+import { MASTER_PASSWORD_NOT_RECOVERABLE_TEXT } from "@/utils/credentialStorageCopy";
+import "./CredentialStorageChooser.css";
 
 interface MasterPasswordSetupFieldsProps {
   password: string;
@@ -26,6 +29,9 @@ interface MasterPasswordSetupFieldsProps {
  * The master-password setup inputs — new password, confirmation, inline error —
  * shared by Settings ▸ Security and the first-use storage chooser (#5187), so
  * both set up the vault the same way.
+ *
+ * A one-line warning callout leads the inputs: a forgotten master password
+ * cannot be recovered, and that must not hide in a grey paragraph (#5560).
  *
  * Each input has a persistent label (not a placeholder that disappears once
  * typed into), the first carries a live requirements hint, and the second an
@@ -52,6 +58,10 @@ export function MasterPasswordSetupFields({
 
   return (
     <>
+      <p className="credential-storage-warning" role="note" data-testid={`${testIdPrefix}-warning`}>
+        <TriangleAlert size={14} className="credential-storage-warning__icon" aria-hidden="true" />
+        <span>{MASTER_PASSWORD_NOT_RECOVERABLE_TEXT}</span>
+      </p>
       <Field
         label="Master password"
         htmlFor={passwordId}
