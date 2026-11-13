@@ -214,6 +214,12 @@ class TestProductRunRemoteDesktop(
             self.wait(lambda: self.driver.exists("field-host"), what="the VNC fields")
             self.driver.type("field-host", SSH_HOST)
             self.driver.type("field-port", str(self.vnc.port))
+            # #5626: the SSH tunnel section sits right below Host / Port, above
+            # the display options, so it is visible without scrolling.
+            tunnel_y = self.driver.measure_element("field-useSshTunnel")["rect"]["y"]
+            display_y = self.driver.measure_element("field-scaleMode")["rect"]["y"]
+            self.evidence(f"tunnel toggle y={tunnel_y}, scale mode y={display_y}")
+            assert tunnel_y < display_y, "the SSH tunnel section is below the display options"
             self.driver.click("field-useSshTunnel")
             self.wait(lambda: self.driver.exists("field-sshHost"), what="the SSH tunnel fields")
             self.driver.type("field-sshHost", SSH_HOST)
@@ -230,6 +236,10 @@ class TestProductRunRemoteDesktop(
             self._wait_active()
             self._vnc_quadrants()
             assert self.vnc.connections() > before, "the tunnel reached no VNC server"
+            # #5626: the status bar says the session goes through the SSH tunnel.
+            status = self.driver.get_text(self.STATUS_SEGMENT)
+            self.evidence(f"status bar: {status!r}")
+            assert f"via SSH {native.target.username}@{SSH_HOST}" in status, status
         self.close_all_tabs()
 
     def test_03_rdp_scripted(self):
@@ -298,6 +308,40 @@ class TestProductRunRemoteDesktop(
     def test_04_real_hosts(self):
         self._real_host("vnc")
         self._real_host("rdp")
+
+    def test_05_vnc_first_frame_state(self):
+        with self.step(
+            "vnc.first-frame",
+            "A VNC session that is up but has painted nothing shows its stage, not a blank pane, "
+            "and the status bar claims no resolution until the first frame",
+            expect="a VNC tab with the 'Connected, waiting for the first frame…' overlay, "
+            "then the four-quadrant desktop",
+        ):
+            self._open()
+            self.vnc.hold_frames()
+            try:
+                self.create_vnc_connection(
+                    unique_name("pr-vnc-held"), host=SSH_HOST, port=self.vnc.port, scale_mode="fit"
+                )
+                self._wait_active()
+                self.wait(lambda: self.driver.exists(self.OVERLAY_FIRST_FRAME),
+                          what="the waiting-for-the-first-frame overlay")
+                status = self.driver.get_text(self.STATUS_SEGMENT)
+                self.evidence(f"status bar before the first frame: {status!r}")
+                assert f"{SSH_HOST}:{self.vnc.port}" in status, status
+                assert "×" not in status and "-bit" not in status, (
+                    f"the status bar claims a live session before any frame: {status!r}"
+                )
+                self.shot(label="waiting")
+            finally:
+                self.vnc.release_frames()
+            self._vnc_quadrants()
+            self.wait(lambda: not self.driver.exists(self.OVERLAY_FIRST_FRAME),
+                      what="the waiting overlay to go once the frame painted")
+            status = self.driver.get_text(self.STATUS_SEGMENT)
+            self.evidence(f"status bar after the first frame: {status!r}")
+            assert f"{self.vnc.width}×{self.vnc.height}" in status, status
+        self.close_all_tabs()
 
 
 # ── Monitoring ───────────────────────────────────────────────────────────────

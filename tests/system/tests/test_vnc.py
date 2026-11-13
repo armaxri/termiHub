@@ -173,9 +173,11 @@ class TestVncRender(_VncSuite):
         text = self.wait(
             lambda: (
                 self.driver.exists("status-bar-remote-desktop")
+                # The resolution shows once a frame painted (#5626).
+                and "×" in (self.driver.get_text("status-bar-remote-desktop") or "")
                 and self.driver.get_text("status-bar-remote-desktop")
             ),
-            what="the remote-desktop status-bar segment",
+            what="the remote-desktop status-bar segment with the resolution",
         )
         assert f"{VNC_HOST}:{VNC_PORT}" in text
         assert f"{VNC_FB_WIDTH}×{VNC_FB_HEIGHT}" in text
