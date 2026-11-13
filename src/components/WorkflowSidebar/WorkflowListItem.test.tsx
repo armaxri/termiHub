@@ -58,14 +58,17 @@ describe("WorkflowListItem", () => {
     container.remove();
   });
 
-  it("renders name, step-count badge, and a kind-joined preview", () => {
+  it("renders the name first with no step-count badge, and a kind-joined preview", () => {
     const steps: WorkflowStep[] = [
       { kind: "send-command", command: "a" },
       { kind: "wait", delayMs: 10 },
     ];
     render(workflow({ steps }));
     expect(query("workflow-name-w1")?.textContent).toBe("Bootstrap");
-    expect(query("workflow-steps-w1")?.textContent).toBe("2 steps");
+    // The name is the row's first text; no step count in front of it (#5519).
+    const header = query("workflow-item-w1")?.querySelector(".sidebar-list-item__header");
+    expect(header?.textContent?.startsWith("Bootstrap")).toBe(true);
+    expect(query("workflow-item-w1")?.querySelector(".sidebar-list-item__badge")).toBeNull();
     expect(query("workflow-preview-w1")?.textContent).toBe("send-command → wait");
   });
 
