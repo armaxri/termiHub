@@ -576,6 +576,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     error: result.status === "failed" ? result.error : undefined,
     continuedFailures: result.continuedFailures?.length || undefined,
     tabId: targetTabId,
+    targetLabel: targetLabel || undefined,
     triggeredBy,
   };
   try {

@@ -98,7 +98,7 @@ describe("WorkflowListItem", () => {
     render(workflow());
     const summary = query("workflow-summary-w1");
     expect(summary?.textContent).toBe("Manual");
-    expect(summary?.classList.contains("workflow-item__summary")).toBe(true);
+    expect(summary?.closest(".workflow-item__summary")).not.toBeNull();
     // Never a step count (#5519/#5635).
     expect(summary?.textContent).not.toMatch(/step/i);
     expect(query("workflow-armed-w1")).toBeNull();

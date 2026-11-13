@@ -121,6 +121,11 @@ export function resolveConnectedTargets(
   return { targets, skipped: tabIds.length - targets.length };
 }
 
+/** "1 terminal" / "2 terminals" — never the lazy "terminal(s)" (#5635). */
+function terminalCount(n: number): string {
+  return `${n} terminal${n === 1 ? "" : "s"}`;
+}
+
 /**
  * Show one toast summarising a fan-out run: success when every target
  * completed cleanly, an error naming the failed terminals when any failed, and
@@ -150,18 +155,18 @@ export function toastFanoutSummary(
 
   if (failed.length > 0) {
     const detail = failed.map((o) => `${o.title}: ${o.result.error ?? "failed"}`).join("; ");
-    toast.error(`Workflow "${workflowName}" failed on ${failed.length} terminal(s)`, {
+    toast.error(`Workflow "${workflowName}" failed on ${terminalCount(failed.length)}`, {
       id: toastId,
       description: `${summary}. ${detail}`,
     });
   } else if (cancelled) {
     toast.info(`Workflow "${workflowName}" canceled`, { id: toastId, description: summary });
   } else if (skipped > 0 || tolerated) {
-    toast.info(`Ran workflow "${workflowName}" on ${completed} terminal(s)`, {
+    toast.info(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, {
       id: toastId,
       description: summary,
     });
   } else {
-    toast.success(`Ran workflow "${workflowName}" on ${completed} terminal(s)`, { id: toastId });
+    toast.success(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, { id: toastId });
   }
 }
