@@ -152,10 +152,13 @@ describe("Settings categories share one section heading style (#5634)", () => {
           container.querySelector<HTMLElement>(`[data-testid='settings-nav-${id}']`)?.click();
         });
         const content = container.querySelector("[data-testid='settings-panel-content']");
-        // Lazily-loaded categories (Editor) render once their chunk resolves.
-        await vi.waitFor(() => expect(content?.querySelector("h3")).not.toBeNull(), {
-          timeout: 3000,
-        });
+        // Lazily-loaded categories (Editor) render once their chunk resolves;
+        // poll inside act so the late render stays wrapped.
+        for (let i = 0; i < 100 && !content?.querySelector("h3"); i++) {
+          await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          });
+        }
         const headings = Array.from(content?.querySelectorAll("h3") ?? []);
         const stray = headings
           .filter((h) => !h.classList.contains(SETTINGS_SECTION_HEADING_CLASS))
