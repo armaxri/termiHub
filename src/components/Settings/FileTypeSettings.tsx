@@ -8,6 +8,7 @@ import { Button, ConfirmDialog, Input, Tooltip, EmptyState } from "@/components/
 import { compareNames } from "@/utils/locale";
 import { isImeComposing } from "@/utils/imeComposition";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
+import "./FileTypeSettings.css";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -245,46 +246,62 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               <Copy size={11} style={{ display: "inline", verticalAlign: "middle" }} /> to copy a
               row into the add form and override it.
             </p>
-            <ul className="settings-panel__file-list">
-              {ALL_BUILT_IN_ROWS.map(({ pattern, language }) => {
-                const isOverridden = pattern in userMappings;
-                return (
-                  <li
-                    key={pattern}
-                    className={`settings-panel__file-item${isOverridden ? " settings-panel__file-item--overridden" : ""}`}
-                  >
-                    <span className="settings-panel__file-path" style={{ fontFamily: "monospace" }}>
-                      {pattern}
-                    </span>
-                    <span
-                      className="settings-panel__file-path settings-panel__file-path--disabled"
-                      style={{ fontFamily: "monospace" }}
+            {/* Dense pattern → language table (#5713): one aligned row per mapping. */}
+            <table className="file-type-settings__table" data-testid="file-type-builtin-table">
+              <thead>
+                <tr>
+                  <th scope="col">Pattern</th>
+                  <th scope="col">Language</th>
+                  <th scope="col" className="file-type-settings__action-col">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {ALL_BUILT_IN_ROWS.map(({ pattern, language }) => {
+                  const isOverridden = pattern in userMappings;
+                  return (
+                    <tr
+                      key={pattern}
+                      className="file-type-settings__row"
+                      data-overridden={isOverridden ? "true" : undefined}
+                      data-testid={`file-type-builtin-row-${pattern}`}
                     >
-                      → {language}
-                    </span>
-                    {isOverridden && (
-                      <span
-                        className="settings-panel__badge"
-                        data-testid={`file-type-overridden-badge-${pattern}`}
+                      <td className="file-type-settings__pattern">
+                        <span data-testid={`file-type-builtin-pattern-${pattern}`}>{pattern}</span>
+                        {isOverridden && (
+                          <span
+                            className="settings-panel__badge file-type-settings__badge"
+                            data-testid={`file-type-overridden-badge-${pattern}`}
+                          >
+                            overridden
+                          </span>
+                        )}
+                      </td>
+                      <td
+                        className="file-type-settings__language"
+                        data-testid={`file-type-builtin-language-${pattern}`}
                       >
-                        overridden
-                      </span>
-                    )}
-                    <Tooltip content={`Copy "${pattern}" into the add form`}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        icon={<Copy size={14} />}
-                        onClick={() => handlePrefillOverride(pattern, language)}
-                        aria-label={`Copy "${pattern}" into the add form`}
-                        data-testid={`file-type-copy-${pattern}`}
-                      />
-                    </Tooltip>
-                  </li>
-                );
-              })}
-            </ul>
+                        {language}
+                      </td>
+                      <td className="file-type-settings__action">
+                        <Tooltip content={`Copy "${pattern}" into the add form`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            icon={<Copy size={14} />}
+                            onClick={() => handlePrefillOverride(pattern, language)}
+                            aria-label={`Copy "${pattern}" into the add form`}
+                            data-testid={`file-type-copy-${pattern}`}
+                          />
+                        </Tooltip>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </>
       )}
