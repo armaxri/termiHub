@@ -20,10 +20,12 @@ const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** [CSS file under src/, selector that paints --bg-selected and must redirect]. */
 const SELECTED_REDIRECTS: [string, string][] = [
   ["components/Sidebar/ConnectionList.css", ".connection-tree__item--selected"],
+  ["components/Sidebar/FileBrowser.css", ".file-browser__row-wrapper--selected"],
   ["components/Sidebar/FileBrowser.css", ".file-browser__row-wrapper--drop-valid"],
   ["components/Sidebar/FileBrowser.css", ".file-browser__row-wrapper--drop-valid:hover"],
   ["components/TransferView/TransferView.css", ".transfer-pane--drop-target"],
   ["components/TransferView/TransferView.css", ".transfer-pane__row--selected"],
+  ["components/Plugins/Plugins.css", ".plugin-row--selected"],
 ];
 
 /**
@@ -42,8 +44,12 @@ const EXEMPT: Record<string, string> = {
 
 const SECONDARY_REDIRECT = /--text-secondary:\s*var\(--text-secondary-on-selection\)/;
 const MUTED_REDIRECT = /--text-muted:\s*var\(--text-muted-on-selection\)/;
-/** `--sidebar-selected-bg` defaults to `--bg-selected` (#5562), so it counts too. */
-const PAINTS_SELECTED = /background(-color)?:\s*var\(--(bg-selected|sidebar-selected-bg)\)/;
+/**
+ * `--selected-row-bg` and `--selected-row-secondary-bg` default to
+ * `--bg-selected` (#5562, #5591), so they count too.
+ */
+const PAINTS_SELECTED =
+  /background(-color)?:\s*var\(--(bg-selected|selected-row-bg|selected-row-secondary-bg)\)/;
 const PLAIN_TEXT_COLOR = /(^|[\s;])color:\s*var\(--text-(secondary|muted)\)/;
 
 /** Map each selector in `css` to the declarations of the rule it heads. */

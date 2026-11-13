@@ -623,17 +623,17 @@ describe("solarized light selection and filled buttons (#5562)", () => {
     expect(contrastRatio(colors.textOnAccent, colors.accentHover)).toBeGreaterThanOrEqual(5);
   });
 
-  it("only themes with a selection set the sidebar selection tokens", () => {
+  it("only themes with a selection set the selection tokens", () => {
     applyTheme("solarized-light");
     const style = document.documentElement.style;
-    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe(selection.bg);
-    expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe(selection.bgHover);
-    expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe(selection.indicator);
+    expect(style.getPropertyValue("--selected-row-bg")).toBe(selection.bg);
+    expect(style.getPropertyValue("--selected-row-hover-bg")).toBe(selection.bgHover);
+    expect(style.getPropertyValue("--selected-row-indicator")).toBe(selection.indicator);
     for (const other of ["dark", "light"]) {
       applyTheme(other);
-      expect(style.getPropertyValue("--sidebar-selected-bg")).toBe("");
-      expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe("");
-      expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe("");
+      expect(style.getPropertyValue("--selected-row-bg")).toBe("");
+      expect(style.getPropertyValue("--selected-row-hover-bg")).toBe("");
+      expect(style.getPropertyValue("--selected-row-indicator")).toBe("");
     }
   });
 
@@ -645,18 +645,18 @@ describe("solarized light selection and filled buttons (#5562)", () => {
     const rule = (sel: string) =>
       new RegExp(`${sel.replace(/[.:-]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
     const selected = rule(".connection-tree__item--selected");
-    expect(selected).toMatch(/background-color:\s*var\(--sidebar-selected-bg\)/);
-    expect(selected).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--sidebar-selected-indicator\)/);
+    expect(selected).toMatch(/background-color:\s*var\(--selected-row-bg\)/);
+    expect(selected).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--selected-row-indicator\)/);
     expect(rule(".connection-tree__item--selected:hover")).toMatch(
-      /background-color:\s*var\(--sidebar-selected-hover-bg\)/
+      /background-color:\s*var\(--selected-row-hover-bg\)/
     );
   });
 
-  it("the tint defaults back the sidebar selection tokens in variables.css", () => {
+  it("the tint defaults back the selection tokens in variables.css", () => {
     const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
-    expect(css).toMatch(/--sidebar-selected-bg:\s*var\(--bg-selected\);/);
-    expect(css).toMatch(/--sidebar-selected-hover-bg:\s*var\(--bg-selected-hover\);/);
-    expect(css).toMatch(/--sidebar-selected-indicator:\s*transparent;/);
+    expect(css).toMatch(/--selected-row-bg:\s*var\(--bg-selected\);/);
+    expect(css).toMatch(/--selected-row-hover-bg:\s*var\(--bg-selected-hover\);/);
+    expect(css).toMatch(/--selected-row-indicator:\s*transparent;/);
   });
 });
 
@@ -710,14 +710,166 @@ describe("solarized dark selection (#5582)", () => {
     expect(contrastRatio(selection.bg, selection.bgHover)).toBeGreaterThanOrEqual(1.05);
   });
 
-  it("applying the theme sets the sidebar selection tokens", () => {
+  it("applying the theme sets the selection tokens", () => {
     applyTheme("solarized-dark");
     const style = document.documentElement.style;
-    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe(selection.bg);
-    expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe(selection.bgHover);
-    expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe(selection.indicator);
+    expect(style.getPropertyValue("--selected-row-bg")).toBe(selection.bg);
+    expect(style.getPropertyValue("--selected-row-hover-bg")).toBe(selection.bgHover);
+    expect(style.getPropertyValue("--selected-row-indicator")).toBe(selection.indicator);
     applyTheme("dark");
-    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe("");
+    expect(style.getPropertyValue("--selected-row-bg")).toBe("");
+  });
+});
+
+/**
+ * Selected rows look the same in every selectable list (#5591): the connection
+ * tree, file browser and plugin list on the sidebar, and the transfer view's
+ * panes on `bgSecondary`. Each paints the shared `--selected-row-*` tokens with
+ * the 2px indicator bar; the panes use the `-secondary` pair, because Solarized
+ * Light's sidebar selection (base2) is the pane colour itself there. Graded per
+ * list and theme on the colour the row really resolves to: the theme's opaque
+ * selection, or the accent tint composited over the list's surface.
+ */
+describe("selected rows on every surface (#5591)", () => {
+  const SURFACES = [
+    {
+      list: "connection tree",
+      file: "components/Sidebar/ConnectionList.css",
+      selector: ".connection-tree__item--selected",
+      base: "sidebarBg",
+      pair: "",
+    },
+    {
+      list: "file browser",
+      file: "components/Sidebar/FileBrowser.css",
+      selector: ".file-browser__row-wrapper--selected",
+      base: "sidebarBg",
+      pair: "",
+    },
+    {
+      list: "plugin list",
+      file: "components/Plugins/Plugins.css",
+      selector: ".plugin-row--selected",
+      base: "sidebarBg",
+      pair: "",
+    },
+    {
+      list: "transfer pane",
+      file: "components/TransferView/TransferView.css",
+      selector: ".transfer-pane__row--selected",
+      base: "bgSecondary",
+      pair: "-secondary",
+    },
+  ] as const;
+  const TOKENS = ["textPrimary", "textSecondaryOnSelection", "textMutedOnSelection"] as const;
+
+  /** The opaque selected / hovered-selected row colours and the bar on one surface. */
+  function resolve(theme: (typeof BUILT_IN_THEMES)[number], surface: (typeof SURFACES)[number]) {
+    const { colors, selection } = theme;
+    if (!selection) {
+      const under = colors[surface.base];
+      return {
+        bg: composite(colors.accentColor, under, BG_SELECTED_ALPHA),
+        hover: composite(colors.accentColor, under, BG_SELECTED_HOVER_ALPHA),
+        indicator: null,
+      };
+    }
+    const pair = surface.pair ? (selection.secondary ?? selection) : selection;
+    return { bg: pair.bg, hover: pair.bgHover, indicator: selection.indicator };
+  }
+
+  /** The declarations of every rule in `file` whose selector list holds `selector`. */
+  function cssRule(file: string, selector: string): string {
+    const css = readFileSync(join(SRC_DIR, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    return Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g))
+      .filter((m) => m[1].split(",").some((s) => s.trim() === selector))
+      .map((m) => m[2])
+      .join("\n");
+  }
+
+  for (const surface of SURFACES) {
+    it(`the ${surface.list} paints the shared selection tokens and the bar`, () => {
+      const rest = cssRule(surface.file, surface.selector);
+      const hover = cssRule(surface.file, `${surface.selector}:hover`);
+      expect(rest).toMatch(
+        new RegExp(`background(-color)?:\\s*var\\(--selected-row${surface.pair}-bg\\)`)
+      );
+      expect(rest).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--selected-row-indicator\)/);
+      expect(hover).toMatch(
+        new RegExp(`background(-color)?:\\s*var\\(--selected-row${surface.pair}-hover-bg\\)`)
+      );
+    });
+
+    for (const theme of BUILT_IN_THEMES) {
+      const under = theme.colors[surface.base];
+      const row = resolve(theme, surface);
+      const label = `${theme.id} ${surface.list} (on ${surface.base} ${under})`;
+
+      for (const [state, bg] of [
+        ["selected", row.bg],
+        ["hovered selected", row.hover],
+      ] as const) {
+        for (const token of TOKENS) {
+          const fg = theme.colors[token];
+          it(`${label}: ${token} (${fg}) meets AA on the ${state} row (${bg})`, () => {
+            expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+          });
+        }
+        it(`${label}: the ${state} row stays distinct from its surface`, () => {
+          expect(contrastRatio(bg, under)).toBeGreaterThanOrEqual(1.1);
+        });
+        if (row.indicator) {
+          const bar = row.indicator;
+          it(`${label}: the bar (${bar}) reaches 3:1 on the ${state} row`, () => {
+            expect(contrastRatio(bar, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+          });
+        }
+      }
+
+      it(`${label}: hovering a selected row visibly changes it`, () => {
+        expect(contrastRatio(row.bg, row.hover)).toBeGreaterThanOrEqual(1.05);
+      });
+      if (row.indicator) {
+        const bar = row.indicator;
+        it(`${label}: the bar (${bar}) reaches 3:1 against the surface it borders`, () => {
+          expect(contrastRatio(bar, under)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+        });
+      }
+    }
+  }
+
+  it("documents the gap the pane pair closes: Solarized Light's base2 is the pane", () => {
+    expect(solarizedLightTheme.selection?.bg).toBe(solarizedLightTheme.colors.bgSecondary);
+    expect(solarizedLightTheme.selection?.secondary?.bg).toBe(SOLARIZED_PALETTE.base3);
+  });
+
+  it("the pane pair falls back to the sidebar pair in variables.css", () => {
+    const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+    expect(css).toMatch(/--selected-row-secondary-bg:\s*var\(--selected-row-bg\);/);
+    expect(css).toMatch(/--selected-row-secondary-hover-bg:\s*var\(--selected-row-hover-bg\);/);
+  });
+
+  it("only a theme with a pane pair sets the pane tokens", () => {
+    const style = document.documentElement.style;
+    applyTheme("solarized-light");
+    const secondary = solarizedLightTheme.selection?.secondary;
+    expect(style.getPropertyValue("--selected-row-secondary-bg")).toBe(secondary?.bg);
+    expect(style.getPropertyValue("--selected-row-secondary-hover-bg")).toBe(secondary?.bgHover);
+    for (const other of ["solarized-dark", "dark", "light"]) {
+      applyTheme(other);
+      expect(style.getPropertyValue("--selected-row-secondary-bg")).toBe("");
+      expect(style.getPropertyValue("--selected-row-secondary-hover-bg")).toBe("");
+    }
+  });
+
+  it("the file browser's metadata overlay fades into the selected row colours", () => {
+    const file = "components/Sidebar/FileBrowser.css";
+    const rest = cssRule(file, ".file-browser__row-wrapper--selected .file-browser__meta");
+    const hover = cssRule(file, ".file-browser__row-wrapper--selected:hover .file-browser__meta");
+    expect(rest).toMatch(/var\(--selected-row-bg\)/);
+    expect(hover).toMatch(/var\(--selected-row-hover-bg\)/);
+    // An opaque sidebar layer under the (possibly translucent) tint.
+    for (const body of [rest, hover]) expect(body).toMatch(/var\(--sidebar-bg\)/);
   });
 });
 

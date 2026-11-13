@@ -69,6 +69,12 @@ export interface VisualScenario {
   monitoring?: boolean;
   /** Seed root connections (#5008) and folders (#5020) with icon colours and emoji. */
   iconStyles?: boolean;
+  /**
+   * Seed the file-browser region's local pane and `local_list_dir` with
+   * {@link LOCAL_ENTRIES}, and offer a browsable local type, so the file
+   * browser has rows (#5591).
+   */
+  fileListing?: boolean;
 }
 
 declare global {
@@ -95,6 +101,13 @@ declare global {
 type Args = Record<string, unknown> | undefined;
 
 const STAMP = "2026-10-01T12:00:00Z";
+
+/** A small home folder for the file browser's selected-row check (#5591). */
+const LOCAL_ENTRIES = [
+  { name: "projects", isDirectory: true, size: 0 },
+  { name: "notes.md", isDirectory: false, size: 1834 },
+  { name: "report.pdf", isDirectory: false, size: 482113 },
+].map((e) => ({ ...e, path: `/home/visual/${e.name}`, modified: STAMP, permissions: null }));
 
 /** Workspaces with names long enough to expose premature truncation (#4709). */
 const WORKSPACES = [
@@ -423,6 +436,15 @@ const SSH_FIELDS = [
 
 const CAPABILITIES = { monitoring: false, fileBrowser: false, resize: true, persistent: false };
 
+/** A local shell type that can browse files, for the file browser's rows (#5591). */
+const LOCAL_BROWSABLE_TYPE = {
+  typeId: "local",
+  displayName: "Local shell",
+  icon: "terminal",
+  schema: { groups: [] },
+  capabilities: { ...CAPABILITIES, fileBrowser: true },
+};
+
 /** Connection types for the stored-secrets editor surfaces (#4431). */
 const STORED_SECRET_TYPES = [
   {
@@ -599,6 +621,15 @@ function regionView(region: string, populated: boolean): unknown {
     return window.__VISUAL_SCENARIO__?.iconStyles ? ICON_STYLE_AGENTS_VIEW : AGENTS_VIEW;
   }
   if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
+  if (region.startsWith("file-browser@") && window.__VISUAL_SCENARIO__?.fileListing) {
+    const pane = { path: "/", entries: [], loading: false, error: null };
+    return {
+      mode: "local",
+      local: { ...pane, path: "/home/visual", entries: LOCAL_ENTRIES },
+      session: pane,
+      clipboard: null,
+    };
+  }
   if (region === "system-monitors") {
     return window.__VISUAL_SCENARIO__?.monitoring ? MONITORS_VIEW : {};
   }
@@ -713,7 +744,8 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "load_connections_and_folders":
       return populated ? wire : { connections: [], folders: [], agents: [], externalErrors: [] };
     case "get_connection_types":
-      return scenario.storedSecrets ? STORED_SECRET_TYPES : [];
+      if (scenario.storedSecrets) return STORED_SECRET_TYPES;
+      return scenario.fileListing ? [LOCAL_BROWSABLE_TYPE] : [];
     case "list_stored_field_secret_keys":
       return STORED_SECRET_KEYS[String(args?.connectionId ?? "")] ?? { fields: [], hops: [] };
     case "get_workspaces":
@@ -749,7 +781,7 @@ export function handleCommand(cmd: string, args: Args): unknown {
     case "get_log_file_path":
       return "/home/visual/.local/share/termihub/termihub.log";
     case "local_list_dir":
-      return [];
+      return scenario.fileListing ? LOCAL_ENTRIES : [];
     case "session_monitoring_set_interval":
       (window.__VISUAL_MONITOR_INTERVALS__ ??= []).push(`${args?.sessionId}:${args?.intervalMs}`);
       return null;

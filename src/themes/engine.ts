@@ -174,16 +174,18 @@ export function resolveTheme(
 }
 
 /**
- * The sidebar selected-row CSS variables a theme sets (#5562), or `null` for
+ * The selected-row CSS variables a theme sets (#5562, #5591), or `null` for
  * each one that falls back to its `variables.css` default (the accent tint,
- * no indicator bar).
+ * no indicator bar; the `-secondary` pair falls back to the plain pair).
  */
 export function selectionVariables(theme: ThemeDefinition): Record<string, string | null> {
   const sel = theme.selection;
   return {
-    "--sidebar-selected-bg": sel?.bg ?? null,
-    "--sidebar-selected-hover-bg": sel?.bgHover ?? null,
-    "--sidebar-selected-indicator": sel?.indicator ?? null,
+    "--selected-row-bg": sel?.bg ?? null,
+    "--selected-row-hover-bg": sel?.bgHover ?? null,
+    "--selected-row-indicator": sel?.indicator ?? null,
+    "--selected-row-secondary-bg": sel?.secondary?.bg ?? null,
+    "--selected-row-secondary-hover-bg": sel?.secondary?.bgHover ?? null,
   };
 }
 
@@ -200,7 +202,7 @@ function setCssVariables(theme: ThemeDefinition): void {
   for (const [token, value] of Object.entries(ELEVATION_SHADOWS[theme.colorScheme])) {
     root.style.setProperty(token, value);
   }
-  // Sidebar selected-row surfaces (#5562): a theme's opaque palette colours,
+  // Selected-row surfaces (#5562, #5591): a theme's opaque palette colours,
   // or (removed) the accent-tint defaults from variables.css. Cleared on every
   // apply so switching away from such a theme restores the tints.
   for (const [token, value] of Object.entries(selectionVariables(theme))) {

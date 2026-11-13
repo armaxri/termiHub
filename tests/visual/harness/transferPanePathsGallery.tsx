@@ -31,6 +31,8 @@ interface PaneCell {
   path: string;
   /** Pane width in CSS pixels (the view splits the tab in two). */
   width: number;
+  /** Entry paths shown selected (#5591: the selected-row check reads these). */
+  selected?: string[];
 }
 
 const LONG_LOCAL = "/Users/arne/work/git/termiHubDev/dev2/termiHub/src/components/Sidebar";
@@ -39,7 +41,14 @@ const DEEP_WINDOWS =
   "C:/Users/Administrator/AppData/Local/Programs/termiHub/resources/plugins/ssh-tools";
 
 const CELLS: PaneCell[] = [
-  { id: "short-local", title: "Short local path", side: "local", path: "/home/visual", width: 420 },
+  {
+    id: "short-local",
+    title: "Short local path, one row selected",
+    side: "local",
+    path: "/home/visual",
+    width: 420,
+    selected: ["/x/index.html"],
+  },
   { id: "long-local", title: "Long local path", side: "local", path: LONG_LOCAL, width: 420 },
   { id: "long-remote", title: "Long remote path", side: "remote", path: LONG_REMOTE, width: 420 },
   { id: "deep-windows", title: "Deep Windows path", side: "local", path: DEEP_WINDOWS, width: 420 },
@@ -105,7 +114,7 @@ function Pane({ cell }: { cell: PaneCell }) {
           side={cell.side}
           title={cell.side === "local" ? "Local" : "web-01"}
           listing={listing(cell.path)}
-          selected={new Set()}
+          selected={new Set(cell.selected)}
           onSelectedChange={noop}
           onCopy={noop}
           canCopy

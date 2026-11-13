@@ -116,5 +116,13 @@ export const solarizedLightTheme: ThemeDefinition = {
     bg: "#eee8d5", // base2
     bgHover: "#e2dcc9", // bgHover
     indicator: "#1f6fa6", // accentColor
+    // #5591: transfer panes paint base2 (bgSecondary), so a base2 selection
+    // would vanish there. Rows on those panes step up to base3, the editor
+    // surface (1.14:1 against the pane, base03 text 13.92:1, bar 5.01:1),
+    // and hover to the theme's hover tone like the sidebar.
+    secondary: {
+      bg: "#fdf6e3", // base3
+      bgHover: "#e2dcc9", // bgHover
+    },
   },
 };
