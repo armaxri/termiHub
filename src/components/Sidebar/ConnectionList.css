@@ -133,7 +133,8 @@
  * shared row the buttons crowded the row and pushed the agent name out of view;
  * a column keeps the toggle full-width so the name is always visible and free to
  * ellipsize. Scoped to the agent header so the LOCAL / REMOTE AGENTS section
- * headers keep their single-row layout.
+ * headers keep their single-row layout. A lone state action (Connect,
+ * Reconnect, Cancel) stays on row 1 instead (#5702).
  */
 .connection-list__group-header--agent {
   flex-direction: column;
@@ -156,6 +157,26 @@
   /* Wrap rather than clip the agent's buttons in a narrow sidebar (#4709). */
   flex-wrap: wrap;
   flex-shrink: 1;
+}
+
+/* Row 1 (#5702, R-010): the toggle takes the free width (so the name can
+   ellipsize) and the agent's single state action — Connect, Reconnect or
+   Cancel — sits inline at its end instead of costing a second row. */
+.connection-list__group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.connection-list__group-row .connection-list__group-toggle {
+  flex: 1 1 auto;
+}
+
+.connection-list__group-header--agent .connection-list__group-actions--inline {
+  padding-left: 0;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .connection-list__tree {
