@@ -705,6 +705,33 @@ pub fn adopted_agent_path(
     (replaceable && current != Some(installed)).then(|| installed.to_string())
 }
 
+/// The agent path to store after the POSIX setup wizard installed to
+/// `remote_path` (#5532), or `None` to keep `current` unchanged.
+///
+/// Unlike a deploy/update, the wizard installs where the user told it to: its
+/// install-path field is prefilled with the stored `agentPath`, so a path that
+/// differs from it is the user's choice in this very dialog, and the connect
+/// must then run what the wizard installed — not a binary elsewhere. So any
+/// differing path is stored, a custom one included. An install to the POSIX
+/// default leaves an unset or default stored path alone (it already runs the
+/// default), and an empty path stores nothing.
+pub fn setup_agent_path(current: Option<&str>, remote_path: &str) -> Option<String> {
+    let remote_path = remote_path.trim();
+    if remote_path.is_empty() {
+        return None;
+    }
+    let current = current.map(str::trim).filter(|path| !path.is_empty());
+    let unchanged = match current {
+        None => is_posix_default_install_path(remote_path),
+        Some(path) => {
+            path == remote_path
+                || (is_posix_default_install_path(path)
+                    && is_posix_default_install_path(remote_path))
+        }
+    };
+    (!unchanged).then(|| remote_path.to_string())
+}
+
 /// Whether `path` is the POSIX default install path in any of its forms:
 /// relative to the SSH home (`.local/bin/termihub-agent`), `~/…` or
 /// `$HOME/…`.
