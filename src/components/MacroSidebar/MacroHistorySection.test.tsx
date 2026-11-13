@@ -66,6 +66,7 @@ describe("MacroHistorySection (#3543)", () => {
     render([]);
     expect(query("macro-history-empty")!.textContent).toContain("No playbacks recorded yet");
     expect((query("macro-history-clear") as HTMLButtonElement).disabled).toBe(true);
+    expect(query("macro-history-filter")).toBeNull();
   });
 
   it("lists each run with outcome, progress, origin and target", () => {
@@ -118,16 +119,57 @@ describe("MacroHistorySection (#3543)", () => {
     expect(onShowAll).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the filter as a removable chip apart from the header actions (#5636)", () => {
+    render([run()], "m1");
+    const chip = query("macro-history-filter")!;
+    const header = query("macro-history")!.querySelector(".sidebar-section-header")!;
+    // The chip lives on its own row, not beside the destructive Clear action.
+    expect(header.contains(chip)).toBe(false);
+    expect(header.contains(query("macro-history-show-all"))).toBe(false);
+    expect(chip.contains(query("macro-history-show-all"))).toBe(true);
+    expect(query("macro-history-show-all")!.getAttribute("aria-label")).toBe(
+      "Clear filter: Deploy"
+    );
+  });
+
+  it("labels the Clear history action with visible text (#5636)", () => {
+    render([run()]);
+    const clear = query("macro-history-clear")!;
+    expect(clear.textContent).toContain("Clear");
+    expect(clear.getAttribute("aria-label")).toBe("Clear history");
+  });
+
   it("says when the filtered macro has no runs", () => {
     render([run({ macroId: "m2" })], "m1");
     expect(query("macro-history-empty")!.textContent).toContain("not been played yet");
   });
 
-  it("clears the history", async () => {
+  it("asks for confirmation before clearing the history (#5636)", async () => {
     render([run()]);
     await act(async () => {
       query("macro-history-clear")!.click();
     });
+    expect(clearMacroRunHistory).not.toHaveBeenCalled();
+    const confirm = document.querySelector<HTMLButtonElement>(
+      '[data-testid="macro-history-clear-confirm-confirm"]'
+    );
+    expect(confirm).not.toBeNull();
+    await act(async () => {
+      confirm!.click();
+    });
     expect(clearMacroRunHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the history when the confirmation is cancelled (#5636)", async () => {
+    render([run()]);
+    await act(async () => {
+      query("macro-history-clear")!.click();
+    });
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="macro-history-clear-confirm-cancel"]')!
+        .click();
+    });
+    expect(clearMacroRunHistory).not.toHaveBeenCalled();
   });
 });
