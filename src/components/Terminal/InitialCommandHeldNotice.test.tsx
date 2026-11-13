@@ -63,8 +63,8 @@ describe("InitialCommandHeldNotice (#5509)", () => {
     container.querySelector<HTMLElement>('[data-testid="initial-command-held-notice"]');
   const button = (id: string) =>
     container.querySelector<HTMLButtonElement>(`[data-testid="initial-command-held-${id}-btn"]`);
-  const hold = (held: boolean, sessionId = "s1") =>
-    act(() => recordInitialCommandHeld({ sessionId, held }));
+  const hold = (held: boolean, sessionId = "s1", setup = false, initialCommand = true) =>
+    act(() => recordInitialCommandHeld({ sessionId, held, setup, initialCommand }));
 
   it("renders nothing until the backend reports the command held", () => {
     act(() => root.render(<InitialCommandHeldNotice tabId="t1" />));
@@ -77,6 +77,34 @@ describe("InitialCommandHeldNotice (#5509)", () => {
     expect(notice()?.textContent).toContain(
       "Waiting for the shell prompt — initial command not sent yet"
     );
+  });
+
+  it("covers a held setup and the initial command behind it (#5512)", () => {
+    act(() => root.render(<InitialCommandHeldNotice tabId="t1" />));
+    hold(true, "s1", true, true);
+    expect(notice()?.textContent).toContain(
+      "Waiting for the shell prompt — command marks and initial command not sent yet"
+    );
+    expect(notice()?.getAttribute("aria-label")).toBe("Command marks and initial command not sent");
+  });
+
+  it("covers a held setup without an initial command (#5512)", () => {
+    act(() => root.render(<InitialCommandHeldNotice tabId="t1" />));
+    hold(true, "s1", true, false);
+    expect(notice()?.textContent).toContain(
+      "Waiting for the shell prompt — command marks not set up yet"
+    );
+  });
+
+  it("Send now for a held setup sends once and clears the notice (#5512)", async () => {
+    act(() => root.render(<InitialCommandHeldNotice tabId="t1" />));
+    hold(true, "s1", true, true);
+    await act(async () => {
+      button("send")!.click();
+      button("send")!.click();
+    });
+    expect(sendHeld).toHaveBeenCalledTimes(1);
+    expect(notice()).toBeNull();
   });
 
   it("ignores another session's held command", () => {

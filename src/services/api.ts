@@ -767,8 +767,9 @@ export async function setSessionLineEnding(
 
 /**
  * **Send now** for an initial command held because the shell never announced
- * its prompt (#5509). Returns whether a command was held; `false` means it
- * already went out (or the session is gone), and nothing was typed.
+ * its prompt (#5509), or a held shell-integration setup (#5512; the setup goes
+ * first, then the command). Returns whether anything was held; `false` means
+ * it already went out (or the session is gone), and nothing was typed.
  */
 export async function sendHeldInitialCommand(sessionId: SessionId): Promise<boolean> {
   return (await invoke<boolean>("send_held_initial_command", { sessionId })) ?? false;

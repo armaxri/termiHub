@@ -12,7 +12,11 @@
 //!    user types before that sends the setup first, so it never splits or
 //!    swallows their command. A shell that announces its line editor with
 //!    bracketed paste waits for that instead, with no cap, because a startup
-//!    question leaves canonical mode too (#5452; see [`ReadySignal`]).
+//!    question leaves canonical mode too (#5452; see [`ReadySignal`]). One
+//!    key answering such a question keeps the next prompt fresh (#5515).
+//!    A shell whose bracketed paste is off never sends the mark: the session
+//!    owner then offers to type the setup at the user's word (#5512; see
+//!    [`GatedSetup`]).
 //! 2. **Its echo is filtered out.** At the moment the line is typed, a
 //!    [`SetupEchoFilter`] is armed on the output; it removes the echo up to
 //!    the setup's own end mark, and shows everything as-is when the held
@@ -27,14 +31,14 @@
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
 
 use super::local_shell_ready::{PasteGate, ReadySignal};
 use super::local_shell_setup_watch::{PromptWatch, Verdict};
-use crate::connection::{OutputSender, PromptProbe};
+use crate::connection::{GatedSetup, OutputSender, PromptProbe};
 use crate::output::setup_echo::{HideOutcome, SetupEchoFilter};
 
 /// Upper bound on waiting for the line editor before typing the setup anyway.
@@ -70,6 +74,9 @@ pub(crate) struct TypedSetup {
     watching: AtomicBool,
     writer: Writer,
     output_tx: SenderSlot,
+    /// The line-editor probe, once [`type_when_ready`](Self::type_when_ready)
+    /// watches it: it tells whether the user's keys went to a raw reader.
+    reading: OnceLock<PromptProbe>,
 }
 
 impl TypedSetup {
@@ -97,7 +104,15 @@ impl TypedSetup {
             watching: AtomicBool::new(bootstrapped),
             writer,
             output_tx,
+            reading: OnceLock::new(),
         })
+    }
+
+    /// Whether the setup waits for the line editor's mark with no cap
+    /// ([`ReadySignal::PasteMark`], not bootstrapped): only the user's
+    /// **Send now** types it otherwise (#5512).
+    pub(crate) fn is_gated(&self) -> bool {
+        !self.watching.load(Ordering::SeqCst) && self.state.lock().is_ok_and(|s| s.gate.is_some())
     }
 
     /// Type the setup now, unless it already was. Arms the filter first, so
@@ -134,8 +149,10 @@ impl TypedSetup {
     /// [`READY_CAP`]; gives up when the session ends (`alive` cleared).
     /// With a [`PasteGate`] the line editor must also have announced a fresh
     /// line, and there is no cap: typing blind could answer a startup
-    /// question (#5452).
+    /// question (#5452). The session owner offers **Send now** instead
+    /// ([`GatedSetup`], #5512).
     pub(crate) fn type_when_ready(self: Arc<Self>, reading: PromptProbe, alive: Arc<AtomicBool>) {
+        let _ = self.reading.set(reading.clone());
         std::thread::spawn(move || {
             let start = Instant::now();
             loop {
@@ -171,13 +188,16 @@ impl TypedSetup {
             .and_then(|s| s.gate.as_ref().map(PasteGate::ready))
     }
 
-    /// Before the user's input: a typed setup goes first, so it never splits
-    /// or swallows their command. A bootstrapped one runs at the prompt by
-    /// itself, so nothing is typed for it here. With a [`PasteGate`] the
-    /// setup goes first only at a fresh prompt; otherwise the user may be
-    /// answering a startup question, and the setup waits for the prompt
-    /// after their input instead.
-    pub(crate) fn before_input(self: &Arc<Self>) {
+    /// Before the user's input (`data`): a typed setup goes first, so it
+    /// never splits or swallows their command. A bootstrapped one runs at
+    /// the prompt by itself, so nothing is typed for it here. With a
+    /// [`PasteGate`] the setup goes first only at a fresh prompt; otherwise
+    /// the user may be answering a startup question. One key to a raw
+    /// reader answers it and is gone, so the next prompt is fresh (#5515);
+    /// other input may sit in the next line, and the setup waits for the
+    /// prompt after it instead (see [`PasteGate::note_keys`]).
+    pub(crate) fn before_input(self: &Arc<Self>, data: &[u8]) {
+        let raw_reader = self.reading.get().is_some_and(|reading| reading());
         if self.watching.load(Ordering::SeqCst) {
             return;
         }
@@ -187,7 +207,7 @@ impl TypedSetup {
             }
             if let Some(gate) = state.gate.as_mut() {
                 if !gate.ready() {
-                    gate.note_input();
+                    gate.note_keys(data, raw_reader);
                     return;
                 }
             }
@@ -233,7 +253,7 @@ impl TypedSetup {
         });
     }
 
-    fn is_pending(&self) -> bool {
+    pub(crate) fn is_pending(&self) -> bool {
         self.state.lock().is_ok_and(|s| s.pending.is_some())
     }
 
@@ -325,5 +345,19 @@ impl TypedSetup {
                 None => return,
             }
         }
+    }
+}
+
+/// The session owner's handle on a gated [`TypedSetup`] (#5512).
+pub(crate) struct GatedHandle(pub(crate) Arc<TypedSetup>);
+
+impl GatedSetup for GatedHandle {
+    fn is_pending(&self) -> bool {
+        self.0.is_pending()
+    }
+
+    fn send_now(&self) {
+        debug!("typing the shell-integration setup at the user's word");
+        self.0.type_now();
     }
 }
