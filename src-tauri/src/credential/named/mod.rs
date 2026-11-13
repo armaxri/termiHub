@@ -283,7 +283,7 @@ fn ensure_writable(
 ) -> Result<(), NamedCredentialError> {
     if *mode == StorageMode::None {
         return Err(NamedCredentialError::StoreUnavailable {
-            message: "Credential storage is turned off. Choose Master Password or OS Keychain \
+            message: "Credential storage is turned off. Choose OS Keychain or Master password \
                       in Settings → Security to use shared credentials."
                 .to_string(),
         });

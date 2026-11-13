@@ -155,3 +155,20 @@ function storingOptionLabels(): string {
 export function credentialStorageOffText(purpose: string): string {
   return `Credential storage is off — choose ${storingOptionLabels()} above to ${purpose}.`;
 }
+
+/**
+ * Restore preview line when the backup carries credentials but credential
+ * storage is off (#5631): says plainly they will not come back, and how to fix it.
+ */
+export function credentialRestoreStorageOffText(): string {
+  return (
+    "Credential storage is off, so credentials won't be restored. " +
+    `Set up ${storingOptionLabels()} to restore them.`
+  );
+}
+
+/** Restore dialog notice beside the primary action when credentials are left out (#5631). */
+export const CREDENTIALS_NOT_RESTORED_TEXT = "Credentials will not be restored.";
+
+/** Inline action that opens the storage chooser from the restore preview (#5631). */
+export const SET_UP_CREDENTIAL_STORAGE_LABEL = "Set up storage…";
