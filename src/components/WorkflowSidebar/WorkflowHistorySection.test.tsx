@@ -98,6 +98,22 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
     expect(query("workflow-run-r-ok")?.textContent).toContain("Manual");
   });
 
+  it("names the target terminal so runs on different terminals differ (#5635)", () => {
+    render([
+      run({ id: "r-local", tabId: "tab-1", targetLabel: "pr-auto-local" }),
+      run({ id: "r-ssh", tabId: "tab-2", targetLabel: "pr-auto-ssh" }),
+      run({ id: "r-old", tabId: "tab-3" }),
+    ]);
+    expect(query("workflow-run-target-r-local")?.textContent).toBe("pr-auto-local");
+    expect(query("workflow-run-target-r-ssh")?.textContent).toBe("pr-auto-ssh");
+    expect(query("workflow-run-r-local")?.textContent).not.toBe(
+      query("workflow-run-r-ssh")?.textContent
+    );
+    // Older records carry no label: no target is shown (never a raw tab id).
+    expect(query("workflow-run-target-r-old")).toBeNull();
+    expect(query("workflow-run-r-old")?.textContent).not.toContain("tab-3");
+  });
+
   it("notes tolerated continue-on-error failures on a run (PROD-045)", () => {
     render([run({ id: "r-soft", continuedFailures: 2 }), run({ id: "r-clean" })]);
     expect(query("workflow-run-tolerated-r-soft")?.textContent).toContain("2 tolerated failures");
