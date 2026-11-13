@@ -104,7 +104,8 @@
    * App-level bottom banners (#5547, #5558): opaque surfaces derived from the
    * status-bar surface so they belong to every theme's palette. The warning
    * banner (crash notices) keeps only a faint amber cast and carries its
-   * semantics in a 1px amber top border plus the amber icon; the info banner
+   * semantics in a 1px amber top border, a 3px amber left accent (#5638) and
+   * the amber icon; the info banner
    * (file-manager prompt) a faint accent cast. Their secondary text renders in
    * --text-secondary-on-selection, graded >= 4.5:1 on both surfaces in
    * src/themes/contrast.test.ts.
@@ -112,6 +113,8 @@
   --bg-banner-info: color-mix(in srgb, var(--accent-color) 6%, var(--bg-secondary));
   --bg-banner-warning: color-mix(in srgb, var(--color-warning) 4%, var(--bg-secondary));
   --border-banner-warning: color-mix(in srgb, var(--color-warning) 60%, var(--bg-secondary));
+  /* #5638: width of the warning banner's amber left accent. */
+  --banner-accent-width: 3px;
   /*
    * Notice amber: brighter than --color-warning, reserved for
    * "update available" indicator dots (status bar + update notification).

@@ -2,13 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { Button } from "@/components/ui";
 import { acknowledgeAgentCrashNotice, getAgentCrashNotices } from "@/services/api";
 import { onAgentCrashNoticesChanged } from "@/services/events";
 import type { AgentCrashNotice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
-import { useBottomBannerSlot } from "@/components/BottomBanners";
+import { BottomBanner, BottomBannerAction, useBottomBannerSlot } from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
@@ -86,41 +85,37 @@ export function AgentCrashReportNotice() {
   const notice = notices[0];
 
   return (
-    <div
-      className="crash-report-notice"
+    <BottomBanner
+      tone="warning"
       role="status"
       data-testid={`agent-crash-notice-${notice.agentId}`}
-    >
-      <span className="crash-report-notice__icon">
-        <AlertTriangle size={16} />
-      </span>
-      <div className="crash-report-notice__text">
-        <strong>Agent “{agentName(notice.agentId)}” crashed since it was last connected.</strong>
-        <span>
+      icon={<AlertTriangle size={16} />}
+      title={<>Agent “{agentName(notice.agentId)}” crashed since it was last connected.</>}
+      description={
+        <>
           {notice.newCount === 1
             ? "A new crash report was saved on that host."
             : `${notice.newCount} new crash reports were saved on that host.`}{" "}
           Nothing was sent anywhere.
-        </span>
-      </div>
-      <div className="crash-report-notice__actions">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => dismiss(notice)}
-          data-testid={`agent-crash-notice-dismiss-${notice.agentId}`}
-        >
-          Close
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => handleView(notice)}
-          data-testid={`agent-crash-notice-view-${notice.agentId}`}
-        >
-          View report
-        </Button>
-      </div>
-    </div>
+        </>
+      }
+      actions={
+        <>
+          <BottomBannerAction
+            onClick={() => dismiss(notice)}
+            data-testid={`agent-crash-notice-dismiss-${notice.agentId}`}
+          >
+            Close
+          </BottomBannerAction>
+          <BottomBannerAction
+            main
+            onClick={() => handleView(notice)}
+            data-testid={`agent-crash-notice-view-${notice.agentId}`}
+          >
+            View report
+          </BottomBannerAction>
+        </>
+      }
+    />
   );
 }
