@@ -469,10 +469,14 @@ def test_linux_layout_change_is_refused_off_ci():
 class ProbeDriver:
     """Fake bridge: reports a trusted pointermove at a fixed client point."""
 
-    def __init__(self, client=(400.0, 300.0), dpr=1.0, rect=None, sees=True):
+    def __init__(self, client=(400.0, 300.0), dpr=1.0, rect=None, sees=True, covered=None):
         self.client, self.dpr, self.rect, self.sees = client, dpr, rect, sees
+        # ``covered(x, y)`` -> the testid laid over client point (x, y), or None;
+        # ``None`` itself: an older bridge that answers no hits.
+        self.covered = covered
+        self.hit_tested: list = []
 
-    def os_input_probe(self, test_id=None, *, reset=False):
+    def os_input_probe(self, test_id=None, *, reset=False, points=None):
         events = []
         if self.sees and not reset:
             events = [
@@ -486,6 +490,14 @@ class ProbeDriver:
         value = {"events": events, "devicePixelRatio": self.dpr, "hasFocus": True}
         if test_id:
             value["rect"] = self.rect
+            if points is not None and self.covered is not None:
+                self.hit_tested.append(list(points))
+                value["hits"] = [
+                    {"inside": True, "testId": test_id}
+                    if self.covered(x, y) is None
+                    else {"inside": False, "testId": self.covered(x, y)}
+                    for x, y in points
+                ]
         return value
 
 
@@ -529,11 +541,11 @@ class LateProbeDriver(ProbeDriver):
         self.misses = misses
         self.resets = 0
 
-    def os_input_probe(self, test_id=None, *, reset=False):
+    def os_input_probe(self, test_id=None, *, reset=False, points=None):
         if reset:
             self.resets += 1
         self.sees = self.resets > self.misses
-        return super().os_input_probe(test_id, reset=reset)
+        return super().os_input_probe(test_id, reset=reset, points=points)
 
 
 def test_calibration_keeps_retrying_past_the_first_nudges_until_a_move_lands(monkeypatch):
@@ -569,6 +581,53 @@ def test_screen_point_rejects_an_unlaid_element():
     screen = ScreenMapper.calibrate(fake, driver)
     with pytest.raises(AssertionError, match="no laid-out box"):
         screen.point("hidden")
+
+
+# ── Aiming a click past what covers the element (#5610) ──────────────────────
+RENDERER = {"left": 300, "top": 70, "width": 700, "height": 600}
+
+
+def toast_in_the_corner(x, y):
+    """A toast stack laid over the renderer's bottom-right corner."""
+    return "toast" if x >= 650 and 500 <= y <= 660 else None
+
+
+def test_exposed_point_is_the_requested_point_when_nothing_covers_it():
+    fake = FakeInput(100, env=CI)
+    driver = ProbeDriver(rect=RENDERER, covered=lambda x, y: None)
+    screen = ScreenMapper.calibrate(fake, driver)
+    assert screen.exposed_point("r", 0.5, 0.9) == screen.point("r", 0.5, 0.9)
+
+
+def test_exposed_point_steps_off_a_toast_to_the_nearest_uncovered_point():
+    fake = FakeInput(100, env=CI)
+    driver = ProbeDriver(rect=RENDERER, covered=toast_in_the_corner)
+    screen = ScreenMapper.calibrate(fake, driver)
+    x, y = screen.exposed_point("r", 0.5, 0.9)
+    # (0.5, 0.9) is client (650, 610): under the toast. The nearest grid point
+    # off it is a step left on the same row.
+    assert (x, y) == screen.point("r", 0.35, 0.9)
+    assert toast_in_the_corner(*driver.hit_tested[-1][0]) == "toast"
+
+
+def test_exposed_point_honours_avoid_and_names_the_cover_when_all_is_covered():
+    fake = FakeInput(100, env=CI)
+    screen = ScreenMapper.calibrate(
+        fake, ProbeDriver(rect=RENDERER, covered=toast_in_the_corner)
+    )
+    # Only the toast's corner lies outside the other window: no point is left.
+    def outside_only_under_the_toast(x, y):
+        client = (x - screen.offset[0], y - screen.offset[1])
+        return toast_in_the_corner(*client) is None
+
+    with pytest.raises(AssertionError, match=r"covered everywhere by \['toast'\]"):
+        screen.exposed_point("r", 0.95, 0.9, avoid=outside_only_under_the_toast)
+
+
+def test_exposed_point_takes_the_point_as_is_from_a_bridge_without_hits():
+    fake = FakeInput(100, env=CI)
+    screen = ScreenMapper.calibrate(fake, ProbeDriver(rect=RENDERER))
+    assert screen.exposed_point("r", 0.95, 0.9) == screen.point("r", 0.95, 0.9)
 
 
 # ── Helper window ────────────────────────────────────────────────────────────

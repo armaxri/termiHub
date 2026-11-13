@@ -75,7 +75,7 @@ CONFLICT_CONFIRM = "file-move-conflict-confirm"
 CONFLICT_CANCEL = "file-move-conflict-cancel"
 
 
-class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
+class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi, ConnectionsUi):
     """The three remote → local paste journeys, shared by both remote hosts.
 
     A concrete suite supplies :meth:`_open_remote_browser`: open a live remote
@@ -137,14 +137,24 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
         self.driver.click("context-file-copy")
 
     def _browse_local_dest(self) -> None:
-        """Open a local terminal, ``cd`` into the destination, show its listing."""
+        """Open a local terminal, ``cd`` into the destination, show its listing.
+
+        On Windows the default local shell is PowerShell, whose ``cd`` the file
+        browser follows only with Command Marks on (#5017), so the terminal
+        there is a Command Marks local connection
+        (:meth:`~ConnectionsUi.open_cwd_following_terminal`).
+        """
         before = self.tab_ids()
         self.switch_to_connections_sidebar()
-        self.open_new_terminal()
-        self.wait(
-            lambda: len(self.tab_ids()) == len(before) + 1, what="a local terminal tab"
-        )
-        local_tab = next(t for t in self.tab_ids() if t not in before)
+        if sys.platform == "win32":
+            local_tab = self.open_cwd_following_terminal()
+            assert local_tab is not None
+        else:
+            self.open_new_terminal()
+            self.wait(
+                lambda: len(self.tab_ids()) == len(before) + 1, what="a local terminal tab"
+            )
+            local_tab = next(t for t in self.tab_ids() if t not in before)
         self.wait(
             lambda: self.driver.read_terminal(local_tab).strip() != "",
             what="the local shell's prompt",
@@ -240,7 +250,6 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
 @pytest.mark.native_sshd
 class TestFileBrowserRemoteToLocal(
     _RemoteToLocalPasteJourneys,
-    ConnectionsUi,
     PasswordPromptUi,
     SshUi,
     SftpUi,

@@ -307,7 +307,11 @@ class Driver:
         return self._call({"action": "listWindows"})
 
     def os_input_probe(
-        self, test_id: Optional[str] = None, *, reset: bool = False
+        self,
+        test_id: Optional[str] = None,
+        *,
+        reset: bool = False,
+        points: Optional[list[tuple[float, float]]] = None,
     ) -> dict[str, Any]:
         """What OS-level input reached this window's document (#4935).
 
@@ -316,11 +320,20 @@ class Driver:
         "innerHeight", "hasFocus", "rect"?}``. Each event carries ``isTrusted``
         (true only for input the OS delivered), its key/modifier state and its
         client/screen coordinates. ``test_id`` adds that element's client rect;
-        ``reset`` clears the recording. Used by
-        :mod:`termihub_harness.os_input` to calibrate screen coordinates and to
-        prove an injected event arrived.
+        ``reset`` clears the recording. ``points`` (client CSS pixels, with
+        ``test_id``) adds ``hits``: per point, whether a real click there lands
+        on the element (``inside``) or on what is laid over it, by ``testId``
+        (#5610). Used by :mod:`termihub_harness.os_input` to calibrate screen
+        coordinates, aim clicks and prove an injected event arrived.
         """
-        return self._call({"action": "osInputProbe", "testId": test_id, "reset": reset or None})
+        command: dict[str, Any] = {
+            "action": "osInputProbe",
+            "testId": test_id,
+            "reset": reset or None,
+        }
+        if points is not None:
+            command["points"] = [{"x": x, "y": y} for x, y in points]
+        return self._call(command)
 
     def force_hover(self, test_id: Optional[str]) -> int:
         """Render ``test_id`` as hovered without the OS pointer (#5538); ``None`` clears.

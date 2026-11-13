@@ -28,7 +28,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from .base import (
     GLOBAL_OPT_IN_ENV,
@@ -131,6 +131,11 @@ CALIBRATION_NUDGES = ((0, 0), (23, 17), (-19, 29))
 
 #: How long (s) one calibration move waits for the webview to report it.
 CALIBRATION_MOVE_WAIT = 2.0
+
+#: Fractions of an element's box :meth:`ScreenMapper.exposed_point` tries when
+#: the requested point is covered (each axis, plus the requested fraction; the
+#: box's edges are left out).
+EXPOSURE_GRID = (0.05, 0.15, 0.25, 0.35, 0.5, 0.65, 0.75, 0.85, 0.95)
 
 
 @dataclass
@@ -240,6 +245,45 @@ class ScreenMapper:
         """Screen point at fraction ``(fx, fy)`` of the element's box (center by default)."""
         rect = self.rect(test_id)
         return self.to_screen(rect["left"] + rect["width"] * fx, rect["top"] + rect["height"] * fy)
+
+    def exposed_point(
+        self,
+        test_id: str,
+        fx: float = 0.5,
+        fy: float = 0.5,
+        *,
+        avoid: Optional[Callable[[float, float], bool]] = None,
+    ) -> tuple[float, float]:
+        """A screen point where a real click lands on the element itself.
+
+        :meth:`point` at ``(fx, fy)`` when nothing is laid over the element
+        there; otherwise the nearest point of the element's box that is
+        uncovered. A toast or notice laid over a terminal takes a real click
+        and the terminal never gets the focus (#5610). ``avoid`` rules out
+        screen points too (e.g. inside another, always-on-top window). An
+        older bridge without hit-testing answers no ``hits``: then the first
+        point not avoided is taken as is.
+        """
+        rect = self.rect(test_id)
+        fractions = sorted(
+            {(gx, gy) for gx in {fx, *EXPOSURE_GRID} for gy in {fy, *EXPOSURE_GRID}},
+            key=lambda f: ((f[0] - fx) ** 2 + (f[1] - fy) ** 2, f),
+        )
+        clients = [
+            (rect["left"] + rect["width"] * gx, rect["top"] + rect["height"] * gy)
+            for gx, gy in fractions
+        ]
+        clients = [c for c in clients if avoid is None or not avoid(*self.to_screen(*c))]
+        if not clients:
+            raise AssertionError(f"every point of {test_id!r} {rect} is ruled out")
+        hits = self.driver.os_input_probe(test_id, points=clients).get("hits")
+        if hits is None:
+            return self.to_screen(*clients[0])
+        for client, hit in zip(clients, hits):
+            if hit.get("inside"):
+                return self.to_screen(*client)
+        covers = sorted({str(hit.get("testId")) for hit in hits})
+        raise AssertionError(f"element {test_id!r} {rect} is covered everywhere by {covers}")
 
     def outside_point(self, margin: float = 60.0) -> tuple[float, float]:
         """An on-screen point just outside the window (for a drag released outside it).

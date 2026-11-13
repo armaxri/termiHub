@@ -98,14 +98,22 @@ class TestOsKeychainFirstSave(
         assert not failures, f"{step}: the OS keychain store failed:\n" + "\n".join(failures)
 
     def _choose_os_keychain_on_first_save(self, name: str) -> None:
-        """Fill a new SSH connection and turn on Save credentials via the chooser."""
+        """Fill a new SSH connection and turn on Save credentials via the chooser.
+
+        Before a store is chosen the profile is in ``none`` mode, where the
+        editor has no Password field (passwords are asked at connect time,
+        ``filterCredentialFields``). It appears once the chooser picked the OS
+        keychain, so the password is typed after the choice.
+        """
         self.fill_ssh_connection_form(
             name,
             host=SSH_HOST,
             port=SSH_PASSWORD_PORT,
             username=SSH_USERNAME,
             auth_method="password",
-            password=SSH_PASSWORD,
+        )
+        assert not self.driver.exists("field-password"), (
+            "the editor shows a Password field before any credential store is chosen"
         )
         self.wait(lambda: self.driver.exists("field-savePassword"), what="Save credentials")
         self.driver.click("field-savePassword")
@@ -124,6 +132,7 @@ class TestOsKeychainFirstSave(
             lambda: self.driver.get_attribute("field-savePassword", "aria-checked") == "true",
             what="Save credentials to turn on once the store is chosen",
         )
+        self._type_form_password(SSH_PASSWORD)
         self._click_editor_save(False)
 
     def _assert_resolves(self, name: str) -> None:

@@ -51,7 +51,7 @@ use tracing::debug;
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, local_fingerprint, local_size,
+    apply_resume_gate, drive_transfer, emit, guard_stall, local_fingerprint, local_partial_size,
     map_copy_outcome, open_local_dest, open_local_read, rehydrate_start_offset, settle_attempt,
     settle_writer, stop_reason, AttemptOutcome, AttemptsResult, ProgressReporter, ResumeCursor,
     StopReason, STALL_TIMEOUT,
@@ -206,7 +206,7 @@ async fn gate_resume(
     let present = if cursor.offset == 0 {
         None
     } else {
-        local_size(&part.to_string_lossy()).await
+        local_partial_size(&part.to_string_lossy(), cursor.offset).await
     };
     apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
 }
