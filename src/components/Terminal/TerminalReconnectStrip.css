@@ -57,22 +57,25 @@
   color: var(--text-muted-on-selection);
 }
 
-/* The input note turns to the warning tone once the user types into the
-   paused terminal — the "your keys are going nowhere" nudge. No motion. */
+/* The input note turns to full-strength, semibold text once the user types
+   into the paused terminal — the "your keys are going nowhere" nudge. No
+   motion. #5740: not the warning tone, which misses AA on the warning tint. */
 .terminal-reconnect-strip__input--typed {
-  color: var(--color-warning);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
-/* Why the last attempt failed (#5395): the warning tone, not the error tone —
-   the loop is still running. */
+/* Why the last attempt failed (#5395). #5740: --text-primary, because the
+   warning and error tones miss AA on the strip's warning tint (Light,
+   Solarized); the strip's tint and icon carry the warning cue. */
 .terminal-reconnect-strip__reason {
   display: block;
-  color: var(--color-warning);
+  color: var(--text-primary);
   word-break: break-word;
 }
 
 .terminal-reconnect-strip__error {
-  color: var(--color-error);
+  color: var(--text-primary);
   word-break: break-word;
   white-space: pre-wrap;
 }
