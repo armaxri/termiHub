@@ -21,6 +21,9 @@
   margin-bottom: 0;
 }
 
+/* Bottom-align the row so the heading's divider lines up with the foot of its
+   actions instead of floating at their middle. */
 .settings-panel__section-header:has(> .settings-section__heading) {
+  align-items: flex-end;
   margin-bottom: var(--spacing-md);
 }
