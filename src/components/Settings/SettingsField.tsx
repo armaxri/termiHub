@@ -1,9 +1,10 @@
 import type { ReactElement, ReactNode } from "react";
-import { isValidElement } from "react";
+import { isValidElement, useId } from "react";
 import { Field } from "../ui/Field";
 import type { FieldHintVariant } from "../ui/Field";
 import { Button } from "../ui/Button";
 import { Toggle } from "../ui/Toggle";
+import { SETTINGS_FIELD_ATTR, SettingsSavedMark, useSavedFieldId } from "./settingsSavedAck";
 
 /** Visual variant applied to the field's hint text. */
 export type SettingsHintVariant = FieldHintVariant;
@@ -79,8 +80,14 @@ export function SettingsField({
   children,
   layout,
 }: SettingsFieldProps): ReactElement {
+  // Lets the panel show its "Saved" tick beside this field's label once an
+  // edit made here has been auto-saved (#5562).
+  const fieldId = useId();
+  const saved = useSavedFieldId() === fieldId;
   return (
     <Field
+      {...{ [SETTINGS_FIELD_ATTR]: fieldId }}
+      labelAccessory={saved ? <SettingsSavedMark /> : undefined}
       variant="settings"
       layout={layout ?? settingsFieldLayout(children)}
       label={label}

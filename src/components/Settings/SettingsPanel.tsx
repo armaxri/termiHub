@@ -8,6 +8,7 @@ import {
   Suspense,
   Fragment,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 import { frontendLog } from "@/utils/frontendLog";
 import {
@@ -55,6 +56,11 @@ import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
 import { SettingsNav } from "./SettingsNav";
 import { SettingsSearch } from "./SettingsSearch";
+import {
+  SETTINGS_FIELD_ATTR,
+  SettingsSavedFieldContext,
+  settingsFieldIdFor,
+} from "./settingsSavedAck";
 import { GeneralSettings, type SettingsUpdate } from "./GeneralSettings";
 import { SessionSettings } from "./SessionSettings";
 import { SafetyPromptSettings } from "./SafetyPromptSettings";
@@ -127,6 +133,7 @@ interface SettingsPanelProps {
 
 /**
  * Two-panel settings layout with categorized navigation, search, and version footer.
+ * Auto-save feedback shows beside the edited field, not in the footer (#5562).
  */
 export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const settings = useProjectedSettings();
@@ -146,7 +153,19 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const [isCompact, setIsCompact] = useState(false);
   const appInfo = useAppInfo();
   const [showSavedAck, setShowSavedAck] = useState(false);
+  // The SettingsField that shows the "Saved" tick, or null when the edit came
+  // from a control outside any field: then the panel's own pill shows it.
+  const [savedFieldId, setSavedFieldId] = useState<string | null>(null);
+  // Where the pill sits when no field owns the edit: the top of the visible
+  // part of the scrolled content column.
+  const [ackTop, setAckTop] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // The field the user last pointed at or typed into, and the field whose edit
+  // the pending debounced save carries (captured when the change happens, so a
+  // click elsewhere during the debounce never moves the acknowledgment).
+  const interactedFieldRef = useRef<string | null>(null);
+  const pendingFieldRef = useRef<string | null>(null);
   // The latest not-yet-persisted edit (the base a functional updater resolves
   // against). Set exactly while a debounced save is pending.
   const pendingSettingsRef = useRef<AppSettings | null>(null);
@@ -176,15 +195,28 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   }, [settings]);
 
   /**
-   * Briefly surface a transient "Saved" acknowledgment in the footer after a
-   * debounced auto-save has actually persisted, then fade it out.
+   * Briefly surface a transient "Saved" acknowledgment after a debounced
+   * auto-save has actually persisted, then fade it out. It shows beside the
+   * label of the field that was edited (#5562); an edit from a control outside
+   * any field shows it at the top of the visible content column instead.
    */
   const acknowledgeSaved = useCallback(() => {
+    const content = contentRef.current;
+    const fieldId = pendingFieldRef.current;
+    const fieldShown =
+      fieldId !== null &&
+      content !== null &&
+      Array.from(content.querySelectorAll(`[${SETTINGS_FIELD_ATTR}]`)).some(
+        (el) => el.getAttribute(SETTINGS_FIELD_ATTR) === fieldId
+      );
+    setSavedFieldId(fieldShown ? fieldId : null);
+    setAckTop(content?.scrollTop ?? 0);
     setShowSavedAck(true);
     if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
     ackTimerRef.current = setTimeout(() => {
       ackTimerRef.current = null;
       setShowSavedAck(false);
+      setSavedFieldId(null);
     }, SAVED_ACK_MS);
   }, []);
 
@@ -218,6 +250,12 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     SAVE_DEBOUNCE_MS,
     { onFlush: persistSettings, flushOnUnmount: true }
   );
+
+  /** Track the field the user is working in (see {@link acknowledgeSaved}). */
+  const rememberInteractedField = useCallback((event: SyntheticEvent) => {
+    const id = settingsFieldIdFor(event.target, contentRef.current);
+    if (id !== undefined) interactedFieldRef.current = id;
+  }, []);
 
   /**
    * Cancel any pending debounced save and persist it immediately, so the last
@@ -266,6 +304,13 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     (update: SettingsUpdate) => {
       const base = pendingSettingsRef.current ?? settingsRef.current;
       const newSettings = typeof update === "function" ? update(base) : update;
+
+      // Remember which field this edit came from, for the "Saved" tick (#5562):
+      // the focused field, else the one last pointed at (a select's options
+      // render outside the panel, but focus returns to its trigger).
+      pendingFieldRef.current =
+        settingsFieldIdFor(document.activeElement, contentRef.current) ??
+        interactedFieldRef.current;
 
       // Apply theme immediately so the user sees the change without waiting
       // for the debounced save (which would compare against already-updated state).
@@ -506,8 +551,40 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           highlightedCategories={highlightedCategories}
           isCompact={isCompact}
         />
-        <div className="settings-panel__content" data-testid="settings-panel-content">
-          {renderContent()}
+        <div
+          ref={contentRef}
+          className="settings-panel__content"
+          data-testid="settings-panel-content"
+          onPointerDownCapture={rememberInteractedField}
+          onKeyDownCapture={rememberInteractedField}
+          onInputCapture={rememberInteractedField}
+        >
+          <SettingsSavedFieldContext.Provider value={showSavedAck ? savedFieldId : null}>
+            {renderContent()}
+          </SettingsSavedFieldContext.Provider>
+          {/* Persistent live region announcing each save. Visible only when no
+              field shows the tick itself; otherwise it is read out but hidden. */}
+          <span
+            data-testid="settings-saved-ack"
+            className={[
+              "settings-panel__saved-ack",
+              showSavedAck ? "settings-panel__saved-ack--visible" : "",
+              savedFieldId !== null ? "sr-only" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            style={{ top: ackTop }}
+            data-anchored={savedFieldId !== null ? "field" : "panel"}
+            role="status"
+            aria-live="polite"
+          >
+            {showSavedAck && (
+              <>
+                <Check size={12} aria-hidden="true" />
+                Saved
+              </>
+            )}
+          </span>
         </div>
       </div>
       <div className="settings-panel__footer">
@@ -517,21 +594,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             {appInfo.gitHash}
           </span>
         )}
-        <span
-          data-testid="settings-saved-ack"
-          className={`settings-panel__saved-ack ${
-            showSavedAck ? "settings-panel__saved-ack--visible" : ""
-          }`}
-          role="status"
-          aria-live="polite"
-        >
-          {showSavedAck && (
-            <>
-              <Check size={12} aria-hidden="true" />
-              Saved
-            </>
-          )}
-        </span>
       </div>
     </div>
   );

@@ -267,4 +267,121 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       expect(updateSettings).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("the acknowledgment shows near the edited control (#5562)", () => {
+    function shellIntegrationToggle(): HTMLElement {
+      const toggle = container.querySelector<HTMLElement>(
+        "[data-testid='settings-default-shell-integration']"
+      );
+      expect(toggle).not.toBeNull();
+      return toggle!;
+    }
+
+    function pointerDown(el: Element) {
+      act(() => {
+        el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      });
+    }
+
+    function marks(): HTMLElement[] {
+      return Array.from(container.querySelectorAll("[data-testid='settings-saved-mark']"));
+    }
+
+    async function saveSettles() {
+      await act(async () => {
+        vi.advanceTimersByTime(350);
+      });
+    }
+
+    it("puts a 'Saved' tick beside the label of the field that was edited", async () => {
+      await render();
+      const toggle = shellIntegrationToggle();
+      const field = toggle.closest("[data-settings-field]");
+      expect(field, "the toggle sits in a tagged SettingsField").not.toBeNull();
+
+      pointerDown(toggle);
+      await act(async () => {
+        toggle.click();
+      });
+      expect(marks()).toHaveLength(0);
+      await saveSettles();
+
+      expect(marks()).toHaveLength(1);
+      expect(field!.contains(marks()[0])).toBe(true);
+      expect(marks()[0].textContent).toContain("Saved");
+      // The live region still announces it, visually hidden.
+      expect(ackEl()?.textContent).toContain("Saved");
+      expect(ackEl()?.getAttribute("data-anchored")).toBe("field");
+      expect(ackEl()?.className).toContain("sr-only");
+
+      await act(async () => {
+        vi.advanceTimersByTime(1600);
+      });
+      expect(marks()).toHaveLength(0);
+    });
+
+    it("anchors to the focused field when the edit came from the keyboard", async () => {
+      await render();
+      const toggle = shellIntegrationToggle();
+      act(() => toggle.focus());
+      await act(async () => {
+        toggle.click();
+      });
+      await saveSettles();
+      expect(marks()).toHaveLength(1);
+      expect(toggle.closest("[data-settings-field]")!.contains(marks()[0])).toBe(true);
+    });
+
+    it("keeps the tick on the edited field when the user moves on during the debounce", async () => {
+      await render();
+      const toggle = shellIntegrationToggle();
+      pointerDown(toggle);
+      await act(async () => {
+        toggle.click();
+      });
+      // Point at another field before the save lands.
+      const other = Array.from(container.querySelectorAll("[data-settings-field]")).find(
+        (f) => !f.contains(toggle)
+      );
+      expect(other).toBeDefined();
+      pointerDown(other!);
+      await saveSettles();
+      expect(marks()).toHaveLength(1);
+      expect(toggle.closest("[data-settings-field]")!.contains(marks()[0])).toBe(true);
+    });
+
+    it("shows a visible pill in the content column for an edit outside any field", async () => {
+      await render();
+      // Pointing at the page heading (no field) and then changing the setting
+      // without focus leaves no field to anchor to.
+      pointerDown(container.querySelector(".settings-panel__category-title")!);
+      await act(async () => {
+        shellIntegrationToggle().click();
+      });
+      await saveSettles();
+
+      expect(marks()).toHaveLength(0);
+      const ack = ackEl()!;
+      expect(ack.textContent).toContain("Saved");
+      expect(ack.getAttribute("data-anchored")).toBe("panel");
+      expect(ack.className).not.toContain("sr-only");
+      expect(ack.className).toContain("settings-panel__saved-ack--visible");
+      expect(container.querySelector("[data-testid='settings-panel-content']")!.contains(ack)).toBe(
+        true
+      );
+    });
+
+    it("keeps the build-info footer free of the transient acknowledgment", async () => {
+      await render();
+      const toggle = shellIntegrationToggle();
+      pointerDown(toggle);
+      await act(async () => {
+        toggle.click();
+      });
+      await saveSettles();
+      const footer = container.querySelector(".settings-panel__footer")!;
+      expect(footer.querySelector("[data-testid='settings-saved-ack']")).toBeNull();
+      expect(footer.textContent).not.toContain("Saved");
+    });
+  });
 });
