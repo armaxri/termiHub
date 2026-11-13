@@ -21,6 +21,8 @@ import { errorMessage } from "@/utils/errorMessage";
 import { BackupSectionRow, type SectionChoice } from "./BackupSectionRow";
 import { BackupCredentialsRow } from "./BackupCredentialsRow";
 import { getBasename } from "@/utils/paths";
+import { useAppStore } from "@/store/appStore";
+import { CREDENTIALS_NOT_RESTORED_TEXT } from "@/utils/credentialStorageCopy";
 import { formatAbsoluteTime } from "@/utils/formatters";
 import "./CredentialVault.css";
 import "./BackupRestore.css";
@@ -33,6 +35,14 @@ interface BackupRestoreDialogProps {
 /** Whether a previewed section can be restored at all. */
 function isRestorable(section: BackupSectionPreview): boolean {
   return section.status === "ok" || section.status === "migrated";
+}
+
+/**
+ * "Replace overwrites your current settings, trusted SSH host keys": section
+ * labels lowercased at the start so the sentence stays in sentence case (#5631).
+ */
+export function replacedSectionsText(labels: string[]): string {
+  return labels.map((l) => l.charAt(0).toLowerCase() + l.slice(1)).join(", ");
 }
 
 /** The initial choice for each previewed section. */
@@ -78,6 +88,8 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
   const [restoreCredentials, setRestoreCredentials] = useState(false);
   const [credentialStrategy, setCredentialStrategy] = useState<VaultConflictStrategy>("skip");
   const [error, setError] = useState("");
+  const storageOff = useAppStore((s) => s.credentialStoreStatus?.mode === "none");
+  const requestStorageChoice = useAppStore((s) => s.requestStorageChoice);
 
   // Drop the file contents and passphrase whenever the dialog opens or closes.
   useEffect(() => {
@@ -135,6 +147,21 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
     }
   }, [header, passphrase, fileContent]);
 
+  // Storage off (#5631): set a store up in place via the storage chooser, then
+  // re-read the credentials preview so they can be restored into it. The
+  // section choices made so far are kept.
+  const handleSetUpStorage = useCallback(async () => {
+    const outcome = await requestStorageChoice();
+    if (outcome !== "os_keychain" && outcome !== "master_password") return;
+    try {
+      const result = await previewBackupRestore(fileContent, passphrase || null);
+      setPreview((prev) => (prev ? { ...prev, credentials: result.credentials } : result));
+      setRestoreCredentials(result.credentials?.available ?? false);
+    } catch (err) {
+      setError(isVaultError(err) ? err.message : errorMessage(err));
+    }
+  }, [requestStorageChoice, fileContent, passphrase]);
+
   const request = preview
     ? buildRestoreRequest(preview, choices, restoreCredentials ? credentialStrategy : null)
     : null;
@@ -170,14 +197,26 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
   }, []);
 
   const willRestart = (request?.sections.length ?? 0) > 0;
+  // The backup carries credentials this restore leaves behind: say so beside
+  // the primary action, so continuing is an informed choice (#5631).
+  const credentialsSkipped = !!preview?.credentials && !preview.credentials.available;
   const footer = (
     <>
+      {credentialsSkipped && (
+        <span className="backup-restore__skipped" data-testid="backup-restore-credentials-skipped">
+          {CREDENTIALS_NOT_RESTORED_TEXT}
+        </span>
+      )}
       <Button variant="secondary" onClick={() => onOpenChange(false)}>
         Cancel
       </Button>
       {preview ? (
         <Button
-          variant="primary"
+          // A fresh Button: never inherit the Preview button's success state,
+          // which painted Restore as a green outline (#5631).
+          key="restore"
+          // Replace cannot be undone, so the action reads as destructive then.
+          variant={replacing && replacing.length > 0 ? "danger" : "primary"}
           onClick={handleRestore}
           errorToast={false}
           disabled={nothingChosen}
@@ -188,6 +227,7 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
         </Button>
       ) : (
         <Button
+          key="preview"
           type="submit"
           form="backup-restore-form"
           variant="primary"
@@ -263,13 +303,14 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
                 strategy={credentialStrategy}
                 onIncludeChange={setRestoreCredentials}
                 onStrategyChange={setCredentialStrategy}
+                onSetUpStorage={storageOff ? () => void handleSetUpStorage() : undefined}
               />
             )}
           </ul>
           {replacing && replacing.length > 0 && (
             <p className="credential-vault__warning" data-testid="backup-restore-replace-warning">
-              Replace overwrites your current {replacing.map((s) => s.label).join(", ")}: anything
-              not in the backup is removed. This cannot be undone.
+              Replace overwrites your current {replacedSectionsText(replacing.map((s) => s.label))}:
+              anything not in the backup is removed. This cannot be undone.
             </p>
           )}
           {willRestart && (

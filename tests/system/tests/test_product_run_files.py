@@ -70,6 +70,17 @@ UPLOAD = "file-browser-upload"
 PATH_EDIT = "file-browser-path-edit"
 PATH_INPUT = "file-browser-path-input"
 MORE_ACTIONS = "file-browser-more-actions"
+# Transfers in one place (#5625): the docked panel lists them, the sidebar only
+# summarises. The old sidebar list ids must not come back.
+SIDEBAR_TRANSFER_LIST = "file-browser-transfers"
+SIDEBAR_TRANSFER_ROW = "file-browser-transfer"
+TRANSFER_SUMMARY = "file-browser-transfer-summary"
+TRANSFER_PANEL = "transfer-queue"
+TRANSFER_PANEL_SUMMARY = "transfer-queue-summary"
+TRANSFER_INDICATOR = "transfer-queue-indicator"
+TRANSFER_CANCEL = "transfer-cancel"
+TRANSFER_PAUSE = "transfer-pause"
+CANCEL_ALL = "transfer-cancel-all"
 
 
 def _read(path: Path) -> str | None:
@@ -332,6 +343,44 @@ class TestProductRunFiles(
             self.wait(lambda: _read(dest / "copy-me.txt") == SEED["copy-me.txt"], what="the local copy")
             self.wait_for_file_row("copy-me.txt")
             assert self.ssh_tab in self.tab_ids(), "the remote tab closed"
+
+    def test_06a_transfers_in_one_place(self):
+        """#5625 (R-028 / R-097): one transfer list, and no 'Cancel all' once all are done."""
+        with self.step(
+            "files.transfers-one-place",
+            "Transfers are listed only in the Transfers panel; the sidebar shows a one-line "
+            "summary, and 'Cancel all' is gone once every transfer has finished",
+            expect="the Files sidebar with a one-line transfer summary under the file list "
+            "(no second transfer list); the Transfers panel collapsed or without 'Cancel all'",
+        ):
+            self.require("files.remote-to-local")
+            # Every transfer of the run has settled (the copies above were waited on).
+            self.wait(
+                lambda: not self.driver.exists(TRANSFER_CANCEL)
+                and not self.driver.exists(TRANSFER_PAUSE),
+                what="every transfer to finish",
+            )
+            assert not self.driver.exists(SIDEBAR_TRANSFER_LIST), (
+                "the file sidebar still repeats the transfer list"
+            )
+            assert not self.driver.exists(SIDEBAR_TRANSFER_ROW), "a transfer row in the sidebar"
+            self.wait(lambda: not self.driver.exists(CANCEL_ALL), what="'Cancel all' to hide")
+            if self.driver.exists(TRANSFER_SUMMARY):
+                self.evidence(f"sidebar summary: {self.driver.get_text(TRANSFER_SUMMARY)!r}")
+            panel = self.driver.exists(TRANSFER_PANEL)
+            indicator = self.driver.exists(TRANSFER_INDICATOR)
+            self.evidence(f"transfers panel open: {panel}; status-bar indicator: {indicator}")
+            if panel:
+                summary = self.driver.get_text(TRANSFER_PANEL_SUMMARY)
+                self.evidence(f"panel summary: {summary!r}")
+                # Only a panel holding a failed/cancelled row stays open: an
+                # all-done queue collapses into the status-bar indicator.
+                if "failed" not in summary and "cancelled" not in summary:
+                    self.wait(
+                        lambda: not self.driver.exists(TRANSFER_PANEL),
+                        what="the all-done Transfers panel to collapse",
+                    )
+                    assert self.driver.exists(TRANSFER_INDICATOR)
 
     def test_07_raspberry_pi(self):
         pi = self.inputs.get("raspberry_pi")

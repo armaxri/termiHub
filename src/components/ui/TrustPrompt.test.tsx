@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
-import { TrustPrompt, type TrustFact } from "./TrustPrompt";
+import { TrustPrompt, fingerprintChunks, type TrustFact } from "./TrustPrompt";
 import { toast } from "./Toast";
 import { flushAsync } from "@/test/flushAsync";
 
@@ -214,5 +214,50 @@ describe("TrustPrompt", () => {
       "Accept for host"
     );
     expect(document.body.textContent).not.toContain("replaces the old key");
+  });
+
+  it("gives a monospaced fact a full-width row of its own (#5662)", () => {
+    renderPrompt();
+    const fp = document.querySelector('[data-testid="tp-fingerprint"]')!;
+    expect(fp.classList.contains("ui-trust-prompt__fact-value--mono")).toBe(true);
+    expect(
+      fp.previousElementSibling?.classList.contains("ui-trust-prompt__fact-label--block")
+    ).toBe(true);
+    // A plain fact keeps the label-beside-value layout.
+    const host = document.querySelector('[data-testid="tp-host"]')!;
+    expect(host.previousElementSibling?.className ?? "").toBe("");
+  });
+
+  it("only lets a fingerprint break between whole chunks, keeping its text (#5662)", () => {
+    renderPrompt();
+    const fp = document.querySelector('[data-testid="tp-fingerprint"]')!;
+    const chunks = [...fp.querySelectorAll(".ui-trust-prompt__fact-chunk")].map(
+      (c) => c.textContent
+    );
+    expect(chunks).toEqual(["SHA256:", "AABBCCDD"]);
+    // One break opportunity, between the chunks; the text itself is unchanged.
+    expect(fp.querySelectorAll("wbr")).toHaveLength(1);
+    expect(fp.querySelector(".ui-trust-prompt__fact-text")?.textContent).toBe("SHA256:AABBCCDD");
+  });
+});
+
+describe("fingerprintChunks (#5662)", () => {
+  it("splits an OpenSSH fingerprint after its algorithm prefix", () => {
+    const fp = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+    expect(fingerprintChunks(fp)).toEqual([
+      "SHA256:",
+      "nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8",
+    ]);
+  });
+
+  it("splits a colon-separated hex digest per byte", () => {
+    expect(fingerprintChunks("AB:CD:EF:01")).toEqual(["AB:", "CD:", "EF:", "01"]);
+  });
+
+  it("splits at whitespace and always joins back to the original value", () => {
+    for (const v of ["aa bb  cc", "SHA256:x y", "plain", ":lead", "trail:"]) {
+      expect(fingerprintChunks(v).join("")).toBe(v);
+    }
+    expect(fingerprintChunks("aa bb")).toEqual(["aa ", "bb"]);
   });
 });

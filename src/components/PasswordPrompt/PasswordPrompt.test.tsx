@@ -435,6 +435,66 @@ describe("PasswordPrompt", () => {
     await expect(answer).resolves.toEqual({ password: "typed-before-status", shouldSave: true });
   });
 
+  describe("field-secret title (#5656)", () => {
+    const title = () => document.querySelector(".ui-modal__title")?.textContent;
+
+    it("titles a schema field secret after its field, never SSH", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("proxy.corp", "alice", "", "password", {
+          label: "Desk",
+          transport: "SSH",
+          secretLabel: "Proxy password",
+        });
+      });
+      render();
+
+      expect(title()).toBe("Proxy password");
+      expect(query("password-prompt-title")?.textContent).toBe("Proxy password");
+      expect(query("password-prompt-input")?.getAttribute("aria-label")).toBe("Proxy password");
+      expect(title()).not.toContain("SSH");
+    });
+
+    it("titles an inline jump host's password as such", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("bastion", "ops", "", "password", {
+          secretLabel: "Jump host password",
+        });
+      });
+      render();
+
+      expect(title()).toBe("Jump host password");
+    });
+
+    it("keeps the key passphrase title for a passphrase prompt", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase", {
+          secretLabel: "Proxy password",
+        });
+      });
+      render();
+
+      expect(title()).toBe("SSH key passphrase");
+    });
+
+    it("follows the secret label of the next queued prompt", async () => {
+      let first: Promise<PasswordPromptAnswer | null> = Promise.resolve(null);
+      await act(async () => {
+        first = useAppStore.getState().requestPassword("proxy.corp", "alice", "", "password", {
+          secretLabel: "Proxy password",
+        });
+        void useAppStore.getState().requestPassword("example.com", "alice");
+      });
+      render();
+      expect(title()).toBe("Proxy password");
+
+      act(() => {
+        query("password-prompt-connect")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await expect(first).resolves.toMatchObject({ password: "" });
+      expect(title()).toBe("SSH password");
+    });
+  });
+
   describe("transport-aware title (#5617)", () => {
     const title = () => document.querySelector(".ui-modal__title")?.textContent;
 

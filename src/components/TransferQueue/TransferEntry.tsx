@@ -64,6 +64,27 @@ function byteCountLabel(entry: TransferEntry): string {
 }
 
 /**
+ * Split a transfer's path into the destination folder for the path column
+ * (#5625): `head` is the folder's parent (truncated with an ellipsis when the
+ * row is narrow) and `tail` is the folder's own name with its leading separator
+ * (never truncated), so a long path reads `/Users/arne/wo…/paste-here` instead
+ * of a prefix every row shares. The file name is dropped when the path ends in
+ * it — it already has its own column. Works with `/` and `\` separators.
+ */
+export function splitTransferLocation(path: string, name: string): { head: string; tail: string } {
+  let folder = path;
+  if (name && path.length > name.length && path.endsWith(name)) {
+    const sep = path[path.length - name.length - 1];
+    if (sep === "/" || sep === "\\") {
+      folder = path.slice(0, path.length - name.length - 1) || sep;
+    }
+  }
+  const cut = Math.max(folder.lastIndexOf("/"), folder.lastIndexOf("\\"));
+  if (cut <= 0) return { head: "", tail: folder };
+  return { head: folder.slice(0, cut), tail: folder.slice(cut) };
+}
+
+/**
  * A single Transfer Queue row (#1337): direction icon, name, remote path, a
  * per-state coloured progress bar, percent, transferred/total bytes, throughput,
  * an estimated time-remaining (UX-019), a status label, and the state-appropriate
@@ -88,6 +109,7 @@ export function TransferEntryRow({
   const status = statusLabel(entry);
   const indeterminate = entry.percent == null && entry.state === "active";
   const state: TransferQueueState = entry.state;
+  const location = entry.path ? splitTransferLocation(entry.path, entry.name) : null;
 
   const controls = (
     <TransferControls
@@ -153,9 +175,10 @@ export function TransferEntryRow({
         {entry.name}
       </span>
 
-      {entry.path && (
-        <span className="transfer-row__path" title={entry.path}>
-          {entry.path}
+      {location && (
+        <span className="transfer-row__path" title={entry.path} data-testid="transfer-row-path">
+          {location.head && <span className="transfer-row__path-head">{location.head}</span>}
+          <span className="transfer-row__path-tail">{location.tail}</span>
         </span>
       )}
 

@@ -39,7 +39,7 @@ vi.mock("@/components/ui", async () => {
   };
 });
 
-import { TransferQueue } from "./TransferQueue";
+import { TransferQueue, TRANSFER_PANEL_AUTO_COLLAPSE_MS } from "./TransferQueue";
 import { TransferQueueIndicator } from "./TransferQueueIndicator";
 import { TooltipProvider, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -253,6 +253,121 @@ describe("TransferQueue panel", () => {
     expect(transferCancel).toHaveBeenCalledWith("q");
     expect(transferCancel).toHaveBeenCalledWith("p");
     expect(transferCancel).not.toHaveBeenCalledWith("done");
+  });
+
+  // #5625 (R-097): with nothing left to cancel, "Cancel all" is noise.
+  it("hides Cancel all when every transfer has finished", () => {
+    seed([entry({ id: "done", state: "completed" }), entry({ id: "bad", state: "failed" })]);
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <TransferQueue />
+        </TooltipProvider>
+      )
+    );
+    expect(query("transfer-queue")).not.toBeNull();
+    expect(query("transfer-cancel-all")).toBeNull();
+  });
+
+  it("shows Cancel all while a transfer is still pending", () => {
+    seed([entry({ id: "live", state: "queued" })]);
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <TransferQueue />
+        </TooltipProvider>
+      )
+    );
+    expect(query("transfer-cancel-all")).not.toBeNull();
+  });
+
+  // #5625 (R-028): the panel gets out of the way once its work is done. It
+  // collapses into the status-bar indicator a moment after every transfer has
+  // completed, and comes back by itself when a new transfer starts.
+  describe("auto-collapse", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function renderQueue() {
+      act(() =>
+        root.render(
+          <TooltipProvider>
+            <TransferQueue />
+          </TooltipProvider>
+        )
+      );
+    }
+
+    function update(entries: TransferEntry[], minimized = currentTransfersView().minimized) {
+      act(() => seed(entries, minimized));
+    }
+
+    it("collapses a moment after every transfer has completed", () => {
+      seed([entry({ id: "a", state: "active" })]);
+      renderQueue();
+      update([entry({ id: "a", state: "completed", percent: 100 })]);
+      // "done" stays readable for a moment before the panel collapses.
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS - 1));
+      expect(query("transfer-queue")).not.toBeNull();
+      act(() => vi.advanceTimersByTime(1));
+      expect(transport.dispatched).toContainEqual(
+        expect.objectContaining({ kind: "transfer.setMinimized", payload: { minimized: true } })
+      );
+      expect(currentTransfersView().minimized).toBe(true);
+      expect(query("transfer-queue")).toBeNull();
+    });
+
+    it("stays open while a failed or cancelled row needs attention", () => {
+      seed([entry({ id: "a", state: "active" }), entry({ id: "b", state: "active" })]);
+      renderQueue();
+      update([entry({ id: "a", state: "completed" }), entry({ id: "b", state: "failed" })]);
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS * 2));
+      expect(currentTransfersView().minimized).toBe(false);
+      expect(query("transfer-queue")).not.toBeNull();
+    });
+
+    it("does not collapse while a transfer is still running", () => {
+      seed([entry({ id: "a", state: "completed" }), entry({ id: "b", state: "active" })]);
+      renderQueue();
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS * 2));
+      expect(currentTransfersView().minimized).toBe(false);
+    });
+
+    it("does not collapse again after the user reopens the same finished set", () => {
+      seed([entry({ id: "a", state: "active" })]);
+      renderQueue();
+      update([entry({ id: "a", state: "completed" })]);
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS));
+      expect(currentTransfersView().minimized).toBe(true);
+      // The user clicks the status-bar indicator to look at the finished rows.
+      update([entry({ id: "a", state: "completed" })], false);
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS * 2));
+      expect(currentTransfersView().minimized).toBe(false);
+      expect(query("transfer-queue")).not.toBeNull();
+    });
+
+    it("reopens by itself when a new transfer starts after an auto-collapse", () => {
+      seed([entry({ id: "a", state: "active" })]);
+      renderQueue();
+      update([entry({ id: "a", state: "completed" })]);
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS));
+      expect(currentTransfersView().minimized).toBe(true);
+      update([entry({ id: "a", state: "completed" }), entry({ id: "b", state: "active" })]);
+      expect(currentTransfersView().minimized).toBe(false);
+      expect(query("transfer-queue")).not.toBeNull();
+    });
+
+    it("keeps a panel the user minimized minimized when a new transfer starts", () => {
+      seed([entry({ id: "a", state: "active" })], true);
+      renderQueue();
+      update([entry({ id: "a", state: "active" }), entry({ id: "b", state: "queued" })]);
+      act(() => vi.advanceTimersByTime(TRANSFER_PANEL_AUTO_COLLAPSE_MS * 2));
+      expect(currentTransfersView().minimized).toBe(true);
+    });
   });
 
   // Honest controls (audit FEC-004 / UX-016): the per-row actions must reflect
