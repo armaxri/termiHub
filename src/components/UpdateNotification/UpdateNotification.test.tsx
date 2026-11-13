@@ -61,6 +61,7 @@ beforeEach(() => {
       releaseNotes: "Fixed things.",
       isSecurity: false,
       channel: "stable",
+      outcome: "updateAvailable",
     },
     updateNotificationDismissed: false,
     dismissUpdateNotification: vi.fn(),
@@ -133,6 +134,7 @@ describe("UpdateNotification (Button migration)", () => {
         releaseNotes: "Fixed things.",
         isSecurity: false,
         channel: "stable",
+        outcome: "updateAvailable",
       },
     });
     const dismiss = vi.fn();
@@ -187,6 +189,7 @@ describe("UpdateNotification (develop build, #5023)", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "develop",
+        outcome: "updateAvailable",
         buildCommit: "0e3504c",
         buildPublishedAt: "2026-10-26T23:31:19+00:00",
       },
@@ -234,6 +237,7 @@ describe("UpdateNotification (develop build, #5023)", () => {
         releaseNotes: "",
         isSecurity: false,
         channel: "develop",
+        outcome: "upToDate",
       },
     });
     await render();

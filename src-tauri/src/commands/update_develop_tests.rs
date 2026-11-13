@@ -1,4 +1,5 @@
 use super::*;
+use crate::commands::update::UpdateCheckOutcome;
 
 const RELEASE_URL: &str = "https://github.com/armaxri/termiHub/releases/tag/dev-develop-latest";
 const RELEASE_SHA: &str = "0e3504c5741626da0dc2618dd1378efa4979ed01";
@@ -87,6 +88,7 @@ fn newer_develop_build_is_available() {
     let release = release_json(Some(RELEASE_SHA), Some("2026-10-26T23:31:19Z"));
     let info = evaluate_develop_release(release, "abc1234", at("2026-10-25T10:00:00+02:00"));
     assert!(info.available);
+    assert_eq!(info.outcome, UpdateCheckOutcome::UpdateAvailable);
     assert_eq!(info.channel, UpdateChannel::Develop);
     assert_eq!(info.latest_version, "0e3504c");
     assert_eq!(info.build_commit.as_deref(), Some("0e3504c"));
@@ -104,6 +106,7 @@ fn identical_build_is_not_offered() {
     let release = release_json(Some(RELEASE_SHA), Some("2026-10-26T23:31:19Z"));
     let info = evaluate_develop_release(release, "0e3504c", at("2026-10-26T22:50:00Z"));
     assert!(!info.available);
+    assert_eq!(info.outcome, UpdateCheckOutcome::UpToDate);
     assert_eq!(info.channel, UpdateChannel::Develop);
     assert!(info.build_commit.is_none());
 }

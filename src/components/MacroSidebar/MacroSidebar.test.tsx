@@ -178,6 +178,40 @@ describe("MacroSidebar", () => {
     expect(query("macro-run-r1")).not.toBeNull();
   });
 
+  it("shows each macro's latest run on its row (#5680)", async () => {
+    const base = {
+      startedAt: "2026-09-20T00:00:00Z",
+      status: "completed" as const,
+      stepsPlayed: 1,
+      totalSteps: 1,
+      targetCount: 1,
+      origin: "manual" as const,
+      macroId: "macro-1",
+      macroName: "Deploy sequence",
+    };
+    const recent = new Date(Date.now() - 1000).toISOString();
+    useAppStore.setState({
+      macros: sampleMacros,
+      loadMacroRuns: vi.fn().mockResolvedValue(undefined),
+      macroRuns: [
+        { ...base, id: "old", endedAt: "2026-09-20T00:00:01Z", targetLabels: ["old-tab"] },
+        { ...base, id: "new", endedAt: recent, targetLabels: ["new-tab"] },
+      ],
+    });
+    await render();
+    expect(query("macro-last-run-macro-1")?.textContent).toBe("Last run: just now on new-tab");
+    expect(query("macro-last-run-macro-2")).toBeNull();
+  });
+
+  it("records from an icon-only filled record dot next to the text New (R-079, #5680)", async () => {
+    await render();
+    const record = query("macro-record-btn")!;
+    expect(record.getAttribute("aria-label")).toBe("Record new macro");
+    expect(record.textContent?.trim()).toBe("");
+    expect(record.querySelector(".lucide-circle-dot")).not.toBeNull();
+    expect(query("macro-new-btn")!.textContent).toContain("New");
+  });
+
   it("filters the list by the search query across name/description/tags", async () => {
     useAppStore.setState({ macros: sampleMacros });
     await render();

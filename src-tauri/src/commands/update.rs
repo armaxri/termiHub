@@ -10,6 +10,7 @@ use super::update_develop::{
     UpdateChannel, DEVELOP_RELEASE_API_URL,
 };
 use crate::connection::manager::ConnectionManager;
+use crate::connection::settings::UpdateSettings;
 
 const GITHUB_API_URL: &str = "https://api.github.com/repos/armaxri/termiHub/releases/latest";
 
@@ -75,6 +76,27 @@ pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
     }
 }
 
+/// What an update check did, stated explicitly so the frontend never has to
+/// infer it from which fields are filled in (#5651).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateCheckOutcome {
+    /// The release feed was read and the running build is current.
+    UpToDate,
+    /// The release feed was read and offers a newer build.
+    UpdateAvailable,
+    /// This build does not check for updates (`channel: none`); no feed was read.
+    NotChecking,
+    /// An automatic check was skipped because automatic checks are turned off.
+    SkippedAutoOff,
+    /// An automatic check was skipped because the last one was under an hour ago.
+    SkippedRateLimited,
+    /// The feed fetch or its evaluation failed; `failure_reason` says why.
+    Failed,
+}
+
 /// Result returned to the frontend after an update check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -104,12 +126,22 @@ pub struct UpdateInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub build_published_at: Option<String>,
+    /// What this check did: read the feed, skipped it (and why), or failed.
+    pub outcome: UpdateCheckOutcome,
+    /// `Failed` only: a short, human-readable reason the check failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub failure_reason: Option<String>,
 }
 
 impl UpdateInfo {
-    /// A "no update" result that did not consult any feed (rate limit, error,
-    /// or a build that does not check).
-    fn unavailable(running_version: String, channel: UpdateChannel) -> Self {
+    /// A "no update" result that did not consult any feed; `outcome` says why
+    /// (a skip, a failure, or a build that does not check).
+    fn feedless(
+        running_version: String,
+        channel: UpdateChannel,
+        outcome: UpdateCheckOutcome,
+    ) -> Self {
         Self {
             available: false,
             latest_version: running_version,
@@ -119,7 +151,26 @@ impl UpdateInfo {
             channel,
             build_commit: None,
             build_published_at: None,
+            outcome,
+            failure_reason: None,
         }
+    }
+
+    /// A feed-less result for a check that failed with `reason`.
+    fn failed(running_version: String, channel: UpdateChannel, reason: String) -> Self {
+        Self {
+            failure_reason: Some(reason),
+            ..Self::feedless(running_version, channel, UpdateCheckOutcome::Failed)
+        }
+    }
+}
+
+/// The outcome for a check that read the feed.
+pub(crate) fn checked_outcome(available: bool) -> UpdateCheckOutcome {
+    if available {
+        UpdateCheckOutcome::UpdateAvailable
+    } else {
+        UpdateCheckOutcome::UpToDate
     }
 }
 
@@ -185,7 +236,11 @@ fn evaluate_stable_release(
         let running = parse_tag(running_version)?;
         return Ok(UpdateInfo {
             release_url: release.html_url,
-            ..UpdateInfo::unavailable(running.to_string(), UpdateChannel::Stable)
+            ..UpdateInfo::feedless(
+                running.to_string(),
+                UpdateChannel::Stable,
+                UpdateCheckOutcome::UpToDate,
+            )
         });
     }
 
@@ -205,6 +260,8 @@ fn evaluate_stable_release(
         channel: UpdateChannel::Stable,
         build_commit: None,
         build_published_at: None,
+        outcome: checked_outcome(available),
+        failure_reason: None,
     })
 }
 
@@ -288,13 +345,96 @@ fn automatic_check_allowed(auto_check: bool, force: bool) -> bool {
     force || auto_check
 }
 
+/// Decide whether a check runs at all.
+///
+/// Returns the feed-less result to hand back when the check is skipped (a
+/// build that does not check, automatic checks off, or the 1-hour rate limit),
+/// or `None` when the feed should be read.
+fn skip_check(
+    channel: UpdateChannel,
+    running_version: &str,
+    update_settings: &UpdateSettings,
+    force: bool,
+) -> Option<UpdateInfo> {
+    let outcome = if channel == UpdateChannel::None {
+        debug!("Update check skipped — this build does not check for updates");
+        UpdateCheckOutcome::NotChecking
+    } else if !automatic_check_allowed(update_settings.auto_check, force) {
+        // The frontend schedules its startup check before settings load, so the
+        // backend is what honours "check automatically: off" (#5388).
+        debug!("Update check skipped — automatic checks are turned off");
+        UpdateCheckOutcome::SkippedAutoOff
+    } else if !should_check(&update_settings.last_check_time, force) {
+        debug!("Update check skipped — last check was less than 1 hour ago");
+        UpdateCheckOutcome::SkippedRateLimited
+    } else {
+        return None;
+    };
+    Some(UpdateInfo::feedless(
+        running_version.to_string(),
+        channel,
+        outcome,
+    ))
+}
+
+/// Turn the result of reading the feed into the frontend's `UpdateInfo`.
+///
+/// A fetch or evaluation error becomes an explicit `Failed` outcome carrying
+/// the reason, so a failed automatic check is never mistaken for a skip (#5651).
+fn finish_check(
+    result: anyhow::Result<UpdateInfo>,
+    running_version: &str,
+    channel: UpdateChannel,
+) -> UpdateInfo {
+    match result {
+        Ok(info) => {
+            debug!(
+                "Update check complete: available={}, latest={}",
+                info.available, info.latest_version
+            );
+            info
+        }
+        Err(err) => {
+            tracing::warn!("Update check failed: {err:#}");
+            UpdateInfo::failed(running_version.to_string(), channel, format!("{err:#}"))
+        }
+    }
+}
+
+/// Run one update check: skip it, or read the feed through `fetch`.
+///
+/// `fetch` is the feed-read seam (the real GitHub fetch in the command, a stub in
+/// tests). `record_check` runs after every feed read, success or failure, so the
+/// caller can persist `last_check_time` and avoid hammering the API.
+async fn run_update_check<F, Fut>(
+    channel: UpdateChannel,
+    running_version: &str,
+    update_settings: &UpdateSettings,
+    force: bool,
+    fetch: F,
+    record_check: impl FnOnce(),
+) -> UpdateInfo
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<UpdateInfo>>,
+{
+    if let Some(skipped) = skip_check(channel, running_version, update_settings, force) {
+        return skipped;
+    }
+    let result = fetch().await;
+    record_check();
+    finish_check(result, running_version, channel)
+}
+
 /// Check for a termiHub update.
 ///
-/// * `force` — skip the 1-hour rate limit (used by the "Check Now" button).
+/// * `force` — skip the auto-check setting and the 1-hour rate limit (used by
+///   the "Check Now" button).
 ///
-/// On any network or API error the command returns an `UpdateInfo` with
-/// `available: false` and logs the error — callers should never show a
-/// hard error to the user for a background check.
+/// The result's `outcome` states what happened: the feed was read (up to date
+/// or update available), the check was skipped (and why), or it failed — a
+/// network or API error is reported as `Failed` with a reason rather than as a
+/// hard error, so a background check never surfaces an error dialog.
 #[tauri::command]
 pub async fn check_for_updates(
     force: bool,
@@ -315,52 +455,28 @@ pub async fn check_for_updates(
     );
     debug!("Checking for updates (running={running_version}, channel={channel:?}, force={force})");
 
-    if channel == UpdateChannel::None {
-        debug!("Update check skipped — this build does not check for updates");
-        return Ok(UpdateInfo::unavailable(running_version, channel));
-    }
-
-    let settings = manager.get_settings();
-    let update_settings = settings.updates.clone();
-
-    // The frontend schedules its startup check before settings load, so the
-    // backend is what honours "check automatically: off" (#5388).
-    if !automatic_check_allowed(update_settings.auto_check, force) {
-        debug!("Update check skipped — automatic checks are turned off");
-        return Ok(UpdateInfo::unavailable(running_version, channel));
-    }
-
-    // Rate-limit automatic checks.
-    if !should_check(&update_settings.last_check_time, force) {
-        debug!("Update check skipped — last check was less than 1 hour ago");
-        // Return "not available" without hitting the network.
-        return Ok(UpdateInfo::unavailable(running_version, channel));
-    }
-
-    let result = match channel {
-        UpdateChannel::Develop => fetch_develop_update_info(&running_version).await,
-        _ => fetch_update_info(&running_version).await,
-    };
-
-    // Persist last_check_time, even on failure to avoid hammering the API.
-    let mut new_settings = manager.get_settings();
-    new_settings.updates.last_check_time = Some(now_iso8601());
-    if let Err(save_err) = manager.save_settings(new_settings) {
-        tracing::warn!("Failed to persist update check timestamp: {save_err:#}");
-    }
-
-    let info = match result {
-        Ok(info) => info,
-        Err(err) => {
-            tracing::warn!("Update check failed: {err:#}");
-            return Ok(UpdateInfo::unavailable(running_version, channel));
-        }
-    };
-
-    debug!(
-        "Update check complete: available={}, latest={}",
-        info.available, info.latest_version
-    );
+    let update_settings = manager.get_settings().updates;
+    let info = run_update_check(
+        channel,
+        &running_version,
+        &update_settings,
+        force,
+        || async {
+            match channel {
+                UpdateChannel::Develop => fetch_develop_update_info(&running_version).await,
+                _ => fetch_update_info(&running_version).await,
+            }
+        },
+        || {
+            // Persist last_check_time, even on failure to avoid hammering the API.
+            let mut new_settings = manager.get_settings();
+            new_settings.updates.last_check_time = Some(now_iso8601());
+            if let Err(save_err) = manager.save_settings(new_settings) {
+                tracing::warn!("Failed to persist update check timestamp: {save_err:#}");
+            }
+        },
+    )
+    .await;
     Ok(info)
 }
 
@@ -695,5 +811,175 @@ mod tests {
         assert_eq!(v.minor, 1);
         assert_eq!(v.patch, 0);
         assert!(!v.pre.is_empty());
+    }
+
+    // ── run_update_check: one explicit outcome per path (#5651) ─────────────
+
+    fn settings(auto_check: bool, last_check_time: Option<String>) -> UpdateSettings {
+        UpdateSettings {
+            auto_check,
+            last_check_time,
+            skipped_version: None,
+        }
+    }
+
+    /// Run a check with a stub feed; returns the result, whether the feed was
+    /// read, and whether the check was recorded (last_check_time persisted).
+    fn run_with_feed(
+        channel: UpdateChannel,
+        update_settings: &UpdateSettings,
+        force: bool,
+        feed: anyhow::Result<UpdateInfo>,
+    ) -> (UpdateInfo, bool, bool) {
+        let mut fetched = false;
+        let mut recorded = false;
+        let info = tauri::async_runtime::block_on(run_update_check(
+            channel,
+            "0.1.0",
+            update_settings,
+            force,
+            || {
+                fetched = true;
+                async move { feed }
+            },
+            || recorded = true,
+        ));
+        (info, fetched, recorded)
+    }
+
+    fn feed_release(tag: &str) -> anyhow::Result<UpdateInfo> {
+        let release: GitHubRelease =
+            serde_json::from_str(&make_release_json(tag, false, "notes")).unwrap();
+        evaluate_stable_release(release, "0.1.0")
+    }
+
+    #[test]
+    fn outcome_up_to_date_when_the_feed_has_nothing_newer() {
+        let (info, fetched, recorded) = run_with_feed(
+            UpdateChannel::Stable,
+            &settings(true, None),
+            false,
+            feed_release("v0.1.0"),
+        );
+        assert!(fetched && recorded);
+        assert_eq!(info.outcome, UpdateCheckOutcome::UpToDate);
+        assert!(!info.available);
+        assert!(info.failure_reason.is_none());
+    }
+
+    #[test]
+    fn outcome_update_available_when_the_feed_is_newer() {
+        let (info, fetched, recorded) = run_with_feed(
+            UpdateChannel::Stable,
+            &settings(true, None),
+            true,
+            feed_release("v0.2.0"),
+        );
+        assert!(fetched && recorded);
+        assert_eq!(info.outcome, UpdateCheckOutcome::UpdateAvailable);
+        assert!(info.available);
+    }
+
+    #[test]
+    fn outcome_not_checking_for_a_build_without_a_channel() {
+        let (info, fetched, recorded) = run_with_feed(
+            UpdateChannel::None,
+            &settings(true, None),
+            true,
+            feed_release("v0.2.0"),
+        );
+        assert!(!fetched && !recorded);
+        assert_eq!(info.outcome, UpdateCheckOutcome::NotChecking);
+        assert_eq!(info.channel, UpdateChannel::None);
+        assert!(!info.available);
+    }
+
+    #[test]
+    fn outcome_skipped_auto_off_for_an_automatic_check() {
+        let (info, fetched, recorded) = run_with_feed(
+            UpdateChannel::Stable,
+            &settings(false, None),
+            false,
+            feed_release("v0.2.0"),
+        );
+        assert!(!fetched && !recorded);
+        assert_eq!(info.outcome, UpdateCheckOutcome::SkippedAutoOff);
+        assert!(!info.available);
+    }
+
+    #[test]
+    fn forced_check_reads_the_feed_even_with_auto_check_off() {
+        let (info, fetched, _) = run_with_feed(
+            UpdateChannel::Stable,
+            &settings(false, Some(now_iso8601())),
+            true,
+            feed_release("v0.1.0"),
+        );
+        assert!(fetched);
+        assert_eq!(info.outcome, UpdateCheckOutcome::UpToDate);
+    }
+
+    #[test]
+    fn outcome_skipped_rate_limited_within_the_hour() {
+        let (info, fetched, recorded) = run_with_feed(
+            UpdateChannel::Develop,
+            &settings(true, Some(now_iso8601())),
+            false,
+            feed_release("v0.2.0"),
+        );
+        assert!(!fetched && !recorded);
+        assert_eq!(info.outcome, UpdateCheckOutcome::SkippedRateLimited);
+        assert_eq!(info.channel, UpdateChannel::Develop);
+    }
+
+    #[test]
+    fn outcome_failed_with_reason_when_the_feed_fetch_fails() {
+        for force in [false, true] {
+            let (info, fetched, recorded) = run_with_feed(
+                UpdateChannel::Stable,
+                &settings(true, None),
+                force,
+                Err(anyhow::anyhow!("GitHub API returned HTTP 503")),
+            );
+            // A failed fetch still stamps last_check_time to avoid hammering the API.
+            assert!(fetched && recorded);
+            assert_eq!(info.outcome, UpdateCheckOutcome::Failed);
+            assert!(!info.available);
+            assert_eq!(
+                info.failure_reason.as_deref(),
+                Some("GitHub API returned HTTP 503")
+            );
+        }
+    }
+
+    #[test]
+    fn outcome_failed_when_the_feed_cannot_be_evaluated() {
+        let (info, _, _) = run_with_feed(
+            UpdateChannel::Stable,
+            &settings(true, None),
+            true,
+            feed_release("not-a-version"),
+        );
+        assert_eq!(info.outcome, UpdateCheckOutcome::Failed);
+        assert!(info
+            .failure_reason
+            .as_deref()
+            .is_some_and(|r| r.contains("not-a-version")));
+    }
+
+    #[test]
+    fn outcome_serialises_as_camel_case() {
+        let info = UpdateInfo::failed("0.1.0".into(), UpdateChannel::Stable, "boom".into());
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["outcome"], "failed");
+        assert_eq!(json["failureReason"], "boom");
+        let skipped = UpdateInfo::feedless(
+            "0.1.0".into(),
+            UpdateChannel::Stable,
+            UpdateCheckOutcome::SkippedRateLimited,
+        );
+        let json = serde_json::to_value(&skipped).unwrap();
+        assert_eq!(json["outcome"], "skippedRateLimited");
+        assert!(json.get("failureReason").is_none());
     }
 }

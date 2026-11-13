@@ -54,6 +54,7 @@ const MOCK_REGULAR_UPDATE: UpdateInfo = {
   releaseNotes: "New features and bug fixes",
   isSecurity: false,
   channel: "stable",
+  outcome: "updateAvailable",
 };
 
 const MOCK_SECURITY_UPDATE: UpdateInfo = {
@@ -63,10 +64,10 @@ const MOCK_SECURITY_UPDATE: UpdateInfo = {
   releaseNotes: "<!-- security -->\nFixes CVE-2026-0001",
   isSecurity: true,
   channel: "stable",
+  outcome: "updateAvailable",
 };
 
-// A feed-backed "no update" result carries the release page URL; only the
-// backend's feed-less placeholder leaves it empty (#5615).
+// A feed-backed "no update" result: the backend states the outcome (#5651).
 const MOCK_NO_UPDATE: UpdateInfo = {
   available: false,
   latestVersion: "0.1.0",
@@ -74,6 +75,7 @@ const MOCK_NO_UPDATE: UpdateInfo = {
   releaseNotes: "",
   isSecurity: false,
   channel: "stable",
+  outcome: "upToDate",
 };
 
 describe("appStore — update checker", () => {
