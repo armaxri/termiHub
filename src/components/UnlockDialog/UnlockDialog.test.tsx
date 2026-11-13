@@ -509,4 +509,73 @@ describe("UnlockDialog", () => {
       expect(input.classList.contains("ui-input--error")).toBe(false);
     });
   });
+
+  describe("names the waiting connection (#5684)", () => {
+    it("the plain (status-bar) unlock keeps the generic text", async () => {
+      await act(async () => {
+        root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+      });
+      expect(query("unlock-dialog-waiting")).toBeNull();
+      expect(query("unlock-dialog-description")?.textContent).toBe(
+        "termiHub has saved credentials that are encrypted with your master password."
+      );
+    });
+
+    it("a waiting connect is named with its type and secret kind", async () => {
+      await act(async () => {
+        root.render(
+          <UnlockDialog
+            open={true}
+            onOpenChange={vi.fn()}
+            connectFallback
+            onConnectWithoutSaved={vi.fn()}
+            waiting={[{ name: "prod-db", transport: "SSH", secret: "password" }]}
+          />
+        );
+      });
+      const line = query("unlock-dialog-waiting");
+      expect(line?.textContent).toBe("Unlock to connect to prod-db (SSH) with its saved password.");
+      // It sits in the body stack, after the generic description.
+      expect(line?.parentElement).toBe(query("unlock-dialog-body"));
+      expect(query("unlock-dialog-description")?.nextElementSibling).toBe(line);
+    });
+
+    it("a key passphrase reads 'passphrase'; an unknown type drops the parenthesis", async () => {
+      await act(async () => {
+        root.render(
+          <UnlockDialog
+            open={true}
+            onOpenChange={vi.fn()}
+            waiting={[{ name: "build-1", secret: "passphrase" }]}
+          />
+        );
+      });
+      expect(query("unlock-dialog-waiting")?.textContent).toBe(
+        "Unlock to connect to build-1 with its saved passphrase."
+      );
+    });
+
+    it.each([
+      [1, "and 1 more connection with their saved credentials."],
+      [3, "and 3 more connections with their saved credentials."],
+    ])("several waiting connects name the first and count %i more", async (more, tail) => {
+      const others = Array.from({ length: more }, (_, i) => ({
+        name: `other-${i}`,
+        transport: "Telnet",
+        secret: "password" as const,
+      }));
+      await act(async () => {
+        root.render(
+          <UnlockDialog
+            open={true}
+            onOpenChange={vi.fn()}
+            waiting={[{ name: "prod-db", transport: "SSH", secret: "password" }, ...others]}
+          />
+        );
+      });
+      expect(query("unlock-dialog-waiting")?.textContent).toBe(
+        `Unlock to connect to prod-db (SSH) ${tail}`
+      );
+    });
+  });
 });

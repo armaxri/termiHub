@@ -34,6 +34,19 @@ import { errorMessage } from "@/utils/errorMessage";
  */
 export type UnlockOutcome = "unlocked" | "skipped" | "canceled";
 
+/**
+ * A connect waiting on the unlock dialog (#5684), so the dialog can say which
+ * connection asked: "Unlock to connect to prod-db (SSH) with its saved password."
+ */
+export interface UnlockWaiter {
+  /** The connection's name. */
+  name: string;
+  /** Display name of its connection type (e.g. `"SSH"`), when known. */
+  transport?: string;
+  /** Which stored secret the connect reads: a password or a key passphrase. */
+  secret: "password" | "passphrase";
+}
+
 /** Options for {@link CredentialStoreSlice.requestUnlockOutcome}. */
 export interface UnlockRequestOptions {
   /**
@@ -42,6 +55,8 @@ export interface UnlockRequestOptions {
    * saved password" next to Unlock.
    */
   connectFallback?: boolean;
+  /** The connect that is waiting, so the dialog can name it (#5684). */
+  waiter?: UnlockWaiter;
 }
 
 /**
@@ -71,11 +86,16 @@ export interface CredentialStoreSlice {
    */
   unlockConnectFallback: boolean;
   /**
+   * The connects waiting on the open dialog, in request order and without
+   * duplicates (#5684). Empty for a plain unlock (the status-bar lock).
+   */
+  unlockWaiters: UnlockWaiter[];
+  /**
    * Opens the unlock dialog and returns a Promise that resolves to `true` when the
    * store is successfully unlocked, or `false` when the user cancels. Callers
    * can `await` this before proceeding with a credential-dependent action.
    */
-  requestUnlock: () => Promise<boolean>;
+  requestUnlock: (opts?: Pick<UnlockRequestOptions, "waiter">) => Promise<boolean>;
   /**
    * Opens the unlock dialog and resolves to how it settled (#5188). With
    * `connectFallback` the dialog also offers "Connect without saved password",
@@ -110,6 +130,15 @@ export interface CredentialStoreSlice {
   resolveStorageChoice: (outcome: StorageChoiceOutcome) => void;
 }
 
+/** Append `waiter` unless the same connect is already listed (#5684). */
+function addWaiter(waiters: UnlockWaiter[], waiter: UnlockWaiter | undefined): UnlockWaiter[] {
+  if (!waiter) return waiters;
+  const listed = waiters.some(
+    (w) => w.name === waiter.name && w.transport === waiter.transport && w.secret === waiter.secret
+  );
+  return listed ? waiters : [...waiters, waiter];
+}
+
 export const createCredentialStoreSlice: StateCreator<AppState, [], [], CredentialStoreSlice> = (
   set,
   get
@@ -137,9 +166,10 @@ export const createCredentialStoreSlice: StateCreator<AppState, [], [], Credenti
   },
   unlockResolvers: [],
   unlockConnectFallback: false,
-  requestUnlock: () =>
+  unlockWaiters: [],
+  requestUnlock: (opts) =>
     get()
-      .requestUnlockOutcome()
+      .requestUnlockOutcome(opts?.waiter ? { waiter: opts.waiter } : undefined)
       .then((outcome) => outcome === "unlocked"),
   requestUnlockOutcome: (opts) =>
     new Promise<UnlockOutcome>((resolve) => {
@@ -153,6 +183,7 @@ export const createCredentialStoreSlice: StateCreator<AppState, [], [], Credenti
         unlockDialogOpen: true,
         unlockResolvers: [...state.unlockResolvers, resolve],
         unlockConnectFallback: state.unlockConnectFallback || Boolean(opts?.connectFallback),
+        unlockWaiters: addWaiter(state.unlockWaiters, opts?.waiter),
       }));
     }),
   resolveUnlock: (outcome) => {
@@ -162,7 +193,7 @@ export const createCredentialStoreSlice: StateCreator<AppState, [], [], Credenti
       outcome === true ? "unlocked" : outcome === false ? "canceled" : outcome;
     // Clear first so a re-entrant resolveUnlock() (e.g. the unlocked event and a
     // dialog-close both firing) is a harmless no-op — every promise settles once.
-    set({ unlockResolvers: [], unlockConnectFallback: false });
+    set({ unlockResolvers: [], unlockConnectFallback: false, unlockWaiters: [] });
     for (const resolve of unlockResolvers) {
       resolve(settled);
     }

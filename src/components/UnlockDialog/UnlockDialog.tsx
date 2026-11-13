@@ -13,6 +13,8 @@ import { frontendLog } from "@/utils/frontendLog";
 import "./UnlockDialog.css";
 import { errorMessage } from "@/utils/errorMessage";
 import { isImeComposing } from "@/utils/imeComposition";
+import type { UnlockWaiter } from "@/store/slices/credentialStoreSlice";
+import { unlockWaitingText } from "./unlockWaitingText";
 
 interface UnlockDialogProps {
   open: boolean;
@@ -26,10 +28,17 @@ interface UnlockDialogProps {
   connectFallback?: boolean;
   /** "Connect without saved password" was chosen (only with `connectFallback`). */
   onConnectWithoutSaved?: () => void;
+  /**
+   * The connects waiting on the unlock (#5684): the dialog names the first
+   * and counts the rest. Empty or omitted for a plain (status-bar) unlock.
+   */
+  waiting?: readonly UnlockWaiter[];
 }
 
 /** Id of the unlock error line, referenced by the password field (#5629). */
 const UNLOCK_ERROR_ID = "unlock-dialog-password-error";
+
+const NO_WAITERS: readonly UnlockWaiter[] = [];
 
 /** Type guard for the backend's unlock error shape (see `UnlockCredentialStoreError`). */
 function isCorruptStoreError(err: unknown): boolean {
@@ -59,6 +68,9 @@ function isCorruptStoreError(err: unknown): boolean {
  * and the master password field stays available as the fallback (cancelling
  * the OS prompt, or choosing "Use Master Password" in it, lands there).
  *
+ * A connect waiting on the dialog is named in it (#5684) — "Unlock to connect
+ * to prod-db (SSH) with its saved password." — so the dialog says why it is up.
+ *
  * A connect waiting on the dialog can go on without the vault (#5188):
  * "Connect without saved password" leaves the store locked and lets that
  * connect ask for its password. Escape/×/Cancel cancel the connect instead.
@@ -70,6 +82,7 @@ export function UnlockDialog({
   onOpenChange,
   connectFallback = false,
   onConnectWithoutSaved,
+  waiting = NO_WAITERS,
 }: UnlockDialogProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -83,6 +96,7 @@ export function UnlockDialog({
   const biometric = osAuth?.biometricUnlock;
   const biometricAvailable = Boolean(biometric?.supported && biometric.enabled);
   const biometricLabel = biometric?.methodLabel ?? "biometrics";
+  const waitingText = unlockWaitingText(waiting);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -267,6 +281,11 @@ export function UnlockDialog({
         <p className="unlock-dialog__description" data-testid="unlock-dialog-description">
           termiHub has saved credentials that are encrypted with your master password.
         </p>
+        {waitingText && (
+          <p className="unlock-dialog__waiting" data-testid="unlock-dialog-waiting">
+            {waitingText}
+          </p>
+        )}
         {biometricAvailable && !corrupt && (
           <div className="unlock-dialog__biometric-row">
             <Button

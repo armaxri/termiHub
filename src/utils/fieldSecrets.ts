@@ -310,7 +310,8 @@ async function takeStored(
   if (opts.unattended && credentialStoreNeedsUnlock(gate)) {
     return { status: "refused", reason: "The credential store is locked." };
   }
-  if (!(await ensureCredentialStoreUnlocked(gate))) {
+  const waiting = opts.label ? { waitingConnection: { name: opts.label } } : {};
+  if (!(await ensureCredentialStoreUnlocked({ ...gate, ...waiting }))) {
     return {
       status: "canceled",
       reason: "Connect canceled — the credential store stayed locked.",
