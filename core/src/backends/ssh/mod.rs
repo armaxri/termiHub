@@ -527,13 +527,15 @@ impl ConnectionType for Ssh {
                             help_text: Some(
                                 "Trusted forwarding (off) gives remote programs full access to \
                                  your local display: they can read other windows and see what \
-                                 you type, as with ssh -Y. Untrusted forwarding (on) gives them a \
-                                 restricted, short-lived key instead, as with ssh -X: new remote \
-                                 windows can open for 20 minutes after connecting, and some \
-                                 programs may not work fully. It needs an X server with the \
-                                 SECURITY extension and xauth. XQuartz (macOS) and VcXsrv \
-                                 (Windows) lack it, so with this on, X11 forwarding stays off \
-                                 there and the connection says why."
+                                 you type, as with ssh -Y.\n\n\
+                                 Untrusted forwarding (on) gives them a restricted, short-lived \
+                                 key instead, as with ssh -X: new remote windows can open for 20 \
+                                 minutes after connecting, and some programs may not work \
+                                 fully.\n\n\
+                                 It needs an X server with the SECURITY extension, and xauth. \
+                                 XQuartz (macOS) and VcXsrv (Windows) lack it, so there X11 \
+                                 forwarding stays off with this on, and the connection says \
+                                 why."
                                     .to_string(),
                             ),
                             field_type: FieldType::Boolean,
