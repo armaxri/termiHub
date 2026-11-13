@@ -41,7 +41,7 @@ impl FakeRunner {
             "fake-runner-{mode}{}",
             std::env::consts::EXE_SUFFIX
         ));
-        std::fs::copy(fake_runner_binary(), &exe).expect("copy the fake runner");
+        copy_fake_runner(&exe);
         Self { exe, dir }
     }
 
@@ -155,6 +155,33 @@ fn fake_runner_binary() -> &'static Path {
             std::env::consts::EXE_SUFFIX
         ))
     })
+}
+
+/// Copy the built fake runner to `dest`.
+///
+/// nextest runs every test in its own process, so each one runs its own
+/// (usually fresh) `cargo build` of the fake runner. Even a fresh build
+/// re-links the output binary: cargo removes it and hard-links it again from
+/// `deps/`. A test copying the binary in that window finds no file
+/// (`NotFound`; on Windows the removal can also make it briefly inaccessible).
+/// Retry that only, bounded.
+fn copy_fake_runner(dest: &Path) {
+    let src = fake_runner_binary();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match std::fs::copy(src, dest) {
+            Ok(_) => return,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                ) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => panic!("copy the fake runner {}: {e:?}", src.display()),
+        }
+    }
 }
 
 /// Whether process `pid` still exists — not even a zombie (Unix).

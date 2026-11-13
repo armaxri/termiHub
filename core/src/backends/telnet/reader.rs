@@ -117,11 +117,9 @@ pub(super) fn end_session(ctx: &ReaderContext) {
 /// `connected` forever. Windows reports its read timeout as `WSAETIMEDOUT`,
 /// which maps to `TimedOut`, so there it counts as a timeout too.
 pub(super) fn is_read_timeout(e: &std::io::Error) -> bool {
-    match e.kind() {
-        std::io::ErrorKind::WouldBlock => true,
-        std::io::ErrorKind::TimedOut => cfg!(windows),
-        _ => false,
-    }
+    let kind = e.kind();
+    kind == std::io::ErrorKind::WouldBlock
+        || (cfg!(windows) && kind == std::io::ErrorKind::TimedOut)
 }
 
 /// Run one chunk through the filter, writing any negotiation replies. Returns
