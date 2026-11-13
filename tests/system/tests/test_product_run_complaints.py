@@ -13,8 +13,8 @@ fails until its fix lands; the grade is never weakened to pass.
    inside the sidebar, at most six icon buttons, the rest in a "…" overflow
    menu, at the normal and at the minimum sidebar width.
 3. **Long paths** (#5521): a deep remote and a deep local path longer than the
-   field show the leaf folder in full, clip or overflow nothing
-   (``scrollWidth <= clientWidth``), fold the middle into "…" and carry the
+   field show the leaf folder in full (not ellipsized), let no rendered
+   segment spill past the field, fold the middle into "…" and carry the
    full path in the tooltip, at the normal and at the minimum sidebar width.
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
@@ -76,7 +76,12 @@ PATH_INPUT = "file-browser-path-input"
 SIDEBAR = "sidebar"
 RESIZE_HANDLE = "sidebar-resize-handle"
 FILTER = "file-browser-filter"
-LONG_SEGMENTS = [f"{i}-a-rather-long-folder-name-for-the-path-bar-check" for i in range(1, 7)]
+#: A deep path: five long folders, then a leaf short enough to fit the field
+#: even at the minimum sidebar width (a 50-character leaf cannot be "fully
+#: visible" in a 150 px field, so it would grade nothing).
+LONG_SEGMENTS = [f"{i}-a-rather-long-folder-name-for-the-path-bar-check" for i in range(1, 6)] + [
+    "current-folder"
+]
 EPS = 0.5
 
 
@@ -309,8 +314,12 @@ class TestProductRunComplaints(
             f"{nav['clientWidth']}; visible {texts}"
         )
         problems = []
-        if nav["scrollWidth"] > nav["clientWidth"]:
-            problems.append(f"the path overflows its field ({nav['scrollWidth']} > {nav['clientWidth']})")
+        # What the user sees spill: a rendered segment reaching past the field.
+        # (The bar's own scrollWidth also counts its invisible measuring copy of
+        # every segment, so it is evidence, not the grade.)
+        spill = [i["text"] for i in nav["items"] if _shown(i) and not _inside(i["rect"], nav["rect"])]
+        if spill:
+            problems.append(f"segments overflow the field: {spill[:4]}")
         crumb = f"file-browser-crumb-{leaf}"
         if not self.driver.exists(crumb):
             problems.append("no crumb for the leaf folder")
