@@ -32,6 +32,7 @@ import {
   mirrorSessionAlreadyConnected,
   mirrorSessionExited,
   mirrorSessionIntent,
+  mirrorSessionLive,
   onSessionView,
   projectedToAutoReconnect,
   regionExited,
@@ -118,6 +119,27 @@ beforeEach(() => {
 afterEach(() => {
   stopSessionSubscription();
   setSessionTransportForTest(null);
+});
+
+describe("mirrorSessionLive (#5645)", () => {
+  it("registers a tab the region does not list: connect, then connected", async () => {
+    mirrorSessionLive("tab-new");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transport.dispatched.map((i) => i.kind)).toEqual([
+      "session.connect",
+      "session.connected",
+    ]);
+  });
+
+  it("only settles a listed tab connected, never resetting it", async () => {
+    await ensureSessionSubscribed();
+    transport.setSession("tab-known", {
+      status: "reconnecting",
+    } as unknown as ProjectedSessionLifecycle);
+    mirrorSessionLive("tab-known");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transport.dispatched.map((i) => i.kind)).toEqual(["session.connected"]);
+  });
 });
 
 describe("mirrorSessionAlreadyConnected (#5608)", () => {

@@ -187,6 +187,23 @@ class TestProductRunAgent(
                           f"executable={os.access(target, os.X_OK)}, identical to {binary.name}={same}")
             assert os.access(target, os.X_OK) and same, "the installed agent is not the uploaded binary"
 
+    def test_05_setup_terminal_in_lifecycle(self):
+        with self.step(
+            "agent.setup.terminal-lifecycle",
+            "The setup terminal, opened on the deploy's already-live SSH session, is "
+            "listed in the session lifecycle (live status, reconnect on a drop)",
+            expect="the agent's setup terminal tab showing the install output",
+        ):
+            self.require("agent.deploy")
+            tab_id = self.tab_id_of(f"Setup: {self.name}")
+            # Before #5645 the tab never reached the region: no entry at all.
+            status = self.wait(
+                lambda: self.session_status(tab_id),
+                timeout=30.0,
+                what=f"setup tab {tab_id} in the session lifecycle",
+            )
+            self.evidence(f"setup tab {tab_id}: lifecycle status {status!r}")
+
     # ── live connection ──────────────────────────────────────────────────────
     def test_10_connect_and_shell(self):
         with self.step(

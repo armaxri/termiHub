@@ -253,6 +253,10 @@ export function mirrorSessionIntent(
     .catch((err) => logSessionBridgeFallback(kind, err));
 }
 
+/** Tabs whose already-live registration (`connect` → `connected`) is in flight,
+ * so a second bind before the first is acknowledged does not reset the record. */
+const registeringLiveTabs = new Set<string>();
+
 /**
  * Register a tab that opened on an **already-live** backend session (#5608):
  * the saved-credential pre-connect or an unattended connect created the session
@@ -262,6 +266,8 @@ export function mirrorSessionIntent(
  * applies them in order) `session.connected`. Never throws; failures are logged.
  */
 export function mirrorSessionAlreadyConnected(tabId: string): void {
+  if (registeringLiveTabs.has(tabId)) return;
+  registeringLiveTabs.add(tabId);
   void dispatchSessionIntent("session.connect", tabId)
     .then(() => dispatchSessionIntent("session.connected", tabId))
     .then((ack) => {
@@ -269,7 +275,30 @@ export function mirrorSessionAlreadyConnected(tabId: string): void {
         logSessionBridgeFallback("session.connected", new Error(ack.error?.message ?? "rejected"));
       }
     })
-    .catch((err) => logSessionBridgeFallback("session.connected", err));
+    .catch((err) => logSessionBridgeFallback("session.connected", err))
+    .finally(() => registeringLiveTabs.delete(tabId));
+}
+
+/**
+ * Settle a terminal tab live in the region now that it is bound to a running
+ * backend session (#5645). The single choke point every terminal binding passes
+ * through (`setTabSessionId`): a fresh connect, a reconnect, a reattach, a tab
+ * opened on a session that connected before the tab existed (the saved-credential
+ * pre-connect, the agent setup terminal, a persistent-session attach) and a tab
+ * moved in from another window (new tab id, the source dropped its record).
+ *
+ * A tab the region already lists (its own `session.connect` ran, or a reconnect
+ * loop is settling) only needs `session.connected`. A tab it does not list gets
+ * `session.connect` first, because the backend ignores `connected` for an
+ * unknown tab — without it the tab would have no live status and no reconnect
+ * after a drop. Never throws; failures are logged.
+ */
+export function mirrorSessionLive(tabId: string): void {
+  if (currentSessionView()[tabId] !== undefined) {
+    mirrorSessionIntent("session.connected", tabId);
+    return;
+  }
+  mirrorSessionAlreadyConnected(tabId);
 }
 
 /** Dispatch a `session.exited` intent carrying the exit cause + code, resolving

@@ -55,7 +55,7 @@ import {
   mirrorLayoutMove,
   viewFromSnapshot,
 } from "@/store/layoutBridge";
-import { mirrorSessionIntent } from "@/store/sessionBridge";
+import { mirrorSessionIntent, mirrorSessionLive } from "@/store/sessionBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { createLayoutCommit } from "./layoutCommit";
 import { prunedSessionState, prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
@@ -418,7 +418,15 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         }
         // Session-intents cut (#2203): the connect / reconnect succeeded — settle
         // the tab live in the region (the sole reconnect authority, #2205 PR-B).
-        mirrorSessionIntent("session.connected", tabId);
+        // A terminal tab bound to a session it did not connect itself (opened on
+        // an already-live session, moved in from another window) is registered
+        // first, so it is never missing from the region (#5645). Other tab kinds
+        // own no region record.
+        if (existingTab?.contentType === "terminal") {
+          mirrorSessionLive(tabId);
+        } else {
+          mirrorSessionIntent("session.connected", tabId);
+        }
 
         // On-connect workflow triggers (#1855): a terminal session that opened
         // for a saved connection runs any workflow bound to that connection,
