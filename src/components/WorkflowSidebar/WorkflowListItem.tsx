@@ -14,7 +14,7 @@ import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Workflow } from "@/types/workflow";
 import type { WorkflowRunState } from "@/store/appStore";
-import { summariseWorkflowSteps } from "./workflowStepMeta";
+import { triggerKindLabel } from "./workflowStepMeta";
 
 interface WorkflowListItemProps {
   workflow: Workflow;
@@ -51,8 +51,8 @@ function hasOnConnectTrigger(workflow: Workflow): boolean {
 
 /**
  * A single workflow row in the manager sidebar: the name first (it is what users
- * scan and search for, #5519; no leading step-count badge), an optional
- * on-connect marker, a one-line preview of the step kinds, and the
+ * scan and search for, #5519; no leading step-count badge), its description,
+ * an optional on-connect marker and tags, and the
  * Run / Run on… / Edit / Duplicate / Export / Delete actions. Double-click runs the
  * workflow against the active session (matching the macro row's affordance).
  * Composed from the shared list-item shell.
@@ -73,7 +73,6 @@ export function WorkflowListItem({
   rowRef,
   rowProps,
 }: WorkflowListItemProps) {
-  const preview = summariseWorkflowSteps(workflow.steps);
   const onConnect = hasOnConnectTrigger(workflow);
 
   return (
@@ -245,21 +244,13 @@ export function WorkflowListItem({
               ))}
             </ul>
           ) : null}
-          {preview ? (
-            <code
-              className="workflow-item__preview"
-              data-testid={`workflow-preview-${workflow.id}`}
-            >
-              {preview}
-            </code>
-          ) : null}
           <span className="workflow-item__meta">
             {onConnect ? (
               <span
                 className="workflow-item__trigger"
                 data-testid={`workflow-on-connect-${workflow.id}`}
               >
-                <Zap size={10} aria-hidden="true" /> on-connect
+                <Zap size={10} aria-hidden="true" /> {triggerKindLabel("on-connect")}
               </span>
             ) : null}
             {workflow.tags.length > 0 ? (

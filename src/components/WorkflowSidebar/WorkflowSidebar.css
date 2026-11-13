@@ -61,16 +61,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.workflow-item__preview {
-  display: block;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workflow-item__meta {
   display: flex;
   flex-wrap: wrap;

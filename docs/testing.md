@@ -264,7 +264,7 @@ The product run replaces hand-run product tests. It is **triggered by hand only*
 
 ```bash
 ./scripts/internal/product-run.sh            # opens the live progress page
-./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving
+./scripts/internal/product-run.sh --help     # --config, --build, --unattended, --keep-serving, --real-pointer
 ```
 
 ```mermaid
@@ -288,6 +288,9 @@ flowchart LR
 - **Credentials, backup, RDP / VNC, monitoring, settings and themes** (#5537): `test_product_run_creds.py` grades the three credential stores (none, master password, OS keychain) with save, resolve on reconnect and after a restart, lock / unlock, a refused wrong master password, removal and migration between stores, then a backup with credentials, a profile wipe and a restore. The keychain is used only under the run's own service `termiHub-dev-product-run-<run id>` and read by attributes only (no prompt). Touch ID and the OS check before exporting keychain secrets are human steps. `test_product_run_desktop.py` connects VNC to a stdlib scripted server (`product_run/vnc_server.py`, direct and over an SSH tunnel through the native sshd) and RDP to the sidecar's scripted server, uses real `rdp` / `vnc` hosts from the input file when given, grades host monitoring on the native sshd (stats update; a variant sshd whose exec sessions find no `sh` shows "not supported on this host"), opens every settings category without a JavaScript error, checks that numeric settings show their value in effect (#5554), and applies every built-in theme with captures of the main surfaces and a text-contrast grade.
 - **Locked screen:** on macOS the runner exits 3 when the screen is locked, because the test window can neither paint nor be captured then.
 - **Human steps** (OS security sheets, physical actions) pause the run and show a prompt with a **Done** button on the page; `--unattended` records them as not tested.
+- **Hover grades:** `with self.hovered(testid):` renders the hover for real — the OS pointer when global input is allowed (`--real-pointer`; refused while any other termiHub, the installed app included, is running), else the bridge's `forceHover` verb paints the app's own `:hover` rules. The evidence says which.
+- **UI review (#5538):** after every run the script writes `review/` — `review-brief.md` (product context, per surface every screenshot with what it should show and the step's grade), `review-request.json` (one reviewer entry per surface with a self-contained prompt, theme and window size) and `contact/<surface>.png`. The coordinator spawns one read-only reviewer agent per entry; each writes `review/findings/<surface>.json` (schema: `termihub_harness/product_run/review_schema.py`). `scripts/internal/product-run-review.py merge <run>` validates them, dedupes into `review/findings.{md,json}` and the page shows a **UI review** section.
+
 - **Writing a phase:** a `SystemTest` suite with `ProductRunUi` first in its bases (`termihub_harness/product_run`) wraps each check in `with self.step(id, title, expect=...)`. A failed step fails only that step; the test fails at the end of its call phase. See `tests/system/tests/test_product_run.py`.
 
 ## 2. Component Integration Tests
