@@ -4,12 +4,10 @@ import {
   AlertTriangle,
   Unplug,
   Server,
-  Route,
   RotateCw,
   Pause,
   Play,
   X,
-  Check,
   ArrowUpCircle,
   Monitor,
   Highlighter,
@@ -38,14 +36,12 @@ import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { summarizeAgentUpdates } from "@/utils/agentVersion";
-import { jumpHostStatusLabel } from "@/utils/jumpHost";
 import { formatBytes, formatRate } from "@/utils/formatters";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SystemStats,
   MonitorStatus,
   MonitorStatusReason,
-  MONITORING_INTERVAL_OPTIONS,
   DEFAULT_MONITORING_INTERVAL_MS,
 } from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
@@ -62,16 +58,12 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
   MenuItem,
-  MenuItemIndicator,
   MenuLabel,
-  MenuRadioGroup,
-  MenuRadioItem,
   MenuSeparator,
 } from "@/components/ui";
-import { MetricSparkline } from "./MetricSparkline";
 import { MonitoringHistoryPanel } from "./MonitoringHistoryPanel";
 import { ProcessTablePanel } from "./ProcessTablePanel";
-import { buildMetricBlocks, latestValue } from "./monitoringHistoryModel";
+import { buildMetricBlocks } from "./monitoringHistoryModel";
 import { PerCoreCpuBars } from "./PerCoreCpuBars";
 import { MonitoringHostInfo } from "./MonitoringHostInfo";
 import { UnavailableStat } from "./UnavailableStat";
@@ -82,24 +74,27 @@ import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
 import { ScheduleStatus } from "./ScheduleStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
+import { SerialStatus, SshStatus } from "./SessionChips";
+import { MonitoringMetricRows } from "./MonitoringMetricRows";
+import { formatRefreshInterval, MonitoringRefreshSubmenu } from "./MonitoringRefreshSubmenu";
 
 /**
  * Backend code for a monitor whose remote agent is too old to monitor an
  * agent-hosted session (#3871) — the fix is updating the agent, not retrying.
  */
 const AGENT_OUTDATED_CODE: IpcErrorCode = "agent_outdated";
-import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
+import {
+  isMonitorUnsupported,
+  monitorOfflineLabel,
+  monitorOfflineReasonText,
+} from "@/utils/monitorStatusReason";
+import { MonitoringStopped, MonitoringUnsupported } from "./MonitoringStateChips";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import { errorMessage } from "@/utils/errorMessage";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
-
-/** Format a monitoring refresh interval (ms) as a compact label like "2s" (#1233). */
-function formatIntervalLabel(intervalMs: number): string {
-  return `${Math.round(intervalMs / 1000)}s`;
-}
 
 /**
  * Format a kB count (as reported by the system monitor) into a human-readable,
@@ -150,7 +145,8 @@ export function StatusBar() {
         <BroadcastStatus />
         <ScheduleStatus />
         <PortableBadge />
-        <JumpHostStatus />
+        <SshStatus />
+        <SerialStatus />
         <RemoteDesktopStatus />
         <MonitoringStatus />
         <PersistentSessionsIndicator />
@@ -158,7 +154,6 @@ export function StatusBar() {
         <PluginsIndicator />
         <AgentUpdatesIndicator />
         <TransferQueueIndicator />
-        <CredentialStoreIndicator />
         <PluginStatusBarWidgets position="left" />
       </div>
       <div className="status-bar__section status-bar__section--center">
@@ -169,6 +164,8 @@ export function StatusBar() {
         )}
       </div>
       <div className="status-bar__section status-bar__section--right">
+        {/* Pinned first in the right group so the lock never moves (#5628). */}
+        <CredentialStoreIndicator />
         <PluginStatusBarWidgets position="right" />
         <HighlightingIndicator />
         <UpdateIndicator />
@@ -254,27 +251,6 @@ function WindowIndicator() {
     <span className="status-bar__item" data-testid="status-bar-window" title={name}>
       <AppWindow size={13} />
       {name}
-    </span>
-  );
-}
-
-/**
- * Shows the SSH jump-host (ProxyJump) chain for the active terminal.
- *
- * When the active tab connects through one or more bastions, the status bar
- * shows `SSH: user@target via gateway` so the hop chain is visible at a glance.
- * Hidden for direct connections and non-SSH tabs.
- */
-function JumpHostStatus() {
-  const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
-  const label = jumpHostStatusLabel(activeTabConfig);
-
-  if (!label) return null;
-
-  return (
-    <span className="status-bar__item" data-testid="status-bar-jump-host" title={`SSH: ${label}`}>
-      <Route size={13} />
-      SSH: {label}
     </span>
   );
 }
@@ -572,7 +548,8 @@ function AgentUpdatesIndicator() {
  */
 function MonitoringStatus() {
   const globalMonitoringEnabled = useProjectedSettings().powerMonitoringEnabled;
-  const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
+  const stopMonitoring = useAppStore((s) => s.stopMonitoring);
+  const startMonitoring = useAppStore((s) => s.startMonitoring);
   const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
   const setMonitoringInterval = useAppStore((s) => s.setMonitoringInterval);
   const cancelMonitoring = useAppStore((s) => s.cancelMonitoring);
@@ -592,6 +569,11 @@ function MonitoringStatus() {
   // Switching tabs just changes which entry we show — other hosts keep
   // monitoring independently.
   const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
+  // A user stop from the host menu latches the monitor off (#5628) so the
+  // auto-connect below does not silently restart it from the cached sample.
+  const monitoringStopped = useAppStore((s) =>
+    activeMonitorKey ? s.stoppedMonitorKeys[activeMonitorKey] === true : false
+  );
   // The active tab's monitor entry, sourced from the authoritative
   // `system-monitors` region (#2224). Picking the active key stays a per-client
   // (presentation) concern under partial projection.
@@ -651,6 +633,7 @@ function MonitoringStatus() {
     // as the sessionId passed to connectMonitoring.
     const key = monitorKeyForTab(activeTab);
     if (!key) return;
+    if (useAppStore.getState().stoppedMonitorKeys[key]) return;
 
     // Already monitoring this session (connected or in flight) → nothing to do.
     // Switching tabs no longer tears down other hosts (#1231, audit gap G6). The
@@ -683,6 +666,7 @@ function MonitoringStatus() {
     activeMonitorKey,
     monitoringConnected,
     monitoringEnabled,
+    monitoringStopped,
     activeTabExited,
     // Re-run auto-connect when the user hits Retry (audit gaps G7 + G9).
     retryNonce,
@@ -701,6 +685,15 @@ function MonitoringStatus() {
     }
     setRetryNonce((n) => n + 1);
   }, [activeMonitorKey]);
+
+  /** Restart monitoring after a user stop (#5628): clear the latch and reconnect. */
+  const handleStart = useCallback(() => {
+    if (!activeMonitorKey) return;
+    frontendLog("monitoring", "user restarting stopped monitoring");
+    autoConnectFailedRef.current = null;
+    startMonitoring(activeMonitorKey);
+    setRetryNonce((n) => n + 1);
+  }, [activeMonitorKey, startMonitoring]);
 
   /** Toggle pause/resume for the active monitor with toast feedback (#1233). */
   const handleSetPaused = useCallback(
@@ -726,7 +719,7 @@ function MonitoringStatus() {
       if (!activeMonitorKey) return;
       try {
         await setMonitoringInterval(activeMonitorKey, intervalMs);
-        toast.success(`Refresh interval set to ${formatIntervalLabel(intervalMs)}`);
+        toast.success(`Refresh interval set to ${formatRefreshInterval(intervalMs)}`);
       } catch (err) {
         frontendLog("monitoring", `Failed to set monitoring interval: ${errorMessage(err)}`);
         toast.error(`Failed to set interval: ${errorMessage(err)}`);
@@ -762,6 +755,12 @@ function MonitoringStatus() {
 
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
+
+  // Stopped by the user (#5628): no metric chip may remain, so the stopped and
+  // running states cannot be confused. One quiet affordance restarts it.
+  if (monitoringStopped) {
+    return <MonitoringStopped onStart={handleStart} />;
+  }
 
   // While reconnecting we already have cached stats — skip the "Connecting" block
   // so the last-known data is shown immediately instead of a blank loading state.
@@ -892,7 +891,7 @@ function MonitoringStatus() {
         paused={monitoringPaused}
         intervalMs={monitoringInterval}
         histories={monitorHistories}
-        onDisconnect={() => activeMonitorKey && disconnectMonitoring(activeMonitorKey)}
+        onDisconnect={() => activeMonitorKey && stopMonitoring(activeMonitorKey)}
         onSetPaused={handleSetPaused}
         onSetInterval={handleSetInterval}
         onCancel={handleCancel}
@@ -912,7 +911,10 @@ function MonitoringStatus() {
         Offline says *why* (#3301): unreadable remote output, a lost connection,
         or an agent that stopped sending data — Retry stays one click away.
       */}
-      {isOffline && (
+      {isOffline && isMonitorUnsupported(monitoringStatus, monitoringStatusReason) && (
+        <MonitoringUnsupported />
+      )}
+      {isOffline && !isMonitorUnsupported(monitoringStatus, monitoringStatusReason) && (
         <Tooltip content="Retry monitoring connection" side="top">
           <button
             className="status-bar__item status-bar__item--interactive monitoring-status__error"
@@ -1163,7 +1165,15 @@ function MonitoringDetailDropdown({
             {host}
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent width="wide" side="top" align="start" sideOffset={4}>
+        <DropdownMenuContent
+          width="wide"
+          side="top"
+          align="start"
+          sideOffset={4}
+          collisionPadding={8}
+          className="monitoring-menu"
+          data-testid="monitoring-menu"
+        >
           {stats && (
             <>
               <MonitoringHostInfo stats={stats} />
@@ -1171,44 +1181,13 @@ function MonitoringDetailDropdown({
             </>
           )}
           {/*
-            Client-side metric history sparklines (PROD-0030): CPU, memory, swap
-            (when present) and network rx/tx. Each is rendered only once it has a
-            real (post-priming) sample, so a just-connected monitor shows the
-            numbers without empty charts. The last-known value labels each row.
+            One compact row per metric (#5628): label, inline mini-sparkline and
+            the latest value, rendered only once a metric has a real
+            (post-priming) sample. The full charts live in View history.
           */}
           {hasAnyHistory && (
             <>
-              <div className="monitoring-menu__sparks" data-testid="monitoring-sparklines">
-                {metricBlocks
-                  .filter((block) => block.hasData)
-                  .map((block) => {
-                    const latest = latestValue(block.values);
-                    const label =
-                      latest == null
-                        ? "—"
-                        : block.unit === "percent"
-                          ? `${latest.toFixed(0)}%`
-                          : formatRate(latest) || "0 B/s";
-                    return (
-                      <div
-                        key={block.key}
-                        className="monitoring-menu__spark"
-                        data-testid={`monitoring-sparkline-${block.key}`}
-                      >
-                        <div className="monitoring-menu__spark-header">
-                          <span className="monitoring-menu__label">{block.label}</span>
-                          <span className="monitoring-menu__value">{label}</span>
-                        </div>
-                        <MetricSparkline
-                          values={block.values}
-                          min={block.min}
-                          max={block.max}
-                          ariaLabel={`${block.label} history`}
-                        />
-                      </div>
-                    );
-                  })}
-              </div>
+              <MonitoringMetricRows blocks={metricBlocks} />
               {/* Open the fuller history panel with larger time-series charts. */}
               <MenuItem onSelect={() => setHistoryOpen(true)} data-testid="monitoring-history-open">
                 <LineChart size={14} />
@@ -1276,41 +1255,24 @@ function MonitoringDetailDropdown({
               <MenuLabel className="monitoring-menu__label" data-testid="monitoring-offline-reason">
                 {monitorOfflineLabel(statusReason)}
               </MenuLabel>
-              <MenuItem onSelect={onRetry} data-testid="monitoring-retry-btn">
-                <RotateCw size={14} />
-                Retry
-              </MenuItem>
+              {/* An unsupported host is permanent: a Retry could only fail (#5628). */}
+              {statusReason !== "unsupported" && (
+                <MenuItem onSelect={onRetry} data-testid="monitoring-retry-btn">
+                  <RotateCw size={14} />
+                  Retry
+                </MenuItem>
+              )}
             </>
           )}
 
           <MenuSeparator />
 
-          {/* Refresh-interval selector — radio-style items (#1233). */}
-          <MenuLabel className="monitoring-menu__interval-label">Refresh interval</MenuLabel>
-          <MenuRadioGroup
-            value={String(intervalMs)}
-            onValueChange={(v) => onSetInterval(Number(v))}
-          >
-            {MONITORING_INTERVAL_OPTIONS.map((opt) => (
-              <MenuRadioItem
-                key={opt}
-                className="monitoring-menu__radio"
-                value={String(opt)}
-                disabled={!monitorKey}
-                data-testid={`monitoring-interval-${opt}`}
-              >
-                <MenuItemIndicator className="monitoring-menu__radio-indicator">
-                  <Check size={14} />
-                </MenuItemIndicator>
-                <span className="monitoring-menu__radio-label">
-                  Refresh every {formatIntervalLabel(opt)}
-                </span>
-                {opt === DEFAULT_MONITORING_INTERVAL_MS && (
-                  <span className="monitoring-menu__radio-default">default</span>
-                )}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
+          {/* Refresh interval as one "Refresh: 2 s ▸" submenu row (#1233, #5628). */}
+          <MonitoringRefreshSubmenu
+            intervalMs={intervalMs}
+            enabled={!!monitorKey}
+            onSetInterval={onSetInterval}
+          />
 
           <MenuSeparator />
 

@@ -1,6 +1,8 @@
 import {
   Terminal,
-  Wifi,
+  KeyRound,
+  Monitor,
+  ScreenShare,
   Cable,
   Globe,
   Server,
@@ -22,48 +24,69 @@ import { getBasename } from "@/utils/paths";
 import { useIconSurfaces } from "@/hooks/useIconSurfaces";
 import { isSingleEmoji, resolveIconColor } from "@/utils/connectionIconStyle";
 
-/** Default icon by connection type (non-local or local without special shell) */
-const TYPE_ICONS: Record<string, LucideIcon> = {
-  local: Terminal,
-  ssh: Wifi,
-  serial: Cable,
-  telnet: Globe,
-  docker: Container,
-  remote: Server,
-  "remote-session": Server,
+/** Resolved icon: a lucide component or a raw icon node, plus a stable id. */
+export interface ConnectionIconInfo {
+  component?: LucideIcon;
+  iconNode?: IconNode;
+  /**
+   * Stable icon id (lucide kebab-case name, or the stored custom-icon name),
+   * rendered as the glyph's `data-icon` attribute so tests and product-run
+   * grades can tell the connection-type glyphs apart (#5622).
+   */
+  id: string;
+}
+
+const TERMINAL_ICON: ConnectionIconInfo = { component: Terminal, id: "terminal" };
+const PENGUIN_ICON: ConnectionIconInfo = { iconNode: labIcons.penguin as IconNode, id: "penguin" };
+
+/**
+ * Default icon by connection type — the single source of truth for every
+ * surface that shows a connection-type glyph (sidebar, tabs, editor type
+ * picker, agent session rows, connect overlay). Each built-in type has its own
+ * glyph; Wi-Fi glyphs are reserved for connectivity state, and graphical
+ * types never borrow the local-shell `>_` glyph (#5622).
+ */
+const TYPE_ICONS: Record<string, ConnectionIconInfo> = {
+  local: TERMINAL_ICON,
+  ssh: { component: KeyRound, id: "key-round" },
+  serial: { component: Cable, id: "cable" },
+  telnet: { component: Globe, id: "globe" },
+  docker: { component: Container, id: "container" },
+  vnc: { component: ScreenShare, id: "screen-share" },
+  rdp: { component: Monitor, id: "monitor" },
+  wsl: PENGUIN_ICON,
+  remote: { component: Server, id: "server" },
+  "remote-session": { component: Server, id: "server" },
 };
+
+/** Icon for a bare connection-type id; unknown (plugin) types get the terminal glyph. */
+export function getConnectionTypeIconInfo(type: string): ConnectionIconInfo {
+  return TYPE_ICONS[type] ?? TERMINAL_ICON;
+}
 
 /** Shell-specific icon overrides for local and remote shell connections.
  *
  * Accepts both short names ("powershell") and full paths ("/usr/local/bin/pwsh")
  * so it works for both local connections and remote-agent connections where the
  * agent reports absolute shell paths. */
-function getShellIconInfo(shellType: ShellType | string | undefined): {
-  component?: LucideIcon;
-  iconNode?: IconNode;
-} {
-  if (!shellType) return { component: Terminal };
+function getShellIconInfo(shellType: ShellType | string | undefined): ConnectionIconInfo {
+  if (!shellType) return TERMINAL_ICON;
   // WSL must be checked first because it uses the "wsl:" prefix, not a path.
-  if (shellType.startsWith("wsl:")) return { iconNode: labIcons.penguin as IconNode };
+  if (shellType.startsWith("wsl:")) return PENGUIN_ICON;
   // For path-based values, compare against the basename.
   const base = getBasename(shellType).toLowerCase();
   if (base === "powershell" || base === "powershell.exe" || base === "pwsh" || base === "pwsh.exe")
-    return { component: BicepsFlexed };
-  if (shellType === "gitbash" || base.includes("gitbash")) return { component: GitBranch };
-  return { component: Terminal };
+    return { component: BicepsFlexed, id: "biceps-flexed" };
+  if (shellType === "gitbash" || base.includes("gitbash"))
+    return { component: GitBranch, id: "git-branch" };
+  return TERMINAL_ICON;
 }
 
 /** Resolve default icon info for a connection config */
-export function getDefaultIconInfo(config: ConnectionConfig): {
-  component?: LucideIcon;
-  iconNode?: IconNode;
-} {
+export function getDefaultIconInfo(config: ConnectionConfig): ConnectionIconInfo {
   if (isLocalConnectionConfig(config)) {
     const shellValue = config.config.shell ?? config.config.shellType;
     return getShellIconInfo(shellValue);
-  }
-  if (config.type === "wsl") {
-    return { iconNode: labIcons.penguin as IconNode };
   }
   if (config.type === "remote-session" || config.type === "remote") {
     // Schema-driven agent session: read the untyped bag via runtime-checked accessors.
@@ -72,7 +95,7 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
       return getShellIconInfo(readConfigString(config, "shell"));
     }
   }
-  return { component: TYPE_ICONS[config.type] };
+  return getConnectionTypeIconInfo(config.type);
 }
 
 /**
@@ -80,18 +103,15 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
  * Names are PascalCase lucide-react names (e.g. "Terminal") or
  * "lab:camelCase" for @lucide/lab icons (e.g. "lab:penguin").
  */
-function resolveIconByName(name: string): {
-  component?: LucideIcon;
-  iconNode?: IconNode;
-} | null {
+function resolveIconByName(name: string): ConnectionIconInfo | null {
   if (name.startsWith("lab:")) {
     const labName = name.slice(4);
     const iconNode = (labIcons as Record<string, IconNode>)[labName];
-    if (iconNode) return { iconNode };
+    if (iconNode) return { iconNode, id: name };
     return null;
   }
   const comp = lucideIconMap[name as keyof typeof lucideIconMap];
-  if (comp) return { component: comp };
+  if (comp) return { component: comp, id: name };
   return null;
 }
 
@@ -163,6 +183,8 @@ interface ConnectionIconProps {
   iconEmoji?: string | null;
   size?: number;
   className?: string;
+  /** Test hook on the drawn glyph (not the emoji, which keeps its own id). */
+  testId?: string;
 }
 
 /**
@@ -179,6 +201,7 @@ export function ConnectionIcon({
   iconEmoji,
   size = 16,
   className,
+  testId,
 }: ConnectionIconProps) {
   // Re-renders on theme switches so a palette colour picks the right shade.
   const surfaces = useIconSurfaces();
@@ -197,17 +220,66 @@ export function ConnectionIcon({
   const color = resolveIconColor(iconColor, surfaces);
   const colorProps = color ? { color, "data-icon-color": iconColor ?? undefined } : {};
   const custom = customIcon ? resolveIconByName(customIcon) : null;
-  const { component: Comp, iconNode } = custom ?? getDefaultIconInfo(config);
+  const info = custom ?? getDefaultIconInfo(config);
+  return (
+    <IconGlyph info={info} size={size} className={className} data-testid={testId} {...colorProps} />
+  );
+}
 
-  if (iconNode) {
+/** Draws a resolved icon, tagged with its `data-icon` id (#5622). */
+function IconGlyph({
+  info,
+  size,
+  className,
+  ...rest
+}: {
+  info: ConnectionIconInfo;
+  size: number;
+  className?: string;
+  color?: string;
+  "data-icon-color"?: string;
+  "aria-hidden"?: boolean;
+  "data-testid"?: string;
+}) {
+  if (info.iconNode) {
     return (
-      <LucideIconRenderer iconNode={iconNode} size={size} className={className} {...colorProps} />
+      <LucideIconRenderer
+        iconNode={info.iconNode}
+        size={size}
+        className={className}
+        data-icon={info.id}
+        {...rest}
+      />
     );
   }
-  if (Comp) {
-    return <Comp size={size} className={className} {...colorProps} />;
-  }
-  return <Terminal size={size} className={className} {...colorProps} />;
+  const Comp = info.component ?? Terminal;
+  return <Comp size={size} className={className} data-icon={info.id} {...rest} />;
+}
+
+/**
+ * Renders the glyph for a bare connection-type id (e.g. `"ssh"`), for
+ * surfaces that know the type but not a full connection config: the editor
+ * type picker, agent session rows and the connect overlay (#5622).
+ */
+export function ConnectionTypeIcon({
+  type,
+  size = 16,
+  className,
+  "aria-hidden": ariaHidden,
+}: {
+  type: string;
+  size?: number;
+  className?: string;
+  "aria-hidden"?: boolean;
+}) {
+  return (
+    <IconGlyph
+      info={getConnectionTypeIconInfo(type)}
+      size={size}
+      className={className}
+      aria-hidden={ariaHidden}
+    />
+  );
 }
 
 /** Render an icon by its stored name string */

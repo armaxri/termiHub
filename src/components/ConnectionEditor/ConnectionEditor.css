@@ -289,6 +289,17 @@
   gap: var(--spacing-xs);
 }
 
+/* Built-in type options carry the shared connection-type glyph (#5622). */
+.connection-editor__type-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.connection-editor__type-icon {
+  flex-shrink: 0;
+}
+
 .connection-editor__plugin-badge {
   flex-shrink: 0;
   color: var(--text-accent);

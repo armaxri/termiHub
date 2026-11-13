@@ -36,9 +36,15 @@ describe("networkMax", () => {
 });
 
 describe("buildMetricBlocks", () => {
-  it("always includes CPU, memory and both network directions", () => {
+  it("always includes CPU, memory, disk and both network directions", () => {
     const blocks = buildMetricBlocks(emptyMonitorHistories());
-    expect(blocks.map((b) => b.key)).toEqual(["cpu", "memory", "netRx", "netTx"]);
+    expect(blocks.map((b) => b.key)).toEqual(["cpu", "memory", "disk", "netRx", "netTx"]);
+  });
+
+  it("orders swap after disk, as in the status bar (#5628)", () => {
+    const blocks = buildMetricBlocks(histories({ disk: [40], swap: [10] }));
+    expect(blocks.map((b) => b.key)).toEqual(["cpu", "memory", "disk", "swap", "netRx", "netTx"]);
+    expect(blocks.find((b) => b.key === "disk")?.max).toBe(100);
   });
 
   it("includes swap only when swap has samples", () => {

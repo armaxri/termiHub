@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { monitorOfflineLabel, monitorOfflineReasonText } from "./monitorStatusReason";
+import {
+  isMonitorUnsupported,
+  monitorOfflineLabel,
+  monitorOfflineReasonText,
+  monitorUnsupportedTooltip,
+} from "./monitorStatusReason";
 
 describe("monitorOfflineReasonText (#3301)", () => {
   it("says the remote output is unreadable for a parse failure", () => {
@@ -15,7 +20,7 @@ describe("monitorOfflineReasonText (#3301)", () => {
   });
 
   it("says monitoring is not supported for a host with no stats source (#5471)", () => {
-    expect(monitorOfflineReasonText("unsupported")).toBe("monitoring not supported on this host");
+    expect(monitorOfflineReasonText("unsupported")).toBe("monitoring unavailable on this host");
   });
 
   it("falls back to connection lost when no reason is known", () => {
@@ -31,6 +36,18 @@ describe("monitorOfflineLabel (#3301)", () => {
   });
 
   it("does not call an unsupported host offline (#5471)", () => {
-    expect(monitorOfflineLabel("unsupported")).toBe("Monitoring not supported on this host");
+    expect(monitorOfflineLabel("unsupported")).toBe("Monitoring unavailable on this host");
+  });
+});
+
+describe("isMonitorUnsupported / monitorUnsupportedTooltip (#5628)", () => {
+  it("treats only an unsupported host as a permanent capability state", () => {
+    expect(isMonitorUnsupported("offline", "unsupported")).toBe(true);
+    expect(isMonitorUnsupported("offline", "transport")).toBe(false);
+    expect(isMonitorUnsupported("live", "unsupported")).toBe(false);
+  });
+
+  it("explains why in the tooltip", () => {
+    expect(monitorUnsupportedTooltip()).toMatch(/POSIX sh/);
   });
 });

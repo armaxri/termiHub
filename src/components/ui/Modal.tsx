@@ -3,6 +3,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { isImeComposing } from "@/utils/imeComposition";
 import { Button } from "./Button";
+import { toast } from "./Toast/toast";
+import { TOAST_AVOID_PROPS } from "./Toast/toastAvoid";
 import "./ui.css";
 
 /**
@@ -116,6 +118,12 @@ export interface ModalProps {
    * focus to on close, and focus falls to `<body>` instead (#4332).
    */
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  /**
+   * Dismiss the success/info toasts still showing when the modal opens (#5618).
+   * Set it on error and blocking dialogs (a connection error, the credential
+   * unlock), so a stale "Connected" or "Saved" never sits beside the error.
+   */
+  dismissTransientToasts?: boolean;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
 }
@@ -148,6 +156,7 @@ export function Modal({
   onKeyDown,
   dirty = false,
   initialFocusRef,
+  dismissTransientToasts = false,
   ...rest
 }: ModalProps): React.ReactElement {
   // Track the content node so descendants can portal into it (#1868). A callback
@@ -172,6 +181,11 @@ export function Modal({
   if (opener.open !== open) {
     setOpener({ open, element: open ? document.activeElement : opener.element });
   }
+
+  // Clear stale confirmations once per open (#5618), not on every re-render.
+  React.useEffect(() => {
+    if (open && dismissTransientToasts) toast.dismissTransient();
+  }, [open, dismissTransientToasts]);
 
   const handleOpenChange = (next: boolean) => {
     if (!next && dirty) {
@@ -281,7 +295,13 @@ export function Modal({
               </Dialog.Description>
             ) : null}
             <div className="ui-modal__body">{children}</div>
-            {footer ? <div className="ui-modal__foot">{footer}</div> : null}
+            {/* The footer is a toast keep-clear zone so a toast never hides its
+                actions (#5618). */}
+            {footer ? (
+              <div className="ui-modal__foot" {...TOAST_AVOID_PROPS}>
+                {footer}
+              </div>
+            ) : null}
           </ModalPortalContainerContext.Provider>
           {/* Nested inside the content so Radix stacks it as a child layer:
               Escape or a click outside the prompt dismisses only the prompt.

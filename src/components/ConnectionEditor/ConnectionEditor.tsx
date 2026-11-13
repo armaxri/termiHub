@@ -3,6 +3,7 @@ import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
 import { z } from "zod";
 import { iconColorSchema, iconEmojiSchema } from "@/utils/connectionIconStyle";
+import { ConnectionTypeIcon } from "@/utils/connectionIcons";
 import {
   PlugZap,
   TerminalSquare,
@@ -80,6 +81,7 @@ import {
   Toggle,
   UnsavedChangesDialog,
   toast,
+  TOAST_AVOID_PROPS,
 } from "@/components/ui";
 import { SettingsField } from "@/components/Settings/SettingsField";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
@@ -1794,7 +1796,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             >
               {builtinTypeOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
+                  <span className="connection-editor__type-option">
+                    <ConnectionTypeIcon
+                      type={opt.value}
+                      size={13}
+                      className="connection-editor__type-icon"
+                      aria-hidden
+                    />
+                    {opt.label}
+                  </span>
                 </SelectItem>
               ))}
               {pluginTypes.length > 0 && (
@@ -2126,7 +2136,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         />
         <div className="connection-editor__content">{renderContent()}</div>
       </div>
-      <div className="connection-editor__actions">
+      <div
+        className="connection-editor__actions"
+        data-testid="connection-editor-actions"
+        {...TOAST_AVOID_PROPS}
+      >
         <Button variant="secondary" onClick={handleCancel} data-testid="connection-editor-cancel">
           Cancel
         </Button>

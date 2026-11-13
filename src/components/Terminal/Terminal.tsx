@@ -61,7 +61,7 @@ import {
 import { resolveLineEnding } from "@/utils/lineEndings";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
-import { toast } from "@/components/ui";
+import { showConnectedToast } from "./connectedToast";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
@@ -810,7 +810,9 @@ export function Terminal({
               useAppStore.getState().setTerminalConnecting(tabId, false);
               useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
               useAppStore.getState().setTerminalSpawnError(tabId, null);
-              toast.success("Connected", { description: resolveTabTitle(tabId) });
+              // One toast per tab (replaced on reconnect, dismissed when the tab
+              // drops) and none for local shells (#5618).
+              showConnectedToast(tabId, resolveTabTitle(tabId), config.type);
               break;
             } catch (err) {
               useAppStore.getState().setConnectStarting(tabId, null);

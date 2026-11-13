@@ -166,4 +166,52 @@ describe("toast API", () => {
       expect(dismiss).toHaveBeenCalledWith(undefined);
     });
   });
+
+  describe("dismissTransient (#5618)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("dismisses the success and info toasts still showing, not errors or loading", () => {
+      vi.useFakeTimers();
+      toast.dismiss(); // start from an empty tracking set
+      vi.clearAllMocks();
+      toast.success("Connected", { id: "ok" });
+      toast.info("Heads up", { id: "note" });
+      toast.error("Boom", { id: "bad" });
+      toast.loading("Connecting…", { id: "busy" });
+
+      toast.dismissTransient();
+      const dismissed = dismiss.mock.calls.map((c) => c[0]);
+      expect(dismissed).toEqual(expect.arrayContaining(["ok", "note"]));
+      expect(dismissed).not.toContain("bad");
+      expect(dismissed).not.toContain("busy");
+    });
+
+    it("forgets an id reused for an error and one already dismissed", () => {
+      vi.useFakeTimers();
+      toast.dismiss();
+      vi.clearAllMocks();
+      toast.success("Saved", { id: "reuse" });
+      toast.error("Save failed", { id: "reuse" });
+      toast.success("Copied", { id: "gone" });
+      toast.dismiss("gone");
+      vi.runAllTimers();
+      vi.clearAllMocks();
+
+      toast.dismissTransient();
+      expect(dismiss).not.toHaveBeenCalled();
+    });
+
+    it("dismisses each toast once, then has nothing left", () => {
+      vi.useFakeTimers();
+      toast.dismiss();
+      toast.success("Connected", { id: "once" });
+      toast.dismissTransient();
+      vi.runAllTimers();
+      vi.clearAllMocks();
+      toast.dismissTransient();
+      expect(dismiss).not.toHaveBeenCalled();
+    });
+  });
 });

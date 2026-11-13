@@ -22,6 +22,7 @@ import { ConfirmDialog } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
+import { useDismissStaleConnectedToasts } from "./connectedToast";
 import { RenameDialog } from "./RenameDialog";
 import { errorMessage } from "@/utils/errorMessage";
 import { rovingTabIndexFromKey, focusRovingTab } from "@/utils/rovingTablist";
@@ -62,6 +63,20 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     terminalExitedTabs,
   } = useProjectedSessionLifecycleMaps();
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
+  // A tab that drops or starts reconnecting loses its "Connected" toast (#5618).
+  const terminalTabIds = useMemo(
+    () => tabs.filter((t) => t.contentType === "terminal").map((t) => t.id),
+    [tabs]
+  );
+  useDismissStaleConnectedToasts(terminalTabIds, {
+    terminalConnecting,
+    terminalReconnectingTabs,
+    terminalSpawnErrors,
+    terminalDisconnectErrors,
+    terminalExitedTabs,
+    terminalSessionLost,
+    terminalEvicted,
+  });
   // Broadcast participation (#1957): the badge shows on every tab in the target
   // set, active or not, so participation is visible at a glance. Sourced from the
   // authoritative `broadcast` region (#2242).
