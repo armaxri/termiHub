@@ -3816,7 +3816,7 @@ mod live_channel_support;
 
 // ── Live agent deploy/connect against a real Windows OpenSSH host (#3684) ─────
 //
-// Deploy + install through the cmd.exe / PowerShell `DefaultShell`, connect over
+// Deploy + install through the cmd.exe / PowerShell / Git Bash `DefaultShell`, connect over
 // SSH exec `--stdio`, and re-attach a named-pipe daemon session after a
 // disconnect. Compiled everywhere; skips (with a stated reason) unless the
 // `Windows SSH Host` nightly lane provides the fixture.

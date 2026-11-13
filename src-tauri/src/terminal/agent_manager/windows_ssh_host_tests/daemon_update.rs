@@ -84,7 +84,7 @@ async fn with_session<T: Send + 'static>(
 /// running after the desktop disconnects. Returns the install path and the
 /// session id.
 async fn install_and_leave_a_daemon_session(fixture: &Fixture) -> (String, String) {
-    let shell = fixture.default_shell;
+    let shell = fixture.native_shell();
     let bin = fixture.agent_bin.clone();
     let agent_path = with_session(fixture, move |session| {
         let plan = windows_install_plan(shell);
@@ -120,7 +120,7 @@ async fn install_and_leave_a_daemon_session(fixture: &Fixture) -> (String, Strin
 /// Steps 2 and 3: a working update, then a broken one, both while the daemon
 /// session runs.
 async fn update_under_the_daemon(fixture: &Fixture) {
-    let shell = fixture.default_shell;
+    let shell = fixture.native_shell();
     let bin = fixture.agent_bin.clone();
     let fx = fixture.clone();
     with_session(fixture, move |session| {
@@ -192,7 +192,7 @@ async fn update_with_daemon_session(want: WindowsShell) {
     let Some(fixture) = live_fixture() else {
         return;
     };
-    if fixture.default_shell != want {
+    if fixture.default_shell != WindowsDeployShell::Native(want) {
         eprintln!(
             "SKIPPED: the fixture's OpenSSH DefaultShell is {:?}, this test needs {want:?} \
              (the lane runs each shell's test in its own step)",

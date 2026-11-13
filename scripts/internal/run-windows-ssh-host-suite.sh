@@ -15,8 +15,12 @@
 #    backend's shell probe must classify the host as a POSIX shell on Windows,
 #    and a terminal session's first command and configured env var must work
 #    with shell integration on -- native_05b/05c/05d of core/tests/ssh_native.rs
-#    (TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash). No agent is deployed: the
-#    agent's deploy path supports only a cmd.exe / PowerShell DefaultShell.
+#    (TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash). Then (#5523) step 1's desktop
+#    test through Git Bash: the deploy runs each step as an encoded
+#    powershell.exe command (#5449), the forward-slash install path is stored
+#    as the agent path (#5522), and the agent is launched and re-attached from
+#    Git Bash. No spaced-path step, rollback, daemon-update or agent-side suite
+#    there (the cmd / powershell legs cover those).
 # 4. `powershell` also runs native_05b/05c/05d/05h/05j of
 #    core/tests/ssh_native.rs first (#5044): with the opt-in hook on, the login
 #    banner stays and no setup text is left on screen, and a session loads the
@@ -56,7 +60,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,58p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -273,23 +277,8 @@ die() {
 
 PREVIOUS_SHELL="$(show_default_shell)" || die "could not read the OpenSSH DefaultShell (HKLM)"
 
-# ---- Git Bash DefaultShell (#5015): core SSH tests only, no agent ----
 if [ "$DEFAULT_SHELL" = bash ]; then
-  bash_exe="$(git_bash_exe)" || die "could not locate Git Bash"
-  trap teardown EXIT
-  set_default_shell bash || die "could not set the OpenSSH DefaultShell to $bash_exe"
-  current_shell="$(show_default_shell)" || die "could not read back the OpenSSH DefaultShell"
-  echo "OpenSSH DefaultShell: $current_shell"
-  exports="$("$FIXTURE" up)" || die "native sshd fixture failed to come up (its log is above)"
-  eval "$exports"
-  export TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash
-  # Print the probe's answer and every setup byte (#4670) on a failure.
-  export TERMIHUB_TEST_SSH_TRACE=1
-  core_log="$(mktemp)"
-  cargo test -p termihub-core --features ssh --test "$CORE_SUITE" -- --test-threads=1 \
-    --show-output "${CORE_TESTS[@]}" "$@" 2>&1 | tee "$core_log"
-  require_passed "$core_log" "${CORE_TESTS[@]}"
-  exit 0
+  git_bash_exe >/dev/null || die "could not locate Git Bash"
 fi
 
 # The deployed agent links the VC runtime statically, like the released one
@@ -312,6 +301,16 @@ echo "OpenSSH DefaultShell: ${current_shell:-<unset> (cmd.exe)}"
 exports="$("$FIXTURE" up --agent-binary "$AGENT_BIN")" ||
   die "native sshd fixture failed to come up (its log is above)"
 eval "$exports"
+
+# ---- Git Bash DefaultShell (#5015, #5523): core SSH tests, then the deploy ----
+if [ "$DEFAULT_SHELL" = bash ]; then
+  core_log="$(mktemp)"
+  # Print the probe's answer and every setup byte (#4670) on a failure.
+  TERMIHUB_NATIVE_SSHD_LOGIN_SHELL=gitbash TERMIHUB_TEST_SSH_TRACE=1 \
+    cargo test -p termihub-core --features ssh --test "$CORE_SUITE" -- --test-threads=1 \
+    --show-output "${CORE_TESTS[@]}" "$@" 2>&1 | tee "$core_log"
+  require_passed "$core_log" "${CORE_TESTS[@]}"
+fi
 
 # ---- PowerShell DefaultShell (#5044): the opt-in hook keeps the banner ----
 # Core SSH tests with shell integration on, as Windows PowerShell 5.1 and as
@@ -359,6 +358,13 @@ cargo test -p termihub --lib "$TEST_NAME" -- --exact --show-output "$@" 2>&1 | t
 # Guard against a false green: the named test must have run and passed, and
 # must not have skipped.
 require_passed "$log" "$TEST_NAME"
+
+# The Git Bash leg ends here (#5523): the update and agent-side steps below are
+# graded through the cmd / powershell legs. The EXIT trap restores the
+# DefaultShell, also when a step above failed.
+if [ "$DEFAULT_SHELL" = bash ]; then
+  exit 0
+fi
 
 # ---- Update rollback (#5219): a broken update leaves the previous agent ----
 # After the test above (it reuses the same install path), with the same test

@@ -213,7 +213,7 @@ pub(super) fn assert_clean_install(
     want: WindowsShell,
     plan: &InstallPlan,
 ) -> String {
-    let path = assert_deployed(outcome, want);
+    let path = assert_deployed(outcome, WindowsDeployShell::Native(want));
     assert_eq!(
         run(
             session,
@@ -237,7 +237,7 @@ pub(super) fn assert_rolled_back(
     plan: &InstallPlan,
     original_len: usize,
 ) {
-    let shell = fixture.default_shell;
+    let shell = fixture.native_shell();
     let AgentDeployResult::RolledBack {
         reason,
         restored_version,
@@ -311,7 +311,7 @@ pub(super) fn assert_rolled_back(
 /// The whole #5219 scenario for one shell. Blocking (the remote-exec helpers
 /// use `block_in_place`), so it runs on a `spawn_blocking` thread.
 fn rollback_scenario(fixture: &Fixture) {
-    let shell = fixture.default_shell;
+    let shell = fixture.native_shell();
     let plan = windows_install_plan(shell);
     let session = connect_and_authenticate(&fixture.ssh_config())
         .unwrap_or_else(|e| panic!("SSH to the Windows host failed: {e}"));
@@ -375,7 +375,7 @@ async fn update_rollback(want: WindowsShell) {
     let Some(fixture) = live_fixture() else {
         return;
     };
-    if fixture.default_shell != want {
+    if fixture.default_shell != WindowsDeployShell::Native(want) {
         eprintln!(
             "SKIPPED: the fixture's OpenSSH DefaultShell is {:?}, this test needs {want:?} \
              (the lane runs each shell's test in its own step)",
