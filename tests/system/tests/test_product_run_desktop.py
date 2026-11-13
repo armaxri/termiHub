@@ -542,3 +542,45 @@ class TestProductRunSettingsThemes(
                 problems.append("the Credentials row is outside the visible list area")
             self.driver.click("modal-close")
             assert not problems, "; ".join(problems)
+
+    def test_05_file_manager_integration_actions(self):
+        """Settings ▸ File manager integration: the actions follow the state (#5616).
+
+        Read-only: it never installs or removes the integration.
+        """
+        with self.step(
+            "settings.file-manager-integration.actions",
+            "File manager integration offers Install when not registered and Reinstall / "
+            "update + Uninstall only when registered (#5616)",
+            expect="Settings ▸ File manager integration with a status matching its buttons",
+        ):
+            self.open_settings_category("shell-integration")
+            self.wait(
+                lambda: self.driver.exists("shell-integration-reinstall"),
+                what="the file manager integration actions",
+            )
+            time.sleep(0.5)  # let the registration status load
+            title = self.driver.get_text("settings-nav-shell-integration").strip()
+            state = self.driver.get_text("shell-integration-status-text").strip()
+            primary = self.driver.get_text("shell-integration-reinstall").strip()
+            has_uninstall = self.driver.exists("shell-integration-uninstall")
+            self.evidence(
+                f"nav {title!r}; status {state!r}; primary {primary!r}; uninstall shown "
+                f"{has_uninstall}"
+            )
+            problems = []
+            if title != "File manager integration":
+                problems.append(f"category reads {title!r}, want 'File manager integration'")
+            if state == "Not registered":
+                if primary != "Install":
+                    problems.append(f"not registered but the primary button reads {primary!r}")
+                if has_uninstall:
+                    problems.append("not registered but Uninstall is offered")
+            elif state == "Registered":
+                if primary != "Reinstall / update":
+                    problems.append(f"registered but the primary button reads {primary!r}")
+                if not has_uninstall:
+                    problems.append("registered but Uninstall is missing")
+            else:
+                problems.append(f"unexpected status {state!r}")
+            assert not problems, "; ".join(problems)

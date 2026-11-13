@@ -128,7 +128,7 @@ class TestShellIntegrationArtifacts(SettingsUi, SystemTest):
         return self.driver.get_text("shell-integration-status-text")
 
     def install_from_settings(self) -> str:
-        """Click Reinstall / Update; return the executable it registered."""
+        """Click Install; return the executable it registered."""
         self.open_settings_category("shell-integration")
         self.wait(
             lambda: self.status_text() == "Not registered",

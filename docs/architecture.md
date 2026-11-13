@@ -1469,7 +1469,7 @@ sequenceDiagram
 shell"). The session-picker branch of that fallback is the one still-open sub-issue (#1366).
 
 **Per-OS registration** (`spawn/registry.rs`) is entirely **user-level — no admin/elevation** — and
-fully installable/uninstallable from the Shell Integration settings panel or the
+fully installable/uninstallable from the File manager integration settings panel or the
 `(un)install-shell-integration` CLI, with every registration losslessly removing only what it wrote:
 
 - **Windows** — `HKCU\Software\Classes\{Directory|Directory\Background|*}\shell\termihub_<slug>`;
