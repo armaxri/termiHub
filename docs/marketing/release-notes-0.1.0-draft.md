@@ -54,7 +54,7 @@ servers, and remote-desktop sessions.
   OS-sandboxed process.
 - **Diagnostics** — an in-app log viewer plus a durable, rotated, size-capped log file that
   never records secrets or terminal contents.
-- **Experimental** — hidden behind **Settings → General → Allow Experimental Features**:
+- **Experimental** — hidden behind **Settings → General → Allow experimental features**:
   remote desktop (RDP / VNC, with VNC file transfer), authored multi-step workflow
   automation, network tools (ping, traceroute, port scanner, DNS lookup, HTTP monitor,
   Wake-on-LAN), embedded HTTP / FTP / TFTP servers, and the separate SSH Tunnels view.

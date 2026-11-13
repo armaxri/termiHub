@@ -579,6 +579,88 @@ describe("solarized light sidebar on base3 (#5457)", () => {
 });
 
 /**
+ * Solarized Light selected rows and filled buttons (#5562). The 18% accent tint
+ * painted off-palette greys over base3 (#d6e0dc selected, #e7eadf hovered), so
+ * the theme's `selection` paints the connection tree's selected row base2 with
+ * an accent left bar, and the hovered selected row the theme's hover tone. The
+ * filled-button accent sat at 4.56:1 under white labels and was darkened for
+ * margin. The engine writes the selection tokens only for a theme that has them.
+ */
+describe("solarized light selection and filled buttons (#5562)", () => {
+  const { colors, selection } = solarizedLightTheme;
+  if (!selection) throw new Error("solarized light defines no selection surfaces");
+  const TOKENS = ["textPrimary", "textSecondaryOnSelection", "textMutedOnSelection"] as const;
+
+  it("selected rows are base2, hovered selected rows the theme's hover tone", () => {
+    expect(selection.bg).toBe(SOLARIZED_PALETTE.base2);
+    expect(selection.bgHover).toBe(colors.bgHover);
+    expect(selection.indicator).toBe(colors.accentColor);
+  });
+
+  for (const [state, bg] of [
+    ["selected", selection.bg],
+    ["hovered selected", selection.bgHover],
+  ] as const) {
+    for (const token of TOKENS) {
+      it(`${token} (${colors[token]}) meets AA on the ${state} row (${bg})`, () => {
+        expect(contrastRatio(colors[token], bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+    it(`the ${state} row stays distinct from the sidebar`, () => {
+      expect(contrastRatio(bg, colors.sidebarBg)).toBeGreaterThanOrEqual(1.1);
+    });
+    it(`the indicator bar reaches 3:1 on the ${state} row`, () => {
+      expect(contrastRatio(selection.indicator, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+    });
+  }
+
+  it("hovering a selected row visibly changes it", () => {
+    expect(contrastRatio(selection.bg, selection.bgHover)).toBeGreaterThanOrEqual(1.05);
+  });
+
+  it("white filled-button text keeps a margin above AA (was 4.56:1)", () => {
+    expect(contrastRatio(colors.textOnAccent, colors.accentColor)).toBeGreaterThanOrEqual(5);
+    expect(contrastRatio(colors.textOnAccent, colors.accentHover)).toBeGreaterThanOrEqual(5);
+  });
+
+  it("only themes with a selection set the sidebar selection tokens", () => {
+    applyTheme("solarized-light");
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe(selection.bg);
+    expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe(selection.bgHover);
+    expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe(selection.indicator);
+    for (const other of ["dark", "light", "solarized-dark"]) {
+      applyTheme(other);
+      expect(style.getPropertyValue("--sidebar-selected-bg")).toBe("");
+      expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe("");
+      expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe("");
+    }
+  });
+
+  it("the connection tree's selected row paints the tokens and the indicator bar", () => {
+    const css = readFileSync(
+      join(SRC_DIR, "components/Sidebar/ConnectionList.css"),
+      "utf8"
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = (sel: string) =>
+      new RegExp(`${sel.replace(/[.:-]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+    const selected = rule(".connection-tree__item--selected");
+    expect(selected).toMatch(/background-color:\s*var\(--sidebar-selected-bg\)/);
+    expect(selected).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--sidebar-selected-indicator\)/);
+    expect(rule(".connection-tree__item--selected:hover")).toMatch(
+      /background-color:\s*var\(--sidebar-selected-hover-bg\)/
+    );
+  });
+
+  it("the tint defaults back the sidebar selection tokens in variables.css", () => {
+    const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+    expect(css).toMatch(/--sidebar-selected-bg:\s*var\(--bg-selected\);/);
+    expect(css).toMatch(/--sidebar-selected-hover-bg:\s*var\(--bg-selected-hover\);/);
+    expect(css).toMatch(/--sidebar-selected-indicator:\s*transparent;/);
+  });
+});
+
+/**
  * Solarized Light muted text (#5459). Maintainer decision: the canonical
  * mapping, base01 for muted, base02 for secondary. base01 reaches 4.99:1 on
  * base3 (editor, sidebar, menus) but only 4.39:1 on base2 (`bgSecondary`) and

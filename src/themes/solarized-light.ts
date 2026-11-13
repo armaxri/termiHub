@@ -60,9 +60,11 @@ export const solarizedLightTheme: ThemeDefinition = {
 
     // Accent / focus
     // #5164: blue darkened (same hue) so white button text reaches AA
-    // (#268bd2 measured 3.68:1). Now 4.56:1, hover 5.51:1.
-    accentColor: "#227bba",
-    accentHover: "#176ea5",
+    // (#268bd2 measured 3.68:1). #5562: #227bba sat at 4.56:1, right on the AA
+    // edge for 13px button labels, so filled buttons take a little more
+    // margin: now 5.41:1, hover 6.84:1. Locked by contrast.test.ts.
+    accentColor: "#1f6fa6",
+    accentHover: "#155f90",
     focusBorder: "#2381c3", // #5399: blue nudged to 3:1 on bgTertiary (was 2.68:1)
     textOnAccent: "#ffffff",
 
@@ -105,5 +107,14 @@ export const solarizedLightTheme: ThemeDefinition = {
     // Scrollbar
     scrollbarThumb: "rgba(147, 161, 161, 0.55)",
     scrollbarThumbHover: "rgba(147, 161, 161, 0.75)",
+  },
+
+  // #5562: an 18% accent tint over base3 painted off-palette greys (#d6e0dc
+  // selected, #e7eadf hovered). Selected rows use base2 with an accent left
+  // bar instead; hovering a selected row darkens it to the theme's hover tone.
+  selection: {
+    bg: "#eee8d5", // base2
+    bgHover: "#e2dcc9", // bgHover
+    indicator: "#1f6fa6", // accentColor
   },
 };

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Copy, RefreshCw } from "lucide-react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { setUpdateAutoCheck } from "@/services/api";
@@ -7,7 +8,7 @@ import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
-import { Button, RadioGroup, Spinner, StatusDot } from "@/components/ui";
+import { Button, RadioGroup, Spinner, StatusDot, Tooltip, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import {
   capitalize,
@@ -80,6 +81,24 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
     }
   };
 
+  // The single home for build info now that the per-page footer is gone (#5561):
+  // one click copies version and commit for a bug report.
+  const handleCopyBuildInfo = async () => {
+    if (!appInfo) return;
+    const text = `termiHub v${appInfo.version}${appInfo.isDev ? " [DEV]" : ""} (${appInfo.gitHash})`;
+    try {
+      // Tauri clipboard plugin: navigator.clipboard rejects on macOS/WKWebView
+      // when the window is not focused (#4327).
+      await writeText(text);
+      toast.success("Build info copied to clipboard");
+    } catch (err) {
+      const message = errorMessage(err);
+      frontendLog("update", `Failed to copy build info: ${message}`);
+      toast.error(`Failed to copy build info: ${message}`);
+      throw err;
+    }
+  };
+
   const handleClearSkipped = async () => {
     await clearSkippedUpdateVersion();
   };
@@ -108,6 +127,19 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
               >
                 {appInfo ? appInfo.gitHash : "—"}
               </span>
+              {appInfo && (
+                <Tooltip content="Copy version and build">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<Copy size={12} />}
+                    onClick={handleCopyBuildInfo}
+                    aria-label="Copy version and build"
+                    data-testid="update-copy-build-info"
+                  />
+                </Tooltip>
+              )}
             </div>
 
             <div className="update-settings__row">

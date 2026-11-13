@@ -29,8 +29,13 @@
 }
 
 .settings-panel__content {
+  /* Positions the panel-level "Saved" pill (#5562). */
+  position: relative;
   flex: 1;
   overflow-y: auto;
+  /* #5562: reserve the scrollbar's gutter, so the column keeps one width on
+     every page and in every theme whether or not this page scrolls. */
+  scrollbar-gutter: stable;
   padding: var(--spacing-lg);
   max-width: 640px;
 }
@@ -53,32 +58,24 @@
   text-align: center;
 }
 
-/* === Footer === */
-.settings-panel__footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-md);
-  border-top: 1px solid var(--border-secondary);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.settings-panel__footer-hash {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-2xs);
-  opacity: 0.6;
-}
-
-/* Transient "Saved" acknowledgment (auto-save feedback). */
+/* Transient "Saved" acknowledgment (auto-save feedback). #5562: it shows
+   beside the edited field's label (.settings-panel__saved-mark) and this live
+   region only announces it; for an edit outside any field the region itself
+   shows as a pill at the top right of the visible content column (its `top`
+   is the column's scroll offset, set inline). */
 .settings-panel__saved-ack {
+  position: absolute;
+  right: var(--spacing-lg);
+  margin-top: var(--spacing-sm);
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
+  padding: var(--spacing-xxs) var(--spacing-sm);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-secondary);
+  font-size: var(--font-size-xs);
   color: var(--color-success);
+  pointer-events: none;
   opacity: 0;
   transition: opacity var(--transition-normal);
 }
@@ -87,9 +84,33 @@
   opacity: 1;
 }
 
+/* The tick beside a field label: same tone and size as the label row. */
+.settings-panel__saved-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  margin-left: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-success);
+  animation: settings-panel-saved-in var(--transition-normal);
+}
+
+@keyframes settings-panel-saved-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings-panel__saved-ack {
     transition: none;
+  }
+
+  .settings-panel__saved-mark {
+    animation: none;
   }
 }
 

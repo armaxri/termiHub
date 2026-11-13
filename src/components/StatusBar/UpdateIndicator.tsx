@@ -7,9 +7,11 @@ import {
 } from "@/components/UpdateNotification/developUpdate";
 
 /**
- * Version chip in the status bar.  Shows an amber or red dot when an update
- * is available.  Clicking re-shows the update notification popup.
- * Shows a "develop" badge when running a develop-branch build.
+ * Update chip in the status bar. The status bar holds live state only
+ * (#5559): the installed version lives in Settings ▸ About, so the chip shows
+ * nothing on an up-to-date release build. With an update available it reads
+ * "Update v<latest>" with an amber or red dot, and clicking re-shows the update
+ * notification popup. A develop-branch build always shows its "develop" badge.
  */
 export function UpdateIndicator() {
   const appInfo = useAppInfo();
@@ -19,6 +21,8 @@ export function UpdateIndicator() {
   const hasUpdate = updateCheckState === "available" && updateInfo?.available === true;
   const isSecurity = hasUpdate && updateInfo?.isSecurity === true;
   const isDevelop = appInfo?.buildBranch === "develop";
+
+  if (!hasUpdate && !isDevelop) return null;
 
   const handleClick = () => {
     if (hasUpdate) {
@@ -36,12 +40,15 @@ export function UpdateIndicator() {
           ? `${developUpdateSummary(updateInfo)} — click to view`
           : hasUpdate
             ? `termiHub v${updateInfo?.latestVersion} is available — click to view`
-            : `termiHub v${appInfo?.version ?? ""}`
+            : `Develop branch build of termiHub v${appInfo?.version ?? ""}`
       }
       data-testid="update-indicator"
       style={{ cursor: hasUpdate ? "pointer" : "default" }}
     >
-      v{appInfo?.version ?? ""}
+      {hasUpdate &&
+        (updateInfo && isDevelopUpdate(updateInfo)
+          ? "Update"
+          : `Update v${updateInfo?.latestVersion ?? ""}`)}
       {isDevelop && (
         <span
           className="update-indicator__develop-badge"

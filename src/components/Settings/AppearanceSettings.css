@@ -17,3 +17,19 @@
   flex-shrink: 0;
   color: var(--text-accent);
 }
+
+/* The actions for the selected custom theme, set apart from New/Import by a
+   hairline so they read as acting on that theme (#5561). */
+.appearance-settings__custom-theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  padding-left: var(--spacing-sm);
+  border-left: 1px solid var(--border-secondary);
+}
+
+/* The default font chain in the Font family hint: wraps anywhere so the long
+   list never overflows the column (#5561). */
+.appearance-settings__font-chain {
+  overflow-wrap: anywhere;
+}

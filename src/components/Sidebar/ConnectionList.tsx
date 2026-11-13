@@ -1615,7 +1615,7 @@ export function ConnectionList() {
           data-testid="connection-list-group-connections"
         >
           <SidebarGroupHeader
-            title="Connections"
+            title="Saved"
             expanded={!localCollapsed}
             onToggle={() => setLocalCollapsed((v) => !v)}
             headerTestId="sidebar-group-header-connections"

@@ -288,14 +288,17 @@
 }
 
 .connection-tree__item--selected {
-  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected
+     (or, #5562, a theme's opaque --sidebar-selected-bg). */
   --text-secondary: var(--text-secondary-on-selection);
   --text-muted: var(--text-muted-on-selection);
-  background-color: var(--bg-selected);
+  background-color: var(--sidebar-selected-bg);
+  /* #5562: the 2px left bar; transparent unless the theme sets one. */
+  box-shadow: inset 2px 0 0 0 var(--sidebar-selected-indicator);
 }
 
 .connection-tree__item--selected:hover {
-  background-color: var(--bg-selected-hover);
+  background-color: var(--sidebar-selected-hover-bg);
 }
 
 .connection-tree__folder--drop-over {

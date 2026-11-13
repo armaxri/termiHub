@@ -25,6 +25,22 @@
   flex-shrink: 0;
 }
 
+/* #5559: session | macros | layout. Each group packs its icons; a hairline
+   separator and a little extra space set the groups apart. */
+.terminal-view__toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+}
+
+.terminal-view__toolbar-separator {
+  align-self: center;
+  width: 1px;
+  height: var(--spacing-lg);
+  margin: 0 var(--spacing-xs);
+  background-color: var(--border-primary);
+}
+
 /* Toolbar toggle affordances compose the ghost icon Button primitive; only the
    toggled-on states are bespoke. Compound `.ui-btn` selectors keep these above
    the primitive's own ghost color. */

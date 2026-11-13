@@ -115,4 +115,24 @@ export interface ThemeDefinition {
    * Absent on the built-in themes.
    */
   baseTheme?: string;
+  /**
+   * Optional opaque surfaces for selected rows in the sidebar (#5562), drawn
+   * on `sidebarBg`. Without it, those rows paint the `--bg-selected` /
+   * `--bg-selected-hover` accent tints (see `styles/variables.css`) and carry
+   * no indicator bar. A theme built from a fixed palette (Solarized Light)
+   * sets palette colours here, so a selection never reads as a blended,
+   * off-palette grey. Built-in themes only: custom and plugin themes always
+   * use the tint defaults.
+   */
+  selection?: ThemeSelection;
+}
+
+/** Opaque selected-row surfaces a theme may supply in place of the accent tints. */
+export interface ThemeSelection {
+  /** Selected row background (`--sidebar-selected-bg`). */
+  bg: string;
+  /** Hovered selected row background (`--sidebar-selected-hover-bg`). */
+  bgHover: string;
+  /** The 2px left bar on a selected row (`--sidebar-selected-indicator`). */
+  indicator: string;
 }
