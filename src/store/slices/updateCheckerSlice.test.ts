@@ -40,15 +40,23 @@ const makeStore = () =>
     createUpdateCheckerSlice as unknown as StateCreator<UpdateCheckerSlice>
   );
 
-const info = (over: Partial<UpdateInfo> = {}): UpdateInfo => ({
-  available: true,
-  latestVersion: "0.2.0",
-  releaseUrl: "https://example/0.2.0",
-  releaseNotes: "notes",
-  isSecurity: false,
-  channel: "stable",
-  ...over,
-});
+const info = (over: Partial<UpdateInfo> = {}): UpdateInfo => {
+  const available = over.available ?? true;
+  return {
+    available,
+    latestVersion: "0.2.0",
+    releaseUrl: "https://example/0.2.0",
+    releaseNotes: "notes",
+    isSecurity: false,
+    channel: "stable",
+    outcome: available ? "updateAvailable" : "upToDate",
+    ...over,
+  };
+};
+
+/** A feed-less backend result (#5651): nothing was read from a release feed. */
+const feedless = (outcome: UpdateInfo["outcome"], over: Partial<UpdateInfo> = {}): UpdateInfo =>
+  info({ available: false, latestVersion: "0.1.0", releaseUrl: "", outcome, ...over });
 
 const setSkipped = (version: string | undefined) =>
   mockedView.mockReturnValue({ updates: { skippedVersion: version } } as ReturnType<
@@ -122,41 +130,71 @@ describe("updateCheckerSlice", () => {
     expect(mockedMirror).toHaveBeenCalledWith("settings.replace", { settings: refreshed });
   });
 
-  it("does not claim up-to-date when a startup check was skipped without consulting a feed (#5615)", async () => {
-    // Auto-check off / rate-limited: the backend returns a feed-less result.
-    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "" }));
-    await store.getState().checkForUpdates(false);
-    expect(store.getState().updateCheckState).toBe("idle");
-    expect(store.getState().updateInfo).toBeNull();
-  });
+  it.each(["skippedAutoOff", "skippedRateLimited"] as const)(
+    "does not claim up-to-date when a startup check was %s (#5615, #5651)",
+    async (outcome) => {
+      mockedCheck.mockResolvedValueOnce(feedless(outcome));
+      await store.getState().checkForUpdates(false);
+      expect(store.getState().updateCheckState).toBe("idle");
+      expect(store.getState().updateInfo).toBeNull();
+      expect(mockedMirror).not.toHaveBeenCalled();
+    }
+  );
 
   it("keeps the previous result when a skipped check follows a real one (#5615)", async () => {
     mockedCheck.mockResolvedValueOnce(info({ available: false }));
     await store.getState().checkForUpdates(true);
-    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "" }));
+    mockedCheck.mockResolvedValueOnce(feedless("skippedRateLimited"));
     await store.getState().checkForUpdates(false);
     expect(store.getState().updateCheckState).toBe("up-to-date");
     expect(store.getState().updateInfo?.releaseUrl).toBe("https://example/0.2.0");
   });
 
-  it("reports a failed manual check as an error, not up-to-date (#5615)", async () => {
-    // The backend swallows feed errors into a feed-less "no update" result.
+  it("trusts the outcome, not releaseUrl: a feed-backed result without a URL is up to date (#5651)", async () => {
     mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "" }));
+    await store.getState().checkForUpdates(false);
+    expect(store.getState().updateCheckState).toBe("up-to-date");
+  });
+
+  it.each([true, false])(
+    "reports a failed check (force=%s) as an error with its reason (#5651)",
+    async (force) => {
+      const refreshed = { updates: { lastCheckTime: "2026-11-13T08:00:00Z" } };
+      mockedGetSettings.mockResolvedValueOnce(refreshed as Awaited<ReturnType<typeof getSettings>>);
+      mockedCheck.mockResolvedValueOnce(
+        feedless("failed", { failureReason: "GitHub API returned HTTP 503" })
+      );
+      const logs = await captureLogs(() => store.getState().checkForUpdates(force));
+      expect(store.getState().updateCheckState).toBe("error");
+      expect(store.getState().updateCheckFailureReason).toBe("GitHub API returned HTTP 503");
+      expect(store.getState().updateInfo).toBeNull();
+      expect(logs.some((m) => m.includes("HTTP 503"))).toBe(true);
+      // The backend stamps lastCheckTime on failure too; the page picks it up.
+      expect(mockedMirror).toHaveBeenCalledWith("settings.replace", { settings: refreshed });
+    }
+  );
+
+  it("clears the failure reason after a later successful check", async () => {
+    mockedCheck.mockResolvedValueOnce(feedless("failed", { failureReason: "offline" }));
     await store.getState().checkForUpdates(true);
-    expect(store.getState().updateCheckState).toBe("error");
+    mockedCheck.mockResolvedValueOnce(info({ available: false }));
+    await store.getState().checkForUpdates(true);
+    expect(store.getState().updateCheckState).toBe("up-to-date");
+    expect(store.getState().updateCheckFailureReason).toBeNull();
   });
 
   it("keeps the no-check build result so the page can say so", async () => {
-    mockedCheck.mockResolvedValueOnce(info({ available: false, releaseUrl: "", channel: "none" }));
+    mockedCheck.mockResolvedValueOnce(feedless("notChecking", { channel: "none" }));
     await store.getState().checkForUpdates(true);
     expect(store.getState().updateCheckState).toBe("up-to-date");
-    expect(store.getState().updateInfo?.channel).toBe("none");
+    expect(store.getState().updateInfo?.outcome).toBe("notChecking");
   });
 
   it("sets error state when the check throws", async () => {
     mockedCheck.mockRejectedValueOnce(new Error("network"));
     await store.getState().checkForUpdates(true);
     expect(store.getState().updateCheckState).toBe("error");
+    expect(store.getState().updateCheckFailureReason).toBe("network");
   });
 
   it("dismissUpdateNotification sets the dismissed flag", () => {

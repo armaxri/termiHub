@@ -727,6 +727,8 @@ export function handleCommand(cmd: string, args: Args): unknown {
         releaseUrl: "",
         releaseNotes: "",
         isSecurity: false,
+        channel: "stable",
+        outcome: "upToDate",
       };
     case "get_os_auth_info":
       return {

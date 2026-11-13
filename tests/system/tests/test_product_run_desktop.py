@@ -516,7 +516,25 @@ class TestProductRunSettingsThemes(
         self.evidence(f"updates: latest {latest!r}, last checked {last_checked!r}")
         if last_checked == "Never" and latest == "Up to date":
             return [f"latest {latest!r} while last checked {last_checked!r}"]
-        return []
+        return self._update_failure_claims(latest, last_checked)
+
+    def _update_failure_claims(self, latest: str, last_checked: str) -> list[str]:
+        """A failed check states why and was recorded (#5651).
+
+        The backend stamps the last check time even when the feed fetch fails and
+        reports the reason, so "Check failed" never pairs with "Never" and always
+        carries the reason as its tooltip.
+        """
+        if latest != "Check failed":
+            return []
+        reason = (self.driver.get_attribute("update-latest-version", "title") or "").strip()
+        self.evidence(f"updates: check failed, reason {reason!r}")
+        claims = []
+        if last_checked == "Never":
+            claims.append("a failed check left last checked at 'Never'")
+        if not reason:
+            claims.append("a failed check shows no reason")
+        return claims
 
     def test_02_build_date(self):
         with self.step(

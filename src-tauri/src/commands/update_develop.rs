@@ -13,7 +13,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::update::UpdateInfo;
+use super::update::{checked_outcome, UpdateInfo};
 
 /// GitHub API URL of the rolling develop pre-release published by `dev-build.yml`.
 pub const DEVELOP_RELEASE_API_URL: &str =
@@ -82,6 +82,8 @@ fn not_available(running_hash: &str, release_url: String) -> UpdateInfo {
         channel: UpdateChannel::Develop,
         build_commit: None,
         build_published_at: None,
+        outcome: checked_outcome(false),
+        failure_reason: None,
     }
 }
 
@@ -154,6 +156,8 @@ pub fn evaluate_develop_release(
         channel: UpdateChannel::Develop,
         build_commit: Some(short),
         build_published_at: Some(published.to_rfc3339()),
+        outcome: checked_outcome(true),
+        failure_reason: None,
     }
 }
 

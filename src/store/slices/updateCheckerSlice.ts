@@ -31,21 +31,13 @@ export interface UpdateCheckerSlice {
   // Update checker
   updateCheckState: "idle" | "checking" | "up-to-date" | "available" | "error";
   updateInfo: UpdateInfo | null;
+  /** Why the last check failed (backend `failureReason`), or `null`. */
+  updateCheckFailureReason: string | null;
   updateNotificationDismissed: boolean;
   checkForUpdates: (force: boolean) => Promise<void>;
   dismissUpdateNotification: () => void;
   skipUpdate: () => Promise<void>;
   clearSkippedUpdateVersion: () => Promise<void>;
-}
-
-/**
- * Whether the backend actually read a release feed for this result. Every
- * feed-backed result carries the release page URL; the backend's feed-less
- * "no update" placeholder (rate limit, auto-check off, feed error, or a build
- * that does not check) leaves it empty.
- */
-function consultedFeed(info: UpdateInfo): boolean {
-  return info.available || info.releaseUrl !== "";
 }
 
 /**
@@ -69,27 +61,40 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
   // Update checker
   updateCheckState: "idle",
   updateInfo: null,
+  updateCheckFailureReason: null,
   updateNotificationDismissed: false,
   checkForUpdates: async (force: boolean) => {
     const previousState = get().updateCheckState;
     set({ updateCheckState: "checking" });
     try {
       const info = await apiCheckForUpdates(force);
-      if (!consultedFeed(info)) {
-        // No release feed was read (#5615): auto-check off, rate-limited, a
-        // build that does not check, or a swallowed feed error. That is not
-        // a check, so it must never turn into "Up to date".
-        if (info.channel === "none") {
-          set({ updateCheckState: "up-to-date", updateInfo: info });
-        } else if (force) {
-          set({ updateCheckState: "error" });
-          frontendLog("update", "Update check did not reach the release feed");
-        } else {
+      // The backend states what the check did (#5651); the page never infers
+      // it from which fields are filled in.
+      switch (info.outcome) {
+        case "notChecking":
+          // A build that does not check: keep the result so the page can say so.
+          set({ updateCheckState: "up-to-date", updateInfo: info, updateCheckFailureReason: null });
+          return;
+        case "skippedAutoOff":
+        case "skippedRateLimited":
+          // No feed was read (#5615): that is not a check, so it must never
+          // turn into "Up to date" — keep whatever the last real check said.
           set({ updateCheckState: previousState === "checking" ? "idle" : previousState });
+          return;
+        case "failed": {
+          // Manual or automatic, a failed check shows as failed (#5651).
+          const reason = info.failureReason ?? "unknown error";
+          set({ updateCheckState: "error", updateCheckFailureReason: reason });
+          frontendLog("update", `Update check failed: ${reason}`);
+          // The backend stamps lastCheckTime even on failure.
+          await refreshLastCheckTime();
+          return;
         }
-        return;
+        case "upToDate":
+        case "updateAvailable":
+          break;
       }
-      if (info.available) {
+      if (info.outcome === "updateAvailable") {
         const currentSettings = currentSettingsView();
         const skippedVersion = currentSettings.updates?.skippedVersion;
         // If the update is available but the user previously skipped this exact
@@ -102,15 +107,17 @@ export const createUpdateCheckerSlice: StateCreator<AppState, [], [], UpdateChec
           // Reset dismissed flag so the popup shows for newly detected versions,
           // unless the user already skipped this version.
           updateNotificationDismissed: isSkipped,
+          updateCheckFailureReason: null,
         });
       } else {
-        set({ updateCheckState: "up-to-date", updateInfo: info });
+        set({ updateCheckState: "up-to-date", updateInfo: info, updateCheckFailureReason: null });
       }
       // After the skip fold above read the current settings view.
       await refreshLastCheckTime();
-    } catch {
-      set({ updateCheckState: "error" });
-      frontendLog("update", "Update check failed");
+    } catch (err) {
+      const reason = errorMessage(err);
+      set({ updateCheckState: "error", updateCheckFailureReason: reason });
+      frontendLog("update", `Update check failed: ${reason}`);
     }
   },
   dismissUpdateNotification: () => set({ updateNotificationDismissed: true }),
