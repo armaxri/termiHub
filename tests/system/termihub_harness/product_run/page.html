@@ -43,7 +43,11 @@
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font: 14px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif;
+        font:
+          14px/1.45 -apple-system,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
       }
       main {
         max-width: 1100px;
@@ -168,6 +172,19 @@
       .current {
         outline: 2px solid var(--run);
       }
+      .sev-P1 {
+        color: var(--fail);
+      }
+      .sev-P2 {
+        color: var(--human);
+      }
+      .sev-P3 {
+        color: var(--nt);
+      }
+      .finding-meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
     </style>
   </head>
   <body>
@@ -176,6 +193,7 @@
       <div class="meta" id="meta">Waiting for the run to start…</div>
       <div class="counts" id="counts"></div>
       <div id="human"></div>
+      <div id="review"></div>
       <div id="steps"></div>
     </main>
     <script>
@@ -280,7 +298,9 @@
         document.getElementById("meta").textContent =
           `${doc.run_id} · ${doc.state} · started ${doc.started_at}` +
           (doc.finished_at ? ` · finished ${doc.finished_at}` : "") +
-          (doc.profile && doc.profile.dev_name ? ` · keychain namespace ${doc.profile.dev_name}` : "");
+          (doc.profile && doc.profile.dev_name
+            ? ` · keychain namespace ${doc.profile.dev_name}`
+            : "");
         document.title = `termiHub product run (${doc.state})`;
         document
           .getElementById("counts")
@@ -304,11 +324,64 @@
         list.replaceChildren(...nodes);
       };
 
-      function poll() {
+      // The UI review (#5538): review/findings.js, written by
+      // scripts/internal/product-run-review.py merge after the reviewers ran.
+      window.__productRunReview = function (doc) {
+        const box = document.getElementById("review");
+        const c = doc.counts || {};
+        const nodes = [
+          el("h3", {}, "UI review"),
+          el(
+            "div",
+            { class: "counts" },
+            ...["P1", "P2", "P3"].map((k) =>
+              el("span", { class: `pill sev-${k}` }, `${c[k] || 0} ${k}`)
+            ),
+            el(
+              "span",
+              { class: "finding-meta" },
+              `${doc.raw_count} reported, merged ${doc.generated_at}`
+            )
+          ),
+        ];
+        for (const bad of doc.rejected || []) {
+          nodes.push(
+            el("div", { class: "panel reason" }, `Rejected ${bad.file}: ${bad.errors.join("; ")}`)
+          );
+        }
+        for (const f of doc.findings || []) {
+          const panel = el(
+            "div",
+            { class: "panel" },
+            el(
+              "div",
+              { class: "step-head" },
+              el("span", { class: `pill sev-${f.severity}` }, f.severity),
+              el("span", { class: "step-title" }, f.finding),
+              el("span", { class: "step-id" }, `${f.id} · ${f.kind} · ${f.surface}`)
+            ),
+            el("div", { class: "reason" }, "Suggestion: " + f.suggestion)
+          );
+          const shots = el("div", { class: "shots" });
+          for (const file of f.screenshots || []) {
+            const img = el("img", { src: file, alt: `${f.id} screenshot`, loading: "lazy" });
+            shots.append(el("a", { href: file, target: "_blank" }, img));
+          }
+          panel.append(shots);
+          nodes.push(panel);
+        }
+        box.replaceChildren(...nodes);
+      };
+
+      function load(src) {
         const script = document.createElement("script");
-        script.src = "status.js?t=" + Date.now();
+        script.src = src + "?t=" + Date.now();
         script.onload = script.onerror = () => script.remove();
         document.head.append(script);
+      }
+      function poll() {
+        load("status.js");
+        load("review/findings.js");
       }
       poll();
       setInterval(poll, 1500);
