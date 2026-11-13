@@ -144,4 +144,13 @@ describe("TransferControls", () => {
       expect(query("transfer-pause")).toBeNull();
     });
   });
+  // #5625 (R-097): a trash can reads as "delete the file". Removing a finished
+  // row only drops it from the list, so the control says exactly that.
+  it("Remove reads as 'remove from list', not as deleting the file", () => {
+    render("completed");
+    const remove = query("transfer-remove");
+    expect(remove?.getAttribute("aria-label")).toBe("Remove from list");
+    expect(remove?.querySelector(".lucide-trash-2")).toBeNull();
+    expect(remove?.querySelector(".lucide-list-x")).not.toBeNull();
+  });
 });

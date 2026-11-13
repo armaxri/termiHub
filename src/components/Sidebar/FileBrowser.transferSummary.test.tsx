@@ -1,11 +1,9 @@
 /**
- * UX-020 / #2905: the in-browser transfer footer is fully consolidated with the
- * docked Transfer Queue panel — it renders from the one authoritative `transfers`
- * projection region (not a divergent transient map) via the shared
- * {@link TransferEntryRow} in its compact variant, so both surfaces share one
- * data source and one row/control component. Its controls route through the
- * shared `useTransferControls` handlers (region commands + the same
- * success/no-op/error toasts), it retains terminal rows, and it offers Remove.
+ * #5625 (R-028): transfers live in one place — the docked Transfers panel. The
+ * file-browser sidebar no longer repeats the list (it squeezed the file list);
+ * it shows at most a one-line summary of the browsed session's transfers, read
+ * from the same authoritative `transfers` projection region, that opens the
+ * panel. (Before #5625 this footer rendered the compact rows, UX-020 / #2905.)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -118,7 +116,7 @@ function activeTransfer(overrides: Partial<TransferEntry> = {}): TransferEntry {
 
 setupFileBrowsersRegion();
 
-describe("FileBrowser — in-browser transfer footer is region-backed (UX-020 / #2905)", () => {
+describe("FileBrowser — transfer summary instead of a second list (#5625)", () => {
   beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
     ({ transport, teardown } = installTransferHarness());
@@ -144,11 +142,11 @@ describe("FileBrowser — in-browser transfer footer is region-backed (UX-020 / 
     vi.clearAllMocks();
   });
 
-  async function renderSessionWithTransfers(entries: TransferEntry[]) {
+  async function renderSessionWithTransfers(entries: TransferEntry[], minimized = false) {
     setActiveTab(makeTab({}));
     setFileBrowserCapableType("ssh", "SSH");
     useAppStore.setState({ sidebarView: "files" });
-    transport.seed(transfersView(entries));
+    transport.seed(transfersView(entries, minimized));
     seedFileBrowsers({
       mode: "session",
       session: { path: "/remote", entries: [], loading: false, error: null },
@@ -163,69 +161,50 @@ describe("FileBrowser — in-browser transfer footer is region-backed (UX-020 / 
     await flushAsync();
   }
 
-  it("renders the shared compact row for the active session's transfer", async () => {
+  function chip(): HTMLButtonElement | null {
+    return container.querySelector('[data-testid="file-browser-transfer-summary"]');
+  }
+
+  it("shows a one-line summary instead of a second transfer list", async () => {
     await renderSessionWithTransfers([activeTransfer()]);
-    const rows = container.querySelectorAll('[data-testid="file-browser-transfer"]');
-    expect(rows.length).toBe(1);
-    expect(container.querySelector('[data-testid="transfer-row"]')).toBeTruthy();
-    expect(container.textContent).toContain("big.iso");
+    expect(chip()?.textContent).toContain("1 transfer in progress");
+    expect(container.querySelector('[data-testid="file-browser-transfers"]')).toBeNull();
+    expect(container.querySelector('[data-testid="transfer-row"]')).toBeNull();
+    expect(container.querySelector('[data-testid="transfer-cancel"]')).toBeNull();
   });
 
-  it("shows only transfers owned by the browsed session", async () => {
-    await renderSessionWithTransfers([
-      activeTransfer(),
-      fakeTransferEntry("t2", { sessionId: "other-sess", name: "elsewhere.bin" }),
-    ]);
-    const rows = container.querySelectorAll('[data-testid="file-browser-transfer"]');
-    expect(rows.length).toBe(1);
-    expect(container.textContent).toContain("big.iso");
-    expect(container.textContent).not.toContain("elsewhere.bin");
-  });
-
-  it("cancels via the shared control (region transfer_cancel + success toast)", async () => {
-    await renderSessionWithTransfers([activeTransfer()]);
-    const cancelBtn = container.querySelector(
-      '[data-testid="transfer-cancel"]'
-    ) as HTMLButtonElement;
-    expect(cancelBtn).toBeTruthy();
-
-    await act(async () => {
-      cancelBtn.click();
-    });
-    await flushAsync();
-
-    expect(mockedInvoke).toHaveBeenCalledWith("transfer_cancel", { transferId: "t1" });
-    expect(toastSuccess).toHaveBeenCalledWith("Transfer cancelled");
-    expect(toastError).not.toHaveBeenCalled();
-  });
-
-  it("retains a terminal (completed) row and offers Remove, dispatching transfer.remove", async () => {
+  it("counts only transfers owned by the browsed session", async () => {
     await renderSessionWithTransfers([
       activeTransfer({ state: "completed", percent: 100, transferred: 100 }),
+      fakeTransferEntry("t2", { sessionId: "ssh-sess-1", name: "two.bin", state: "completed" }),
+      fakeTransferEntry("t3", { sessionId: "other-sess", name: "elsewhere.bin", state: "active" }),
     ]);
-    // Terminal rows are now retained (single source of truth), unlike the old
-    // transient footer that cleared on completion.
-    expect(container.querySelector('[data-testid="file-browser-transfer"]')).toBeTruthy();
-    expect(container.querySelector('[data-testid="transfer-cancel"]')).toBeNull();
-    const removeBtn = container.querySelector(
-      '[data-testid="transfer-remove"]'
-    ) as HTMLButtonElement;
-    expect(removeBtn).toBeTruthy();
-
-    await act(async () => {
-      removeBtn.click();
-    });
-    await flushAsync();
-
-    expect(transport.kinds()).toContain("transfer.remove");
-    // The region fold drops the row, so the footer empties.
-    expect(container.querySelector('[data-testid="file-browser-transfer"]')).toBeNull();
+    expect(chip()?.textContent).toContain("2 transfers done");
   });
 
-  // #3304: SFTP transfers support pause/resume/retry since PROD-0012.
-  it("shows Pause for an SSH/SFTP footer transfer alongside Cancel", async () => {
-    await renderSessionWithTransfers([activeTransfer()]);
-    expect(container.querySelector('[data-testid="transfer-pause"]')).toBeTruthy();
-    expect(container.querySelector('[data-testid="transfer-cancel"]')).toBeTruthy();
+  it("says when a finished transfer failed", async () => {
+    await renderSessionWithTransfers([
+      activeTransfer({ state: "completed", percent: 100, transferred: 100 }),
+      fakeTransferEntry("t2", { sessionId: "ssh-sess-1", name: "two.bin", state: "failed" }),
+    ]);
+    expect(chip()?.textContent).toContain("1 transfer failed");
+  });
+
+  it("opens the Transfers panel when clicked", async () => {
+    await renderSessionWithTransfers([activeTransfer()], true);
+    await act(async () => {
+      chip()?.click();
+    });
+    await flushAsync();
+    expect(transport.dispatched).toContainEqual(
+      expect.objectContaining({ kind: "transfer.setMinimized", payload: { minimized: false } })
+    );
+  });
+
+  it("renders nothing when the browsed session has no transfers", async () => {
+    await renderSessionWithTransfers([
+      fakeTransferEntry("t3", { sessionId: "other-sess", name: "elsewhere.bin" }),
+    ]);
+    expect(chip()).toBeNull();
   });
 });
