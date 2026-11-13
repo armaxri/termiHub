@@ -2083,6 +2083,19 @@ jobs:
       - name: Run machinery suite
         run: ./tests/system/pytest.sh -m "not integration" -q
 
+      # Contended leg (#5590). On a parallel macOS/Windows worker
+      # `deadlines.CONTENDED` raises named ops' budgets; a serial ubuntu run never
+      # takes that path, so a test that silently depends on serial budgets failed
+      # only under `pytest -n` on macOS and CI never saw it (#5543).
+      # TERMIHUB_FORCE_CONTENDED=1 forces the contended deadline math on, and `-n 4`
+      # adds the xdist sharding. Runs inside this job (~1 min; the job is far off
+      # the PR's critical path) and even when the serial leg failed, so both report.
+      - name: Run machinery suite (forced contended, xdist)
+        if: ${{ !cancelled() }}
+        env:
+          TERMIHUB_FORCE_CONTENDED: '1'
+        run: ./tests/system/pytest.sh -m "not integration" -q -n 4
+
       # Test inventory + coverage-gap report (#1950) and its ratchet (#3755,
       # CI-012). It statically introspects the harness (stdlib-only, no app build)
       # and writes the report to the step summary, then fails when a feature area
