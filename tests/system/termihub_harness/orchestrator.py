@@ -780,8 +780,8 @@ class AppInstance:
     def adopt_self_restart(self, timeout: float = 60.0) -> None:
         """Track the process the app started when it restarted itself (#4127).
 
-        A flow such as a backup restore ends in ``AppHandle::request_restart``:
-        the app spawns its own binary again and exits. Call this right after
+        A flow such as a backup restore ends in a self-relaunch (#5647): the
+        app spawns its own binary again, with its environment, and exits. Call this right after
         triggering it. It waits up to ``timeout`` for the launched process to
         exit, then for the relaunched one to appear (see
         :func:`~termihub_harness.relaunch.find_relaunched_app`), and tracks it so
