@@ -35,6 +35,7 @@ use super::alive::AgentAlive;
 use super::capabilities::{refresh_agent_capabilities, SharedCapabilities};
 use super::files_only::FilesOnlyRoutes;
 use super::io_lanes::{AgentIoSender, CloseBudgetOnDrop, IoBudget, IoLanes, Next};
+use super::session_exit::SessionExitRoutes;
 use super::stdout_reader::{frame, Frame};
 use super::{
     dispatch_agent_notification, emit_agent_state, emit_agent_state_with_error, evicted_remote_ids,
@@ -233,6 +234,9 @@ pub(super) async fn agent_io_task<R: Runtime>(
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
     // Files-only agent sessions (#4081): remote session id → its proxy's watch.
     let mut files_only_routes = FilesOnlyRoutes::default();
+    // Agent sessions that end with a known cause (#5732): remote session id →
+    // its proxy's end-cause slot.
+    let mut exit_routes = SessionExitRoutes::default();
     // Streaming tool runs (#3353): run id → where its notifications go.
     let mut tool_runs: HashMap<String, ToolRunSender> = HashMap::new();
     let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, AgentRpcFailure>>> =
@@ -269,9 +273,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
             &agent_id,
             method,
             params,
-            &session_outputs,
+            &mut session_outputs,
             &monitoring_outputs,
             &mut files_only_routes,
+            &mut exit_routes,
             &b64,
         );
     }
@@ -442,6 +447,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
                         AgentIoCommand::UnregisterSession { session_id } => {
                             session_outputs.remove(&session_id);
                             files_only_routes.remove(&session_id);
+                            exit_routes.remove(&session_id);
+                        }
+                        AgentIoCommand::RegisterSessionEnd { session_id, end_cause } => {
+                            exit_routes.register(session_id, end_cause);
                         }
                         AgentIoCommand::RegisterFilesOnly { session_id, files_only_tx } => {
                             files_only_routes.register(session_id, files_only_tx);
@@ -549,9 +558,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
                                                 &agent_id,
                                                 &method,
                                                 &params,
-                                                &session_outputs,
+                                                &mut session_outputs,
                                                 &monitoring_outputs,
                                                 &mut files_only_routes,
+                                                &mut exit_routes,
                                                 &b64,
                                             );
                                         }
@@ -705,9 +715,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
                         &agent_id,
                         method,
                         params,
-                        &session_outputs,
+                        &mut session_outputs,
                         &monitoring_outputs,
                         &mut files_only_routes,
+                        &mut exit_routes,
                         &b64,
                     );
                 }
@@ -773,6 +784,7 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             &keep,
                         );
                         files_only_routes.retain(&keep);
+                        exit_routes.retain(&keep);
                     }
                     // Route the output read while waiting for the attach replies
                     // (the re-attached sessions' buffered output) to their tabs.
@@ -782,9 +794,10 @@ pub(super) async fn agent_io_task<R: Runtime>(
                             &agent_id,
                             method,
                             params,
-                            &session_outputs,
+                            &mut session_outputs,
                             &monitoring_outputs,
                             &mut files_only_routes,
+                            &mut exit_routes,
                             &b64,
                         );
                     }

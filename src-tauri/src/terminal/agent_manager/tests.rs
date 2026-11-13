@@ -2773,9 +2773,10 @@ fn dispatch_agent_notification_preserves_connection_output_order() {
             "agent-1",
             method,
             params,
-            &session_outputs,
+            &mut session_outputs,
             &monitoring_outputs,
             &mut files_only::FilesOnlyRoutes::default(),
+            &mut session_exit::SessionExitRoutes::default(),
             &b64,
         );
     }

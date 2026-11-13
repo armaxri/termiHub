@@ -1482,7 +1482,10 @@ async fn read_frames(
                 }
                 MSG_EXITED => {
                     let code = protocol::decode_exit_code(&frame.payload).unwrap_or(-1);
-                    info!("Session {session_id} exited with code {code}");
+                    // Why the backend's link ended (#5732); an older daemon
+                    // sends no cause byte.
+                    let end_cause = protocol::decode_end_cause(&frame.payload);
+                    info!("Session {session_id} exited with code {code} (cause {end_cause:?})");
                     alive.store(false, Ordering::SeqCst);
 
                     let notification = JsonRpcNotification::new(
@@ -1490,6 +1493,7 @@ async fn read_frames(
                         to_params(&ConnectionExitNotification {
                             session_id: session_id.to_owned(),
                             exit_code: Some(code),
+                            end_cause,
                         }),
                     );
                     let _ = notification_tx.send(notification);
@@ -1703,6 +1707,7 @@ fn spawn_output_flow_forwarder(writer: DaemonWriterHandle, features: &FeatureCha
 mod tests {
     use super::*;
     use crate::daemon::protocol;
+    use termihub_core::connection::SessionEndCause;
 
     /// The worker's half of the session heartbeat (#3140).
     mod heartbeat_tests;
@@ -2466,6 +2471,43 @@ mod tests {
         assert_eq!(
             wire(&rx.try_recv().unwrap()),
             legacy_wire(CONNECTION_EXIT, legacy)
+        );
+    }
+
+    /// The daemon's end-cause byte reaches the desktop as the exit's
+    /// `end_cause` (#5732), so a server-closed SSH session on an agent reads
+    /// "closed by server".
+    #[tokio::test]
+    async fn reader_loop_forwards_the_daemon_end_cause() {
+        let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            let payload = protocol::encode_exit(0, Some(SessionEndCause::RemoteClosed));
+            protocol::write_frame_async(&mut server_sock, MSG_EXITED, &payload)
+                .await
+                .unwrap();
+        });
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (on_exit, _ran) = recording_exit_hook();
+        reader_loop(
+            Box::new(client_sock),
+            "sess",
+            &tx,
+            &Arc::new(AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            on_exit,
+        )
+        .await;
+
+        let exit = rx.try_recv().unwrap();
+        assert_eq!(exit.method, CONNECTION_EXIT);
+        assert_eq!(
+            exit.params,
+            serde_json::json!({
+                "session_id": "sess",
+                "exit_code": 0,
+                "end_cause": "remote_closed",
+            })
         );
     }
 

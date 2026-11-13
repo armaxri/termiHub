@@ -18,6 +18,7 @@ use crate::protocol::methods::{
     CONNECTION_ERROR, CONNECTION_EXIT, CONNECTION_OUTPUT,
 };
 use crate::session::output_budget::OutputBudget;
+use termihub_core::connection::SessionEndCause;
 use termihub_core::errors::SessionError;
 use termihub_core::session::traits::OutputSink;
 
@@ -52,6 +53,33 @@ impl JsonRpcOutputSink {
             budget: Some(budget),
         }
     }
+
+    /// Send `connection.exit` with the session's end cause (#5732): why its
+    /// link ended on its own, read from the backend's
+    /// [`end_cause`](termihub_core::connection::ConnectionType::end_cause).
+    /// `None` omits the field, exactly as [`OutputSink::send_exit`] does.
+    pub fn send_exit_with_cause(
+        &self,
+        session_id: &str,
+        exit_code: Option<i32>,
+        end_cause: Option<SessionEndCause>,
+    ) -> Result<(), SessionError> {
+        let notification = JsonRpcNotification::new(
+            CONNECTION_EXIT,
+            to_params(&ConnectionExitNotification {
+                session_id: session_id.to_owned(),
+                exit_code,
+                end_cause,
+            }),
+        );
+        self.notification_tx.send(notification).map_err(|e| {
+            SessionError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                format!("notification channel closed: {e}"),
+            ))
+        })?;
+        Ok(())
+    }
 }
 
 impl OutputSink for JsonRpcOutputSink {
@@ -84,20 +112,7 @@ impl OutputSink for JsonRpcOutputSink {
     }
 
     fn send_exit(&self, session_id: &str, exit_code: Option<i32>) -> Result<(), SessionError> {
-        let notification = JsonRpcNotification::new(
-            CONNECTION_EXIT,
-            to_params(&ConnectionExitNotification {
-                session_id: session_id.to_owned(),
-                exit_code,
-            }),
-        );
-        self.notification_tx.send(notification).map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                format!("notification channel closed: {e}"),
-            ))
-        })?;
-        Ok(())
+        self.send_exit_with_cause(session_id, exit_code, None)
     }
 
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError> {
@@ -211,6 +226,33 @@ mod tests {
         assert_eq!(notification.method, "connection.exit");
         assert_eq!(notification.params["session_id"], "s1");
         assert!(notification.params["exit_code"].is_null());
+    }
+
+    #[test]
+    fn output_sink_send_exit_with_an_end_cause() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = JsonRpcOutputSink::new(tx);
+
+        sink.send_exit_with_cause("s1", Some(0), Some(SessionEndCause::RemoteClosed))
+            .unwrap();
+
+        let notification = rx.try_recv().unwrap();
+        assert_eq!(notification.method, "connection.exit");
+        assert_eq!(notification.params["session_id"], "s1");
+        assert_eq!(notification.params["exit_code"], 0);
+        assert_eq!(notification.params["end_cause"], "remote_closed");
+    }
+
+    #[test]
+    fn output_sink_send_exit_without_a_cause_omits_the_field() {
+        // The pre-0.38.0 wire shape: no `end_cause` key at all (#5732).
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = JsonRpcOutputSink::new(tx);
+
+        sink.send_exit_with_cause("s1", Some(0), None).unwrap();
+
+        let notification = rx.try_recv().unwrap();
+        assert!(notification.params.get("end_cause").is_none());
     }
 
     #[test]

@@ -112,6 +112,7 @@ mod reattach;
 mod reconnect;
 mod reconnect_notice;
 mod recovery;
+mod session_exit;
 mod state_events;
 mod stdout_reader;
 mod update_reconnect;
@@ -345,6 +346,12 @@ pub(crate) enum AgentIoCommand {
     },
     /// Unregister a session's output sender (and its files-only route, #4081).
     UnregisterSession { session_id: String },
+    /// Register the slot a session's proxy reads its end cause from (#5732),
+    /// recorded by the agent's `connection.exit` when it carries one.
+    RegisterSessionEnd {
+        session_id: String,
+        end_cause: termihub_core::connection::EndCauseSlot,
+    },
     /// Register the watch a session's proxy reads its files-only verdict from
     /// (#4081), flipped by the agent's `connection.filesOnly` notification.
     RegisterFilesOnly {
@@ -882,6 +889,19 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         _agent_id: &str,
         _remote_session_id: &str,
         _files_only_tx: tokio::sync::watch::Sender<bool>,
+    ) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    /// Register the slot a remote session's end cause is recorded in (#5732)
+    /// when the agent's `connection.exit` carries one; the session's output
+    /// route is then dropped, so the session ends. Dropped with the session's
+    /// output route. The default does nothing, so no cause is ever recorded.
+    fn register_session_end(
+        &self,
+        _agent_id: &str,
+        _remote_session_id: &str,
+        _end_cause: termihub_core::connection::EndCauseSlot,
     ) -> Result<(), TerminalError> {
         Ok(())
     }
@@ -2766,6 +2786,31 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
+    /// Register a remote session's end-cause slot on the agent's I/O task
+    /// (#5732).
+    pub fn register_session_end(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        end_cause: termihub_core::connection::EndCauseSlot,
+    ) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+
+        conn.command_tx
+            .send(AgentIoCommand::RegisterSessionEnd {
+                session_id: remote_session_id.to_string(),
+                end_cause,
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
+    }
+
     /// Unregister a session's output sender from the agent's I/O task.
     pub fn unregister_session_output(
         &self,
@@ -3457,6 +3502,15 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
         AgentConnectionManager::unregister_session_output(self, agent_id, remote_session_id)
+    }
+
+    fn register_session_end(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        end_cause: termihub_core::connection::EndCauseSlot,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::register_session_end(self, agent_id, remote_session_id, end_cause)
     }
 
     fn register_files_only(

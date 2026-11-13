@@ -22,6 +22,7 @@ use crate::daemon::protocol::{
 };
 use crate::daemon::transport::{BoxedReader, BoxedWriter};
 use crate::daemon::worker_sink::WRITE_STALL_TIMEOUT;
+use termihub_core::connection::ConnectionType;
 
 /// Socket-buffer stand-in for every worker connection.
 const PIPE: usize = 64 * 1024;
@@ -57,13 +58,18 @@ pub(super) struct Daemon {
 }
 
 pub(super) fn spawn_daemon() -> Daemon {
+    spawn_daemon_with(Box::new(FakeConnection))
+}
+
+/// [`spawn_daemon`] hosting `connection` instead of the plain fake.
+pub(super) fn spawn_daemon_with(connection: Box<dyn ConnectionType>) -> Daemon {
     let (conns, conn_rx) = mpsc::unbounded_channel();
     let (output, output_rx) = mpsc::channel::<Vec<u8>>(16);
     let task = tokio::spawn(async move {
         let mut acceptor = TestAcceptor(conn_rx);
         let _ = daemon_loop(
             "write-bound",
-            Box::new(FakeConnection),
+            connection,
             output_rx,
             &mut acceptor,
             RING,

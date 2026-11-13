@@ -126,6 +126,7 @@ pub(crate) fn lane_of(cmd: &AgentIoCommand) -> Lane {
         | AgentIoCommand::AgentForwardAck { .. }
         | AgentIoCommand::RegisterSession { .. }
         | AgentIoCommand::UnregisterSession { .. }
+        | AgentIoCommand::RegisterSessionEnd { .. }
         | AgentIoCommand::RegisterFilesOnly { .. }
         | AgentIoCommand::RegisterMonitoring { .. }
         | AgentIoCommand::RegisterMonitoringStatus { .. }

@@ -339,6 +339,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.38.0        | Yes (the desktop requests 0.24.0; a server-closed session on the agent reads "closed by server" via `connection.exit`'s `end_cause`)  |
 | 0.24.0          | 0.37.0        | Yes (the desktop requests 0.24.0; a serial session reopens its port in place and reports it with `connection.reconnect`)              |
 | 0.24.0          | 0.35.0        | Yes (the desktop requests 0.24.0; a refused, unreachable or unresolvable host gets its own connect hint)                              |
 | 0.24.0          | 0.34.0        | Yes (the desktop requests 0.24.0; `serialPortRescan` lets the Port field of an agent-hosted serial connection follow plug / unplug)   |
@@ -420,6 +421,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.38.0 (additive, minor)** — adds the optional `end_cause` of [`connection.exit`](#connectionexit) (#5732): why an agent-hosted session's link ended on its own (`remote_closed`, `io_error`, `timeout`), read from the backend. A Telnet or SSH session on the agent whose server closes the connection now reads "— connection closed by server —" on the desktop instead of "connection lost". An older agent never sends the field, and its sessions behave as before; an older desktop ignores it.
 
 **0.37.0 (additive, minor)** — adds the [`connection.reconnect`](#connectionreconnect) notification (#5396): a serial session whose Auto-Reconnect is on (the serial default) no longer ends when its port drops. The agent keeps the session and reopens the port on its own host on the shared reconnect policy, reopening only the device that was open before (a renamed port is followed only on a unique serial-number match), and reports each step. A give-up still ends the session with [`connection.exit`](#connectionexit). [`connection.close`](#connectionclose) stops the loop. An older agent ends the session on a drop as before and never sends the notification; an older desktop ignores it, and the session's output simply resumes once the port is back.
 
@@ -4117,10 +4120,41 @@ A session's process has exited.
 }
 ```
 
-| Param        | Type       | Description                                                       |
-| ------------ | ---------- | ----------------------------------------------------------------- |
-| `session_id` | `string`   | Exited session UUID                                               |
-| `exit_code`  | `integer?` | Exit code if available (`null` for signals or serial disconnects) |
+| Param        | Type       | Description                                                                                                                 |
+| ------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `session_id` | `string`   | Exited session UUID                                                                                                         |
+| `exit_code`  | `integer?` | Exit code if available (`null` for signals or serial disconnects)                                                           |
+| `end_cause`  | `string?`  | Why the session's link ended on its own (0.38.0+): `remote_closed`, `io_error` or `timeout`. Omitted when unknown or closed |
+
+`end_cause` (0.38.0+, #5732) is the backend's own verdict, the same one a direct session reports
+on the desktop: `remote_closed` when the server ended the connection cleanly (TCP end-of-stream on
+Telnet, the SSH server closing the shell channel), `io_error` when a read or write on the link
+failed, `timeout` when the link timed out. The agent omits it when the backend cannot tell, after
+a [`connection.close`](#connectionclose), and an agent older than 0.38.0 never sends it. A
+desktop reads a value it does not know as absent.
+
+When `end_cause` is present, the desktop ends the hosted session at once and shows the cause
+("connection closed by server" for `remote_closed`). Without it, the desktop keeps its earlier
+behaviour, and losing the agent link still reads "connection lost".
+
+For a daemon-hosted session (SSH and the other persistent types) the session daemon passes the
+cause to the agent worker as an optional fifth byte of its `MSG_EXITED` frame (after the 4-byte
+exit code: `1` = `remote_closed`, `2` = `io_error`, `3` = `timeout`). A worker that predates the
+byte reads only the exit code, and a frame without it means no cause.
+
+Example with a cause:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.exit",
+  "params": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "exit_code": 0,
+    "end_cause": "remote_closed"
+  }
+}
+```
 
 ### `connection.reconnect`
 

@@ -5,7 +5,8 @@
 //! `connection.output` and `connection.monitoring.*` to the per-session/per-host
 //! channels, `connection.evicted` to the SM-003 eviction fold,
 //! `connection.filesOnly` to the session's files-only watch (#4081),
-//! `connection.reconnect` to the agent-side reconnect fold (#5396), `agent.forward.*`
+//! `connection.reconnect` to the agent-side reconnect fold (#5396),
+//! `connection.exit` with an end cause to the session's end (#5732), `agent.forward.*`
 //! to the desktop ssh-agent relay, `tool.event`/`tool.done` to their tool run,
 //! the `agent.update_available` notice to the frontend as a Tauri event, and the
 //! `agent.update_pending` notice to the backend's update reconnect (#4489).
@@ -29,6 +30,7 @@ use termihub_core::protocol::methods::{
 
 use super::files_only::{route_files_only_notification, FilesOnlyRoutes};
 use super::reconnect_notice::handle_session_reconnect_notification;
+use super::session_exit::{route_session_exit_notification, SessionExitRoutes};
 use super::update_reconnect::handle_update_pending_notice;
 use super::{
     fold_evicted_hosted_sessions, hosted_sessions_for_agent, AgentIoSender, MonitoringRoute,
@@ -158,13 +160,19 @@ pub(super) fn dispatch_agent_notification<R: Runtime>(
     agent_id: &str,
     method: &str,
     params: &Value,
-    session_outputs: &HashMap<String, OutputSender>,
+    session_outputs: &mut HashMap<String, OutputSender>,
     monitoring_outputs: &HashMap<String, MonitoringRoute>,
     files_only: &mut FilesOnlyRoutes,
+    exit_routes: &mut SessionExitRoutes,
     b64: &base64::engine::GeneralPurpose,
 ) {
     // #4081: a hosted session became files-only — flip its proxy's watch.
     if route_files_only_notification(files_only, agent_id, method, params) {
+        return;
+    }
+    // #5732: a hosted session ended on its own with a known cause — record it
+    // for the proxy and end the session's output stream.
+    if route_session_exit_notification(exit_routes, session_outputs, agent_id, method, params) {
         return;
     }
     if method == termihub_core::protocol::methods::AGENT_UPDATE_AVAILABLE {

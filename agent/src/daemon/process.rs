@@ -29,7 +29,7 @@ use crate::daemon::serial_reopen::{wants_reopen, ReopenStatus, ReopenStatusRx, S
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
 use crate::daemon::worker_sink::{self, SinkEvent, WorkerSink};
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
-use termihub_core::connection::{ConnectionType, OutputReceiver};
+use termihub_core::connection::{ConnectionType, OutputReceiver, SessionEndCause};
 use termihub_core::session::serial_reconnect::SystemSerialPortProbe;
 
 /// Process requests the daemon runs at once (#3210). The desktop refreshes one
@@ -631,7 +631,9 @@ async fn daemon_loop_with_reopen(
                                 send_reopen_status(agent_writer.as_ref(), &status);
                             }
                         }
-                        send_exited_async(&mut agent_writer, 0).await;
+                        // Why the link ended (#5732), recorded by the backend
+                        // before it closed the output channel.
+                        send_exited_async(&mut agent_writer, 0, connection.end_cause()).await;
                         return Ok(());
                     }
                 }
@@ -763,7 +765,7 @@ async fn daemon_loop_with_reopen(
                         if let Err(e) = connection.disconnect().await {
                             warn!("Disconnect error: {e}");
                         }
-                        send_exited_async(&mut agent_writer, 0).await;
+                        send_exited_async(&mut agent_writer, 0, None).await;
                         return Ok(());
                     }
                     Some(AgentCommand::OutputFlow(paused)) => {
@@ -1499,10 +1501,15 @@ fn abort_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
 const EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Send an Exited frame to the agent if connected, after the frames already
-/// queued for it, and close the connection.
-async fn send_exited_async(agent_writer: &mut Option<WorkerSink>, code: i32) {
+/// queued for it, and close the connection. `end_cause` says why the
+/// backend's link ended on its own (#5732); `None` after a kill.
+async fn send_exited_async(
+    agent_writer: &mut Option<WorkerSink>,
+    code: i32,
+    end_cause: Option<SessionEndCause>,
+) {
     if let Some(sink) = agent_writer.take() {
-        sink.send(MSG_EXITED, &protocol::encode_exit_code(code));
+        sink.send(MSG_EXITED, &protocol::encode_exit(code, end_cause));
         sink.close(EXIT_DRAIN_TIMEOUT).await;
     }
 }
@@ -1906,6 +1913,9 @@ pub(crate) mod tests {
 
     /// Bounded writes to the attached worker (#3890).
     mod write_bound_tests;
+
+    /// The daemon's exit frame carries why the backend's link ended (#5732).
+    mod exit_cause_tests;
 
     /// The attach intent is read off the loop, and a slow one is honoured (#3928).
     mod attach_intent_tests;

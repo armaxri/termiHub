@@ -13,6 +13,7 @@
 
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use crate::connection::ConnectionTypeInfo;
+use crate::connection::SessionEndCause;
 use crate::monitoring::{KillSignal, MonitorStatus, MonitorStatusReason, ProcessInfo, SystemStats};
 use crate::service::ServiceStatus;
 #[cfg(feature = "ssh")]
@@ -2266,6 +2267,28 @@ pub struct ConnectionExitNotification {
     pub session_id: String,
     /// Process exit code; serialized as `null` when the backend reports none.
     pub exit_code: Option<i32>,
+    /// Why the session's link ended on its own (0.38.0+, #5732): the server
+    /// closed it, an I/O error, or a timeout — the backend's
+    /// [`end_cause`](crate::connection::ConnectionType::end_cause). Omitted
+    /// when the backend cannot tell, after a deliberate close, and by an agent
+    /// older than 0.38.0. A value this build does not know reads as absent,
+    /// so a newer agent's cause never makes the notification unreadable.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_end_cause"
+    )]
+    pub end_cause: Option<SessionEndCause>,
+}
+
+/// Read an optional [`SessionEndCause`], treating a value this build does not
+/// know (a newer agent's cause) as absent instead of failing the payload.
+fn lenient_end_cause<'de, D>(deserializer: D) -> Result<Option<SessionEndCause>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 /// Payload of a [`CONNECTION_ERROR`] notification (agent → desktop, #3759).
@@ -5131,6 +5154,7 @@ mod tests {
         let exit = ConnectionExitNotification {
             session_id: "s-1".to_owned(),
             exit_code: Some(3),
+            end_cause: None,
         };
         assert_eq!(
             serde_json::to_value(&exit).unwrap(),
@@ -5139,6 +5163,7 @@ mod tests {
         let exit = ConnectionExitNotification {
             session_id: "s-1".to_owned(),
             exit_code: None,
+            end_cause: None,
         };
         assert_eq!(
             serde_json::to_value(&exit).unwrap(),
@@ -5152,5 +5177,58 @@ mod tests {
             serde_json::to_value(&err).unwrap(),
             json!({ "session_id": "s-1", "message": "boom" })
         );
+    }
+
+    #[test]
+    fn exit_notification_carries_the_end_cause() {
+        let exit = ConnectionExitNotification {
+            session_id: "s-1".to_owned(),
+            exit_code: Some(0),
+            end_cause: Some(SessionEndCause::RemoteClosed),
+        };
+        let wire = serde_json::to_value(&exit).unwrap();
+        assert_eq!(
+            wire,
+            json!({ "session_id": "s-1", "exit_code": 0, "end_cause": "remote_closed" })
+        );
+        let back: ConnectionExitNotification = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, exit);
+        for (cause, name) in [
+            (SessionEndCause::IoError, "io_error"),
+            (SessionEndCause::Timeout, "timeout"),
+        ] {
+            let n: ConnectionExitNotification = serde_json::from_value(
+                json!({ "session_id": "s", "exit_code": null, "end_cause": name }),
+            )
+            .unwrap();
+            assert_eq!(n.end_cause, Some(cause));
+        }
+    }
+
+    #[test]
+    fn exit_notification_from_an_older_agent_has_no_end_cause() {
+        // A pre-0.38.0 agent sends no `end_cause` at all (#5732).
+        let n: ConnectionExitNotification =
+            serde_json::from_value(json!({ "session_id": "s-1", "exit_code": 0 })).unwrap();
+        assert_eq!(n.end_cause, None);
+        assert_eq!(n.exit_code, Some(0));
+        let n: ConnectionExitNotification = serde_json::from_value(
+            json!({ "session_id": "s-1", "exit_code": null, "end_cause": null }),
+        )
+        .unwrap();
+        assert_eq!(n.end_cause, None);
+    }
+
+    #[test]
+    fn exit_notification_with_an_unknown_end_cause_still_parses() {
+        // A newer agent's cause this build does not know reads as absent.
+        for cause in [json!("power_failure"), json!(7), json!({ "kind": "x" })] {
+            let n: ConnectionExitNotification = serde_json::from_value(
+                json!({ "session_id": "s-1", "exit_code": null, "end_cause": cause }),
+            )
+            .unwrap();
+            assert_eq!(n.session_id, "s-1");
+            assert_eq!(n.end_cause, None);
+        }
     }
 }
