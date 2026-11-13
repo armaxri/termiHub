@@ -16,6 +16,13 @@
 //! the prompt mark the setup brings rather than for a timeout. The same notice
 //! then covers the setup: **Send now** types the setup, and then the initial
 //! command once the setup's prompt mark is seen.
+//!
+//! A setup on the canonical-mode cue (macOS `/bin/bash` 3.2, zsh before 5.1)
+//! is typed at the latest at its own cap ([`GatedSetup::cap`], #5525). The
+//! initial command then waits for the setup's prompt mark that long plus
+//! [`SETUP_CAP_MARGIN`], never for the 1 s mark-only timeout, which would type
+//! it into a still-cooked tty ahead of the setup. Past that the tab gets the
+//! same notice; the command is still never typed blind.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -35,6 +42,11 @@ use super::{EventEmitter, SessionManager};
 /// How long an uncapped initial command waits before the tab is told it is
 /// held: the cap the wait had before #5455.
 pub const HELD_NOTICE_AFTER: Duration = PROBE_CAP;
+
+/// How long past a capped setup's [`GatedSetup::cap`] the initial command
+/// still waits for the setup's prompt mark before the tab is told it is held
+/// (#5525): the shell runs the setup and prints its prompt in that time.
+pub const SETUP_CAP_MARGIN: Duration = Duration::from_secs(2);
 
 /// Payload of the `initial-command-held` event.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -68,6 +80,8 @@ pub(super) enum InitialCommandCue {
 pub(crate) struct HeldInitialCommands {
     release: Arc<StdMutex<HashMap<String, Arc<Notify>>>>,
     notice_after: Duration,
+    /// [`SETUP_CAP_MARGIN`], shorter in tests.
+    cap_margin: Duration,
 }
 
 impl Default for HeldInitialCommands {
@@ -75,6 +89,7 @@ impl Default for HeldInitialCommands {
         Self {
             release: Arc::default(),
             notice_after: HELD_NOTICE_AFTER,
+            cap_margin: SETUP_CAP_MARGIN,
         }
     }
 }
@@ -130,7 +145,8 @@ impl HeldInitialCommands {
     }
 
     /// Wait while `setup` is held for the line editor's mark (#5512), with
-    /// no cap, telling the tab after the notice delay. With an initial
+    /// no cap, telling the tab after the notice delay; for a capped setup
+    /// (#5525), after its cap plus [`SETUP_CAP_MARGIN`]. With an initial
     /// command (`ready`, the OSC 133 prompt-start mark) the wait ends on the
     /// prompt the setup brings; without one, once the setup was typed. Ends
     /// on **Send now** too, whichever comes first; the caller then types the
@@ -155,7 +171,7 @@ impl HeldInitialCommands {
                 }
             } => InitialCommandCue::Prompt(PromptSignal::Mark),
             () = async {
-                tokio::time::sleep(self.notice_after).await;
+                tokio::time::sleep(self.setup_notice_after(setup)).await;
                 let pending = setup.is_pending();
                 info!(session_id, setup = pending, "Held: no prompt from the shell yet");
                 self.hold(session_id, release.clone());
@@ -167,6 +183,15 @@ impl HeldInitialCommands {
                 });
                 release.notified().await;
             } => InitialCommandCue::SendNow,
+        }
+    }
+
+    /// When the tab is told that `setup` (and the initial command behind
+    /// it) is held: after the notice delay, or past a capped setup's cap.
+    fn setup_notice_after(&self, setup: &Arc<dyn GatedSetup>) -> Duration {
+        match setup.cap() {
+            Some(cap) => cap + self.cap_margin,
+            None => self.notice_after,
         }
     }
 
@@ -240,6 +265,12 @@ impl SessionManager {
     pub(super) fn set_held_notice_after(&mut self, after: Duration) {
         self.held_initial_commands.notice_after = after;
     }
+
+    /// Shorten the margin past a capped setup's cap, for tests.
+    #[cfg(test)]
+    pub(super) fn set_setup_cap_margin(&mut self, margin: Duration) {
+        self.held_initial_commands.cap_margin = margin;
+    }
 }
 
 #[cfg(test)]
@@ -272,5 +303,28 @@ mod tests {
     #[test]
     fn the_notice_comes_after_the_former_cap() {
         assert_eq!(HeldInitialCommands::default().notice_after(), PROBE_CAP);
+    }
+
+    struct Capped(Option<Duration>);
+    impl GatedSetup for Capped {
+        fn is_pending(&self) -> bool {
+            true
+        }
+        fn send_now(&self) {}
+        fn cap(&self) -> Option<Duration> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn a_capped_setup_is_waited_for_past_its_cap() {
+        let held = HeldInitialCommands::default();
+        let capped: Arc<dyn GatedSetup> = Arc::new(Capped(Some(Duration::from_secs(10))));
+        assert_eq!(
+            held.setup_notice_after(&capped),
+            Duration::from_secs(10) + SETUP_CAP_MARGIN
+        );
+        let uncapped: Arc<dyn GatedSetup> = Arc::new(Capped(None));
+        assert_eq!(held.setup_notice_after(&uncapped), HELD_NOTICE_AFTER);
     }
 }
