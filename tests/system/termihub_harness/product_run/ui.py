@@ -41,7 +41,11 @@ from ..display_runner import bring_app_foreground
 from ..window_capture import CaptureUnavailable, capture_window, save_png
 from ..ui.base import HarnessMixin
 from .config import ProductRunInputs, load_inputs
-from .grades import painted_terminal_problems
+from .grades import (
+    drop_separator_problems,
+    painted_terminal_problems,
+    reconnect_wording_problems,
+)
 from .hover import Hover, hovered
 from .recorder import Recorder, recorder_from_env, unattended
 
@@ -331,6 +335,43 @@ class ProductRunUi(HarnessMixin):
         except AssertionError as exc:
             raise AssertionError(f"terminal {tab_id} not painted: {'; '.join(last)}") from exc
         self.evidence(f"painted (slot + rendered rows): {', '.join(expected)}")
+
+    def assert_drop_marked(
+        self, tab_id: str, kind: str, *, reconnected: bool = True, timeout: float = 15.0
+    ) -> None:
+        """Wait until the tab's scrollback marks the drop as a drop, not a process exit.
+
+        ``kind`` is ``network`` or ``serial`` (#5619); with ``reconnected`` the
+        ``— reconnected hh:mm:ss —`` marker must follow too (#5660). See
+        :func:`~.grades.drop_separator_problems`.
+        """
+        last: list[str] = []
+
+        def marked() -> bool:
+            nonlocal last
+            last = drop_separator_problems(
+                self.driver.read_terminal(tab_id), kind, reconnected=reconnected
+            )
+            return not last
+
+        try:
+            self.wait(marked, timeout=timeout, interval=0.5, what="the drop separators")
+        except AssertionError as exc:
+            raise AssertionError(f"terminal {tab_id}: {'; '.join(last)}") from exc
+        self.evidence(f"scrollback marks the {kind} drop" + (" and the reconnect" if reconnected else ""))
+
+    def assert_reconnect_wording(self, *, serial: bool = False, timeout: float = 20.0) -> None:
+        """Grade the shown reconnect notice's wording for its transport (#5619).
+
+        Waits for the notice, then fails with what the text gets wrong (see
+        :func:`~.grades.reconnect_wording_problems`).
+        """
+        notice = "terminal-disconnect-overlay"
+        self.wait(lambda: self.driver.exists(notice), timeout=timeout, what="the reconnect notice")
+        text = self.driver.get_text(notice)
+        self.evidence(f"reconnect notice: {text!r}")
+        problems = reconnect_wording_problems(text, serial=serial)
+        assert not problems, "; ".join(problems)
 
     # ── hover ─────────────────────────────────────────────────────────────────
     @contextlib.contextmanager

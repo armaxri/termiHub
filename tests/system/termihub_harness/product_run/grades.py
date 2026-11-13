@@ -65,3 +65,48 @@ def painted_terminal_problems(
     if missing:
         problems.append(f"not on the {source}: {missing}")
     return problems
+
+
+#: The scrollback line a dropped session writes, per kind of drop (#5619).
+DROP_SEPARATORS = {
+    "network": re.compile(r"— connection lost \d{2}:\d{2}:\d{2} —"),
+    "serial": re.compile(r"— device disconnected \d{2}:\d{2}:\d{2} —"),
+}
+#: The marker written after a reconnect (#5660).
+RECONNECTED_MARKER = re.compile(r"— reconnected \d{2}:\d{2}:\d{2} —")
+
+
+def drop_separator_problems(buffer: str, kind: str, *, reconnected: bool = True) -> list[str]:
+    """What is wrong with how a dropped session is marked in the scrollback.
+
+    A dropped link or unplugged device is not a process exit (#5619): the
+    buffer must carry the timed ``kind`` separator (``network`` / ``serial``)
+    and no ``[Process exited]``; after a reconnect it must also carry the
+    ``— reconnected hh:mm:ss —`` marker (#5660). Empty when it is right.
+    """
+    problems: list[str] = []
+    if "[Process exited" in buffer:
+        problems.append("the drop reads as '[Process exited]'")
+    if not DROP_SEPARATORS[kind].search(buffer):
+        problems.append(f"no {kind} drop separator in the scrollback")
+    if reconnected and not RECONNECTED_MARKER.search(buffer):
+        problems.append("no '— reconnected hh:mm:ss —' marker after the reconnect")
+    return problems
+
+
+def reconnect_wording_problems(text: str, *, serial: bool = False) -> list[str]:
+    """What is wrong with the reconnect notice's wording for its transport (#5619).
+
+    A serial device has no shell or agent, so a serial notice must mention
+    neither. Any notice that mentions an agent must name the termiHub remote
+    agent — a bare "agent" reads as ssh-agent in an SSH tab. Empty when right.
+    """
+    problems: list[str] = []
+    lower = text.lower()
+    if serial:
+        for word in ("agent", "shell"):
+            if word in lower:
+                problems.append(f"the serial notice mentions {word!r}: {text!r}")
+    elif "agent" in lower and "termihub remote agent" not in lower:
+        problems.append(f"the notice says 'agent' without 'termiHub remote agent': {text!r}")
+    return problems

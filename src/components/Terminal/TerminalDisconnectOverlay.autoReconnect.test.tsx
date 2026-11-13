@@ -82,6 +82,7 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
   });
 
   it("shows the countdown, attempt progress, and the honest continuity note while waiting", async () => {
+    seedTabConfig();
     harness.transport.setSession("tab-1", reconnecting(waiting({ attempt: 1, delayMs: 3_400 })));
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
@@ -93,8 +94,8 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
     const countdown = container.querySelector("[data-testid='terminal-auto-reconnect-countdown']");
     expect(countdown?.textContent).toContain("Attempt 2 of 10");
     // Honest about agentless continuity.
-    expect(container.textContent).toContain("Local scrollback is preserved");
-    expect(container.textContent).toContain("not restored");
+    expect(container.textContent).toContain("Scrollback is kept");
+    expect(container.textContent).toContain("Your remote shell restarts");
   });
 
   it("announces the on-reconnect command when one is configured (#1978)", async () => {
