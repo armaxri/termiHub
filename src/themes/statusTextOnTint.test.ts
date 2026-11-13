@@ -192,7 +192,8 @@ function tintPairs(): Pair[] {
     const linked: Rule[] = own.length
       ? own
       : sameFile.filter((o) => classes(r.selector).includes(o.selector) && foregroundVar(o.body));
-    const last = classes(r.selector).at(-1);
+    const tintClasses = classes(r.selector);
+    const last = tintClasses[tintClasses.length - 1];
     const elements = last
       ? sameFile.filter(
           (o) =>
