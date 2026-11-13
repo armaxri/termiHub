@@ -6,7 +6,6 @@ import { AppSettings } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
 import {
   Button,
-  Input,
   Select,
   SelectItem,
   SelectGroup,
@@ -19,6 +18,7 @@ import {
 import type { SelectOption } from "@/components/ui";
 import { DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT } from "@/components/Terminal/terminalDefaults";
 import { DefaultNumberInput } from "./DefaultNumberInput";
+import { DefaultTextInput } from "./DefaultTextInput";
 import {
   createCustomTheme,
   customThemeId,
@@ -60,6 +60,9 @@ const BUILTIN_BASE_IDS = new Set(["dark", "light", "solarized-dark", "solarized-
 
 const DEFAULT_FONT_FAMILY =
   "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
+
+/** The default chain as readable text for the Font family hint (no CSS quotes). */
+const DEFAULT_FONT_CHAIN_TEXT = DEFAULT_FONT_FAMILY.replace(/'/g, "");
 
 interface AppearanceSettingsProps {
   settings: AppSettings;
@@ -271,6 +274,8 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               </Select>
             </TooltipProvider>
           </SettingsField>
+          {/* Edit, Export and Delete act on a custom theme, so they appear only
+              while one is selected instead of sitting there disabled (#5561). */}
           <div className="appearance-settings__theme-actions">
             <Button
               variant="secondary"
@@ -283,38 +288,44 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
             <Button
               variant="secondary"
               size="sm"
-              onClick={openEditTheme}
-              disabled={!selectedCustom}
-              data-testid="appearance-theme-edit"
-            >
-              Edit
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
               onClick={handleImportTheme}
               data-testid="appearance-theme-import"
             >
               Import
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleExportTheme}
-              disabled={!selectedCustom}
-              data-testid="appearance-theme-export"
-            >
-              Export
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
-              onClick={handleDeleteTheme}
-              disabled={!selectedCustom}
-              data-testid="appearance-theme-delete"
-            >
-              Delete
-            </Button>
+            {selectedCustom && (
+              <div
+                className="appearance-settings__custom-theme-actions"
+                role="group"
+                aria-label={`Custom theme ${selectedCustom.name}`}
+                data-testid="appearance-theme-custom-actions"
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={openEditTheme}
+                  data-testid="appearance-theme-edit"
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleExportTheme}
+                  data-testid="appearance-theme-export"
+                >
+                  Export
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleDeleteTheme}
+                  data-testid="appearance-theme-delete"
+                >
+                  Delete
+                </Button>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -346,12 +357,18 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       {show("fontFamily") && (
         <SettingsField
           label="Font family"
-          hint="Terminal font family. Leave empty to use the default Nerd Font chain."
+          hint={
+            <>
+              Terminal font, as a CSS font list. Empty uses the default chain:{" "}
+              <span className="appearance-settings__font-chain">{DEFAULT_FONT_CHAIN_TEXT}</span>
+            </>
+          }
         >
-          <Input
-            value={settings.fontFamily ?? ""}
-            onChange={(e) => onChange({ ...settings, fontFamily: e.target.value || undefined })}
-            placeholder={DEFAULT_FONT_FAMILY}
+          <DefaultTextInput
+            value={settings.fontFamily}
+            defaultLabel="Default font chain"
+            onChange={(v) => onChange({ ...settings, fontFamily: v })}
+            data-testid="settings-font-family"
           />
         </SettingsField>
       )}
