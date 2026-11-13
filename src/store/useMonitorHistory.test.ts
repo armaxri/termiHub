@@ -18,7 +18,7 @@ import { fakeStats } from "@/test/systemMonitorHarness";
 
 /** A metric-values record where every metric shares one value (test convenience). */
 function all(value: number | null): MonitorMetricValues {
-  return { cpu: value, memory: value, swap: value, netRx: value, netTx: value };
+  return { cpu: value, memory: value, disk: value, swap: value, netRx: value, netTx: value };
 }
 
 /** Feed a run of samples through the fold, returning the final state. */
@@ -50,12 +50,12 @@ describe("foldMonitorSample (multi-metric)", () => {
       {
         key: "sess-1",
         sampleCount: 1,
-        values: { cpu: 1, memory: 2, swap: 3, netRx: 4, netTx: 5 },
+        values: { cpu: 1, memory: 2, disk: 6, swap: 3, netRx: 4, netTx: 5 },
       },
       {
         key: "sess-1",
         sampleCount: 2,
-        values: { cpu: 11, memory: 22, swap: 33, netRx: 44, netTx: 55 },
+        values: { cpu: 11, memory: 22, disk: 66, swap: 33, netRx: 44, netTx: 55 },
       },
     ]);
     expect(series.cpu).toEqual([1, 11]);
@@ -162,12 +162,14 @@ describe("monitorMetricValues", () => {
     expect(values.netRx).toBeNull();
     expect(values.netTx).toBeNull();
     expect(values.memory).toBe(50);
+    // Disk is a level, not a rate: correct from the first sample (#5628).
+    expect(values.disk).toBe(40);
     expect(values.swap).toBe(25);
   });
 
   it("reports every metric once primed", () => {
     const values = monitorMetricValues(fakeStats("h", 40), 2);
-    expect(values).toEqual({ cpu: 40, memory: 50, swap: 25, netRx: 1024, netTx: 512 });
+    expect(values).toEqual({ cpu: 40, memory: 50, disk: 40, swap: 25, netRx: 1024, netTx: 512 });
   });
 
   it("leaves swap empty on a host without swap", () => {
@@ -176,9 +178,14 @@ describe("monitorMetricValues", () => {
 
   it("renders a metric the sample could not supply as a gap, not a zero", () => {
     const values = monitorMetricValues(
-      { ...fakeStats("h", 0), source: "dockerStats", unavailableMetrics: ["cpu", "network"] },
+      {
+        ...fakeStats("h", 0),
+        source: "dockerStats",
+        unavailableMetrics: ["cpu", "network", "disk"],
+      },
       5
     );
+    expect(values.disk).toBeNull();
     expect(values.cpu).toBeNull();
     expect(values.netRx).toBeNull();
     expect(values.netTx).toBeNull();
@@ -211,6 +218,7 @@ describe("historiesFromRegionSamples", () => {
     expect(historiesFromRegionSamples([])).toEqual({
       cpu: [],
       memory: [],
+      disk: [],
       swap: [],
       netRx: [],
       netTx: [],
