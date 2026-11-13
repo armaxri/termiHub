@@ -2,7 +2,7 @@
  * The abortable saved-credential pre-connect (#5180): the "Connecting…" toast
  * carries an Abort that ends the pre-tab window at any step (stored credential
  * resolve, the blocking pre-connect; while the unlock dialog is up the toast
- * waits, as the dialog's own Cancel ends the connect — #5665), cancels the backend connect,
+ * waits, as closing the dialog ends the connect — #5665), cancels the backend connect,
  * ignores and cleans up late results, and saves nothing. A pre-connect that
  * fails for a non-auth reason connects exactly once: the tab is handed that
  * failure instead of connecting again.

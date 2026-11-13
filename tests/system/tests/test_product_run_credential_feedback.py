@@ -148,7 +148,7 @@ class TestProductRunCredentialFeedback(
             "cred-feedback.unlock.connect-toast",
             "A connect that must unlock the store shows the unlock dialog without a toast (#5665)",
             expect="#5665: the unlock dialog raised by a connect, with no 'Connecting… / Abort' "
-            "toast beside it (the dialog's Cancel ends the connect)",
+            "toast beside it (closing the dialog ends the connect)",
         ):
             self.require("cred-feedback.switch-once")
             if self.credential_store_locked():
@@ -169,5 +169,8 @@ class TestProductRunCredentialFeedback(
                 self.evidence(f"connect toast shown: {shown}; toasts {toasts!r}")
                 assert not shown, "a 'Connecting… / Abort' toast sits over the unlock dialog"
             finally:
-                self.driver.click("unlock-dialog-cancel")
+                # A connect-raised unlock dialog has no Cancel button: "Connect
+                # without saved password" takes its place (#5188), so dismiss it
+                # with the dialog's X, which cancels the connect.
+                self.driver.click("modal-close")
             self.wait(lambda: not self.driver.exists("unlock-dialog-input"), what="cancelled")

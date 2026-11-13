@@ -448,10 +448,10 @@ export async function connectSavedConnection(
     // stored-credential resolve, blocking pre-connect handshake). Show the
     // non-blocking connecting indicator before them, so the pre-tab window is
     // never a silent gap — except while the unlock dialog is up: it is then
-    // the feedback surface, and its own
-    // Cancel ends the connect: a "Connecting… / Abort" toast beside it would
-    // sit over a backdrop that blocks its button (#5665). The toast appears
-    // once the store is unlocked (or skipped) instead.
+    // the feedback surface: closing it (X / Escape) ends the connect, and
+    // "Connect without saved password" goes on. A "Connecting… / Abort" toast
+    // beside it would sit over a backdrop that blocks its button (#5665). The
+    // toast appears once the store is unlocked (or skipped) instead.
     const showConnecting = () => {
       if (unattended || preconnect.signal.aborted) return;
       connectingToastId = toast.loading("Connecting…", {
