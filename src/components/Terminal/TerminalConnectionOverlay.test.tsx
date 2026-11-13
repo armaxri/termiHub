@@ -512,7 +512,7 @@ describe("TerminalConnectionOverlay — failed state", () => {
 
   it("shows the SSH agent hint for the agent-auth kind", async () => {
     expect(await renderFailure("Agent auth failed: x", "agent-auth", "ssh")).toContain(
-      "SSH Agent not running"
+      "SSH agent not ready"
     );
   });
 
@@ -545,7 +545,7 @@ describe("TerminalConnectionOverlay — failed state", () => {
   // must not leak onto other backends even with the agent-auth kind.
   it("does not show the SSH-agent hint on a non-SSH backend", async () => {
     expect(await renderFailure("Agent auth failed", "agent-auth", "telnet")).not.toContain(
-      "SSH Agent not running"
+      "SSH agent not ready"
     );
   });
 
@@ -633,7 +633,7 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(serial).not.toContain("already in use by another application");
     expect(serial).toContain("Permission denied on 'COM7' — something busy not found timed out");
     const ssh = await renderFailure("Agent auth failed: connection timed out", undefined, "ssh");
-    expect(ssh).not.toContain("SSH Agent not running");
+    expect(ssh).not.toContain("SSH agent not ready");
     expect(ssh).not.toContain("before the SSH session was established");
   });
 

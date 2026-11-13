@@ -14,8 +14,9 @@ wrong premise that the option did not exist (#4339).
 
 The suite's app is launched without ``SSH_AUTH_SOCK``, so on macOS/Linux no
 agent is reachable whatever the runner has running. On Windows the app dials
-the system OpenSSH agent pipe instead, and the runner's ``ssh-agent`` service
-is not running, so the native sshd lane (#5422) gets the same failure. The
+the system OpenSSH agent pipe instead. The runner's ``ssh-agent`` service may
+answer there, but it holds no key, and an agent with no key fails the same way
+as a missing one (#5606), so the native sshd lane (#5422) grades it too. The
 ``ssh-password`` container is Linux-only; macOS and Windows log in to the
 native sshd fixture instead.
 """

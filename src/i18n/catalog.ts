@@ -29,7 +29,7 @@ const en = {
     "The connection timed out. Check that the host is reachable, the address and port are correct, and that no firewall is blocking the connection.",
   "connection.hint.auth.remote":
     "The server rejected the credentials. Check the username, password, or key and try again.",
-  "connection.hint.agentAuth.title": "SSH Agent not running",
+  "connection.hint.agentAuth.title": "SSH agent not ready",
   "connection.hint.agentAuth.ssh":
     'Open the connection editor and use the "Set up SSH agent" button, or run:',
   "connection.hint.notFound.serial":
