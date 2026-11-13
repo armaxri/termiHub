@@ -39,6 +39,7 @@ pub mod schema_defaults;
 pub mod secrets;
 pub mod shell_hook;
 pub mod validation;
+pub mod x11_forwarding;
 
 pub use auto_reconnect::{
     auto_reconnect_default_for, auto_reconnect_enabled, auto_reconnect_enabled_for,
@@ -84,6 +85,7 @@ pub use registry::{
 pub use save_password::{normalize_save_password, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
+pub use x11_forwarding::X11ForwardingMode;
 
 use std::sync::Arc;
 
@@ -388,6 +390,13 @@ pub trait ConnectionType: Send + Sync {
     /// that can never be files-only returns `None`, the default. The sender lives in the backend, so a receiver's `changed()`
     /// errors once the connection is dropped — a watcher never outlives it.
     fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        None
+    }
+
+    /// How X11 forwarding runs for this session (#5586), read once it is
+    /// connected. `None` when X11 forwarding is off, while disconnected, and
+    /// for every backend that has no X11 forwarding (the default).
+    fn x11_forwarding(&self) -> Option<X11ForwardingMode> {
         None
     }
 

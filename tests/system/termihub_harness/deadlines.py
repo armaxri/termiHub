@@ -119,6 +119,12 @@ CONTENDED_OS = ("darwin", "win32")
 
 _DEBUG_ENV = "TERMIHUB_WAIT_SCALE"
 
+#: Forces :func:`contended` on (``1``) or off (``0``) regardless of OS and xdist
+#: worker count (#5590). Unlike ``TERMIHUB_WAIT_SCALE`` it is honoured in CI: the
+#: machinery job runs a forced-contended leg on ubuntu so a test that only passes
+#: with serial budgets (#5543) fails on every PR, not just under ``-n`` on macOS.
+FORCE_CONTENDED_ENV = "TERMIHUB_FORCE_CONTENDED"
+
 
 def _xdist_workers() -> int:
     try:
@@ -127,8 +133,38 @@ def _xdist_workers() -> int:
         return 1
 
 
-def contended(platform: str | None = None, workers: int | None = None) -> bool:
-    """Whether this process is a parallel macOS/Windows worker (the slow category)."""
+def _forced_contended(environ: dict | None = None) -> bool | None:
+    """The ``TERMIHUB_FORCE_CONTENDED`` override: True/False, or None when unset.
+
+    ``1``/``true``/``yes``/``on`` force on, ``0``/``false``/``no``/``off`` force
+    off; anything else is an error, so a typo cannot silently run the serial path
+    in the lane that exists to exercise the contended one.
+    """
+    environ = os.environ if environ is None else environ
+    raw = environ.get(FORCE_CONTENDED_ENV)
+    if raw is None or raw.strip() == "":
+        return None
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{FORCE_CONTENDED_ENV}={raw!r}: expected 1/0 (or true/false)")
+
+
+def contended(
+    platform: str | None = None,
+    workers: int | None = None,
+    environ: dict | None = None,
+) -> bool:
+    """Whether this process is a parallel macOS/Windows worker (the slow category).
+
+    ``TERMIHUB_FORCE_CONTENDED`` (see :data:`FORCE_CONTENDED_ENV`) overrides the
+    OS / worker-count detection when set.
+    """
+    forced = _forced_contended(environ)
+    if forced is not None:
+        return forced
     platform = sys.platform if platform is None else platform
     workers = _xdist_workers() if workers is None else workers
     return workers > 1 and any(platform.startswith(p) for p in CONTENDED_OS)

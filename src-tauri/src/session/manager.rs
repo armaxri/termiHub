@@ -353,6 +353,14 @@ pub struct SessionInfo {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub spawned: bool,
+    /// How X11 forwarding runs for an SSH session with it on (#5586), for the
+    /// Open Connections panel. Omitted when X11 forwarding is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(type = "import(\"./X11ForwardingMode\").X11ForwardingMode", optional)
+    )]
+    pub x11_forwarding: Option<termihub_core::connection::X11ForwardingMode>,
 }
 
 /// One agent-hosted session's identity, for server-side `session-lifecycle`
@@ -1299,6 +1307,8 @@ impl SessionManager {
             alive: true,
             agent_id: agent_id.map(|s| s.to_string()),
             spawned,
+            // Known once connected; the connect above has run (#5586).
+            x11_forwarding: connection.x11_forwarding(),
         };
 
         // Capture the agent's live session id before `remote_session_id` moves
@@ -2286,6 +2296,7 @@ impl SessionManager {
                         alive: true,
                         agent_id: Some(agent_id.to_string()),
                         spawned: false,
+                        x11_forwarding: None,
                     },
                     remote_session_id: Some(remote_session_id.to_string()),
                     line_ending: LineEnding::default(),
@@ -2544,6 +2555,7 @@ impl SessionManager {
                     alive: true,
                     agent_id: None,
                     spawned: false,
+                    x11_forwarding: None,
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),

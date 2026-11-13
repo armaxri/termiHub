@@ -1,0 +1,7 @@
+{
+  "reason": "^the in-test telnet server needs a POSIX pty$",
+  "nodeid": "test_telnet\\.py",
+  "lanes": ["bulk-windows"],
+  "why": "TELNET-04 (#5578) drops the product run's loopback telnet server, whose shell runs on a POSIX pseudo-terminal; it is graded on the Linux and macOS lanes",
+  "max_skips": { "bulk-windows": 1 }
+}

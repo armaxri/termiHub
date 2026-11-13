@@ -126,7 +126,9 @@ forwarded-GUI path. It backs the X-server provisioning epic (#1047); see
 [`docs/testing.md`](../../docs/testing.md) → _X11 / GUI forwarding_ for the full
 cross-platform manual matrix. The integration-fixtures workflow runs
 `render-check.sh` over a termiHub SSH session
-(`core/tests/ssh_x11.rs::x11_fixture_render_check_maps_a_window`).
+(`core/tests/ssh_x11.rs::x11_fixture_render_check_maps_a_window`), and runs
+the fixture's `xdpyinfo` over `x11-req` into a private host Xvfb
+(`core/tests/ssh_x11_req.rs`, #5584).
 
 ```bash
 # Headless render check — proves a GUI client renders to an X server with NO

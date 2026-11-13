@@ -146,6 +146,8 @@ struct ConnectedState {
     /// Watches the shell's output for a settled prompt, the initial
     /// command's cue without the prompt mark (#5029).
     prompt_settle: Arc<OutputSettle>,
+    /// How X11 forwarding runs (#5586); `None` when it is off.
+    x11_forwarding: Option<crate::connection::X11ForwardingMode>,
 }
 
 impl Drop for ConnectedState {
@@ -981,6 +983,7 @@ impl ConnectionType for Ssh {
             _extensions: std::sync::Mutex::new(handle.extensions),
             disconnected: false,
             prompt_settle,
+            x11_forwarding: handle.x11_forwarding,
         });
 
         Ok(())
@@ -1089,6 +1092,10 @@ impl ConnectionType for Ssh {
     fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         Some(self.files_only.subscribe())
     }
+
+    fn x11_forwarding(&self) -> Option<crate::connection::X11ForwardingMode> {
+        self.state.as_ref()?.x11_forwarding
+    }
 }
 
 /// Drop the output sender so the session manager's pump sees EOF and ends the
@@ -1168,6 +1175,8 @@ mod tests {
         integration_typed: bool,
         /// When set, the shell prints each chunk after its delay (#5029).
         script: Option<Vec<(Duration, &'static [u8])>>,
+        /// Reported as [`SshShellHandle::x11_forwarding`] (#5586).
+        x11_forwarding: Option<crate::connection::X11ForwardingMode>,
     }
 
     impl MockSshConnector {
@@ -1183,6 +1192,7 @@ mod tests {
                 detect_requested: Arc::new(Mutex::new(None)),
                 integration_typed: false,
                 script: None,
+                x11_forwarding: None,
             }
         }
 
@@ -1198,6 +1208,7 @@ mod tests {
                 detect_requested: Arc::new(Mutex::new(None)),
                 integration_typed: false,
                 script: None,
+                x11_forwarding: None,
             }
         }
 
@@ -1214,6 +1225,7 @@ mod tests {
                 detect_requested: Arc::new(Mutex::new(None)),
                 integration_typed: false,
                 script: None,
+                x11_forwarding: None,
             }
         }
 
@@ -1313,6 +1325,7 @@ mod tests {
                 shell_refused,
                 remote_shell: self.remote_shell,
                 integration_typed: self.integration_typed,
+                x11_forwarding: self.x11_forwarding,
             })
         }
     }
@@ -2586,6 +2599,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_x11_mode_is_reported_while_connected() {
+        use crate::connection::X11ForwardingMode;
+        for mode in [
+            X11ForwardingMode::ServerForwarded,
+            X11ForwardingMode::FallbackRefused,
+            X11ForwardingMode::FallbackNoReply,
+            X11ForwardingMode::Failed,
+        ] {
+            let connector = MockSshConnector {
+                x11_forwarding: Some(mode),
+                ..MockSshConnector::new()
+            };
+            let mut ssh = Ssh::with_connector(Box::new(connector));
+            assert_eq!(ssh.x11_forwarding(), None, "nothing before the connect");
+            ssh.connect(mock_settings()).await.unwrap();
+            assert_eq!(ssh.x11_forwarding(), Some(mode));
+            ssh.disconnect().await.unwrap();
+            assert_eq!(ssh.x11_forwarding(), None, "nothing after disconnect");
+        }
+    }
+
+    #[tokio::test]
+    async fn no_x11_mode_without_x11_forwarding() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(ssh.x11_forwarding(), None);
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn files_only_session_drops_input_and_ignores_resize() {
         let connector = MockSshConnector::new();
         let connector_writes = connector.write_log.clone();
@@ -2811,6 +2854,7 @@ mod tests {
             _extensions: std::sync::Mutex::new(Vec::new()),
             disconnected,
             prompt_settle: Arc::new(OutputSettle::new()),
+            x11_forwarding: None,
         }
     }
 

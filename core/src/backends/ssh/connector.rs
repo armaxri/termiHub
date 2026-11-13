@@ -81,6 +81,8 @@ pub struct SshShellHandle {
     /// part of its sequenced session setup (#4604). The backend types it
     /// itself otherwise.
     pub integration_typed: bool,
+    /// How X11 forwarding runs (#5586); `None` when it is off.
+    pub x11_forwarding: Option<crate::connection::X11ForwardingMode>,
 }
 
 // ── Shell-refusal detection (#4078) ───────────────────────────────
@@ -450,7 +452,8 @@ impl SshConnector for RusshSshConnector {
     ) -> Result<SshShellHandle, SessionError> {
         use super::jump_host::connect_target_with_liveness;
         use super::x11::X11Forwarder;
-        use super::x11_req::X11Mode;
+        use super::x11_req::{forwarding_mode, X11Mode};
+        use crate::connection::X11ForwardingMode;
         use russh::ChannelMsg;
 
         // Opaque resources kept alive for the session lifetime.
@@ -496,7 +499,8 @@ impl SshConnector for RusshSshConnector {
             None
         };
         // Untrusted forwarding (#5585) swaps in a generated untrusted cookie,
-        // or turns X11 off for the session when that is not possible.
+        // or turns X11 off for the session when that is not possible; the
+        // session then reports `X11ForwardingMode::Failed` (#5586).
         let (x11_server, x11_deadline) = match x11_server {
             Some(server) => untrusted_x11_server(config, server).await,
             None => (None, None),
@@ -557,6 +561,10 @@ impl SshConnector for RusshSshConnector {
         let mut early_msgs = std::collections::VecDeque::new();
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
+        // What the session reports as its X11 mode once connected (#5586).
+        let mut x11_forwarding = config
+            .enable_x11_forwarding
+            .then_some(X11ForwardingMode::Failed);
         if let Some(server) = x11_server {
             let mode = match super::x11_req::request_x11_forwarding(
                 &mut channel,
@@ -571,6 +579,7 @@ impl SshConnector for RusshSshConnector {
                 Ok((forwarder, msgs)) => {
                     early_msgs.extend(msgs);
                     extensions.push(Box::new(forwarder));
+                    x11_forwarding = Some(forwarding_mode(Ok(()), true));
                     Some(X11Mode::ChannelRequest)
                 }
                 Err(_) if cancel.is_some_and(CancellationToken::is_cancelled) => {
@@ -580,7 +589,7 @@ impl SshConnector for RusshSshConnector {
                 }
                 Err(refusal) => {
                     tracing::info!(?refusal, "SSH server did not accept x11-req");
-                    match X11Forwarder::start(
+                    let started = X11Forwarder::start(
                         config,
                         &mut session,
                         registry.clone(),
@@ -588,8 +597,9 @@ impl SshConnector for RusshSshConnector {
                         Some(server),
                         x11_deadline,
                     )
-                    .await
-                    {
+                    .await;
+                    x11_forwarding = Some(forwarding_mode(Err(refusal), started.is_ok()));
+                    match started {
                         Ok((forwarder, display_num, cookie)) => {
                             x11_display = Some(display_num);
                             x11_cookie = cookie;
@@ -979,6 +989,7 @@ impl SshConnector for RusshSshConnector {
             shell_refused,
             remote_shell,
             integration_typed,
+            x11_forwarding,
         })
     }
 }

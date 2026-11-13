@@ -35,16 +35,69 @@ def _clean_samples():
     ],
 )
 def test_contended_is_scoped_to_parallel_macos_and_windows(platform, workers, expected):
-    assert deadlines.contended(platform, workers) is expected
+    # environ={}: the detection itself, not the forced-contended CI leg's override.
+    assert deadlines.contended(platform, workers, environ={}) is expected
 
 
 def test_contended_reads_the_xdist_worker_count(monkeypatch):
+    monkeypatch.delenv(deadlines.FORCE_CONTENDED_ENV, raising=False)
     monkeypatch.setenv("PYTEST_XDIST_WORKER_COUNT", "2")
     assert deadlines.contended("darwin") is True
     monkeypatch.delenv("PYTEST_XDIST_WORKER_COUNT")
     assert deadlines.contended("darwin") is False
     monkeypatch.setenv("PYTEST_XDIST_WORKER_COUNT", "junk")
     assert deadlines.contended("darwin") is False
+
+
+# ── Forced-contended override (#5590) ────────────────────────────────────────
+@pytest.mark.parametrize("raw", ["1", "true", "YES", " on "])
+def test_force_contended_on_overrides_serial_linux(raw):
+    env = {deadlines.FORCE_CONTENDED_ENV: raw}
+    assert deadlines.contended("linux", 1, environ=env) is True
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "No", "off"])
+def test_force_contended_off_overrides_parallel_macos(raw):
+    env = {deadlines.FORCE_CONTENDED_ENV: raw}
+    assert deadlines.contended("darwin", 4, environ=env) is False
+
+
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_empty_force_contended_falls_back_to_detection(raw):
+    env = {deadlines.FORCE_CONTENDED_ENV: raw}
+    assert deadlines.contended("linux", 2, environ=env) is False
+    assert deadlines.contended("darwin", 2, environ=env) is True
+
+
+def test_force_contended_rejects_a_typo():
+    # A typo must not silently run the serial path in the lane that exists to
+    # exercise the contended one.
+    with pytest.raises(ValueError, match=deadlines.FORCE_CONTENDED_ENV):
+        deadlines.contended("linux", 1, environ={deadlines.FORCE_CONTENDED_ENV: "ture"})
+
+
+def test_force_contended_flips_the_resolved_deadline_math(monkeypatch):
+    # The guard: the env knob must reach the import-time CONTENDED flag that
+    # ui_budget reads, and so raise a listed op's budget. Reload the module under
+    # each setting so this exercises the real import path, not a monkeypatched flag.
+    import importlib
+
+    op = "command:getState"
+    assert op in deadlines.CONTENDED_OP_DEADLINES
+    monkeypatch.delenv("TERMIHUB_WAIT_SCALE", raising=False)
+    try:
+        monkeypatch.setenv(deadlines.FORCE_CONTENDED_ENV, "1")
+        forced_on = importlib.reload(deadlines)
+        assert forced_on.CONTENDED is True
+        assert forced_on.ui_budget(0.05, op) == forced_on.CONTENDED_OP_DEADLINES[op]
+
+        monkeypatch.setenv(deadlines.FORCE_CONTENDED_ENV, "0")
+        forced_off = importlib.reload(deadlines)
+        assert forced_off.CONTENDED is False
+        assert forced_off.ui_budget(0.05, op) == 0.05
+    finally:
+        monkeypatch.undo()
+        importlib.reload(deadlines)
 
 
 # ── Local-only debugging override ────────────────────────────────────────────

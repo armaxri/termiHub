@@ -204,6 +204,7 @@ async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, Sessi
                 alive: true,
                 agent_id: None,
                 spawned: false,
+                x11_forwarding: None,
             },
             remote_session_id: None,
             line_ending: LineEnding::default(),
@@ -313,6 +314,7 @@ async fn sessions_with_local_browser(
                 alive: true,
                 agent_id: None,
                 spawned: false,
+                x11_forwarding: None,
             },
             remote_session_id: None,
             line_ending: LineEnding::default(),
@@ -3849,6 +3851,9 @@ mod held_initial_command;
 
 /// Files-only sessions on hosts that refuse the shell (#4078).
 mod files_only;
+
+/// The X11 forwarding mode on the listed session info (#5586).
+mod x11_forwarding;
 
 /// Same-session pastes onto or into themselves are refused (#5330).
 mod paste_guard;

@@ -207,3 +207,19 @@
   /* #5459: on --bg-tertiary plain --text-muted falls below AA. */
   color: var(--text-muted-on-selection);
 }
+
+/* X11 forwarding mode chip on an SSH session row (#5586): quiet when the
+   server forwards X11, a warning icon for the typed fallback, an error icon
+   when it failed. */
+.oc-x11 {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.oc-x11--fallback .ui-chip__icon {
+  color: var(--color-warning);
+}
+
+.oc-x11--failed .ui-chip__icon {
+  color: var(--color-error);
+}
