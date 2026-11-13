@@ -90,6 +90,20 @@ def app_binary_path() -> Path:
     )
 
 
+def app_launch_path() -> Path:
+    """The app binary to *start*: :func:`app_binary_path` with symlinks resolved.
+
+    The app restarts itself after a backup restore (``utils::relaunch``, #5647)
+    through Tauri's ``current_binary``, which on macOS refuses an executable path
+    that runs through a symlink ("StartingBinary found current_exe() that
+    contains a symlink on a non-allowed platform"). A checkout whose ``target/``
+    is a symlink (a separate build volume) then failed "Restore and restart" with
+    the app staying up (#5654). Launching the real path keeps the product's
+    symlink guard intact and makes the relaunch work wherever the build lives.
+    """
+    return app_binary_path().resolve()
+
+
 #: The sideloaded ConPTY host that must sit next to ``termihub.exe`` on Windows
 #: (#4121). Without it local shells run on the inbox ConPTY, which drops SIXEL.
 SIDELOADED_CONPTY = ("conpty.dll", "OpenConsole.exe")
@@ -356,7 +370,7 @@ class AppInstance:
         shell-integration XDG launchers out of the real ``~/.local/share``
         (#3691, SI-5/6/7). It is a no-op on macOS and Windows.
         """
-        binary = app_binary_path()
+        binary = app_launch_path()
         self._unset_env = tuple(unset_env)
         self._extra_env = dict(extra_env or {})
         self._hermetic = hermetic

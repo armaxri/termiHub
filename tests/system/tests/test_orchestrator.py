@@ -59,6 +59,24 @@ def test_env_override_missing_file_raises(fake_repo: Path, monkeypatch: pytest.M
         orchestrator.app_binary_path()
 
 
+def test_launch_path_resolves_a_symlinked_target(fake_repo: Path, tmp_path: Path):
+    # The relaunch after a backup restore refuses a binary path through a
+    # symlink on macOS (#5654), so a target/ linked to a build volume must be
+    # launched by its real path.
+    volume = tmp_path / "build-volume"
+    real = volume / "debug" / "termihub"
+    real.parent.mkdir(parents=True)
+    real.write_text("#!/bin/sh\n")
+    try:
+        (fake_repo / "target").symlink_to(volume, target_is_directory=True)
+    except OSError as err:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create a symlink here: {err}")
+    assert orchestrator.app_binary_path() == fake_repo / "target/debug/termihub"
+    launch = orchestrator.app_launch_path()
+    assert launch == real.resolve()
+    assert not any(p.is_symlink() for p in [launch, *launch.parents])
+
+
 def test_no_build_raises_with_both_paths(fake_repo: Path):
     with pytest.raises(FileNotFoundError) as exc:
         orchestrator.app_binary_path()
