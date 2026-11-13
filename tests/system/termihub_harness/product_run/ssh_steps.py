@@ -16,6 +16,7 @@ import pytest
 
 from ..bridge import BridgeError
 from ..ui.base import HarnessMixin
+from .hostkey_layout import fingerprint_layout_problems, rejected_screen_problems
 from .hosts import RunHosts, run_hosts
 from .ui import run_recorder
 
@@ -138,6 +139,25 @@ class SshPhaseUi(HarnessMixin):
     def answer_hostkey_prompt(self, button: str) -> None:
         self.driver.click(button)
         self.wait(lambda: not self.hostkey_prompt_open(), what="the host-key prompt to close")
+
+    def hostkey_layout_problems(self) -> list[str]:
+        """Layout problems of the open prompt's fingerprint rows (#5662), or ``[]``."""
+        problems: list[str] = []
+        for test_id in (HOSTKEY_PREV_FINGERPRINT, HOSTKEY_FINGERPRINT):
+            if not self.driver.exists(test_id):
+                continue
+            text = self.driver.measure_element(test_id, "text").get("items", [])
+            buttons = self.driver.measure_element(test_id, "buttons").get("items", [])
+            problems += [f"{test_id}: {p}" for p in fingerprint_layout_problems(text, buttons)]
+        return problems
+
+    def rejected_screen_problems(self) -> list[str]:
+        """Whether the rejected-key screen says it once (#5662), or ``[]``."""
+        overlay = "terminal-connection-overlay"
+        if not self.driver.exists(overlay):
+            return ["no connection overlay on the rejected tab"]
+        items = self.driver.measure_element(overlay, "text").get("items", [])
+        return rejected_screen_problems(items)
 
     def accept_all_hostkeys(self, *, max_prompts: int = 3, timeout: float = 20.0) -> int:
         """Accept (remember) every host-key prompt that shows within ``timeout`` each."""
