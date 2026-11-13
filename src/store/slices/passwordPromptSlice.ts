@@ -46,6 +46,20 @@ export interface PasswordPromptOptions {
    */
   label?: string;
   /**
+   * Display name of the connection type the secret is for (e.g. `"Telnet"`,
+   * `"SSH"`), so the prompt titles itself after the real transport (#5617):
+   * a telnet password must never be presented as an SSH one. Omitted keeps
+   * the SSH title, which every caller without a connection type is (agent
+   * hosts, jump hosts, spawned SSH sessions).
+   */
+  transport?: string;
+  /**
+   * Path of the private key a `key_passphrase` prompt unlocks, named in the
+   * prompt so a user with several keys knows which passphrase is wanted
+   * (#5617). Ignored for a password prompt.
+   */
+  keyPath?: string;
+  /**
    * The connection's saved secret was just rejected by the server (#5156). The
    * saved secret is kept, never deleted; the prompt's Save control becomes
    * "Replace saved password", and a submit's `shouldSave` then means "replace
@@ -92,6 +106,10 @@ export interface PasswordPromptRequest {
   kind: PasswordPromptKind;
   allowSave: boolean;
   label: string;
+  /** See {@link PasswordPromptOptions.transport}; `""` when omitted. */
+  transport: string;
+  /** See {@link PasswordPromptOptions.keyPath}; `""` when omitted. */
+  keyPath: string;
   /** See {@link PasswordPromptOptions.savedRejected}. */
   savedRejected: boolean;
 }
@@ -145,6 +163,10 @@ export interface PasswordPromptSlice {
   passwordPromptAllowSave: boolean;
   /** Connection name of the prompt on screen, or `""` (#4312). */
   passwordPromptLabel: string;
+  /** Connection-type display name of the prompt on screen, or `""` (#5617). */
+  passwordPromptTransport: string;
+  /** Key file of the passphrase prompt on screen, or `""` (#5617). */
+  passwordPromptKeyPath: string;
   /** Whether the prompt on screen follows a rejected saved secret (#5156). */
   passwordPromptSavedRejected: boolean;
   requestPassword: RequestPassword;
@@ -166,6 +188,8 @@ function headFields(queue: PendingPasswordPrompt[]) {
     passwordPromptKind: head?.kind ?? ("password" as PasswordPromptKind),
     passwordPromptAllowSave: head?.allowSave ?? true,
     passwordPromptLabel: head?.label ?? "",
+    passwordPromptTransport: head?.transport ?? "",
+    passwordPromptKeyPath: head?.keyPath ?? "",
     passwordPromptSavedRejected: head?.savedRejected ?? false,
   };
 }
@@ -212,6 +236,8 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
           kind,
           allowSave: options.allowSave ?? true,
           label: options.label ?? "",
+          transport: options.transport ?? "",
+          keyPath: options.keyPath ?? "",
           savedRejected: options.savedRejected ?? false,
           resolve,
           reject,

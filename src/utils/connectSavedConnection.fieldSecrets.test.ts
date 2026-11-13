@@ -178,8 +178,10 @@ describe("connectSavedConnection — remote-desktop password prompt (#4474, #447
     const result = await connectSavedConnection(SAVED_VNC);
 
     expect(result.status).toBe("opened");
+    // Titled after the real transport, not "SSH" (#5617).
     expect(requestPasswordSpy).toHaveBeenCalledWith("office", "me", "", "password", {
       label: "Office desktop",
+      transport: "VNC",
     });
     // Held until the tab connects (#5197), then written.
     expect(vi.mocked(storeCredential)).not.toHaveBeenCalled();
@@ -192,5 +194,37 @@ describe("connectSavedConnection — remote-desktop password prompt (#4474, #447
       null
     );
     expect(openedSettings().password).toBe("typed-vnc");
+  });
+});
+
+describe("connectSavedConnection — transport-aware password prompt (#5617)", () => {
+  const TELNET_TYPE = {
+    typeId: "telnet",
+    displayName: "Telnet",
+    icon: "terminal",
+    capabilities: { terminal: true },
+    schema: { groups: [] },
+  } as unknown as ConnectionTypeInfo;
+
+  const SAVED_TELNET: SavedConnection = {
+    id: "Switch",
+    name: "Lab switch",
+    folderId: null,
+    config: {
+      type: "telnet",
+      config: { host: "10.0.0.7", port: 23, username: "pi", authMethod: "password" },
+    },
+  };
+
+  it("titles a telnet connection's password prompt after telnet, not SSH", async () => {
+    setup("master_password", "unlocked");
+    useAppStore.setState({ connectionTypes: [TELNET_TYPE] });
+    requestPasswordSpy.mockResolvedValue(null);
+    await connectSavedConnection(SAVED_TELNET);
+
+    expect(requestPasswordSpy).toHaveBeenCalledTimes(1);
+    const [, , , kind, options] = requestPasswordSpy.mock.calls[0];
+    expect(kind).toBe("password");
+    expect(options).toMatchObject({ label: "Lab switch", transport: "Telnet" });
   });
 });

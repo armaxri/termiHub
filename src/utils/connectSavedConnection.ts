@@ -87,6 +87,7 @@ import {
   stashPreconnectFailure,
   untilAborted,
 } from "@/utils/preconnect";
+import { connectionTypeDisplayName } from "@/utils/connectionTypeDisplayName";
 import type { PasswordPromptKind } from "@/store/slices/passwordPromptSlice";
 
 /** Options for {@link connectSavedConnection}. */
@@ -210,6 +211,8 @@ export async function connectSavedConnection(
 ): Promise<ConnectSavedConnectionResult> {
   const unattended = options.unattended === true;
   const { addTab, requestPassword } = useAppStore.getState();
+  // Display name of the connection type, for the password prompt's title (#5617).
+  const transport = connectionTypeDisplayName(connection.config.type);
 
   // A connection whose plugin is missing, disabled or not trusted cannot
   // connect (#3344): say why, with the same wording as the sidebar marker,
@@ -377,6 +380,7 @@ export async function connectSavedConnection(
       settings: cfg as Record<string, unknown>,
       requestPassword,
       label: connection.name,
+      ...(transport ? { transport } : {}),
     });
     if (resolved.status === "canceled") {
       toast.info(CONNECT_CANCELED_MESSAGE);
@@ -607,6 +611,8 @@ export async function connectSavedConnection(
       allowSave: !sharedCredential && !isGraphical && !storeStaysLocked,
       label: connection.name,
       ...(savedRejected ? { savedRejected: true } : {}),
+      // Titled after the real transport, never "SSH" for telnet (#5617).
+      ...(transport ? { transport } : {}),
     };
     if (authMethod === "password") {
       const host = readConfigString(connection.config, "host") ?? "";
@@ -643,12 +649,14 @@ export async function connectSavedConnection(
       // The prompt modal is now the feedback surface — clear the pre-connect
       // indicator before it appears (UX-011).
       dismissConnecting();
+      const keyPath = readConfigString(connection.config, "keyPath") ?? "";
       const answer = await requestPassword(
         host,
         username,
         rejectedCredentialNotice,
         "key_passphrase",
-        promptOptions
+        // Name the key the passphrase unlocks (#5617).
+        keyPath.trim() ? { ...promptOptions, keyPath } : promptOptions
       );
       if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.

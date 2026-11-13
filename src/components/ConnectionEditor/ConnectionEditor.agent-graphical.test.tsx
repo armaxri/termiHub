@@ -263,6 +263,8 @@ describe("ConnectionEditor — VNC/RDP under an agent (#3241)", () => {
     // The definition's name titles the prompt (#4475).
     expect(requestPassword).toHaveBeenCalledWith("10.0.0.5", "", "", "password", {
       label: "Lab desktop",
+      // Titled after the real transport (#5617).
+      transport: "VNC",
     });
     expect(addTab).not.toHaveBeenCalled();
   });
