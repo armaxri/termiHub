@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  collapseCrumbs,
   splitPathSegments,
   sortEntries,
   filterEntries,
@@ -229,5 +230,34 @@ describe("resolveSymlinkTarget", () => {
       symlinkTarget: "./x/../y",
     });
     expect(resolveSymlinkTarget(e)).toBe("/a/b/y");
+  });
+});
+
+describe("collapseCrumbs", () => {
+  // "/" + "home" + "user" + "projects" + "leaf"
+  const widths = [10, 40, 40, 60, 50];
+  const ellipsisWidth = 20;
+  const hidden = (available: number | null) => collapseCrumbs({ available, widths, ellipsisWidth });
+
+  it("hides nothing when the width is unknown or the path fits", () => {
+    expect(hidden(null)).toEqual({ hiddenStart: 0, hiddenEnd: 0 });
+    expect(hidden(200)).toEqual({ hiddenStart: 0, hiddenEnd: 0 });
+  });
+
+  it("keeps the root, the leaf and as many nearest ancestors as fit", () => {
+    // 10 root + 20 "…" + 50 leaf = 80; + 60 "projects" = 140.
+    expect(hidden(150)).toEqual({ hiddenStart: 1, hiddenEnd: 3 });
+    expect(hidden(139)).toEqual({ hiddenStart: 1, hiddenEnd: 4 });
+  });
+
+  it("drops the root before the leaf when even that does not fit", () => {
+    expect(hidden(75)).toEqual({ hiddenStart: 0, hiddenEnd: 4 });
+  });
+
+  it("never folds a two-segment path (the leaf ellipsizes instead)", () => {
+    expect(collapseCrumbs({ available: 10, widths: [10, 300], ellipsisWidth })).toEqual({
+      hiddenStart: 0,
+      hiddenEnd: 0,
+    });
   });
 });

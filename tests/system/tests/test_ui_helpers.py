@@ -15,6 +15,7 @@ from termihub_harness.ui import (
     folder_toggle_testid,
     iter_tabs,
 )
+from termihub_harness.ui.agent import AgentUi
 from termihub_harness.ui.base import HarnessMixin
 from termihub_harness.ui.connections import ConnectionsUi
 from termihub_harness.ui.settings import SettingsUi
@@ -511,3 +512,68 @@ def test_open_settings_tab_times_out_when_the_panel_never_mounts():
     driver = SettingsMountDriver(mount_after=10_000)
     with pytest.raises(AssertionError, match="the settings panel to mount"):
         FakeSettings(driver).open_settings_tab()
+
+
+class FakeAgentHarness(AgentUi):
+    """``AgentUi`` over a config dir and a scripted agents region (no app)."""
+
+    _MAX_POLLS = 50
+
+    def __init__(self, config_dir, region):
+        self.driver = None
+        self._config_dir = config_dir
+        self._region = region
+
+    @property
+    def config_dir(self):
+        return self._config_dir
+
+    def remote_agents(self):
+        return self._region()
+
+    def wait(self, predicate, *, timeout=0, interval=0, what=""):
+        for _ in range(self._MAX_POLLS):
+            result = predicate()
+            if result:
+                return result
+        raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_set_agent_path_edits_the_saved_agent_and_waits_for_the_region(tmp_path):
+    """#5511: ``agentPath`` lands in the saved agent's config, nothing else
+    changes, and the call returns once the region carries it (the app's
+    file watcher reloads it there)."""
+    import json
+
+    store = tmp_path / "connections.json"
+    doc = {
+        "version": "2",
+        "children": [{"type": "connection", "id": "c1"}],
+        "agents": [
+            {"id": "other", "name": "o", "config": {"host": "h"}},
+            {"id": "a1", "name": "n", "config": {"host": "h", "port": 22}},
+        ],
+        "futureField": 1,
+    }
+    store.write_text(json.dumps(doc), encoding="utf-8")
+    path = "C:/Users/u/AppData/Local/termiHub/agent/termihub-agent.exe"
+
+    def region():
+        saved = json.loads(store.read_text(encoding="utf-8"))
+        return saved["agents"]
+
+    agent = FakeAgentHarness(tmp_path, region).set_agent_path("a1", path)
+
+    assert agent["config"] == {"host": "h", "port": 22, "agentPath": path}
+    saved = json.loads(store.read_text(encoding="utf-8"))
+    doc["agents"][1]["config"]["agentPath"] = path
+    assert saved == doc
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["connections.json"]
+
+
+def test_set_agent_path_waits_for_the_agent_to_be_saved(tmp_path):
+    store = tmp_path / "connections.json"
+    store.write_text('{"version": "2", "children": [], "agents": []}', encoding="utf-8")
+    harness = FakeAgentHarness(tmp_path, lambda: [])
+    with pytest.raises(AssertionError, match="to be saved"):
+        harness.set_agent_path("a1", "C:/x/termihub-agent.exe")

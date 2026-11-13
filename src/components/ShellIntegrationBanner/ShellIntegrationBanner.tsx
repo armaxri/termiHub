@@ -9,6 +9,7 @@ import { getShellIntegrationStatus, installShellIntegration } from "@/services/a
 import { defaultShellIntegrationSettings } from "@/components/Settings/shellIntegrationEntries";
 import { INSTALL_TOAST, syncRegistrationFacts } from "@/components/Settings/shellIntegrationStore";
 import { errorMessage } from "@/utils/errorMessage";
+import { useBottomBannerSlot } from "@/components/BottomBanners";
 import "./ShellIntegrationBanner.css";
 
 /**
@@ -17,6 +18,10 @@ import "./ShellIntegrationBanner.css";
  * shell, until the integration is registered or the user opts out
  * ("Don't ask again" persists `shellIntegration.firstLaunchBannerDismissed`).
  * Modelled on {@link TerminalViewModeBanner}.
+ *
+ * It is the lowest-ranked bottom banner (#5548): while a crash notice shows it
+ * stays hidden and appears once that notice is closed. "Install now" is a
+ * secondary button so it never competes with the view's filled primary (#5549).
  */
 export function ShellIntegrationBanner() {
   const storedSi = useProjectedSettings().shellIntegration;
@@ -62,7 +67,11 @@ export function ShellIntegrationBanner() {
 
   // Hide until status is known, once registered, after a session dismiss, or
   // when the user opted out permanently.
-  if (!eligible || !status || status.registered || dismissedThisSession) {
+  const wants = eligible && !!status && !status.registered && !dismissedThisSession;
+  // #5548/#5549: a promotional prompt never competes with a crash notice — it
+  // ranks last among the bottom banners and waits until the others are closed.
+  const active = useBottomBannerSlot("shell-integration", wants);
+  if (!wants || !active) {
     return null;
   }
 
@@ -93,7 +102,7 @@ export function ShellIntegrationBanner() {
           Don't ask again
         </Button>
         <Button
-          variant="primary"
+          variant="secondary"
           size="sm"
           onClick={handleInstall}
           data-testid="shell-integration-banner-install"

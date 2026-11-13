@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
 import { TransferQueue } from "@/components/TransferQueue";
 import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
+import { BottomBannerRegion } from "@/components/BottomBanners";
 import {
   AgentCrashReportNotice,
   CrashReportNotice,
@@ -376,9 +377,11 @@ function App() {
             )}
             {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
           </div>
-          <ShellIntegrationBanner />
-          <CrashReportNotice />
-          <AgentCrashReportNotice />
+          <BottomBannerRegion>
+            <CrashReportNotice />
+            <AgentCrashReportNotice />
+            <ShellIntegrationBanner />
+          </BottomBannerRegion>
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />

@@ -54,6 +54,9 @@ class FileBrowserPathReads(HarnessMixin):
     """
 
     CURRENT_PATH = "file-browser-current-path"
+    #: The header's overflow "…" trigger (#5520): most actions are entries of its
+    #: menu, and narrow widths move the inline icons there too.
+    MORE_ACTIONS = "file-browser-more-actions"
     #: The toolbar Refresh button; its ``aria-busy`` mirrors the pane's loading flag.
     REFRESH_CONTROL = "file-browser-refresh"
 
@@ -62,6 +65,18 @@ class FileBrowserPathReads(HarnessMixin):
         if not self.driver.exists(self.CURRENT_PATH):
             return ""
         return self.driver.get_attribute(self.CURRENT_PATH, "title") or ""
+
+    def reveal_file_browser_action(self, action: str) -> bool:
+        """Make header action ``action`` clickable, opening the "…" menu if needed.
+
+        Returns whether the menu was opened (the caller closes it with Escape if
+        it does not click an item). See :meth:`reveal_toolbar_action`.
+        """
+        return self.reveal_toolbar_action(action, overflow=self.MORE_ACTIONS)
+
+    def invoke_file_browser_action(self, action: str) -> None:
+        """Click header action ``action``, inline or from the "…" menu (#5520)."""
+        self.invoke_toolbar_action(action, overflow=self.MORE_ACTIONS)
 
     def file_browser_busy(self) -> bool:
         """Whether a directory listing is in flight (the Refresh control's ``aria-busy``)."""
@@ -116,9 +131,11 @@ class FilesUi(FileBrowserPathReads):
     NEW_FOLDER = "file-browser-new-folder"
     NEW_FOLDER_INPUT = "file-browser-new-folder-input"
     NEW_FOLDER_CONFIRM = "file-browser-new-folder-confirm"
-    #: Toolbar Paste: enabled while the file clipboard holds a copy/cut.
+    #: Toolbar Paste: an inline button only while the file clipboard holds a
+    #: copy/cut (#5520); a disabled entry of the "…" menu otherwise.
     PASTE = "file-browser-paste"
-    #: Local-only toolbar actions that act on the current folder (#2656).
+    #: Local-only toolbar actions that act on the current folder (#2656); entries
+    #: of the "…" menu (#5520) — click them with :meth:`invoke_file_browser_action`.
     OPEN_IN_EXPLORER = "file-browser-open-in-explorer"
     OPEN_FOLDER_VSCODE = "file-browser-open-folder-vscode"
 
@@ -237,14 +254,14 @@ class FilesUi(FileBrowserPathReads):
     # -- create ------------------------------------------------------------------
     def open_new_file_input(self) -> bool:
         """Click New File and return whether its inline input appeared."""
-        self.driver.click(self.NEW_FILE)
+        self.invoke_file_browser_action(self.NEW_FILE)
         return self.wait(
             lambda: self.driver.exists(self.NEW_FILE_INPUT), what="the new-file input"
         )
 
     def open_new_folder_input(self) -> bool:
         """Click New Folder and return whether its inline input appeared."""
-        self.driver.click(self.NEW_FOLDER)
+        self.invoke_file_browser_action(self.NEW_FOLDER)
         return self.wait(
             lambda: self.driver.exists(self.NEW_FOLDER_INPUT), what="the new-folder input"
         )

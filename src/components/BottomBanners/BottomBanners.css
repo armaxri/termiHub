@@ -1,0 +1,7 @@
+/* App-level bottom banner region (#5548). Holds at most one banner at a time. */
+
+.bottom-banners {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}

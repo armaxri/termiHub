@@ -6,7 +6,6 @@ import {
   File,
   FileSymlink,
   FolderSymlink,
-  ArrowUp,
   RefreshCw,
   Upload,
   FolderPlus,
@@ -26,18 +25,13 @@ import {
   Copy,
   Scissors,
   ClipboardPaste,
-  FolderSync,
   Globe,
-  Terminal,
   X,
   ChevronUp,
   ChevronDown,
   ExternalLink,
-  Eye,
-  EyeOff,
   FolderInput,
   CopyPlus,
-  Columns2,
   Plus,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
@@ -107,7 +101,9 @@ import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import { FileBrowserDndProvider } from "./FileBrowserDndProvider";
 import { FileMoveConflictDialog } from "./FileMoveConflictDialog";
 import { MoveToDialog, type MoveToRequest } from "./MoveToDialog";
-import { FileBookmarksMenu } from "./FileBookmarksMenu";
+import { FileBookmarksManageDialog, FileBookmarksSubmenu } from "./FileBookmarksMenu";
+import { FileBrowserActions } from "./FileBrowserActions";
+import { buildFileBrowserActions } from "./fileBrowserHeaderActions";
 import { useFileRowDnd } from "./fileBrowserDnd";
 import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import { useFileDragOut } from "@/hooks/useFileDragOut";
@@ -1313,6 +1309,9 @@ export function FileBrowser() {
 
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const bookmarkScope = useFileBookmarkScope(mode, sessionFileBrowserId);
+  // The overflow menu's bookmarks sub-menu unmounts on close, so its manage
+  // dialog lives here (#5520).
+  const [bookmarksManageOpen, setBookmarksManageOpen] = useState(false);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const openTransferViewTab = useAppStore((s) => s.openTransferViewTab);
 
@@ -1830,6 +1829,43 @@ export function FileBrowser() {
     }
   }, [newFileName, createFile, requestWrite, currentPath]);
 
+  const headerActions = buildFileBrowserActions({
+    mode: mode === "session" ? "session" : "local",
+    currentPath,
+    isLoading,
+    reducedMotion,
+    hasCwd,
+    canCd,
+    showHiddenFiles,
+    vscodeAvailable,
+    fileManagerLabel,
+    pasteTooltip: fileClipboard
+      ? fileClipboard.entries.length === 1
+        ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
+        : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
+      : null,
+    bookmarksMenu: (
+      <FileBookmarksSubmenu
+        scope={bookmarkScope}
+        currentPath={currentPath}
+        onNavigate={handleNavigatePath}
+        onManage={() => setBookmarksManageOpen(true)}
+      />
+    ),
+    onNavigateUp: handleNavigateUp,
+    onNavigateToCwd: navigateToCwd,
+    onCdHere: cdToCurrentPath,
+    onRefresh: refresh,
+    onOpenTransferView: handleOpenTransferView,
+    onToggleHidden: () => updateLayoutConfig({ showHiddenFiles: !showHiddenFiles }),
+    onOpenInFileManager: handleOpenInExplorer,
+    onOpenInVscode: handleOpenFolderInVscode,
+    onUpload: handleUploadClick,
+    onPaste: handlePaste,
+    onNewFile: () => setNewFileName(""),
+    onNewFolder: () => setNewDirName(""),
+  });
+
   // "none" mode — show placeholder
   if (mode === "none") {
     return (
@@ -1923,168 +1959,14 @@ export function FileBrowser() {
         {mode === "session" && <RemoteDesktopBrowseRoute sessionId={sessionFileBrowserId} />}
         <div className="file-browser__toolbar">
           <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
-          <div className="file-browser__actions">
-            <Tooltip content="Go up" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<ArrowUp size={14} />}
-                onClick={handleNavigateUp}
-                disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
-                aria-label="Go up one directory"
-                data-testid="file-browser-up"
-              />
-            </Tooltip>
-            <Tooltip content="Go to terminal CWD" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<FolderSync size={14} />}
-                onClick={navigateToCwd}
-                disabled={!hasCwd}
-                aria-label="Go to terminal working directory"
-                data-testid="file-browser-go-to-cwd"
-              />
-            </Tooltip>
-            <FileBookmarksMenu
-              scope={bookmarkScope}
-              currentPath={currentPath}
-              onNavigate={handleNavigatePath}
-            />
-            <Tooltip
-              content={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
-              side="top"
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<Terminal size={14} />}
-                onClick={cdToCurrentPath}
-                disabled={!canCd}
-                aria-label="Send cd for current path to terminal"
-                data-testid="file-browser-cd-here"
-              />
-            </Tooltip>
-            <Tooltip content="Refresh" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={
-                  <RefreshCw
-                    size={14}
-                    className={isLoading ? "file-browser__spinner motion-essential-spinner" : ""}
-                  />
-                }
-                onClick={refresh}
-                aria-label="Refresh file list"
-                aria-busy={isLoading}
-                data-testid="file-browser-refresh"
-              >
-                {isLoading && reducedMotion ? "Refreshing…" : undefined}
-              </Button>
-            </Tooltip>
-            <Tooltip content="Open dual-pane transfer view" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<Columns2 size={14} />}
-                onClick={handleOpenTransferView}
-                aria-label="Open dual-pane transfer view"
-                data-testid="file-browser-open-transfer-view"
-              />
-            </Tooltip>
-            <Tooltip
-              content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
-              side="top"
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={showHiddenFiles ? <Eye size={14} /> : <EyeOff size={14} />}
-                onClick={() => updateLayoutConfig({ showHiddenFiles: !showHiddenFiles })}
-                aria-pressed={showHiddenFiles}
-                aria-label={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
-                data-testid="file-browser-toggle-hidden"
-              />
-            </Tooltip>
-            {mode === "local" && (
-              <Tooltip content={fileManagerLabel} side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<ExternalLink size={14} />}
-                  onClick={handleOpenInExplorer}
-                  aria-label={fileManagerLabel}
-                  data-testid="file-browser-open-in-explorer"
-                />
-              </Tooltip>
-            )}
-            {mode === "local" && vscodeAvailable && (
-              <Tooltip content="Open folder in VS Code" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<CodeXml size={14} />}
-                  onClick={handleOpenFolderInVscode}
-                  aria-label="Open folder in VS Code"
-                  data-testid="file-browser-open-folder-vscode"
-                />
-              </Tooltip>
-            )}
-            {mode === "session" && (
-              <Tooltip content="Upload file" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Upload size={14} />}
-                  onClick={handleUploadClick}
-                  aria-label="Upload file"
-                  data-testid="file-browser-upload"
-                />
-              </Tooltip>
-            )}
-            <Tooltip
-              content={
-                fileClipboard
-                  ? fileClipboard.entries.length === 1
-                    ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
-                    : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
-                  : "Paste"
-              }
-              side="top"
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<ClipboardPaste size={14} />}
-                onClick={handlePaste}
-                disabled={!fileClipboard}
-                aria-label="Paste"
-                data-testid="file-browser-paste"
-              />
-            </Tooltip>
-            <Tooltip content="New file" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<FilePlus size={14} />}
-                onClick={() => setNewFileName("")}
-                aria-label="New file"
-                data-testid="file-browser-new-file"
-              />
-            </Tooltip>
-            <Tooltip content="New folder" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<FolderPlus size={14} />}
-                onClick={() => setNewDirName("")}
-                aria-label="New folder"
-                data-testid="file-browser-new-folder"
-              />
-            </Tooltip>
-          </div>
+          <FileBrowserActions actions={headerActions} />
         </div>
+        <FileBookmarksManageDialog
+          scope={bookmarkScope}
+          open={bookmarksManageOpen}
+          onOpenChange={setBookmarksManageOpen}
+          onNavigate={handleNavigatePath}
+        />
 
         <div className="file-browser__subbar">
           <SearchInput

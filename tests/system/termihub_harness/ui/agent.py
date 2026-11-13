@@ -18,6 +18,10 @@ password prompt, so :class:`~termihub_harness.ui.PasswordPromptUi` too.
 
 from __future__ import annotations
 
+import json
+import os
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from .base import HarnessMixin
@@ -37,6 +41,9 @@ class AgentUi(HarnessMixin):
         # switch_to_connections_sidebar from SidebarUi (suites mix both in)
         def enable_experimental_features(self) -> None: ...
         def switch_to_connections_sidebar(self) -> None: ...
+
+        @property
+        def config_dir(self) -> Path: ...  # from SystemTest
 
     NEW_AGENT = "connection-list-new-agent"
     EDITOR_NAME = "connection-editor-name-input"
@@ -119,12 +126,14 @@ class AgentUi(HarnessMixin):
         port: int,
         username: str,
         auth_method: str = "password",
+        agent_path: Optional[str] = None,
     ) -> dict[str, Any]:
         """Create a remote-agent definition via the New Remote Agent editor.
 
         The agent editor has no connection-type select (the type is fixed); it
         renders the same ``field-host`` / ``field-port`` / ``field-username`` /
-        ``field-authMethod`` fields as SSH. Returns the saved agent.
+        ``field-authMethod`` fields as SSH. Returns the saved agent. A non-None
+        ``agent_path`` is then stored as its ``agentPath`` (:meth:`set_agent_path`).
         """
         self.open_agents_sidebar()
         self.driver.click(self.NEW_AGENT)
@@ -136,7 +145,52 @@ class AgentUi(HarnessMixin):
         if auth_method:
             self.driver.select("field-authMethod", auth_method)
         self.driver.click(self.EDITOR_SAVE)
-        return self.require_agent(name)
+        agent = self.require_agent(name)
+        if agent_path is not None:
+            agent = self.set_agent_path(agent["id"], agent_path)
+        return agent
+
+    #: The connection store in the app's config dir that holds the agents.
+    CONNECTIONS_FILE = "connections.json"
+
+    def set_agent_path(self, agent_id: str, path: str, *, timeout: float = 30.0) -> dict[str, Any]:
+        """Store ``path`` as the saved agent's ``agentPath``; return the agent.
+
+        The editor has no field for it: the app sets it from the install path
+        its deploy reports (a Windows host's ``%LOCALAPPDATA%`` install, #5511).
+        The harness edits the saved agent in ``connections.json`` instead, as a
+        parallel instance would: the app watches the file and reloads it within
+        a second, so the agents region, and every connect, carry the path. Waits
+        for the agent to be saved first, and for the region to show the path.
+        """
+        store = self.config_dir / self.CONNECTIONS_FILE
+
+        def saved() -> Optional[dict[str, Any]]:
+            try:
+                doc = json.loads(store.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            agents = doc.get("agents") if isinstance(doc, dict) else None
+            entry = next(
+                (a for a in agents or () if isinstance(a, dict) and a.get("id") == agent_id),
+                None,
+            )
+            return doc if entry is not None else None
+
+        doc = self.wait(saved, timeout=timeout, what=f"agent {agent_id!r} to be saved")
+        for entry in doc["agents"]:
+            if entry.get("id") == agent_id:
+                entry.setdefault("config", {})["agentPath"] = path
+        tmp = store.with_name(f"{store.name}.harness-{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        _replace_with_retry(tmp, store)
+
+        def carried() -> Optional[dict[str, Any]]:
+            agent = next((a for a in self.remote_agents() if a.get("id") == agent_id), None)
+            config = agent.get("config") if agent else None
+            return agent if isinstance(config, dict) and config.get("agentPath") == path else None
+
+        return self.wait(carried, timeout=timeout, what=f"agent {agent_id!r} to carry {path!r}")
 
     # ── context menu ────────────────────────────────────────────────────────────
     def open_agent_menu(self, name: str, *, sentinel: Optional[str] = None) -> None:
@@ -572,3 +626,15 @@ class AgentUi(HarnessMixin):
         """
         value = self.driver.get_state("agentUpdatesDismissed")
         return bool(value.get(agent_id)) if isinstance(value, dict) else False
+
+
+def _replace_with_retry(src: Path, dest: Path, *, attempts: int = 20) -> None:
+    """``os.replace`` that retries while the app has ``dest`` open (Windows)."""
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dest)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.1)
