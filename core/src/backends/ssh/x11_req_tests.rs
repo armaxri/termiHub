@@ -182,6 +182,54 @@ fn the_mode_is_described_for_the_user() {
     assert!(X11Mode::TypedFallback.describe().contains("fallback"));
 }
 
+#[test]
+fn the_session_mode_follows_the_reply_and_the_fallback() {
+    use X11ForwardingMode as M;
+    assert_eq!(forwarding_mode(Ok(()), false), M::ServerForwarded);
+    assert_eq!(forwarding_mode(Ok(()), true), M::ServerForwarded);
+    let refused = Err(X11ReqRefusal::Refused);
+    assert_eq!(forwarding_mode(refused, true), M::FallbackRefused);
+    assert_eq!(
+        forwarding_mode(Err(X11ReqRefusal::NoReply), true),
+        M::FallbackNoReply
+    );
+    assert_eq!(
+        forwarding_mode(Err(X11ReqRefusal::ChannelGone), true),
+        M::FallbackNoReply
+    );
+    for refusal in [
+        X11ReqRefusal::Refused,
+        X11ReqRefusal::NoReply,
+        X11ReqRefusal::ChannelGone,
+    ] {
+        assert_eq!(
+            forwarding_mode(Err(refusal), false),
+            M::Failed,
+            "{refusal:?}"
+        );
+    }
+}
+
+#[test]
+fn the_session_mode_serializes_for_the_ui() {
+    use X11ForwardingMode as M;
+    for (mode, wire) in [
+        (M::ServerForwarded, "serverForwarded"),
+        (M::FallbackRefused, "fallbackRefused"),
+        (M::FallbackNoReply, "fallbackNoReply"),
+        (M::Failed, "failed"),
+    ] {
+        assert_eq!(serde_json::to_value(mode).unwrap(), wire);
+    }
+}
+
+/// The mode a session reports for the server's answer, with the fallback up.
+fn reported(
+    result: &Result<(X11ReqForwarder, VecDeque<russh::ChannelMsg>), X11ReqRefusal>,
+) -> X11ForwardingMode {
+    forwarding_mode(result.as_ref().map(|_| ()).map_err(|r| *r), true)
+}
+
 // ── Bridge to the local X server ────────────────────────────────────────
 
 /// A fake local X server: records the first connection's bytes, answers `ok`.
@@ -290,8 +338,17 @@ type SeenReq = Arc<Mutex<Option<(String, String, bool)>>>;
 
 /// A server that answers `x11-req` with success or failure and keeps the
 /// session channels open.
+/// How the test server answers `x11-req`.
+#[derive(Clone, Copy)]
+enum Reply {
+    Accept,
+    Refuse,
+    /// Never answers, as a server that ignores the request.
+    Silent,
+}
+
 struct X11Server {
-    accept_x11: bool,
+    reply: Reply,
     seen: SeenReq,
     channels: Vec<Channel<ServerMsg>>,
 }
@@ -328,10 +385,10 @@ impl russh::server::Handler for X11Server {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         *self.seen.lock().unwrap() = Some((protocol.into(), cookie.into(), single_connection));
-        if self.accept_x11 {
-            session.channel_success(channel)?;
-        } else {
-            session.channel_failure(channel)?;
+        match self.reply {
+            Reply::Accept => session.channel_success(channel)?,
+            Reply::Refuse => session.channel_failure(channel)?,
+            Reply::Silent => {}
         }
         Ok(())
     }
@@ -346,10 +403,19 @@ struct Connected {
 }
 
 async fn connect(accept_x11: bool) -> Connected {
+    connect_replying(if accept_x11 {
+        Reply::Accept
+    } else {
+        Reply::Refuse
+    })
+    .await
+}
+
+async fn connect_replying(reply: Reply) -> Connected {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let seen = SeenReq::default();
     let handler = X11Server {
-        accept_x11,
+        reply,
         seen: seen.clone(),
         channels: Vec::new(),
     };
@@ -418,15 +484,16 @@ async fn accepted_x11_req_forwards_with_the_real_cookie_locally_only() {
     let (local, mut seen_local) = fake_x_server().await;
     let mut c = connect(true).await;
     let alive = Arc::new(AtomicBool::new(true));
-    let (forwarder, _early) = request_x11_forwarding(
+    let forwarder = request_x11_forwarding(
         &mut c.channel,
         &c.registry,
         &resolved(&local, Some(REAL_HEX)),
         alive,
         None,
     )
-    .await
-    .expect("the server accepted x11-req");
+    .await;
+    assert_eq!(reported(&forwarder), X11ForwardingMode::ServerForwarded);
+    let (forwarder, _early) = forwarder.expect("the server accepted x11-req");
 
     let (protocol, fake_hex, single) = c.seen.lock().unwrap().clone().expect("x11-req seen");
     assert_eq!(protocol, MIT_MAGIC_COOKIE_1);
@@ -505,8 +572,28 @@ async fn refused_x11_req_selects_the_fallback_and_grants_nothing() {
         None,
     )
     .await;
+    assert_eq!(reported(&result), X11ForwardingMode::FallbackRefused);
     assert_eq!(result.err(), Some(X11ReqRefusal::Refused));
     assert!(c.registry.x11_listener().is_none());
     let open = c.server.channel_open_x11("127.0.0.1", 40000).await;
     assert!(open.is_err(), "no x11 channel without an accepted x11-req");
+}
+
+#[tokio::test]
+async fn unanswered_x11_req_selects_the_fallback_and_grants_nothing() {
+    let (local, _seen_local) = fake_x_server().await;
+    let mut c = connect_replying(Reply::Silent).await;
+    let result = request_x11_forwarding_within(
+        &mut c.channel,
+        &c.registry,
+        &resolved(&local, Some(REAL_HEX)),
+        Arc::new(AtomicBool::new(true)),
+        None,
+        Duration::from_millis(200),
+    )
+    .await;
+    assert!(c.seen.lock().unwrap().is_some(), "x11-req was sent");
+    assert_eq!(reported(&result), X11ForwardingMode::FallbackNoReply);
+    assert_eq!(result.err(), Some(X11ReqRefusal::NoReply));
+    assert!(c.registry.x11_listener().is_none());
 }

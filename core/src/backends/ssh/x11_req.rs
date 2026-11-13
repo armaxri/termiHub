@@ -32,6 +32,7 @@ use tracing::{debug, info, warn};
 
 use super::handler::{ForwardedChannelRegistry, IncomingX11};
 use super::x11::{LocalXConnection, LocalXServerInfo, ResolvedXServer};
+use crate::connection::X11ForwardingMode;
 
 /// The only X11 authorization protocol termiHub forwards.
 pub const MIT_MAGIC_COOKIE_1: &str = "MIT-MAGIC-COOKIE-1";
@@ -414,6 +415,22 @@ pub enum X11ReqRefusal {
     ChannelGone,
 }
 
+/// The session's [`X11ForwardingMode`] (#5586): from the server's answer to
+/// `x11-req`, and, when it did not accept, whether the typed fallback started.
+pub(crate) fn forwarding_mode(
+    request: Result<(), X11ReqRefusal>,
+    fallback_started: bool,
+) -> X11ForwardingMode {
+    match request {
+        Ok(()) => X11ForwardingMode::ServerForwarded,
+        Err(_) if !fallback_started => X11ForwardingMode::Failed,
+        Err(X11ReqRefusal::Refused) => X11ForwardingMode::FallbackRefused,
+        Err(X11ReqRefusal::NoReply | X11ReqRefusal::ChannelGone) => {
+            X11ForwardingMode::FallbackNoReply
+        }
+    }
+}
+
 /// Ask the server for X11 forwarding on `channel` (before `shell`) and wait
 /// for its answer (#5570).
 ///
@@ -434,6 +451,27 @@ pub(crate) async fn request_x11_forwarding(
     alive: Arc<AtomicBool>,
     cancel: Option<&CancellationToken>,
 ) -> Result<(X11ReqForwarder, VecDeque<russh::ChannelMsg>), X11ReqRefusal> {
+    request_x11_forwarding_within(
+        channel,
+        registry,
+        server,
+        alive,
+        cancel,
+        X11_REQ_REPLY_TIMEOUT,
+    )
+    .await
+}
+
+/// [`request_x11_forwarding`] with the reply timeout given, so a test can
+/// stand in for a server that never answers.
+pub(crate) async fn request_x11_forwarding_within(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    registry: &ForwardedChannelRegistry,
+    server: &ResolvedXServer,
+    alive: Arc<AtomicBool>,
+    cancel: Option<&CancellationToken>,
+    reply_timeout: Duration,
+) -> Result<(X11ReqForwarder, VecDeque<russh::ChannelMsg>), X11ReqRefusal> {
     use russh::ChannelMsg;
 
     let cookies = X11Cookies::generate(server.cookie.as_deref());
@@ -446,7 +484,7 @@ pub(crate) async fn request_x11_forwarding(
     }
     let never = CancellationToken::new();
     let cancel = cancel.unwrap_or(&never);
-    let deadline = tokio::time::Instant::now() + X11_REQ_REPLY_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + reply_timeout;
     let mut other = VecDeque::new();
     loop {
         let msg = tokio::select! {
