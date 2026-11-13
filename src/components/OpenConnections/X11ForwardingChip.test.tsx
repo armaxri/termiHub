@@ -7,17 +7,18 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import type { X11ForwardingMode } from "@/types/generated/X11ForwardingMode";
+import type { X11ForwardingReason } from "@/types/generated/X11ForwardingReason";
 import { checkA11y } from "@/test/axe";
-import { X11ForwardingChip, x11ModeCopy } from "./X11ForwardingChip";
+import { X11ForwardingChip, x11ChipHint, x11ModeCopy, x11ReasonCopy } from "./X11ForwardingChip";
 
 let container: HTMLDivElement;
 let root: Root;
 
-function render(mode: X11ForwardingMode) {
+function render(mode: X11ForwardingMode, reason?: X11ForwardingReason) {
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <X11ForwardingChip mode={mode} data-testid="x11-chip" />
+        <X11ForwardingChip mode={mode} reason={reason} data-testid="x11-chip" />
       </TooltipProvider>
     );
   });
@@ -104,5 +105,61 @@ describe("X11ForwardingChip", () => {
       const words = x11ModeCopy(mode).label.split(" ").slice(1);
       expect(words.every((w) => w === w.toLowerCase())).toBe(true);
     }
+  });
+
+  describe("with the exact reason (#5601)", () => {
+    const CASES: [X11ForwardingMode, X11ForwardingReason, string, string][] = [
+      ["failed", "noLocalXServer", "no local X server", "Start a local X server"],
+      ["fallbackRefused", "serverRefused", "X11Forwarding no", "Set X11Forwarding yes"],
+      ["fallbackNoReply", "serverNoReply", "did not answer", "sshd log"],
+      [
+        "failed",
+        "untrustedNoSecurityExtension",
+        "SECURITY extension",
+        "Turn off Untrusted X11 forwarding",
+      ],
+      ["failed", "untrustedXauthMissing", "xauth, which is not installed", "Install xauth"],
+      ["failed", "untrustedXauthFailed", "xauth could not create", "local X server is running"],
+      ["failed", "fallbackFailed", "fallback could not start", "Set X11Forwarding yes"],
+    ];
+
+    it.each(CASES)("shows the %s / %s reason and its fix", (mode, reason, why, fix) => {
+      const chip = render(mode, reason);
+      expect(chip.textContent).toBe(x11ModeCopy(mode).label);
+      expect(chip.closest(".oc-x11")?.getAttribute("data-x11-reason")).toBe(reason);
+      const hint = tooltipText(chip);
+      expect(hint).toContain(why);
+      expect(hint).toContain(fix);
+    });
+
+    it("gives every reason one sentence-case line of why and one of fix", () => {
+      for (const [, reason] of CASES) {
+        const { why, fix } = x11ReasonCopy(reason);
+        for (const line of [why, fix]) {
+          expect(line[0]).toBe(line[0].toUpperCase());
+          expect(line.endsWith(".")).toBe(true);
+          expect(line).not.toContain("\n");
+        }
+      }
+    });
+
+    it("keeps the mode hint when no reason is known", () => {
+      expect(x11ChipHint("failed")).toBe(x11ModeCopy("failed").hint);
+      const chip = render("failed");
+      expect(chip.closest(".oc-x11")?.hasAttribute("data-x11-reason")).toBe(false);
+    });
+
+    it("ignores a reason on a server-forwarded session", () => {
+      expect(x11ChipHint("serverForwarded", "serverRefused")).toBe(
+        x11ModeCopy("serverForwarded").hint
+      );
+    });
+
+    it("has no a11y violations with a reason", async () => {
+      const chip = render("failed", "untrustedNoSecurityExtension");
+      expect(chip.getAttribute("tabindex")).toBe("0");
+      tooltipText(chip);
+      expect(await checkA11y()).toHaveNoViolations();
+    });
   });
 });

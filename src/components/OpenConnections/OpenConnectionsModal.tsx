@@ -975,7 +975,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 title={s.title}
                 meta={
                   s.x11Forwarding && (
-                    <X11ForwardingChip mode={s.x11Forwarding} data-testid={`oc-x11-mode-${s.id}`} />
+                    <X11ForwardingChip
+                      mode={s.x11Forwarding}
+                      reason={s.x11ForwardingReason}
+                      data-testid={`oc-x11-mode-${s.id}`}
+                    />
                   )
                 }
                 badge={s.alive ? "alive" : "dead"}

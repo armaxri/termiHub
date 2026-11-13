@@ -52,6 +52,15 @@ const FALLBACK: LocalSessionInfo = {
   x11Forwarding: "fallbackRefused",
 };
 
+const REFUSED_UNTRUSTED: LocalSessionInfo = {
+  id: "sess-untrusted",
+  title: "secure-box",
+  connectionType: "ssh",
+  alive: true,
+  x11Forwarding: "failed",
+  x11ForwardingReason: "untrustedNoSecurityExtension",
+};
+
 const NO_X11: LocalSessionInfo = {
   id: "sess-plain",
   title: "plain-box",
@@ -69,7 +78,7 @@ describe("OpenConnectionsModal — X11 forwarding mode (#5586)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     listLocalSessions.mockReset();
-    listLocalSessions.mockResolvedValue([FORWARDED, FALLBACK, NO_X11]);
+    listLocalSessions.mockResolvedValue([FORWARDED, FALLBACK, REFUSED_UNTRUSTED, NO_X11]);
   });
 
   afterEach(() => {
@@ -105,6 +114,21 @@ describe("OpenConnectionsModal — X11 forwarding mode (#5586)", () => {
       r.textContent?.includes("plain-box")
     );
     expect(row?.querySelector(".oc-x11")).toBeNull();
+  });
+
+  it("tells why X11 is off from the backend's reason (#5601)", async () => {
+    await renderModal();
+    const chip = chipFor("sess-untrusted")!;
+    expect(chip.textContent).toBe("X11 failed");
+    expect(chip.closest(".oc-x11")?.getAttribute("data-x11-reason")).toBe(
+      "untrustedNoSecurityExtension"
+    );
+    act(() => {
+      chip.focus();
+      chip.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+    });
+    const id = chip.getAttribute("aria-describedby");
+    expect(document.getElementById(id!)?.textContent).toContain("SECURITY extension");
   });
 
   it("keeps the chip inside its own row", async () => {
