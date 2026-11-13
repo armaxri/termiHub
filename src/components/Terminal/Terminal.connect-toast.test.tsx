@@ -3,7 +3,8 @@
  *
  * A successful connect must not resolve silently: once createTerminal resolves,
  * the Terminal fires a non-intrusive `toast.success` so the user gets positive
- * feedback that the session is live.
+ * feedback that the session is live. The toast carries a per-tab id so a
+ * reconnect replaces it, and local shells get none (#5618).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -126,6 +127,11 @@ const LOCAL_CONFIG = {
   config: { shell: "/bin/bash" },
 };
 
+const SSH_CONFIG = {
+  type: "ssh" as const,
+  config: { host: "example.test", port: 22, username: "me", authMethod: "password" },
+};
+
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("Terminal — connect success confirmation", () => {
@@ -133,7 +139,7 @@ describe("Terminal — connect success confirmation", () => {
     act(() => {
       root.render(
         <TerminalPortalProvider>
-          <Terminal tabId="tab-1" config={LOCAL_CONFIG} isVisible={true} />
+          <Terminal tabId="tab-1" config={SSH_CONFIG} isVisible={true} />
         </TerminalPortalProvider>
       );
     });
@@ -143,6 +149,23 @@ describe("Terminal — connect success confirmation", () => {
 
     expect(mockCreateTerminal).toHaveBeenCalledTimes(1);
     expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    expect(mockToastSuccess.mock.calls[0][1]).toMatchObject({ id: "connected:tab-1" });
+  });
+
+  it("fires no success toast for a local shell (#5618)", async () => {
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal tabId="tab-3" config={LOCAL_CONFIG} isVisible={true} />
+        </TerminalPortalProvider>
+      );
+    });
+    await act(async () => {
+      await wait(50);
+    });
+
+    expect(mockCreateTerminal).toHaveBeenCalledTimes(1);
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
   it("does not fire a success toast when the connect fails", async () => {
@@ -150,7 +173,7 @@ describe("Terminal — connect success confirmation", () => {
     act(() => {
       root.render(
         <TerminalPortalProvider>
-          <Terminal tabId="tab-2" config={LOCAL_CONFIG} isVisible={true} />
+          <Terminal tabId="tab-2" config={SSH_CONFIG} isVisible={true} />
         </TerminalPortalProvider>
       );
     });
