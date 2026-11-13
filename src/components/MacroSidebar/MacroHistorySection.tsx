@@ -16,6 +16,7 @@ import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader"
 import type { MacroRun, MacroRunStatus } from "@/types/macro";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { t } from "@/i18n/catalog";
 import { macroRunOriginLabel, macroRunTargetsText } from "./macroRunFormat";
 
 /** Map a playback's terminal status to a {@link StatusDot} tone. */
@@ -154,7 +155,7 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
       />
       {runs.length === 0 ? (
         <EmptyState
-          title={macroId ? "No runs of this macro yet." : "No runs yet."}
+          title={macroId ? t("macroHistory.empty.filtered") : t("runHistory.empty")}
           data-testid="macro-history-empty"
         />
       ) : (

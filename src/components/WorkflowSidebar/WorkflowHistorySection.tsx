@@ -8,6 +8,7 @@ import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader"
 import type { WorkflowRun, WorkflowRunHistoryStatus } from "@/types/workflow";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { t } from "@/i18n/catalog";
 import { triggerKindLabel } from "./workflowStepMeta";
 
 /** Map a run's terminal status to a {@link StatusDot} tone. */
@@ -94,7 +95,7 @@ export function WorkflowHistorySection() {
         }
       />
       {workflowRuns.length === 0 ? (
-        <EmptyState title="No runs yet." data-testid="workflow-history-empty" />
+        <EmptyState title={t("runHistory.empty")} data-testid="workflow-history-empty" />
       ) : (
         <div className="workflow-history__list" data-testid="workflow-history-list">
           {workflowRuns.map((run) => {

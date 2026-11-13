@@ -1,3 +1,4 @@
+import { t } from "@/i18n/catalog";
 import type { MacroRun, MacroRunOrigin } from "@/types/macro";
 
 /**
@@ -7,13 +8,13 @@ import type { MacroRun, MacroRunOrigin } from "@/types/macro";
 export function macroRunOriginLabel(origin: MacroRunOrigin): string {
   switch (origin) {
     case "manual":
-      return "Manual";
+      return t("macro.run.origin.manual");
     case "palette":
-      return "Palette";
+      return t("macro.run.origin.palette");
     case "workflow-step":
-      return "Workflow step";
+      return t("macro.run.origin.workflowStep");
     case "scheduled":
-      return "Scheduled";
+      return t("macro.run.origin.scheduled");
   }
 }
 

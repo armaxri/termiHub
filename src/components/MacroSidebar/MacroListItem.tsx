@@ -3,6 +3,7 @@ import { Play, Pencil, Copy, Download, Trash2, CalendarClock, History } from "lu
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Macro, MacroRun } from "@/types/macro";
+import { t, tf } from "@/i18n/catalog";
 import { formatAbsoluteTime, formatRelativeTime } from "@/utils/formatters";
 import { MAX_PREVIEW_LINES, macroPreviewLines } from "./macroStepFormat";
 import { macroRunTargetsText } from "./macroRunFormat";
@@ -59,7 +60,9 @@ export function MacroListItem({
 }: MacroListItemProps) {
   const lines = macroPreviewLines(macro.steps);
   const shownLines = lines.slice(0, MAX_PREVIEW_LINES);
-  const playTooltip = playTarget ? `Play in: ${playTarget}` : "Play: no active terminal";
+  const playTooltip = playTarget
+    ? tf("macro.play.target", { target: playTarget })
+    : t("macro.play.noTarget");
 
   return (
     <SidebarListItem
@@ -213,11 +216,11 @@ export function MacroListItem({
           ) : null}
           {lastRun ? (
             <span className="macro-item__last-run" data-testid={`macro-last-run-${macro.id}`}>
-              Last run:{" "}
+              {t("macro.lastRun.label")}{" "}
               <time dateTime={lastRun.endedAt} title={formatAbsoluteTime(lastRun.endedAt)}>
                 {formatRelativeTime(lastRun.endedAt)}
               </time>{" "}
-              on {macroRunTargetsText(lastRun)}
+              {tf("macro.lastRun.on", { target: macroRunTargetsText(lastRun) })}
             </span>
           ) : null}
           {macro.tags.length > 0 ? (
