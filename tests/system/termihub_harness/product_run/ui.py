@@ -27,9 +27,11 @@ from __future__ import annotations
 import contextlib
 import datetime
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Iterator, Optional
 
 import pytest
 
@@ -95,6 +97,50 @@ def make_profile_home(home: Path) -> Path:
     return home
 
 
+#: Docker-backed steps; named in the setup hint when no container runtime runs.
+DOCKER_HINT = (
+    "No container runtime (Docker or Podman) is running, so the Docker-backed SSH steps "
+    "(password and two-factor login) are not tested. Start Docker Desktop (or Podman / "
+    "Colima) before the run if you want them: the run never starts a VM itself."
+)
+
+_SETUP_HINTS_DONE = False
+
+
+def record_setup_hints(
+    recorder: Recorder, *, runtime: Optional[Callable[[], Optional[str]]] = None
+) -> None:
+    """Check the run's optional setup once and list what is missing on the page."""
+    global _SETUP_HINTS_DONE
+    if _SETUP_HINTS_DONE:
+        return
+    _SETUP_HINTS_DONE = True
+    if runtime is None:
+        from ..fixtures import container_runtime as runtime
+    if runtime() is None:
+        recorder.add_hint("docker", DOCKER_HINT)
+        print(f"[product-run] setup hint: {DOCKER_HINT}", flush=True)
+
+
+def notify_operator(title: str, message: str) -> None:
+    """Post a desktop notification so a waiting human step is noticed (macOS).
+
+    Best effort and never fatal: the progress page shows the step either way.
+    Uses ``osascript``'s ``display notification`` (no app is addressed).
+    """
+    if sys.platform != "darwin" or os.environ.get("TERMIHUB_PRODUCT_RUN_NO_NOTIFY") == "1":
+        return
+
+    def quoted(text: str) -> str:
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    script = f"display notification {quoted(message[:200])} with title {quoted(title)} sound name \"Glass\""
+    try:
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def failed_steps_of(instance: object) -> list[str]:
     """The steps a product-run test instance recorded as failed (for conftest)."""
     return list(getattr(instance, "_failed_steps", None) or [])
@@ -124,6 +170,7 @@ class ProductRunUi(HarnessMixin):
             inputs=inputs.summary(),
             profile={"dev_name": dev_name, "home": str(home)},
         )
+        record_setup_hints(recorder)
         cls.recorder = recorder
         cls.inputs = inputs
         cls.profile_home = home
@@ -270,6 +317,7 @@ class ProductRunUi(HarnessMixin):
         if unattended():
             raise pytest.skip.Exception(f"needs a human ({instruction}); unattended run")
         token = self.recorder.request_human(step_id, instruction, expected)
+        notify_operator("termiHub product run: your turn", instruction)
         answer_file = self.recorder.human_dir / f"{token}.json"
         print(
             f"\n[product-run] YOUR TURN: {instruction}\n  expected: {expected}\n"

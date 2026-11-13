@@ -208,6 +208,15 @@ class Recorder:
         )
         _write_atomic(manifest_path, json.dumps(manifest, indent=2) + "\n")
 
+    # ── setup hints ───────────────────────────────────────────────────────────
+    def add_hint(self, key: str, text: str) -> None:
+        """Show ``text`` once at the top of the page (a setup the run lacks).
+
+        Keyed, so a hint several suites raise is listed once; a later call with
+        the same key replaces the text.
+        """
+        self._update(lambda doc: doc.setdefault("hints", {}).update({key: text}))
+
     # ── human steps ───────────────────────────────────────────────────────────
     def request_human(self, step_id: str, instruction: str, expected: str) -> str:
         """Ask the operator (the page shows it with a Done button); returns the token."""
