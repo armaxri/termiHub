@@ -58,26 +58,6 @@
   text-align: center;
 }
 
-/* === Footer === */
-.settings-panel__footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-md);
-  border-top: 1px solid var(--border-secondary);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.settings-panel__footer-hash {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-2xs);
-  opacity: 0.6;
-}
-
 /* Transient "Saved" acknowledgment (auto-save feedback). #5562: it shows
    beside the edited field's label (.settings-panel__saved-mark) and this live
    region only announces it; for an edit outside any field the region itself
