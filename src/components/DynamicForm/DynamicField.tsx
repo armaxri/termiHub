@@ -170,8 +170,17 @@ export function DynamicField({
           onChange(next);
           return;
         }
+        // Keep the toggle the choice is about in view (#5630). Focus it before
+        // the chooser opens (a WebKit mouse click does not), so the dialog
+        // returns focus here instead of to the editor's first field, and
+        // scroll it back into view once the dialog has gone.
+        const toggle = document.getElementById(controlId);
+        toggle?.focus({ preventScroll: true });
         void ensureCredentialStorageForSave().then((active) => {
           if (active) onChange(true);
+          requestAnimationFrame(() => {
+            if (toggle?.isConnected) toggle.scrollIntoView?.({ block: "nearest" });
+          });
         });
       }
     : onChange;

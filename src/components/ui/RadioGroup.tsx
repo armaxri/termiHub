@@ -174,6 +174,19 @@ export function RadioGroup({
   ...rest
 }: RadioGroupProps): React.ReactElement {
   const idBase = React.useId();
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  // Focus follows the selection (#5630). A mouse click in WebKit (and any
+  // synthetic click) selects a radio without focusing it, which left the
+  // focus ring on the previous option while another showed as selected: two
+  // emphasised options at once. Only moves focus that is already on a radio
+  // in this group; never pulls focus in from elsewhere.
+  React.useLayoutEffect(() => {
+    const group = rootRef.current;
+    const active = document.activeElement;
+    if (!group || !(active instanceof HTMLElement) || !group.contains(active)) return;
+    if (active.getAttribute("role") !== "radio" || active.dataset.state === "checked") return;
+    group.querySelector<HTMLElement>('[role="radio"][data-state="checked"]')?.focus();
+  }, [value]);
   const classes = ["ui-radio-group"];
   if (variant === "cards") classes.push("ui-radio-group--cards");
   if (className) classes.push(className);
@@ -200,6 +213,7 @@ export function RadioGroup({
 
   return (
     <RadioGroupPrimitive.Root
+      ref={rootRef}
       className={rootClass}
       value={value}
       onValueChange={onValueChange}
