@@ -284,6 +284,17 @@ describe("FileTypeSettings", () => {
     expect(query("file-type-overridden-badge-Makefile")).toBeNull();
   });
 
+  it("shows a custom mapping's language as secondary text, not disabled grey (#5722)", async () => {
+    seedSettings({ fileLanguageMappings: { "main.tf": "hcl" } });
+    await render();
+    const row = query("file-type-custom-row-main.tf");
+    const language = query("file-type-custom-language-main.tf");
+    expect(row?.contains(language)).toBe(true);
+    expect(language?.textContent).toBe("→ hcl");
+    expect(language?.className).toContain("file-type-settings__custom-language");
+    expect(language?.className).not.toContain("--disabled");
+  });
+
   describe("built-in defaults table (#5713)", () => {
     const builtInCount =
       Object.keys(BUILT_IN_FILENAME_MAPPINGS).length +

@@ -974,3 +974,36 @@ class TestProductRunSettingsThemes(
                         "settings-serial-prefixes-disclosure", "aria-expanded") != "false":
                     problems.append("no collapsed Show Linux prefixes disclosure")
             assert not problems, "; ".join(problems)
+
+    def test_11_editor_custom_mapping_contrast(self):
+        """Settings ▸ Editor custom mappings show their language readably (#5722).
+
+        Adds a custom mapping through the form, then measures the mapped language
+        against its row: it must read at >= 4.5:1 instead of the disabled grey.
+        The mapping is removed again afterwards.
+        """
+        pattern = "pr5722.tf"
+        with self.step(
+            "settings.editor.custom-mapping-contrast",
+            "Settings ▸ Editor shows a custom file type mapping's language as readable "
+            "secondary text, not faint disabled grey (#5722)",
+            expect="A custom mapping row whose language reads at >= 4.5:1 on the row",
+        ):
+            self.open_settings_category("editor")
+            self.driver.type("file-type-pattern-input", pattern)
+            self.driver.type("file-type-language-input", "hcl")
+            self.driver.click("file-type-add-btn")
+            row = f"file-type-custom-row-{pattern}"
+            language = f"file-type-custom-language-{pattern}"
+            try:
+                self.wait(lambda: self.driver.exists(language), what="the custom mapping row")
+                time.sleep(0.4)
+                self.shot(label="custom-mapping")
+                fg = self.style_color("color", language)
+                bg = self.opaque_background(row, self.root_color("--bg-tertiary"))
+                ratio = contrast(fg, bg)
+                self.evidence(f"custom mapping language contrast {ratio:.2f}:1")
+                assert ratio >= 4.5, f"custom mapping language contrast {ratio:.2f}:1 < 4.5:1"
+            finally:
+                if self.driver.exists(f"file-type-remove-{pattern}"):
+                    self.driver.click(f"file-type-remove-{pattern}")
