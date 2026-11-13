@@ -192,6 +192,52 @@ describe("Modal", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  describe("default initial focus (#5550)", () => {
+    function renderModal(body: React.ReactNode, footer?: React.ReactNode) {
+      render(
+        <Modal data-testid="modal" open onOpenChange={() => {}} title="Pick" footer={footer}>
+          {body}
+        </Modal>
+      );
+    }
+    const byTestId = (id: string) => document.querySelector(`[data-testid="${id}"]`);
+
+    it("skips disabled and tabindex=-1 body controls", () => {
+      renderModal(
+        <>
+          <button type="button" disabled data-testid="disabled">
+            Off
+          </button>
+          <button type="button" tabIndex={-1} data-testid="untabbable">
+            Skip
+          </button>
+          <input data-testid="field" />
+        </>
+      );
+      expect(document.activeElement).toBe(byTestId("field"));
+    });
+
+    it("falls back to the first footer action when the body has nothing to focus", () => {
+      renderModal(
+        <p>Are you sure?</p>,
+        <>
+          <button type="button" data-testid="cancel">
+            Cancel
+          </button>
+          <button type="button" data-testid="ok">
+            OK
+          </button>
+        </>
+      );
+      expect(document.activeElement).toBe(byTestId("cancel"));
+    });
+
+    it("lands on the X only when nothing else can take focus", () => {
+      renderModal(<p>Just text</p>);
+      expect(document.activeElement).toBe(byTestId("modal-close"));
+    });
+  });
+
   describe("initialFocusRef (#4332)", () => {
     /** A trigger that opens the modal; the modal's field is not its first tabbable. */
     function Harness({ withRef }: { withRef: boolean }) {
@@ -230,9 +276,9 @@ describe("Modal", () => {
       expect(document.activeElement).toBe(document.querySelector('[data-testid="modal-field"]'));
     });
 
-    it("without it, Radix focuses the first tabbable as before", () => {
+    it("without it, focuses the first tabbable in the body — never the X (#5550)", () => {
       openFromTrigger(false);
-      expect(document.activeElement).toBe(document.querySelector('[data-testid="modal-close"]'));
+      expect(document.activeElement).toBe(document.querySelector('[data-testid="modal-field"]'));
     });
 
     it("still returns focus to the trigger once the modal closes and unmounts", async () => {
