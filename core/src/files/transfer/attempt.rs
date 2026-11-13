@@ -441,6 +441,44 @@ pub(super) async fn local_size(path: &str) -> Option<u64> {
     tokio::fs::metadata(path).await.map(|m| m.len()).ok()
 }
 
+/// Size of a resumed download's local partial, trimmed to the `requested`
+/// offset first (#5609).
+///
+/// The copy keeps writing between the checkpoints it persists, so after a
+/// crash the partial is usually longer than the checkpoint a relaunch resumes
+/// from. Those extra bytes are dropped (they are fetched again), so the
+/// resume gate sees the checkpoint itself rather than a partial "longer than
+/// we wrote", which it would restart from zero. A shorter partial is left as
+/// is; a failed trim reports the untrimmed size, so the gate still restarts.
+#[cfg_attr(
+    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    allow(dead_code, reason = "only the offset-resuming download executors trim")
+)]
+pub(super) async fn local_partial_size(path: &str, requested: u64) -> Option<u64> {
+    let present = local_size(path).await?;
+    if requested == 0 || present <= requested {
+        return Some(present);
+    }
+    let trimmed = async {
+        let file = tokio::fs::OpenOptions::new().write(true).open(path).await?;
+        file.set_len(requested).await?;
+        file.sync_all().await
+    };
+    match trimmed.await {
+        Ok(()) => {
+            debug!(
+                present,
+                requested, "trimmed the local partial to its checkpoint"
+            );
+            Some(requested)
+        }
+        Err(e) => {
+            warn!(present, requested, error = %e, "could not trim the local partial");
+            Some(present)
+        }
+    }
+}
+
 /// Open the local destination for a resumed download: the existing partial is
 /// opened for writing and the file pointer is seeked to `offset` so the copy
 /// appends rather than truncates. A zero offset creates/truncates the file.
@@ -1360,6 +1398,42 @@ mod tests {
         let second = local_fingerprint(path_str).await.expect("fingerprint");
         assert!(!first.same_source(&second));
         assert_eq!(local_size(path_str).await, Some(11));
+    }
+
+    /// #5609: after a crash the local partial holds the bytes written after
+    /// the last persisted checkpoint too. They are trimmed off, so the resume
+    /// gate sees exactly the checkpoint and resumes from it instead of
+    /// restarting a "longer than we wrote" partial from zero.
+    #[tokio::test]
+    async fn local_partial_size_trims_bytes_past_the_checkpoint() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dst.part");
+        let path_str = path.to_str().expect("utf8");
+        assert_eq!(
+            local_partial_size(path_str, 4).await,
+            None,
+            "absent stays absent"
+        );
+        std::fs::write(&path, b"abcdefgh").expect("write");
+        assert_eq!(local_partial_size(path_str, 8).await, Some(8));
+        assert_eq!(
+            local_partial_size(path_str, 10).await,
+            Some(8),
+            "shorter is kept"
+        );
+        assert_eq!(local_partial_size(path_str, 5).await, Some(5));
+        assert_eq!(std::fs::read(&path).expect("read"), b"abcde");
+
+        let (handle, sink, _) = harness();
+        let mut cursor = ResumeCursor {
+            offset: 3,
+            total: 100,
+            baseline: fp(100, 7),
+        };
+        let present = local_partial_size(path_str, cursor.offset).await;
+        apply_resume_gate(&mut cursor, &handle, &sink, fp(100, 7), present, "T");
+        assert_eq!(cursor.offset, 3, "resumes from the checkpoint");
+        assert_eq!(std::fs::read(&path).expect("read"), b"abc");
     }
 
     #[tokio::test]

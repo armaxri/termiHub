@@ -32,7 +32,7 @@ use crate::files::{FileEntry, RangedFileAccess};
 
 use super::attempt::{
     apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
-    local_size, open_local_dest, open_local_read, probe_timed_out, rehydrate_start_offset,
+    local_partial_size, open_local_dest, open_local_read, probe_timed_out, rehydrate_start_offset,
     settle_attempt, stop_reason, AttemptOutcome, AttemptsResult, Probed, ProgressReporter,
     ResumeCursor, StopReason, STALL_TIMEOUT,
 };
@@ -260,7 +260,7 @@ async fn gate_resume(
             None
         } else {
             match direction {
-                TransferDirection::Download => local_size(local_path).await,
+                TransferDirection::Download => local_partial_size(local_path, offset).await,
                 TransferDirection::Upload => remote_fingerprint(target, remote_path)
                     .await
                     .map(|fp| fp.size),

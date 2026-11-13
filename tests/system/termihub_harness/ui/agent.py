@@ -142,7 +142,11 @@ class AgentUi(HarnessMixin):
         self.driver.type("field-host", str(host))
         self.driver.type("field-port", str(port))
         self.driver.type("field-username", username)
-        if auth_method:
+        # The select's trigger mirrors its value as `data-value`; skip opening
+        # its listbox when the default already is the method (#5609: a loaded
+        # Windows runner once missed the portalled option).
+        current = self.driver.get_attribute("field-authMethod", "data-value")
+        if auth_method and current != auth_method:
             self.driver.select("field-authMethod", auth_method)
         self.driver.click(self.EDITOR_SAVE)
         agent = self.require_agent(name)
