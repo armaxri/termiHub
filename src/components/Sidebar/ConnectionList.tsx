@@ -1045,15 +1045,23 @@ export function ConnectionList() {
   // logic and their stored `isExpanded` is ignored (#1378). Suppress folder
   // toggles (click + keyboard) so a toggle has no hidden effect and clearing the
   // filter restores exactly the expansion state the tree had before filtering.
+  // A folder the user is expanding while it hides the active connection: once
+  // the expansion has rendered, the connection row is scrolled into view (or,
+  // inside a still-collapsed subfolder, that subfolder's marked row) (#5706).
+  // The folder click also reaches the tree's click-on-empty deselect, so a
+  // selection that was on the hidden connection is restored with the reveal.
+  const pendingReveal = useRef<{ folderId: string; reselect: boolean } | null>(null);
   const handleToggleFolder = useCallback(
     (folderId: string) => {
       if (filter) return;
       const expanding = folders.find((f) => f.id === folderId)?.isExpanded === false;
-      toggleFolder(folderId);
-      // Expanding a folder that hides the active connection shows its row (#5706).
       if (expanding && activeConnectionId && activeConnectionFolderIds.has(folderId)) {
-        revealConnectionRow(activeConnectionId, activeConnectionAncestors);
+        pendingReveal.current = {
+          folderId,
+          reselect: selectedConnectionIds.has(activeConnectionId),
+        };
       }
+      toggleFolder(folderId);
     },
     [
       filter,
@@ -1061,9 +1069,23 @@ export function ConnectionList() {
       toggleFolder,
       activeConnectionId,
       activeConnectionFolderIds,
-      activeConnectionAncestors,
+      selectedConnectionIds,
     ]
   );
+  useEffect(() => {
+    const pending = pendingReveal.current;
+    if (!pending || !folders.some((f) => f.id === pending.folderId && f.isExpanded)) return;
+    pendingReveal.current = null;
+    if (!activeConnectionId || !activeConnectionFolderIds.has(pending.folderId)) return;
+    if (pending.reselect) selectConnectionSingle(activeConnectionId);
+    revealConnectionRow(activeConnectionId, activeConnectionAncestors);
+  }, [
+    folders,
+    activeConnectionId,
+    activeConnectionFolderIds,
+    activeConnectionAncestors,
+    selectConnectionSingle,
+  ]);
 
   // Activate a row: folders toggle, connections connect — shared by Enter (via
   // the roving-nav handler) and Space (tree-specific handler below).
