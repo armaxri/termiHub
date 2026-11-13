@@ -398,7 +398,12 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
               )}
               <div className="settings-panel__inline-dialog-actions">
-                <Button variant="secondary" size="sm" onClick={resetSwitchDialogs}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={resetSwitchDialogs}
+                  data-testid="confirm-switch-cancel-btn"
+                >
                   Cancel
                 </Button>
                 <Button
