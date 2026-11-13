@@ -688,9 +688,12 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// `has_integration` says whether the shell-integration line is typed,
 /// `has_setup` whether any setup line (env fallback, X11, integration) is.
 ///
-/// - A POSIX login shell: only with the integration line, whose setup-done
-///   mark is what ends the hidden region (see
-///   [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)).
+/// - A POSIX login shell: whenever anything is typed. With the integration
+///   line, its setup-done mark is what ends the hidden region (see
+///   [`SetupEchoFilter`](crate::output::setup_echo::SetupEchoFilter)); with
+///   the hook off (#5555) the joined env / X11 line ends with that mark
+///   itself ([`join_marked_setup`]), so the typed `export DISPLAY=…` and
+///   the `xauth` cookie are hidden too.
 /// - A fish login shell (#5016, #5094): whenever anything is typed. The
 ///   joined fish line always ends with the setup-done mark
 ///   ([`join_marked_setup`]), so a fish 4 — which is typed no integration
@@ -710,8 +713,9 @@ pub fn defers_setup_until_prompt(shell: RemoteShell, has_setup: bool) -> bool {
 /// erases its own echo instead, [`powershell_erase_echo`]).
 pub fn hides_setup_echo(shell: RemoteShell, has_integration: bool, has_setup: bool) -> bool {
     match shell {
-        RemoteShell::Posix => has_integration,
-        RemoteShell::Fish { windows: false, .. } => has_setup || has_integration,
+        RemoteShell::Posix | RemoteShell::Fish { windows: false, .. } => {
+            has_setup || has_integration
+        }
         _ => false,
     }
 }
