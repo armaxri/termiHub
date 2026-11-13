@@ -1,0 +1,5 @@
+{
+  "$comment": "macOS signing identity (#5545): the SHA-1 of termiHub's self-signed code-signing certificate, the hash every release's designated requirement names (certificate root/leaf = H\"<sha1>\"), so keychain access survives updates. Public data. Written by scripts/internal/setup-macos-signing-identity.sh; release.yml signs with the MACOS_SIGNING_P12_BASE64 secret only while this is set and refuses a secret holding another certificate. Empty = not set up yet: releases stay ad-hoc signed.",
+  "certificateSha1": "",
+  "subject": ""
+}
