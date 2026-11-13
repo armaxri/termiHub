@@ -23,8 +23,9 @@
 #                         `externalBin` expects. Tauri strips the -<triple>
 #                         suffix and drops the helper next to the app binary,
 #                         where SidecarRdp's next-to-exe resolution finds it.
-#                         macOS: ad-hoc signed first, under its installed
-#                         name, so the release re-sign leaves its bytes (and
+#                         macOS: signed first, under its installed name
+#                         (ad hoc, or with TERMIHUB_MACOS_SIGNING_IDENTITY,
+#                         #5545), so the release re-sign leaves its bytes (and
 #                         the digest core/build.rs embeds) unchanged (#4222).
 #                         Linux: RUNPATH set to $ORIGIN/../lib first (needs
 #                         patchelf), so the AppImage bundler leaves it as is
@@ -147,10 +148,13 @@ if [ "$EXTERNALBIN" -eq 1 ]; then
         if command -v codesign >/dev/null 2>&1; then
             SIGN_DIR="$(mktemp -d)"
             cp "$BIN_PATH" "$SIGN_DIR/termihub-rdp-helper"
-            codesign -s - --force "$SIGN_DIR/termihub-rdp-helper"
+            # With TERMIHUB_MACOS_SIGNING_IDENTITY set (release.yml, #5545) this
+            # is the project's self-signed identity, and the release re-sign
+            # keeps this signature; otherwise ad hoc.
+            bash scripts/internal/macos-codesign.sh sign "$SIGN_DIR/termihub-rdp-helper"
             cp "$SIGN_DIR/termihub-rdp-helper" "$STAGE_DIR/$STAGE_NAME"
             rm -rf "$SIGN_DIR"
-            echo "Ad-hoc signed as termihub-rdp-helper"
+            echo "Signed as termihub-rdp-helper (${TERMIHUB_MACOS_SIGNING_IDENTITY:-ad hoc})"
         else
             echo "WARNING: codesign not found; staging the helper unsigned. A macOS" >&2
             echo "  bundle re-signed later will not match the embedded digest." >&2
