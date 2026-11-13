@@ -29,6 +29,7 @@ import {
   effectiveExitedMap,
   effectiveReconnectingMap,
   ensureSessionSubscribed,
+  mirrorSessionAlreadyConnected,
   mirrorSessionExited,
   mirrorSessionIntent,
   onSessionView,
@@ -117,6 +118,25 @@ beforeEach(() => {
 afterEach(() => {
   stopSessionSubscription();
   setSessionTransportForTest(null);
+});
+
+describe("mirrorSessionAlreadyConnected (#5608)", () => {
+  it("registers a tab opened on a live session: connect, then connected, in order", async () => {
+    mirrorSessionAlreadyConnected("tab-live");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transport.dispatched.map((i) => [i.kind, i.payload])).toEqual([
+      ["session.connect", { sessionId: "tab-live" }],
+      ["session.connected", { sessionId: "tab-live" }],
+    ]);
+  });
+
+  it("never throws when the transport fails", async () => {
+    transport.onDispatch = () => {
+      throw new Error("boom");
+    };
+    expect(() => mirrorSessionAlreadyConnected("tab-x")).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 });
 
 describe("dispatchSessionIntent", () => {
