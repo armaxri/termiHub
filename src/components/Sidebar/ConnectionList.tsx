@@ -560,6 +560,7 @@ function ConnectionItem({
                 iconColor={connection.iconColor}
                 iconEmoji={connection.iconEmoji}
                 size={16}
+                testId={`connection-icon-${connection.id}`}
               />
               <span className="connection-tree__label">{connection.name}</span>
               {pluginIssue && (

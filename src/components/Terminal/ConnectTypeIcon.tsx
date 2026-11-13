@@ -1,4 +1,4 @@
-import { Cable, Container, Globe, Monitor, Terminal, Wifi } from "lucide-react";
+import { ConnectionTypeIcon } from "@/utils/connectionIcons";
 
 /** Props for {@link ConnectTypeIcon}. */
 export interface ConnectTypeIconProps {
@@ -9,23 +9,9 @@ export interface ConnectTypeIconProps {
 }
 
 /**
- * The glyph for a connection type on the connect overlay (#5068) — the same
- * mapping the agent tree uses for its session rows.
+ * The glyph for a connection type on the connect overlay (#5068) — the shared
+ * connection-type mapping used by the sidebar, tabs and agent tree (#5622).
  */
 export function ConnectTypeIcon({ type, size = 20 }: ConnectTypeIconProps) {
-  switch (type) {
-    case "serial":
-      return <Cable size={size} aria-hidden />;
-    case "docker":
-      return <Container size={size} aria-hidden />;
-    case "ssh":
-      return <Wifi size={size} aria-hidden />;
-    case "telnet":
-      return <Globe size={size} aria-hidden />;
-    case "rdp":
-    case "vnc":
-      return <Monitor size={size} aria-hidden />;
-    default:
-      return <Terminal size={size} aria-hidden />;
-  }
+  return <ConnectionTypeIcon type={type} size={size} aria-hidden />;
 }

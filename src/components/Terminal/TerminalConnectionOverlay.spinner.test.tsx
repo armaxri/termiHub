@@ -26,15 +26,13 @@ vi.mock("lucide-react", () => {
     Check: icon("icon-check"),
     CircleAlert: icon("icon-circlealert"),
     Clock: icon("icon-clock"),
-    Cable: icon("icon-cable"),
-    Container: icon("icon-container"),
-    Globe: icon("icon-globe"),
-    Monitor: icon("icon-monitor"),
-    Terminal: icon("icon-terminal"),
-    Wifi: icon("icon-wifi"),
     Copy: icon("icon-copy"),
   };
 });
+
+// The type glyph comes from the shared connection-type map (#5622), covered by
+// ConnectTypeIcon.test.tsx; stub it so this lucide mock stays minimal.
+vi.mock("./ConnectTypeIcon", () => ({ ConnectTypeIcon: () => null }));
 
 const TAB_ID = "tab-test";
 const PANEL_ID = "panel-test";
