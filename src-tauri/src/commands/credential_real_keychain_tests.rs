@@ -383,9 +383,15 @@ impl UpdatedBuild {
         let signed = std::process::Command::new("/usr/bin/codesign")
             .args(["--force", "--sign", "-", "--identifier", "termihub-dev-ci-update"])
             .arg(&path)
-            .status()
+            .output()
             .expect("run codesign");
-        assert!(signed.success(), "could not re-sign the test binary");
+        // Captured: codesign's "replacing existing signature" on the
+        // inherited stderr would split the test's `... ok` line.
+        assert!(
+            signed.status.success(),
+            "could not re-sign the test binary: {}",
+            String::from_utf8_lossy(&signed.stderr)
+        );
         Self { _dir: dir, path }
     }
 }
