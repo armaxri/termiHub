@@ -60,28 +60,31 @@ const TOAST_OFFSET = {
 export function ToastProvider() {
   useToastAvoidInset(TOAST_WIDTH, TOAST_EDGE);
   return (
-    <Toaster
-      position="bottom-right"
-      expand
-      visibleToasts={VISIBLE_TOASTS}
-      gap={8}
-      offset={TOAST_OFFSET}
-      mobileOffset={TOAST_OFFSET}
-      closeButton
-      hotkey={toastHotkey()}
-      toastOptions={{ className: "th-toast", unstyled: true, closeButtonAriaLabel: "Close" }}
-      icons={{
-        success: <CheckCircle2 className="th-toast__icon-svg" aria-hidden />,
-        error: <XCircle className="th-toast__icon-svg" aria-hidden />,
-        info: <Info className="th-toast__icon-svg" aria-hidden />,
-        loading: (
-          <Loader2
-            className="th-toast__icon-svg th-toast__icon-svg--spin motion-essential-spinner"
-            aria-hidden
-          />
-        ),
-        close: <X className="th-toast__close-icon" aria-hidden />,
-      }}
-    />
+    // `toast-region` lets the product run measure the stack (#5618).
+    <div data-testid="toast-region">
+      <Toaster
+        position="bottom-right"
+        expand
+        visibleToasts={VISIBLE_TOASTS}
+        gap={8}
+        offset={TOAST_OFFSET}
+        mobileOffset={TOAST_OFFSET}
+        closeButton
+        hotkey={toastHotkey()}
+        toastOptions={{ className: "th-toast", unstyled: true, closeButtonAriaLabel: "Close" }}
+        icons={{
+          success: <CheckCircle2 className="th-toast__icon-svg" aria-hidden />,
+          error: <XCircle className="th-toast__icon-svg" aria-hidden />,
+          info: <Info className="th-toast__icon-svg" aria-hidden />,
+          loading: (
+            <Loader2
+              className="th-toast__icon-svg th-toast__icon-svg--spin motion-essential-spinner"
+              aria-hidden
+            />
+          ),
+          close: <X className="th-toast__close-icon" aria-hidden />,
+        }}
+      />
+    </div>
   );
 }
