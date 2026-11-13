@@ -262,7 +262,7 @@ describe("SecuritySettings", () => {
     expect(switchCalls.length).toBeGreaterThan(0);
   });
 
-  it("shows a success toast after a successful store switch", async () => {
+  it("confirms a successful store switch once, inline, without a toast (#5629)", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
@@ -294,10 +294,13 @@ describe("SecuritySettings", () => {
       confirmBtn.click();
     });
 
-    expect(mockedToast.success).toHaveBeenCalled();
+    expect(query("migration-result")).not.toBeNull();
+    expect(container.textContent?.match(/Switched to/g)).toHaveLength(1);
+    expect(mockedToast.success).not.toHaveBeenCalled();
+    expect(mockedToast.info).not.toHaveBeenCalled();
   });
 
-  it("shows an error toast when the store switch fails", async () => {
+  it("shows a failed store switch inline in the confirm, without a toast (#5629)", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
@@ -321,7 +324,10 @@ describe("SecuritySettings", () => {
       confirmBtn.click();
     });
 
-    expect(mockedToast.error).toHaveBeenCalled();
+    const dialog = query("confirm-switch-dialog") as HTMLElement;
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain("switch boom");
+    expect(mockedToast.error).not.toHaveBeenCalled();
     expect(mockedToast.success).not.toHaveBeenCalled();
   });
 
@@ -602,6 +608,65 @@ describe("SecuritySettings", () => {
     });
   });
 
+  // #5629: each switch confirmation names its action and says what happens to
+  // the saved credentials and the master-password vault.
+  describe("switch confirmation copy (#5629)", () => {
+    async function openSwitch(from: "master_password" | "os_keychain" | "none", to: string) {
+      useAppStore.setState({ credentialStoreStatus: { mode: from, status: "unlocked" } });
+      await render();
+      await act(async () => {
+        (query(to) as HTMLElement).click();
+      });
+    }
+
+    it("names the move to the OS Keychain and says the vault is kept", async () => {
+      await openSwitch("master_password", "storage-mode-os-keychain");
+      const dialog = query("confirm-switch-dialog") as HTMLElement;
+      const title = dialog.querySelector("h4")!.textContent;
+      expect(title).toBe("Move saved credentials to OS Keychain?");
+      expect(query("confirm-switch-confirm-btn")!.textContent).toBe("Move to OS Keychain");
+      expect(dialog.textContent).toMatch(/master-password vault stays on this computer/);
+      // One name for the target: never "OS credential store".
+      expect(dialog.textContent).not.toMatch(/credential store/i);
+      expect(dialog.textContent).not.toMatch(/\bConfirm\b/);
+    });
+
+    it("says nothing is moved when no storage was used before", async () => {
+      await openSwitch("none", "storage-mode-os-keychain");
+      const dialog = query("confirm-switch-dialog") as HTMLElement;
+      expect(dialog.querySelector("h4")!.textContent).toBe("Use OS Keychain?");
+      expect(query("confirm-switch-confirm-btn")!.textContent).toBe("Use OS Keychain");
+      expect(dialog.textContent).toMatch(/nothing is moved/i);
+    });
+
+    it("names the delete when turning storage off, as a danger action", async () => {
+      await openSwitch("os_keychain", "storage-mode-none");
+      const dialog = query("confirm-switch-dialog") as HTMLElement;
+      expect(dialog.querySelector("h4")!.textContent).toBe("Delete saved credentials?");
+      const btn = query("confirm-switch-confirm-btn")!;
+      expect(btn.textContent).toBe("Delete saved credentials");
+      expect(btn.classList.contains("ui-btn--danger")).toBe(true);
+      expect(dialog.textContent).toMatch(/saved in the OS Keychain/);
+    });
+
+    it("names the move into a master-password vault and keeps the keychain copies", async () => {
+      await openSwitch("os_keychain", "storage-mode-master-password");
+      const form = query("master-password-setup") as HTMLElement;
+      expect(form.querySelector("h4")!.textContent).toBe(
+        "Move saved credentials to a master-password vault"
+      );
+      expect(form.textContent).toMatch(/copies in the OS Keychain are left in place/);
+      expect(query("master-password-confirm-btn")!.textContent).toBe("Move to Master password");
+    });
+
+    it("names turning the master password on from no storage", async () => {
+      await openSwitch("none", "storage-mode-master-password");
+      const form = query("master-password-setup") as HTMLElement;
+      expect(form.querySelector("h4")!.textContent).toBe("Set master password");
+      expect(query("master-password-confirm-btn")!.textContent).toBe("Turn on master password");
+    });
+  });
+
   // #2839: the switch flow must distinguish a clean migration from a partial or
   // failed one using the backend's structured `status`, never the warnings.
   describe("migration status", () => {
@@ -624,7 +689,7 @@ describe("SecuritySettings", () => {
 
     const base = { removedCount: 0, remaining: [], rolledBack: false };
 
-    it("reports a clean success with a success toast and no warnings", async () => {
+    it("reports a clean success inline only, with no warnings", async () => {
       await switchFromMasterPasswordToKeychain({
         ...base,
         status: "success",
@@ -637,7 +702,7 @@ describe("SecuritySettings", () => {
       expect(panel.dataset.status).toBe("success");
       expect(panel.textContent).toContain("3 credentials migrated");
       expect(query("migration-warnings")).toBeNull();
-      expect(mockedToast.success).toHaveBeenCalledTimes(1);
+      expect(mockedToast.success).not.toHaveBeenCalled();
       expect(mockedToast.info).not.toHaveBeenCalled();
       expect(mockedToast.error).not.toHaveBeenCalled();
     });
@@ -658,7 +723,7 @@ describe("SecuritySettings", () => {
       expect(panel.textContent).toContain("1 credential could not be moved");
       expect(panel.textContent).not.toContain("successfully");
       expect(query("migration-warnings")?.textContent).toContain("conn-1:password");
-      expect(mockedToast.info).toHaveBeenCalledTimes(1);
+      expect(mockedToast.info).not.toHaveBeenCalled();
       expect(mockedToast.success).not.toHaveBeenCalled();
       expect(mockedToast.error).not.toHaveBeenCalled();
     });
@@ -681,7 +746,7 @@ describe("SecuritySettings", () => {
       expect(panel.textContent).toContain("Master password is still active");
       expect(panel.textContent).not.toContain("Switched to");
       expect(query("migration-warnings")?.querySelectorAll("li")).toHaveLength(2);
-      expect(mockedToast.error).toHaveBeenCalledTimes(1);
+      expect(mockedToast.error).not.toHaveBeenCalled();
       expect(mockedToast.success).not.toHaveBeenCalled();
     });
 
@@ -717,7 +782,8 @@ describe("SecuritySettings", () => {
       expect(panel.textContent).toContain("3 credentials removed");
       expect(panel.textContent).not.toContain("migrated");
       expect(query("migration-remaining")).toBeNull();
-      expect(mockedToast.success).toHaveBeenCalledWith("Switched to None — 3 credentials removed.");
+      expect(panel.textContent).toContain("Switched to None — 3 credentials removed.");
+      expect(mockedToast.success).not.toHaveBeenCalled();
     });
 
     it("lists the entries a switch to none could not remove", async () => {
@@ -739,7 +805,7 @@ describe("SecuritySettings", () => {
       const remaining = query("migration-remaining");
       expect(remaining?.querySelectorAll("li")).toHaveLength(1);
       expect(remaining?.textContent).toContain("conn-9:password");
-      expect(mockedToast.info).toHaveBeenCalledTimes(1);
+      expect(mockedToast.info).not.toHaveBeenCalled();
     });
 
     it("reports a switch to none that removed nothing as rolled back", async () => {
