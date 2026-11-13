@@ -3,7 +3,8 @@
 //! The vendored `vnc-rs` decoders emit `RawImage` rectangles (Raw, ZRLE, Tight
 //! fill/copy/palette/gradient) in the **negotiated** RFB pixel format. termiHub
 //! negotiates either 32-bit RGBA — byte-identical to the shared contract, passed
-//! through untouched — or 16-bit high colour, which is expanded here.
+//! through with only its padding byte set opaque — or 16-bit high colour, which
+//! is expanded here.
 //!
 //! The conversion is driven entirely by the negotiated [`PixelFormat`]: its
 //! bytes per pixel, its big-endian flag, and each channel's shift and maximum.
@@ -19,7 +20,7 @@ use vnc::PixelFormat;
 pub struct PixelConverter {
     format: PixelFormat,
     bytes_per_pixel: usize,
-    /// The format already is byte-order RGBA: no conversion needed.
+    /// The format already is byte-order RGBA: only the padding byte is made opaque.
     passthrough: bool,
     /// Per-channel lookup tables: channel value (`0..=max`) → 8-bit intensity.
     luts: [Vec<u8>; 3],
@@ -68,6 +69,12 @@ impl PixelConverter {
             return None;
         }
         if self.passthrough {
+            // The fourth byte is RFB padding ("x"), not alpha: servers commonly
+            // send 0 there, which the canvas would draw fully transparent.
+            let mut data = data;
+            for pixel in data.as_chunks_mut::<4>().0 {
+                pixel[3] = 255;
+            }
             return Some(data);
         }
         let big_endian = self.format.big_endian_flag != 0;
@@ -120,10 +127,15 @@ mod tests {
     }
 
     #[test]
-    fn rgba_is_passed_through_untouched() {
+    fn rgba_keeps_its_colours_and_becomes_opaque() {
+        // The fourth byte is RFB padding, which servers commonly send as 0. Taken
+        // as alpha it made the canvas transparent: nothing painted (#5608).
         let conv = PixelConverter::new(PixelFormat::rgba()).unwrap();
-        let data = vec![1, 2, 3, 0, 4, 5, 6, 0];
-        assert_eq!(conv.to_rgba(data.clone(), 2), Some(data));
+        let data = vec![1, 2, 3, 0, 4, 5, 6, 0x7f];
+        assert_eq!(
+            conv.to_rgba(data, 2),
+            Some(vec![1, 2, 3, 255, 4, 5, 6, 255])
+        );
     }
 
     #[test]

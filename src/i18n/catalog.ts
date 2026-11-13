@@ -133,6 +133,20 @@ const en = {
   "schedule.connect.skip.failed": "could not connect: {error}",
   "schedule.connect.skip.notReady": "the terminal did not open in time",
 
+  // ── Connect-time password prompt (PasswordPrompt, #5617) ────────────────
+  // Titled after the connection's real transport: a telnet password is not
+  // an SSH one. Sentence case; the connection name sits on its own line.
+  "passwordPrompt.title.password": "{transport} password",
+  "passwordPrompt.title.keyPassphrase": "SSH key passphrase",
+  "passwordPrompt.connection": "Connection: {name}",
+  "passwordPrompt.description.password": "Enter password for {target}",
+  "passwordPrompt.description.keyPassphrase":
+    "Enter the passphrase for the SSH key used by {target}",
+  "passwordPrompt.description.keyPassphraseWithPath":
+    "Enter the passphrase for key {keyPath}, used by {target}",
+  "passwordPrompt.input.password": "{transport} password",
+  "passwordPrompt.input.keyPassphrase": "SSH key passphrase",
+
   // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
   "tunnel.missingConnection.status": "SSH connection deleted",
   "tunnel.missingConnection.detail": "SSH connection deleted — choose another",

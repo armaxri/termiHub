@@ -1302,6 +1302,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           requestPassword,
           // The connection's name titles the prompt (#4475).
           label: name.trim(),
+          transport: currentTypeInfo?.displayName,
         });
         if (resolved.status === "canceled") {
           toast.info("Connect canceled — your changes were saved.");
@@ -1382,6 +1383,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       sourceFile: savedSourceFile,
       requestPassword,
       label: saved.name,
+      // Titled after the real transport (#5617); agent mode is SSH.
+      transport: isAgentTransportMode ? "SSH" : currentTypeInfo?.displayName,
     });
     if (secret.status === "canceled") {
       // The connection was saved; only the connect step was aborted. Surface a
@@ -1522,6 +1525,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         // Test never persists the secret, so the prompt offers no Save box (#3316).
         allowSave: false,
         label: testLabel,
+        // Titled after the real transport (#5617); agent mode is SSH.
+        transport: isAgentTransportMode ? "SSH" : currentTypeInfo?.displayName,
       });
       if (secret.status === "canceled") {
         // Cancel cleanly: no probe ran, so no auth-failure toast. Rethrow so the

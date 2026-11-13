@@ -166,7 +166,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                   </span>
                 ) : updateCheckState === "up-to-date" && notChecked ? (
                   <span data-testid="update-latest-version">Not checked for this build</span>
-                ) : updateCheckState === "up-to-date" ? (
+                ) : updateCheckState === "up-to-date" && lastCheckTime ? (
                   <span className="update-settings__up-to-date" data-testid="update-latest-version">
                     Up to date
                   </span>
@@ -174,8 +174,14 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                   <span className="update-settings__error" data-testid="update-latest-version">
                     Check failed
                   </span>
+                ) : isChecking ? (
+                  <span data-testid="update-latest-version">Checking…</span>
                 ) : (
-                  <span data-testid="update-latest-version">—</span>
+                  // "Up to date" is only claimed after a completed, timestamped
+                  // check (#5615); before that the page says so honestly.
+                  <span data-testid="update-latest-version">
+                    {lastCheckTime ? "Not checked since launch" : "Not checked yet"}
+                  </span>
                 )}
               </span>
             </div>
@@ -237,7 +243,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
                 value: "off",
                 label: "Never",
                 description: (
-                  <>Disable automatic checks. Use &ldquo;Check Now&rdquo; to check manually.</>
+                  <>Disable automatic checks. Use &ldquo;Check now&rdquo; to check manually.</>
                 ),
                 "data-testid": "update-auto-check-off",
               },

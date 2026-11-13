@@ -311,6 +311,9 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
       allowSave: false,
       // The form's name titles the prompt (#4475).
       label: "Key Server",
+      // The transport titles it, and the key file is named (#5617).
+      transport: "SSH",
+      keyPath: "/home/a/.ssh/id_enc",
     });
     expect(testedSettings().password).toBe("key-pass");
     expect(toastSuccess).toHaveBeenCalledTimes(1);
@@ -337,6 +340,7 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
     expect(requestPassword).toHaveBeenCalledWith("10.0.0.9", "root", "", "password", {
       allowSave: false,
       label: "Brand New",
+      transport: "SSH",
     });
     expect(testedSettings().password).toBe("entered");
     expectNothingPersisted();
@@ -476,6 +480,10 @@ describe("ConnectionEditor — password prompt Save control (#3316)", () => {
     await clickTest();
 
     expect(useAppStore.getState().passwordPromptLabel).toBe("Key Server");
-    expect(document.querySelector(".ui-modal__title")?.textContent).toContain("Key Server");
+    // The name sits on its own line, not in the title (#5617).
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH key passphrase");
+    expect(
+      document.querySelector('[data-testid="password-prompt-connection"]')?.textContent
+    ).toContain("Key Server");
   });
 });

@@ -350,6 +350,14 @@ class TestProductRunTelnet(_PhaseBase):
             if asked == "asked":
                 self.shot(label="password-prompt")
                 self.evidence("termiHub asked for the password at connect")
+                # Telnet sends the password in clear text: the prompt must
+                # never present it as an SSH one (#5617).
+                title = self.password_prompt_title()
+                self.evidence(f"prompt title: {title!r}")
+                assert title.startswith("Telnet password"), (
+                    f"the telnet password prompt is titled {title!r}, not 'Telnet password'"
+                )
+                assert "SSH" not in title, f"the telnet password prompt says SSH: {title!r}"
                 self.handle_password_prompt(TELNET_PASSWORD)
             tab = self.tab_of(name)
             session = self.wait(

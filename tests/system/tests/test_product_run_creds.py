@@ -277,7 +277,10 @@ class TestProductRunCredentials(_CredsBase):
             self.evidence(f"migration: {result!r}")
             self.evidence(f"service {run_service()!r}, account {account!r}")
             self.wait(lambda: keychain_has(run_service(), account), what="the keychain item")
-            assert not self.credential_indicator_present(), "a lock indicator in keychain mode"
+            # Keychain mode shows a static "Keychain" item, never the lock toggle.
+            indicator = self.driver.get_text("credential-store-indicator").strip()
+            self.evidence(f"status bar: {indicator!r}")
+            assert indicator == "Keychain", f"status bar shows {indicator!r} in keychain mode"
         self.switch_to_connections_sidebar()
         with self.step(
             "creds.keychain.resolve",
@@ -401,11 +404,23 @@ class TestProductRunBackup(_CredsBase):
             expect="the restore preview listing connections, settings and credentials",
         ):
             self.require("backup.wipe")
+            # A wiped profile has no credential store, and credentials only
+            # import into one ("Choose Master Password or OS Keychain first"),
+            # so set the master-password store up the way a user would first.
+            self.setup_master_password_store(MASTER_PASSWORD)
             rows = self.preview_restore(target, BACKUP_PASSPHRASE)
             self.evidence(f"preview: {rows}")
             for section in ("connections", "settings", "credentials"):
                 self._toggle(f"backup-restore-include-{section}", True)
             self.shot(label="preview")
+            if sys.platform == "darwin":
+                # The bundled app relaunches through LaunchServices, which drops
+                # the run's isolation env: the restarted test build would come up
+                # on the default profile and keychain service (#5647).
+                raise pytest.skip.Exception(
+                    "Restore and restart is not run on macOS: the relaunch loses the run's "
+                    "isolated profile (#5647)"
+                )
             self.driver.click("backup-restore-submit")
             self.adopt_app_self_restart(timeout=120.0)
         with self.step(
