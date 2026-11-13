@@ -946,6 +946,14 @@
   overflow: hidden;
 }
 
+/* The dialog container takes focus only as Radix's fallback (tabindex -1); it
+   is not a control, so it never draws the focus ring around the whole modal
+   (#5631). Controls inside keep theirs. */
+.ui-modal:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-overlay);
+}
+
 .ui-modal--lg {
   width: 640px;
 }
