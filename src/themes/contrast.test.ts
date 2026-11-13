@@ -579,6 +579,88 @@ describe("solarized light sidebar on base3 (#5457)", () => {
 });
 
 /**
+ * Solarized Light selected rows and filled buttons (#5562). The 18% accent tint
+ * painted off-palette greys over base3 (#d6e0dc selected, #e7eadf hovered), so
+ * the theme's `selection` paints the connection tree's selected row base2 with
+ * an accent left bar, and the hovered selected row the theme's hover tone. The
+ * filled-button accent sat at 4.56:1 under white labels and was darkened for
+ * margin. The engine writes the selection tokens only for a theme that has them.
+ */
+describe("solarized light selection and filled buttons (#5562)", () => {
+  const { colors, selection } = solarizedLightTheme;
+  if (!selection) throw new Error("solarized light defines no selection surfaces");
+  const TOKENS = ["textPrimary", "textSecondaryOnSelection", "textMutedOnSelection"] as const;
+
+  it("selected rows are base2, hovered selected rows the theme's hover tone", () => {
+    expect(selection.bg).toBe(SOLARIZED_PALETTE.base2);
+    expect(selection.bgHover).toBe(colors.bgHover);
+    expect(selection.indicator).toBe(colors.accentColor);
+  });
+
+  for (const [state, bg] of [
+    ["selected", selection.bg],
+    ["hovered selected", selection.bgHover],
+  ] as const) {
+    for (const token of TOKENS) {
+      it(`${token} (${colors[token]}) meets AA on the ${state} row (${bg})`, () => {
+        expect(contrastRatio(colors[token], bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+    it(`the ${state} row stays distinct from the sidebar`, () => {
+      expect(contrastRatio(bg, colors.sidebarBg)).toBeGreaterThanOrEqual(1.1);
+    });
+    it(`the indicator bar reaches 3:1 on the ${state} row`, () => {
+      expect(contrastRatio(selection.indicator, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+    });
+  }
+
+  it("hovering a selected row visibly changes it", () => {
+    expect(contrastRatio(selection.bg, selection.bgHover)).toBeGreaterThanOrEqual(1.05);
+  });
+
+  it("white filled-button text keeps a margin above AA (was 4.56:1)", () => {
+    expect(contrastRatio(colors.textOnAccent, colors.accentColor)).toBeGreaterThanOrEqual(5);
+    expect(contrastRatio(colors.textOnAccent, colors.accentHover)).toBeGreaterThanOrEqual(5);
+  });
+
+  it("only themes with a selection set the sidebar selection tokens", () => {
+    applyTheme("solarized-light");
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue("--sidebar-selected-bg")).toBe(selection.bg);
+    expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe(selection.bgHover);
+    expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe(selection.indicator);
+    for (const other of ["dark", "light", "solarized-dark"]) {
+      applyTheme(other);
+      expect(style.getPropertyValue("--sidebar-selected-bg")).toBe("");
+      expect(style.getPropertyValue("--sidebar-selected-hover-bg")).toBe("");
+      expect(style.getPropertyValue("--sidebar-selected-indicator")).toBe("");
+    }
+  });
+
+  it("the connection tree's selected row paints the tokens and the indicator bar", () => {
+    const css = readFileSync(
+      join(SRC_DIR, "components/Sidebar/ConnectionList.css"),
+      "utf8"
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = (sel: string) =>
+      new RegExp(`${sel.replace(/[.:-]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
+    const selected = rule(".connection-tree__item--selected");
+    expect(selected).toMatch(/background-color:\s*var\(--sidebar-selected-bg\)/);
+    expect(selected).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--sidebar-selected-indicator\)/);
+    expect(rule(".connection-tree__item--selected:hover")).toMatch(
+      /background-color:\s*var\(--sidebar-selected-hover-bg\)/
+    );
+  });
+
+  it("the tint defaults back the sidebar selection tokens in variables.css", () => {
+    const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+    expect(css).toMatch(/--sidebar-selected-bg:\s*var\(--bg-selected\);/);
+    expect(css).toMatch(/--sidebar-selected-hover-bg:\s*var\(--bg-selected-hover\);/);
+    expect(css).toMatch(/--sidebar-selected-indicator:\s*transparent;/);
+  });
+});
+
+/**
  * Solarized Light muted text (#5459). Maintainer decision: the canonical
  * mapping, base01 for muted, base02 for secondary. base01 reaches 4.99:1 on
  * base3 (editor, sidebar, menus) but only 4.39:1 on base2 (`bgSecondary`) and
@@ -847,6 +929,61 @@ describe("ansi palettes keep their canonical values (#5309)", () => {
     expect(xterm.brightBlack).toBe(xterm.background);
     applyTheme("dark");
   });
+});
+
+/**
+ * Credential-storage chooser polish (#5560). The "Recommended" badge was accent
+ * text on the selected card's accent tint (~3.5:1); it is now a filled accent
+ * badge with `--text-on-accent`. The master-password warning callout puts
+ * primary text on `--bg-warning` over the dialog surface. Both are read from
+ * the shipped stylesheet so a later CSS edit cannot silently swap the tokens.
+ */
+describe("credential-storage chooser contrast (WCAG 2.2 AA, #5560)", () => {
+  const css = readFileSync(
+    join(SRC_DIR, "components/CredentialStorage/CredentialStorageChooser.css"),
+    "utf8"
+  );
+  /** The declarations of the first rule whose selector is exactly `selector`. */
+  function rule(selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    if (!m) throw new Error(`no ${selector} rule in CredentialStorageChooser.css`);
+    return m[1];
+  }
+
+  it("the Recommended badge is a filled accent badge with on-accent text", () => {
+    const badge = rule(".credential-storage-option__badge");
+    expect(badge).toMatch(/(?:^|\n)\s*color:\s*var\(--text-on-accent\);/);
+    expect(badge).toMatch(/background:\s*var\(--accent-color\);/);
+  });
+
+  it("the warning callout paints primary text on the warning surface", () => {
+    const warning = rule(".credential-storage-warning");
+    expect(warning).toMatch(/(?:^|\n)\s*color:\s*var\(--text-primary\);/);
+    expect(warning).toMatch(/background:\s*var\(--bg-warning\);/);
+  });
+
+  const varsCss = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+  const warnMix =
+    /--bg-warning:\s*color-mix\(in srgb, var\(--color-warning\) (\d+)%, transparent\)/.exec(
+      varsCss
+    );
+  const BG_WARNING_ALPHA = Number(warnMix?.[1] ?? NaN) / 100;
+
+  for (const theme of BUILT_IN_THEMES) {
+    const c = theme.colors;
+    it(`${theme.id} badge text (${c.textOnAccent}) meets AA on ${c.accentColor}`, () => {
+      expect(contrastRatio(c.textOnAccent, c.accentColor)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    });
+
+    it(`${theme.id} warning callout text meets AA on --bg-warning`, () => {
+      expect(Number.isFinite(BG_WARNING_ALPHA)).toBe(true);
+      for (const surface of [c.bgSecondary, c.bgPrimary]) {
+        const bg = composite(c.colorWarning, surface, BG_WARNING_ALPHA);
+        expect(contrastRatio(c.textPrimary, bg)).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      }
+    });
+  }
 });
 
 /**

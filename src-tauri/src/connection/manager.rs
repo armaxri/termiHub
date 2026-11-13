@@ -651,11 +651,40 @@ impl ConnectionManager {
     /// `agentPath`, so the next connect launches it (#5522).
     ///
     /// Applies [`adopted_agent_path`](crate::terminal::agent_install::adopted_agent_path):
-    /// only a Windows install path is stored, and a user-set custom path is
-    /// kept. Edits the stored entry in place — every other field, the
-    /// unknown on-disk ones included, is untouched. Returns whether the stored
-    /// path changed; an unknown agent is an error.
+    /// a Windows install path (or an explicit non-default POSIX one) is stored,
+    /// and a user-set custom path is kept. Edits the stored entry in place —
+    /// every other field, the unknown on-disk ones included, is untouched.
+    /// Returns whether the stored path changed; an unknown agent is an error.
     pub fn record_agent_install_path(&self, agent_id: &str, installed_path: &str) -> Result<bool> {
+        let posix_default = crate::terminal::backend::RemoteAgentConfig::default()
+            .agent_path()
+            .to_string();
+        self.update_agent_path(agent_id, |current| {
+            crate::terminal::agent_install::adopted_agent_path(
+                current,
+                installed_path,
+                &posix_default,
+            )
+        })
+    }
+
+    /// Store the install path the user chose in the POSIX setup wizard as the
+    /// agent's `agentPath` (#5532), per
+    /// [`setup_agent_path`](crate::terminal::agent_install::setup_agent_path).
+    /// Same in-place edit and return value as [`Self::record_agent_install_path`].
+    pub fn record_agent_setup_path(&self, agent_id: &str, remote_path: &str) -> Result<bool> {
+        self.update_agent_path(agent_id, |current| {
+            crate::terminal::agent_install::setup_agent_path(current, remote_path)
+        })
+    }
+
+    /// Replace the stored `agentPath` of `agent_id` with what `next` returns
+    /// for the current one (`None`: keep it), persisting only on a change.
+    fn update_agent_path(
+        &self,
+        agent_id: &str,
+        next: impl FnOnce(Option<&str>) -> Option<String>,
+    ) -> Result<bool> {
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let agent = store
@@ -663,14 +692,7 @@ impl ConnectionManager {
             .iter_mut()
             .find(|a| a.id == agent_id)
             .ok_or_else(|| anyhow::anyhow!("Agent {} not found", agent_id))?;
-        let posix_default = crate::terminal::backend::RemoteAgentConfig::default()
-            .agent_path()
-            .to_string();
-        let Some(path) = crate::terminal::agent_install::adopted_agent_path(
-            agent.config.agent_path.as_deref(),
-            installed_path,
-            &posix_default,
-        ) else {
+        let Some(path) = next(agent.config.agent_path.as_deref()) else {
             return Ok(false);
         };
         agent.config.agent_path = Some(path);

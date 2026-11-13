@@ -4,7 +4,8 @@
 //! Since russh 0.65 a server-opened channel is confirmed only when the client
 //! handler accepts it, and russh's defaults accept. These pin that termiHub
 //! confirms only the channels it asked for — a `forwarded-tcpip` channel with a
-//! registered listener — and refuses everything else with
+//! registered listener, or an `x11` channel while the connection holds a live
+//! X11 grant (#5570) — and refuses everything else with
 //! `SSH_OPEN_ADMINISTRATIVELY_PROHIBITED`. Agent forwarding with the opt-in is
 //! not exercised here: accepting it bridges to the local `ssh-agent`, and tests
 //! must never reach the user's real agent.
@@ -276,4 +277,85 @@ async fn host_certificate_is_refused() {
         hash_alg: None,
     };
     assert!(handler.check_server_key(&bare).await.unwrap());
+}
+
+// ── x11 channel acceptance policy (#5570) ──────────────────────────────
+
+async fn open_x11(c: &Connected) -> Result<russh::Channel<ServerMsg>, russh::Error> {
+    tokio::time::timeout(STEP, c.server.channel_open_x11("127.0.0.1", 40000))
+        .await
+        .expect("x11 open answered in time")
+}
+
+#[tokio::test]
+async fn x11_without_a_grant_is_refused() {
+    let c = connect(false).await;
+    assert_prohibited(open_x11(&c).await, "x11 without x11-req");
+}
+
+#[tokio::test]
+async fn x11_with_a_live_grant_is_confirmed_and_routed() {
+    let c = connect(false).await;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    c.registry.grant_x11(tx);
+    let server_channel = open_x11(&c).await.expect("a granted x11 open is confirmed");
+    let incoming = tokio::time::timeout(STEP, rx.recv())
+        .await
+        .expect("forwarder got the channel in time")
+        .expect("forwarder got the channel");
+    assert_eq!(incoming.originator_address, "127.0.0.1");
+    assert_eq!(incoming.originator_port, 40000);
+    server_channel.data(&b"x"[..]).await.expect("server write");
+}
+
+#[tokio::test]
+async fn x11_after_the_grant_is_revoked_is_refused() {
+    let c = connect(false).await;
+    let (tx, _rx) = mpsc::unbounded_channel();
+    c.registry.grant_x11(tx.clone());
+    c.registry.revoke_x11(&tx);
+    assert_prohibited(open_x11(&c).await, "x11 after revoke");
+}
+
+#[tokio::test]
+async fn x11_whose_forwarder_is_gone_is_refused() {
+    let c = connect(false).await;
+    let (tx, rx) = mpsc::unbounded_channel();
+    c.registry.grant_x11(tx);
+    drop(rx);
+    assert_prohibited(open_x11(&c).await, "x11 whose forwarder is gone");
+}
+
+#[tokio::test]
+async fn revoking_a_stale_grant_keeps_the_current_one() {
+    let c = connect(false).await;
+    let (old, _old_rx) = mpsc::unbounded_channel();
+    let (new, mut new_rx) = mpsc::unbounded_channel();
+    c.registry.grant_x11(old.clone());
+    c.registry.grant_x11(new);
+    c.registry.revoke_x11(&old);
+    let _ch = open_x11(&c).await.expect("the current grant still holds");
+    assert!(tokio::time::timeout(STEP, new_rx.recv())
+        .await
+        .unwrap()
+        .is_some());
+}
+
+#[tokio::test]
+async fn an_x11_grant_does_not_open_other_channel_kinds() {
+    let c = connect(false).await;
+    let (tx, _rx) = mpsc::unbounded_channel();
+    c.registry.grant_x11(tx);
+    let fwd = tokio::time::timeout(
+        STEP,
+        c.server
+            .channel_open_forwarded_tcpip("localhost", 6010, "127.0.0.1", 40000),
+    )
+    .await
+    .expect("open answered in time");
+    assert_prohibited(fwd, "forwarded-tcpip with only an x11 grant");
+    let agent = tokio::time::timeout(STEP, c.server.channel_open_agent())
+        .await
+        .expect("open answered in time");
+    assert_prohibited(agent, "agent with only an x11 grant");
 }

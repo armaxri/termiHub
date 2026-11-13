@@ -139,6 +139,7 @@ const DISPATCH: Record<string, Effect> = {
 /** Registry actions that deliberately never fire through the global engine. */
 const NOT_DISPATCHED: Record<string, string> = {
   [RELEASE_CHORD_ACTION]: "modifier-only chord read directly by the remote-desktop canvas",
+  "edit-file-browser-path": "matched by the focused file browser / transfer pane (#5540)",
 };
 
 /**

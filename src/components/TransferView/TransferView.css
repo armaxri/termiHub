@@ -79,10 +79,12 @@
   white-space: nowrap;
 }
 
+/* The shared folding breadcrumb path bar (#5541) takes the toolbar's free
+   width; the leaf folder stays visible however long the path is. */
 .transfer-pane__path {
+  display: flex;
   flex: 1;
   min-width: 0;
-  font-family: var(--font-mono);
 }
 
 .transfer-pane__error {

@@ -308,3 +308,67 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     expect(addTab).toHaveBeenCalledWith("Terminal", "local");
   });
 });
+
+describe("TerminalView — toolbar grouping (#5559)", () => {
+  function groupIds(groupTestId: string): string[] {
+    const group = container.querySelector(`[data-testid="${groupTestId}"]`);
+    expect(group, groupTestId).not.toBeNull();
+    return Array.from(group!.querySelectorAll("button")).map(
+      (b) => b.getAttribute("data-testid") ?? ""
+    );
+  }
+
+  it("groups session, macro and layout actions, in that order, with separators", async () => {
+    seed(
+      {
+        type: "split",
+        id: "s",
+        direction: "horizontal",
+        children: [leaf("a", [tab("t1", "a")]), leaf("b", [])],
+        sizes: [50, 50],
+      } as PanelNode,
+      "a"
+    );
+    await renderView();
+
+    const actions = container.querySelector(".terminal-view__toolbar-actions")!;
+    const children = Array.from(actions.children).map((el) =>
+      el.getAttribute("role") === "separator" ? "|" : el.getAttribute("aria-label")
+    );
+    expect(children).toEqual(["Session", "|", "Macros", "|", "Layout"]);
+    for (const sep of actions.querySelectorAll("[role='separator']")) {
+      expect(sep.getAttribute("aria-orientation")).toBe("vertical");
+    }
+
+    expect(groupIds("terminal-view-toolbar-session")).toEqual([
+      "terminal-view-new-terminal",
+      "terminal-view-broadcast",
+      "terminal-view-toggle-logging",
+    ]);
+    expect(groupIds("terminal-view-toolbar-macros")).toEqual([
+      "terminal-view-record-macro",
+      "terminal-view-play-macro",
+    ]);
+    expect(groupIds("terminal-view-toolbar-layout")).toEqual([
+      "terminal-view-split-horizontal",
+      "terminal-view-split-vertical",
+      "terminal-view-close-panel",
+      "terminal-view-toggle-sidebar",
+    ]);
+  });
+
+  it("draws record macro as a record glyph, not a plain circle", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    const svg = button("terminal-view-record-macro")!.querySelector("svg")!;
+    expect(svg.getAttribute("class")).toContain("lucide-circle-dot");
+  });
+
+  it("keeps every icon-only action named for tooltips and assistive tech", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    const buttons = container.querySelectorAll(".terminal-view__toolbar-actions button");
+    expect(buttons.length).toBeGreaterThanOrEqual(8);
+    for (const b of buttons) expect(b.getAttribute("aria-label")).toBeTruthy();
+  });
+});

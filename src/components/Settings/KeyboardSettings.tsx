@@ -21,6 +21,7 @@ import {
   unbindAction,
   isUnboundCombo,
   isValidModifierOnlyCombo,
+  isActionCustomized,
 } from "@/services/keybindings";
 import {
   MODIFIER_KEYS,
@@ -225,12 +226,21 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     [persistOverrides]
   );
 
+  // Clearing is one click, so it confirms with a toast that can undo it (#5561).
   const handleUnbindOne = useCallback(
     (binding: KeyBinding) => {
+      const snapshot = getOverrides();
       unbindAction(binding.action);
       persistOverrides();
       setConflictWarning(null);
       setAnnouncement(`${binding.label} shortcut cleared.`);
+      showUndoToast(`Shortcut for ${binding.label} cleared`, {
+        testId: "keybinding-unbind-toast",
+        onUndo: () => {
+          restoreKeybindings(snapshot);
+          forceRender((n) => n + 1);
+        },
+      });
     },
     [persistOverrides]
   );
@@ -536,6 +546,8 @@ function KeybindingRow({
 }: KeybindingRowProps) {
   const combo = getEffectiveCombo(binding.action);
   const isUnbound = !combo || isUnboundCombo(combo);
+  // Reset only when it would change something: a default row shows no reset (#5561).
+  const isCustomized = isActionCustomized(binding.action);
   // Alternate defaults are listed too, e.g. "Cmd+P / Cmd+Shift+P" (#5084).
   const displayStr = formatActionBindings(binding.action) ?? "(unbound)";
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -736,17 +748,19 @@ function KeybindingRow({
             />
           </Tooltip>
         )}
-        <Tooltip content="Reset to default">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<RotateCcw size={12} />}
-            onClick={onReset}
-            aria-label={`Reset ${binding.label} to default`}
-            data-testid={`keybinding-reset-${binding.action}`}
-          />
-        </Tooltip>
+        {isCustomized && (
+          <Tooltip content="Reset to default">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              icon={<RotateCcw size={12} />}
+              onClick={onReset}
+              aria-label={`Reset ${binding.label} to default`}
+              data-testid={`keybinding-reset-${binding.action}`}
+            />
+          </Tooltip>
+        )}
       </td>
     </tr>
   );

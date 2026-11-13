@@ -97,7 +97,11 @@ import {
 import { PermissionsDialog } from "./PermissionsDialog";
 import { OwnerDialog } from "./OwnerDialog";
 import { SymlinkDialog } from "./SymlinkDialog";
-import { FileBrowserPathBar } from "./FileBrowserPathBar";
+import {
+  FileBrowserPathBar,
+  isEditPathShortcut,
+  type FileBrowserPathBarHandle,
+} from "./FileBrowserPathBar";
 import { FileBrowserDndProvider } from "./FileBrowserDndProvider";
 import { FileMoveConflictDialog } from "./FileMoveConflictDialog";
 import { MoveToDialog, type MoveToRequest } from "./MoveToDialog";
@@ -1133,6 +1137,14 @@ export function FileBrowser() {
   } = useFileBrowser();
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const pathBarRef = useRef<FileBrowserPathBarHandle>(null);
+
+  // Cmd/Ctrl+L anywhere in the focused browser edits the path (#5540).
+  const handleEditPathShortcut = useCallback((e: React.KeyboardEvent) => {
+    if (!isEditPathShortcut(e)) return;
+    e.preventDefault();
+    pathBarRef.current?.startEditing();
+  }, []);
 
   // Auto-refresh the local listing when its directory changes on disk under
   // another process (#1626). Event-driven via the backend directory watcher;
@@ -1948,6 +1960,7 @@ export function FileBrowser() {
     <div
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
       ref={containerRef}
+      onKeyDown={handleEditPathShortcut}
     >
       <FileBrowserDndProvider onDrop={requestTransfer} onDragOut={handleDragOut}>
         {isDragOver && (
@@ -1958,7 +1971,11 @@ export function FileBrowser() {
         )}
         {mode === "session" && <RemoteDesktopBrowseRoute sessionId={sessionFileBrowserId} />}
         <div className="file-browser__toolbar">
-          <FileBrowserPathBar currentPath={currentPath} onNavigate={handleNavigatePath} />
+          <FileBrowserPathBar
+            ref={pathBarRef}
+            currentPath={currentPath}
+            onNavigate={handleNavigatePath}
+          />
           <FileBrowserActions actions={headerActions} />
         </div>
         <FileBookmarksManageDialog

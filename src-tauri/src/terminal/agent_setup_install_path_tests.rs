@@ -75,3 +75,43 @@ fn an_unresolvable_setup_path_keeps_the_stored_path() {
     );
     assert_eq!(stored_agent_path(&app), None);
 }
+
+// ── POSIX setup wizard (#5532) ──────────────────────────────────────────
+
+#[test]
+fn a_custom_posix_setup_path_is_saved_and_reaches_the_agents_region() {
+    let (_dir, app, agents) = app_with_agent();
+    crate::commands::connection::record_setup_agent_path(app.handle(), "a1", "/opt/termihub-agent");
+
+    assert_eq!(
+        stored_agent_path(&app).as_deref(),
+        Some("/opt/termihub-agent")
+    );
+    let region = agents.get("a1").expect("folded into the region");
+    assert_eq!(
+        region.config["agentPath"],
+        serde_json::json!("/opt/termihub-agent")
+    );
+    let view = app
+        .state::<ConnectionManager>()
+        .load_unified_view()
+        .unwrap();
+    assert_eq!(
+        view.agents[0].config.agent_exec_command(),
+        "/opt/termihub-agent --stdio"
+    );
+}
+
+#[test]
+fn the_setup_script_refuses_to_replace_a_file_that_is_not_an_agent() {
+    let script = generate_setup_script("/opt/termihub-agent", false, "/tmp/up/termihub-agent");
+    let guard = script
+        .find("Never replace a file that is not a termiHub agent")
+        .expect("the guard is in the script");
+    let mv = script.find("$SUDO mv").expect("the install move");
+    assert!(
+        guard < mv,
+        "the guard runs before the binary is moved into place"
+    );
+    assert!(script.contains(r#""termihub-agent "*)"#));
+}

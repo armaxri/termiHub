@@ -15,6 +15,12 @@
      tint stronger than 18% stays below AA, so hover lightens the tint instead.
      Graded by src/themes/contrast.test.ts. */
   --bg-selected-hover: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  /* Selected rows in the sidebar's connection tree (#5562). Default to the
+     accent tints with no indicator bar; a theme with a fixed palette (Solarized
+     Light) overrides all three through ThemeDefinition.selection. */
+  --sidebar-selected-bg: var(--bg-selected);
+  --sidebar-selected-hover-bg: var(--bg-selected-hover);
+  --sidebar-selected-indicator: transparent;
 
   /* Activity bar */
   --activity-bar-bg: #0b0d12;

@@ -419,7 +419,24 @@ fn run_setup_background(
     let remote_path = setup_config
         .remote_path
         .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
         .unwrap_or(DEFAULT_REMOTE_PATH);
+    // The path goes into the script and, once stored, the connect's exec
+    // command: refuse one a shell would mangle before anything runs (#5532).
+    if let Err(e) = agent_install::validate_posix_agent_path(remote_path) {
+        error!("Agent setup: {e}");
+        rollback_uploaded_binary(&sftp_session, upload_path);
+        emit_progress(app_handle, agent_id, "error", &e.to_string());
+        inject_error_script(
+            &sftp_session,
+            session_manager,
+            session_id,
+            &e.to_string(),
+            rt_handle,
+        );
+        return;
+    }
     let script = generate_setup_script(remote_path, setup_config.install_service, upload_path);
 
     if bail_if_cancelled(cancel).is_err() {
@@ -456,6 +473,10 @@ fn run_setup_background(
     emit_progress(app_handle, agent_id, "install", "Running setup script...");
     let exec_command = setup_exec_command(&upload_dir);
     inject_commands(session_manager, session_id, &exec_command, rt_handle);
+
+    // The next connect must run the binary this setup installs: store the
+    // chosen path as the agent path (#5532).
+    crate::commands::connection::record_setup_agent_path(app_handle, agent_id, remote_path);
 
     emit_progress(
         app_handle,
@@ -832,6 +853,15 @@ case "$INSTALL_PATH" in
     "~/"*) INSTALL_PATH="$HOME/${INSTALL_PATH#\~/}" ;;
 esac
 echo "\360\237\223\201 Install path: $INSTALL_PATH"
+
+# --- Step 2b: Never replace a file that is not a termiHub agent ---
+if [ -e "$INSTALL_PATH" ]; then
+    EXISTING=$("$INSTALL_PATH" --version 2>/dev/null || true)
+    case "$EXISTING" in
+        "termihub-agent "*) echo "Replacing the installed agent: $EXISTING" ;;
+        *) fail "$INSTALL_PATH already exists and is not a termiHub agent; it was not replaced. Remove it or choose another install path." ;;
+    esac
+fi
 
 # --- Step 3: Check permissions ---
 SUDO=""

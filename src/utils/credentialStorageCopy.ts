@@ -93,6 +93,13 @@ export interface CredentialStorageChoiceCopy {
   description: string;
 }
 
+/**
+ * The irreversible fact about a master password, shown as a warning callout
+ * above the setup inputs in the chooser and in Settings ▸ Security (#5560).
+ */
+export const MASTER_PASSWORD_NOT_RECOVERABLE_TEXT =
+  "Your master password cannot be recovered if you forget it.";
+
 /** Title of the first-use credential-storage chooser (#5187). */
 export const CREDENTIAL_STORAGE_CHOOSER_TITLE = "Where should termiHub keep passwords?";
 

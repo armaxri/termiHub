@@ -129,6 +129,45 @@ fn capture_early_output(early: &mut Vec<u8>, data: &[u8]) {
     early.extend_from_slice(&data[..data.len().min(room)]);
 }
 
+/// Resolve the local X server for X11 forwarding: the app-registered
+/// provisioner (epic #1047) when there is one, else a user-run server.
+///
+/// The provisioner's session-lifetime guard (#1107) goes into `extensions` at
+/// once, so it is released on session end *or* a later connect failure. A
+/// provisioning failure or a missing server is logged and the session goes on
+/// without display forwarding rather than aborting the connect.
+async fn resolve_x11_server(
+    cancel: Option<&CancellationToken>,
+    extensions: &mut Vec<Box<dyn std::any::Any + Send>>,
+) -> Option<super::x11::ResolvedXServer> {
+    use super::x11::{x_server_provisioner, ResolvedXServer};
+    let resolved = match x_server_provisioner() {
+        // Thread the connect-abort token so a Stop while XQuartz is still
+        // coming up (macOS) short-cuts the readiness wait promptly (#1260).
+        Some(provisioner) => match provisioner.ensure(cancel.cloned()).await {
+            Ok(lease) => {
+                if let Some(guard) = lease.guard {
+                    extensions.push(guard);
+                }
+                lease.resolved
+            }
+            Err(message) => {
+                tracing::warn!("X server provisioning failed: {message}");
+                None
+            }
+        },
+        None => None,
+    };
+    let server = resolved.or_else(ResolvedXServer::detect_user_run);
+    if server.is_none() {
+        tracing::warn!(
+            "X11 forwarding setup failed, continuing without it: no local X server detected. \
+             Start an X server (XQuartz on macOS)."
+        );
+    }
+    server
+}
+
 /// Ask the host for its login shell over an exec channel (#4143), abortable
 /// by the connect's cancel token.
 async fn probe_remote_shell(
@@ -386,6 +425,7 @@ impl SshConnector for RusshSshConnector {
     ) -> Result<SshShellHandle, SessionError> {
         use super::jump_host::connect_target_with_liveness;
         use super::x11::X11Forwarder;
+        use super::x11_req::X11Mode;
         use russh::ChannelMsg;
 
         // Opaque resources kept alive for the session lifetime.
@@ -424,51 +464,12 @@ impl SshConnector for RusshSshConnector {
         } else {
             RemoteShell::Unknown
         };
-        let mut x11_display: Option<u32> = None;
-        let mut x11_cookie: Option<String> = None;
-        if config.enable_x11_forwarding {
-            // Ensure a usable local X server via the app-registered provisioner
-            // (epic #1047). It resolves the concrete server (managed or adopted)
-            // so the forwarder does not re-probe. When none is registered (core
-            // standalone / tests) `resolved` is `None` and the forwarder falls
-            // back to detecting a user-run server. A provisioning failure is
-            // logged with its actionable message and the session continues
-            // without display forwarding rather than aborting the whole connect.
-            use super::x11::x_server_provisioner;
-            let resolved = match x_server_provisioner() {
-                // Thread the connect-abort token so a Stop while XQuartz is still
-                // coming up (macOS) short-cuts the readiness wait promptly (#1260).
-                Some(provisioner) => match provisioner.ensure(cancel.cloned()).await {
-                    Ok(lease) => {
-                        // Hold the desktop session-lifetime guard (dependent-session
-                        // refcount lease, #1107) for the whole session. Pushing it
-                        // into `extensions` now — before the forwarder even starts —
-                        // means it is released on session end *or* if the connect
-                        // fails afterwards, so the refcount matches acquire exactly.
-                        if let Some(guard) = lease.guard {
-                            extensions.push(guard);
-                        }
-                        lease.resolved
-                    }
-                    Err(message) => {
-                        tracing::warn!("X server provisioning failed: {message}");
-                        None
-                    }
-                },
-                None => None,
-            };
-            match X11Forwarder::start(config, &mut session, registry, alive.clone(), resolved).await
-            {
-                Ok((forwarder, display_num, cookie)) => {
-                    x11_display = Some(display_num);
-                    x11_cookie = cookie;
-                    extensions.push(Box::new(forwarder));
-                }
-                Err(e) => {
-                    tracing::warn!("X11 forwarding setup failed, continuing without it: {e}");
-                }
-            }
-        }
+        // The local X server to forward to, resolved once for either mode.
+        let x11_server = if config.enable_x11_forwarding {
+            resolve_x11_server(cancel, &mut extensions).await
+        } else {
+            None
+        };
 
         connect_progress::report(ConnectStage::Shell, Some("Opening the remote shell".into()));
         let mut channel = session
@@ -519,6 +520,64 @@ impl SshConnector for RusshSshConnector {
             }
         }
 
+        // X11 forwarding (#5570): `x11-req` first, so sshd sets `DISPLAY` and
+        // runs `xauth` itself and nothing is typed; a server that refuses it
+        // gets the `tcpip-forward` listener plus typed setup instead.
+        let mut early_msgs = std::collections::VecDeque::new();
+        let mut x11_display: Option<u32> = None;
+        let mut x11_cookie: Option<String> = None;
+        if let Some(server) = x11_server {
+            let mode = match super::x11_req::request_x11_forwarding(
+                &mut channel,
+                &registry,
+                &server,
+                alive.clone(),
+                cancel,
+            )
+            .await
+            {
+                Ok((forwarder, msgs)) => {
+                    early_msgs.extend(msgs);
+                    extensions.push(Box::new(forwarder));
+                    Some(X11Mode::ChannelRequest)
+                }
+                Err(_) if cancel.is_some_and(CancellationToken::is_cancelled) => {
+                    return Err(SessionError::SpawnFailed(
+                        "SSH connection cancelled while requesting X11 forwarding".to_string(),
+                    ));
+                }
+                Err(refusal) => {
+                    tracing::info!(?refusal, "SSH server did not accept x11-req");
+                    match X11Forwarder::start(
+                        config,
+                        &mut session,
+                        registry.clone(),
+                        alive.clone(),
+                        Some(server),
+                    )
+                    .await
+                    {
+                        Ok((forwarder, display_num, cookie)) => {
+                            x11_display = Some(display_num);
+                            x11_cookie = cookie;
+                            extensions.push(Box::new(forwarder));
+                            Some(X11Mode::TypedFallback)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "X11 forwarding setup failed, continuing without it: {e}"
+                            );
+                            None
+                        }
+                    }
+                }
+            };
+            if let Some(mode) = mode {
+                tracing::info!(host = %config.host, "{}", mode.describe());
+                connect_progress::report(ConnectStage::Shell, Some(mode.describe().into()));
+            }
+        }
+
         channel
             .request_pty(
                 false,
@@ -545,10 +604,9 @@ impl SshConnector for RusshSshConnector {
         // Win32-OpenSSH (#5134, #5147): tell cmd.exe or PowerShell by its
         // banner, and keep what was read for the channel task below, which
         // handles it as if it had just arrived.
-        let mut early_msgs = std::collections::VecDeque::new();
         if needs_shell && win32_openssh {
             let (banner, msgs) = read_shell_banner(&mut channel, cancel).await?;
-            early_msgs = msgs;
+            early_msgs.extend(msgs);
             remote_shell = match banner {
                 Some(shell) => {
                     remote_shell::setup_trace(

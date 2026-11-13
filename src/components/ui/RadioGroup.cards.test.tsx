@@ -68,6 +68,19 @@ describe("RadioGroup cards variant", () => {
     expect(byTestId("card-b").getAttribute("aria-checked")).toBe("false");
   });
 
+  it("leads every card with a decorative radio mark (#5560)", () => {
+    act(() => root.render(<Harness />));
+    for (const id of ["card-a", "card-b", "card-c"]) {
+      const mark = byTestId(id).firstElementChild as HTMLElement;
+      expect(mark.classList.contains("ui-radio-card__mark")).toBe(true);
+      expect(mark.getAttribute("aria-hidden")).toBe("true");
+      expect(mark.textContent).toBe("");
+    }
+    // The accessible name is still just the label: the mark adds nothing to it.
+    const labelId = byTestId("card-a").getAttribute("aria-labelledby") as string;
+    expect(document.getElementById(labelId)?.textContent).toBe("Alpha");
+  });
+
   it("names each card by its label and describes it by its description", () => {
     act(() => root.render(<Harness />));
     const card = byTestId("card-b");

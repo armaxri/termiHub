@@ -10,7 +10,7 @@
 //! #2139). See `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, MutexGuard, Weak};
 use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
@@ -42,7 +42,7 @@ fn lock_registry(
 const CANCEL_FORWARD_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The registry's map type, for the forwarder's non-owning handle on it.
-type RegistryMap = Mutex<HashMap<u32, UnboundedSender<IncomingChannel>>>;
+type RegistryMap = crate::backends::ssh::handler::ForwardedChannels;
 
 /// Manages a remote port forwarding tunnel.
 ///
@@ -374,9 +374,7 @@ mod tests {
     /// remove keep working for all the other tunnels sharing the registry.
     #[test]
     fn lock_registry_recovers_from_poison() {
-        use std::sync::Mutex;
-
-        let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let registry: ForwardedChannelRegistry = Arc::default();
 
         // Poison the mutex the way a panicking forwarder task would: panic while
         // holding the lock. `catch_unwind` keeps the test process alive.

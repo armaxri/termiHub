@@ -11,7 +11,7 @@ export interface ExperimentalSettingLinkProps {
 
 /**
  * Inline link that names the experimental-features toggle by its real path
- * ("Settings ▸ General ▸ Allow Experimental Features") and opens Settings ▸
+ * ("Settings ▸ General ▸ Allow experimental features") and opens Settings ▸
  * General when clicked (#5363). Copy that refers to a surface hidden behind the
  * toggle uses this instead of naming the hidden surface as if it were visible.
  */

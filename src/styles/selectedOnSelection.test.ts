@@ -42,7 +42,8 @@ const EXEMPT: Record<string, string> = {
 
 const SECONDARY_REDIRECT = /--text-secondary:\s*var\(--text-secondary-on-selection\)/;
 const MUTED_REDIRECT = /--text-muted:\s*var\(--text-muted-on-selection\)/;
-const PAINTS_SELECTED = /background(-color)?:\s*var\(--bg-selected\)/;
+/** `--sidebar-selected-bg` defaults to `--bg-selected` (#5562), so it counts too. */
+const PAINTS_SELECTED = /background(-color)?:\s*var\(--(bg-selected|sidebar-selected-bg)\)/;
 const PLAIN_TEXT_COLOR = /(^|[\s;])color:\s*var\(--text-(secondary|muted)\)/;
 
 /** Map each selector in `css` to the declarations of the rule it heads. */

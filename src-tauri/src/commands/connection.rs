@@ -366,15 +366,40 @@ pub(crate) fn record_installed_agent_path<R: Runtime>(
     agent_id: &str,
     installed_path: &str,
 ) {
+    record_agent_path(app, agent_id, installed_path, |manager| {
+        manager.record_agent_install_path(agent_id, installed_path)
+    });
+}
+
+/// Store the install path the user chose in the POSIX setup wizard as the
+/// agent's `agentPath` (#5532), through the same `commit` + agents fold as
+/// [`record_installed_agent_path`]. See
+/// [`ConnectionManager::record_agent_setup_path`] for when it is stored.
+pub(crate) fn record_setup_agent_path<R: Runtime>(
+    app: &AppHandle<R>,
+    agent_id: &str,
+    remote_path: &str,
+) {
+    record_agent_path(app, agent_id, remote_path, |manager| {
+        manager.record_agent_setup_path(agent_id, remote_path)
+    });
+}
+
+/// Run `record` against the managed [`ConnectionManager`] under the agents
+/// fold and log the outcome. Best-effort: a failure is logged only.
+fn record_agent_path<R: Runtime>(
+    app: &AppHandle<R>,
+    agent_id: &str,
+    path: &str,
+    record: impl FnOnce(&ConnectionManager) -> anyhow::Result<bool>,
+) {
     let Some(manager) = app.try_state::<ConnectionManager>() else {
         return;
     };
-    let result = commit(app, &[Fold::Agents], || {
-        manager.record_agent_install_path(agent_id, installed_path)
-    });
+    let result = commit(app, &[Fold::Agents], || record(&manager));
     match result {
-        Ok(true) => info!(agent_id, installed_path, "Stored the agent install path"),
-        Ok(false) => debug!(agent_id, installed_path, "Kept the stored agent path"),
+        Ok(true) => info!(agent_id, path, "Stored the agent install path"),
+        Ok(false) => debug!(agent_id, path, "Kept the stored agent path"),
         Err(e) => tracing::warn!(agent_id, "Could not store the agent install path: {e:#}"),
     }
 }

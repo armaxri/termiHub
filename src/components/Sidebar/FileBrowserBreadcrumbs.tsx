@@ -17,32 +17,58 @@ export interface CollapsingBreadcrumbsProps {
   currentPath: string;
   /** Navigate the browser to an absolute path. */
   onNavigate: (path: string) => void;
+  /**
+   * Switch the bar to its path editor (#5540). When set, clicking the leaf
+   * (current) folder or the empty space after the segments starts editing;
+   * otherwise the leaf is inert.
+   */
+  onEdit?: () => void;
+  /** Prefix of every `data-testid` (default `file-browser`). */
+  testIdPrefix?: string;
+  /** Accessible name of the breadcrumb `nav` (default "Path"). */
+  label?: string;
+  /**
+   * Whether segments are drag-to-move drop targets (the sidebar file browser,
+   * PROD-006). The transfer view's panes copy between sides instead, so their
+   * breadcrumbs opt out (default `true`).
+   */
+  dropTargets?: boolean;
 }
 
 interface CrumbProps {
   label: string;
   path: string;
-  isCurrent: boolean;
+  isLeaf: boolean;
   onNavigate: (path: string) => void;
+  onEdit?: () => void;
+  testIdPrefix: string;
+  dropTargets: boolean;
 }
 
 /**
- * One breadcrumb segment. Besides navigating on click, each segment is a drop
- * target for drag-to-move (PROD-006), so a row can be dragged "up" into any
- * ancestor folder; it highlights valid vs refused drops.
+ * One breadcrumb segment. An ancestor navigates on click; the leaf (the folder
+ * being shown) opens the path editor instead, when the bar has one (#5540).
+ * In the sidebar each segment is also a drop target for drag-to-move
+ * (PROD-006), so a row can be dragged "up" into any ancestor folder; it
+ * highlights valid vs refused drops.
  */
-function Crumb({ label, path, isCurrent, onNavigate }: CrumbProps) {
-  const { setNodeRef, highlight } = useFileDropTarget(`crumb:${path}`, path);
+function Crumb({ label, path, isLeaf, onNavigate, onEdit, testIdPrefix, dropTargets }: CrumbProps) {
+  const dropId = dropTargets ? `crumb:${path}` : `${testIdPrefix}-crumb:${path}`;
+  const { setNodeRef, highlight } = useFileDropTarget(dropId, path, undefined, !dropTargets);
+  const editsPath = isLeaf && !!onEdit;
   return (
     <button
       ref={setNodeRef}
       type="button"
-      className={`file-browser__crumb${highlight ? ` file-browser__crumb--drop-${highlight}` : ""}`}
-      onClick={() => onNavigate(path)}
-      disabled={isCurrent}
-      aria-current={isCurrent ? "location" : undefined}
+      className={`file-browser__crumb${editsPath ? " file-browser__crumb--edit" : ""}${
+        highlight ? ` file-browser__crumb--drop-${highlight}` : ""
+      }`}
+      onClick={() => (isLeaf ? onEdit?.() : onNavigate(path))}
+      disabled={isLeaf && !onEdit}
+      aria-current={isLeaf ? "location" : undefined}
+      aria-description={editsPath ? "Edit path" : undefined}
       // Per-segment id so a drag can target one ancestor (`dragTo`, #4007).
-      data-testid={`file-browser-crumb-${label}`}
+      data-testid={`${testIdPrefix}-crumb-${label}`}
       data-drop-highlight={highlight ?? undefined}
     >
       {label}
@@ -59,9 +85,11 @@ function Sep() {
 function CollapsedCrumbs({
   hidden,
   onNavigate,
+  testIdPrefix,
 }: {
   hidden: PathCrumb[];
   onNavigate: (path: string) => void;
+  testIdPrefix: string;
 }) {
   return (
     <DropdownMenuRoot>
@@ -71,20 +99,20 @@ function CollapsedCrumbs({
             type="button"
             className="file-browser__crumb"
             aria-label="Show collapsed folders"
-            data-testid="file-browser-crumb-overflow"
+            data-testid={`${testIdPrefix}-crumb-overflow`}
           >
             …
           </button>
         </DropdownMenuTrigger>
       </Tooltip>
-      <DropdownMenuContent align="start" sideOffset={4} data-testid="file-browser-crumb-menu">
+      <DropdownMenuContent align="start" sideOffset={4} data-testid={`${testIdPrefix}-crumb-menu`}>
         {hidden.map((crumb) => (
           <MenuItem
             key={crumb.path}
             icon={<Folder size={14} />}
             onSelect={() => onNavigate(crumb.path)}
             title={crumb.path}
-            data-testid={`file-browser-crumb-menu-${crumb.label}`}
+            data-testid={`${testIdPrefix}-crumb-menu-${crumb.label}`}
           >
             {crumb.label}
           </MenuItem>
@@ -99,13 +127,21 @@ function CollapsedCrumbs({
  * than its row, the middle segments fold into one "…" (a menu of them) so the
  * leaf folder — and the root, when there is room — stays legible; a leaf wider
  * than the row on its own ellipsizes. The row never scrolls. The full path is
- * the row's tooltip (`title`, also what the system harness reads).
+ * the row's tooltip (`title`, also what the system harness reads). Shared by
+ * the sidebar file browser and the transfer view's panes (#5541).
  *
  * The decision uses the natural width of every segment, read from an invisible
  * measuring copy, against the row width from a `ResizeObserver` — so it never
  * oscillates with the layout it produces.
  */
-export function CollapsingBreadcrumbs({ currentPath, onNavigate }: CollapsingBreadcrumbsProps) {
+export function CollapsingBreadcrumbs({
+  currentPath,
+  onNavigate,
+  onEdit,
+  testIdPrefix = "file-browser",
+  label = "Path",
+  dropTargets = true,
+}: CollapsingBreadcrumbsProps) {
   const crumbs = useMemo(() => splitPathSegments(currentPath), [currentPath]);
   const [observeNav, width] = useElementWidth<HTMLElement>();
   const measureRef = useRef<HTMLSpanElement | null>(null);
@@ -145,8 +181,11 @@ export function CollapsingBreadcrumbs({ currentPath, onNavigate }: CollapsingBre
       <Crumb
         label={crumb.label}
         path={crumb.path}
-        isCurrent={crumb.path === currentPath}
+        isLeaf={i === last}
         onNavigate={onNavigate}
+        onEdit={onEdit}
+        testIdPrefix={testIdPrefix}
+        dropTargets={dropTargets}
       />
     </span>
   );
@@ -155,22 +194,33 @@ export function CollapsingBreadcrumbs({ currentPath, onNavigate }: CollapsingBre
     <nav
       ref={observeNav}
       className="file-browser__breadcrumbs"
-      aria-label="Path"
+      aria-label={label}
       title={currentPath}
-      data-testid="file-browser-current-path"
+      data-testid={`${testIdPrefix}-current-path`}
       data-collapsed={hidden.length > 0 ? hidden.length : undefined}
     >
       {crumbs.slice(0, hiddenStart).map((c, i) => renderCrumb(c, i, i > 0))}
       {hidden.length > 0 && (
         <span className="file-browser__crumb-group" key="collapsed">
           {hiddenStart > 0 && <Sep />}
-          <CollapsedCrumbs hidden={hidden} onNavigate={onNavigate} />
+          <CollapsedCrumbs hidden={hidden} onNavigate={onNavigate} testIdPrefix={testIdPrefix} />
         </span>
       )}
       {crumbs.slice(hiddenEnd).map((c, j) => {
         const i = hiddenEnd + j;
         return renderCrumb(c, i, i > 0);
       })}
+      {onEdit && (
+        // The empty space after the segments: a click there edits the path
+        // (#5540). Pointer-only — the leaf segment and the edit shortcut are
+        // the keyboard ways in — so it stays out of the tab order and a11y tree.
+        <span
+          className="file-browser__crumb-fill"
+          onClick={onEdit}
+          aria-hidden="true"
+          data-testid={`${testIdPrefix}-path-edit`}
+        />
+      )}
       {/* Natural widths of every segment (with its separator) plus the "…". */}
       <span className="file-browser__crumb-measure" ref={setMeasureRef} aria-hidden="true">
         {crumbs.map((crumb, i) => (

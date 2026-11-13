@@ -228,6 +228,8 @@ struct MockEventEmitter {
     retry_auth_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
     /// Recorded `emit_initial_command_held` events (#5509).
     initial_command_helds: std::sync::Arc<std::sync::Mutex<Vec<InitialCommandHeldEvent>>>,
+    /// Recorded `fold_session_drop` calls as `(tab_id, fold)` (#5569).
+    session_drops: std::sync::Arc<std::sync::Mutex<Vec<(String, DropFold)>>>,
     fail_output: bool,
 }
 
@@ -272,6 +274,12 @@ impl EventEmitter for MockEventEmitter {
             .lock()
             .unwrap()
             .push(event.clone());
+    }
+    fn fold_session_drop(&self, tab_id: &str, fold: DropFold) {
+        self.session_drops
+            .lock()
+            .unwrap()
+            .push((tab_id.to_string(), fold));
     }
 }
 
@@ -3844,6 +3852,9 @@ mod files_only;
 
 /// Same-session pastes onto or into themselves are refused (#5330).
 mod paste_guard;
+
+/// A telnet server hanging up ends the session and reconnect works (#5569).
+mod telnet_drop;
 
 /// Application log secrecy: SSH password, store passphrase, sudo password and
 /// terminal content (#1570, #4007).
