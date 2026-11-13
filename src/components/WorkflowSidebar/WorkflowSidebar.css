@@ -122,7 +122,7 @@
   flex-shrink: 0;
   align-items: center;
   gap: var(--spacing-xxs);
-  color: var(--accent-color);
+  color: var(--text-accent);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
 }

@@ -59,7 +59,7 @@
 .portable-mode__info-box svg {
   flex-shrink: 0;
   margin-top: var(--spacing-xxs);
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 /* === Config file status list === */

@@ -39,7 +39,7 @@
 
 .connection-path-dialog__icon {
   flex-shrink: 0;
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .connection-path-dialog__label {
@@ -67,7 +67,7 @@
 }
 
 .connection-path-dialog__status--connecting {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .connection-path-dialog__status--connected {

@@ -42,7 +42,7 @@
 }
 
 .bottom-banner--info .bottom-banner__icon {
-  color: var(--accent-color);
+  color: var(--text-accent);
 }
 
 .bottom-banner--warning .bottom-banner__icon {
