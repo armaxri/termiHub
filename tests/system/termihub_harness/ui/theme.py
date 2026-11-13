@@ -20,6 +20,8 @@ BUILTIN_THEMES = ("dark", "light", "solarized-dark", "solarized-light")
 LIGHT_THEMES = ("light", "solarized-light")
 
 THEME_SELECT = "appearance-theme-select"
+#: The theme an unset ``theme`` setting means (``AppearanceSettings.tsx``).
+DEFAULT_THEME = "dark"
 
 
 class ThemeUi(HarnessMixin):
@@ -41,7 +43,13 @@ class ThemeUi(HarnessMixin):
         """
         self.open_settings_category("appearance")
         self.driver.select(THEME_SELECT, theme)
-        self.wait(lambda: self.current_theme() == theme, what=f"the {theme} theme setting")
+        # An unset theme *is* Dark (the select shows ``theme ?? "dark"``), and
+        # picking the already-shown option changes nothing, so on a fresh profile
+        # "dark" stays unset: compare the effective theme (#5608).
+        self.wait(
+            lambda: (self.current_theme() or DEFAULT_THEME) == theme,
+            what=f"the {theme} theme setting",
+        )
         self.wait_root_settled()
 
     def wait_root_settled(self) -> str:
