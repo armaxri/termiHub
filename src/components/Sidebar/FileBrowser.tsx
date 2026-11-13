@@ -428,12 +428,15 @@ function SortHeader({
   activeKey,
   direction,
   onToggle,
+  children,
 }: {
   label: string;
   col: FileSortKey;
   activeKey: FileSortKey;
   direction: SortDirection;
   onToggle: (col: FileSortKey) => void;
+  /** Extra content after the label (the Name header's "sorted by" hint, #5671). */
+  children?: React.ReactNode;
 }) {
   const active = activeKey === col;
   // `aria-sort` is only valid on columnheader/rowheader, and these headers are
@@ -452,6 +455,7 @@ function SortHeader({
       data-testid={`file-browser-sort-${col}`}
     >
       <span>{label}</span>
+      {children}
       {active &&
         (direction === "asc" ? (
           <ChevronUp size={10} className="file-browser__col-caret" />
@@ -459,6 +463,39 @@ function SortHeader({
           <ChevronDown size={10} className="file-browser__col-caret" />
         ))}
     </button>
+  );
+}
+
+/**
+ * "· sorted by size ↓" beside the Name header (#5671): the active sort column
+ * is not always on screen — Modified / Size hide with their headers at narrow
+ * widths (CSS container queries) or when the listing has no such data. The
+ * hint is visible exactly then: `always` when the column is not rendered at
+ * all, otherwise only inside the container query that hides that column.
+ */
+function SortedByHint({
+  sortKey,
+  direction,
+  always,
+}: {
+  sortKey: Exclude<FileSortKey, "name">;
+  direction: SortDirection;
+  always: boolean;
+}) {
+  return (
+    <span
+      className={`file-browser__col-sorted-by file-browser__col-sorted-by--${sortKey}${
+        always ? " file-browser__col-sorted-by--always" : ""
+      }`}
+      data-testid="file-browser-sorted-by"
+    >
+      · sorted by {sortKey}
+      {direction === "asc" ? (
+        <ChevronUp size={10} className="file-browser__col-caret" aria-label="ascending" />
+      ) : (
+        <ChevronDown size={10} className="file-browser__col-caret" aria-label="descending" />
+      )}
+    </span>
   );
 }
 
@@ -1855,6 +1892,15 @@ export function FileBrowser() {
     }
   }, [newFileName, createFile, requestWrite, currentPath]);
 
+  const copyCurrentPath = useCallback(() => {
+    writeClipboard(currentPath)
+      .then(() => toast.success("Copied path"))
+      .catch((err: unknown) => {
+        frontendLog("file_browser", `Copy path failed: ${errorMessage(err)}`);
+        toast.error(`Failed to copy path: ${errorMessage(err)}`);
+      });
+  }, [currentPath]);
+
   const headerActions = buildFileBrowserActions({
     mode: mode === "session" ? "session" : "local",
     currentPath,
@@ -1890,6 +1936,9 @@ export function FileBrowser() {
     onPaste: handlePaste,
     onNewFile: () => setNewFileName(""),
     onNewFolder: () => setNewDirName(""),
+    onCopyPath: copyCurrentPath,
+    sort,
+    onSort: setSort,
   });
 
   // "none" mode — show placeholder
@@ -1990,6 +2039,7 @@ export function FileBrowser() {
             ref={pathBarRef}
             currentPath={currentPath}
             onNavigate={handleNavigatePath}
+            onCopyPath={copyCurrentPath}
           />
           <FileBrowserActions actions={headerActions} />
         </div>
@@ -2018,7 +2068,11 @@ export function FileBrowser() {
               activeKey={sort.key}
               direction={sort.dir}
               onToggle={toggleSort}
-            />
+            >
+              {sort.key !== "name" && (
+                <SortedByHint sortKey={sort.key} direction={sort.dir} always={!columns[sort.key]} />
+              )}
+            </SortHeader>
             {columns.modified && (
               <SortHeader
                 label="Modified"
@@ -2220,21 +2274,13 @@ export function FileBrowser() {
           </ContextMenuContent>
         </ContextMenuRoot>
       </FileBrowserDndProvider>
-      {(mode === "local" || selectedPaths.size > 0) && (
+      {/* The drop target announces itself only during a drag, via the drag
+          overlay, in both modes (#5624) — no permanent "Drop files here". */}
+      {selectedPaths.size > 0 && (
         <div className="file-browser__statusbar">
-          {mode === "local" && (
-            <span className="file-browser__drop-hint" data-testid="file-browser-drop-hint">
-              <Upload size={11} /> Drop files here
-            </span>
-          )}
-          {selectedPaths.size > 0 && (
-            <span
-              className="file-browser__selected-count"
-              data-testid="file-browser-selected-count"
-            >
-              {selectedPaths.size} selected
-            </span>
-          )}
+          <span className="file-browser__selected-count" data-testid="file-browser-selected-count">
+            {selectedPaths.size} selected
+          </span>
         </div>
       )}
       <ConfirmDeleteDialog

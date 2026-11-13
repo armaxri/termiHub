@@ -13,6 +13,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { openFileBrowserMoreMenu } from "@/test/fileBrowserMenu";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -301,5 +302,62 @@ describe("FileBrowser.css – truncation + scroll rules (#5623, #2798)", () => {
 
   it("drops the middot separator rule entirely", () => {
     expect(css).not.toContain(".file-browser__meta-sep");
+  });
+});
+
+describe("FileBrowser – sort by a hidden column (#5671)", () => {
+  beforeEach(mountHarness);
+  afterEach(unmountHarness);
+
+  async function chooseSort(testId: string) {
+    await openFileBrowserMoreMenu();
+    const trigger = document.querySelector<HTMLElement>('[data-testid="file-browser-sort-menu"]')!;
+    await act(async () => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    await act(async () => {
+      document.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click();
+    });
+    await flushAsync();
+  }
+
+  it("sorts by size from the menu and names the hidden sort on the Name header", async () => {
+    const sized = [
+      { ...rowEntries[0], name: "big.bin", path: "/home/big.bin", size: 9000, modified: undefined },
+      { ...rowEntries[0], name: "a.txt", path: "/home/a.txt", size: 10, modified: undefined },
+      { ...rowEntries[0], name: "mid.txt", path: "/home/mid.txt", size: 500, modified: undefined },
+    ];
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(sized);
+      return Promise.resolve(undefined);
+    });
+    await renderLocalAt("/home");
+    const order = () =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>('[role="option"][data-testid^="file-row-"]')
+      ).map((r) => r.dataset.testid);
+    expect(order()).toEqual(["file-row-a.txt", "file-row-big.bin", "file-row-mid.txt"]);
+
+    await chooseSort("file-browser-sort-by-size");
+    expect(order()).toEqual(["file-row-a.txt", "file-row-mid.txt", "file-row-big.bin"]);
+    await chooseSort("file-browser-sort-dir-desc");
+    expect(order()).toEqual(["file-row-big.bin", "file-row-mid.txt", "file-row-a.txt"]);
+
+    // Size has a column here, so the hint shows only when CSS hides it.
+    const hint = container.querySelector('[data-testid="file-browser-sorted-by"]');
+    expect(hint?.textContent).toContain("size");
+    expect(hint?.classList.contains("file-browser__col-sorted-by--size")).toBe(true);
+    expect(hint?.classList.contains("file-browser__col-sorted-by--always")).toBe(false);
+
+    // Modified has no column at all: the Name header always says so.
+    await chooseSort("file-browser-sort-by-modified");
+    const always = container.querySelector('[data-testid="file-browser-sorted-by"]');
+    expect(always?.classList.contains("file-browser__col-sorted-by--always")).toBe(true);
+  });
+
+  it("shows no 'sorted by' hint while sorting by name", async () => {
+    await renderLocalAt("/home");
+    expect(container.querySelector('[data-testid="file-browser-sorted-by"]')).toBeNull();
   });
 });

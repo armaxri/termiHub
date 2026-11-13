@@ -70,7 +70,15 @@ export interface CrumbCollapse {
   hiddenStart: number;
   /** End of the hidden range (exclusive); equal to `hiddenStart` when none is hidden. */
   hiddenEnd: number;
+  /**
+   * Set when the leaf's direct parent (index `hiddenEnd`) stays visible only
+   * middle-truncated (#5624): the width, in CSS pixels, it may take.
+   */
+  parentWidth?: number;
 }
+
+/** Narrowest a middle-truncated parent segment may get before it is folded instead. */
+export const MIN_TRUNCATED_CRUMB_WIDTH = 64;
 
 /** Inputs of {@link collapseCrumbs}, all widths in CSS pixels. */
 export interface CollapseCrumbsInput {
@@ -80,19 +88,24 @@ export interface CollapseCrumbsInput {
   widths: number[];
   /** Width of the "…" segment, including its separator. */
   ellipsisWidth: number;
+  /** Narrowest a middle-truncated parent may get (default {@link MIN_TRUNCATED_CRUMB_WIDTH}). */
+  minTruncatedWidth?: number;
 }
 
 /**
  * Decide which middle segments of a breadcrumb fold into one "…" so the path
  * fits its row (#5521). The leaf (the folder being shown) always stays; then
  * the root when it fits (it says which drive / share / filesystem this is);
- * then as many of the leaf's nearest ancestors as fit. A leaf that is wider
- * than the row on its own is left to ellipsize in CSS.
+ * then as many of the leaf's nearest ancestors as fit. When not even the
+ * leaf's direct parent fits in full but enough room is left, the parent stays
+ * as a middle-truncated segment of that width (#5624) instead of folding. A
+ * leaf that is wider than the row on its own is left to ellipsize in CSS.
  */
 export function collapseCrumbs({
   available,
   widths,
   ellipsisWidth,
+  minTruncatedWidth = MIN_TRUNCATED_CRUMB_WIDTH,
 }: CollapseCrumbsInput): CrumbCollapse {
   const n = widths.length;
   const none = { hiddenStart: 0, hiddenEnd: 0 };
@@ -111,7 +124,16 @@ export function collapseCrumbs({
     budget -= widths[i];
     tailStart = i;
   }
-  return { hiddenStart: showRoot ? 1 : 0, hiddenEnd: tailStart };
+  const hiddenStart = showRoot ? 1 : 0;
+  const parent = n - 2;
+  if (tailStart === n - 1 && parent >= 1 && parent >= hiddenStart) {
+    // Nothing left to fold once the parent shows: the "…" frees its room.
+    const room = Math.floor(budget + (parent === hiddenStart ? ellipsisWidth : 0));
+    if (room >= minTruncatedWidth) {
+      return { hiddenStart, hiddenEnd: parent, parentWidth: room };
+    }
+  }
+  return { hiddenStart, hiddenEnd: tailStart };
 }
 
 /**
