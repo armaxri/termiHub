@@ -30,13 +30,14 @@ use crate::session::types::{
 };
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
-use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::connection::{
+    ConnectionType, ConnectionTypeRegistry, OutputReceiver, SessionEndCause,
+};
 use termihub_core::errors::SessionError;
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use termihub_core::monitoring::{LocalProcessManager, MonitoringProvider, ProcessManager};
 use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
 use termihub_core::session::registry::{Reservations, Sessions};
-use termihub_core::session::traits::OutputSink;
 
 use crate::daemon::client::{
     evicted_notification, DaemonClient, DaemonWriterHandle, DetachJob, ExitHook, ExitHookFuture,
@@ -1415,6 +1416,18 @@ impl SessionManager {
             alive,
             flow,
         })
+    }
+
+    /// Why the in-process session `session_id`'s link ended on its own
+    /// (#5732), read from its backend's
+    /// [`end_cause`](ConnectionType::end_cause). `None` for an unknown or
+    /// daemon-hosted session and when the backend cannot tell.
+    async fn in_process_end_cause(&self, session_id: &str) -> Option<SessionEndCause> {
+        let sessions = self.sessions.lock().await;
+        match &sessions.get(session_id)?.backend {
+            SessionBackend::InProcess { connection, .. } => connection.end_cause(),
+            _ => None,
+        }
     }
 
     /// List all sessions as read-only snapshots.
@@ -2841,7 +2854,15 @@ fn spawn_output_forwarder(
             // to `Exited` (#2369), then notify the desktop.
             PumpEnd::Eof => {
                 alive.store(false, Ordering::SeqCst);
-                let _ = sink.send_exit(&session_id, Some(0));
+                // Why the link ended (#5732): a telnet server that closed the
+                // connection reads "closed by server" on the desktop, not
+                // "connection lost". The backend recorded it before closing
+                // its output channel.
+                let end_cause = match manager.upgrade() {
+                    Some(manager) => manager.in_process_end_cause(&session_id).await,
+                    None => None,
+                };
+                let _ = sink.send_exit_with_cause(&session_id, Some(0), end_cause);
                 // Natural-exit deferred-update hook (#2378): if this was the
                 // last active session, apply any staged self-update now,
                 // matching the explicit-close path. The `Weak` is empty when
@@ -5115,6 +5136,60 @@ mod tests {
 
         // active_count() must no longer count a naturally-dead session.
         assert_eq!(mgr.active_count().await, 0);
+    }
+
+    /// A telnet session hosted in-process whose server closes the connection
+    /// cleanly ends with `end_cause: "remote_closed"` on its `connection.exit`
+    /// (#5732), so the desktop reads "closed by server", not "connection
+    /// lost". Uses a real loopback telnet server.
+    #[tokio::test]
+    async fn in_process_exit_carries_the_backends_end_cause() {
+        use std::io::Read;
+
+        use crate::protocol::methods::CONNECTION_EXIT;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let (close_tx, close_rx) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().expect("accept");
+            // Read the client's opening negotiation offer so the close below
+            // sends FIN rather than RST (see core `eof_tests`).
+            peer.set_read_timeout(Some(std::time::Duration::from_secs(20)))
+                .expect("read timeout");
+            let mut offer = [0u8; 6];
+            peer.read_exact(&mut offer).expect("read the opening offer");
+            // Close only once the session is registered with the manager.
+            let _ = close_rx.recv();
+            drop(peer);
+        });
+
+        let (notif_tx, mut notif_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mgr = SessionManager::new(notif_tx, test_registry()).into_arc();
+        let snapshot = mgr
+            .create(
+                "telnet",
+                "telnet".to_string(),
+                serde_json::json!({ "host": "127.0.0.1", "port": port }),
+                None,
+            )
+            .await
+            .expect("create the telnet session");
+        close_tx.send(()).expect("signal the server to close");
+        server.join().expect("server thread");
+
+        let exit = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                let n = notif_rx.recv().await.expect("notification channel open");
+                if n.method == CONNECTION_EXIT {
+                    return n;
+                }
+            }
+        })
+        .await
+        .expect("connection.exit within the deadline");
+        assert_eq!(exit.params["session_id"], snapshot.id.as_str());
+        assert_eq!(exit.params["end_cause"], "remote_closed");
     }
 
     #[tokio::test]

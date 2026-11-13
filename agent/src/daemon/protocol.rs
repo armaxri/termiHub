@@ -11,6 +11,7 @@ use std::io;
 use std::io::{Read, Write};
 use std::time::Duration;
 
+use termihub_core::connection::SessionEndCause;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 // ── Message type constants ──────────────────────────────────────────
@@ -131,7 +132,8 @@ pub const ERR_OWNED_BY_LIVE_PEER: &[u8] = b"AGT-015: session owned by a live con
 pub const MSG_OUTPUT: u8 = 0x81;
 /// Daemon → Agent: full ring buffer replay on connect.
 pub const MSG_BUFFER_REPLAY: u8 = 0x82;
-/// Daemon → Agent: shell exited (payload: exit_code i32 BE).
+/// Daemon → Agent: shell exited (payload: exit_code i32 BE, then optionally one
+/// end-cause byte, #5732 — see [`encode_exit`]).
 pub const MSG_EXITED: u8 = 0x83;
 /// Daemon → Agent: error message (payload: UTF-8 string).
 pub const MSG_ERROR: u8 = 0x84;
@@ -529,6 +531,44 @@ pub fn decode_exit_code(payload: &[u8]) -> Option<i32> {
     ]))
 }
 
+/// End-cause byte of a [`MSG_EXITED`] payload (#5732): the server closed the
+/// link.
+const END_CAUSE_REMOTE_CLOSED: u8 = 1;
+/// End-cause byte: a read or write on the link failed.
+const END_CAUSE_IO_ERROR: u8 = 2;
+/// End-cause byte: the link timed out.
+const END_CAUSE_TIMEOUT: u8 = 3;
+
+/// Encode a [`MSG_EXITED`] payload: the exit code (4 bytes BE), followed by
+/// one end-cause byte when the backend knows why its link ended (#5732).
+///
+/// The cause byte is a pure extension: a worker that predates it reads only
+/// the first four bytes ([`decode_exit_code`]), and a payload without it (from
+/// an older daemon) decodes to no cause ([`decode_end_cause`]).
+pub fn encode_exit(code: i32, end_cause: Option<SessionEndCause>) -> Vec<u8> {
+    let mut payload = encode_exit_code(code).to_vec();
+    if let Some(cause) = end_cause {
+        payload.push(match cause {
+            SessionEndCause::RemoteClosed => END_CAUSE_REMOTE_CLOSED,
+            SessionEndCause::IoError => END_CAUSE_IO_ERROR,
+            SessionEndCause::Timeout => END_CAUSE_TIMEOUT,
+        });
+    }
+    payload
+}
+
+/// Decode the end cause of a [`MSG_EXITED`] payload (see [`encode_exit`]).
+/// `None` for a payload without the cause byte or with one this build does
+/// not know.
+pub fn decode_end_cause(payload: &[u8]) -> Option<SessionEndCause> {
+    match payload.get(4)? {
+        &END_CAUSE_REMOTE_CLOSED => Some(SessionEndCause::RemoteClosed),
+        &END_CAUSE_IO_ERROR => Some(SessionEndCause::IoError),
+        &END_CAUSE_TIMEOUT => Some(SessionEndCause::Timeout),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,6 +633,34 @@ mod tests {
         let frame = read_frame(&mut cursor).unwrap().unwrap();
         assert_eq!(frame.msg_type, MSG_EXITED);
         assert_eq!(decode_exit_code(&frame.payload), Some(42));
+    }
+
+    #[test]
+    fn exit_payload_round_trips_each_end_cause() {
+        for cause in [
+            SessionEndCause::RemoteClosed,
+            SessionEndCause::IoError,
+            SessionEndCause::Timeout,
+        ] {
+            let payload = encode_exit(0, Some(cause));
+            let mut buf = Vec::new();
+            write_frame(&mut buf, MSG_EXITED, &payload).unwrap();
+            let frame = read_frame(&mut Cursor::new(&buf)).unwrap().unwrap();
+            assert_eq!(decode_exit_code(&frame.payload), Some(0));
+            assert_eq!(decode_end_cause(&frame.payload), Some(cause));
+        }
+    }
+
+    #[test]
+    fn exit_payload_without_a_cause_keeps_the_four_byte_shape() {
+        // No cause: byte-identical to the pre-#5732 payload.
+        assert_eq!(encode_exit(7, None), encode_exit_code(7).to_vec());
+        assert_eq!(decode_end_cause(&encode_exit_code(7)), None);
+        // An unknown cause byte (a newer daemon) reads as no cause.
+        let mut payload = encode_exit_code(7).to_vec();
+        payload.push(0xEE);
+        assert_eq!(decode_end_cause(&payload), None);
+        assert_eq!(decode_exit_code(&payload), Some(7));
     }
 
     #[test]
