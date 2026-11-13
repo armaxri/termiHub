@@ -6,7 +6,8 @@
  *   the scrollbar gutter reserved (the Appearance column was 13px wider in one
  *   capture than in another);
  * - the window toolbar shows three groups split by visible separators;
- * - a selected connection row in Solarized Light is base2 with an accent bar;
+ * - a selected connection row in Solarized Light is the theme's active tone
+ *   with an accent bar (#5639; was base2);
  *   in Solarized Dark it is base03 with the canonical blue bar (#5582).
  *
  * Screenshots land in the usual screens/ folder for human review.
@@ -18,6 +19,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import type { VisualHandle } from "./harness/visualHandle";
 import { SCREENS } from "./surfaces";
+import { solarizedLightTheme } from "../../src/themes/solarized-light";
 
 declare global {
   interface Window {
@@ -129,13 +131,20 @@ test("the window toolbar shows session, macro and layout groups (#5559)", async 
   await testInfo.attach("toolbar", { path: file, contentType: "image/png" });
 });
 
+/** `#rrggbb` as the `rgb(r, g, b)` string getComputedStyle reports. */
+function rgb(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
 const SELECTED_ROWS = [
   {
     theme: "solarized-light",
-    title: "a selected Solarized Light connection row is base2 with an accent bar (#5562)",
-    bg: "rgb(238, 232, 213)", // base2
-    sidebar: "rgb(253, 246, 227)", // base3
-    bar: "rgb(31, 111, 166)", // accentColor
+    title:
+      "a selected Solarized Light connection row is the active tone with an accent bar (#5639)",
+    bg: rgb(solarizedLightTheme.selection!.bg), // bgActive (#5639; was base2)
+    sidebar: rgb(solarizedLightTheme.colors.sidebarBg), // base3
+    bar: rgb(solarizedLightTheme.selection!.indicator), // accentColor
   },
   {
     theme: "solarized-dark",
