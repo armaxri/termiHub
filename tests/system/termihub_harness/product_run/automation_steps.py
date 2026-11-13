@@ -10,6 +10,7 @@ and ``TerminalUi``.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..ui.base import HarnessMixin
@@ -19,6 +20,9 @@ WORKFLOW_EDITOR = "workflow-editor-dialog"
 SCHEDULE_EDITOR = "schedule-editor-dialog"
 SCHEDULE_CONFIRM = "schedule-enable-confirm"
 RUN_TARGETS = "workflow-run-targets-dialog"
+#: A field inside a workflow step row (``workflow-editor-step-delay-1``): the
+#: row starts collapsed when an existing workflow is opened (#5637).
+_STEP_FIELD = re.compile(r"^workflow-editor-step-[a-z-]+-(\d+)$")
 
 
 class AutomationPhaseUi(HarnessMixin):
@@ -34,6 +38,7 @@ class AutomationPhaseUi(HarnessMixin):
         def set_command(self, index: int, command: str) -> None: ...
         def save_workflow(self) -> None: ...
         def workflow_id(self, name: str) -> str: ...
+        def expand_step(self, index: int) -> None: ...
 
     # ── stores ───────────────────────────────────────────────────────────────
     def _state_list(self, key: str) -> list[dict[str, Any]]:
@@ -147,6 +152,9 @@ class AutomationPhaseUi(HarnessMixin):
         self.driver.click(f"workflow-edit-{workflow_id}")
         self.wait(lambda: self.driver.exists(WORKFLOW_EDITOR), what="the workflow editor")
         for testid, value in fields.items():
+            step = _STEP_FIELD.match(testid)
+            if step:
+                self.expand_step(int(step.group(1)))
             self.wait(lambda t=testid: self.driver.exists(t), what=f"{testid} in the editor")
             self.driver.type(testid, str(value))
         self.save_workflow()

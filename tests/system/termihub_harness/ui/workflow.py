@@ -135,6 +135,21 @@ class WorkflowUi(HarnessMixin):
             what=f"a {kind!r} step to be added",
         )
 
+    def expand_step(self, index: int) -> None:
+        """Expand the step row at ``index`` to its detail editor (idempotent).
+
+        A workflow opened for editing shows each step as a collapsed summary
+        line (#5637); its fields only exist once the row is expanded.
+        """
+        toggle = f"workflow-editor-step-toggle-{index}"
+        self.wait(lambda: self.driver.exists(toggle), what=f"step {index} in the editor")
+        if self.driver.get_attribute(toggle, "aria-expanded") != "true":
+            self.driver.click(toggle)
+        self.wait(
+            lambda: self.driver.exists(f"workflow-editor-step-body-{index}"),
+            what=f"step {index} to expand",
+        )
+
     def set_name(self, name: str) -> None:
         """Set the workflow name field."""
         self.driver.type("workflow-editor-name", name)

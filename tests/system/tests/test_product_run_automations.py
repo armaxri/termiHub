@@ -396,3 +396,68 @@ class TestProductRunAutomations(
         assert "sidebar-list-item--actions-visible" in row, f"row actions hidden behind hover: {row}"
         for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
             assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
+
+    # ── workflow editor layout ───────────────────────────────────────────────
+    def test_80_workflow_editor_layout(self):
+        with self.step(
+            "automations.workflow.editor-layout",
+            "The workflow editor fits 800x600 with one scroll container and Triggers in view",
+            expect="the Edit workflow dialog at 800x600: Name, Description and Tags spaced "
+            "apart, the Triggers chips fully visible above the Cancel/Save footer, the five "
+            "steps as one-line summaries, a single scrollbar (#5637)",
+        ):
+            self.require("automations.workflow.create")
+            self.driver.resize_window(800, 600)
+            try:
+                self.open_workflows_sidebar()
+                self.driver.click(f"workflow-edit-{self.ids['workflow']}")
+                self.wait(lambda: self.driver.exists("workflow-editor-dialog"),
+                          what="the workflow editor")
+                self.shot(label="editor-800x600")
+                self._grade_workflow_editor_layout()
+                self.cancel_clean_editor()
+            finally:
+                self.driver.resize_window(1280, 800)
+
+    def _grade_workflow_editor_layout(self) -> None:
+        """Grade the editor's layout at 800x600 (#5637, R-063/R-069/R-070).
+
+        No element inside the dialog body scrolls on its own (the steps list and
+        the trigger connection list flow in the body); Name, Description and Tags
+        are at least 8 px apart; the Triggers chips sit wholly inside the dialog
+        and above its footer without scrolling; collapsed steps are one line.
+        """
+        dialog = self.driver.measure_element("workflow-editor-dialog")["rect"]
+        self.evidence(f"dialog {dialog}")
+        assert dialog["y"] >= 0 and dialog["y"] + dialog["height"] <= 600 + 1, (
+            f"the dialog {dialog} does not fit 800x600"
+        )
+        for nested in ("workflow-editor-steps", "workflow-editor-form"):
+            overflow = self.driver.get_computed_style("overflow-y", nested)
+            box = self.driver.measure_element(nested)
+            self.evidence(f"{nested}: overflow-y {overflow}, scroll {box['scrollHeight']} "
+                          f"/ client {box['clientHeight']}")
+            assert overflow == "visible", f"{nested} is its own scroll container ({overflow})"
+            assert box["scrollHeight"] <= box["clientHeight"] + 1, f"{nested} clips its content"
+        pairs = (("workflow-editor-name", "workflow-editor-description-label"),
+                 ("workflow-editor-description", "workflow-editor-tags-label"))
+        for above, below in pairs:
+            upper = self.driver.measure_element(above)["rect"]
+            lower = self.driver.measure_element(below)["rect"]
+            gap = lower["y"] - (upper["y"] + upper["height"])
+            self.evidence(f"gap {above} -> {below}: {gap:.1f}px")
+            assert gap >= 8, f"{below} sits {gap:.1f}px under {above} (want >= 8px)"
+        chips = self.driver.measure_element("workflow-editor-triggers-chips")["rect"]
+        save = self.driver.measure_element("workflow-editor-save")["rect"]
+        self.evidence(f"trigger chips {chips}; Save {save}")
+        assert chips["y"] >= dialog["y"], f"the trigger chips {chips} start above the dialog"
+        assert chips["y"] + chips["height"] <= save["y"] - 8, (
+            f"the trigger chips {chips} run into the footer (Save at {save})"
+        )
+        index = 0
+        while self.driver.exists(f"workflow-editor-step-{index}"):
+            row = self.driver.measure_element(f"workflow-editor-step-{index}")["rect"]
+            assert row["height"] <= 48, f"collapsed step {index} is {row['height']:.0f}px tall"
+            index += 1
+        self.evidence(f"{index} collapsed step rows, each <= 48px")
+        assert index == 5, f"expected the five authored steps, found {index}"
