@@ -449,6 +449,8 @@ describe("PasswordPrompt", () => {
 
       expect(title()).toBe("Telnet password");
       expect(title()).not.toContain("SSH");
+      // The product run reads the title by this hook.
+      expect(query("password-prompt-title")?.textContent).toBe("Telnet password");
       expect(query("password-prompt-input")?.getAttribute("aria-label")).toBe("Telnet password");
       expect(document.body.textContent).not.toContain("SSH");
     });

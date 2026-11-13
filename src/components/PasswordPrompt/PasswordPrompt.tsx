@@ -142,7 +142,7 @@ export function PasswordPrompt() {
       onOpenChange={(v) => {
         if (!v) dismissPasswordPrompt();
       }}
-      title={title}
+      title={<span data-testid="password-prompt-title">{title}</span>}
       footer={
         <>
           <Button

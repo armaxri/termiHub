@@ -23,6 +23,18 @@ class PasswordPromptUi(HarnessMixin):
         """Whether the SSH password prompt modal is currently open."""
         return bool(self.driver.get_state("passwordPromptOpen"))
 
+    def password_prompt_title(self) -> str:
+        """The open prompt's title, e.g. ``"Telnet password"`` (#5617).
+
+        The title follows the connection's transport and is sentence case; the
+        connection name is on its own line (``password-prompt-connection``).
+        """
+        return self.driver.get_text("password-prompt-title").strip()
+
+    def password_prompt_description(self) -> str:
+        """The open prompt's description line (names the key file, #5617)."""
+        return self.driver.get_text("password-prompt-description").strip()
+
     def _host_key_prompt_open(self) -> bool:
         """Whether the host-key prompt is open — not merely still in the DOM.
 

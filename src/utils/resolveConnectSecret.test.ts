@@ -358,7 +358,6 @@ describe("resolveConnectSecret — telnet auto-login schema", () => {
   });
 
   it("titles the auto-login prompt after telnet, not SSH (#5617)", async () => {
-    mockedResolve.mockResolvedValue(null);
     requestPassword.mockResolvedValue({ password: "pw", shouldSave: false });
     await resolveConnectSecret({
       schema: TELNET_SCHEMA,
