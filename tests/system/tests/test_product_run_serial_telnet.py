@@ -184,6 +184,9 @@ class TestProductRunSerial(_PhaseBase):
                 timeout=30.0, interval=3.0, what="the device's answer after the replug",
             )
             self.evidence(f"terminal: {self.tail(tab)}")
+            # #5620: the buffer held these lines while the pane painted blank —
+            # grade what is rendered: the pre-unplug line and the device's answer.
+            self.assert_terminal_painted(tab, "PR-DEVICE READY", DEVICE_ID)
         self.close_all_tabs()
 
     def test_20_physical_adapter(self):

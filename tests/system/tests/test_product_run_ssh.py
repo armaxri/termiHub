@@ -366,7 +366,7 @@ class TestProductRunSsh(
         with self.step(
             "ssh.auto-reconnect",
             "Bastion down: the jump tab notices; bastion back: it reconnects on its own",
-            expect="the jump-host tab live again after the bastion restart",
+            expect="the jump-host tab live again after the bastion restart, scrollback and new output visible",
         ):
             self.require("ssh.jump")
             bastion = NativeBastionControl(self.hosts.native.target)
@@ -385,6 +385,9 @@ class TestProductRunSsh(
                     timeout=RECONNECT_TIMEOUT, what="the jump tab to reconnect",
                 )
                 self.evidence(self.echo_round_trip(jump_tab, "PR_SSH_AUTO_RECONNECT_OK"))
+                # #5620: the buffer held both lines while the pane painted blank —
+                # grade what is rendered: the pre-drop line and the new output.
+                self.assert_terminal_painted(jump_tab, "PR_SSH_JUMP_OK", "PR_SSH_AUTO_RECONNECT_OK")
             finally:
                 bastion.restore()
         self.close_all_tabs()
