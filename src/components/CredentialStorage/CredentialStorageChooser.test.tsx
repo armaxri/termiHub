@@ -7,6 +7,8 @@ import type { StorageChoiceOutcome } from "@/store/slices/credentialStoreSlice";
 import type { CredentialStorageMode, CredentialStoreStatusInfo } from "@/types/credential";
 import { CredentialStorageChooser } from "./CredentialStorageChooser";
 import { expectedStorageCards, readStorageCards } from "@/test/credentialStorageCards";
+import { pressRadioArrow } from "@/test/radioKeyboard";
+import { MASTER_PASSWORD_NOT_RECOVERABLE_TEXT } from "@/utils/credentialStorageCopy";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -410,6 +412,95 @@ describe("CredentialStorageChooser (#5187)", () => {
         "Passwords do not match."
       );
       expect(input("confirm-input").getAttribute("aria-invalid")).toBe("true");
+    });
+  });
+
+  describe("polish (#5560)", () => {
+    const MODES = ["os_keychain", "master_password", "none"] as const;
+    const option = (mode: string) => query(`credential-storage-chooser-option-${mode}`)!;
+
+    it("calls out that a master password cannot be recovered, above the inputs", async () => {
+      await openChooser();
+      await click("credential-storage-chooser-option-master_password");
+      await click("credential-storage-chooser-continue");
+
+      const warning = query("credential-storage-chooser-master-password-warning")!;
+      expect(warning.getAttribute("role")).toBe("note");
+      expect(warning.textContent).toBe(MASTER_PASSWORD_NOT_RECOVERABLE_TEXT);
+      expect(warning.classList.contains("credential-storage-warning")).toBe(true);
+      expect(warning.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+      // Not buried in the grey description any more; it leads the inputs.
+      const setup = query("credential-storage-chooser-master-password-setup")!;
+      const passwordField = query("credential-storage-chooser-master-password-field")!;
+      expect(setup.firstElementChild).toBe(warning);
+      expect(
+        warning.compareDocumentPosition(passwordField) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+      expect(document.querySelector(".credential-storage-chooser__text")?.textContent).not.toMatch(
+        /cannot be recovered/
+      );
+    });
+
+    it("gives every option its own icon", async () => {
+      await openChooser();
+      const icons = MODES.map((mode) =>
+        query(`credential-storage-chooser-option-${mode}-icon`)!.getAttribute("class")
+      );
+      expect(new Set(icons).size).toBe(MODES.length);
+      for (const mode of MODES) {
+        const icon = query(`credential-storage-chooser-option-${mode}-icon`)!;
+        expect(icon.getAttribute("aria-hidden")).toBe("true");
+        expect(icon.getAttribute("data-icon")).toBe(mode);
+      }
+    });
+
+    it("marks every option with a radio mark and exposes radio semantics", async () => {
+      await openChooser();
+      for (const mode of MODES) {
+        const card = option(mode);
+        expect(card.getAttribute("role")).toBe("radio");
+        const mark = card.querySelector(".ui-radio-card__mark");
+        expect(mark).not.toBeNull();
+        expect(mark!.getAttribute("aria-hidden")).toBe("true");
+      }
+      expect(option("os_keychain").getAttribute("aria-checked")).toBe("true");
+      expect(option("os_keychain").getAttribute("data-state")).toBe("checked");
+    });
+
+    it("moves the selection with the arrow keys", async () => {
+      await openChooser();
+      await pressRadioArrow(option("os_keychain"), "ArrowDown");
+      expect(document.activeElement).toBe(option("master_password"));
+      expect(option("master_password").getAttribute("aria-checked")).toBe("true");
+      expect(option("os_keychain").getAttribute("aria-checked")).toBe("false");
+
+      await pressRadioArrow(option("master_password"), "ArrowDown");
+      expect(option("none").getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("keeps the body at its tallest height across steps", async () => {
+      // jsdom has no layout: the choose step measures 400px, the vault step 260px.
+      const spy = vi
+        .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.dataset.testid !== "credential-storage-chooser-body") return 0;
+          return this.querySelector('[role="radiogroup"]') ? 400 : 260;
+        });
+      try {
+        await openChooser();
+        const body = () => query("credential-storage-chooser-body")!;
+        expect(body().style.minHeight).toBe("400px");
+
+        await click("credential-storage-chooser-option-master_password");
+        await click("credential-storage-chooser-continue");
+        expect(query("credential-storage-chooser-master-password-setup")).not.toBeNull();
+        expect(body().style.minHeight).toBe("400px");
+
+        await click("credential-storage-chooser-back");
+        expect(body().style.minHeight).toBe("400px");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

@@ -777,6 +777,36 @@ describe("SecuritySettings", () => {
       });
     });
 
+    it("marks each card with a radio mark and its own icon, like the chooser (#5560)", async () => {
+      await render();
+      const group = query("storage-mode-group")!;
+      const cards = Array.from(group.querySelectorAll(".ui-radio-card"));
+      expect(cards).toHaveLength(3);
+      for (const card of cards) {
+        expect(card.querySelector(".ui-radio-card__mark")?.getAttribute("aria-hidden")).toBe(
+          "true"
+        );
+      }
+      expect(readStorageCards(group).map((c) => c.icon)).toEqual([
+        "os_keychain",
+        "master_password",
+        "none",
+      ]);
+    });
+
+    it("calls out that the master password cannot be recovered (#5560)", async () => {
+      await render();
+      await act(async () => {
+        (query("storage-mode-master-password") as HTMLElement).click();
+      });
+      const warning = query("master-password-warning")!;
+      expect(warning.getAttribute("role")).toBe("note");
+      expect(warning.textContent).toBe(
+        "Your master password cannot be recovered if you forget it."
+      );
+      expect(query("master-password-setup")!.contains(warning)).toBe(true);
+    });
+
     it("is a named radiogroup that owns radios (not aria-pressed toggles)", async () => {
       await render();
       const group = query("storage-mode-group") as HTMLElement;

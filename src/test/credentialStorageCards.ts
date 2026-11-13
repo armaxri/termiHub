@@ -3,6 +3,8 @@ import { CREDENTIAL_STORAGE_CHOICES } from "@/utils/credentialStorageCopy";
 /** One rendered credential-storage card, as the user reads it. */
 interface StorageCardView {
   label: string;
+  /** The option's icon, by the storage mode it stands for (#5560). */
+  icon: string | null;
   badge: string | null;
   description: string;
 }
@@ -15,6 +17,7 @@ interface StorageCardView {
 export function readStorageCards(group: Element): StorageCardView[] {
   return Array.from(group.querySelectorAll(".ui-radio-card")).map((card) => ({
     label: card.querySelector(".ui-radio-card__label > span:not([class])")?.textContent ?? "",
+    icon: card.querySelector("[data-icon]")?.getAttribute("data-icon") ?? null,
     badge: card.querySelector(".credential-storage-option__badge")?.textContent ?? null,
     description: card.querySelector(".ui-radio-card__desc")?.textContent ?? "",
   }));
@@ -24,6 +27,7 @@ export function readStorageCards(group: Element): StorageCardView[] {
 export function expectedStorageCards(): StorageCardView[] {
   return CREDENTIAL_STORAGE_CHOICES.map((c) => ({
     label: c.label,
+    icon: c.mode,
     badge: c.badge ?? null,
     description: c.description,
   }));
