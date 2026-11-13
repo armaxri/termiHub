@@ -213,4 +213,48 @@ describe("AgentNode — header presentation (#2524)", () => {
       expect(actions!.parentElement).toBe(header());
     });
   });
+
+  // R-010 (#5702): the single state action (Connect / Reconnect / Cancel) sits
+  // on the agent row itself, beside the name — not on a second header row.
+  describe("the state action sits on the agent row", () => {
+    const row1 = () => header()?.querySelector<HTMLElement>(":scope > .connection-list__group-row");
+    const secondRowActions = () =>
+      header()?.querySelector<HTMLElement>(":scope > .connection-list__group-actions") ?? null;
+
+    it.each([
+      ["never connected → Connect", { connectionState: "disconnected" as const }, "agent-connect"],
+      [
+        "failed → Reconnect",
+        { connectionState: "disconnected" as const, lastError: "boom" },
+        "agent-reconnect",
+      ],
+      ["connecting → Cancel", { connectionState: "connecting" as const }, "agent-cancel-connect"],
+    ])("%s is inline on row 1", (_label, overrides, testIdPrefix) => {
+      renderAgent(makeAgent(overrides));
+
+      const row = row1();
+      const toggle = container.querySelector<HTMLElement>(".connection-list__group-toggle");
+      const action = container.querySelector<HTMLElement>(
+        `[data-testid="${testIdPrefix}-${AGENT_ID}"]`
+      );
+      expect(row).not.toBeNull();
+      expect(action).not.toBeNull();
+      expect(row!.contains(toggle)).toBe(true);
+      expect(row!.contains(action)).toBe(true);
+      // Never nested in the toggle button (no button-in-button), and no
+      // second header row is spent on a single action.
+      expect(toggle!.contains(action)).toBe(false);
+      expect(secondRowActions()).toBeNull();
+    });
+
+    it("keeps a connected agent's several actions on row 2", () => {
+      renderAgent(makeAgent({ connectionState: "connected" }));
+
+      expect(row1()).not.toBeNull();
+      const actions = secondRowActions();
+      expect(actions).not.toBeNull();
+      expect(actions!.querySelector(`[data-testid="agent-disconnect-${AGENT_ID}"]`)).not.toBeNull();
+      expect(row1()!.querySelector(".connection-list__group-actions")).toBeNull();
+    });
+  });
 });
