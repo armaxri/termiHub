@@ -62,6 +62,15 @@
   color: var(--text-secondary);
 }
 
+/* #5740: an active chip paints its level colour as a 15% tint, and the level
+   colour misses AA on that tint (Light, Solarized). The tint keeps the level
+   cue; the label of an active chip uses --text-primary. */
+.log-viewer__level-filter--active.log-viewer__level-filter--error,
+.log-viewer__level-filter--active.log-viewer__level-filter--warn,
+.log-viewer__level-filter--active.log-viewer__level-filter--info {
+  color: var(--text-primary);
+}
+
 .log-viewer__level-filter--active.log-viewer__level-filter--error {
   background-color: color-mix(in srgb, var(--color-error) 15%, transparent);
 }

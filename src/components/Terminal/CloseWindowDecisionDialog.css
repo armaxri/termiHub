@@ -88,12 +88,16 @@
 }
 
 .close-window-decision__pill--detach {
-  color: var(--color-success);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   background: color-mix(in srgb, var(--color-success) 16%, transparent);
 }
 
 .close-window-decision__pill--terminate {
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   background: color-mix(in srgb, var(--color-error) 16%, transparent);
 }
 

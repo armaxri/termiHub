@@ -102,7 +102,9 @@
 
 .terminal-disconnect-overlay__error-text {
   font-size: var(--font-size-xs);
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   word-break: break-word;
   white-space: pre-wrap;
 }

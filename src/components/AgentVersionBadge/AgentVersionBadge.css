@@ -43,17 +43,23 @@
 }
 
 .agent-version-badge__state--up-to-date {
-  color: var(--color-success);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   background: color-mix(in srgb, var(--color-success) 18%, transparent);
 }
 
 .agent-version-badge__state--update-available {
-  color: var(--color-notice);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   background: color-mix(in srgb, var(--color-notice) 18%, transparent);
 }
 
 .agent-version-badge__state--incompatible {
-  color: var(--color-error);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
   background: color-mix(in srgb, var(--color-error) 18%, transparent);
 }
 

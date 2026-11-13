@@ -389,7 +389,9 @@
   margin: var(--spacing-xs) 0 0;
   padding-left: var(--spacing-md);
   font-size: var(--font-size-xs);
-  color: var(--color-warning);
+  /* #5740: status text misses AA on its own tint (Light, Solarized); the tint and border keeps
+     the status cue, the label uses --text-primary. */
+  color: var(--text-primary);
 }
 
 /* === Serial port scan prefix section === */
