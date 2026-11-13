@@ -144,6 +144,10 @@ class TestProductRunSerial(_PhaseBase):
             config = (self.require_connection(name).get("config") or {}).get("config") or {}
             self.evidence(f"saved config: port={config.get('port')} baud={config.get('baudRate')}")
             assert str(config.get("baudRate")) == "9600", config
+            # The status bar names the port and line settings (#5628, R-143).
+            chip = self.driver.get_text("status-bar-serial") if self.driver.exists("status-bar-serial") else ""
+            self.evidence(f"serial chip: {chip!r}")
+            assert "9600" in chip and "8N1" in chip, f"no port/baud chip: {chip!r}"
         with self.step(
             "serial.virtual.io",
             "Typed text goes over the port; the device's answer comes back",
