@@ -21,6 +21,7 @@ const getElement = vi.fn((_tabId: string) => (elementRegistered ? termEl : null)
 vi.mock("@/components/Terminal/TerminalRegistry", () => ({
   useTerminalRegistry: () => ({
     getElement,
+    onRegister: () => () => {},
     focusTerminal: vi.fn(),
     fitTerminal: vi.fn(),
     parkingRef: { current: parkingEl },

@@ -41,6 +41,7 @@ from ..display_runner import bring_app_foreground
 from ..window_capture import CaptureUnavailable, capture_window, save_png
 from ..ui.base import HarnessMixin
 from .config import ProductRunInputs, load_inputs
+from .grades import painted_terminal_problems
 from .hover import Hover, hovered
 from .recorder import Recorder, recorder_from_env, unattended
 
@@ -302,6 +303,34 @@ class ProductRunUi(HarnessMixin):
             return {"window_css": {"width": width, "height": height}}
         except BridgeError:
             return {}
+
+    # ── terminal paint ────────────────────────────────────────────────────────
+    def assert_terminal_painted(self, tab_id: str, *expected: str, timeout: float = 15.0) -> None:
+        """Wait until every ``expected`` text is *visible* in the tab, not only buffered.
+
+        Grades the rendered terminal (#5620): the element mounted in its panel
+        slot with a visible area, and the texts on the rows the renderer paints
+        (see :func:`~.grades.painted_terminal_problems`). Adds an evidence line;
+        fails the step with what kept the text from showing.
+        """
+        last: list[str] = []
+
+        def painted() -> bool:
+            nonlocal last
+            try:
+                measure = self.driver.measure_terminal(tab_id)
+                rows = [r.get("text", "") for r in self.driver.read_terminal_cells(tab_id=tab_id)]
+            except BridgeError as exc:
+                last = [f"unreadable: {exc}"]
+                return False
+            last = painted_terminal_problems(measure, rows, list(expected))
+            return not last
+
+        try:
+            self.wait(painted, timeout=timeout, interval=0.5, what="the terminal to paint")
+        except AssertionError as exc:
+            raise AssertionError(f"terminal {tab_id} not painted: {'; '.join(last)}") from exc
+        self.evidence(f"painted (slot + rendered rows): {', '.join(expected)}")
 
     # ── hover ─────────────────────────────────────────────────────────────────
     @contextlib.contextmanager

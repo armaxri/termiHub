@@ -36,3 +36,32 @@ def mix_with_transparent(value: str, resolve: Callable[[str], Rgba] = parse_colo
         return parse_color(value)
     base = resolve(match.group(1))
     return Rgba(base.r, base.g, base.b, base.a * float(match.group(2)) / 100)
+
+
+def painted_terminal_problems(
+    measure: dict, viewport_rows: list[str], expected: list[str]
+) -> list[str]:
+    """What keeps ``expected`` from being *visible* in a terminal; empty when it is.
+
+    A buffer read is not enough (#5620): after an automatic reconnect the tab's
+    fresh xterm element stayed parked off screen, so the buffer held every line
+    while the pane painted blank. ``measure`` is ``measureTerminal``'s value.
+    The element must sit in its panel slot (``slotted``) with a visible area,
+    and every ``expected`` text must be on a rendered row: the DOM renderer's
+    painted rows, or on WebGL (which paints rows from the viewport) the
+    viewport's rows ``viewport_rows``.
+    """
+    problems: list[str] = []
+    if measure.get("slotted") is False:
+        problems.append("the terminal element is parked off screen, not in its tab's slot")
+    rect = measure.get("visibleRect") or {}
+    if (rect.get("width") or 0) <= 0 or (rect.get("height") or 0) <= 0:
+        problems.append(f"the terminal has no visible area (visibleRect {rect or None})")
+    dom_rows = measure.get("domRows")
+    rows = dom_rows if dom_rows is not None else viewport_rows
+    source = "painted DOM rows" if dom_rows is not None else "viewport rows"
+    text = "\n".join(rows)
+    missing = [e for e in expected if e not in text]
+    if missing:
+        problems.append(f"not on the {source}: {missing}")
+    return problems
