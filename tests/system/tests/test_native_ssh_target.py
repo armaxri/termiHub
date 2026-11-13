@@ -9,6 +9,7 @@ bastion's gateway count, and the server-control twin's session lookup and
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 
@@ -639,7 +640,7 @@ def test_windows_agent_path_refuses_what_the_app_cannot_launch_unquoted(monkeypa
         control.windows_agent_path()
 
 
-def test_windows_install_agent_streams_the_binary_raw_after_the_script(tmp_path, monkeypatch):
+def test_windows_install_agent_uploads_raw_then_renames(tmp_path, monkeypatch):
     import hashlib
 
     data = bytes(range(256)) * 4
@@ -647,58 +648,78 @@ def test_windows_install_agent_streams_the_binary_raw_after_the_script(tmp_path,
     binary.write_bytes(data)
     digest = hashlib.sha256(data).hexdigest()
     state = {"installed": False}
+    uploads = []
 
     def install(_stdin):
         state["installed"] = True
         return b""
 
-    fake = _FakeWindowsSsh(
+    script_fake = _FakeWindowsSsh(
         [
             ("LOCALAPPDATA", WIN_AGENT.encode()),
             ("[ -e", lambda _: b"yes" if state["installed"] else b"no"),
-            ("mv -f", install),
+            ("mkdir -p", b""),
+            ('mv -f "$2"', install),
             ("sha256", f"{digest}  -\n".encode()),
         ]
     )
-    monkeypatch.setattr(native_ssh.subprocess, "run", fake)
+
+    def fake_run(cmd, **kw):
+        if cmd[-1].startswith("cat >"):
+            uploads.append((cmd[-1], kw.get("input")))
+
+            class _R:
+                returncode = 0
+                stdout = b""
+                stderr = b""
+
+            return _R()
+        return script_fake(cmd, **kw)
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
     control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
     assert control.install_agent(binary) == WIN_AGENT
-    (streamed,) = [c for c in fake.calls if b"mv -f" in c.split(b"\n", 2)[1]]
-    # The binary follows the script as is: no base64 inlining.
-    assert streamed.endswith(b"\n" + data)
+    (command, sent), = uploads
+    # The binary goes to cat as is, beside the agent, under a marked command
+    # without quotes; the rename names that temp file.
+    assert sent == data
+    assert command.startswith(f"cat >{WIN_AGENT}.tmp.")
+    assert command.endswith(f"; : {native_ssh.WINDOWS_EXEC_MARKER}")
+    assert not set(command) & set("\"'\\")
+    tmp = command[len("cat >") : command.index(";")]
+    (rename,) = [c for c in script_fake.calls if b'mv -f "$2"' in c]
+    assert shlex.split(rename.split(b"\n", 1)[0].decode()) == ["set", "--", WIN_AGENT, tmp]
     with pytest.raises(ValueError, match="variants"):
         control.install_agent(binary, home="C:/x")
 
 
-def test_windows_stream_install_script_runs_in_a_posix_sh(tmp_path):
-    """The streamed install, run for real: ``sh -s`` must leave the bytes behind
-    the script to its ``cat``, and an existing agent is replaced."""
+@pytest.mark.parametrize("path", ["C:/a b/x.exe", "C:/a'b/x.exe", "C:/a;b/x.exe", "C:\\a\\x.exe", ""])
+def test_windows_upload_command_refuses_paths_it_cannot_name_unquoted(path):
+    with pytest.raises(ValueError, match="unquoted"):
+        native_ssh.windows_upload_command(path)
+
+
+def test_windows_upload_and_rename_run_in_a_posix_sh(tmp_path):
+    """The upload command and the rename script, run for real in the local
+    ``sh`` (dash on Linux, bash elsewhere): the bytes land intact and an
+    existing agent is replaced, with nothing left beside it."""
+    import shutil
     import subprocess as sp
 
-    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
-    captured = {}
-
-    def fake_run(cmd, **kw):
-        captured["stdin"] = kw["input"]
-
-        class _R:
-            returncode = 0
-            stdout = b""
-            stderr = b""
-
-        return _R()
-
+    missing = [tool for tool in ("sh", "cat", "mv", "rm") if shutil.which(tool) is None]
+    assert not missing, f"the install needs {missing} on this host"
     dest = tmp_path / "termiHub" / "agent" / "termihub-agent.exe"
     dest.parent.mkdir(parents=True)
     dest.write_bytes(b"old agent")
+    tmp = f"{dest}.tmp.1-2"
     data = b"\x00\x01binary\r\n\xff" * 5000
-    real_run = native_ssh.subprocess.run
-    try:
-        native_ssh.subprocess.run = fake_run
-        control._run(native_ssh.WINDOWS_AGENT_INSTALL_SCRIPT, str(dest), stdin=data, stream=True)
-    finally:
-        native_ssh.subprocess.run = real_run
-    sp.run(["sh", "-s", native_ssh.WINDOWS_EXEC_MARKER], input=captured["stdin"], check=True)
+    upload = native_ssh.windows_upload_command(tmp)
+    sp.run(["sh", "-c", upload], input=data, check=True)
+    script = native_ssh.NativeSshServerControl.windows_script(
+        native_ssh.WINDOWS_AGENT_INSTALL_SCRIPT, str(dest), tmp
+    )
+    result = sp.run(["sh", "-s", native_ssh.WINDOWS_EXEC_MARKER], input=script, capture_output=True)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
     assert dest.read_bytes() == data
     assert sorted(p.name for p in dest.parent.iterdir()) == ["termihub-agent.exe"]
 

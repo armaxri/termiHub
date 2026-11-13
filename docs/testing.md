@@ -1450,10 +1450,11 @@ the script with Git Bash, never a `bash` that could be WSL's). The twin installs
 it where the app's encoded PowerShell deploy step puts it,
 `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, and resolves that path in
 the forward-slash form the app stores for a Git Bash login shell
-(`C:/Users/…/termihub-agent.exe`). The binary is streamed raw behind the install
-script: `sh -s` reads the script a byte at a time, so inlining the binary as
-base64, as the small writes are, would take minutes. A running `.exe` cannot be
-overwritten, so the old one is renamed aside first. The editor has no agent-path
+(`C:/Users/…/termihub-agent.exe`). The binary goes raw to a `cat >tmp` exec
+beside it (a quote-free command that carries the exec marker), then a script
+renames it into place. Inlining it as base64 in the `sh -s` script, as the
+small writes are, would be read a byte at a time and take minutes. A running
+`.exe` cannot be overwritten, so the old one is renamed aside first. The editor has no agent-path
 field, so `AgentUi.create_remote_agent(agent_path=…)` writes the path into the
 saved agent in `connections.json`, as a parallel instance would; the app's file
 watcher reloads it within a second. The agent's shells on Windows are

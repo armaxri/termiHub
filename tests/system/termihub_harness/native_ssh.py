@@ -30,6 +30,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Optional, Sequence
@@ -445,16 +446,33 @@ WINDOWS_AGENT_PATH_RE = re.compile(
     r"[A-Za-z]:/(?:[A-Za-z0-9._+@-]+/)*termiHub/agent/termihub-agent\.exe"
 )
 
-#: How the Windows twin installs the agent at ``$1`` (#5511): the binary is
-#: streamed behind the script (``_run(..., stream=True)``) into a temp name
-#: beside it. A running agent's ``.exe`` cannot be overwritten but can be
+#: How the Windows twin puts the uploaded agent ``$2`` in place at ``$1``
+#: (#5511). A running agent's ``.exe`` cannot be overwritten but can be
 #: renamed, so the old one moves aside first; removing it may fail while it
 #: runs, which is harmless.
 WINDOWS_AGENT_INSTALL_SCRIPT = (
-    'mkdir -p "$(dirname "$1")" && t="$1.tmp.$$" && o="$1.old.$$" '
-    '&& cat > "$t" && { [ ! -e "$1" ] || mv -f "$1" "$o"; } '
-    '&& mv -f "$t" "$1" && { rm -f "$o" 2>/dev/null || true; }'
+    'o="$1.old.$$" && { [ ! -e "$1" ] || mv -f "$1" "$o"; } '
+    '&& mv -f "$2" "$1" && { rm -f "$o" 2>/dev/null || true; }'
 )
+
+#: A path the raw upload command may name unquoted: no space, quote,
+#: backslash or shell metacharacter (Win32-OpenSSH mangles quotes, #5511).
+_UPLOAD_PATH = re.compile(r"[A-Za-z0-9:/._+@-]+")
+
+
+def windows_upload_command(path: str) -> str:
+    """The remote command that writes its stdin to ``path`` on the Windows fixture.
+
+    The bytes go straight to ``cat``: an ``sh -s`` script with data behind it
+    would need the shell to read its script a byte at a time, which bash does
+    and dash, for one, does not. The trailing ``:`` keeps the login shell
+    alive with :data:`WINDOWS_EXEC_MARKER` in its command line, so the upload
+    never counts as a test's terminal connection.
+    """
+    if not _UPLOAD_PATH.fullmatch(path):
+        raise ValueError(f"cannot name {path!r} unquoted in a Windows exec command")
+    return f"cat >{path}; : {WINDOWS_EXEC_MARKER}"
+
 
 _SFTP_DRIVE_PATH = re.compile(r"^/(?P<drive>[A-Za-z]):(?P<rest>/.*)?$")
 
@@ -630,9 +648,7 @@ class NativeSshServerControl:
         if self.path_exists(dest) and self.sha256(dest) == digest:
             return dest
         if self._windows:
-            # Streamed raw after the script (no base64 inlining: the script is
-            # read a byte at a time, which would take minutes for an agent).
-            self._run(WINDOWS_AGENT_INSTALL_SCRIPT, dest, stdin=data, stream=True, timeout=300.0)
+            self._install_windows_agent(dest, data)
         else:
             self._run(
                 'mkdir -p "$(dirname "$1")" && t="$1.tmp.$$" && cat > "$t" '
@@ -647,6 +663,21 @@ class NativeSshServerControl:
                 f"installed agent {dest} has SHA-256 {installed}, expected {digest}"
             )
         return dest
+
+    def _install_windows_agent(self, dest: str, data: bytes) -> None:
+        """Upload ``data`` beside ``dest`` (:func:`windows_upload_command`), then
+        rename it into place (:data:`WINDOWS_AGENT_INSTALL_SCRIPT`)."""
+        tmp = f"{dest}.tmp.{os.getpid()}-{time.monotonic_ns()}"
+        self._run('mkdir -p "$(dirname "$1")"', dest)
+        try:
+            self._run_remote(windows_upload_command(tmp), data, timeout=300.0)
+            self._run(WINDOWS_AGENT_INSTALL_SCRIPT, dest, tmp)
+        except NativeSshExecError:
+            try:
+                self.remove_path(tmp)
+            except NativeSshExecError:
+                pass
+            raise
 
     def windows_agent_path(self) -> str:
         """Where the app deploys the agent on the Windows fixture, as it launches it.
@@ -796,7 +827,7 @@ class NativeSshServerControl:
                 f"{self._target.username!r}, not {user!r}"
             )
 
-    def ssh_argv(self, script: str, *args: str) -> list[str]:
+    def ssh_argv(self, script: str, *args: str, remote: Optional[str] = None) -> list[str]:
         """The ``ssh`` command that runs ``sh -c script`` with ``args`` as ``$1``...
 
         ``-F /dev/null`` and ``IdentitiesOnly`` keep the caller's own ssh
@@ -813,10 +844,10 @@ class NativeSshServerControl:
             # `NUL` as a file name.
             ssh = str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe")
             null = "NUL"
-            remote = WINDOWS_EXEC_COMMAND
+            remote = remote or WINDOWS_EXEC_COMMAND
         else:
             ssh, null = "ssh", "/dev/null"
-            remote = shlex.join(["sh", "-c", script, "sh", *args])
+            remote = remote or shlex.join(["sh", "-c", script, "sh", *args])
         return [
             ssh,
             "-F",
@@ -862,28 +893,44 @@ class NativeSshServerControl:
             lines.append(f"printf %s {data} | base64 -d | {{ {script}\n}}")
         return ("\n".join(lines) + "\n").encode("utf-8")
 
+    def _run_remote(self, command: str, stdin: bytes, *, timeout: float = 60.0) -> bytes:
+        """Run the remote ``command`` itself (no script), ``stdin`` piped to it raw."""
+        try:
+            result = subprocess.run(
+                self.ssh_argv(command, remote=command),
+                capture_output=True,
+                input=stdin,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise NativeSshExecError(
+                f"ssh to the native sshd timed out after {timeout}s: {command}"
+            ) from exc
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", "replace").strip()
+            raise NativeSshExecError(
+                f"ssh to the native sshd failed (exit {result.returncode}) running "
+                f"{command!r}: {err}"
+            )
+        return result.stdout
+
     def _run(
         self,
         script: str,
         *args: str,
         text: bool = True,
         stdin: Optional[bytes] = None,
-        stream: bool = False,
         timeout: float = 60.0,
     ):
         """Run ``script`` on the fixture as the login user; return its stdout.
 
         On Windows ``stdin`` is inlined into the script as base64
-        (:meth:`windows_script`), or with ``stream`` sent raw after it: ``sh -s``
-        reads its script from the pipe a byte at a time, so the script's first
-        command that reads stdin gets exactly the bytes behind it. The script
-        must then be one line that reads all of them.
+        (:meth:`windows_script`); a large upload goes through
+        :meth:`_run_remote` instead.
         """
         if self._windows:
-            if stream:
-                stdin = self.windows_script(script, *args) + (stdin or b"")
-            else:
-                stdin = self.windows_script(script, *args, stdin=stdin)
+            stdin = self.windows_script(script, *args, stdin=stdin)
         try:
             result = subprocess.run(
                 self.ssh_argv(script, *args),
