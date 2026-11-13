@@ -80,6 +80,14 @@ if [ "$BUILD" -eq 1 ] || ! have_app; then
         ./scripts/internal/build-system-test-app.sh --debug
 fi
 
+# A locked screen stalls the test window (WKWebView only paints in front) and
+# blocks window capture, so every step would time out. Say so and stop (#5537).
+if [ "$(uname -s)" = "Darwin" ] && ioreg -n Root -d1 -a 2>/dev/null |
+    plutil -extract IOConsoleUsers.0.CGSSessionScreenIsLocked raw - 2>/dev/null | grep -qx true; then
+    echo "the screen is locked: unlock this Mac and run again (the test window must be in front)" >&2
+    exit 3
+fi
+
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$REPO/tests/system/artifacts/product-run/$RUN_ID"
 DEV_NAME="product-run-$RUN_ID"
