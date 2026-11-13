@@ -3,7 +3,8 @@ import { LineEnding } from "@/types/terminal";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
 import { Select, Toggle } from "@/components/ui";
 import { DEFAULT_SCROLLBACK } from "@/components/Terminal/terminalDefaults";
-import { DefaultNumberInput } from "./DefaultNumberInput";
+import { DefaultNumberInput, formatSettingNumber, isAtDefault } from "./DefaultNumberInput";
+import { SettingDefaultMarker } from "./SettingDefaultMarker";
 import type { SelectOption } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { SyntaxHighlightingSettings } from "./SyntaxHighlightingSettings";
@@ -58,7 +59,16 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("scrollbackBuffer") && (
           <SettingsField
             label="Scrollback buffer"
-            hint="Number of lines kept in the terminal scrollback (100–1 000 000). Larger values consume more memory — roughly 1–2 MB per 10 000 lines of typical output."
+            hint="Number of lines kept in the terminal scrollback (100–1000000). Larger values consume more memory — roughly 1–2 MB per 10000 lines of typical output."
+            labelAccessory={
+              <SettingDefaultMarker
+                isDefault={isAtDefault(settings.scrollbackBuffer, DEFAULT_SCROLLBACK)}
+                onReset={() => onChange({ ...settings, scrollbackBuffer: undefined })}
+                name="Scrollback buffer"
+                defaultText={formatSettingNumber(DEFAULT_SCROLLBACK)}
+                data-testid="settings-scrollback-buffer"
+              />
+            }
           >
             <DefaultNumberInput
               min={100}

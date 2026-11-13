@@ -910,6 +910,8 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(run.stepsCompleted).toBe(2);
       expect(run.total).toBe(2);
       expect(run.tabId).toBe("tab-active");
+      // The target terminal is named so history can tell targets apart (#5635).
+      expect(run.targetLabel).toBe("term");
       expect(run.triggeredBy).toBe("manual");
       expect(run.failedStepIndex).toBeUndefined();
       expect(typeof run.startedAt).toBe("string");
@@ -1282,7 +1284,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       const recorded = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.tabId);
       expect(recorded).toEqual(["tab-a", "tab-b"]);
       expect(toast.success).toHaveBeenCalledWith(
-        'Ran workflow "Workflow w1" on 2 terminal(s)',
+        'Ran workflow "Workflow w1" on 2 terminals',
         expect.objectContaining({ id: "workflow-run-w1-fanout" })
       );
     });
@@ -1296,7 +1298,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends).toEqual([["tab-a", "uptime\n"]]);
       expect(toast.info).toHaveBeenCalledWith(
-        'Ran workflow "Workflow w1" on 1 terminal(s)',
+        'Ran workflow "Workflow w1" on 1 terminal',
         expect.objectContaining({ description: expect.stringContaining("1 skipped") })
       );
     });
@@ -1321,7 +1323,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends.map(([tabId]) => tabId)).toEqual(["tab-a", "tab-b"]);
       expect(toast.error).toHaveBeenCalledWith(
-        'Workflow "Workflow w1" failed on 1 terminal(s)',
+        'Workflow "Workflow w1" failed on 1 terminal',
         expect.objectContaining({ description: expect.stringContaining("web-1:") })
       );
     });
@@ -1450,7 +1452,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(inj.maxInFlight()).toBe(WORKFLOW_FANOUT_CONCURRENCY);
       expect(inj.sends).toHaveLength(ids.length);
       expect(toast.success).toHaveBeenCalledWith(
-        `Ran workflow "Workflow w1" on ${ids.length} terminal(s)`,
+        `Ran workflow "Workflow w1" on ${ids.length} terminals`,
         expect.anything()
       );
     });

@@ -69,12 +69,32 @@
   padding-top: var(--spacing-xxs);
 }
 
-.workflow-item__trigger {
+/* The muted second line: how the workflow is launched and what it targets (#5635). */
+.workflow-item__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.workflow-item__summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A trigger runs this workflow by itself (and may type into a terminal). */
+.workflow-item__armed {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--spacing-xxs);
   color: var(--accent-color);
   font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 .workflow-item__tags {

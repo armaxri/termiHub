@@ -13,7 +13,8 @@ Steps (in order): macro create, edit, play on the local shell, play on SSH;
 workflow create (send-command, wait, a delayed output, wait-for-output,
 send-command), edit, run on both terminals at once ("Run on…"); an
 on-output-match trigger fired by real terminal output; macro and workflow run
-history; the command palette; a 1-minute schedule that fires on the local
+history; workflow rows naming trigger, target and armed state (#5635); the
+command palette; a 1-minute schedule that fires on the local
 connection (Settings -> Schedules), then is switched off.
 """
 
@@ -302,6 +303,41 @@ class TestProductRunAutomations(
             assert "Deploy smoke" in shown and "Answer on match" in shown, shown
             self.shot(label="workflows")
 
+    def test_45_workflow_rows(self):
+        """Workflow rows and history show trigger, target and armed state (#5635)."""
+        t = self.tag
+        with self.step(
+            "automations.workflow.rows",
+            "Workflow rows say how each runs and which terminal each history run went to",
+            expect="the Workflows sidebar: 'Deploy smoke' with 'Manual' under its name; "
+            "'Answer on match' with an 'Armed' marker and 'On output match · pr-auto-local…' "
+            "under its name; the two Deploy smoke history rows name different terminals",
+        ):
+            self.require("automations.workflow.run-on", "automations.trigger.output-match")
+            self.open_workflows_sidebar()
+            manual = self.ids["workflow"]
+            armed = self.workflow_id(f"Answer on match {t}")
+            self.wait(lambda: self.driver.exists(f"workflow-summary-{armed}"),
+                      what="the workflow rows' second line")
+            manual_line = self.driver.get_text(f"workflow-summary-{manual}").strip()
+            armed_line = self.driver.get_text(f"workflow-summary-{armed}").strip()
+            self.evidence(f"Deploy smoke line: {manual_line!r}; Answer on match line: {armed_line!r}")
+            assert manual_line == "Manual", f"manual workflow line: {manual_line!r}"
+            assert not self.driver.exists(f"workflow-armed-{manual}"), "a manual workflow is marked armed"
+            assert self.driver.exists(f"workflow-armed-{armed}"), "the armed workflow has no marker"
+            assert armed_line.startswith("On output match"), f"trigger missing: {armed_line!r}"
+            assert f"pr-auto-local-{t}" in armed_line, f"watched connection missing: {armed_line!r}"
+            assert "step" not in armed_line.lower(), f"step count on the row: {armed_line!r}"
+            fresh = sorted(self.workflow_runs(manual), key=lambda r: r["startedAt"])[-2:]
+            targets = []
+            for run in fresh:
+                testid = f"workflow-run-target-{run['id']}"
+                self.wait(lambda tid=testid: self.driver.exists(tid), what=f"{testid}")
+                targets.append(self.driver.get_text(testid).strip())
+            self.evidence(f"history targets: {targets}; labels {[r.get('targetLabel') for r in fresh]}")
+            assert len(targets) == 2 and all(targets), f"history rows do not name a target: {targets}"
+            assert targets[0] != targets[1], f"both runs show the same target: {targets}"
+
     def test_50_palette(self):
         t = self.tag
         with self.step(
@@ -396,6 +432,66 @@ class TestProductRunAutomations(
         assert "sidebar-list-item--actions-visible" in row, f"row actions hidden behind hover: {row}"
         for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
             assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
+
+    # ── macro row + history header grade (#5636) ─────────────────────────────
+    def test_70_macro_row_actions(self):
+        with self.step(
+            "automations.macro.row-actions",
+            "A macro row offers Play without a hover, and the history header labels and "
+            "separates its actions",
+            expect="the Macros sidebar at rest: the macro row's Play button visible after its "
+            "name; the history filtered to the macro, the filter a removable chip on its own row "
+            "below the header, and a labelled 'Clear…' action in the header (#5636)",
+            screenshot=False,
+        ):
+            self.require("automations.macro.create")
+            mid = self.ids["macro"]
+            self.show_macros()
+            self.driver.force_hover(None)
+            row = self.driver.get_attribute(f"macro-item-{mid}", "class") or ""
+            self.evidence(f"row classes: {row}")
+            assert "sidebar-list-item--actions-visible" in row, f"Play hides behind hover: {row}"
+            name = self.driver.measure_element(f"macro-name-{mid}")["rect"]
+            play = self.driver.measure_element(f"macro-play-{mid}")["rect"]
+            more = self.driver.measure_element(f"macro-more-{mid}")["rect"]
+            self.evidence(f"name {name}, play {play}, more {more}")
+            assert play["width"] > 0 and play["height"] > 0, "the Play button is not laid out"
+            assert play["x"] >= name["x"] + name["width"] - 1, f"Play {play} leads the name {name}"
+            inside_more = more["x"] <= play["x"] and play["x"] + play["width"] <= more["x"] + more[
+                "width"
+            ]
+            assert not inside_more, "Play sits in the hover-revealed group"
+            assert self.driver.get_computed_style("opacity", f"macro-more-{mid}") == "0", (
+                "the secondary actions show at rest and crowd the name"
+            )
+            self.shot(label="row")
+
+            self.driver.click(f"macro-history-{mid}")
+            self.wait(lambda: self.driver.exists("macro-history-filter"), what="the macro filter")
+            header = self.driver.measure_element("macro-history-header")["rect"]
+            chip = self.driver.measure_element("macro-history-show-all")["rect"]
+            self.evidence(f"history header {header}, filter clear {chip}")
+            assert chip["y"] >= header["y"] + header["height"] - 1, (
+                "the filter's clear button sits in the header beside Clear history"
+            )
+            label = self.driver.get_text("macro-history-clear").strip()
+            self.evidence(f"clear action text: {label!r}")
+            assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
+            before = len(self.macro_runs(mid))
+            self.driver.click("macro-history-clear")
+            self.wait(
+                lambda: self.driver.exists("macro-history-clear-confirm-cancel"),
+                what="the clear-history confirmation",
+            )
+            self.shot(label="confirm")
+            self.driver.click("macro-history-clear-confirm-cancel")
+            self.wait(
+                lambda: not self.driver.exists("macro-history-clear-confirm-cancel"),
+                what="the confirmation to close",
+            )
+            after = len(self.macro_runs(mid))
+            assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
+            self.driver.click("macro-history-show-all")
 
     # ── workflow editor layout ───────────────────────────────────────────────
     def test_80_workflow_editor_layout(self):

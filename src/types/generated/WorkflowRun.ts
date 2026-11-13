@@ -64,6 +64,12 @@ continuedFailures?: number,
  */
 tabId?: string, 
 /**
+ * Display label (tab title) of the terminal the run targeted, so history
+ * can tell two runs on different terminals apart (#5635). Omitted when
+ * unknown, so older records round-trip unchanged.
+ */
+targetLabel?: string, 
+/**
  * What launched the run.
  */
 triggeredBy: WorkflowRunTrigger, };

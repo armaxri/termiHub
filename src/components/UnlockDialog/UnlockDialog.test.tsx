@@ -459,4 +459,54 @@ describe("UnlockDialog", () => {
       expect(mockedOsAuth.mock.calls.length).toBeGreaterThan(1);
     });
   });
+
+  // #5629: a wrong password is an error on the field, never a recoloured button.
+  describe("wrong-password error state (#5629)", () => {
+    async function submitWrongPassword() {
+      mockedUnlock.mockRejectedValue(new Error("wrong"));
+      await act(async () => {
+        root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+      });
+      const input = query("unlock-dialog-input") as HTMLInputElement;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(input, "bad");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        query("unlock-dialog-unlock")!.click();
+      });
+      // Let any button lifecycle settle (a resolved async click flashes success).
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+
+    it("keeps Unlock the filled primary button, without the success flash", async () => {
+      await submitWrongPassword();
+      const unlock = query("unlock-dialog-unlock")!;
+      expect(unlock.classList.contains("ui-btn--primary")).toBe(true);
+      expect(unlock.classList.contains("ui-btn--success")).toBe(false);
+      expect(unlock.classList.contains("ui-btn--pending")).toBe(false);
+    });
+
+    it("marks the password field invalid and links it to the message", async () => {
+      await submitWrongPassword();
+      const input = query("unlock-dialog-input") as HTMLInputElement;
+      const error = query("unlock-dialog-error")!;
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+      expect(input.classList.contains("ui-input--error")).toBe(true);
+      expect(error.id).not.toBe("");
+      expect(input.getAttribute("aria-describedby") ?? "").toContain(error.id);
+    });
+
+    it("has no error state before an attempt", async () => {
+      await act(async () => {
+        root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+      });
+      const input = query("unlock-dialog-input") as HTMLInputElement;
+      expect(input.getAttribute("aria-invalid")).toBeNull();
+      expect(input.classList.contains("ui-input--error")).toBe(false);
+    });
+  });
 });

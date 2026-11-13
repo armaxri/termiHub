@@ -321,6 +321,37 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     const [decoration] = measureTerminal(handles).decorations;
     expect(decoration.classes).toContain("terminal-command-mark--failure");
     expect(decoration.background).toBe("rgb(255, 0, 0)");
+    expect(decoration.maskImage).toBe("none");
+  });
+
+  it("reports a decoration's mask shape and its gap to the cell grid (#5640)", () => {
+    const screen = handles.element.querySelector<HTMLElement>(".xterm-screen")!;
+    const bar = document.createElement("div");
+    bar.className = "xterm-decoration terminal-command-mark terminal-command-mark--failure";
+    bar.style.setProperty("mask-image", "repeating-linear-gradient(red, transparent)");
+    screen.appendChild(bar);
+    const rect = (left: number, width: number) => () =>
+      ({ left, right: left + width, top: 0, bottom: 0, width, height: 0 }) as DOMRect;
+    vi.spyOn(bar, "getBoundingClientRect").mockImplementation(rect(102, 3));
+    vi.spyOn(screen, "getBoundingClientRect").mockImplementation(rect(111, 400));
+    const real = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+      const style = real(el, pseudo);
+      if (el !== bar) return style;
+      return new Proxy(style, {
+        get: (target, key) =>
+          key === "getPropertyValue"
+            ? (name: string) =>
+                name === "mask-image"
+                  ? "repeating-linear-gradient(red, transparent)"
+                  : target.getPropertyValue(name)
+            : Reflect.get(target, key, target),
+      });
+    });
+    const [decoration] = measureTerminal(handles).decorations;
+    expect(decoration.maskImage).toBe("repeating-linear-gradient(red, transparent)");
+    expect(decoration.gapToText).toBe(6);
+    vi.restoreAllMocks();
   });
 
   it("returns null for the scrollbar when the gutter is not mounted", () => {

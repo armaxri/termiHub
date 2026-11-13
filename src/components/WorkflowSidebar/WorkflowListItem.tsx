@@ -14,7 +14,7 @@ import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Workflow } from "@/types/workflow";
 import type { WorkflowRunState } from "@/store/appStore";
-import { triggerKindLabel } from "./workflowStepMeta";
+import { armedDescription, armedTriggers, workflowRowSummary } from "./workflowRowSummary";
 
 interface WorkflowListItemProps {
   workflow: Workflow;
@@ -38,21 +38,25 @@ interface WorkflowListItemProps {
   onDuplicate: (workflowId: string) => void;
   onExport: (workflowId: string) => void;
   onDelete: (workflowId: string) => void;
+  /**
+   * Resolve a saved connection id to its display name, for the trigger line
+   * and the armed indicator (#5635). Unknown ids show as "Unknown connection".
+   */
+  connectionName?: (connectionId: string) => string | undefined;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
   rowProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
-/** True when the workflow has an on-connect trigger bound to at least one connection. */
-function hasOnConnectTrigger(workflow: Workflow): boolean {
-  return workflow.triggers.some((t) => t.kind === "on-connect" && t.connectionIds.length > 0);
-}
+/** Fallback resolver when the caller passes none: every id is unknown. */
+const noConnectionName = (): undefined => undefined;
 
 /**
  * A single workflow row in the manager sidebar: the name first (it is what users
- * scan and search for, #5519; no leading step-count badge), its description,
- * an optional on-connect marker and tags, and the
+ * scan and search for, #5519; no leading step-count badge), then a muted line
+ * saying how it is launched and what it targets — with an "Armed" marker when a
+ * trigger runs it automatically (#5635) — its description and tags, and the
  * Run / Run on… / Edit / Duplicate / Export / Delete actions. Double-click runs the
  * workflow against the active session (matching the macro row's affordance).
  * Composed from the shared list-item shell.
@@ -70,10 +74,11 @@ export function WorkflowListItem({
   onDuplicate,
   onExport,
   onDelete,
+  connectionName = noConnectionName,
   rowRef,
   rowProps,
 }: WorkflowListItemProps) {
-  const onConnect = hasOnConnectTrigger(workflow);
+  const armed = armedTriggers(workflow).length > 0;
 
   return (
     <SidebarListItem
@@ -207,6 +212,26 @@ export function WorkflowListItem({
       }
       details={
         <>
+          <span className="workflow-item__summary">
+            {armed ? (
+              <span
+                className="workflow-item__armed"
+                role="img"
+                aria-label={armedDescription(workflow, connectionName)}
+                title={armedDescription(workflow, connectionName)}
+                data-testid={`workflow-armed-${workflow.id}`}
+              >
+                <Zap size={10} aria-hidden="true" />
+                <span aria-hidden="true">Armed</span>
+              </span>
+            ) : null}
+            <span
+              className="workflow-item__summary-text"
+              data-testid={`workflow-summary-${workflow.id}`}
+            >
+              {workflowRowSummary(workflow, connectionName)}
+            </span>
+          </span>
           {workflow.description ? (
             <span className="workflow-item__description">{workflow.description}</span>
           ) : null}
@@ -244,16 +269,8 @@ export function WorkflowListItem({
               ))}
             </ul>
           ) : null}
-          <span className="workflow-item__meta">
-            {onConnect ? (
-              <span
-                className="workflow-item__trigger"
-                data-testid={`workflow-on-connect-${workflow.id}`}
-              >
-                <Zap size={10} aria-hidden="true" /> {triggerKindLabel("on-connect")}
-              </span>
-            ) : null}
-            {workflow.tags.length > 0 ? (
+          {workflow.tags.length > 0 ? (
+            <span className="workflow-item__meta">
               <span className="workflow-item__tags" data-testid={`workflow-tags-${workflow.id}`}>
                 {workflow.tags.map((tag) => (
                   <span className="workflow-item__tag" key={tag}>
@@ -261,8 +278,8 @@ export function WorkflowListItem({
                   </span>
                 ))}
               </span>
-            ) : null}
-          </span>
+            </span>
+          ) : null}
         </>
       }
     />

@@ -52,8 +52,9 @@
      container edge or the scrollbar, which makes them hard to select.
      FitAddon reads this padding via getComputedStyle on the .xterm element
      and subtracts it from the available width, so column counts stay
-     accurate. */
-  padding: 0 var(--spacing-sm);
+     accurate. The left inset is wider (#5640): it holds the OSC 133 command
+     mark plus a gutter, so the mark never touches the prompt text. */
+  padding: 0 var(--spacing-sm) 0 var(--terminal-text-inset-left);
 }
 
 /* In horizontal-scroll mode we set xterm width imperatively to the content
@@ -199,9 +200,12 @@
    #5563: the bar is a full-strength, full-row 3px mark (no opacity — a dimmed
    failure red fell to ~3.7:1 on the terminal background) and takes the pointer,
    so hovering it shows the exit code (its `title`, set in commandMarks.ts). It
-   sits in the padding, never over a cell, so it cannot steal a text selection. */
+   sits in the padding, never over a cell, so it cannot steal a text selection.
+   #5640: a gutter separates the bar from the prompt text, and success and
+   failure differ by shape as well as hue (solid vs dashed) so red-green
+   colour-blind users can tell them apart. */
 .terminal-container .xterm-decoration.terminal-command-mark {
-  left: calc(var(--spacing-sm) * -1 + 2px);
+  left: calc((var(--terminal-command-mark-width) + var(--terminal-command-mark-gutter)) * -1);
   width: var(--terminal-command-mark-width) !important;
   border-radius: 1px;
   cursor: default;
@@ -213,6 +217,20 @@
 
 .terminal-container .xterm-decoration.terminal-command-mark--failure {
   background-color: var(--color-error);
+  /* Dashed: the mask keeps full-strength dashes (3:1 on the terminal
+     background, like the solid bar) separated by short transparent gaps. */
+  -webkit-mask-image: repeating-linear-gradient(
+    to bottom,
+    black 0 var(--terminal-command-mark-dash),
+    transparent var(--terminal-command-mark-dash)
+      calc(var(--terminal-command-mark-dash) + var(--terminal-command-mark-dash-gap))
+  );
+  mask-image: repeating-linear-gradient(
+    to bottom,
+    black 0 var(--terminal-command-mark-dash),
+    transparent var(--terminal-command-mark-dash)
+      calc(var(--terminal-command-mark-dash) + var(--terminal-command-mark-dash-gap))
+  );
 }
 
 /* Brief highlight of the prompt row after "Jump to Previous/Next Prompt". */

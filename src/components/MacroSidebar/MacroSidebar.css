@@ -66,10 +66,42 @@
   border-top: 1px solid var(--border-primary);
 }
 
-.macro-history__filter {
-  margin-left: var(--spacing-xs);
-  text-transform: none;
-  letter-spacing: normal;
+/* The per-macro filter sits on its own row as a removable chip (#5636), apart
+   from the header's destructive Clear action. */
+.macro-history__filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  padding: 0 var(--spacing-md) var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.macro-history__filter-label {
+  flex-shrink: 0;
+}
+
+.macro-history__filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+  padding-left: var(--spacing-xs);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.macro-history__filter-name {
+  min-width: 0;
+}
+
+/* The destructive action reads as such on hover/focus without shouting at rest. */
+.macro-history__clear:hover:not([disabled]),
+.macro-history__clear:focus-visible {
+  color: var(--color-error);
 }
 
 .macro-history__list {
@@ -88,4 +120,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * Macro rows keep Play visible at rest (#5636): the row opts into
+ * `actionsVisible`, so the actions sit in the header's flow after the name.
+ * Only Play (one square `md` icon button) takes width there; the secondary
+ * actions (Edit, Schedule, …) form a group positioned against the header that
+ * overlays the name's tail just before Play on hover/focus, like the shared
+ * hover-reveal, so the name keeps the row at rest. A narrow row wraps the
+ * group onto a second line over the details instead of clipping it.
+ */
+.macro-item__more {
+  position: absolute;
+  top: 0;
+  right: calc(var(--control-height-md) + var(--spacing-xxs));
+  max-width: calc(100% - var(--control-height-md) - var(--spacing-xxs));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  padding-left: var(--spacing-xs);
+  background: var(--sidebar-list-item-surface);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.macro-item:hover .macro-item__more,
+.macro-item:focus-within .macro-item__more {
+  opacity: 1;
+  pointer-events: auto;
 }

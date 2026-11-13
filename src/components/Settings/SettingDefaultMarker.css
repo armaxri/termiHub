@@ -1,0 +1,23 @@
+/* Label-row marker of a setting that follows a built-in default (#5632): a
+   small outlined "Default" tag, or a "Reset to default" ghost button once the
+   value is overridden. Pushed to the row's right edge so it lines up with the
+   end of the full-width control below. */
+.settings-default-marker__tag {
+  margin-left: auto;
+  padding: 0 var(--spacing-xs);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.settings-default-marker__reset {
+  margin-left: auto;
+}
+
+/* An unset text setting's placeholder names the default; italic keeps it from
+   reading as an entered value (R-052). */
+.settings-default-text__input::placeholder {
+  font-style: italic;
+}

@@ -150,6 +150,16 @@ describe("AgentCrashReportNotice", () => {
     expect(byTestId("agent-crash-notice-export-agent-a")).toBeNull();
   });
 
+  it("uses the shared warning banner and its button pattern (#5638)", async () => {
+    await render();
+    const notice = byTestId("agent-crash-notice-agent-a");
+    expect(notice?.className).toContain("bottom-banner--warning");
+    const close = byTestId("agent-crash-notice-dismiss-agent-a")?.className ?? "";
+    expect(close).toContain("ui-btn--ghost");
+    expect(close).toContain("bottom-banner__action");
+    expect(byTestId("agent-crash-notice-view-agent-a")?.className).toContain("ui-btn--secondary");
+  });
+
   it("shows one notice at a time; closing it reveals the next (#5548)", async () => {
     mockedApi.getAgentCrashNotices.mockResolvedValue([
       NOTICE,

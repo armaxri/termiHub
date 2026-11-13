@@ -17,7 +17,8 @@ import {
 } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT } from "@/components/Terminal/terminalDefaults";
-import { DefaultNumberInput } from "./DefaultNumberInput";
+import { DefaultNumberInput, formatSettingNumber, isAtDefault } from "./DefaultNumberInput";
+import { SettingDefaultMarker } from "./SettingDefaultMarker";
 import { DefaultTextInput } from "./DefaultTextInput";
 import {
   createCustomTheme,
@@ -363,6 +364,14 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               <span className="appearance-settings__font-chain">{DEFAULT_FONT_CHAIN_TEXT}</span>
             </>
           }
+          labelAccessory={
+            <SettingDefaultMarker
+              isDefault={!settings.fontFamily}
+              onReset={() => onChange({ ...settings, fontFamily: undefined })}
+              name="Font family"
+              data-testid="settings-font-family"
+            />
+          }
         >
           <DefaultTextInput
             value={settings.fontFamily}
@@ -374,7 +383,19 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       )}
       {show("fontSize") && <WorkspaceOverrideNotice settingKey="fontSize" label="Font size" />}
       {show("fontSize") && (
-        <SettingsField label="Font size" hint="Terminal font size in pixels (8–32).">
+        <SettingsField
+          label="Font size"
+          hint="Terminal font size in pixels (8–32)."
+          labelAccessory={
+            <SettingDefaultMarker
+              isDefault={isAtDefault(settings.fontSize, DEFAULT_FONT_SIZE)}
+              onReset={() => onChange({ ...settings, fontSize: undefined })}
+              name="Font size"
+              defaultText={formatSettingNumber(DEFAULT_FONT_SIZE)}
+              data-testid="settings-font-size"
+            />
+          }
+        >
           <DefaultNumberInput
             min={8}
             max={32}
@@ -389,6 +410,15 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
         <SettingsField
           label="Line height"
           hint="Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters."
+          labelAccessory={
+            <SettingDefaultMarker
+              isDefault={isAtDefault(settings.lineHeight, DEFAULT_LINE_HEIGHT)}
+              onReset={() => onChange({ ...settings, lineHeight: undefined })}
+              name="Line height"
+              defaultText={formatSettingNumber(DEFAULT_LINE_HEIGHT, 0.1)}
+              data-testid="settings-line-height"
+            />
+          }
         >
           <DefaultNumberInput
             min={0.8}
