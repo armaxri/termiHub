@@ -85,3 +85,27 @@ describe("command-mark gutter and shape (#5640)", () => {
     expect(ruleBody(terminalCss, `${MARK}--success`)).not.toMatch(/mask/);
   });
 });
+
+describe("command marks in horizontal-scroll mode (#5693)", () => {
+  // The marks are drawn inside .xterm-screen at a negative left. Horizontal
+  // mode used to drop the .xterm left padding and clip .xterm-screen, which
+  // cut the marks off entirely.
+  it("keeps the command-mark inset and gutter as the .xterm left padding", () => {
+    expect(ruleBody(terminalCss, ".terminal-horizontal-scroll .xterm")).toMatch(
+      /padding:\s*0\s+0\s+calc\(var\(--hscroll-bar\)\s*\+\s*var\(--spacing-xs\)\)\s+var\(--terminal-text-inset-left\);/
+    );
+  });
+
+  it("clips the wide rows at the .xterm padding box, not at the screen", () => {
+    expect(ruleBody(terminalCss, ".terminal-horizontal-scroll .xterm")).toMatch(
+      /overflow:\s*clip;/
+    );
+    expect(terminalCss).not.toMatch(/\.terminal-horizontal-scroll \.xterm-screen\s*\{/);
+  });
+
+  it("does not inset the scroll viewport on the left on top of the padding", () => {
+    expect(ruleBody(terminalCss, ".terminal-scroll-viewport.terminal-horizontal-scroll")).toMatch(
+      /left:\s*0;/
+    );
+  });
+});

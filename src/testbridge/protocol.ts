@@ -968,6 +968,11 @@ export interface TerminalDecoration {
   maskImage: string;
   /** Horizontal px from its right edge to the cell grid's left edge; `null` without a screen. */
   gapToText: number | null;
+  /**
+   * CSS px of its width that is not clipped by an ancestor's overflow (#5693):
+   * equal to `width` when the whole bar shows, `0` when it is cut off entirely.
+   */
+  visibleWidth: number;
   /** Rect relative to the terminal container's top-left, in CSS px. */
   top: number;
   left: number;

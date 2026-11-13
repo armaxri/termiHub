@@ -150,11 +150,16 @@ function measureDecorations(element: HTMLElement): TerminalDecoration[] {
   const screen = element.querySelector<HTMLElement>(".xterm-screen")?.getBoundingClientRect();
   return Array.from(element.querySelectorAll<HTMLElement>(".xterm-decoration")).map((el) => {
     const rect = el.getBoundingClientRect();
+    const clip = clipRectAbove(el);
     return {
       classes: Array.from(el.classList),
       background: backgroundOf(el),
       maskImage: maskImageOf(el),
       gapToText: screen ? screen.left - rect.right : null,
+      visibleWidth: Math.max(
+        0,
+        Math.min(rect.right, clip.left + clip.width) - Math.max(rect.left, clip.left)
+      ),
       top: rect.top - box.top,
       left: rect.left - box.left,
       width: rect.width,
@@ -193,14 +198,28 @@ function measureScreenRect(element: HTMLElement): PageRect | null {
 function measureVisibleRect(element: HTMLElement): PageRect | null {
   const screen = element.querySelector<HTMLElement>(".xterm-screen");
   if (!screen) return null;
-  const view = element.ownerDocument.defaultView ?? window;
+  return clipRectAbove(screen);
+}
+
+/** Whether a computed `overflow-x`/`overflow-y` value clips its content. */
+function clips(overflow: string): boolean {
+  return overflow !== "" && overflow !== "visible";
+}
+
+/**
+ * The window region `el` can show through: the viewport, intersected with the
+ * padding box of every ancestor whose overflow clips (#5065, #5693).
+ */
+function clipRectAbove(el: HTMLElement): PageRect {
+  const view = el.ownerDocument.defaultView ?? window;
   let left = 0;
   let top = 0;
   let right = view.innerWidth;
   let bottom = view.innerHeight;
-  for (let node = screen.parentElement; node; node = node.parentElement) {
+  for (let node = el.parentElement; node; node = node.parentElement) {
     const style = view.getComputedStyle(node);
-    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+    // An unset overflow reads "" where nothing cascades (jsdom): not clipping.
+    if (!clips(style.overflowX) && !clips(style.overflowY)) continue;
     const rect = node.getBoundingClientRect();
     const innerLeft = rect.left + node.clientLeft;
     const innerTop = rect.top + node.clientTop;
