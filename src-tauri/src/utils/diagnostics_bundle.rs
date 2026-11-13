@@ -71,6 +71,9 @@ pub struct BuildInfo {
     pub git_hash: String,
     /// Git branch the binary was built from.
     pub build_branch: String,
+    /// Commit time of the build's git commit (RFC 3339 UTC), or `None` when
+    /// unknown; the line is then left out of `system-info.txt`.
+    pub build_commit_time: Option<String>,
 }
 
 impl BuildInfo {
@@ -80,6 +83,9 @@ impl BuildInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
             git_hash: env!("GIT_HASH").to_string(),
             build_branch: env!("TERMIHUB_BUILD_BRANCH").to_string(),
+            build_commit_time: crate::commands::update::normalize_build_commit_time(env!(
+                "TERMIHUB_BUILD_COMMIT_TIME"
+            )),
         }
     }
 }
@@ -163,11 +169,17 @@ fn file_entry(name: String, description: &str, path: PathBuf) -> BundleEntry {
 }
 
 fn render_system_info(build: &BuildInfo, now: SystemTime) -> String {
+    let build_date = build
+        .build_commit_time
+        .as_deref()
+        .map(|t| format!("build date:    {t} (commit time)\n"))
+        .unwrap_or_default();
     format!(
         "termiHub system info\n\
          ====================\n\
          version:       {}\n\
          build commit:  {}\n\
+         {}\
          build branch:  {}\n\
          os:            {}\n\
          os family:     {}\n\
@@ -175,6 +187,7 @@ fn render_system_info(build: &BuildInfo, now: SystemTime) -> String {
          exported at:   {}\n",
         build.version,
         build.git_hash,
+        build_date,
         build.build_branch,
         std::env::consts::OS,
         std::env::consts::FAMILY,

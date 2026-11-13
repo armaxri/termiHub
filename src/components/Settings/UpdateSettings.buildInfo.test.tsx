@@ -9,13 +9,18 @@ import { UpdateSettings } from "./UpdateSettings";
 const toastSuccess = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
-vi.mock("@/hooks/useAppInfo", () => ({
-  useAppInfo: () => ({
+const appInfo = vi.hoisted(() => ({
+  current: {
     version: "0.1.0",
     gitHash: "1cdb14920",
     isDev: true,
     buildBranch: "develop",
-  }),
+    buildCommitTime: "2026-11-13T09:42:07Z" as string | null,
+  },
+}));
+
+vi.mock("@/hooks/useAppInfo", () => ({
+  useAppInfo: () => appInfo.current,
 }));
 
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -46,6 +51,7 @@ describe("UpdateSettings build info (#5561)", () => {
     mockedWriteText.mockResolvedValue(undefined);
     toastSuccess.mockClear();
     toastError.mockClear();
+    appInfo.current = { ...appInfo.current, buildCommitTime: "2026-11-13T09:42:07Z" };
   });
 
   afterEach(() => {
@@ -79,7 +85,9 @@ describe("UpdateSettings build info (#5561)", () => {
     await act(async () => {
       byId("update-copy-build-info")!.click();
     });
-    expect(mockedWriteText).toHaveBeenCalledWith("termiHub v0.1.0 [DEV] (1cdb14920)");
+    expect(mockedWriteText).toHaveBeenCalledWith(
+      "termiHub v0.1.0 [DEV] (1cdb14920, commit time 2026-11-13T09:42:07Z)"
+    );
     expect(toastSuccess).toHaveBeenCalledWith("Build info copied to clipboard");
   });
 
@@ -90,5 +98,35 @@ describe("UpdateSettings build info (#5561)", () => {
       byId("update-copy-build-info")!.click();
     });
     expect(toastError).toHaveBeenCalledWith("Failed to copy build info: denied");
+  });
+
+  describe("build date (#5652)", () => {
+    it("shows the commit time as a localized date with time zone", async () => {
+      await render();
+      const date = byId("update-build-date");
+      expect(date).not.toBeNull();
+      expect(date!.getAttribute("title")).toBe("Commit time of this build");
+      const text = date!.textContent ?? "";
+      expect(text).toContain("2026");
+      expect(text).toMatch(/Nov/);
+      // A time zone name is part of the format (e.g. "UTC", "GMT+1", "CET").
+      expect(text).toMatch(/(UTC|GMT|[A-Z]{2,5})/);
+      expect(text).not.toContain("Invalid");
+    });
+
+    it.each([
+      ["missing", null],
+      ["empty", ""],
+      ["unparseable", "not-a-date"],
+    ])("hides the row and keeps the copy text plain when the time is %s", async (_, value) => {
+      appInfo.current = { ...appInfo.current, buildCommitTime: value };
+      await render();
+      expect(byId("update-build-date")).toBeNull();
+      expect(container.textContent).not.toContain("Invalid Date");
+      await act(async () => {
+        byId("update-copy-build-info")!.click();
+      });
+      expect(mockedWriteText).toHaveBeenCalledWith("termiHub v0.1.0 [DEV] (1cdb14920)");
+    });
   });
 });

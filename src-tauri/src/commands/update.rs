@@ -46,6 +46,18 @@ pub struct AppInfo {
     pub is_dev: bool,
     /// Git branch this binary was built from (e.g. `"main"`, `"develop"`, `"unknown"`).
     pub build_branch: String,
+    /// Commit time of the build's git commit as an RFC 3339 UTC timestamp
+    /// (e.g. `"2026-11-13T09:42:00Z"`), or `None` when the binary was built
+    /// without git or the embedded value does not parse.
+    pub build_commit_time: Option<String>,
+}
+
+/// Normalise the embedded build commit time to an RFC 3339 UTC string.
+///
+/// Returns `None` for an empty or unparseable value so the frontend can hide
+/// the build date instead of rendering an invalid one.
+pub fn normalize_build_commit_time(raw: &str) -> Option<String> {
+    parse_build_commit_time(raw).map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
 }
 
 /// Return build-time info (version, git hash, dev flag, build branch) to the frontend.
@@ -59,6 +71,7 @@ pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
         git_hash: env!("GIT_HASH").to_string(),
         is_dev,
         build_branch: env!("TERMIHUB_BUILD_BRANCH").to_string(),
+        build_commit_time: normalize_build_commit_time(env!("TERMIHUB_BUILD_COMMIT_TIME")),
     }
 }
 
@@ -471,6 +484,36 @@ mod tests {
     #[test]
     fn should_check_treats_invalid_timestamp_as_no_previous_check() {
         assert!(should_check(&Some("not-a-timestamp".to_string()), false));
+    }
+
+    // ── build commit time (#5652) ─────────────────────────────────────────────
+
+    #[test]
+    fn build_commit_time_is_normalised_to_utc() {
+        assert_eq!(
+            normalize_build_commit_time("2026-11-13T10:42:07+01:00\n").as_deref(),
+            Some("2026-11-13T09:42:07Z")
+        );
+    }
+
+    #[test]
+    fn missing_or_malformed_build_commit_time_is_none() {
+        assert!(normalize_build_commit_time("").is_none());
+        assert!(normalize_build_commit_time("2026-11-13").is_none());
+        assert!(normalize_build_commit_time("not a date").is_none());
+    }
+
+    #[test]
+    fn app_info_serialises_build_commit_time_as_camel_case() {
+        let info = AppInfo {
+            version: "0.1.0".into(),
+            git_hash: "abc1234".into(),
+            is_dev: false,
+            build_branch: "main".into(),
+            build_commit_time: None,
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert!(json["buildCommitTime"].is_null());
     }
 
     // ── fetch_update_info (mock) ──────────────────────────────────────────────

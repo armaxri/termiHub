@@ -16,7 +16,13 @@ import { UpdateIndicator } from "./UpdateIndicator";
 const { invoke } = await import("@tauri-apps/api/core");
 const mockedInvoke = vi.mocked(invoke);
 
-const RELEASE: AppInfo = { version: "0.1.0", gitHash: "abc", isDev: false, buildBranch: "main" };
+const RELEASE: AppInfo = {
+  version: "0.1.0",
+  gitHash: "abc",
+  isDev: false,
+  buildBranch: "main",
+  buildCommitTime: null,
+};
 
 const UPDATE: UpdateInfo = {
   available: true,
