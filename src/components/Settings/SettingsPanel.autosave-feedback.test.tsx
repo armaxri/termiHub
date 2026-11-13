@@ -358,9 +358,10 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
       await render();
       // Pointing at the page heading (no field) and then changing the setting
       // without focus leaves no field to anchor to.
+      const toggle = shellIntegrationToggle();
       pointerDown(container.querySelector(".settings-panel__category-title")!);
       await act(async () => {
-        shellIntegrationToggle().click();
+        toggle.click();
       });
       await saveSettles();
 
