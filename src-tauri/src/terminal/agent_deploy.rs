@@ -353,10 +353,7 @@ fn deploy_agent_with<R>(
 where
     R: FnOnce(&str, &str, &dyn Fn(u64, u64)) -> anyhow::Result<PathBuf>,
 {
-    let remote_path = deploy_config
-        .remote_path
-        .as_deref()
-        .unwrap_or(DEFAULT_REMOTE_PATH);
+    let remote_path = posix_install_target(config, deploy_config);
 
     // 1–2. SSH connect, detect the remote OS/arch.
     let (session, remote_os, remote_arch) = connect_and_detect(agent_id, config, cancel)?;
@@ -380,6 +377,28 @@ where
         &progress,
         cancel,
     )
+}
+
+/// Where a POSIX deploy/update installs the agent (#5532): an explicit
+/// `remotePath`, else the agent's custom `agentPath` (the binary the next
+/// connect launches — see [`agent_install::custom_posix_agent_path`]), else
+/// the default `.local/bin/termihub-agent`.
+///
+/// Installing over the custom path (verified, backed up and rolled back like
+/// the default) rather than to the default is what keeps the connect from
+/// running the old binary after an update. A Windows host ignores the path: it
+/// always installs to the managed location.
+fn posix_install_target<'a>(
+    config: &'a RemoteAgentConfig,
+    deploy_config: &'a AgentDeployConfig,
+) -> &'a str {
+    deploy_config
+        .remote_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .or_else(|| agent_install::custom_posix_agent_path(config.agent_path.as_deref()))
+        .unwrap_or(DEFAULT_REMOTE_PATH)
 }
 
 /// The production binary resolver: the cache → bundled → download chain of
@@ -577,6 +596,12 @@ pub fn install_agent_bytes(
         };
         (windows_deploy_install_plan(shell), Some(shell), launch_path)
     } else {
+        // A custom install path is checked before anything touches the host:
+        // it must be shell-safe and hold no file that is not a termiHub agent
+        // (#5532). The default path is termiHub's own.
+        if !agent_install::is_posix_default_install_path(remote_path) {
+            check_custom_install_target(session, remote_path)?;
+        }
         let upload_dir = prepare_posix_upload_dir(session)?;
         (posix_install_plan(remote_path, &upload_dir), None, None)
     };
@@ -740,6 +765,44 @@ pub fn install_agent_bytes(
         installed_version,
         installed_path,
     })
+}
+
+/// Refuse a custom POSIX install target that termiHub must not write (#5532).
+///
+/// The path must pass [`agent_install::validate_posix_agent_path`]. When a file
+/// is already there it is replaced only if it is a termiHub agent: its
+/// `--version` prints `termihub-agent <version>`. A file there that does not
+/// run is accepted only when its `.previous` backup is a termiHub agent (an
+/// earlier deploy died after the move; the deploy then restores the backup).
+/// Anything else — a user's own binary, a script, a data file, a directory —
+/// stops the deploy with nothing changed on the host. A timeout propagates
+/// (#3698).
+fn check_custom_install_target(
+    session: &termihub_core::backends::ssh::handler::SshSession,
+    path: &str,
+) -> Result<(), TerminalError> {
+    agent_install::validate_posix_agent_path(path)?;
+    match run_remote_command_checked(session, &format!("test -e {path}")) {
+        Ok(_) => {}
+        Err(e) if e.is_timeout() => return Err(e),
+        // Nothing at the path: the install creates it.
+        Err(_) => return Ok(()),
+    }
+    let is_agent = |target: &str| -> Result<bool, TerminalError> {
+        match run_remote_command(session, &format!("{target} --version 2>/dev/null")) {
+            Ok(output) => Ok(agent_install::is_termihub_agent_version_output(&output)),
+            Err(e) if e.is_timeout() => Err(e),
+            Err(_) => Ok(false),
+        }
+    };
+    if is_agent(path)? || is_agent(&format!("{path}{}", agent_install::POSIX_BACKUP_SUFFIX))? {
+        return Ok(());
+    }
+    Err(TerminalError::RemoteError(format!(
+        "The agent path {path} holds a file that is not a termiHub agent, so it was not \
+         replaced and nothing was changed on the host. Remove that file or set the \
+         agent path to a different location, then update again."
+    )))
 }
 
 /// Run a `--version` command and return the reported version, or `None` when
@@ -1404,3 +1467,7 @@ mod prologue_tests;
 #[cfg(test)]
 #[path = "agent_deploy_windows_tests.rs"]
 mod windows_tests;
+
+#[cfg(test)]
+#[path = "agent_deploy_custom_path_tests.rs"]
+mod custom_path_tests;

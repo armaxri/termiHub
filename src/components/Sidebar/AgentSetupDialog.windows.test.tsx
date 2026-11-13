@@ -154,6 +154,32 @@ describe("AgentSetupDialog Windows support", () => {
     expect(pathInput!.value).toBe("~/.local/bin/termihub-agent");
   });
 
+  it("prefills the install path with the agent's custom agentPath (#5532)", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+    const agent = makeAgent();
+    agent.config.agentPath = "/opt/termihub/termihub-agent";
+
+    await renderAndDetect(agent);
+
+    const pathInput = document.querySelector(
+      '[data-testid="agent-setup-remote-path"]'
+    ) as HTMLInputElement;
+    expect(pathInput.value).toBe("/opt/termihub/termihub-agent");
+  });
+
+  it("ignores a saved Windows agentPath on a POSIX host", async () => {
+    detectAgentArch.mockResolvedValue(makeArchInfo());
+    const agent = makeAgent();
+    agent.config.agentPath = "C:\\Users\\me\\AppData\\Local\\termiHub\\agent\\termihub-agent.exe";
+
+    await renderAndDetect(agent);
+
+    const pathInput = document.querySelector(
+      '[data-testid="agent-setup-remote-path"]'
+    ) as HTMLInputElement;
+    expect(pathInput.value).toBe("~/.local/bin/termihub-agent");
+  });
+
   it("renders the arch picker via ui/Select with the detected arch pre-selected", async () => {
     detectAgentArch.mockResolvedValue(makeArchInfo());
 
