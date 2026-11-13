@@ -208,7 +208,9 @@ fn an_isolated_store_ignores_another_profiles_item_and_saves_over_it() {
     assert_eq!(store.get(&pw).unwrap(), None);
     store.seed_key_index(std::slice::from_ref(&pw));
     assert!(store.list_keys().unwrap().is_empty());
-    store.remove_all_for_connection("Chooser test (SSH)").unwrap();
+    store
+        .remove_all_for_connection("Chooser test (SSH)")
+        .unwrap();
     let raw = store.entry(&pw).unwrap().get_password().unwrap();
     assert_eq!(raw, "other-profile-secret");
 

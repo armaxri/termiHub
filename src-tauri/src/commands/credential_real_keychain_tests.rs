@@ -312,7 +312,12 @@ fn an_update_signed_differently_can_replace_what_the_old_build_saved() {
 
     let updated = UpdatedBuild::new();
     let output = std::process::Command::new(&updated.path)
-        .args([UPDATE_HELPER, "--exact", "--include-ignored", "--test-threads=1"])
+        .args([
+            UPDATE_HELPER,
+            "--exact",
+            "--include-ignored",
+            "--test-threads=1",
+        ])
         .env(UPDATE_DIR_ENV, dir.path())
         .output()
         .expect("run the re-signed test binary");
@@ -381,7 +386,13 @@ impl UpdatedBuild {
             || std::fs::copy(&exe, &path).is_ok();
         assert!(copied, "could not copy the test binary");
         let signed = std::process::Command::new("/usr/bin/codesign")
-            .args(["--force", "--sign", "-", "--identifier", "termihub-dev-ci-update"])
+            .args([
+                "--force",
+                "--sign",
+                "-",
+                "--identifier",
+                "termihub-dev-ci-update",
+            ])
             .arg(&path)
             .output()
             .expect("run codesign");
