@@ -312,12 +312,7 @@ fn an_update_signed_differently_can_replace_what_the_old_build_saved() {
 
     let updated = UpdatedBuild::new();
     let output = std::process::Command::new(&updated.path)
-        .args([
-            UPDATE_HELPER,
-            "--exact",
-            "--ignored",
-            "--test-threads=1",
-        ])
+        .args([UPDATE_HELPER, "--exact", "--ignored", "--test-threads=1"])
         .env(UPDATE_DIR_ENV, dir.path())
         .output()
         .expect("run the re-signed test binary");
