@@ -45,6 +45,13 @@ describe("Modal and toasts (#5618)", () => {
     container.remove();
   });
 
+  it("marks the whole open dialog as a toast keep-clear zone (#5686)", () => {
+    render(dialog(true));
+    const content = document.querySelector('[data-testid="modal"]');
+    expect(content?.classList.contains("ui-modal")).toBe(true);
+    expect(content?.hasAttribute(TOAST_AVOID_ATTR)).toBe(true);
+  });
+
   it("marks its footer as a toast keep-clear zone", () => {
     render(dialog(true));
     const foot = document.querySelector(".ui-modal__foot");

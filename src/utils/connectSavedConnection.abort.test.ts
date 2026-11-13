@@ -1,7 +1,8 @@
 /**
  * The abortable saved-credential pre-connect (#5180): the "Connecting…" toast
- * carries an Abort that ends the pre-tab window at any step (unlock, stored
- * credential resolve, the blocking pre-connect), cancels the backend connect,
+ * carries an Abort that ends the pre-tab window at any step (stored credential
+ * resolve, the blocking pre-connect; while the unlock dialog is up the toast
+ * waits, as the dialog's own Cancel ends the connect — #5665), cancels the backend connect,
  * ignores and cleans up late results, and saves nothing. A pre-connect that
  * fails for a non-auth reason connects exactly once: the tab is handed that
  * failure instead of connecting again.
@@ -126,22 +127,42 @@ afterEach(() => {
 });
 
 describe("connectSavedConnection — abortable pre-connect (#5180)", () => {
-  it("aborts while the credential store unlock is pending and ignores a late unlock", async () => {
+  it("shows no Connecting toast while the unlock dialog is up, then raises it (#5665)", async () => {
     const unlock = deferred<UnlockOutcome>();
+    const secret = deferred<string | null>();
+    mockedResolveCredential.mockReturnValue(secret.promise);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
       requestUnlockOutcome: () => unlock.promise,
     });
     const pending = connectSavedConnection(sshPassword());
     await flush();
-    pressAbort();
-    expectCleanCancel(await pending);
+    // The unlock dialog is the feedback; its backdrop would block an Abort.
+    expect(loadingSpy).not.toHaveBeenCalled();
 
     unlock.resolve("unlocked");
     await flush();
-    expect(mockedResolveCredential).not.toHaveBeenCalled();
+    expect(loadingSpy).toHaveBeenCalledWith(
+      "Connecting…",
+      expect.objectContaining({ testId: "connect-preconnect-toast" })
+    );
+    // Abort still works once the toast is up.
+    pressAbort();
+    expectCleanCancel(await pending);
+    secret.resolve("stored-secret");
+    await flush();
     expect(mockedCreateTerminal).not.toHaveBeenCalled();
-    expect(addTabSpy).not.toHaveBeenCalled();
+  });
+
+  it("raises no Connecting toast when the unlock dialog is dismissed (#5665)", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      requestUnlockOutcome: () => Promise.resolve("canceled" as UnlockOutcome),
+    });
+    const result = await connectSavedConnection(sshPassword());
+    expect(result).toEqual({ status: "canceled" });
+    expect(loadingSpy).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith("Connect canceled");
   });
 
   it("aborts while the stored credential resolves and ignores the late secret", async () => {

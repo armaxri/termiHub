@@ -103,6 +103,15 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
     expect(lastToastAction()).toBe("Reopen");
   });
 
+  it("the Reopen toast goes away when a dialog opens (#5665)", () => {
+    useAppStore.setState({ terminalSpawnErrors: { failed: "boom" } });
+    requestTabClose(terminal("failed"), PANEL, trigger);
+    const opts = toastSuccess.mock.calls[toastSuccess.mock.calls.length - 1]?.[1] as
+      | { dismissOnModal?: boolean }
+      | undefined;
+    expect(opts?.dismissOnModal).toBe(true);
+  });
+
   it("a terminal that failed to spawn closes at once with a Reopen toast", () => {
     useAppStore.setState({ terminalSpawnErrors: { failed: "boom" } });
     requestTabClose(terminal("failed"), PANEL, trigger);
