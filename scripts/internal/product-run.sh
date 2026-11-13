@@ -80,6 +80,17 @@ if [ "$BUILD" -eq 1 ] || ! have_app; then
         ./scripts/internal/build-system-test-app.sh --debug
 fi
 
+# The agent phase deploys this machine's dev agent through the app's setup wizard.
+case "$(uname -s)" in
+Darwin | Linux)
+    if [ ! -x target/debug/termihub-agent ] && [ ! -x target/release/termihub-agent ]; then
+        echo "building the dev agent (cargo build -p termihub-agent)..."
+        cargo build -p termihub-agent ||
+            echo "agent build failed: the agent phase will be not tested" >&2
+    fi
+    ;;
+esac
+
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="$REPO/tests/system/artifacts/product-run/$RUN_ID"
 DEV_NAME="product-run-$RUN_ID"
