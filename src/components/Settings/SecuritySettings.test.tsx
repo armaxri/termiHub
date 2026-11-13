@@ -8,6 +8,7 @@ import { currentSettingsView } from "@/store/settingsBridge";
 import { SecuritySettings } from "./SecuritySettings";
 import { checkA11y } from "@/test/axe";
 import { pressRadioArrow } from "@/test/radioKeyboard";
+import { expectedStorageCards, readStorageCards } from "@/test/credentialStorageCards";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -762,6 +763,14 @@ describe("SecuritySettings", () => {
   });
 
   describe("storage-mode selector semantics (UISF2-002)", () => {
+    it("shows the chooser's options: same order, names, descriptions, badge (#5553)", async () => {
+      await render();
+      const cards = readStorageCards(query("storage-mode-group")!);
+      expect(cards).toEqual(expectedStorageCards());
+      expect(cards[0]).toMatchObject({ label: "OS Keychain", badge: "Recommended" });
+      expect(query("storage-mode-os-keychain-badge")?.textContent).toBe("Recommended");
+    });
+
     beforeEach(() => {
       useAppStore.setState({
         credentialStoreStatus: { mode: "none", status: "unlocked" },
@@ -784,9 +793,10 @@ describe("SecuritySettings", () => {
 
     it("starts the switch flow for the option reached with an arrow key", async () => {
       await render();
-      const none = query("storage-mode-none") as HTMLElement;
-      act(() => none.focus());
-      await pressRadioArrow(none, "ArrowUp");
+      // Shared order (#5553): OS Keychain, Master password, None.
+      const masterPassword = query("storage-mode-master-password") as HTMLElement;
+      act(() => masterPassword.focus());
+      await pressRadioArrow(masterPassword, "ArrowUp");
       expect(document.activeElement).toBe(query("storage-mode-os-keychain"));
       // The switch still needs confirmation; the confirm step is shown.
       expect(query("confirm-switch-confirm-btn")).not.toBeNull();

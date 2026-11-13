@@ -9,6 +9,7 @@ bastion's gateway count, and the server-control twin's session lookup and
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 
@@ -459,27 +460,33 @@ def test_ssh_server_control_picks_the_native_twin(monkeypatch):
 
 
 # ── Deployed agent on the native sshd (#5424) ─────────────────────────────────
-def test_agent_suites_are_served_on_macos_only():
-    assert native_ssh.serves_agent("darwin")
-    assert not native_ssh.serves_agent("win32")
+def test_plain_agent_suites_are_served_on_macos_and_windows():
+    """#5511: the plain deployed-agent fixture is served on both native lanes;
+    the agent-host variants stay macOS only."""
+    for plat in ("darwin", "win32"):
+        assert native_ssh.serves_agent(plat)
+        assert native_ssh.served_fixtures(plat) >= native_ssh.PLAIN_AGENT_FIXTURES
+    assert native_ssh.serves_agent_variants("darwin")
+    assert not native_ssh.serves_agent_variants("win32")
     assert native_ssh.served_fixtures("darwin") >= native_ssh.AGENT_FIXTURES
-    assert not native_ssh.served_fixtures("win32") & native_ssh.AGENT_FIXTURES
+    assert not native_ssh.served_fixtures("win32") & native_ssh.AGENT_VARIANT_FIXTURES
+    assert not native_ssh.serves_agent("linux")
 
 
-def test_unmarked_agent_suite_is_not_ported_on_macos_only():
+def test_unmarked_agent_suite_is_not_ported_on_both_native_lanes():
     names = ["remote_agent_fixtures"]
     containers = {"remote_agent_fixtures", "remote_agent_pending_fixtures", "vnc_fixtures"}
-    darwin = skip_reason(names, None, target=TARGET, platform="darwin", container_fixtures=containers)
-    assert darwin == NOT_PORTED_REASON
-    # Windows keeps the container fixture's own skip reason.
-    assert (
-        skip_reason(names, None, target=TARGET, platform="win32", container_fixtures=containers)
-        is None
+    for plat in ("darwin", "win32"):
+        unmarked = skip_reason(names, None, target=TARGET, platform=plat, container_fixtures=containers)
+        assert unmarked == NOT_PORTED_REASON
+        marked = skip_reason(
+            names, ("darwin", "win32"), target=TARGET, platform=plat, container_fixtures=containers
+        )
+        assert marked is None
+    darwin_only = skip_reason(
+        names, ("darwin",), target=TARGET, platform="win32", container_fixtures=containers
     )
-    marked = skip_reason(
-        names, ("darwin",), target=TARGET, platform="darwin", container_fixtures=containers
-    )
-    assert marked is None
+    assert darwin_only == NOT_PORTED_REASON
 
 
 def test_agent_variants_are_served_on_macos_too():
@@ -556,7 +563,7 @@ def test_install_agent_streams_and_renames_then_verifies(tmp_path, monkeypatch):
         ]
     )
     monkeypatch.setattr(native_ssh.subprocess, "run", fake)
-    control = native_ssh.NativeSshServerControl(KEYED)
+    control = native_ssh.NativeSshServerControl(KEYED, platform="darwin")
     assert control.install_agent(binary) == "/Users/u/.local/bin/termihub-agent"
     streamed = [inp for script, inp in fake.calls if "mv -f" in script]
     assert streamed == [b"AGENT-BINARY"]
@@ -575,6 +582,153 @@ def test_install_agent_fails_on_a_digest_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr(native_ssh.subprocess, "run", fake)
     with pytest.raises(native_ssh.NativeSshExecError, match="expected"):
         native_ssh.NativeSshServerControl(KEYED, platform="darwin").install_agent(binary)
+
+
+class _FakeWindowsSsh:
+    """Replays Windows exec results per script substring (the script is on stdin)."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    def __call__(self, cmd, **kw):
+        assert cmd[-1] == native_ssh.WINDOWS_EXEC_COMMAND
+        stdin = kw.get("input") or b""
+        self.calls.append(stdin)
+        for needle, out in self.replies:
+            if needle.encode() in stdin.split(b"\n", 2)[1]:
+                value = out(stdin) if callable(out) else out
+
+                class _R:
+                    returncode = 0
+                    stdout = value
+                    stderr = b""
+
+                return _R()
+        raise AssertionError(f"unexpected script {stdin[:200]!r}")
+
+
+WIN_AGENT = "C:/Users/termihubssh/AppData/Local/termiHub/agent/termihub-agent.exe"
+
+
+def test_windows_agent_path_is_the_deploy_location_in_forward_slash_form(monkeypatch):
+    fake = _FakeWindowsSsh([("LOCALAPPDATA", f"{WIN_AGENT}\n".encode())])
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake)
+    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
+    assert control.windows_agent_path() == WIN_AGENT
+    # Resolved once per control.
+    control.windows_agent_path()
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "out",
+    [
+        "C:/Users/a b/AppData/Local/termiHub/agent/termihub-agent.exe",
+        "C:/Users/a;b/AppData/Local/termiHub/agent/termihub-agent.exe",
+        "C:/Users/../AppData/Local/termiHub/agent/termihub-agent.exe",
+        "/c/Users/u/AppData/Local/termiHub/agent/termihub-agent.exe",
+        "C:/Users/u/AppData/Local/termiHub/agent/termihub-agent",
+        "",
+    ],
+)
+def test_windows_agent_path_refuses_what_the_app_cannot_launch_unquoted(monkeypatch, out):
+    fake = _FakeWindowsSsh([("LOCALAPPDATA", out.encode())])
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake)
+    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
+    with pytest.raises(native_ssh.NativeSshExecError, match="unquoted"):
+        control.windows_agent_path()
+
+
+def test_windows_install_agent_uploads_raw_then_renames(tmp_path, monkeypatch):
+    import hashlib
+
+    data = bytes(range(256)) * 4
+    binary = tmp_path / "termihub-agent.exe"
+    binary.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    state = {"installed": False}
+    uploads = []
+
+    def install(_stdin):
+        state["installed"] = True
+        return b""
+
+    script_fake = _FakeWindowsSsh(
+        [
+            ("LOCALAPPDATA", WIN_AGENT.encode()),
+            ("[ -e", lambda _: b"yes" if state["installed"] else b"no"),
+            ("mkdir -p", b""),
+            ('mv -f "$2"', install),
+            ("sha256", f"{digest}  -\n".encode()),
+        ]
+    )
+
+    def fake_run(cmd, **kw):
+        if cmd[-1].startswith("cat >"):
+            uploads.append((cmd[-1], kw.get("input")))
+
+            class _R:
+                returncode = 0
+                stdout = b""
+                stderr = b""
+
+            return _R()
+        return script_fake(cmd, **kw)
+
+    monkeypatch.setattr(native_ssh.subprocess, "run", fake_run)
+    control = native_ssh.NativeSshServerControl(KEYED, platform="win32")
+    assert control.install_agent(binary) == WIN_AGENT
+    (command, sent), = uploads
+    # The binary goes to cat as is, beside the agent, under a marked command
+    # without quotes; the rename names that temp file.
+    assert sent == data
+    assert command.startswith(f"cat >{WIN_AGENT}.tmp.")
+    assert command.endswith(f"; : {native_ssh.WINDOWS_EXEC_MARKER}")
+    assert not set(command) & set("\"'\\")
+    tmp = command[len("cat >") : command.index(";")]
+    (rename,) = [c for c in script_fake.calls if b'mv -f "$2"' in c]
+    assert shlex.split(rename.split(b"\n", 1)[0].decode()) == ["set", "--", WIN_AGENT, tmp]
+    with pytest.raises(ValueError, match="variants"):
+        control.install_agent(binary, home="C:/x")
+
+
+@pytest.mark.parametrize("path", ["C:/a b/x.exe", "C:/a'b/x.exe", "C:/a;b/x.exe", "C:\\a\\x.exe", ""])
+def test_windows_upload_command_refuses_paths_it_cannot_name_unquoted(path):
+    with pytest.raises(ValueError, match="unquoted"):
+        native_ssh.windows_upload_command(path)
+
+
+def test_windows_upload_and_rename_run_in_a_posix_sh(tmp_path):
+    """The upload command and the rename script, run for real in the local
+    ``sh`` (dash on Linux, bash elsewhere): the bytes land intact and an
+    existing agent is replaced, with nothing left beside it."""
+    import shutil
+    import subprocess as sp
+
+    missing = [tool for tool in ("sh", "cat", "mv", "rm") if shutil.which(tool) is None]
+    assert not missing, f"the install needs {missing} on this host"
+    dest = tmp_path / "termiHub" / "agent" / "termihub-agent.exe"
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b"old agent")
+    tmp = f"{dest}.tmp.1-2"
+    data = b"\x00\x01binary\r\n\xff" * 5000
+    upload = native_ssh.windows_upload_command(tmp)
+    sp.run(["sh", "-c", upload], input=data, check=True)
+    script = native_ssh.NativeSshServerControl.windows_script(
+        native_ssh.WINDOWS_AGENT_INSTALL_SCRIPT, str(dest), tmp
+    )
+    result = sp.run(["sh", "-s", native_ssh.WINDOWS_EXEC_MARKER], input=script, capture_output=True)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert dest.read_bytes() == data
+    assert sorted(p.name for p in dest.parent.iterdir()) == ["termihub-agent.exe"]
+
+
+def test_system_test_agent_binary_is_an_exe_for_a_windows_triple():
+    from termihub_harness import fixtures
+
+    assert fixtures.system_test_agent_binary("x86_64-pc-windows-msvc").name == "termihub-agent.exe"
+    assert fixtures.system_test_agent_binary("aarch64-apple-darwin").name == "termihub-agent"
 
 
 def test_agent_service_control_is_native_on_macos(monkeypatch):

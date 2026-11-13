@@ -187,23 +187,31 @@ class TestProductRunChecklist(
     def test_01_crash_banner(self):
         with self.step(
             "checklist.banner.wording",
-            "Crash banner says 'closed unexpectedly' with Don't show again, Close, Export…, View report",
-            expect="the crash banner across the top with four buttons, none named Dismiss",
+            "Crash banner says 'closed unexpectedly' with Close and View report, plus an inline "
+            "Don't show again link (#5558)",
+            expect="the crash banner with two actions, Close and View report, and a small "
+            "'Don't show again' link in its text; no Export and no button named Dismiss",
         ):
             self.require("checklist.profile")
             self.wait_notice_visible(CRASH_NOTICE)
             text = self.driver.get_text(CRASH_NOTICE)
             self.evidence(f"banner text: {text!r}")
             assert "termiHub closed unexpectedly last time." in text, text
-            buttons = {
+            labels = {
                 CRASH_NOTICE_NEVER: "Don't show again",
                 CRASH_NOTICE_DISMISS: "Close",
-                CRASH_EXPORT: "Export…",
                 CRASH_NOTICE_VIEW: "View report",
             }
-            for testid, label in buttons.items():
+            for testid, label in labels.items():
                 got = self.driver.get_text(testid).strip()
                 assert got == label, f"{testid} reads {got!r}, want {label!r}"
+            buttons = [
+                i["text"].strip()
+                for i in self.driver.measure_element(CRASH_NOTICE, "buttons")["items"]
+                if i["visible"]
+            ]
+            self.evidence(f"banner buttons: {buttons}")
+            assert not self.driver.exists(CRASH_EXPORT), "Export is still in the banner (#5558)"
             assert "Dismiss" not in text, f"a button still says Dismiss: {text!r}"
         with self.step(
             "checklist.banner.close",

@@ -141,11 +141,26 @@ describe("AgentCrashReportNotice", () => {
     expect(mockedApi.acknowledgeAgentCrashNotice).toHaveBeenCalledTimes(1);
   });
 
-  it("export opens the diagnostics export dialog", async () => {
+  it("offers View report and Close only, export lives in the viewer (#5558)", async () => {
     await render();
-    await click("agent-crash-notice-export-agent-a");
-    expect(useDiagnosticsDialogStore.getState().exportOpen).toBe(true);
-    expect(mockedApi.acknowledgeAgentCrashNotice).toHaveBeenCalledTimes(1);
+    const labels = Array.from(
+      byTestId("agent-crash-notice-agent-a")?.querySelectorAll("button") ?? []
+    ).map((b) => b.textContent?.trim());
+    expect(labels).toEqual(["Close", "View report"]);
+    expect(byTestId("agent-crash-notice-export-agent-a")).toBeNull();
+  });
+
+  it("shows one notice at a time; closing it reveals the next (#5548)", async () => {
+    mockedApi.getAgentCrashNotices.mockResolvedValue([
+      NOTICE,
+      { agentId: "agent-b", name: "crash-b.txt", newCount: 1 },
+    ]);
+    await render();
+    expect(byTestId("agent-crash-notice-agent-a")).not.toBeNull();
+    expect(byTestId("agent-crash-notice-agent-b")).toBeNull();
+    await click("agent-crash-notice-dismiss-agent-a");
+    expect(byTestId("agent-crash-notice-agent-a")).toBeNull();
+    expect(byTestId("agent-crash-notice-agent-b")).not.toBeNull();
   });
 
   it("unsubscribes on unmount", async () => {

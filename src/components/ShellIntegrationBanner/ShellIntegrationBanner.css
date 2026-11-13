@@ -5,10 +5,13 @@
   align-items: center;
   gap: var(--spacing-md);
   padding: var(--spacing-sm) var(--spacing-lg);
-  background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-secondary));
+  background: var(--bg-banner-info);
   border-top: 1px solid var(--border-primary);
   font-size: var(--font-size-md);
   color: var(--text-primary);
+  /* #5547: secondary text (subtitle, ghost buttons) on the tinted banner uses
+     the on-selection variant, which reaches AA on it in every theme. */
+  --text-secondary: var(--text-secondary-on-selection);
 }
 
 .shell-integration-banner__icon {

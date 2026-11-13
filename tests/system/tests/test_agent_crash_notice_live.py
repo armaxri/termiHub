@@ -19,7 +19,9 @@ deployed-agent container (``remote_agent_fixtures``, the same one
 
 Reports are seeded as the agent's own user into its
 ``~/.config/termihub-agent/logs/crash-reports/`` and removed again afterwards, so
-other suites sharing the container never see them.
+other suites sharing the container never see them. On the macOS and Windows
+native sshd the directory follows the agent's own config dir there
+(``agent_crash_dir``; ``%APPDATA%`` on Windows, #5511).
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
+    deployed_agent_path,
     ssh_server_control,
     unique_name,
 )
@@ -60,7 +63,7 @@ SECRETS = "password=hunter2-4009 addr 10.20.30.40"
 
 
 @pytest.mark.usefixtures("remote_agent_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestAgentCrashNoticeLive(
     AgentUi,
     CrashReportUi,
@@ -122,7 +125,11 @@ class TestAgentCrashNoticeLive(
     def _create_and_baseline(self, label: str) -> dict:
         """Create + connect a fresh agent and wait for its baseline check."""
         agent = self.create_remote_agent(
-            unique_name(label), host=SSH_HOST, port=REMOTE_AGENT_PORT, username=SSH_USERNAME
+            unique_name(label),
+            host=SSH_HOST,
+            port=REMOTE_AGENT_PORT,
+            username=SSH_USERNAME,
+            agent_path=deployed_agent_path(),
         )
         self._connect(agent["name"])
         self.wait(

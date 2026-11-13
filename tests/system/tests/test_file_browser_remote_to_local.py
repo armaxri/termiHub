@@ -27,11 +27,18 @@ agent cross-build toolchain is missing (see ``remote_agent_fixtures``).
 
 The local destination is a fresh temp dir, removed afterwards, so nothing lands
 in ``$HOME``.
+
+On the macOS and Windows lanes both hosts are the native sshd fixture (#5424,
+#5511). On Windows the direct session's login shell is Git Bash, so the POSIX
+seeding commands run there as written; the agent's shells are PowerShell, so
+that suite seeds with PowerShell, and its agent carries the install path of
+the app's PowerShell deploy step (:func:`~termihub_harness.deployed_agent_path`).
 """
 
 from __future__ import annotations
 
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -53,6 +60,7 @@ from termihub_harness import (
     SystemTest,
     TabsUi,
     TerminalUi,
+    deployed_agent_path,
     unique_name,
 )
 
@@ -91,16 +99,39 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
         """Open a remote session, run ``seed`` in its home dir, show its browser."""
         raise NotImplementedError
 
+    #: Whether the remote shell is PowerShell (an agent on a Windows host)
+    #: rather than a POSIX shell; picks the seeding commands.
+    remote_powershell = False
+
+    def _file_seed(self, name: str) -> str:
+        """The command that writes ``name`` holding :data:`PAYLOAD`, newline exact."""
+        if self.remote_powershell:
+            # Set-Content -NoNewline writes the value as is: one LF, no CRLF.
+            return f'Set-Content -NoNewline -Path {name} -Value "remote-to-local paste payload`n"'
+        # printf keeps the trailing newline exact (no shell-dependent echo).
+        return f"printf 'remote-to-local paste payload\\n' > {name}"
+
+    def _tree_seed(self, name: str) -> str:
+        """The command that builds folder ``name`` with ``top.txt`` and ``sub/nested.txt``."""
+        if self.remote_powershell:
+            # `;`, not `&&`: Windows PowerShell 5.1 has no pipeline chains.
+            return (
+                f"New-Item -ItemType Directory -Force -Path {name}/sub | Out-Null;"
+                f' Set-Content -NoNewline -Path {name}/top.txt -Value "top`n";'
+                f' Set-Content -NoNewline -Path {name}/sub/nested.txt -Value "nested`n"'
+            )
+        return (
+            f"mkdir -p {name}/sub && printf 'top\\n' > {name}/top.txt"
+            f" && printf 'nested\\n' > {name}/sub/nested.txt"
+        )
+
     def _copy_remote_file(self, name: str, *, seed: str | None = None) -> None:
         """Seed ``name`` in the remote home dir, then Copy it in the file browser.
 
         ``seed`` replaces the default seeding command (one file holding
         :data:`PAYLOAD`), e.g. to build a nested folder named ``name``.
         """
-        # printf keeps the trailing newline exact (no shell-dependent echo).
-        self._open_remote_browser(
-            seed or f"printf 'remote-to-local paste payload\\n' > {name}"
-        )
+        self._open_remote_browser(seed or self._file_seed(name))
         self.wait_for_file_row(name)
         self.open_file_menu(name)
         self.driver.click("context-file-copy")
@@ -153,11 +184,7 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
     def test_copied_remote_folder_pastes_its_nested_tree_locally(self):
         """A copied folder lands with its whole tree: sub-folder and both files."""
         name = unique_name("r2l-dir")
-        seed = (
-            f"mkdir -p {name}/sub && printf 'top\\n' > {name}/top.txt"
-            f" && printf 'nested\\n' > {name}/sub/nested.txt"
-        )
-        self._copy_remote_file(name, seed=seed)
+        self._copy_remote_file(name, seed=self._tree_seed(name))
 
         self._browse_local_dest()
         self._paste_when_enabled()
@@ -210,7 +237,7 @@ class _RemoteToLocalPasteJourneys(TerminalUi, TabsUi, SidebarUi, FilesUi):
 
 
 @pytest.mark.usefixtures("ssh_password_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestFileBrowserRemoteToLocal(
     _RemoteToLocalPasteJourneys,
     ConnectionsUi,
@@ -228,7 +255,7 @@ class TestFileBrowserRemoteToLocal(
 
 
 @pytest.mark.usefixtures("remote_agent_fixtures")
-@pytest.mark.native_sshd(platforms=("darwin",))
+@pytest.mark.native_sshd
 class TestAgentFileBrowserRemoteToLocal(
     _RemoteToLocalPasteJourneys,
     AgentUi,
@@ -237,6 +264,9 @@ class TestAgentFileBrowserRemoteToLocal(
     SystemTest,
 ):
     """The journeys from the session browser of a remote-agent shell (#4007)."""
+
+    # A Windows agent host offers no POSIX shell: its shell tab is PowerShell.
+    remote_powershell = sys.platform == "win32"
 
     @pytest.fixture(autouse=True)
     def _disconnect_agents(self):
@@ -250,7 +280,11 @@ class TestAgentFileBrowserRemoteToLocal(
     def _open_remote_browser(self, seed: str) -> None:
         name = unique_name("r2l-agent")
         self.create_remote_agent(
-            name, host=SSH_HOST, port=REMOTE_AGENT_PORT, username=SSH_USERNAME
+            name,
+            host=SSH_HOST,
+            port=REMOTE_AGENT_PORT,
+            username=SSH_USERNAME,
+            agent_path=deployed_agent_path(),
         )
         self.connect_agent(name)
         self.handle_password_prompt(SSH_PASSWORD)
