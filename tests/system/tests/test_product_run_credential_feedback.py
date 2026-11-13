@@ -11,10 +11,14 @@ Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 3. **Named switch confirmation**: the switch to the OS Keychain offered a
    generic "Confirm", did not say what happens to the master-password vault
    and named the target two ways ("OS Keychain", "OS credential store").
+4. **No connect toast under the unlock dialog** (#5665): a connect that has to
+   unlock the store first shows the unlock dialog alone, without a
+   "Connecting… / Abort" toast over its blocking backdrop.
 
 No sshd and no keychain write: the store is set up from Settings ▸ Security,
-the unlock dialog is opened from the status-bar lock, and the keychain switch
-confirmation is read and then cancelled.
+the unlock dialog is opened from the status-bar lock, the keychain switch
+confirmation is read and then cancelled, and the connect-time unlock dialog is
+cancelled before anything connects.
 """
 
 from __future__ import annotations
@@ -23,7 +27,14 @@ import time
 
 import pytest
 
-from termihub_harness import CredentialStoreUi, SettingsUi, SidebarUi, SystemTest
+from termihub_harness import (
+    ConnectionsUi,
+    CredentialStoreUi,
+    SettingsUi,
+    SidebarUi,
+    SystemTest,
+    unique_name,
+)
 from termihub_harness.product_run import ProductRunUi
 
 pytestmark = [pytest.mark.product_run, pytest.mark.integration]
@@ -37,6 +48,7 @@ TOAST_REGION = "toast-region"
 
 class TestProductRunCredentialFeedback(
     ProductRunUi,
+    ConnectionsUi,
     CredentialStoreUi,
     SettingsUi,
     SidebarUi,
@@ -129,3 +141,33 @@ class TestProductRunCredentialFeedback(
     def store_mode_is_master_password(self) -> bool:
         status = self.credential_store_status() or {}
         return status.get("mode") == "master_password"
+
+    def test_40_no_connect_toast_over_unlock_dialog(self):
+        name = unique_name("pr-unlock-connect")
+        with self.step(
+            "cred-feedback.unlock.connect-toast",
+            "A connect that must unlock the store shows the unlock dialog without a toast (#5665)",
+            expect="#5665: the unlock dialog raised by a connect, with no 'Connecting… / Abort' "
+            "toast beside it (the dialog's Cancel ends the connect)",
+        ):
+            self.require("cred-feedback.switch-once")
+            if self.credential_store_locked():
+                self.unlock_credential_store(MASTER_PASSWORD)
+            self.switch_to_connections_sidebar()
+            # Never connected: the unlock dialog is cancelled first.
+            self.create_ssh_connection(
+                name, host="127.0.0.1", port=1, username="nobody", save_password=True
+            )
+            self.require_connection(name)
+            self.lock_credential_store()
+            self.connect_connection(name)
+            self.wait(lambda: self.driver.exists("unlock-dialog-input"), what="the unlock dialog")
+            try:
+                time.sleep(1.0)  # the toast used to appear before the dialog
+                shown = self.driver.exists("connect-preconnect-toast")
+                toasts = self.driver.get_text(TOAST_REGION) if self.driver.exists(TOAST_REGION) else ""
+                self.evidence(f"connect toast shown: {shown}; toasts {toasts!r}")
+                assert not shown, "a 'Connecting… / Abort' toast sits over the unlock dialog"
+            finally:
+                self.driver.click("unlock-dialog-cancel")
+            self.wait(lambda: not self.driver.exists("unlock-dialog-input"), what="cancelled")
