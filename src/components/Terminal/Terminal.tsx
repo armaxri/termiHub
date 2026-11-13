@@ -20,7 +20,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { applyCombineEmoji } from "./unicodeWidth";
 import { waitForUsableDimensions } from "./waitForUsableDimensions";
-import { createHscrollProbe, syncHscrollBar } from "./hscrollBar";
+import { createHscrollProbe, syncHscrollBar, horizontalScrollElementWidth } from "./hscrollBar";
 import { abortableDelay } from "@/utils/abortableDelay";
 import { ConnectionConfig } from "@/types/terminal";
 import {
@@ -194,7 +194,9 @@ function updateHorizontalScrollWidth(xterm: XTerm, fitAddon: FitAddon, _containe
 
   const xtermEl = xterm.element;
   if (xtermEl) {
-    xtermEl.style.width = targetWidth + "px";
+    // .xterm is border-box with the command-mark inset as left padding (#5693),
+    // so it is that much wider than the screen it holds.
+    xtermEl.style.width = horizontalScrollElementWidth(xtermEl, targetWidth) + "px";
     const screen = xtermEl.querySelector(".xterm-screen") as HTMLElement | null;
     if (screen) {
       screen.style.width = targetWidth + "px";

@@ -32,8 +32,8 @@ const h = vi.hoisted(() => {
   const HSCROLL_BAR_DEFAULT = 10;
   /** Gap between the bar and the last row (`--spacing-xs`). */
   const HSCROLL_GAP = 4;
-  /** Viewport insets in horizontal mode: edge gap (8) + gutter (12). */
-  const HSCROLL_INSET = 20;
+  /** Horizontal-mode insets: .xterm mark padding (11, #5693) + viewport gutter (12). */
+  const HSCROLL_INSET = 23;
   const state = {
     containerWidth: 711,
     containerHeight: 504,

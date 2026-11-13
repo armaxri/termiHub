@@ -68,3 +68,16 @@ export function syncHscrollBar(container: HTMLElement, probe: HTMLElement): bool
   else container.style.removeProperty("--hscroll-bar");
   return true;
 }
+
+/**
+ * Width to give the `.xterm` element in horizontal-scroll mode so its content
+ * box fits a screen `screenWidth` px wide (#5693). `.xterm` is `border-box` and
+ * keeps the command-mark inset as its left padding in that mode (so the OSC 133
+ * marks show beside the prompt), and it clips its rows at the padding box: set
+ * to the bare screen width it would cut the last columns off by that padding.
+ */
+export function horizontalScrollElementWidth(xtermEl: HTMLElement, screenWidth: number): number {
+  const style = (xtermEl.ownerDocument.defaultView ?? window).getComputedStyle(xtermEl);
+  const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  return screenWidth + padding;
+}
