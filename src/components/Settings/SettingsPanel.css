@@ -400,6 +400,40 @@
   white-space: nowrap;
 }
 
+/* Linux: built-in prefixes as a compact chip grid, not one full-width row each
+   (#5712). Each chip is a small switch + the monospace prefix. */
+.settings-panel__prefix-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: var(--spacing-xs);
+}
+
+.settings-panel__prefix-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  padding: var(--spacing-xxs) var(--spacing-xs);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-tertiary);
+}
+
+/* Other platforms: a one-line note + disclosure instead of the list (#5712). */
+.settings-panel__prefix-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
+.settings-panel__prefix-note .settings-panel__description {
+  margin: 0;
+}
+
 .settings-panel__subsection-title {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);

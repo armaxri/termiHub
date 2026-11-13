@@ -342,6 +342,53 @@ const HTTP_MONITORS = [
 ];
 
 /**
+ * A representative slice of the backend's built-in serial `/dev` scan prefixes
+ * (`core/src/session/serial.rs`), which a fresh install seeds into settings, so
+ * Settings ▸ Serial renders its real layout (#5712).
+ */
+const BUILTIN_SERIAL_PREFIXES = [
+  "ttyAMA",
+  "ttyAM",
+  "ttyS",
+  "uart",
+  "serial",
+  "ttyTHS",
+  "ttyTCU",
+  "ttymxc",
+  "ttyLP",
+  "ttyPS",
+  "ttyMSM",
+  "ttyHS",
+  "ttyAML",
+  "ttySAC",
+  "ttySC",
+  "ttyMV",
+  "ttyATH",
+  "ttyAS",
+  "ttyLF",
+  "ttyAT",
+  "ttySIF",
+  "ttyGS",
+  "ttyRPMSG",
+  "rfcomm",
+  "ttyPSC",
+  "ttyLTQ",
+  "ttyTX",
+  "ttyAPP",
+  "ttyWMT",
+  "ttyCL",
+  "ttySA",
+  "ttyPCH",
+  "ttyNVT",
+  "ttyRDA",
+  "ttyOWL",
+  "ttyLXU",
+  "ttyUSI",
+  "ttySUP",
+  "ttyPIC",
+];
+
+/**
  * A fresh-install settings document (the backend's seed baseline), with the
  * experimental sidebars switched on so every sidebar can be captured and the
  * first-launch shell-integration banner dismissed so it does not cover the
@@ -353,6 +400,11 @@ const FRESH_SETTINGS = {
   powerMonitoringEnabled: true,
   fileBrowserEnabled: true,
   experimentalFeaturesEnabled: true,
+  serialPortScanPrefixes: BUILTIN_SERIAL_PREFIXES.map((prefix) => ({
+    prefix,
+    enabled: true,
+    builtIn: true,
+  })),
   shellIntegration: {
     entries: [],
     fallback: "picker",
