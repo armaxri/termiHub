@@ -174,7 +174,7 @@ describe("TransferView", () => {
     expect(q("transfer-pane-local-row-a.txt")).not.toBeNull();
     expect(api.sessionListFiles).toHaveBeenCalledWith("s1", "~");
     // The remote `~` resolves to the listed directory.
-    expect((q("transfer-pane-remote-path") as HTMLInputElement).value).toBe("/srv/app");
+    expect(q("transfer-pane-remote-current-path")?.getAttribute("title")).toBe("/srv/app");
     expect(q("transfer-pane-remote-row-logs")).not.toBeNull();
   });
 
@@ -371,7 +371,7 @@ describe("TransferView", () => {
       expect(q("file-bookmark-item-logs")).toBeNull();
       await pick("file-bookmark-item-docs");
       expect(api.localListDir).toHaveBeenLastCalledWith("/home/me/docs");
-      expect((q("transfer-pane-local-path") as HTMLInputElement).value).toBe("/home/me/docs");
+      expect(q("transfer-pane-local-current-path")?.getAttribute("title")).toBe("/home/me/docs");
     });
 
     it("the remote pane lists the remote connection's bookmarks and jumps to one", async () => {

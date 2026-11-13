@@ -143,19 +143,31 @@ class TestTransferViewLive(
         self.invoke_file_browser_action(OPEN_TRANSFER_VIEW)  # a "…" menu entry (#5520)
         self.wait(lambda: self.driver.exists(VIEW), what="the transfer view")
         self.wait(
-            lambda: self.driver.get_value("transfer-pane-remote-path") == self._home,
+            lambda: self._pane_path("remote") == self._home,
             what="the remote pane to list the home dir",
         )
         self._point_local_pane()
         return ssh_tab
 
+    def _pane_path(self, side: str) -> str:
+        """The path a pane shows: its breadcrumb bar's tooltip (#5541)."""
+        bar = f"transfer-pane-{side}-current-path"
+        if not self.driver.exists(bar):
+            return ""
+        return self.driver.get_attribute(bar, "title") or ""
+
     def _point_local_pane(self) -> None:
         # Forward slashes: the local listing accepts them on Windows too (#2683).
         target = str(self._local).replace("\\", "/")
-        self.driver.type("transfer-pane-local-path", target)
-        self.driver.press_key("Enter", "transfer-pane-local-path")
+        # The bar is breadcrumbs until clicked: the empty space after the
+        # segments opens the path editor (#5540, #5541).
+        self.driver.click("transfer-pane-local-path-edit")
+        field = "transfer-pane-local-path-input"
+        self.wait(lambda: self.driver.exists(field), what="the local pane's path editor")
+        self.driver.type(field, target)
+        self.driver.press_key("Enter", field)
         self.wait(
-            lambda: self._local.name in self.driver.get_value("transfer-pane-local-path"),
+            lambda: self._local.name in self._pane_path("local"),
             what="the local pane to enter the temp dir",
         )
 
