@@ -1,7 +1,7 @@
 import type React from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
+import { GripVertical, ArrowUp, ArrowDown, Trash2, Plus, ChevronRight } from "lucide-react";
 import {
   Button,
   Input,
@@ -25,6 +25,8 @@ import {
   newWorkflowStep,
   stepKindIcon,
   stepKindLabel,
+  stepPolicySummary,
+  stepSummary,
 } from "./workflowStepMeta";
 import { WorkflowStepErrorHandlingEditor } from "./WorkflowStepErrorHandlingEditor";
 import { ScriptSourceField } from "./ScriptSourceField";
@@ -44,6 +46,13 @@ interface WorkflowStepRowProps {
   onChange: (uid: string, step: WorkflowStep) => void;
   onMove: (index: number, direction: -1 | 1) => void;
   onDelete: (uid: string) => void;
+  /**
+   * Whether the step's detail editor is shown. Collapsed, the row is a single
+   * summary line (#5637). Defaults to expanded.
+   */
+  expanded?: boolean;
+  /** Called with the step's uid when its header is clicked to expand/collapse. */
+  onToggleExpanded?: (uid: string) => void;
 }
 
 /**
@@ -52,6 +61,10 @@ interface WorkflowStepRowProps {
  * keyboard/click reorder fallback. The row body is a per-kind detail editor —
  * a command input, a script textarea, a macro picker, a wait delay, or a
  * local-process program+args pair — driven by the step's discriminant.
+ *
+ * The row collapses to one summary line (kind + main value + failure policy) so
+ * a long sequence fits the dialog without an inner scroll box (#5637); the
+ * header button expands it to edit.
  */
 export function WorkflowStepRow({
   entry,
@@ -61,6 +74,8 @@ export function WorkflowStepRow({
   onChange,
   onMove,
   onDelete,
+  expanded = true,
+  onToggleExpanded,
 }: WorkflowStepRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: entry.uid,
@@ -73,6 +88,7 @@ export function WorkflowStepRow({
 
   const { step } = entry;
   const Icon = stepKindIcon(step.kind);
+  const policyNotes = stepPolicySummary(step);
 
   return (
     <li
@@ -93,14 +109,42 @@ export function WorkflowStepRow({
           <GripVertical size={14} />
         </button>
         <span className="workflow-step__index">{index + 1}</span>
-        <Icon size={14} />
-        <span
-          className="workflow-step__kind"
-          data-testid={`workflow-editor-step-kind-${index}`}
-          data-kind={step.kind}
+        <button
+          type="button"
+          className="workflow-step__toggle"
+          aria-expanded={expanded}
+          onClick={() => onToggleExpanded?.(entry.uid)}
+          data-testid={`workflow-editor-step-toggle-${index}`}
         >
-          {stepKindLabel(step.kind)}
-        </span>
+          <ChevronRight
+            size={14}
+            className={
+              expanded
+                ? "workflow-step__chevron workflow-step__chevron--open"
+                : "workflow-step__chevron"
+            }
+            aria-hidden="true"
+          />
+          <Icon size={14} />
+          <span
+            className="workflow-step__kind"
+            data-testid={`workflow-editor-step-kind-${index}`}
+            data-kind={step.kind}
+          >
+            {stepKindLabel(step.kind)}
+          </span>
+          {!expanded && (
+            <span
+              className="workflow-step__summary"
+              data-testid={`workflow-editor-step-summary-${index}`}
+            >
+              <span className="workflow-step__summary-value">{stepSummary(step, macros)}</span>
+              {policyNotes.length > 0 && (
+                <span className="workflow-step__summary-policy">{policyNotes.join(" · ")}</span>
+              )}
+            </span>
+          )}
+        </button>
         <div className="workflow-step__actions">
           <Button
             variant="ghost"
@@ -133,15 +177,17 @@ export function WorkflowStepRow({
           />
         </div>
       </div>
-      <div className="workflow-step__body">
-        <StepDetailEditor
-          fieldId={String(index)}
-          stepNumber={index + 1}
-          step={step}
-          macros={macros}
-          onChange={(next) => onChange(entry.uid, next)}
-        />
-      </div>
+      {expanded && (
+        <div className="workflow-step__body" data-testid={`workflow-editor-step-body-${index}`}>
+          <StepDetailEditor
+            fieldId={String(index)}
+            stepNumber={index + 1}
+            step={step}
+            macros={macros}
+            onChange={(next) => onChange(entry.uid, next)}
+          />
+        </div>
+      )}
     </li>
   );
 }

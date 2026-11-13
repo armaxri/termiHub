@@ -121,7 +121,9 @@ function stepUid(): string {
 /**
  * Create/edit view for a workflow: name, description, tags, an ordered typed
  * step list (add / remove / reorder via grip-drag or up/down), and a Triggers
- * section binding manual / on-connect / hotkey. Composed entirely from the
+ * section binding manual / on-connect / hotkey. Triggers sit above the steps
+ * and every step collapses to a summary line, so the dialog has a single scroll
+ * container and the "when does this run" choice is visible at once (#5637). Composed entirely from the
  * shared UI primitives, mirroring `MacroEditorDialog`.
  *
  * Edits are held locally and only persisted when the user saves, so cancelling
@@ -151,6 +153,9 @@ export function WorkflowEditorDialog({
   const [entries, setEntries] = useState<WorkflowStepEntry[]>([]);
   const [triggers, setTriggers] = useState<WorkflowTrigger[]>([]);
   const [parameters, setParameters] = useState<WorkflowParameter[]>([]);
+  // Uids of the step rows showing their detail editor (#5637). Opened steps
+  // start collapsed to one summary line each; added steps start expanded.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   // A connection renamed while the dialog is open: re-point the on-connect
   // triggers, or saving would write the old id back (#3603).
   useFollowConnectionIdChanges(setTriggers, remapWorkflowTriggers, open);
@@ -168,7 +173,13 @@ export function WorkflowEditorDialog({
         description: workflow.description ?? "",
         tags: workflow.tags.join(", "),
       });
-      setEntries(workflow.steps.map((step) => ({ uid: stepUid(), step: { ...step } })));
+      const opened = workflow.steps.map((step) => ({ uid: stepUid(), step: { ...step } }));
+      setEntries(opened);
+      // A step whose failure policy is out of bounds opens expanded, so the
+      // inline reason that blocks Save is visible without hunting for it.
+      setExpanded(
+        new Set(opened.filter((e) => !workflowStepsPolicyValid([e.step])).map((e) => e.uid))
+      );
       setTriggers(workflow.triggers.map((t) => ({ ...t })));
       setParameters((workflow.parameters ?? []).map((p) => ({ ...p })));
     }
@@ -222,7 +233,22 @@ export function WorkflowEditorDialog({
   };
 
   const addStep = (kind: WorkflowStepKind) => {
-    setEntries((prev) => [...prev, { uid: stepUid(), step: newWorkflowStep(kind) }]);
+    const uid = stepUid();
+    setEntries((prev) => [...prev, { uid, step: newWorkflowStep(kind) }]);
+    setExpanded((prev) => new Set(prev).add(uid));
+  };
+
+  const toggleStep = (uid: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(uid)) next.add(uid);
+      return next;
+    });
+  };
+
+  const allExpanded = entries.length > 0 && entries.every((e) => expanded.has(e.uid));
+  const toggleAllSteps = () => {
+    setExpanded(allExpanded ? new Set() : new Set(entries.map((e) => e.uid)));
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -283,100 +309,143 @@ export function WorkflowEditorDialog({
         </>
       }
     >
-      <Controller
-        name="name"
-        control={control}
-        render={({ field }) => (
-          <Field label="Name" htmlFor="workflow-editor-name" error={errors["name"]}>
-            <Input
-              id="workflow-editor-name"
-              value={field.value ?? ""}
-              error={Boolean(errors["name"])}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="Workflow name"
-              data-testid="workflow-editor-name"
-            />
-          </Field>
-        )}
-      />
-      <Controller
-        name="description"
-        control={control}
-        render={({ field }) => (
-          <Field label="Description (optional)" htmlFor="workflow-editor-description">
-            <Input
-              id="workflow-editor-description"
-              value={field.value ?? ""}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="What this workflow does"
-              data-testid="workflow-editor-description"
-            />
-          </Field>
-        )}
-      />
-      <Controller
-        name="tags"
-        control={control}
-        render={({ field }) => (
-          <Field label="Tags (optional, comma-separated)" htmlFor="workflow-editor-tags">
-            <Input
-              id="workflow-editor-tags"
-              value={field.value ?? ""}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="ops, release"
-              data-testid="workflow-editor-tags"
-            />
-          </Field>
-        )}
-      />
-
-      <div className="workflow-editor__section-header">
-        <span className="workflow-editor__section-title">Steps ({entries.length})</span>
-      </div>
-      {entries.length === 0 ? (
-        <EmptyState
-          title="No steps yet. Add one below — a workflow needs at least one step to be saved."
-          data-testid="workflow-editor-no-steps"
+      {/* One scroll container — the Modal body — and one vertical rhythm:
+          every field and section is a flex child spaced by a token (#5637). */}
+      <div className="workflow-editor__form" data-testid="workflow-editor-form">
+        <Controller
+          name="name"
+          control={control}
+          render={({ field }) => (
+            <Field label="Name" htmlFor="workflow-editor-name" error={errors["name"]}>
+              <Input
+                id="workflow-editor-name"
+                value={field.value ?? ""}
+                error={Boolean(errors["name"])}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="Workflow name"
+                data-testid="workflow-editor-name"
+              />
+            </Field>
+          )}
         />
-      ) : (
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-          <SortableContext items={stepIds} strategy={verticalListSortingStrategy}>
-            <ul className="workflow-editor__steps" data-testid="workflow-editor-steps">
-              {entries.map((entry, index) => (
-                <WorkflowStepRow
-                  key={entry.uid}
-                  entry={entry}
-                  index={index}
-                  total={entries.length}
-                  macros={macros}
-                  onChange={updateStep}
-                  onMove={moveStep}
-                  onDelete={deleteStep}
-                />
-              ))}
-            </ul>
-          </SortableContext>
-        </DndContext>
-      )}
+        <Controller
+          name="description"
+          control={control}
+          render={({ field }) => (
+            <Field
+              label="Description (optional)"
+              htmlFor="workflow-editor-description"
+              labelTestId="workflow-editor-description-label"
+            >
+              <Input
+                id="workflow-editor-description"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="What this workflow does"
+                data-testid="workflow-editor-description"
+              />
+            </Field>
+          )}
+        />
+        <Controller
+          name="tags"
+          control={control}
+          render={({ field }) => (
+            <Field
+              label="Tags (optional, comma-separated)"
+              htmlFor="workflow-editor-tags"
+              labelTestId="workflow-editor-tags-label"
+            >
+              <Input
+                id="workflow-editor-tags"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="ops, release"
+                data-testid="workflow-editor-tags"
+              />
+            </Field>
+          )}
+        />
 
-      <AddStepMenu onAdd={addStep} />
+        <section
+          className="workflow-editor__section"
+          aria-labelledby="workflow-editor-triggers-title"
+        >
+          <div className="workflow-editor__section-header">
+            <span id="workflow-editor-triggers-title" className="workflow-editor__section-title">
+              Triggers
+            </span>
+            <span className="workflow-editor__section-hint">Pick one or more</span>
+          </div>
+          <WorkflowTriggersEditor
+            triggers={triggers}
+            connections={connections}
+            onChange={setTriggers}
+          />
+        </section>
 
-      <div className="workflow-editor__section-header">
-        <span className="workflow-editor__section-title">Parameters ({parameters.length})</span>
+        <section className="workflow-editor__section" aria-labelledby="workflow-editor-steps-title">
+          <div className="workflow-editor__section-header">
+            <span id="workflow-editor-steps-title" className="workflow-editor__section-title">
+              Steps ({entries.length})
+            </span>
+            {entries.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleAllSteps}
+                data-testid="workflow-editor-steps-toggle-all"
+              >
+                {allExpanded ? "Collapse all" : "Expand all"}
+              </Button>
+            )}
+          </div>
+          {entries.length === 0 ? (
+            <EmptyState
+              title="No steps yet. Add one below — a workflow needs at least one step to be saved."
+              data-testid="workflow-editor-no-steps"
+            />
+          ) : (
+            <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+              <SortableContext items={stepIds} strategy={verticalListSortingStrategy}>
+                <ul className="workflow-editor__steps" data-testid="workflow-editor-steps">
+                  {entries.map((entry, index) => (
+                    <WorkflowStepRow
+                      key={entry.uid}
+                      entry={entry}
+                      index={index}
+                      total={entries.length}
+                      macros={macros}
+                      onChange={updateStep}
+                      onMove={moveStep}
+                      onDelete={deleteStep}
+                      expanded={expanded.has(entry.uid)}
+                      onToggleExpanded={toggleStep}
+                    />
+                  ))}
+                </ul>
+              </SortableContext>
+            </DndContext>
+          )}
+
+          <AddStepMenu onAdd={addStep} />
+        </section>
+
+        <section
+          className="workflow-editor__section"
+          aria-labelledby="workflow-editor-params-title"
+        >
+          <div className="workflow-editor__section-header">
+            <span id="workflow-editor-params-title" className="workflow-editor__section-title">
+              Parameters ({parameters.length})
+            </span>
+          </div>
+          <WorkflowParametersEditor parameters={parameters} onChange={setParameters} />
+        </section>
       </div>
-      <WorkflowParametersEditor parameters={parameters} onChange={setParameters} />
-
-      <div className="workflow-editor__section-header">
-        <span className="workflow-editor__section-title">Triggers</span>
-      </div>
-      <WorkflowTriggersEditor
-        triggers={triggers}
-        connections={connections}
-        onChange={setTriggers}
-      />
     </Modal>
   );
 }
