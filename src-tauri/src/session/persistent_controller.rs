@@ -325,6 +325,7 @@ impl<'a> PersistentController<'a> {
                                     alive: true,
                                     agent_id: Some(agent_id.clone()),
                                     spawned: false,
+                                    x11_forwarding: None,
                                 },
                                 remote_session_id: Some(remote_sid),
                                 line_ending: LineEnding::default(),

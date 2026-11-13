@@ -15,4 +15,9 @@ agentId?: string,
  * Containers" from this authoritative backend marker, surviving a tab close
  * (whereas the frontend `spawned` tab flag is lost once the tab is gone).
  */
-spawned?: boolean, };
+spawned?: boolean, 
+/**
+ * How X11 forwarding runs for an SSH session with it on (#5586), for the
+ * Open Connections panel. Omitted when X11 forwarding is off.
+ */
+x11Forwarding?: import("./X11ForwardingMode").X11ForwardingMode, };

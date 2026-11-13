@@ -259,6 +259,12 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
+      - name: Install Xvfb for the real-X-client x11-req grade
+        # core/tests/ssh_x11_req.rs (#5584) runs the ssh-x11 fixture's xdpyinfo
+        # over x11-req into a private Xvfb on the runner. It hard-fails without
+        # Xvfb under TERMIHUB_REQUIRE_DOCKER, so install it explicitly.
+        run: sudo apt-get install -y xvfb
+
       - name: Build the Docker fixture images
         # Bounded retry (#2768): the image builds fetch from Ubuntu/Debian apt
         # mirrors, and a transient mirror outage used to red unrelated PRs. The

@@ -160,6 +160,21 @@ WA-CI-005).
   budget when running locally — `0.5` makes a suspected hang fail fast, `3` gives
   a slow VM slack. It is **ignored in CI** (`GITHUB_ACTIONS=true`, with a
   warning), so no lane can reintroduce a global multiplier.
+- **Forcing the contended path (#5590).** `TERMIHUB_FORCE_CONTENDED=1` makes
+  `deadlines.contended()` true on any OS and worker count (`0` forces it off; unset
+  = auto-detect; any other value is an error). Unlike `TERMIHUB_WAIT_SCALE` it is
+  honoured in CI: the `System-Test Harness (machinery)` job runs the machinery suite
+  a second time with it set and `-n 4`, so a test that only passes with serial
+  budgets (#5543) fails on every PR instead of only under `pytest -n` on macOS.
+  Reproduce that leg locally:
+
+  ```bash
+  TERMIHUB_FORCE_CONTENDED=1 ./tests/system/pytest.sh -m "not integration" -q -n 4
+  ```
+
+  A test that needs the serial budgets pins them itself
+  (`monkeypatch.setattr(deadlines, "CONTENDED", False)`), as `test_deadlines.py` does.
+
 - **Hang guard (xdist workers).** Deadlines bound the harness's _waits_, not a
   blocking call (a pipe `close()`, a `recv` without timeout). On xdist workers
   each test phase runs under a watchdog — setup 45 min (the deployed-agent
@@ -1384,7 +1399,7 @@ sshd** moved to the native fixture. These stay on the Linux Docker lane:
 | `ftp_*.rs`, `ftps_handshake.rs`                                                                                                        | needs the `ftp-server` fixture (plain FTP + explicit FTPS with its test certs and data)                                                                             |
 | `vnc.rs`                                                                                                                               | needs Xvfb + x11vnc / TigerVNC VeNCrypt servers with a fixed test pattern                                                                                           |
 | `rdp.rs`                                                                                                                               | needs xrdp + xorgxrdp and the FreeRDP shadow server (NLA)                                                                                                           |
-| `ssh_auth.rs`, `ssh_banner.rs`, `ssh_compat.rs`, `ssh_advanced.rs`, `ssh_x11.rs`, `monitoring.rs`                                      | fixture-specific servers: password auth for `testuser`, a pre-auth banner, OpenSSH 7.x, a jump host, an rbash-restricted shell, X11 forwarding, Linux `/proc` stats |
+| `ssh_auth.rs`, `ssh_banner.rs`, `ssh_compat.rs`, `ssh_advanced.rs`, `ssh_x11.rs`, `ssh_x11_req.rs`, `monitoring.rs`                    | fixture-specific servers: password auth for `testuser`, a pre-auth banner, OpenSSH 7.x, a jump host, an rbash-restricted shell, X11 forwarding, Linux `/proc` stats |
 | `sftp_stress.rs`, `ssh_exec_with_stdin.rs` (SFTP-only case), `tunnel_local_forward.rs`, `network_resilience.rs`, `monitoring_fault.rs` | a pre-populated SFTP tree, a `ForceCommand internal-sftp` server, tunnel-target services, `tc`/netem fault injection                                                |
 
 The portable parts of those (key auth for every key type, exec/stdin, SFTP
@@ -3940,6 +3955,7 @@ running termiHub; the local X server is provisioned per platform (epic #1047,
 | Setup dialog, connect-time consent, X Servers rows                                                                                       | Vitest (`XServerSetupDialog`, `XServerConnectConsent`, `OpenConnectionsModal.xservers`)                                             |
 | Forwarded channel, `DISPLAY`, graceful degradation                                                                                       | `core/tests/ssh_x11.rs`, `test_ssh.py::TestSshX11Display` against the `ssh-x11` fixture                                             |
 | In-container Xvfb render (`render-check.sh`)                                                                                             | `core/tests/ssh_x11.rs::x11_fixture_render_check_maps_a_window` runs it over a termiHub SSH session (integration-fixtures workflow) |
+| Real X client (`xdpyinfo`) over `x11-req`, cookie swap (only the fake cookie remote, the real one local)                                 | `core/tests/ssh_x11_req.rs` against the `ssh-x11` fixture and a private runner Xvfb (integration-fixtures workflow, #5584)          |
 | A forwarded X11 client's window on the app's display (Linux Xvfb)                                                                        | `test_ssh.py::TestSshX11Display` window grade via `xdotool search` (MT-XPLAT-03, MT-SSH-15, #4932)                                  |
 | A running X server adopted without a setup prompt (Linux Xvfb)                                                                           | `test_ssh.py::TestSshX11Display::test_running_x_server_is_adopted_without_a_setup_prompt` (MT-SSH-50, #4965)                        |
 | Wayland-only session without XWayland guides the XWayland install                                                                        | `test_ssh_x11_wayland.py` under a headless weston, its own CI step (MT-SSH-50, #4965)                                               |

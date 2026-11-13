@@ -92,6 +92,7 @@ import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { windowDisplayName } from "@/utils/windowPicker";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { XServerSetupDialog } from "./XServerSetupDialog";
+import { X11ForwardingChip } from "./X11ForwardingChip";
 import { ConfirmStopSessionDialog } from "@/components/Sidebar/ConfirmStopSessionDialog";
 import { errorMessage } from "@/utils/errorMessage";
 import { withLoggedFallback } from "@/utils/loggedFallback";
@@ -972,6 +973,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 key={s.id}
                 icon={<Terminal size={14} />}
                 title={s.title}
+                meta={
+                  s.x11Forwarding && (
+                    <X11ForwardingChip mode={s.x11Forwarding} data-testid={`oc-x11-mode-${s.id}`} />
+                  )
+                }
                 badge={s.alive ? "alive" : "dead"}
                 owningWindow={resolveOwningWindow(s.id)}
                 onFocusWindow={handleFocusWindow}
