@@ -990,7 +990,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
  */
 export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
-  const { getElement, focusTerminal, fitTerminal, parkingRef, clearTerminal } =
+  const { getElement, onRegister, focusTerminal, fitTerminal, parkingRef, clearTerminal } =
     useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
   const isViewMode = useAppStore((s) => s.terminalViewMode[tabId] ?? false);
@@ -1062,8 +1062,20 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       });
     }
 
-    return teardown;
-  }, [tabId, getElement, fitTerminal, parkingRef]);
+    // Adopt every element registered while this slot is mounted (#5620): a
+    // reconnect re-runs the Terminal's creation effect, which disposes the old
+    // xterm element and registers a fresh one in the parking node. The automatic
+    // reconnect keeps this slot mounted (it shows a strip, not an overlay), so
+    // without this the new element stayed parked and the pane painted blank.
+    const stopListening = onRegister(tabId, () => {
+      tryAdopt();
+    });
+
+    return () => {
+      stopListening();
+      teardown();
+    };
+  }, [tabId, getElement, onRegister, fitTerminal, parkingRef]);
 
   const showDisconnectOverlay =
     !isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode));

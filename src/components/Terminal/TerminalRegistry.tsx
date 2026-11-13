@@ -140,6 +140,14 @@ interface TerminalRegistryContextType {
   ) => void;
   /** Unregister a terminal element (on terminal close). */
   unregister: (tabId: string) => void;
+  /**
+   * Call `listener` whenever a terminal element is registered for `tabId`
+   * (#5620). A reconnect re-runs the Terminal's creation effect and registers a
+   * fresh, parked element while the tab's `TerminalSlot` stays mounted (the
+   * automatic reconnect shows a strip, not an overlay that would remount the
+   * slot), so the slot listens here to adopt it. Returns the unsubscribe.
+   */
+  onRegister: (tabId: string, listener: () => void) => () => void;
   /** Get the registered element for a tab. */
   getElement: (tabId: string) => HTMLDivElement | undefined;
   /**
@@ -273,6 +281,24 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   // paste trigger for the same tab within PASTE_DEBOUNCE_MS (#2595).
   const lastPasteAtRef = useRef(new Map<string, number>());
   const parkingRef = useRef<HTMLDivElement | null>(null);
+  // Per-tab listeners notified on each registration (#5620, see `onRegister`).
+  const registerListenersRef = useRef(new Map<string, Set<() => void>>());
+
+  const onRegister = useCallback((tabId: string, listener: () => void) => {
+    const listeners = registerListenersRef.current;
+    let set = listeners.get(tabId);
+    if (!set) {
+      set = new Set();
+      listeners.set(tabId, set);
+    }
+    set.add(listener);
+    return () => {
+      const current = listeners.get(tabId);
+      if (!current) return;
+      current.delete(listener);
+      if (current.size === 0) listeners.delete(tabId);
+    };
+  }, []);
 
   const register = useCallback(
     (
@@ -291,6 +317,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       } else {
         deferFitRegistryRef.current.delete(tabId);
       }
+      // Let a mounted slot adopt the new element (#5620). Copied first: a
+      // listener may unsubscribe while the set is being walked.
+      const listeners = registerListenersRef.current.get(tabId);
+      if (listeners) for (const listener of [...listeners]) listener();
     },
     []
   );
@@ -756,6 +786,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     () => ({
       register,
       unregister,
+      onRegister,
       getElement,
       getTerminalHandles,
       focusTerminal,
@@ -787,6 +818,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     [
       register,
       unregister,
+      onRegister,
       getElement,
       getTerminalHandles,
       focusTerminal,
