@@ -69,6 +69,7 @@ RENAME_INPUT = "file-row-rename-input"
 UPLOAD = "file-browser-upload"
 PATH_EDIT = "file-browser-path-edit"
 PATH_INPUT = "file-browser-path-input"
+MORE_ACTIONS = "file-browser-more-actions"
 
 
 def _read(path: Path) -> str | None:
@@ -110,6 +111,13 @@ class TestProductRunFiles(
     @property
     def remote(self) -> Path:
         return type(self).remote_root
+
+    def _invoke(self, action: str) -> None:
+        """Click a header action inline, or from the "…" menu once #5520 folds it there."""
+        if not self.driver.exists(action) and self.driver.exists(MORE_ACTIONS):
+            self.driver.click(MORE_ACTIONS)
+            self.wait(lambda: self.driver.exists(action), what=f"{action} in the '…' menu")
+        self.driver.click(action)
 
     def _clear_filter(self) -> None:
         if self.driver.exists(self.FILTER):
@@ -227,7 +235,7 @@ class TestProductRunFiles(
             source = local / "uploaded.txt"
             source.write_text("uploaded by the product run\n", encoding="utf-8")
             self.driver.stub_native_dialog("open", source)
-            self.driver.click(UPLOAD)
+            self._invoke(UPLOAD)
             self.wait(
                 lambda: _read(self.remote / "uploaded.txt") == "uploaded by the product run\n",
                 what="the uploaded file on the host",
