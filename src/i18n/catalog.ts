@@ -171,6 +171,33 @@ const en = {
     "Switch failed, nothing changed: none of your {credentials} could be removed. {previous} is still active.",
   "credentialSwitch.remaining.title": "Still stored in {previous}:",
 
+  // ── Credential store switch confirmation (SecuritySettings, #5629) ──────
+  // Chosen by the (current, target) mode pair; each names its action and says
+  // what happens to the saved credentials and the master-password vault.
+  "credentialSwitch.confirm.toKeychain.move.title": "Move saved credentials to OS Keychain?",
+  "credentialSwitch.confirm.toKeychain.move.text":
+    "termiHub copies your saved credentials into the OS Keychain and reads them from there. Your master-password vault stays on this computer, locked and unchanged. Switching back to Master password opens it again with the same password.",
+  "credentialSwitch.confirm.toKeychain.move.action": "Move to OS Keychain",
+  "credentialSwitch.confirm.toKeychain.fresh.title": "Use OS Keychain?",
+  "credentialSwitch.confirm.toKeychain.fresh.text":
+    "Credentials you save from now on are stored in the OS Keychain. Nothing is saved yet, so nothing is moved.",
+  "credentialSwitch.confirm.toKeychain.fresh.action": "Use OS Keychain",
+  "credentialSwitch.confirm.toNone.title": "Delete saved credentials?",
+  "credentialSwitch.confirm.toNone.text":
+    "This permanently deletes every credential saved in {source} and cannot be undone. You'll be prompted for passwords each time you connect.",
+  "credentialSwitch.confirm.toNone.source.keychain": "the OS Keychain",
+  "credentialSwitch.confirm.toNone.source.vault": "your master-password vault",
+  "credentialSwitch.confirm.toNone.action": "Delete saved credentials",
+  "credentialSwitch.confirm.toMaster.move.title":
+    "Move saved credentials to a master-password vault",
+  "credentialSwitch.confirm.toMaster.move.text":
+    "Choose a strong password. termiHub copies your saved credentials from the OS Keychain into a vault encrypted with it. The copies in the OS Keychain are left in place.",
+  "credentialSwitch.confirm.toMaster.move.action": "Move to Master password",
+  "credentialSwitch.confirm.toMaster.fresh.title": "Set master password",
+  "credentialSwitch.confirm.toMaster.fresh.text":
+    "Choose a strong password to encrypt your credentials.",
+  "credentialSwitch.confirm.toMaster.fresh.action": "Turn on master password",
+
   // ── Process kill signal menu (ProcessTablePanel, #3209) ─────────────────
   "process.signal.term": "SIGTERM — terminate (graceful)",
   "process.signal.kill": "SIGKILL — kill (force)",

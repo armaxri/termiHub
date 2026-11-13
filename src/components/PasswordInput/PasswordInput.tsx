@@ -16,7 +16,10 @@ interface PasswordInputProps {
   "aria-label"?: string;
   /** Space-separated ids of elements describing this input (e.g. an error message). */
   "aria-describedby"?: string;
-  /** Marks the input invalid for assistive tech when validation fails. */
+  /**
+   * Marks the input invalid when validation fails: `aria-invalid` for assistive
+   * tech plus the shared red error border (#5629).
+   */
   "aria-invalid"?: boolean;
   "data-testid"?: string;
 }
@@ -74,7 +77,7 @@ export function PasswordInput({
         disabled={disabled}
         aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
-        aria-invalid={ariaInvalid || undefined}
+        error={ariaInvalid ?? false}
         data-testid={dataTestId}
       />
       <button
