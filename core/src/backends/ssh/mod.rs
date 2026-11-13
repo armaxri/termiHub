@@ -1839,7 +1839,9 @@ mod tests {
             .find(|f| f.key == "enableX11Forwarding")
             .unwrap();
         assert!(matches!(x11.field_type, FieldType::Boolean));
-        assert_eq!(x11.default, Some(serde_json::json!(true)));
+        // Off, as the config parser reads a missing key and as OpenSSH's
+        // `ForwardX11 no` (#5555).
+        assert_eq!(x11.default, Some(serde_json::json!(false)));
     }
 
     #[test]

@@ -1161,7 +1161,10 @@ mod tests {
             !settings.default_shell_integration,
             "the shell hook is opt-in (#5042)"
         );
-        assert!(settings.default_x11_forwarding);
+        assert!(
+            !settings.default_x11_forwarding,
+            "X11 forwarding is opt-in, like OpenSSH's ForwardX11 no (#5555)"
+        );
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
     }
@@ -1172,11 +1175,31 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
-        // The one default that is not on: the shell hook is opt-in (#5042).
+        // The defaults that are not on: the shell hook (#5042) and X11
+        // forwarding (#5555) are opt-in.
         assert!(!settings.default_shell_integration);
-        assert!(settings.default_x11_forwarding);
+        assert!(!settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
+    }
+
+    /// #5555: only the fresh-profile default changed. A stored `true` (every
+    /// profile saved while the default was on) keeps X11 forwarding on, at
+    /// every schema version, and a stored `false` stays off.
+    #[test]
+    fn a_stored_x11_forwarding_default_is_kept() {
+        for version in ["1", "2"] {
+            for stored in [true, false] {
+                let json = format!(
+                    r#"{{"version":"{version}","externalConnectionFiles":[],"defaultX11Forwarding":{stored}}}"#
+                );
+                let (_storage, settings, _dir) = load_raw(&json);
+                assert_eq!(
+                    settings.default_x11_forwarding, stored,
+                    "version {version}, stored {stored}"
+                );
+            }
+        }
     }
 
     #[test]
