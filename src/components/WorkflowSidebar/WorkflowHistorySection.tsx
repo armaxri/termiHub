@@ -1,13 +1,14 @@
 import { useCallback, useEffect } from "react";
 import { History, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
+import { Button, StatusDot, Tooltip, TruncatedText, toast, EmptyState } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
 import type { WorkflowRun, WorkflowRunHistoryStatus } from "@/types/workflow";
 import { formatAbsoluteTime, formatElapsed, formatRelativeTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { t } from "@/i18n/catalog";
 import { triggerKindLabel } from "./workflowStepMeta";
 
 /** Map a run's terminal status to a {@link StatusDot} tone. */
@@ -94,7 +95,7 @@ export function WorkflowHistorySection() {
         }
       />
       {workflowRuns.length === 0 ? (
-        <EmptyState title="No runs recorded yet." data-testid="workflow-history-empty" />
+        <EmptyState title={t("runHistory.empty")} data-testid="workflow-history-empty" />
       ) : (
         <div className="workflow-history__list" data-testid="workflow-history-list">
           {workflowRuns.map((run) => {
@@ -113,7 +114,10 @@ export function WorkflowHistorySection() {
                 }
                 actions={null}
                 details={
-                  <span className="workflow-history__meta">
+                  <TruncatedText
+                    className="workflow-history__meta"
+                    data-testid={`workflow-run-meta-${run.id}`}
+                  >
                     <time dateTime={run.endedAt} title={formatAbsoluteTime(run.endedAt)}>
                       {formatRelativeTime(run.endedAt)}
                     </time>
@@ -139,7 +143,7 @@ export function WorkflowHistorySection() {
                         {run.continuedFailures === 1 ? "" : "s"}
                       </span>
                     ) : null}
-                  </span>
+                  </TruncatedText>
                 }
               />
             );

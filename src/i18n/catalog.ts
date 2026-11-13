@@ -264,6 +264,20 @@ const en = {
   "drop.separator.network": "— connection lost {time} —",
   "drop.separator.reconnected": "— reconnected {time} —",
   "drop.overlay.scrollbackKept": "Your scrollback is kept — choose View scrollback to read it.",
+
+  // ── Macro rows and run history (#5680) ──────────────────────────────────
+  // Sentence case; one empty-state wording across the macro and workflow
+  // run histories (R-081).
+  "macro.play.target": "Play in: {target}",
+  "macro.play.noTarget": "Play: no active terminal",
+  "macro.lastRun.label": "Last run:",
+  "macro.lastRun.on": "on {target}",
+  "macro.run.origin.manual": "Manual",
+  "macro.run.origin.palette": "Palette",
+  "macro.run.origin.workflowStep": "Workflow step",
+  "macro.run.origin.scheduled": "Scheduled",
+  "runHistory.empty": "No runs yet.",
+  "macroHistory.empty.filtered": "No runs of this macro yet.",
 } as const;
 
 /** A stable id naming one catalog message. */

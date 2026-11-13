@@ -109,6 +109,12 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-status-s1")!.textContent).toMatch(/^Next: today/);
   });
 
+  it("truncates the summary on one line with a tooltip, not a mid-name wrap (R-082)", async () => {
+    await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
+    // TruncatedText: ellipsizes and reveals the full text only when clipped.
+    expect(query("schedule-summary-s1")!.classList.contains("ui-truncate")).toBe(true);
+  });
+
   it("asks for confirmation listing the hosts before the first enable", async () => {
     await render([view()]);
     act(() => query("schedule-enable-s1")!.click());
