@@ -389,7 +389,8 @@ class ProductRunUi(HarnessMixin):
     ) -> None:
         """Wait until the tab's scrollback marks the drop as a drop, not a process exit.
 
-        ``kind`` is ``network`` or ``serial`` (#5619); with ``reconnected`` the
+        ``kind`` is ``network``, ``server_closed`` (#5696) or ``serial``
+        (#5619); with ``reconnected`` the
         ``— reconnected hh:mm:ss —`` marker must follow too (#5660). See
         :func:`~.grades.drop_separator_problems`.
         """

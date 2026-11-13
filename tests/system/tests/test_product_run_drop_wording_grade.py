@@ -1,4 +1,4 @@
-"""The product run's drop-wording grades (#5619, #5660), without an app.
+"""The product run's drop-wording grades (#5619, #5660, #5696), without an app.
 
 Runs in the normal (per-PR) lane; the product run itself is hand-triggered.
 """
@@ -22,6 +22,23 @@ def test_process_exited_for_a_drop_is_named():
     problems = drop_separator_problems(buffer, "network")
     assert any("[Process exited]" in p for p in problems)
     assert any("network drop separator" in p for p in problems)
+
+
+def test_a_server_close_must_read_closed_by_server():
+    closed = RECONNECTED.replace("connection lost", "connection closed by server")
+    assert drop_separator_problems(closed, "server_closed") == []
+    assert drop_separator_problems(RECONNECTED, "server_closed") == [
+        "no server_closed drop separator in the scrollback",
+        "the drop reads as a network drop, not server_closed",
+    ]
+
+
+def test_a_broken_link_must_not_read_closed_by_server():
+    closed = RECONNECTED.replace("connection lost", "connection closed by server")
+    assert drop_separator_problems(closed, "network") == [
+        "no network drop separator in the scrollback",
+        "the drop reads as a server_closed drop, not network",
+    ]
 
 
 def test_a_missing_reconnect_marker_is_named():
