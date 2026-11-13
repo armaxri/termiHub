@@ -495,12 +495,14 @@
 }
 
 /* First-run experimental-features signpost link inside the connections empty
-   state (UX-002/UX-004). Inline text button styled as a link, tokens only. */
+   state (UX-002/UX-004). Inline text button styled as a link, tokens only.
+   `--text-link` (not the `--accent-color` button fill) so the text meets AA on
+   the sidebar in every theme — Solarized Dark's fill measured ~3:1 (R-139). */
 .connections-empty__link {
   padding: 0;
   border: none;
   background: none;
-  color: var(--accent-color);
+  color: var(--text-link);
   font: inherit;
   cursor: pointer;
   text-decoration: underline;
@@ -508,7 +510,8 @@
 }
 
 .connections-empty__link:hover {
-  color: var(--accent-hover);
+  color: var(--text-link);
+  text-decoration-thickness: 2px;
 }
 
 .connections-empty__link:focus-visible {
