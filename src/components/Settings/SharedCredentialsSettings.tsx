@@ -8,6 +8,7 @@ import type { NamedCredential } from "@/types/generated/NamedCredential";
 import type { NamedCredentialEntry } from "@/types/generated/NamedCredentialEntry";
 import type { NamedCredentialUsage } from "@/types/generated/NamedCredentialUsage";
 import { errorMessage } from "@/utils/errorMessage";
+import { credentialStorageOffText } from "@/utils/credentialStorageCopy";
 import {
   kindLabel,
   SharedCredentialDialog,
@@ -45,7 +46,7 @@ export function SharedCredentialsSettings() {
   const status = credentialStoreStatus?.status;
   const unavailable =
     mode === "none"
-      ? "Credential storage is off — choose Master Password or OS Keychain to use shared credentials."
+      ? credentialStorageOffText("use shared credentials")
       : mode === "master_password" && status === "unavailable"
         ? "Set up a master password first."
         : null;
@@ -132,18 +133,21 @@ export function SharedCredentialsSettings() {
           </ul>
         </div>
       )}
-      <div className="credential-vault__actions">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<Plus size={14} />}
-          disabled={unavailable !== null}
-          onClick={() => void open({ kind: "create" })}
-          data-testid="shared-credentials-create"
-        >
-          New shared credential…
-        </Button>
-      </div>
+      {/* With no store creating cannot work, so the line above replaces it (#5685). */}
+      {mode !== "none" && (
+        <div className="credential-vault__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus size={14} />}
+            disabled={unavailable !== null}
+            onClick={() => void open({ kind: "create" })}
+            data-testid="shared-credentials-create"
+          >
+            New shared credential…
+          </Button>
+        </div>
+      )}
       <SharedCredentialDialog mode={dialog} onClose={() => setDialog(null)} />
       <ConfirmDialog
         open={pendingDelete !== null}

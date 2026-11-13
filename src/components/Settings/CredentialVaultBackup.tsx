@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode, OsAuthInfo } from "@/types/credential";
 import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import { Button } from "@/components/ui";
+import { credentialStorageOffText } from "@/utils/credentialStorageCopy";
 import { CredentialVaultExportDialog } from "./CredentialVaultExportDialog";
 import { CredentialVaultImportDialog } from "./CredentialVaultImportDialog";
 
@@ -15,7 +16,7 @@ interface CredentialVaultBackupProps {
 /** Why the vault actions are unavailable in the current store state, or null. */
 function unavailableReason(mode: CredentialStorageMode, status: string | undefined): string | null {
   if (mode === "none") {
-    return "Credential storage is off — choose Master Password or OS Keychain to back up or restore credentials.";
+    return credentialStorageOffText("back up or restore credentials");
   }
   if (mode === "master_password" && status === "unavailable") {
     return "Set up a master password first.";
@@ -29,7 +30,7 @@ function unavailableReason(mode: CredentialStorageMode, status: string | undefin
  * enforces the gate independently (#3433).
  */
 export const KEYCHAIN_EXPORT_UNAVAILABLE_REASON =
-  "Exporting from the OS keychain requires system authentication (Touch ID / Windows Hello / polkit), which is not available on this computer.";
+  "Exporting from the OS Keychain requires system authentication (Touch ID / Windows Hello / polkit), which is not available on this computer.";
 
 /** Shown while the OS-verification capability is still being read. */
 export const KEYCHAIN_EXPORT_CHECKING_REASON = "Checking system authentication…";
@@ -64,6 +65,7 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
   const mode: CredentialStorageMode = credentialStoreStatus?.mode ?? "none";
   const status = credentialStoreStatus?.status;
   const reason = unavailableReason(mode, status);
+  const storageOff = mode === "none";
   // Import into the keychain is fine; export needs OS user verification (#3433).
   const exportReason = reason ?? (mode === "os_keychain" ? keychainExportReason(osAuth) : null);
 
@@ -99,29 +101,32 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
           {exportReason}
         </p>
       )}
-      <div className="credential-vault__actions">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<Download size={14} />}
-          disabled={exportReason !== null}
-          title={exportReason ?? undefined}
-          onClick={() => void openExport()}
-          data-testid="credential-vault-export-btn"
-        >
-          Export vault…
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<Upload size={14} />}
-          disabled={reason !== null}
-          onClick={() => void openImport()}
-          data-testid="credential-vault-import-btn"
-        >
-          Import vault…
-        </Button>
-      </div>
+      {/* With no store the actions cannot work, so the line above replaces them (#5685). */}
+      {!storageOff && (
+        <div className="credential-vault__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download size={14} />}
+            disabled={exportReason !== null}
+            title={exportReason ?? undefined}
+            onClick={() => void openExport()}
+            data-testid="credential-vault-export-btn"
+          >
+            Export vault…
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Upload size={14} />}
+            disabled={reason !== null}
+            onClick={() => void openImport()}
+            data-testid="credential-vault-import-btn"
+          >
+            Import vault…
+          </Button>
+        </div>
+      )}
       {!exportReason && mode === "os_keychain" && osAuth && (
         <p className="settings-panel__description" data-testid="credential-vault-export-os-auth">
           {keychainExportNote(osAuth)}

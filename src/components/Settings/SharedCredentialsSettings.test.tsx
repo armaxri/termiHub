@@ -103,9 +103,20 @@ describe("SharedCredentialsSettings (#3557)", () => {
     expect(row?.textContent).toContain("Password · Used by 2 connections");
   });
 
-  it("blocks creating when credential storage is off", async () => {
+  it("collapses creating behind one line when credential storage is off (#5685)", async () => {
+    mockedList.mockResolvedValue([]);
     await render("none");
-    expect(query("shared-credentials-unavailable")).not.toBeNull();
+    expect(query("shared-credentials-unavailable")?.textContent).toBe(
+      "Credential storage is off — choose OS Keychain or Master password above to use shared credentials."
+    );
+    expect(query("shared-credentials-create")).toBeNull();
+  });
+
+  it("keeps creating disabled, not hidden, before a master password is set", async () => {
+    await render("master_password", "unavailable");
+    expect(query("shared-credentials-unavailable")?.textContent).toBe(
+      "Set up a master password first."
+    );
     expect((query("shared-credentials-create") as HTMLButtonElement).disabled).toBe(true);
   });
 

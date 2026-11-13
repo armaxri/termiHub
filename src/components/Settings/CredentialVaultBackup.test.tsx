@@ -108,11 +108,24 @@ describe("CredentialVaultBackup", () => {
     container.remove();
   });
 
-  it("disables both actions when credential storage is off", async () => {
+  it("collapses both actions behind one line when credential storage is off (#5685)", async () => {
     await renderLoaded("none");
+    expect(query("credential-vault-export-btn")).toBeNull();
+    expect(query("credential-vault-import-btn")).toBeNull();
+    expect(query("credential-vault-export-blocked")).toBeNull();
+    expect(query("credential-vault-unavailable")?.textContent).toBe(
+      "Credential storage is off — choose OS Keychain or Master password above to back up or restore credentials."
+    );
+  });
+
+  it("keeps both actions disabled, not hidden, before a master password is set", async () => {
+    await renderLoaded("master_password", "unavailable");
     expect((query("credential-vault-export-btn") as HTMLButtonElement).disabled).toBe(true);
     expect((query("credential-vault-import-btn") as HTMLButtonElement).disabled).toBe(true);
-    expect(query("credential-vault-unavailable")).not.toBeNull();
+  });
+
+  it("names the OS Keychain with the chooser's casing when export is blocked", () => {
+    expect(KEYCHAIN_EXPORT_UNAVAILABLE_REASON).toContain("OS Keychain");
   });
 
   it("keeps keychain export blocked (with the OS reason) when OS verification is unavailable", async () => {
