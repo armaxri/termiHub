@@ -66,6 +66,17 @@ describe("extractDesignatedRequirement / parseRequirement", () => {
     });
   });
 
+  it("recognises a universal binary's ad-hoc DR (one cdhash per architecture)", () => {
+    const universal =
+      'designated => cdhash H"20581f5068ca90c617d7dac864bcdb25ce6153b6" or ' +
+      'cdhash H"10cac98278a56995ecce950771f3e48aec121907"\n';
+    expect(parseRequirement(extractDesignatedRequirement(universal))).toEqual({
+      kind: "cdhash",
+      cdhash: "20581f5068ca90c617d7dac864bcdb25ce6153b6 10cac98278a56995ecce950771f3e48aec121907",
+    });
+    expect(() => checkDesignatedRequirement(universal, { certSha1: CERT })).toThrow(/ad-hoc/);
+  });
+
   it("treats any other requirement shape as other", () => {
     expect(parseRequirement(extractDesignatedRequirement(APPLE)).kind).toBe("other");
     expect(
@@ -167,7 +178,7 @@ describe("runCli", () => {
 
   it("rejects unknown commands", () => {
     expect(() => runCli([], read)).toThrow(/unknown command/);
-    expect(() => runCli(["pinned", "x"], read)).toThrow(/no arguments/);
+    expect(() => runCli(["pinned", "x"], read)).toThrow(/usage: pinned/);
   });
 });
 

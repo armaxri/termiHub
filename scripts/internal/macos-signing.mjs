@@ -19,7 +19,7 @@
 // the SHA-1 the DR names, plus the subject for humans).
 //
 // CLI (macOS: runs `codesign -d -r- <path>` itself):
-//   node scripts/internal/macos-signing.mjs pinned
+//   node scripts/internal/macos-signing.mjs pinned [--file <pin.json>]
 //       Print the pinned certificate SHA-1 ("" while none is set up).
 //   node scripts/internal/macos-signing.mjs check --cert-sha1 <hex>
 //       [--identifier <id>] <path>...
@@ -87,8 +87,12 @@ export function extractDesignatedRequirement(output) {
  */
 export function parseRequirement(requirement) {
   const text = String(requirement).trim();
-  const cdhash = /^cdhash\s+H"([0-9a-fA-F]+)"$/.exec(text);
-  if (cdhash) return { kind: "cdhash", cdhash: cdhash[1].toLowerCase() };
+  // Ad hoc: one build hash, or one per architecture of a universal binary
+  // (`cdhash H"…" or cdhash H"…"`).
+  if (/^cdhash\s+H"[0-9a-fA-F]+"(?:\s+or\s+cdhash\s+H"[0-9a-fA-F]+")*$/.test(text)) {
+    const hashes = [...text.matchAll(/H"([0-9a-fA-F]+)"/g)].map((m) => m[1].toLowerCase());
+    return { kind: "cdhash", cdhash: hashes.join(" ") };
+  }
   // The whole DR must be exactly "[identifier X and] certificate leaf|root = H"…"",
   // so a DR that adds or swaps clauses (anchor apple, a team id) is "other".
   const cert =
@@ -208,7 +212,8 @@ function codesignRequirement(target) {
 export function runCli(args, readRequirement = codesignRequirement) {
   const [command, ...rest] = args;
   if (command === "pinned") {
-    if (rest.length > 0) throw new Error("pinned takes no arguments");
+    if (rest.length === 2 && rest[0] === "--file") return `${readPinned(rest[1])}\n`;
+    if (rest.length > 0) throw new Error("usage: pinned [--file <pin.json>]");
     return `${readPinned()}\n`;
   }
   if (command === "check") {
