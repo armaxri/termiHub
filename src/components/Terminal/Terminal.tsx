@@ -62,6 +62,8 @@ import { resolveLineEnding } from "@/utils/lineEndings";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { showConnectedToast } from "./connectedToast";
+import { dropTransportOf, reconnectedMarker, sessionEndSeparator } from "./dropCopy";
+import { connectOverlayIdentity } from "@/utils/connectStages";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { applyAgentSpawnFailure } from "./agentStateHandlers";
 import { parseOsc7Cwd, parseOsc9Cwd, routeTerminalKeyEvent } from "./terminalInputRouting";
@@ -898,6 +900,13 @@ export function Terminal({
         sessionIdRef.current = sessionId;
         registerSession(tabId, sessionId);
 
+        // A reconnect marks where the old session ends and the new one starts
+        // (#5660), below the replayed scrollback. Skipped when the agent
+        // re-forwards the buffer as live output: the marker would land above it.
+        if (isReconnect && !isBackendDrivenAgentReconnectTabId(tabId)) {
+          xterm.writeln(`\r\n\x1b[90m${reconnectedMarker(new Date())}\x1b[0m`);
+        }
+
         // Push the resolved line ending to the backend BEFORE wiring onData, so
         // the session's send_input normalizes from the very first keystroke.
         // Awaited to avoid an IPC ordering race where early input on a CR/CRLF
@@ -1172,8 +1181,14 @@ export function Terminal({
             "disconnect",
             `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason}`
           );
-          const exitLabel =
-            exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
+          // A dropped link is not a process exit (#5619): a serial unplug or a
+          // network drop writes a timed "connection lost" line instead.
+          const exitLabel = sessionEndSeparator({
+            transport: dropTransportOf(connectOverlayIdentity(config)),
+            exitCode,
+            reason,
+            at: new Date(),
+          });
           xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
           // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).
           sandboxNotifySessionEnd(sessionId);
