@@ -617,6 +617,83 @@ pub fn resolve_encoded_install_path(session: &SshSession) -> Result<String, Term
     parse_encoded_install_path(&output)
 }
 
+/// The launch path a native (`cmd.exe` / PowerShell) Windows install reports,
+/// from the output of [`windows_resolve_command`].
+///
+/// The resolved absolute path (`C:\Users\me\AppData\Local\termiHub\agent\
+/// termihub-agent.exe`) when the shell printed one, otherwise the
+/// [`windows_install_plan`] form (`%LOCALAPPDATA%\…` for `cmd.exe`,
+/// `$env:LOCALAPPDATA\…` for PowerShell), which the same shell expands when it
+/// launches the agent.
+pub fn native_install_path(shell: WindowsShell, resolve_output: Option<&str>) -> String {
+    resolve_output
+        .and_then(last_line)
+        .map(str::to_string)
+        .unwrap_or_else(|| windows_install_plan(shell).install_path)
+}
+
+/// Resolve the path a Windows install of the agent lands at, in the form the
+/// host's login shell launches it with: [`native_install_path`] for `cmd.exe` /
+/// PowerShell, the forward-slash [`parse_encoded_install_path`] form for any
+/// other login shell (Git Bash, MSYS2, …). Only the encoded path can fail.
+pub fn resolve_windows_install_path(
+    session: &SshSession,
+    shell: WindowsDeployShell,
+) -> Result<String, TerminalError> {
+    match shell {
+        WindowsDeployShell::Native(shell) => {
+            let output = run_remote_command(session, &windows_resolve_command(shell)).ok();
+            Ok(native_install_path(shell, output.as_deref()))
+        }
+        WindowsDeployShell::EncodedPowerShell => resolve_encoded_install_path(session),
+    }
+}
+
+/// Whether `path` names the termiHub-managed Windows install location
+/// (`…\termiHub\agent\termihub-agent.exe`) in any of its forms: the
+/// `%LOCALAPPDATA%` / `$env:LOCALAPPDATA` plan forms, a resolved absolute
+/// path, or the forward-slash encoded-deploy form. Case-insensitive, as
+/// Windows paths are.
+pub fn is_managed_windows_install_path(path: &str) -> bool {
+    let normalized = path.trim().replace('\\', "/").to_ascii_lowercase();
+    let suffix = format!(
+        "/{}/{WINDOWS_AGENT_EXE}",
+        WINDOWS_INSTALL_SUBDIR.replace('\\', "/")
+    )
+    .to_ascii_lowercase();
+    is_windows_path(path) && normalized.ends_with(&suffix)
+}
+
+/// The agent path to store after a deploy/setup reported `installed_path`
+/// (#5522), or `None` to keep `current` unchanged.
+///
+/// Only a Windows install is recorded: it always lands at the managed
+/// `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, never at the POSIX
+/// default the connect would otherwise run. A POSIX install goes to the path
+/// the deploy was asked for, so the stored path is left alone there.
+///
+/// A user-set custom path is **not** overwritten: the Windows install location
+/// is fixed rather than chosen per deploy, so a custom path that names some
+/// other binary was set on purpose and is kept. The stored path is replaced
+/// only when it is unset, empty, the POSIX default (`posix_default`), or an
+/// earlier managed install path in another form (e.g. the host's login shell
+/// changed from PowerShell to Git Bash).
+pub fn adopted_agent_path(
+    current: Option<&str>,
+    installed: &str,
+    posix_default: &str,
+) -> Option<String> {
+    let installed = installed.trim();
+    if installed.is_empty() || !is_windows_path(installed) {
+        return None;
+    }
+    let replaceable = match current.map(str::trim) {
+        None | Some("") => true,
+        Some(path) => path == posix_default || is_managed_windows_install_path(path),
+    };
+    (replaceable && current != Some(installed)).then(|| installed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1043,3 +1120,7 @@ mod tests {
 #[cfg(test)]
 #[path = "agent_install_encoded_tests.rs"]
 mod encoded_tests;
+
+#[cfg(test)]
+#[path = "agent_install_path_tests.rs"]
+mod path_tests;

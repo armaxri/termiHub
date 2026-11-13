@@ -50,8 +50,9 @@ function hasOnConnectTrigger(workflow: Workflow): boolean {
 }
 
 /**
- * A single workflow row in the manager sidebar: name, a step-count badge, an
- * optional on-connect marker, a one-line preview of the step kinds, and the
+ * A single workflow row in the manager sidebar: the name first (it is what users
+ * scan and search for, #5519; no leading step-count badge), an optional
+ * on-connect marker, a one-line preview of the step kinds, and the
  * Run / Run on… / Edit / Duplicate / Export / Delete actions. Double-click runs the
  * workflow against the active session (matching the macro row's affordance).
  * Composed from the shared list-item shell.
@@ -72,7 +73,6 @@ export function WorkflowListItem({
   rowRef,
   rowProps,
 }: WorkflowListItemProps) {
-  const stepCount = workflow.steps.length;
   const preview = summariseWorkflowSteps(workflow.steps);
   const onConnect = hasOnConnectTrigger(workflow);
 
@@ -83,8 +83,6 @@ export function WorkflowListItem({
       testId={`workflow-item-${workflow.id}`}
       nameTestId={`workflow-name-${workflow.id}`}
       name={workflow.name}
-      badge={`${stepCount} step${stepCount === 1 ? "" : "s"}`}
-      badgeTestId={`workflow-steps-${workflow.id}`}
       onDoubleClick={() => onRun(workflow.id)}
       actions={
         <>

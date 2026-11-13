@@ -44,12 +44,18 @@ struct PromptConnection {
     banner: Vec<u8>,
     writes: Writes,
     // Keeps the output channel open so the reader does not see EOF.
-    keep_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>,
+    keep_tx: OutputSlot,
     /// The backend's hook-free prompt check (#5029), if it has one.
     probe: Option<termihub_core::connection::PromptProbe>,
     /// Whether `probe` is waited for without a cap (#5455).
     uncapped: bool,
+    /// A typed setup waiting for the line editor's mark (#5512).
+    gated: Option<Arc<dyn termihub_core::connection::GatedSetup>>,
 }
+
+/// The mock's output sender, kept so the reader does not see EOF and so a
+/// test can print more output.
+pub(super) type OutputSlot = Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>>;
 
 #[async_trait::async_trait]
 impl ConnectionType for PromptConnection {
@@ -107,6 +113,9 @@ impl ConnectionType for PromptConnection {
     fn prompt_probe_uncapped(&self) -> bool {
         self.uncapped
     }
+    fn gated_setup(&self) -> Option<Arc<dyn termihub_core::connection::GatedSetup>> {
+        self.gated.clone()
+    }
 }
 
 fn prompt_manager(banner: &'static [u8]) -> (SessionManager, Writes) {
@@ -127,6 +136,27 @@ pub(super) fn probing_manager_with(
     uncapped: bool,
 ) -> (SessionManager, Writes) {
     let writes = Writes::default();
+    let manager = mock_manager(
+        banner,
+        probe,
+        uncapped,
+        None,
+        writes.clone(),
+        OutputSlot::default(),
+    );
+    (manager, writes)
+}
+
+/// A manager over the mock backend; `gated` is its gated setup (#5512) and
+/// `keep_tx` its output sender, filled on subscribe.
+pub(super) fn mock_manager(
+    banner: &'static [u8],
+    probe: Option<termihub_core::connection::PromptProbe>,
+    uncapped: bool,
+    gated: Option<Arc<dyn termihub_core::connection::GatedSetup>>,
+    writes: Writes,
+    keep_tx: OutputSlot,
+) -> SessionManager {
     let factory_writes = writes.clone();
     let mut registry = ConnectionTypeRegistry::new();
     registry.register(
@@ -137,16 +167,14 @@ pub(super) fn probing_manager_with(
             Box::new(PromptConnection {
                 banner: banner.to_vec(),
                 writes: factory_writes.clone(),
-                keep_tx: std::sync::Mutex::new(None),
+                keep_tx: keep_tx.clone(),
                 probe: probe.clone(),
                 uncapped,
+                gated: gated.clone(),
             })
         }),
     );
-    (
-        SessionManager::new(registry, Arc::new(FakeAgent::offline())),
-        writes,
-    )
+    SessionManager::new(registry, Arc::new(FakeAgent::offline()))
 }
 
 pub(super) async fn open(manager: &SessionManager, emitter: &MockEventEmitter) -> String {
@@ -251,7 +279,7 @@ async fn initial_command_waits_for_the_backends_prompt_probe() {
 
 /// A real backend whose every write is recorded, so a test can prove the
 /// initial command is the only thing termiHub typed into the shell.
-struct Recording {
+pub(super) struct Recording {
     inner: Box<dyn ConnectionType>,
     writes: Writes,
 }
@@ -295,6 +323,9 @@ impl ConnectionType for Recording {
     fn prompt_probe_uncapped(&self) -> bool {
         self.inner.prompt_probe_uncapped()
     }
+    fn gated_setup(&self) -> Option<Arc<dyn termihub_core::connection::GatedSetup>> {
+        self.inner.gated_setup()
+    }
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         None
     }
@@ -305,7 +336,7 @@ impl ConnectionType for Recording {
 
 /// A manager whose `type_id` backend comes from `make`, wrapped in a
 /// [`Recording`].
-fn recording_manager(
+pub(super) fn recording_manager(
     type_id: &'static str,
     make: fn() -> Box<dyn ConnectionType>,
 ) -> (SessionManager, Writes) {
@@ -391,13 +422,13 @@ async fn assert_typed_at_the_prompt(
 }
 
 #[cfg(unix)]
-fn local_shell() -> Box<dyn ConnectionType> {
+pub(super) fn local_shell() -> Box<dyn ConnectionType> {
     Box::new(termihub_core::backends::local_shell::LocalShell::new())
 }
 
 /// The env entries for a local shell test, as `envVars`.
 #[cfg(unix)]
-fn env_vars(pairs: &[(&str, &str)]) -> serde_json::Value {
+pub(super) fn env_vars(pairs: &[(&str, &str)]) -> serde_json::Value {
     serde_json::Value::Array(
         pairs
             .iter()

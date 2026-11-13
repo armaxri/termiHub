@@ -60,14 +60,20 @@ type PaletteEntry =
   | {
       kind: "macro";
       key: string;
+      /** The macro's name — the primary text, never behind a prefix (#5519). */
       label: string;
+      /** Secondary match key ("Run macro: <name>") so the verb still finds it. */
+      searchText: string;
       /** The macro to replay into the active terminal. */
       macroId: string;
     }
   | {
       kind: "workflow";
       key: string;
+      /** The workflow's name — the primary text, never behind a prefix (#5519). */
       label: string;
+      /** Secondary match key ("Run workflow: <name>") so the verb still finds it. */
+      searchText: string;
       /** The workflow to run against the active terminal (manual trigger). */
       workflowId: string;
     }
@@ -100,6 +106,17 @@ type PaletteEntry =
 
 /** The palette's sub-picker, or null for the root command list. */
 type PaletteMode = "root" | "broadcast-workflow";
+
+/**
+ * The entry's secondary match key: a connection's host, or a macro/workflow's
+ * "Run …: <name>" phrase so typing the verb still finds an automation whose
+ * row shows only its name (#5519).
+ */
+function secondaryMatchKey(entry: PaletteEntry): string {
+  if (entry.kind === "connection") return entry.host;
+  if (entry.kind === "macro" || entry.kind === "workflow") return entry.searchText;
+  return "";
+}
 
 /** Whether an entry is shown but inert in the current context. */
 function isDisabled(entry: PaletteEntry): boolean {
@@ -174,13 +191,15 @@ export function CommandPalette(): React.ReactElement {
     const macroEntries: PaletteEntry[] = macros.map((m) => ({
       kind: "macro",
       key: `macro:${m.id}`,
-      label: `Run macro: ${m.name}`,
+      label: m.name,
+      searchText: `Run macro: ${m.name}`,
       macroId: m.id,
     }));
     const workflowEntries: PaletteEntry[] = workflows.map((w) => ({
       kind: "workflow",
       key: `workflow:${w.id}`,
-      label: `Run workflow: ${w.name}`,
+      label: w.name,
+      searchText: `Run workflow: ${w.name}`,
       workflowId: w.id,
     }));
     // Only offered while broadcasting (#3430); disabled when the group has no
@@ -236,7 +255,7 @@ export function CommandPalette(): React.ReactElement {
   const results = useMemo<PaletteEntry[]>(() => {
     if (query.trim() === "") return entries;
     return matchSorter(entries, query, {
-      keys: ["label", (entry) => (entry.kind === "connection" ? entry.host : "")],
+      keys: ["label", secondaryMatchKey],
     });
   }, [entries, query]);
 

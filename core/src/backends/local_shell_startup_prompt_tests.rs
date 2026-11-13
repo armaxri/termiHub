@@ -84,8 +84,18 @@ impl Session {
 
     /// Start with the settings in `extra` on top of the scratch environment.
     async fn start_with(shell_name: &str, extra: serde_json::Value) -> Session {
+        Self::start_in(shell_name, extra, startup_files).await
+    }
+
+    /// As [`start_with`](Self::start_with), with the startup files `files`
+    /// writes into the scratch `HOME` / `ZDOTDIR`.
+    async fn start_in(
+        shell_name: &str,
+        extra: serde_json::Value,
+        files: impl FnOnce(&Path),
+    ) -> Session {
         let home = tempfile::tempdir().expect("temp HOME");
-        startup_files(home.path());
+        files(home.path());
         let dir = |name: &str| {
             let d = home.path().join(name);
             std::fs::create_dir_all(&d).expect("scratch dir");
@@ -173,8 +183,8 @@ async fn assert_question_waits_for_the_user(shell_name: &str) {
         "{shell_name}: something answered the startup question: {text:?}"
     );
 
-    // The user answers. Their keys could still sit in the line editor, so
-    // the setup waits for the prompt after their first command.
+    // The user answers with one key, which the question consumes at once,
+    // so the setup goes in at the first prompt (#5515).
     s.shell.write(b"y").expect("write");
     s.read_until("the user's answer and the prompt", |t| {
         (t.contains("ANSWER-y") || t.contains("ANSWER-Y")) && t.contains(PROMPT)
@@ -278,4 +288,179 @@ async fn bash_startup_question_is_not_answered_by_the_initial_command() {
         return;
     };
     assert_initial_command_waits_for_the_user(&shell).await;
+}
+
+/// The setup of a session, as the session manager sees it (#5512).
+fn gated(s: &Session) -> std::sync::Arc<dyn crate::connection::GatedSetup> {
+    s.shell
+        .gated_setup()
+        .expect("a bash / zsh announcing its line editor has a gated setup")
+}
+
+/// Run `false` and `true` and see their OSC 133 exit marks.
+async fn assert_exit_marks(s: &mut Session) {
+    s.shell.write(b"false\r").expect("write");
+    s.read_until("the failed command's D mark", |t| {
+        t.contains("\x1b]133;D;1")
+    })
+    .await;
+    s.shell.write(b"true\r").expect("write");
+    s.read_until("the next command's D mark", |t| {
+        t.rfind("\x1b]133;D;0") > t.find("\x1b]133;D;1")
+    })
+    .await;
+}
+
+/// #5515, the maintainer's product-test profile: zsh with shell integration
+/// and an initial command, whose `.zshrc` asks `read -q` before the first
+/// prompt. Answering it must bring the setup at the first prompt, so the
+/// prompt marks arrive without another command, and a failed command gets
+/// its error mark.
+#[tokio::test]
+#[serial(local_pty)]
+async fn zsh_answered_startup_question_brings_the_command_marks() {
+    let Some(shell) = shell_with_line_editor_mark("zsh") else {
+        return;
+    };
+    let mut s = Session::start_in(
+        &shell,
+        serde_json::json!({
+            "shellIntegration": true,
+            "initialCommand": "echo INITIAL-COMMAND-RAN",
+        }),
+        |home| {
+            // No /etc/zshrc & co.: the system's own `compinit` must not ask first.
+            std::fs::write(home.join(".zshenv"), "setopt no_global_rcs\n").expect("zshenv");
+            // The kit's `.zshrc` (coordinator-handover/product-test/start.sh).
+            std::fs::write(
+                home.join(".zshrc"),
+                "HISTFILE=\"$ZDOTDIR/.zsh_history\"\n\
+                 print -P \"%F{yellow}[product-test] .zshrc asks a one-key question:%f\"\n\
+                 if read -q \"?Continue startup? Press y or n: \"; then echo; \
+                 echo \"ANSWER-Y\"; else echo; echo \"ANSWER-N\"; fi\n\
+                 PROMPT='%F{green}question-shell%f %# '\n",
+            )
+            .expect("zshrc");
+        },
+    )
+    .await;
+    s.read_until("the startup question", |t| t.contains("Continue startup?"))
+        .await;
+    s.soak(Duration::from_millis(2500)).await;
+    let text = s.text();
+    assert!(
+        !text.contains("ANSWER-") && !text.contains("\x1b]133;"),
+        "the question was answered, or the setup typed into it: {text:?}"
+    );
+    let setup = gated(&s);
+    assert!(setup.is_pending(), "the setup waits for the prompt");
+
+    s.shell.write(b"y").expect("write");
+    s.read_until("the answer and the integrated prompt", |t| {
+        t.contains("ANSWER-Y") && t.contains("\x1b]133;A")
+    })
+    .await;
+    assert!(!setup.is_pending(), "the setup went in at the first prompt");
+    assert_exit_marks(&mut s).await;
+    let text = s.text();
+    assert!(!text.contains("command not found"), "{text:?}");
+    s.close().await;
+}
+
+/// The bash flavour of #5515: `read -n 1` answered with one key.
+#[tokio::test]
+#[serial(local_pty)]
+async fn bash_answered_startup_question_brings_the_command_marks() {
+    let Some(shell) = shell_with_line_editor_mark("bash") else {
+        return;
+    };
+    let mut s = Session::start(&shell).await;
+    s.read_until("the startup question", |t| t.contains(QUESTION))
+        .await;
+    let setup = gated(&s);
+    s.shell.write(b"y").expect("write");
+    s.read_until("the answer and the integrated prompt", |t| {
+        t.contains("ANSWER-y") && t.contains("\x1b]133;A")
+    })
+    .await;
+    assert!(!setup.is_pending());
+    assert_exit_marks(&mut s).await;
+    s.close().await;
+}
+
+/// #5512: with bracketed paste turned off the line editor never announces
+/// its prompt, so the setup is never typed on its own — not even after the
+/// cap the canonical-mode cue has. The session manager's **Send now** types
+/// it, and the marks follow.
+async fn assert_paste_off_setup_waits_for_send_now(shell_name: &str) {
+    let mut s = Session::start_in(
+        shell_name,
+        serde_json::json!({ "shellIntegration": true, "initialCommand": "true" }),
+        |home| {
+            std::fs::write(home.join(".zshenv"), "setopt no_global_rcs\n").expect("zshenv");
+            std::fs::write(
+                home.join(".zshrc"),
+                // Before ZLE is loaded, ZLE sets the parameter again.
+                format!("zmodload zsh/zle; unset zle_bracketed_paste\nPROMPT='{PROMPT} '\n"),
+            )
+            .expect("zshrc");
+            let rc = format!("bind 'set enable-bracketed-paste off'\nPS1='{PROMPT} '\n");
+            std::fs::write(home.join(".bash_profile"), &rc).expect("profile");
+            std::fs::write(home.join(".bashrc"), &rc).expect("bashrc");
+        },
+    )
+    .await;
+    s.read_until("the prompt", |t| t.contains(PROMPT)).await;
+    s.soak(Duration::from_millis(2500)).await;
+    let text = s.text();
+    assert!(
+        !text.contains("\x1b]133;") && !text.contains("\x1b[?2004h"),
+        "{shell_name}: {text:?}"
+    );
+    let setup = gated(&s);
+    assert!(setup.is_pending(), "{shell_name}: nothing typed on its own");
+
+    setup.send_now();
+    s.read_until("the integrated prompt", |t| t.contains("\x1b]133;A"))
+        .await;
+    assert!(!setup.is_pending());
+    setup.send_now(); // a second Send now types nothing
+    assert_exit_marks(&mut s).await;
+    let text = s.text();
+    assert!(
+        !text.contains("command not found"),
+        "{shell_name}: {text:?}"
+    );
+    s.close().await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn zsh_paste_off_setup_waits_for_send_now() {
+    let Some(shell) = shell_with_line_editor_mark("zsh") else {
+        return;
+    };
+    assert_paste_off_setup_waits_for_send_now(&shell).await;
+}
+
+#[tokio::test]
+#[serial(local_pty)]
+async fn bash_paste_off_setup_waits_for_send_now() {
+    let Some(shell) = shell_with_line_editor_mark("bash") else {
+        return;
+    };
+    assert_paste_off_setup_waits_for_send_now(&shell).await;
+}
+
+/// Only the uncapped, mark-gated setup is offered to the session manager:
+/// without the integration there is none.
+#[tokio::test]
+#[serial(local_pty)]
+async fn no_gated_setup_without_the_integration() {
+    let Some(shell) = shell_with_line_editor_mark("zsh") else {
+        return;
+    };
+    let s = Session::start_with(&shell, serde_json::json!({ "shellIntegration": false })).await;
+    assert!(s.shell.gated_setup().is_none());
+    s.close().await;
 }

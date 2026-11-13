@@ -6,14 +6,23 @@ import { errorMessage } from "@/utils/errorMessage";
 /** A held initial command's notice: shown, or dismissed by the user. */
 export type InitialCommandHeldState = "held" | "dismissed";
 
+/** What a session holds and whether its notice shows. */
+export interface InitialCommandHeldNotice {
+  state: InitialCommandHeldState;
+  /** The shell-integration setup (command marks) is held (#5512). */
+  setup: boolean;
+  /** An initial command is held. */
+  initialCommand: boolean;
+}
+
 interface InitialCommandHeldStore {
-  /** Sessions whose initial command is held, keyed by session id. */
-  bySession: Record<string, InitialCommandHeldState>;
+  /** Sessions whose initial command or setup is held, keyed by session id. */
+  bySession: Record<string, InitialCommandHeldNotice>;
 }
 
 /**
- * Sessions whose initial command waits for a prompt the shell never announced
- * (#5509), fed by the backend's `initial-command-held` events. Runtime-only and
+ * Sessions whose initial command or shell-integration setup waits for a prompt
+ * the shell never announced (#5509, #5512), fed by the backend's `initial-command-held` events. Runtime-only and
  * outside the app store: a pure display feed for the tab's notice.
  */
 export const useInitialCommandHeldStore = create<InitialCommandHeldStore>(() => ({
@@ -35,23 +44,34 @@ export function recordInitialCommandHeld(event: InitialCommandHeldEvent): void {
     clearInitialCommandHeld(event.sessionId);
     return;
   }
+  const notice: InitialCommandHeldNotice = {
+    state: "held",
+    setup: event.setup,
+    initialCommand: event.initialCommand,
+  };
   useInitialCommandHeldStore.setState((s) => ({
-    bySession: { ...s.bySession, [event.sessionId]: "held" },
+    bySession: { ...s.bySession, [event.sessionId]: notice },
   }));
 }
 
 /** Hide a session's notice; the command stays held and is never sent on its own. */
 export function dismissInitialCommandHeld(sessionId: string): void {
-  useInitialCommandHeldStore.setState((s) =>
-    s.bySession[sessionId] === "held"
-      ? { bySession: { ...s.bySession, [sessionId]: "dismissed" } }
-      : s
-  );
+  useInitialCommandHeldStore.setState((s) => {
+    const notice = s.bySession[sessionId];
+    return notice?.state === "held"
+      ? { bySession: { ...s.bySession, [sessionId]: { ...notice, state: "dismissed" } } }
+      : s;
+  });
 }
 
-/** Whether `sessionId`'s held notice should show. */
-export function useInitialCommandHeldNotice(sessionId: string | null | undefined): boolean {
-  return useInitialCommandHeldStore((s) => (sessionId ? s.bySession[sessionId] === "held" : false));
+/** `sessionId`'s held notice while it should show, else `null`. */
+export function useInitialCommandHeldNotice(
+  sessionId: string | null | undefined
+): InitialCommandHeldNotice | null {
+  return useInitialCommandHeldStore((s) => {
+    const notice = sessionId ? s.bySession[sessionId] : undefined;
+    return notice?.state === "held" ? notice : null;
+  });
 }
 
 let subscribed: Promise<void> | null = null;

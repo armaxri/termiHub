@@ -14,8 +14,8 @@ use tracing::{debug, info};
 
 use crate::config::ShellConfig;
 use crate::connection::{
-    Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
-    PromptProbe, SelectOption, SettingsField, SettingsGroup, SettingsSchema,
+    Capabilities, Condition, ConnectionType, FieldType, FilePathKind, GatedSetup, OutputReceiver,
+    OutputSender, PromptProbe, SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
@@ -29,7 +29,7 @@ use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 use super::cwd_follow_thread::CwdFollowThread;
 pub use super::local_shell_env::set_shell_env_override;
 use super::local_shell_ready::{ready_signal, ProbeGate, ReadySignal};
-use super::local_shell_setup::TypedSetup;
+use super::local_shell_setup::{GatedHandle, TypedSetup};
 
 use crate::output::early::EarlyOutput;
 use tokio_util::sync::CancellationToken;
@@ -965,7 +965,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         // Input before the first prompt: the setup goes first, so it never
         // splits or swallows the user's command (#5009).
         if let Some(setup) = &state.setup {
-            setup.before_input();
+            setup.before_input(data);
         }
         if let Some(gate) = &state.prompt_gate {
             gate.note_keys(data);
@@ -1027,6 +1027,13 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         self.state
             .as_ref()
             .is_some_and(|state| state.prompt_gate.is_some())
+    }
+
+    fn gated_setup(&self) -> Option<Arc<dyn GatedSetup>> {
+        let setup = self.state.as_ref()?.setup.as_ref()?;
+        setup
+            .is_gated()
+            .then(|| Arc::new(GatedHandle(setup.clone())) as Arc<dyn GatedSetup>)
     }
 }
 

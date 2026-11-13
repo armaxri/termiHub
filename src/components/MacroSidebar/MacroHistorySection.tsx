@@ -164,7 +164,6 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
                     title={statusLabel(run.status)}
                   />
                 }
-                badge={`${run.stepsPlayed}/${run.totalSteps}`}
                 actions={null}
                 details={
                   <span className="macro-history__meta">
@@ -173,6 +172,12 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
                     </time>
                     {duration ? <span> · {duration}</span> : null}
                     <span> · {originLabel(run.origin)}</span>
+                    {run.stepsPlayed < run.totalSteps ? (
+                      <span data-testid={`macro-run-progress-${run.id}`}>
+                        {" "}
+                        · {run.stepsPlayed}/{run.totalSteps} steps
+                      </span>
+                    ) : null}
                     <span
                       title={run.targetLabels?.join("\n")}
                       data-testid={`macro-run-targets-${run.id}`}
