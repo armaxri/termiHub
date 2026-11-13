@@ -558,7 +558,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     >
       <div className="tunnel-editor__header">
         <span className="tunnel-editor__title" data-testid="tunnel-editor-title">
-          {existingTunnel ? `Edit Tunnel: ${existingTunnel.name}` : "New SSH Tunnel"}
+          {existingTunnel ? `Edit tunnel: ${existingTunnel.name}` : "New SSH tunnel"}
         </span>
       </div>
 
