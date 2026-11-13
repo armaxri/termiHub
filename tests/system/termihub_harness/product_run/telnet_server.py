@@ -33,6 +33,7 @@ import select
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -159,6 +160,7 @@ class TelnetServer:
         self._listener: Optional[socket.socket] = None
         self._clients: list[socket.socket] = []
         self._pids: set[int] = set()
+        self._procs: dict[int, subprocess.Popen[bytes]] = {}
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self.port = 0
@@ -245,10 +247,12 @@ class TelnetServer:
             except ProcessLookupError:
                 break
             time.sleep(0.1)
-        try:
-            os.waitpid(pid, os.WNOHANG)
-        except ChildProcessError:
-            pass
+        proc = self._procs.pop(pid, None)
+        if proc is not None:
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
         with self._lock:
             self._pids.discard(pid)
 
@@ -317,8 +321,6 @@ class TelnetServer:
                 pass
 
     def _spawn_shell(self, term: str, size: Optional[tuple[int, int]]) -> tuple[int, int]:
-        import pty
-
         env = {
             "HOME": str(self.home),
             "USER": self.username,
@@ -329,17 +331,28 @@ class TelnetServer:
             "HISTFILE": "/dev/null",
             "LANG": "C",
         }
-        pid, master = pty.fork()
-        if pid == 0:  # child
-            try:
-                os.chdir(str(self.home))
-                os.execve("/bin/sh", ["sh", "-i"], env)
-            finally:
-                os._exit(127)
-        with self._lock:
-            self._pids.add(pid)
+        # posix_spawn-style Popen, not pty.fork(): forking a threaded process is
+        # unsafe. The shell gets the pty as stdio in its own session.
+        master, slave = os.openpty()
         if size is not None:
             _set_winsize(master, size)
+        try:
+            proc = subprocess.Popen(
+                ["/bin/sh", "-i"],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                cwd=str(self.home),
+                env=env,
+                start_new_session=True,
+                close_fds=True,
+            )
+        finally:
+            os.close(slave)
+        pid = proc.pid
+        self._procs[pid] = proc
+        with self._lock:
+            self._pids.add(pid)
         return master, pid
 
 
