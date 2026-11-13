@@ -48,6 +48,13 @@ export interface ToastOptions {
    * specific toast appeared (e.g. the external-spawn outcome toasts, #4010).
    */
   testId?: string;
+  /**
+   * Dismiss this toast as soon as a dialog opens (#5665). For a toast that
+   * offers an action on what was on screen a moment ago (a "Closed … /
+   * Reopen" undo): once a dialog takes over, it would only sit beside the
+   * dialog, over a backdrop that blocks it.
+   */
+  dismissOnModal?: boolean;
 }
 
 /** The success/error messages a loading toast resolves into. */
@@ -131,6 +138,34 @@ function trackTransient(id: string | number | undefined, transient: boolean): vo
   }
 }
 
+/** Ids of the toasts raised with {@link ToastOptions.dismissOnModal}. */
+const modalStaleIds = new Set<string | number>();
+
+/** Record (or forget) `id` as a toast a dialog opening dismisses. */
+function trackModalStale(id: string | number | undefined, stale: boolean | undefined): void {
+  if (id === undefined) return;
+  modalStaleIds.delete(id);
+  if (!stale) return;
+  modalStaleIds.add(id);
+  if (modalStaleIds.size > MAX_TRACKED_TRANSIENT) {
+    const oldest = modalStaleIds.values().next().value;
+    if (oldest !== undefined) modalStaleIds.delete(oldest);
+  }
+}
+
+/**
+ * Dismiss every toast raised with {@link ToastOptions.dismissOnModal}. Called
+ * by the toast hub when a dialog opens (#5665).
+ */
+export function dismissModalStaleToasts(): void {
+  const ids = Array.from(modalStaleIds);
+  modalStaleIds.clear();
+  for (const id of ids) {
+    transientIds.delete(id);
+    dismissById(id);
+  }
+}
+
 /**
  * The termiHub toast API — a token-styled skin over sonner. Every mutating or
  * async user action that resolves in the background should surface one of these
@@ -188,6 +223,7 @@ export const toast: ToastApi = {
       testId: opts?.testId,
     });
     trackTransient(id ?? opts?.id, true);
+    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
     return id;
   },
 
@@ -201,6 +237,7 @@ export const toast: ToastApi = {
       testId: opts?.testId,
     });
     trackTransient(id ?? opts?.id, false);
+    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
     return id;
   },
 
@@ -214,6 +251,7 @@ export const toast: ToastApi = {
       testId: opts?.testId,
     });
     trackTransient(id ?? opts?.id, true);
+    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
     return id;
   },
 
@@ -227,6 +265,7 @@ export const toast: ToastApi = {
       testId: opts?.testId,
     });
     trackTransient(id ?? opts?.id, false);
+    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
     return id;
   },
 
@@ -250,10 +289,12 @@ export const toast: ToastApi = {
   dismiss(id) {
     if (id === undefined) {
       transientIds.clear();
+      modalStaleIds.clear();
       sonnerToast.dismiss();
       return;
     }
     transientIds.delete(id);
+    modalStaleIds.delete(id);
     dismissById(id);
   },
 

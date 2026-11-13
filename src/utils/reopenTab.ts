@@ -21,11 +21,16 @@ export function reopenPayloadForTab(
 /**
  * Show a success toast confirming a tab was closed, with an Undo/Reopen action
  * that opens a fresh tab from the saved connection config. No-op when `payload`
- * is null (nothing reconnectable to offer).
+ * is null (nothing reconnectable to offer). The toast goes away when a dialog
+ * opens (#5665).
  */
 export function showReopenToast(payload: ReopenTabPayload | null): void {
   if (!payload) return;
   toast.success(`Closed “${payload.title}”`, {
+    // The undo belongs to the moment of closing: a dialog opened afterwards
+    // (a settings confirm, an unlock) dismisses it rather than sitting beside
+    // it (#5665).
+    dismissOnModal: true,
     action: {
       label: "Reopen",
       onClick: () =>
