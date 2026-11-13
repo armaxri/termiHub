@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { EditorTabMeta, TerminalTab } from "@/types/terminal";
-import { getEditorSessionQualifier, getEditorTabDisplayTitle } from "./editorTabTitle";
+import {
+  getEditorSessionQualifier,
+  getEditorTabDisplayTitle,
+  getTabDisplayTitle,
+} from "./editorTabTitle";
 
 function makeTab(overrides: Partial<TerminalTab> & { id: string }): TerminalTab {
   return {
@@ -129,5 +133,56 @@ describe("getEditorTabDisplayTitle", () => {
   it("does not touch non-editor tabs", () => {
     const term = makeTab({ id: "t", title: "bash", contentType: "terminal" });
     expect(getEditorTabDisplayTitle(term, [term])).toBe("bash");
+  });
+});
+
+describe("getTabDisplayTitle — duplicate session tabs (#5667)", () => {
+  const session = (id: string, title: string, connectionId?: string) =>
+    makeTab({ id, title, connectionId });
+
+  it("keeps a lone session tab's plain title", () => {
+    const a = session("a", "web", "conn-web");
+    expect(getTabDisplayTitle(a, [a])).toBe("web");
+  });
+
+  it("suffixes later tabs of the same connection with a counter", () => {
+    const a = session("a", "web", "conn-web");
+    const b = session("b", "web", "conn-web");
+    const c = session("c", "web", "conn-web");
+    const all = [a, b, c];
+    expect(getTabDisplayTitle(a, all)).toBe("web");
+    expect(getTabDisplayTitle(b, all)).toBe("web (2)");
+    expect(getTabDisplayTitle(c, all)).toBe("web (3)");
+  });
+
+  it("does not count tabs of other connections or with other titles", () => {
+    const a = session("a", "web", "conn-web");
+    const other = session("o", "web", "conn-other");
+    const renamed = session("r", "web-renamed", "conn-web");
+    const b = session("b", "web", "conn-web");
+    const all = [a, other, renamed, b];
+    expect(getTabDisplayTitle(other, all)).toBe("web");
+    expect(getTabDisplayTitle(renamed, all)).toBe("web-renamed");
+    expect(getTabDisplayTitle(b, all)).toBe("web (2)");
+  });
+
+  it("leaves tabs without a saved connection alone", () => {
+    const a = session("a", "zsh");
+    const b = session("b", "zsh");
+    expect(getTabDisplayTitle(b, [a, b])).toBe("zsh");
+  });
+
+  it("still disambiguates editor tabs by session", () => {
+    const a = makeEditorTab("a", "hosts", {
+      filePath: "/etc/hosts",
+      isRemote: true,
+      sessionKey: "sftp:user@host-a:22",
+    });
+    const b = makeEditorTab("b", "hosts", {
+      filePath: "/etc/hosts",
+      isRemote: true,
+      sessionKey: "sftp:user@host-b:22",
+    });
+    expect(getTabDisplayTitle(a, [a, b])).toBe(getEditorTabDisplayTitle(a, [a, b]));
   });
 });
