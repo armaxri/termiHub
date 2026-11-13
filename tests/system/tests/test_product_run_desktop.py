@@ -406,7 +406,7 @@ class TestProductRunSettingsThemes(
         ):
             cursor, _ = self._js_errors(None)
             self.open_settings_tab()
-            missing, empty, errors = [], [], []
+            missing, empty, errors, false_claims = [], [], [], []
             for category in SETTINGS_CATEGORIES:
                 nav = f"settings-nav-{category}"
                 if not self.driver.exists(nav):
@@ -420,12 +420,27 @@ class TestProductRunSettingsThemes(
                     empty.append(category)
                 cursor, new = self._js_errors(cursor)
                 errors += [f"{category}: {e.get('message', '')[:160]}" for e in new]
+                if category == "updates":
+                    false_claims += self._update_currency_claims()
                 self.shot(label=category)
             self.evidence(f"opened {len(SETTINGS_CATEGORIES) - len(missing)} categories")
             if missing:
                 self.evidence(f"not in the nav (hidden here): {missing}")
             assert not empty, f"categories with an empty panel: {empty}"
             assert not errors, f"JavaScript errors: {errors}"
+            assert not false_claims, f"Updates page claims currency without a check: {false_claims}"
+
+    def _update_currency_claims(self) -> list[str]:
+        """Settings ▸ Updates must not say "Up to date" before any check (#5615)."""
+        if not (self.driver.exists("update-latest-version")
+                and self.driver.exists("update-last-checked")):
+            return []
+        latest = self.driver.get_text("update-latest-version").strip()
+        last_checked = self.driver.get_text("update-last-checked").strip()
+        self.evidence(f"updates: latest {latest!r}, last checked {last_checked!r}")
+        if last_checked == "Never" and latest == "Up to date":
+            return [f"latest {latest!r} while last checked {last_checked!r}"]
+        return []
 
     def test_02_numeric_values(self):
         for category, testid, key, label in NUMERIC_SETTINGS:
