@@ -42,14 +42,18 @@ fn run(mut ctx: ReaderContext) {
 
     while ctx.alive.load(Ordering::SeqCst) {
         match ctx.stream.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                debug!("Telnet server closed the connection");
+                break;
+            }
             Ok(n) => {
                 let Some(filtered) = negotiate(&ctx, &mut filter, &buf[..n]) else {
                     break;
                 };
                 if let Some(login) = auto_login.as_mut() {
                     if let Some(line) = login.on_output(&filtered, Instant::now()) {
-                        // Best-effort: a failed write surfaces on the next read.
+                        // A failed write shuts the socket down (see `write_locked`),
+                        // so the next read ends the session.
                         let _ = write_locked(&ctx.writer, &line);
                     }
                 }
@@ -57,10 +61,11 @@ fn run(mut ctx: ReaderContext) {
                     break;
                 }
             }
-            Err(ref e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(_) => break,
+            Err(ref e) if is_read_timeout(e) => {}
+            Err(e) => {
+                debug!(error = %e, "Telnet read failed; ending the session");
+                break;
+            }
         }
         if let Some(login) = auto_login.as_mut() {
             login.on_tick(Instant::now());
@@ -71,7 +76,52 @@ fn run(mut ctx: ReaderContext) {
             }
         }
     }
-    ctx.alive.store(false, Ordering::SeqCst);
+    end_session(&ctx);
+}
+
+/// Mark the session dead and, when this thread is the one that found it dead,
+/// drop the stored output sender (#5569).
+///
+/// The session manager only learns that a session ended when its output
+/// channel closes. The reader used to clear `alive` and leave the sender in
+/// place, so a server-side close (EOF) or a read error left the tab green and
+/// `connected` with no disconnect overlay and no Reconnect: a dead connection
+/// that looked alive. Dropping the sender ends the channel, the manager emits
+/// `terminal-exit`, and the tab shows the disconnect overlay. This matches the
+/// serial and SSH readers.
+///
+/// When `alive` was already `false`, something else stopped the session —
+/// [`disconnect`](crate::connection::ConnectionType::disconnect) (which clears
+/// the sender itself), `interrupt_io` (followed by a disconnect) or the
+/// [`Drop`] guard. Then the sender is left alone: by the time this thread
+/// notices, the same `Telnet` may already be connected again, and the sender
+/// in `output_tx` would belong to that new connection.
+fn end_session(ctx: &ReaderContext) {
+    if !ctx.alive.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let sender = match ctx.output_tx.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
+    };
+    drop(sender);
+}
+
+/// Whether a read error is only the socket's read timeout (`READ_TIMEOUT`),
+/// which wakes the loop for its `alive` and auto-login checks.
+///
+/// Unix reports an `SO_RCVTIMEO` expiry as `EAGAIN` (`WouldBlock`) and keeps
+/// `ETIMEDOUT` (`TimedOut`) for a connection that really timed out, such as a
+/// peer that failed the TCP keepalive probes. That one ends the session: if it
+/// were taken for a quiet socket, a half-open connection would stay
+/// `connected` forever. Windows reports its read timeout as `WSAETIMEDOUT`,
+/// which maps to `TimedOut`, so there it counts as a timeout too.
+pub(super) fn is_read_timeout(e: &std::io::Error) -> bool {
+    match e.kind() {
+        std::io::ErrorKind::WouldBlock => true,
+        std::io::ErrorKind::TimedOut => cfg!(windows),
+        _ => false,
+    }
 }
 
 /// Run one chunk through the filter, writing any negotiation replies. Returns
@@ -82,8 +132,9 @@ fn negotiate(ctx: &ReaderContext, filter: &mut TelnetFilter, chunk: &[u8]) -> Op
     let filtered = filter.filter(chunk, &mut negotiator, &mut responses);
     if !responses.is_empty() {
         // Written under the negotiator lock (lock order negotiator → writer)
-        // so a size report never races a concurrent resize. Best-effort, as
-        // before: a dead socket surfaces as the next read error.
+        // so a size report never races a concurrent resize. A failed write
+        // shuts the socket down (see `write_locked`), so the next read ends
+        // the session.
         let _ = write_locked(&ctx.writer, &responses);
     }
     Some(filtered)

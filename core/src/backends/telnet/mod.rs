@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::config::{expand_config_value, TelnetConfig};
 use crate::connection::connect_progress::{self, ConnectStage};
@@ -459,13 +459,26 @@ impl SharedWriter {
 }
 
 /// Write `data` to the shared socket under its lock and flush.
+///
+/// A failed write ends the session (#5569). The error means the connection is
+/// gone (`EPIPE`, `ECONNRESET`) or stalled past `WRITE_TIMEOUT`, and in the
+/// stalled case `write_all` may have sent only part of `data`, so the stream
+/// can no longer be trusted. Shutting the socket down wakes the reader thread,
+/// which then ends the output stream; the tab shows the disconnect overlay
+/// instead of swallowing every later keystroke. The serial backend ends its
+/// session on a failed write the same way.
 fn write_locked(writer: &SharedWriter, data: &[u8]) -> Result<(), SessionError> {
     let _order = writer.order.lock().map_err(|e| {
         SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
     })?;
     let mut stream = &writer.stream;
-    stream.write_all(data).map_err(SessionError::Io)?;
-    stream.flush().map_err(SessionError::Io)?;
+    if let Err(e) = stream.write_all(data).and_then(|()| stream.flush()) {
+        warn!(error = %e, "Telnet write failed; ending the session");
+        if let Err(shutdown) = writer.shutdown() {
+            debug!("Telnet shutdown after a failed write: {shutdown}");
+        }
+        return Err(SessionError::Io(e));
+    }
     Ok(())
 }
 
