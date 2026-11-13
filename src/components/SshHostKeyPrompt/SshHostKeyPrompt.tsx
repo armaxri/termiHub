@@ -13,10 +13,11 @@ import { useAppStore } from "@/store/appStore";
  * emits `ssh-host-key-prompt`; this dialog surfaces the SHA-256 fingerprint and
  * lets the user accept it once, accept and remember it for the host, or reject.
  * When the key *changed* for a previously-trusted host (`changed`), it warns
- * prominently about a possible man-in-the-middle and, when the backend supplies
- * the previously-trusted fingerprint(s), shows them beside the new one so the
- * user can compare exactly what changed (UX-034). The verdict is routed back to
- * the blocked handshake via `sshHostKeyDecision`.
+ * prominently about a possible man-in-the-middle, shows the previously-trusted
+ * key(s) above the newly presented one (each with its key type, when known) so
+ * the user can compare exactly what changed (UX-034, #5627), and offers to
+ * "Replace trusted key". The verdict is routed back to the blocked handshake
+ * via `sshHostKeyDecision`.
  *
  * Any SSH connect path (terminal, tunnel, SFTP, jump host) can raise a prompt,
  * so this mounts once at the app root and serialises concurrent prompts through
@@ -70,31 +71,38 @@ export function SshHostKeyPrompt() {
 
   const changed = current?.changed ?? false;
 
-  // On a changed key, the backend sends the fingerprint(s) termiHub had trusted
-  // so the user can compare old vs new (UX-034). Absent/empty on first contact
-  // (and when the change was only against the user's ~/.ssh/known_hosts).
-  const priorFingerprints = current?.previous_fingerprints ?? [];
-  const hasPrior = priorFingerprints.length > 0;
+  // On a changed key, the backend sends the key(s) trusted before — from
+  // termiHub's own store and/or ~/.ssh/known_hosts — so the user can compare
+  // old vs new (UX-034, #5627). Absent on first contact.
+  const priorKeys = current?.previous_keys ?? [];
+  const hasPrior = priorKeys.length > 0;
+  const hostPort = current ? `${current.host}:${current.port}` : "";
 
   const facts: TrustFact[] = current
     ? [
-        { label: "Host", value: `${current.host}:${current.port}`, testId: "ssh-hostkey-host" },
-        { label: "Key type", value: current.key_type, testId: "ssh-hostkey-type" },
-        // When a prior fingerprint exists, show it beside the new one, each
-        // clearly labeled and copyable, so the user can see exactly what changed.
-        ...priorFingerprints.map(
-          (fp, i): TrustFact => ({
+        { label: "Host", value: hostPort, testId: "ssh-hostkey-host" },
+        // With a prior to compare against, each fingerprint carries its own key
+        // type: the previously trusted key(s) first, then the presented one.
+        ...(hasPrior
+          ? []
+          : [{ label: "Key type", value: current.key_type, testId: "ssh-hostkey-type" }]),
+        ...priorKeys.map((key, i): TrustFact => {
+          const testId = `ssh-hostkey-prev-fingerprint${i === 0 ? "" : `-${i}`}`;
+          return {
             label: "Previously trusted",
-            value: fp,
+            value: key.fingerprint,
+            detail: key.key_type ?? undefined,
+            detailTestId: `${testId}-type`,
             mono: true,
             copyable: true,
-            testId: `ssh-hostkey-prev-fingerprint${i === 0 ? "" : `-${i}`}`,
-            copyTestId: `ssh-hostkey-prev-fingerprint${i === 0 ? "" : `-${i}`}-copy`,
-          })
-        ),
+            testId,
+            copyTestId: `${testId}-copy`,
+          };
+        }),
         {
-          label: hasPrior ? "New" : "Fingerprint",
+          label: hasPrior ? "Now presented" : "Fingerprint",
           value: current.fingerprint,
+          ...(hasPrior ? { detail: current.key_type, detailTestId: "ssh-hostkey-type" } : {}),
           mono: true,
           copyable: true,
           testId: "ssh-hostkey-fingerprint",
@@ -116,6 +124,14 @@ export function SshHostKeyPrompt() {
       onReject={() => decide(false, false)}
       onAcceptOnce={() => decide(true, false)}
       onAcceptForHost={() => decide(true, true)}
+      changedAcceptForHostLabel="Replace trusted key"
+      changedHint={
+        <>
+          Verify the new fingerprint matches the one your server administrator reports.
+          &ldquo;Replace trusted key&rdquo; replaces the old key for {hostPort}, so you are not
+          asked again.
+        </>
+      }
       modalTestId="ssh-hostkey-prompt"
       rejectTestId="ssh-hostkey-reject"
       acceptOnceTestId="ssh-hostkey-accept-once"

@@ -129,6 +129,17 @@ impl SshTrustStore {
         self.persist();
     }
 
+    /// Trust `fingerprint` as the **only** key for `host`, dropping any key
+    /// remembered before, and persist immediately. Used when the user replaces
+    /// a changed key (#5627), so the old key is no longer trusted.
+    pub fn replace(&self, host: &str, fingerprint: &str) {
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(host.to_string(), vec![fingerprint.to_string()]);
+        self.persist();
+    }
+
     /// Remember `fingerprint` for `host` **only** when the host has nothing
     /// remembered yet, checking and inserting under one lock (#4852).
     ///

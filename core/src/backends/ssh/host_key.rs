@@ -121,6 +121,75 @@ fn check_known_hosts_in(
     map_known_hosts_result(result, host)
 }
 
+/// A host key recorded in `~/.ssh/known_hosts`: its algorithm and SHA-256
+/// fingerprint, in the same forms as [`HostKeyInfo::key_type`] and
+/// [`HostKeyInfo::fingerprint`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedHostKey {
+    /// The key algorithm, e.g. `ssh-ed25519`.
+    pub key_type: String,
+    /// The SHA-256 fingerprint in OpenSSH `SHA256:BASE64` form.
+    pub fingerprint: String,
+}
+
+/// The key(s) `~/.ssh/known_hosts` records for `host:port` that a presented
+/// `key` would *replace*: same algorithm, different key material (#5627).
+///
+/// This is what [`KnownHostsStatus::Changed`] was decided against, so a trust
+/// prompt can show the previously-trusted key beside the new one. Empty for an
+/// unrecorded host, a matching key, a missing or unreadable file, or an empty
+/// host. Honours [`set_known_hosts_file_override`] like
+/// [`check_system_known_hosts`].
+pub fn recorded_known_host_keys(
+    host: &str,
+    port: u16,
+    key: &russh::keys::PublicKey,
+) -> Vec<RecordedHostKey> {
+    recorded_keys_in(
+        host,
+        port,
+        key,
+        KNOWN_HOSTS_FILE_OVERRIDE.get().map(PathBuf::as_path),
+    )
+}
+
+/// [`recorded_known_host_keys`] against an explicit `file`, or the default
+/// `~/.ssh/known_hosts` when `file` is `None`.
+fn recorded_keys_in(
+    host: &str,
+    port: u16,
+    key: &russh::keys::PublicKey,
+    file: Option<&Path>,
+) -> Vec<RecordedHostKey> {
+    if host.is_empty() {
+        return Vec::new();
+    }
+    let recorded = match file {
+        Some(path) => russh::keys::known_hosts::known_host_keys_path(host, port, path),
+        None => russh::keys::known_hosts::known_host_keys(host, port),
+    };
+    let recorded = match recorded {
+        Ok(recorded) => recorded,
+        Err(e) => {
+            warn!(
+                host = %host,
+                error = %e,
+                "could not read the recorded host keys from ~/.ssh/known_hosts"
+            );
+            return Vec::new();
+        }
+    };
+    recorded
+        .into_iter()
+        .map(|(_line, recorded)| recorded)
+        .filter(|recorded| recorded.algorithm() == key.algorithm() && recorded != key)
+        .map(|recorded| RecordedHostKey {
+            key_type: key_algorithm(&recorded),
+            fingerprint: fingerprint_sha256(&recorded),
+        })
+        .collect()
+}
+
 /// Map a `russh` `check_known_hosts*` result to a [`KnownHostsStatus`], logging a
 /// non-`KeyChanged` error so a broken/unreadable file is visible rather than
 /// silently swallowed. Shared by [`check_system_known_hosts`] and its
@@ -161,6 +230,11 @@ pub struct HostKeyInfo {
     /// key recorded there is trusted and a *changed* key is never quietly
     /// accepted.
     pub known_hosts: KnownHostsStatus,
+    /// When [`known_hosts`](Self::known_hosts) is
+    /// [`KnownHostsStatus::Changed`], the key(s) that file had recorded for the
+    /// host, so a prompt can show what was trusted before (#5627). Empty
+    /// otherwise.
+    pub known_hosts_previous: Vec<RecordedHostKey>,
 }
 
 impl HostKeyInfo {
@@ -343,6 +417,7 @@ mod tests {
             key_type: "ssh-ed25519".to_string(),
             fingerprint: "SHA256:AABBCC".to_string(),
             known_hosts: KnownHostsStatus::Unknown,
+            known_hosts_previous: Vec::new(),
         }
     }
 
@@ -441,6 +516,70 @@ mod tests {
             KnownHostsStatus::Unknown,
             "an empty host never matches, even with an explicit file"
         );
+    }
+
+    /// On a changed key, the key(s) `known_hosts` had recorded for the host are
+    /// returned with their type and fingerprint, so the prompt can show what was
+    /// trusted before beside what is presented now (#5627).
+    #[test]
+    fn previously_recorded_keys_are_returned_for_a_changed_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, format!("[127.0.0.1]:40022 {RECORDED_KEY}\n")).unwrap();
+
+        let previous = |host: &str, key: &str| {
+            recorded_keys_in(host, 40022, &public_key(key), Some(path.as_path()))
+        };
+        assert_eq!(
+            previous("127.0.0.1", IMPOSTOR_KEY),
+            vec![RecordedHostKey {
+                key_type: "ssh-ed25519".to_string(),
+                fingerprint: fingerprint_sha256(&public_key(RECORDED_KEY)),
+            }],
+            "the recorded key is what was trusted before"
+        );
+        assert!(
+            previous("127.0.0.1", RECORDED_KEY).is_empty(),
+            "a matching key has no different previous key"
+        );
+        assert!(
+            previous("unlisted.example", IMPOSTOR_KEY).is_empty(),
+            "an unrecorded host has no previous key"
+        );
+        assert!(
+            previous("", IMPOSTOR_KEY).is_empty(),
+            "an empty host never matches"
+        );
+    }
+
+    /// A key of a *different* algorithm recorded for the host is not the one the
+    /// presented key replaces, so it is not reported; a missing file yields
+    /// nothing rather than an error (#5627).
+    #[test]
+    fn previously_recorded_keys_skip_other_algorithms_and_missing_files() {
+        const RSA_KEY: &str = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQDVY3GoxCLBMvTagiz4hgAmzYoISgaKYj5khYUSAw3kyrwxfWy+WjpohV5dnKXiQ/offo6DrVa7TnuY9rrT7VepCAGCqA8uvfcfxshuZoVGVwZn7GFU77z6vP02GlHM7v8Xs3v83LtFwWbB2zocODBJKmg55DkN0rT5IpjrMkcQvw== rsa";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, format!("[127.0.0.1]:40022 {RSA_KEY}\n")).unwrap();
+        assert!(
+            recorded_keys_in(
+                "127.0.0.1",
+                40022,
+                &public_key(IMPOSTOR_KEY),
+                Some(path.as_path())
+            )
+            .is_empty(),
+            "an rsa key is not what a new ed25519 key replaces"
+        );
+
+        let missing = dir.path().join("does-not-exist");
+        assert!(recorded_keys_in(
+            "127.0.0.1",
+            40022,
+            &public_key(IMPOSTOR_KEY),
+            Some(missing.as_path())
+        )
+        .is_empty());
     }
 
     /// End-to-end mapping against a real `known_hosts` file: a recorded key is a

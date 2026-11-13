@@ -408,16 +408,22 @@ impl russh::client::Handler for TermiHubHandler {
         // verifier registered, e.g. the remote agent) trusts only a recorded key
         // and refuses the rest, while the desktop verifier can additionally
         // prompt the user for an unknown key.
+        let known_hosts =
+            super::host_key::check_system_known_hosts(&self.host, self.port, server_public_key);
+        // On a changed key, carry what the file had recorded so the prompt can
+        // show the previously-trusted key beside the new one (#5627).
+        let known_hosts_previous = if known_hosts == super::host_key::KnownHostsStatus::Changed {
+            super::host_key::recorded_known_host_keys(&self.host, self.port, server_public_key)
+        } else {
+            Vec::new()
+        };
         let info = super::host_key::HostKeyInfo {
             host: self.host.clone(),
             port: self.port,
             key_type: super::host_key::key_algorithm(server_public_key),
             fingerprint: super::host_key::fingerprint_sha256(server_public_key),
-            known_hosts: super::host_key::check_system_known_hosts(
-                &self.host,
-                self.port,
-                server_public_key,
-            ),
+            known_hosts,
+            known_hosts_previous,
         };
         if self.handshake.unattended {
             // Unattended (#3527): never prompt — only an already-trusted key

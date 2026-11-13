@@ -177,12 +177,18 @@ class TestProductRunSsh(
         with self.step(
             "ssh.hostkey.changed",
             "A changed host key shows the warning with both fingerprints; Reject connects nothing",
-            expect="the host-key dialog with the red 'key has changed' warning and the new fingerprint",
+            expect=(
+                "the host-key dialog with the red 'key has changed' warning, the previously"
+                " trusted and the now presented fingerprint with their key types, and a"
+                " 'Replace trusted key' button"
+            ),
             screenshot=False,
         ):
             native = self.need_native()
             bastion = native.target.jump_port
-            algorithm, wrong = key_blob(SSH_KEY_PATH.with_name(SSH_KEY_PATH.name + ".pub"))
+            wrong_pub = SSH_KEY_PATH.with_name(SSH_KEY_PATH.name + ".pub")
+            algorithm, wrong = key_blob(wrong_pub)
+            wrong_fp = host_key_fingerprint(wrong_pub)
             known_hosts.trust(SSH_HOST, bastion, algorithm, wrong)
             try:
                 self.switch_to_connections_sidebar()
@@ -195,9 +201,18 @@ class TestProductRunSsh(
                 self.shot(label=None)
                 self.evidence(f"prompt: {shown}")
                 assert "mitm" in shown, "no changed-key warning for a host whose key differs"
-                # The previous key lives in known_hosts here, not termiHub's own
-                # store, so the prompt has no previous fingerprint to show.
-                self.evidence(f"previous fingerprint shown: {shown.get('previous')!r}")
+                # The previous key lives in known_hosts here; the prompt shows it
+                # (with its key type) above the presented one (#5627).
+                self.evidence(f"previous fingerprint (ssh-keygen): {wrong_fp}")
+                assert wrong_fp and wrong_fp in shown.get("previous", ""), (
+                    f"previously trusted fingerprint {shown.get('previous')!r} is not the"
+                    f" recorded {wrong_fp!r}"
+                )
+                assert algorithm in shown.get("previous_type", ""), shown.get("previous_type")
+                assert "SHA256:" in shown["fingerprint"], shown["fingerprint"]
+                assert wrong_fp not in shown["fingerprint"], "the presented key is the recorded one"
+                assert "ed25519" in shown["type"].lower(), shown["type"]
+                assert shown["remember"] == "Replace trusted key", shown["remember"]
                 self.answer_hostkey_prompt(HOSTKEY_REJECT)
                 tab_id = self.tab_id_of(name)
                 time.sleep(3.0)

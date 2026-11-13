@@ -220,6 +220,7 @@ fn host_key(fingerprint: &str) -> HostKeyInfo {
         key_type: "ssh-ed25519".to_string(),
         fingerprint: fingerprint.to_string(),
         known_hosts: KnownHostsStatus::Unknown,
+        known_hosts_previous: Vec::new(),
     }
 }
 
