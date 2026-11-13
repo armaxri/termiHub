@@ -264,6 +264,12 @@ const en = {
   "drop.separator.network": "— connection lost {time} —",
   "drop.separator.reconnected": "— reconnected {time} —",
   "drop.overlay.scrollbackKept": "Your scrollback is kept — choose View scrollback to read it.",
+  // ── Serial port scan prefixes (Settings ▸ Serial, #5712) ───────────────
+  // The /dev prefix scan only runs on Linux; elsewhere the list is folded.
+  "serialPrefixes.offLinux.note":
+    "Prefix scanning only runs on Linux. This computer lists serial ports from the system.",
+  "serialPrefixes.offLinux.show": "Show Linux prefixes ({count})",
+  "serialPrefixes.offLinux.hide": "Hide Linux prefixes",
 
   // ── Macro rows and run history (#5680) ──────────────────────────────────
   // Sentence case; one empty-state wording across the macro and workflow
