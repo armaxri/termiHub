@@ -7,6 +7,7 @@ import {
   formatRelativeAgo,
   formatRelativeTime,
   formatAbsoluteTime,
+  formatCompactAge,
   formatClockTime,
   formatLogTime,
   formatRelativeDay,
@@ -166,6 +167,33 @@ describe("formatRelativeTime", () => {
     const out = formatRelativeTime("2026-01-01T12:00:00Z");
     expect(out).not.toContain("ago");
     expect(out).toContain("2026");
+  });
+});
+
+describe("formatCompactAge (#5623)", () => {
+  const NOW = new Date("2026-06-15T12:00:00Z").getTime();
+
+  it("reads recent times as a bare number + unit, without 'ago'", () => {
+    expect(formatCompactAge("2026-06-15T11:59:40Z", NOW)).toBe("now");
+    expect(formatCompactAge("2026-06-15T11:55:00Z", NOW)).toBe("5m");
+    expect(formatCompactAge("2026-06-15T09:00:00Z", NOW)).toBe("3h");
+    expect(formatCompactAge("2026-06-13T12:00:00Z", NOW)).toBe("2d");
+  });
+
+  it("clamps a future time (clock skew) to 'now'", () => {
+    expect(formatCompactAge("2026-06-15T12:30:00Z", NOW)).toBe("now");
+  });
+
+  it("shows month and day for an older date in the same year, the year before that", () => {
+    const sameYear = formatCompactAge("2026-02-03T12:00:00Z", NOW);
+    expect(sameYear).not.toContain("2026");
+    expect(sameYear).toMatch(/3/);
+    expect(formatCompactAge("2024-02-03T12:00:00Z", NOW)).toBe("2024");
+  });
+
+  it("returns an empty string for a missing or unparseable date", () => {
+    expect(formatCompactAge("", NOW)).toBe("");
+    expect(formatCompactAge("not a date", NOW)).toBe("");
   });
 });
 
