@@ -14,6 +14,7 @@ import { ensureAgentsSubscribed } from "@/store/agentsBridge";
 import { ensureConnectionsSubscribed } from "@/store/connectionsBridge";
 import { ensureSettingsSubscribed } from "@/store/settingsBridge";
 import { ensureConnectProgressSubscribed } from "@/store/connectProgressBridge";
+import { ensureSshHostKeyTrustSubscribed } from "@/store/sshHostKeyTrustBridge";
 import { ensureInitialCommandHeldSubscribed } from "@/store/initialCommandHeldBridge";
 import { toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
@@ -89,6 +90,8 @@ export const createStartupSlice: StateCreator<AppState, [], [], StartupSlice> = 
       // Connect-stage reports feed the connect overlay's stepper (#5068). The
       // helper logs its own failure and never rejects.
       void ensureConnectProgressSubscribed();
+      // Accepted host keys feed the status-bar SSH chip's tooltip (#5669).
+      void ensureSshHostKeyTrustSubscribed();
       // A held initial command shows its tab's Send now notice (#5509).
       void ensureInitialCommandHeldSubscribed();
       // The agent list is region-authoritative (#2409): the backend seeds the

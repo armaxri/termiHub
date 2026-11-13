@@ -11,6 +11,7 @@ import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalTab } from "@/types/terminal";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { flushAsync } from "@/test/flushAsync";
+import { recordSshHostKeyTrust, useSshHostKeyTrustStore } from "@/store/sshHostKeyTrustBridge";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({
   CredentialStoreIndicator: () =>
@@ -75,6 +76,28 @@ describe("StatusBar — session chips (#5628)", () => {
     expect(chip).not.toBeNull();
     expect(chip!.textContent).toContain("SSH: arne@127.0.0.1:22400");
     expect(chip!.getAttribute("title")).toContain("Auth: key ~/.ssh/pr_ed25519");
+  });
+
+  it("adds the host-key trust state once the tab's connect accepted the key (#5669)", async () => {
+    useSshHostKeyTrustStore.setState({ byTab: {} });
+    setActiveTab({ type: "ssh", config: { host: "box", username: "u", authMethod: "agent" } });
+    await render();
+    const chip = () => container.querySelector('[data-testid="status-bar-ssh"]');
+    expect(chip()!.getAttribute("title")).not.toContain("Host key");
+
+    act(() =>
+      recordSshHostKeyTrust({
+        owner: "tab-1:0",
+        host: "box",
+        port: 22,
+        key_type: "ssh-ed25519",
+        fingerprint: "SHA256:abc",
+        trust: "firstSeenRemembered",
+      })
+    );
+    expect(chip()!.getAttribute("title")).toContain(
+      "Host key: first seen, accepted and remembered (SHA256:abc)"
+    );
   });
 
   it("shows host:port for both ends of a jump", async () => {

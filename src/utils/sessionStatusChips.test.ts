@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ConnectionConfig } from "@/types/terminal";
+import type { SshHostKeyTrust } from "@/types/generated/SshHostKeyTrust";
+import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
 import { serialStatusChip, sshStatusChip } from "./sessionStatusChips";
 
 function ssh(config: Record<string, unknown>): ConnectionConfig {
@@ -93,5 +95,51 @@ describe("serialStatusChip (#5628)", () => {
   it("returns null without a port or for other types", () => {
     expect(serialStatusChip(serial({}))).toBeNull();
     expect(serialStatusChip(ssh({ host: "h" }))).toBeNull();
+  });
+});
+
+describe("sshStatusChip host-key trust (#5669)", () => {
+  function key(host: string, port: number, trust: SshHostKeyTrust): SshHostKeyTrustedEvent {
+    return {
+      owner: "tab-1:0",
+      host,
+      port,
+      key_type: "ssh-ed25519",
+      fingerprint: `SHA256:${host}${port}`,
+      trust,
+    };
+  }
+
+  it("names how the target's host key is trusted, with its fingerprint", () => {
+    const cases: [SshHostKeyTrust, string][] = [
+      ["remembered", "Host key: trusted (SHA256:h22)"],
+      ["knownHosts", "Host key: trusted via ~/.ssh/known_hosts (SHA256:h22)"],
+      ["firstSeenRemembered", "Host key: first seen, accepted and remembered (SHA256:h22)"],
+      ["firstSeenOnce", "Host key: first seen, trusted once (this session only) (SHA256:h22)"],
+      ["changedReplaced", "Host key: changed, new key accepted and remembered (SHA256:h22)"],
+      ["changedOnce", "Host key: changed, trusted once (this session only) (SHA256:h22)"],
+    ];
+    for (const [trust, line] of cases) {
+      const chip = sshStatusChip(ssh({ host: "h" }), [key("h", 22, trust)]);
+      expect(chip?.tooltip.split("\n")).toContain(line);
+    }
+  });
+
+  it("shows the target's key, not a jump hop's, and nothing before a key is known", () => {
+    const config = ssh({
+      host: "t",
+      port: 2200,
+      proxyJump: [{ host: "b", port: 22, username: "u", authMethod: "key" }],
+    });
+    expect(sshStatusChip(config)?.tooltip).not.toContain("Host key");
+    expect(sshStatusChip(config, [key("b", 22, "remembered")])?.tooltip).not.toContain("Host key");
+    const chip = sshStatusChip(config, [
+      key("b", 22, "remembered"),
+      key("t", 2200, "firstSeenOnce"),
+    ]);
+    expect(chip?.tooltip).toContain(
+      "Host key: first seen, trusted once (this session only) (SHA256:t2200)"
+    );
+    expect(chip?.tooltip).not.toContain("SHA256:b22");
   });
 });
