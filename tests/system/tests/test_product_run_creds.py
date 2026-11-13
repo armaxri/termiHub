@@ -277,7 +277,10 @@ class TestProductRunCredentials(_CredsBase):
             self.evidence(f"migration: {result!r}")
             self.evidence(f"service {run_service()!r}, account {account!r}")
             self.wait(lambda: keychain_has(run_service(), account), what="the keychain item")
-            assert not self.credential_indicator_present(), "a lock indicator in keychain mode"
+            # Keychain mode shows a static "Keychain" item, never the lock toggle.
+            indicator = self.driver.get_text("credential-store-indicator").strip()
+            self.evidence(f"status bar: {indicator!r}")
+            assert indicator == "Keychain", f"status bar shows {indicator!r} in keychain mode"
         self.switch_to_connections_sidebar()
         with self.step(
             "creds.keychain.resolve",
