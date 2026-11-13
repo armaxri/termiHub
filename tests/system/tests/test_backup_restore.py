@@ -9,7 +9,7 @@ cover is the user's path through the real app: Settings → Backup & Restore →
 and the app coming back with the data restored.
 
 Both native dialogs are stubbed with ``driver.stub_native_dialog`` (#4122). The
-app restarts *itself* after the restore (``AppHandle::request_restart``), so the
+app restarts *itself* after the restore (``utils::relaunch``, #5647), so the
 harness follows that relaunch with ``adopt_app_self_restart`` instead of
 restarting the app on its own. Marked ``integration`` (needs the built
 test-bridge app).

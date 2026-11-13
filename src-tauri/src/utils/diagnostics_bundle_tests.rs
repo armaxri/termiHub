@@ -11,6 +11,7 @@ fn build() -> BuildInfo {
         version: "9.9.9".into(),
         git_hash: "abc1234".into(),
         build_branch: "develop".into(),
+        build_commit_time: Some("2026-11-13T09:42:07Z".into()),
     }
 }
 
@@ -135,6 +136,40 @@ fn system_info_carries_version_build_and_platform() {
     assert!(info.contains("abc1234"));
     assert!(info.contains(std::env::consts::OS));
     assert!(info.contains(std::env::consts::ARCH));
+}
+
+#[test]
+fn system_info_carries_the_build_date() {
+    let entries = plan_bundle(None, &build(), SystemTime::now());
+    let BundleSource::Text(info) = &entries[1].source else {
+        panic!("system-info is generated text");
+    };
+    assert!(info.contains("build date:    2026-11-13T09:42:07Z (commit time)\n"));
+}
+
+#[test]
+fn system_info_omits_an_unknown_build_date() {
+    let unknown = BuildInfo {
+        build_commit_time: None,
+        ..build()
+    };
+    let entries = plan_bundle(None, &unknown, SystemTime::now());
+    let BundleSource::Text(info) = &entries[1].source else {
+        panic!("system-info is generated text");
+    };
+    assert!(!info.contains("build date"));
+    assert!(info.contains("build commit:  abc1234\nbuild branch:  develop\n"));
+}
+
+#[test]
+fn the_build_date_survives_redaction() {
+    let out = tempfile::tempdir().unwrap();
+    let dest = out.path().join("diag.zip");
+    let entries = plan_bundle(None, &build(), SystemTime::now());
+    write_bundle(&dest, &entries, &redactor()).unwrap();
+    let files = read_zip(&dest);
+    let (_, info) = files.iter().find(|(n, _)| n == "system-info.txt").unwrap();
+    assert!(info.contains("2026-11-13T09:42:07Z"), "{info}");
 }
 
 #[test]

@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
 import { ShieldCheck, ShieldAlert, Copy } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Modal } from "./Modal";
@@ -25,6 +25,13 @@ export interface TrustFact {
   testId?: string;
   /** `data-testid` forwarded to the copy button (when `copyable`). */
   copyTestId?: string;
+  /**
+   * A short secondary line above the value, e.g. a fingerprint's key type
+   * (#5627).
+   */
+  detail?: string;
+  /** `data-testid` forwarded to the {@link detail} line. */
+  detailTestId?: string;
 }
 
 /**
@@ -60,6 +67,16 @@ export interface TrustPromptProps {
   onAcceptOnce: () => void;
   /** Accept and remember for the host. */
   onAcceptForHost: () => void;
+  /**
+   * Label of the accept-and-remember button for a *changed* identity, e.g.
+   * `Replace trusted key` (#5627). Defaults to `Accept for host`.
+   */
+  changedAcceptForHostLabel?: string;
+  /**
+   * Footer hint for a *changed* identity, saying what accepting for the host
+   * does to the old identity (#5627). Defaults to the first-contact hint.
+   */
+  changedHint?: ReactNode;
   /** `data-testid` for the modal content node. */
   modalTestId: string;
   /** `data-testid` for the Reject button. */
@@ -106,6 +123,8 @@ export function TrustPrompt({
   onReject,
   onAcceptOnce,
   onAcceptForHost,
+  changedAcceptForHostLabel = "Accept for host",
+  changedHint,
   modalTestId,
   rejectTestId,
   acceptOnceTestId,
@@ -158,7 +177,7 @@ export function TrustPrompt({
               Reject
             </Button>
             <Button variant="danger" onClick={onAcceptForHost} data-testid={acceptForHostTestId}>
-              Accept for host
+              {changedAcceptForHostLabel}
             </Button>
           </div>
         ) : (
@@ -196,7 +215,14 @@ export function TrustPrompt({
                 className={fact.mono ? "ui-trust-prompt__fact-value--mono" : undefined}
                 data-testid={fact.testId}
               >
-                <span className="ui-trust-prompt__fact-text">{fact.value}</span>
+                <span className="ui-trust-prompt__fact-text">
+                  {fact.detail && (
+                    <span className="ui-trust-prompt__fact-detail" data-testid={fact.detailTestId}>
+                      {fact.detail}
+                    </span>
+                  )}
+                  {fact.value}
+                </span>
                 {fact.copyable && (
                   <Button
                     iconOnly
@@ -214,8 +240,14 @@ export function TrustPrompt({
           ))}
         </dl>
         <p className="ui-trust-prompt__hint">
-          Verify the fingerprint matches the one your server administrator reports. &ldquo;Accept
-          for host&rdquo; remembers it so you are not asked again.
+          {changed && changedHint ? (
+            changedHint
+          ) : (
+            <>
+              Verify the fingerprint matches the one your server administrator reports.
+              &ldquo;Accept for host&rdquo; remembers it so you are not asked again.
+            </>
+          )}
         </p>
       </div>
     </Modal>

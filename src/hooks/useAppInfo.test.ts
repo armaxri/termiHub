@@ -18,6 +18,7 @@ const APP_INFO: AppInfo = {
   gitHash: "abcdef1",
   isDev: false,
   buildBranch: "develop",
+  buildCommitTime: "2026-11-13T09:42:07Z",
 };
 
 /** Helper component that exposes the full app info via a callback. */

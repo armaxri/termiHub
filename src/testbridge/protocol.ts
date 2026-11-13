@@ -961,6 +961,12 @@ export interface TerminalMeasurement {
   container: { width: number; height: number };
   /** The live renderer as advertised on the container (`webgl` / `dom`). */
   renderer: string | null;
+  /**
+   * Whether the terminal element is mounted in its tab's panel slot rather than
+   * parked off screen (#5620). `false` means the tab shows nothing, whatever the
+   * buffer or the WebGL canvas holds.
+   */
+  slotted: boolean;
   /** Backing-store size of the WebGL canvas; `null` when no WebGL canvas is mounted. */
   webglCanvas: { width: number; height: number } | null;
   /** Text of each row the DOM renderer painted; `null` when it is not mounted. */

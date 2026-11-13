@@ -68,6 +68,7 @@ const MEASUREMENT: TerminalMeasurement = {
   screenRect: { left: 260, top: 80, width: 624, height: 408 },
   visibleRect: { left: 252, top: 80, width: 650, height: 420 },
   domTextRight: null,
+  slotted: true,
   charCell: { measured: { width: 8.43, height: 18 }, current: { width: 8.43, height: 18 } },
   page: { devicePixelRatio: 2, innerWidth: 1280, innerHeight: 800 },
   decorations: [],

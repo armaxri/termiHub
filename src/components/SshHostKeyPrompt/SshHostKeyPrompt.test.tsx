@@ -62,7 +62,7 @@ const unknownPrompt: SshHostKeyPromptPayload = {
   key_type: "ssh-ed25519",
   fingerprint: "SHA256:AABBCCDD",
   changed: false,
-  previous_fingerprints: null,
+  previous_keys: null,
   owner: null,
 };
 
@@ -73,7 +73,7 @@ const changedPrompt: SshHostKeyPromptPayload = {
   key_type: "ssh-ed25519",
   fingerprint: "SHA256:99887766",
   changed: true,
-  previous_fingerprints: null,
+  previous_keys: null,
   owner: null,
 };
 
@@ -85,7 +85,7 @@ const changedWithPriorPrompt: SshHostKeyPromptPayload = {
   key_type: "ssh-ed25519",
   fingerprint: "SHA256:99887766",
   changed: true,
-  previous_fingerprints: ["SHA256:AABBCCDD"],
+  previous_keys: [{ key_type: "ssh-ed25519", fingerprint: "SHA256:AABBCCDD" }],
   owner: null,
 };
 
@@ -182,12 +182,61 @@ describe("SshHostKeyPrompt", () => {
     expect(next?.textContent).toContain("SHA256:99887766");
     // Labels make the comparison explicit.
     expect(prev?.previousElementSibling?.textContent).toBe("Previously trusted");
-    expect(next?.previousElementSibling?.textContent).toBe("New");
+    expect(next?.previousElementSibling?.textContent).toBe("Now presented");
+    // Each fingerprint names its key type (#5627).
+    expect(
+      document.querySelector('[data-testid="ssh-hostkey-prev-fingerprint-type"]')?.textContent
+    ).toBe("ssh-ed25519");
+    expect(document.querySelector('[data-testid="ssh-hostkey-type"]')?.textContent).toBe(
+      "ssh-ed25519"
+    );
+    expect(next?.contains(document.querySelector('[data-testid="ssh-hostkey-type"]'))).toBe(true);
     // Both have their own copy affordance.
     expect(
       document.querySelector('[data-testid="ssh-hostkey-prev-fingerprint-copy"]')
     ).not.toBeNull();
     expect(document.querySelector('[data-testid="ssh-hostkey-fingerprint-copy"]')).not.toBeNull();
+  });
+
+  it("lists the previously trusted key before the presented one (#5627)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(changedWithPriorPrompt);
+    const prev = document.querySelector('[data-testid="ssh-hostkey-prev-fingerprint"]');
+    const next = document.querySelector('[data-testid="ssh-hostkey-fingerprint"]');
+    expect(prev && next && prev.compareDocumentPosition(next)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+  });
+
+  it("shows a prior whose key type is unknown without a type line", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({
+      ...changedWithPriorPrompt,
+      previous_keys: [{ key_type: null, fingerprint: "SHA256:AABBCCDD" }],
+    });
+    expect(
+      document.querySelector('[data-testid="ssh-hostkey-prev-fingerprint"]')?.textContent
+    ).toBe("SHA256:AABBCCDD");
+    expect(document.querySelector('[data-testid="ssh-hostkey-prev-fingerprint-type"]')).toBeNull();
+  });
+
+  it("offers to replace the trusted key on a changed key (#5627)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(changedWithPriorPrompt);
+    expect(document.querySelector('[data-testid="ssh-hostkey-accept-remember"]')?.textContent).toBe(
+      "Replace trusted key"
+    );
+    const body = document.querySelector('[data-testid="ssh-hostkey-prompt"]')?.textContent ?? "";
+    expect(body).toContain("replaces the old key for server.example:2222");
+    expect(body).not.toContain("remembers it so you are not asked again");
+  });
+
+  it("keeps Accept for host on first contact", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    expect(document.querySelector('[data-testid="ssh-hostkey-accept-remember"]')?.textContent).toBe(
+      "Accept for host"
+    );
   });
 
   it("copies the previously-trusted fingerprint from its copy button", async () => {

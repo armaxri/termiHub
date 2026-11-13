@@ -1448,6 +1448,13 @@
   line-height: 1.5;
 }
 
+/* A secondary line above a fact's value, e.g. a fingerprint's key type (#5627). */
+.ui-trust-prompt__fact-detail {
+  display: block;
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+}
+
 .ui-trust-prompt__copy {
   flex: 0 0 auto;
   align-self: center;

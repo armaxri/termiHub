@@ -28,6 +28,7 @@ HOSTKEY_HOST = "ssh-hostkey-host"
 HOSTKEY_TYPE = "ssh-hostkey-type"
 HOSTKEY_FINGERPRINT = "ssh-hostkey-fingerprint"
 HOSTKEY_PREV_FINGERPRINT = "ssh-hostkey-prev-fingerprint"
+HOSTKEY_PREV_TYPE = "ssh-hostkey-prev-fingerprint-type"
 HOSTKEY_MITM = "ssh-hostkey-mitm-warning"
 HOSTKEY_ACCEPT_REMEMBER = "ssh-hostkey-accept-remember"
 HOSTKEY_REJECT = "ssh-hostkey-reject"
@@ -114,17 +115,24 @@ class SshPhaseUi(HarnessMixin):
         )
 
     def wait_hostkey_prompt(self, *, timeout: float = 45.0) -> dict[str, str]:
-        """Wait for the host-key prompt; return host, type, fingerprint (+ prev, mitm)."""
+        """Wait for the host-key prompt; return host, type, fingerprint, remember label.
+
+        Also ``mitm`` (the changed-key warning), ``previous`` and
+        ``previous_type`` (the previously trusted key) when shown.
+        """
         self.wait(self.hostkey_prompt_open, timeout=timeout, what="the SSH host-key prompt")
         shown = {
             "host": self.driver.get_text(HOSTKEY_HOST).strip(),
             "type": self.driver.get_text(HOSTKEY_TYPE).strip(),
             "fingerprint": self.driver.get_text(HOSTKEY_FINGERPRINT).strip(),
+            "remember": self.driver.get_text(HOSTKEY_ACCEPT_REMEMBER).strip(),
         }
         if self.driver.exists(HOSTKEY_MITM):
             shown["mitm"] = self.driver.get_text(HOSTKEY_MITM).strip()
         if self.driver.exists(HOSTKEY_PREV_FINGERPRINT):
             shown["previous"] = self.driver.get_text(HOSTKEY_PREV_FINGERPRINT).strip()
+        if self.driver.exists(HOSTKEY_PREV_TYPE):
+            shown["previous_type"] = self.driver.get_text(HOSTKEY_PREV_TYPE).strip()
         return shown
 
     def answer_hostkey_prompt(self, button: str) -> None:

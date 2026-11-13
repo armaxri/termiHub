@@ -167,4 +167,52 @@ describe("TrustPrompt", () => {
     expect(onAcceptOnce).toHaveBeenCalledTimes(1);
     expect(onAcceptForHost).toHaveBeenCalledTimes(1);
   });
+
+  it("renders a fact's detail line above its value (#5627)", () => {
+    renderPrompt({
+      facts: [
+        {
+          label: "Previously trusted",
+          value: "SHA256:OLD",
+          detail: "ssh-ed25519",
+          detailTestId: "tp-prev-type",
+          mono: true,
+          testId: "tp-prev",
+        },
+      ],
+    });
+    const detail = document.querySelector('[data-testid="tp-prev-type"]');
+    expect(detail?.textContent).toBe("ssh-ed25519");
+    expect(document.querySelector('[data-testid="tp-prev"]')?.contains(detail ?? null)).toBe(true);
+    expect(document.querySelector('[data-testid="tp-prev"]')?.textContent).toContain("SHA256:OLD");
+  });
+
+  it("uses the changed-identity accept label and hint when given (#5627)", () => {
+    renderPrompt({
+      changed: true,
+      changedAcceptForHostLabel: "Replace trusted key",
+      changedHint: "Replace trusted key replaces the old key for server.example:2222.",
+    });
+    expect(document.querySelector('[data-testid="tp-accept-remember"]')?.textContent).toBe(
+      "Replace trusted key"
+    );
+    expect(document.body.textContent).toContain(
+      "Replace trusted key replaces the old key for server.example:2222."
+    );
+    expect(document.body.textContent).not.toContain("remembers it so you are not asked again");
+    // Button emphasis is unchanged by the label (#5185).
+    expect(variantOf("tp-accept-remember")).toBe("ui-btn--danger");
+  });
+
+  it("keeps the shared label and hint for a new identity even when changed copy is given", () => {
+    renderPrompt({
+      changed: false,
+      changedAcceptForHostLabel: "Replace trusted key",
+      changedHint: "replaces the old key",
+    });
+    expect(document.querySelector('[data-testid="tp-accept-remember"]')?.textContent).toBe(
+      "Accept for host"
+    );
+    expect(document.body.textContent).not.toContain("replaces the old key");
+  });
 });

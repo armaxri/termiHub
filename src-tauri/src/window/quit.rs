@@ -156,7 +156,8 @@ pub enum ExitDecision {
 /// closed, `Some` = an explicit quit), the platform, how many windows are still
 /// open, and the current [`QuitPhase`].
 ///
-/// * A confirmed quit always proceeds.
+/// * A confirmed quit always proceeds, and so does a restart
+///   ([`tauri::RESTART_EXIT_CODE`]), which no window can veto.
 /// * `code == None`: every window already went through its own close prompt.
 ///   macOS keeps the app alive in the Dock unless a quit is in progress, in which
 ///   case closing the last window completes it. Windows and Linux quit.
@@ -169,7 +170,10 @@ pub fn decide_exit_request(
     open_windows: usize,
     phase: QuitPhase,
 ) -> ExitDecision {
-    if phase == QuitPhase::Confirmed {
+    // A confirmed quit, or a restart (Tauri ignores `prevent_exit` for its
+    // restart exit code, so asking the windows would only leave a dangling
+    // quit prompt behind, #5647).
+    if phase == QuitPhase::Confirmed || code == Some(tauri::RESTART_EXIT_CODE) {
         return ExitDecision::Proceed;
     }
     match code {
@@ -666,6 +670,18 @@ mod tests {
             for is_macos in [true, false] {
                 assert_eq!(
                     decide_exit_request(code, is_macos, 3, QuitPhase::Confirmed),
+                    ExitDecision::Proceed
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_restart_proceeds_without_asking_the_windows() {
+        for phase in [QuitPhase::Idle, QuitPhase::Prompting] {
+            for is_macos in [true, false] {
+                assert_eq!(
+                    decide_exit_request(Some(tauri::RESTART_EXIT_CODE), is_macos, 2, phase),
                     ExitDecision::Proceed
                 );
             }

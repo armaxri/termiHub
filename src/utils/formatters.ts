@@ -286,6 +286,26 @@ export function formatShortDate(value: DateInput): string {
 }
 
 /**
+ * Format a build timestamp (date, time and time zone) in the UI locale, e.g.
+ * `Nov 13, 2026, 10:42 AM GMT+1` in `en-US` or `13. Nov. 2026, 10:42 MEZ` in
+ * `de-DE` (#5652). Returns an empty string for a missing or unparseable input so
+ * the caller can hide the line instead of showing `"Invalid Date"`.
+ */
+export function formatBuildDate(value: DateInput | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "";
+  const date = toValidDate(value);
+  if (!date) return "";
+  return new Intl.DateTimeFormat(resolveUiLocale(), {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+/**
  * Name a day offset from today in the UI locale — `0` → "today", `1` →
  * "tomorrow", `-1` → "yesterday" (`heute`/`morgen`/`gestern` in `de-DE`), and
  * "in N days" beyond that (#4374). Uses `Intl.RelativeTimeFormat` so the word
