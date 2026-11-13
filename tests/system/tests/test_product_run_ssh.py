@@ -581,3 +581,34 @@ class TestProductRunSsh(
             assert not missing, f"not measured: {missing}"
             problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
             assert not problems, problems
+
+    # ── SSH chip: host-key trust (#5669) ─────────────────────────────────────
+    def test_12_ssh_chip_trust(self):
+        name = unique_name("pr-ssh-chip-trust")
+        with self.step(
+            "ssh.chip.trust",
+            "The SSH chip's tooltip says how the session's host key is trusted (#5669)",
+            expect="an SSH tab whose status-bar SSH chip tooltip reads 'Host key: trusted (SHA256:…)'",
+        ):
+            self.require("ssh.key.login")
+            native = self.need_native()
+            port = native.target.port
+            want = host_key_fingerprint(native.host_pubkey) if native.host_pubkey else None
+            # ssh.key.login remembered the target's key: this connect trusts it silently.
+            self.switch_to_connections_sidebar()
+            self.create_ssh_connection(
+                name, host=SSH_HOST, port=port, username=native.target.username,
+                auth_method="key", key_path=str(native.client_key), connect=True,
+            )
+            tab_id = self.tab_id_of(name)
+            self.wait_connected(tab_id)
+            self.switch_to_tab(tab_id)
+            title = self.wait(
+                lambda: (lambda t: t if "Host key:" in t else None)(
+                    self.driver.get_attribute("status-bar-ssh", "title") or ""
+                ),
+                timeout=10.0, what="the host-key line in the SSH chip tooltip",
+            )
+            self.evidence(f"SSH chip tooltip: {title!r}; server fingerprint {want!r}")
+            assert want and f"Host key: trusted ({want})" in title, title
+        self.close_all_tabs()
