@@ -28,9 +28,8 @@
   border-left: 1px solid var(--border-secondary);
 }
 
-/* The default font chain in the Font family hint: monospace so the names read
-   as values, wrapping anywhere so the long list never overflows (#5561). */
+/* The default font chain in the Font family hint: wraps anywhere so the long
+   list never overflows the column (#5561). */
 .appearance-settings__font-chain {
-  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }
