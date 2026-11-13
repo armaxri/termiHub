@@ -29,7 +29,10 @@ import "./toast.css";
  * editor footers, the Transfers panel — #5618): `useToastAvoidInset` publishes
  * `--app-toast-avoid-inset`, the height the stack must start above. An open
  * dialog is a keep-clear zone too (#5686): the stack sits above it, or beside
- * it in a narrower column when it is too tall to clear.
+ * it in a narrower column when it is too tall to clear. When not even a 240px
+ * column fits beside it (#5715), the stack docks at the top edge: one compact,
+ * single-line toast at a time over the dialog head, never its body, and
+ * success/info toasts wait until the dialog closes — errors stay visible.
  *
  * A toast raised with `dismissOnModal` (the "Closed … / Reopen" undo) is
  * dismissed when a dialog opens (#5665), so it never lingers beside one.
@@ -51,6 +54,9 @@ const TOAST_WIDTH = 340;
 /** At most this many toasts show at once; older ones wait until one closes. */
 const VISIBLE_TOASTS = 3;
 
+/** Gap above the docked stack (#5715): it sits as high as it can. */
+const DOCKED_TOP = 8;
+
 /**
  * sonner offsets: 16px from the window edges; from the bottom, 16px above the
  * top of the visible bottom banner (#5556) or of the highest keep-clear element
@@ -63,19 +69,23 @@ const TOAST_OFFSET = {
   bottom: `calc(max(var(--app-bottom-banner-inset, 0px), var(${TOAST_AVOID_INSET_VAR}, 0px)) + ${TOAST_EDGE}px)`,
 };
 
+/** Offsets while docked at the top edge over a tall dialog (#5715). */
+const DOCKED_OFFSET = { ...TOAST_OFFSET, top: DOCKED_TOP };
+
 export function ToastProvider() {
-  useToastAvoidInset(TOAST_WIDTH, TOAST_EDGE);
+  const docked = useToastAvoidInset(TOAST_WIDTH, TOAST_EDGE);
   useDismissOnModalOpen();
+  const offset = docked ? DOCKED_OFFSET : TOAST_OFFSET;
   return (
     // `toast-region` lets the product run measure the stack (#5618).
     <div data-testid="toast-region">
       <Toaster
-        position="bottom-right"
+        position={docked ? "top-center" : "bottom-right"}
         expand
-        visibleToasts={VISIBLE_TOASTS}
+        visibleToasts={docked ? 1 : VISIBLE_TOASTS}
         gap={8}
-        offset={TOAST_OFFSET}
-        mobileOffset={TOAST_OFFSET}
+        offset={offset}
+        mobileOffset={offset}
         closeButton
         hotkey={toastHotkey()}
         toastOptions={{ className: "th-toast", unstyled: true, closeButtonAriaLabel: "Close" }}
