@@ -562,8 +562,13 @@ mod tests {
         let path = dir.path().join("known_hosts");
         std::fs::write(&path, format!("[127.0.0.1]:40022 {RSA_KEY}\n")).unwrap();
         assert!(
-            recorded_keys_in("127.0.0.1", 40022, &public_key(IMPOSTOR_KEY), Some(path.as_path()))
-                .is_empty(),
+            recorded_keys_in(
+                "127.0.0.1",
+                40022,
+                &public_key(IMPOSTOR_KEY),
+                Some(path.as_path())
+            )
+            .is_empty(),
             "an rsa key is not what a new ed25519 key replaces"
         );
 

@@ -99,7 +99,10 @@ fn previous_keys(
         }
     }
     for recorded in recorded {
-        match keys.iter_mut().find(|k| k.fingerprint == recorded.fingerprint) {
+        match keys
+            .iter_mut()
+            .find(|k| k.fingerprint == recorded.fingerprint)
+        {
             Some(known) => known.key_type = Some(recorded.key_type.clone()),
             None => keys.push(PreviousHostKey {
                 key_type: Some(recorded.key_type.clone()),
