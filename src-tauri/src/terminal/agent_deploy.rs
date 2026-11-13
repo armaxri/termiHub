@@ -795,9 +795,7 @@ fn check_custom_install_target(
             Err(_) => Ok(false),
         }
     };
-    if is_agent(path)?
-        || is_agent(&format!("{path}{}", agent_install::POSIX_BACKUP_SUFFIX))?
-    {
+    if is_agent(path)? || is_agent(&format!("{path}{}", agent_install::POSIX_BACKUP_SUFFIX))? {
         return Ok(());
     }
     Err(TerminalError::RemoteError(format!(

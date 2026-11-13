@@ -109,6 +109,9 @@ fn the_setup_script_refuses_to_replace_a_file_that_is_not_an_agent() {
         .find("Never replace a file that is not a termiHub agent")
         .expect("the guard is in the script");
     let mv = script.find("$SUDO mv").expect("the install move");
-    assert!(guard < mv, "the guard runs before the binary is moved into place");
+    assert!(
+        guard < mv,
+        "the guard runs before the binary is moved into place"
+    );
     assert!(script.contains(r#""termihub-agent "*)"#));
 }

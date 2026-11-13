@@ -79,18 +79,27 @@ async fn update_replaces_the_agent_at_its_custom_path() {
             installed_path: Some(CUSTOM.to_string()),
         }
     );
-    assert_eq!(file(&state, CUSTOM), Some(bytes), "the new agent is at the custom path");
+    assert_eq!(
+        file(&state, CUSTOM),
+        Some(bytes),
+        "the new agent is at the custom path"
+    );
     assert_eq!(
         file(&state, DEFAULT_INSTALLED),
         None,
         "nothing is installed at the default the connect does not run"
     );
-    assert_eq!(file(&state, &format!("{CUSTOM}{POSIX_BACKUP_SUFFIX}")), None);
+    assert_eq!(
+        file(&state, &format!("{CUSTOM}{POSIX_BACKUP_SUFFIX}")),
+        None
+    );
     assert!(state.lock().expect("host").staged_files().is_empty());
 
     // The stored path already names the new binary: nothing to record, and the
     // next connect launches exactly what was installed and verified.
-    let path = result.launchable_install_path().expect("a launchable install");
+    let path = result
+        .launchable_install_path()
+        .expect("a launchable install");
     assert_eq!(
         agent_install::adopted_agent_path(Some(CUSTOM), path, "~/.local/bin/termihub-agent"),
         None
@@ -119,7 +128,11 @@ async fn update_without_a_custom_path_installs_to_the_default() {
             ),
             "{agent_path:?}: {result:?}"
         );
-        assert_eq!(file(&state, DEFAULT_INSTALLED), Some(bytes), "{agent_path:?}");
+        assert_eq!(
+            file(&state, DEFAULT_INSTALLED),
+            Some(bytes),
+            "{agent_path:?}"
+        );
     }
 }
 
@@ -169,16 +182,27 @@ async fn update_refuses_to_replace_a_file_that_is_not_a_termihub_agent() {
         .expect_err("a foreign file must not be replaced");
 
     assert!(err.to_string().contains("not a termiHub agent"), "{err}");
-    assert_eq!(file(&state, CUSTOM), Some(theirs), "their file is untouched");
+    assert_eq!(
+        file(&state, CUSTOM),
+        Some(theirs),
+        "their file is untouched"
+    );
     let st = state.lock().expect("host");
     assert!(
         !st.files.keys().any(|p| p.ends_with(POSIX_BACKUP_SUFFIX)),
         "no backup was made: {:?}",
         st.files.keys()
     );
-    assert!(st.dirs.is_empty(), "no upload dir was prepared: {:?}", st.dirs);
+    assert!(
+        st.dirs.is_empty(),
+        "no upload dir was prepared: {:?}",
+        st.dirs
+    );
     assert!(st.staged_files().is_empty());
-    assert!(!st.commands.iter().any(|c| c.starts_with("mv ") || c.starts_with("cp ")));
+    assert!(!st
+        .commands
+        .iter()
+        .any(|c| c.starts_with("mv ") || c.starts_with("cp ")));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -208,7 +232,11 @@ async fn update_refuses_a_shell_unsafe_custom_path_before_touching_the_host() {
 
     assert!(err.to_string().contains("cannot be used"), "{err}");
     let st = state.lock().expect("host");
-    assert_eq!(st.commands, ["uname -s", "uname -m"], "only the OS was detected");
+    assert_eq!(
+        st.commands,
+        ["uname -s", "uname -m"],
+        "only the OS was detected"
+    );
     assert!(st.files.is_empty());
 }
 
@@ -238,8 +266,15 @@ async fn a_broken_new_binary_is_rolled_back_at_the_custom_path() {
         }
         other => panic!("expected RolledBack, got {other:?}"),
     }
-    assert_eq!(file(&state, CUSTOM), Some(old), "the previous agent is back");
-    assert_eq!(file(&state, &format!("{CUSTOM}{POSIX_BACKUP_SUFFIX}")), None);
+    assert_eq!(
+        file(&state, CUSTOM),
+        Some(old),
+        "the previous agent is back"
+    );
+    assert_eq!(
+        file(&state, &format!("{CUSTOM}{POSIX_BACKUP_SUFFIX}")),
+        None
+    );
     assert_eq!(file(&state, DEFAULT_INSTALLED), None);
     assert_eq!(result.launchable_install_path(), Some(CUSTOM));
 }

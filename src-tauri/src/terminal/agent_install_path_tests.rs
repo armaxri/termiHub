@@ -128,7 +128,13 @@ fn only_a_custom_posix_agent_path_is_an_update_target() {
         custom_posix_agent_path(Some("~/bin/termihub-agent")),
         Some("~/bin/termihub-agent")
     );
-    for path in [None, Some(""), Some("  "), Some(POSIX_DEFAULT), Some(ENCODED)] {
+    for path in [
+        None,
+        Some(""),
+        Some("  "),
+        Some(POSIX_DEFAULT),
+        Some(ENCODED),
+    ] {
         assert_eq!(custom_posix_agent_path(path), None, "{path:?}");
     }
 }
@@ -186,12 +192,20 @@ fn an_explicit_posix_install_is_stored_only_over_a_replaceable_path() {
         );
     }
     assert_eq!(
-        adopted_agent_path(Some("/opt/termihub-agent"), "/srv/termihub-agent", POSIX_DEFAULT),
+        adopted_agent_path(
+            Some("/opt/termihub-agent"),
+            "/srv/termihub-agent",
+            POSIX_DEFAULT
+        ),
         None,
         "a user-set custom path is kept"
     );
     assert_eq!(
-        adopted_agent_path(Some("/opt/termihub-agent"), "/opt/termihub-agent", POSIX_DEFAULT),
+        adopted_agent_path(
+            Some("/opt/termihub-agent"),
+            "/opt/termihub-agent",
+            POSIX_DEFAULT
+        ),
         None,
         "an update over the custom path changes nothing"
     );
@@ -228,6 +242,10 @@ fn the_setup_wizard_path_is_not_stored_when_it_changes_nothing() {
         (Some("/opt/termihub-agent"), "/opt/termihub-agent"),
         (Some("/opt/termihub-agent"), "  "),
     ] {
-        assert_eq!(setup_agent_path(current, chosen), None, "{current:?} {chosen:?}");
+        assert_eq!(
+            setup_agent_path(current, chosen),
+            None,
+            "{current:?} {chosen:?}"
+        );
     }
 }
