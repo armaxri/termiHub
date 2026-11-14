@@ -12,6 +12,11 @@ One fresh profile with a saved local-shell connection, a macro with a
 description and tags, an on-output-match workflow with a description and
 tags, and a schedule left off. Each row's visible text must be its name,
 description and markers only; the settings must be in its tooltip.
+
+#5770 extends the grade to the other lists: a tunnel (its forwarding, SSH
+connection and host), a service (its protocol, address and folder), a
+workspace (its tab count) and a remote agent (its address). None of them is
+started or connected; the rows are graded at rest.
 """
 
 from __future__ import annotations
@@ -21,7 +26,9 @@ import sys
 import pytest
 
 from termihub_harness import (
+    AgentUi,
     ConnectionsUi,
+    EmbeddedServicesUi,
     PasswordPromptUi,
     SettingsUi,
     SidebarUi,
@@ -43,10 +50,18 @@ pytestmark = [
 ]
 
 
+#: Save Current on the Workspaces toolbar (in its "…" menu when narrow, #4824).
+WORKSPACE_SAVE_CURRENT = "workspace-save-current-btn"
+WORKSPACE_OVERFLOW = "workspace-toolbar-overflow"
+WORKSPACE_SAVE_DIALOG = "save-workspace-dialog"
+
+
 class TestProductRunRowsNames(
     ProductRunUi,
     SshPhaseUi,
     AutomationPhaseUi,
+    EmbeddedServicesUi,
+    AgentUi,
     WorkflowUi,
     SettingsUi,
     TerminalUi,
@@ -206,3 +221,138 @@ class TestProductRunRowsNames(
                 [f"on {self.ids['conn_name']}"],
             )
             self.shot(label="schedule")
+
+    def test_50_tunnel_row(self):
+        t = self.tag
+        with self.step(
+            "rows-names.tunnel",
+            "A tunnel row shows its name only; the forwarding, SSH connection and host are in "
+            "the tooltip",
+            expect="the Tunnels sidebar: 'Rows tunnel …' with a grey dot and its name; no "
+            "'Local' badge, no '127.0.0.1:…' mapping, no 'via …' and no 'this computer' on "
+            "the row (#5770)",
+        ):
+            self.require("rows-names.items")
+            ssh = f"pr-rows-ssh-{t}"
+            self.switch_to_connections_sidebar()
+            self.create_ssh_connection(
+                ssh, host="127.0.0.1", port=22, username="rows", connect=False
+            )
+            self.wait(lambda: self.find_connection(ssh) is not None, what="the SSH connection")
+            name = f"Rows tunnel {t}"
+            self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+            self.driver.click("tunnel-new-btn")
+            self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
+            self.driver.type("tunnel-editor-name", name)
+            self.wait(
+                lambda: self._try_select("tunnel-editor-ssh-connection", ssh),
+                what="the SSH connection option",
+            )
+            self.driver.click("tunnel-type-local")
+            self.wait(
+                lambda: self.driver.exists("tunnel-editor-local-port"), what="the port fields"
+            )
+            self.driver.type("tunnel-editor-local-port", "18577")
+            self.driver.type("tunnel-editor-remote-host", "db.internal")
+            self.driver.type("tunnel-editor-remote-port", "5432")
+            self.driver.click("tunnel-editor-save")
+            tunnel = self.wait(
+                lambda: next(
+                    (x for x in self.driver.get_state("tunnels") or [] if x.get("name") == name),
+                    None,
+                ),
+                what="the tunnel to save",
+            )
+            self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+            self._grade_row(
+                f"tunnel-item-{tunnel['id']}",
+                [name],
+                [
+                    "Local · 127.0.0.1:18577 → db.internal:5432",
+                    f"Via {ssh}",
+                    "Hosted on this computer",
+                ],
+            )
+            self.shot(label="tunnel")
+
+    def test_60_service_row(self):
+        t = self.tag
+        with self.step(
+            "rows-names.service",
+            "A service row shows its name only; the protocol, address and folder are in the "
+            "tooltip, and Run on is in the editor",
+            expect="the Services sidebar: 'Rows service …' with a grey dot and its name; no "
+            "'HTTP' badge, no ':port → folder' line and no 'Run on' selector on the row "
+            "(#5770)",
+        ):
+            self.require("rows-names.items")
+            name = f"Rows service {t}"
+            port = self.free_port()
+            server = self.create_server(name, proto="http", root="/tmp", port=port)
+            row = f"server-item-{server['id']}"
+            self.wait(lambda: self.driver.exists(row), what="the service row")
+            self._grade_row(
+                row, [name], [f"HTTP · http://127.0.0.1:{port}", "Serves /tmp"]
+            )
+            assert not self.driver.exists(f"server-runloc-{server['id']}"), (
+                "the Run on selector is still on the row"
+            )
+            self.shot(label="service")
+
+    def test_70_workspace_row(self):
+        t = self.tag
+        with self.step(
+            "rows-names.workspace",
+            "A workspace row shows its name and description; the tab count is in the tooltip",
+            expect="the Workspaces sidebar: 'Rows workspace …' with 'Morning layout' muted "
+            "under it, nothing else (#5770)",
+        ):
+            self.require("rows-names.items")
+            self.switch_to_connections_sidebar()
+            self.connect_connection(self.ids["conn_name"])
+            name = f"Rows workspace {t}"
+            self._ensure_sidebar("workspaces", "activity-bar-workspaces")
+            self.invoke_toolbar_action(WORKSPACE_SAVE_CURRENT, overflow=WORKSPACE_OVERFLOW)
+            self.wait(
+                lambda: self.driver.exists(WORKSPACE_SAVE_DIALOG), what="the save dialog"
+            )
+            self.driver.type("save-workspace-name", name)
+            self.driver.type("save-workspace-description", "Morning layout")
+            self.driver.click("save-workspace-confirm")
+            ws = self.wait(
+                lambda: next(
+                    (
+                        w
+                        for w in self.driver.get_state("workspaces") or []
+                        if w.get("name") == name
+                    ),
+                    None,
+                ),
+                what="the workspace to save",
+            )
+            self._grade_row(f"workspace-item-{ws['id']}", [name, "Morning layout"], ["Opens"])
+            desc = self.driver.get_text(f"workspace-description-{ws['id']}").strip()
+            assert desc == "Morning layout", f"the workspace description reads {desc!r}"
+            self.shot(label="workspace")
+
+    def test_80_agent_row(self):
+        t = self.tag
+        with self.step(
+            "rows-names.agent",
+            "A remote agent row shows its name, state dot and Connect; its address is in the "
+            "tooltip",
+            expect="the Connections sidebar, Remote Agents: 'Rows agent …' with a grey dot, "
+            "its name and Connect; no 'rows@127.0.0.1:22' and no version on the row (#5770)",
+        ):
+            self.require("rows-names.items")
+            name = f"Rows agent {t}"
+            agent = self.create_remote_agent(name, host="127.0.0.1", port=22, username="rows")
+            header = self.agent_header_testid(agent["id"])
+            self.wait(lambda: self.driver.exists(header), what="the agent header")
+            text = self.row_text(header)
+            tip = self.driver.get_attribute(header, "title") or ""
+            self.evidence(f"agent header {text!r}; tooltip {tip!r}")
+            left = row_leftover_text(text, [name, "Connect"])
+            assert left == "", f"the agent row shows settings text: {left!r}"
+            assert "rows@127.0.0.1:22" in tip, f"the address is not in the tooltip {tip!r}"
+            self.shot(label="agent")
