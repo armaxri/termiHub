@@ -152,6 +152,10 @@
   background: color-mix(in srgb, var(--color-info) 18%, transparent);
 }
 
+.tab__unencrypted-badge {
+  margin-left: var(--spacing-xs);
+}
+
 .tab__dirty-dot {
   display: inline-block;
   width: 8px;

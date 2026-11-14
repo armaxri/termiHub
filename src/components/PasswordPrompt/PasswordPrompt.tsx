@@ -1,4 +1,5 @@
 import { useState, useCallback, useId } from "react";
+import { LockOpen } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox } from "@/components/ui";
@@ -14,6 +15,7 @@ import {
   credentialStorageNeedsChoice,
   ensureCredentialStorageForSave,
 } from "@/utils/credentialStorageChoice";
+import { isUnencryptedTransport } from "@/utils/unencryptedSession";
 
 /**
  * Global dialog that prompts the user for an SSH password at connect time.
@@ -48,6 +50,8 @@ import {
  * line rather than in the title, and a key passphrase prompt names its key.
  * A schema field secret is titled after its own field (#5656): "Proxy
  * password", "Jump host password" — never the connection's "SSH password".
+ * A telnet login password adds "Telnet sends this password unencrypted."
+ * (#5749).
  */
 export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
@@ -86,6 +90,9 @@ export function PasswordPrompt() {
   // itself (#5656): it is not the connection's own login password.
   const secretName =
     secretLabel || tf("passwordPrompt.title.password", { transport: transportName });
+  // A telnet login password travels in clear text (#5749); a schema field
+  // secret (a proxy password) is not the telnet login, so it is not flagged.
+  const unencrypted = !isPassphrase && !secretLabel && isUnencryptedTransport(transport);
   const title = isPassphrase ? t("passwordPrompt.title.keyPassphrase") : secretName;
   const waitingText = `${waiting} more password ${waiting === 1 ? "prompt" : "prompts"} waiting`;
   const target = `${username}@${host}`;
@@ -183,6 +190,12 @@ export function PasswordPrompt() {
         <p className="password-prompt__description" data-testid="password-prompt-description">
           {description}
         </p>
+        {unencrypted && (
+          <p className="password-prompt__unencrypted" data-testid="password-prompt-unencrypted">
+            <LockOpen size={14} aria-hidden className="password-prompt__unencrypted-icon" />
+            {t("passwordPrompt.unencrypted")}
+          </p>
+        )}
         {waiting > 0 && (
           <p className="password-prompt__queue" data-testid="password-prompt-queue">
             {waitingText}
