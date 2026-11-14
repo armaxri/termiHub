@@ -114,8 +114,9 @@ pub struct SpawnedShell {
     /// this watcher a self-exited Windows shell was never reported as ended
     /// (issue #2704). When it returns, the watcher drives the end-of-session
     /// path directly. Returns once the child is gone — whether it exited itself
-    /// or was terminated via [`kill`](Self::kill).
-    pub wait_for_exit: Box<dyn FnOnce() + Send>,
+    /// or was terminated via [`kill`](Self::kill) — with the child's exit
+    /// status, or `None` when it cannot be read (#5742).
+    pub wait_for_exit: Box<dyn FnOnce() -> Option<i32> + Send>,
     /// Release the pseudoterminal master (best-effort).
     ///
     /// Called by the watcher once [`wait_for_exit`](Self::wait_for_exit)

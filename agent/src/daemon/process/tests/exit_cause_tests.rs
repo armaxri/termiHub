@@ -2,6 +2,10 @@
 //! a backend whose server closed the connection reports `RemoteClosed` in the
 //! frame's end-cause byte, so the agent can tell the desktop "closed by
 //! server" instead of "connection lost". A kill carries no cause.
+//!
+//! It also carries the process's real exit status (#5742): a shell the user
+//! exited reports its status, so the desktop ends the tab instead of
+//! reconnecting it.
 
 use std::time::Duration;
 
@@ -17,6 +21,8 @@ use crate::daemon::protocol::{self, INTENT_TAKEOVER, MSG_EXITED, MSG_KILL};
 /// reports once its server closed the shell channel.
 struct EndedConnection {
     cause: Option<SessionEndCause>,
+    /// The process's exit status, as a local shell reports it (#5742).
+    status: Option<i32>,
 }
 
 #[async_trait::async_trait]
@@ -69,6 +75,9 @@ impl ConnectionType for EndedConnection {
     fn end_cause(&self) -> Option<SessionEndCause> {
         self.cause
     }
+    fn exit_code(&self) -> Option<i32> {
+        self.status
+    }
 }
 
 /// Read frames until the daemon's [`MSG_EXITED`] and return its payload.
@@ -93,6 +102,7 @@ async fn exited_payload(worker: &mut Worker) -> Vec<u8> {
 async fn a_natural_end_reports_the_backends_cause() {
     let daemon = spawn_daemon_with(Box::new(EndedConnection {
         cause: Some(SessionEndCause::RemoteClosed),
+        status: None,
     }));
     let mut worker = Worker::connect(&daemon, INTENT_TAKEOVER).await;
     assert_eq!(worker.handshake().await, Some(Attach::Ready(Vec::new())));
@@ -110,7 +120,10 @@ async fn a_natural_end_reports_the_backends_cause() {
 
 #[tokio::test]
 async fn a_natural_end_without_a_known_cause_keeps_the_legacy_payload() {
-    let daemon = spawn_daemon_with(Box::new(EndedConnection { cause: None }));
+    let daemon = spawn_daemon_with(Box::new(EndedConnection {
+        cause: None,
+        status: None,
+    }));
     let mut worker = Worker::connect(&daemon, INTENT_TAKEOVER).await;
     assert_eq!(worker.handshake().await, Some(Attach::Ready(Vec::new())));
 
@@ -125,6 +138,7 @@ async fn a_kill_reports_no_cause() {
     // Even a backend that would report a cause: a kill is deliberate.
     let daemon = spawn_daemon_with(Box::new(EndedConnection {
         cause: Some(SessionEndCause::IoError),
+        status: Some(1),
     }));
     let mut worker = Worker::connect(&daemon, INTENT_TAKEOVER).await;
     assert_eq!(worker.handshake().await, Some(Attach::Ready(Vec::new())));
@@ -135,4 +149,24 @@ async fn a_kill_reports_no_cause() {
     let payload = exited_payload(&mut worker).await;
 
     assert_eq!(protocol::decode_end_cause(&payload), None);
+    assert_eq!(protocol::decode_exit_status(&payload), None);
+}
+
+#[tokio::test]
+async fn a_shell_that_exits_on_its_own_reports_its_real_status() {
+    for status in [0, 3] {
+        let daemon = spawn_daemon_with(Box::new(EndedConnection {
+            cause: None,
+            status: Some(status),
+        }));
+        let mut worker = Worker::connect(&daemon, INTENT_TAKEOVER).await;
+        assert_eq!(worker.handshake().await, Some(Attach::Ready(Vec::new())));
+
+        drop(daemon.output);
+        let payload = exited_payload(&mut worker).await;
+
+        assert_eq!(protocol::decode_exit_status(&payload), Some(status));
+        assert_eq!(protocol::decode_exit_code(&payload), Some(status));
+        assert_eq!(protocol::decode_end_cause(&payload), None);
+    }
 }

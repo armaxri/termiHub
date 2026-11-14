@@ -1418,15 +1418,18 @@ impl SessionManager {
         })
     }
 
-    /// Why the in-process session `session_id`'s link ended on its own
-    /// (#5732), read from its backend's
-    /// [`end_cause`](ConnectionType::end_cause). `None` for an unknown or
+    /// How the in-process session `session_id` ended on its own: why its link
+    /// ended (#5732, its backend's [`end_cause`](ConnectionType::end_cause))
+    /// and its process's real exit status (#5742, the backend's
+    /// [`exit_code`](ConnectionType::exit_code)). `None`s for an unknown or
     /// daemon-hosted session and when the backend cannot tell.
-    async fn in_process_end_cause(&self, session_id: &str) -> Option<SessionEndCause> {
+    async fn in_process_end(&self, session_id: &str) -> (Option<SessionEndCause>, Option<i32>) {
         let sessions = self.sessions.lock().await;
-        match &sessions.get(session_id)?.backend {
-            SessionBackend::InProcess { connection, .. } => connection.end_cause(),
-            _ => None,
+        match sessions.get(session_id).map(|s| &s.backend) {
+            Some(SessionBackend::InProcess { connection, .. }) => {
+                (connection.end_cause(), connection.exit_code())
+            }
+            _ => (None, None),
         }
     }
 
@@ -2858,11 +2861,18 @@ fn spawn_output_forwarder(
                 // connection reads "closed by server" on the desktop, not
                 // "connection lost". The backend recorded it before closing
                 // its output channel.
-                let end_cause = match manager.upgrade() {
-                    Some(manager) => manager.in_process_end_cause(&session_id).await,
-                    None => None,
+                // A backend with a process of its own also reports how it
+                // exited (#5742); the legacy `exit_code` stays `0` without.
+                let (end_cause, exit_status) = match manager.upgrade() {
+                    Some(manager) => manager.in_process_end(&session_id).await,
+                    None => (None, None),
                 };
-                let _ = sink.send_exit_with_cause(&session_id, Some(0), end_cause);
+                let _ = sink.send_exit_with_cause(
+                    &session_id,
+                    Some(exit_status.unwrap_or(0)),
+                    end_cause,
+                    exit_status,
+                );
                 // Natural-exit deferred-update hook (#2378): if this was the
                 // last active session, apply any staged self-update now,
                 // matching the explicit-close path. The `Weak` is empty when

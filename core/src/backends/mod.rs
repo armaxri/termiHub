@@ -14,6 +14,9 @@ mod local_shell_cwd;
 mod cwd_follow_thread;
 #[cfg(feature = "local-shell")]
 mod local_shell_env;
+// The exit status of a local shell that ended on its own (#5742).
+#[cfg(feature = "local-shell")]
+mod local_shell_exit;
 #[cfg(feature = "local-shell")]
 mod local_shell_ready;
 #[cfg(feature = "local-shell")]

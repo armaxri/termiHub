@@ -58,11 +58,14 @@ impl JsonRpcOutputSink {
     /// link ended on its own, read from the backend's
     /// [`end_cause`](termihub_core::connection::ConnectionType::end_cause).
     /// `None` omits the field, exactly as [`OutputSink::send_exit`] does.
+    /// `exit_status` is the process's real exit status (#5742), also omitted
+    /// when `None`.
     pub fn send_exit_with_cause(
         &self,
         session_id: &str,
         exit_code: Option<i32>,
         end_cause: Option<SessionEndCause>,
+        exit_status: Option<i32>,
     ) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
             CONNECTION_EXIT,
@@ -70,6 +73,7 @@ impl JsonRpcOutputSink {
                 session_id: session_id.to_owned(),
                 exit_code,
                 end_cause,
+                exit_status,
             }),
         );
         self.notification_tx.send(notification).map_err(|e| {
@@ -112,7 +116,7 @@ impl OutputSink for JsonRpcOutputSink {
     }
 
     fn send_exit(&self, session_id: &str, exit_code: Option<i32>) -> Result<(), SessionError> {
-        self.send_exit_with_cause(session_id, exit_code, None)
+        self.send_exit_with_cause(session_id, exit_code, None, None)
     }
 
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError> {
@@ -233,7 +237,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let sink = JsonRpcOutputSink::new(tx);
 
-        sink.send_exit_with_cause("s1", Some(0), Some(SessionEndCause::RemoteClosed))
+        sink.send_exit_with_cause("s1", Some(0), Some(SessionEndCause::RemoteClosed), None)
             .unwrap();
 
         let notification = rx.try_recv().unwrap();
@@ -249,9 +253,27 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let sink = JsonRpcOutputSink::new(tx);
 
-        sink.send_exit_with_cause("s1", Some(0), None).unwrap();
+        sink.send_exit_with_cause("s1", Some(0), None, None)
+            .unwrap();
 
         let notification = rx.try_recv().unwrap();
+        assert!(notification.params.get("end_cause").is_none());
+        // Nor an `exit_status` without a real status (pre-0.39.0, #5742).
+        assert!(notification.params.get("exit_status").is_none());
+    }
+
+    #[test]
+    fn output_sink_send_exit_with_the_real_exit_status() {
+        // #5742: a shell the user exited with `exit 3`.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let sink = JsonRpcOutputSink::new(tx);
+
+        sink.send_exit_with_cause("s1", Some(3), None, Some(3))
+            .unwrap();
+
+        let notification = rx.try_recv().unwrap();
+        assert_eq!(notification.params["exit_code"], 3);
+        assert_eq!(notification.params["exit_status"], 3);
         assert!(notification.params.get("end_cause").is_none());
     }
 

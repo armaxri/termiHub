@@ -554,16 +554,18 @@ export const createTerminalSessionStateSlice: StateCreator<
     // Fold the exit into the shared `session-lifecycle` region — the sole
     // reconnect authority (#2205 PR-B):
     //  - a user kill is a graceful `session.disconnect`;
-    //  - an unexpected drop on a resilient tab that opted in arms the backend
-    //    redrive via `session.reconnect` (region → reconnecting; the backend
-    //    drives the backoff loop and re-establishes the transport). Only an
-    //    unexpected drop qualifies — a clean exit or a user kill never reconnects;
+    //  - a lost link (no exit code) on a resilient tab that opted in arms the
+    //    backend redrive via `session.reconnect` (region → reconnecting; the
+    //    backend drives the backoff loop and re-establishes the transport). Only
+    //    a lost link qualifies — a clean exit, a user kill or a process that
+    //    exited with a code (an agent-hosted shell the user ended, #5742) never
+    //    reconnects;
     //  - any other unexpected drop is a terminal `session.dropped`.
     if (info?.reason === "killed") {
       mirrorSessionIntent("session.disconnect", tabId);
     } else if (info?.reason === "dropped") {
       const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
-      if (isResilientReconnectTab(tab)) {
+      if (info.code === null && isResilientReconnectTab(tab)) {
         mirrorSessionIntent("session.reconnect", tabId);
       } else {
         mirrorSessionIntent("session.dropped", tabId);

@@ -2279,6 +2279,15 @@ pub struct ConnectionExitNotification {
         deserialize_with = "lenient_end_cause"
     )]
     pub end_cause: Option<SessionEndCause>,
+    /// The real exit status of the session's process when it exited on its
+    /// own (0.39.0+, #5742): a shell on the agent where the user typed `exit`
+    /// sends `0`. Omitted when the backend has no process status (a network
+    /// session, a stopped container), after a deliberate close, and by an
+    /// agent older than 0.39.0 — whose `exit_code` is always `0` and so never
+    /// says how a process ended. `exit_code` carries the same value when this
+    /// is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_status: Option<i32>,
 }
 
 /// Read an optional [`SessionEndCause`], treating a value this build does not
@@ -5155,6 +5164,7 @@ mod tests {
             session_id: "s-1".to_owned(),
             exit_code: Some(3),
             end_cause: None,
+            exit_status: None,
         };
         assert_eq!(
             serde_json::to_value(&exit).unwrap(),
@@ -5164,6 +5174,7 @@ mod tests {
             session_id: "s-1".to_owned(),
             exit_code: None,
             end_cause: None,
+            exit_status: None,
         };
         assert_eq!(
             serde_json::to_value(&exit).unwrap(),
@@ -5185,6 +5196,7 @@ mod tests {
             session_id: "s-1".to_owned(),
             exit_code: Some(0),
             end_cause: Some(SessionEndCause::RemoteClosed),
+            exit_status: None,
         };
         let wire = serde_json::to_value(&exit).unwrap();
         assert_eq!(
@@ -5217,6 +5229,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(n.end_cause, None);
+    }
+
+    #[test]
+    fn exit_notification_carries_the_real_exit_status() {
+        // 0.39.0+ (#5742): the process's real status, next to the legacy code.
+        let exit = ConnectionExitNotification {
+            session_id: "s-1".to_owned(),
+            exit_code: Some(2),
+            end_cause: None,
+            exit_status: Some(2),
+        };
+        let wire = serde_json::to_value(&exit).unwrap();
+        assert_eq!(
+            wire,
+            json!({ "session_id": "s-1", "exit_code": 2, "exit_status": 2 })
+        );
+        let back: ConnectionExitNotification = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, exit);
+    }
+
+    #[test]
+    fn exit_notification_from_an_older_agent_has_no_exit_status() {
+        // A pre-0.39.0 agent sends `exit_code: 0` for every end and no status.
+        let n: ConnectionExitNotification =
+            serde_json::from_value(json!({ "session_id": "s-1", "exit_code": 0 })).unwrap();
+        assert_eq!(n.exit_status, None);
+        let n: ConnectionExitNotification = serde_json::from_value(
+            json!({ "session_id": "s-1", "exit_code": 0, "exit_status": null }),
+        )
+        .unwrap();
+        assert_eq!(n.exit_status, None);
     }
 
     #[test]

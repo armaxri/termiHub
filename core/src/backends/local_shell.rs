@@ -28,6 +28,7 @@ use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 use super::cwd_follow_thread::CwdFollowThread;
 pub use super::local_shell_env::set_shell_env_override;
+use super::local_shell_exit::{ExitStatusSlot, SETTLE_TIMEOUT};
 use super::local_shell_ready::{ready_signal, ProbeGate, ReadySignal};
 use super::local_shell_setup::{GatedHandle, TypedSetup};
 
@@ -285,7 +286,9 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             }),
             wait_for_exit: Box::new(move || {
                 let mut child = child;
-                let _ = child.wait();
+                // The shell's real status (#5742); a signalled death reads 1.
+                // Windows codes above `i32::MAX` (NTSTATUS) keep their bits.
+                child.wait().ok().map(|status| status.exit_code() as i32)
             }),
             close_pty: Box::new(move || {
                 #[cfg(unix)]
@@ -395,6 +398,8 @@ pub struct LocalShell<S: LocalShellSpawner = NativeLocalShellSpawner> {
     /// Holds the output produced between `connect` and the first
     /// `subscribe_output()`, so it reaches that subscriber (#4719).
     early_output: EarlyOutput,
+    /// The current shell's exit status once it ended on its own (#5742).
+    exit_status: Arc<ExitStatusSlot>,
     /// Local file browser capability.
     file_backend: LocalFileBrowser,
     /// Local-machine monitoring provider (PROD-0022). Held in an `Arc` so
@@ -428,6 +433,7 @@ impl<S: LocalShellSpawner> LocalShell<S> {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
             early_output: EarlyOutput::new(),
+            exit_status: Arc::new(ExitStatusSlot::default()),
             file_backend: LocalFileBrowser::new(),
             monitor: Arc::new(LocalMonitoringProvider::new()),
             spawner,
@@ -706,6 +712,8 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         let alive = Arc::new(AtomicBool::new(true));
+        // A fresh slot per shell, so a reconnect never reports the last one.
+        self.exit_status = Arc::new(ExitStatusSlot::default());
 
         // Set up the output channel. Its receiver is kept for the first subscriber, so output produced
         // before anyone subscribes waits there instead of being dropped (#4719).
@@ -761,11 +769,18 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let reader_cwd = cwd_follow.clone();
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
+        let reader_exit = self.exit_status.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            // Whether the PTY itself ended (EOF / read error), as opposed to the
+            // session dropping its output sender.
+            let mut pty_ended = false;
             loop {
                 match reader.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        pty_ended = true;
+                        break;
+                    }
                     Ok(n) => {
                         let data = buf[..n].to_vec();
                         if let Some(gate) = &reader_gate {
@@ -799,8 +814,17 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                             None => deliver(data),
                         }
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        pty_ended = true;
+                        break;
+                    }
                 }
+            }
+            // The PTY closes as the child exits: give the watcher a moment to
+            // reap it, so the exit status is known before the output ends
+            // (#5742).
+            if pty_ended {
+                reader_exit.wait_settled(SETTLE_TIMEOUT);
             }
             alive_clone.store(false, Ordering::SeqCst);
             if let Ok(mut guard) = output_tx_clone.lock() {
@@ -833,8 +857,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let close_pty = spawned.close_pty;
         let alive_for_watcher = alive.clone();
         let output_tx_for_watcher = self.output_tx.clone();
+        let watcher_exit = self.exit_status.clone();
         std::thread::spawn(move || {
-            wait_for_exit();
+            let code = wait_for_exit();
+            // Before the output ends, so the session owner reads it (#5742).
+            watcher_exit.record(code);
             alive_for_watcher.store(false, Ordering::SeqCst);
             if let Ok(mut guard) = output_tx_for_watcher.lock() {
                 *guard = None;
@@ -923,6 +950,12 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         self.state
             .as_ref()
             .is_some_and(|s| s.alive.load(Ordering::SeqCst))
+    }
+
+    /// The shell's exit status once it ended on its own (#5742); `None`
+    /// while it runs and after a deliberate disconnect.
+    fn exit_code(&self) -> Option<i32> {
+        self.state.as_ref().and_then(|_| self.exit_status.get())
     }
 
     /// Kill the child so a PTY write it stopped reading returns (#4394).
@@ -1323,7 +1356,8 @@ mod tests {
         captured_size: Arc<Mutex<Option<(u16, u16)>>>,
         /// Unblocks `wait_for_exit`. Sending on it (or dropping it) simulates
         /// the child process exiting — mirroring a real `exit` or `kill()`.
-        child_exit: Arc<Mutex<Option<std::sync::mpsc::Sender<()>>>>,
+        /// Sends the exit status the mock child exits with (#5742).
+        child_exit: Arc<Mutex<Option<std::sync::mpsc::Sender<i32>>>>,
     }
 
     impl MockLocalShellSpawner {
@@ -1371,7 +1405,7 @@ mod tests {
 
             // Exit channel: `wait_for_exit` blocks on the receiver until the
             // test signals a child exit (or the sender is dropped via kill).
-            let (exit_tx, exit_rx) = std::sync::mpsc::channel::<()>();
+            let (exit_tx, exit_rx) = std::sync::mpsc::channel::<i32>();
             *self.child_exit.lock().unwrap() = Some(exit_tx);
 
             Ok(SpawnedShell {
@@ -1393,8 +1427,9 @@ mod tests {
                     *child_exit_for_kill.lock().unwrap() = None;
                 }),
                 wait_for_exit: Box::new(move || {
-                    // Blocks until the test signals an exit or the sender drops.
-                    let _ = exit_rx.recv();
+                    // Blocks until the test signals an exit or the sender drops
+                    // (a kill, whose status the mock cannot tell).
+                    exit_rx.recv().ok()
                 }),
                 close_pty: Box::new(|| {
                     // Model Windows ConPTY faithfully: closing the pty master
@@ -2067,6 +2102,35 @@ mod tests {
     /// `is_connected()` to false, the signal the session manager forwards as
     /// "Session ended". A reader-EOF-dependent fix (like the first #2709
     /// attempt) fails this test, mirroring the real-Windows failure.
+    /// #5742: a shell that exits on its own reports its real status by the
+    /// time its output ends, and a deliberate disconnect drops it.
+    #[tokio::test]
+    async fn child_exit_reports_the_real_exit_status() {
+        let mock = MockLocalShellSpawner::new();
+        let child_exit = mock.child_exit.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        let mut rx = shell.subscribe_output();
+        assert_eq!(shell.exit_code(), None, "no status while the shell runs");
+
+        if let Some(tx) = child_exit.lock().unwrap().as_ref() {
+            tx.send(3).expect("watcher listening");
+        }
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while rx.recv().await.is_some() {}
+        })
+        .await;
+        assert!(
+            ended.is_ok(),
+            "the session should end after the child exits"
+        );
+        assert_eq!(shell.exit_code(), Some(3), "known once the output ended");
+
+        shell.disconnect().await.ok();
+        assert_eq!(shell.exit_code(), None, "a disconnect drops the status");
+    }
+
     #[tokio::test]
     async fn child_exit_ends_session_even_without_reader_eof() {
         let mock = MockLocalShellSpawner::new();
@@ -2084,7 +2148,7 @@ mod tests {
             // listening, and the point of this test is that the session must
             // still be driven to end — so a failed signal must surface as the
             // drain timeout below, not as an early panic here.
-            let _ = tx.send(());
+            let _ = tx.send(0);
         }
 
         // The watcher must close the PTY, closing the output channel.

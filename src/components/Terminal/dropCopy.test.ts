@@ -157,6 +157,15 @@ describe("scrollback separators", () => {
     );
   });
 
+  it("writes [Process exited with code N] for a shell the user exited on an agent (#5742)", () => {
+    expect(sessionEndSeparator({ transport: "agent", exitCode: 0, reason: "clean", at: AT })).toBe(
+      "[Process exited with code 0]"
+    );
+    expect(
+      sessionEndSeparator({ transport: "agent", exitCode: 3, reason: "dropped", at: AT })
+    ).toBe("[Process exited with code 3]");
+  });
+
   it("marks a reconnect with the time", () => {
     expect(reconnectedMarker(AT)).toBe("— reconnected 09:05:07 —");
   });

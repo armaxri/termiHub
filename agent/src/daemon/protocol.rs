@@ -133,7 +133,7 @@ pub const MSG_OUTPUT: u8 = 0x81;
 /// Daemon → Agent: full ring buffer replay on connect.
 pub const MSG_BUFFER_REPLAY: u8 = 0x82;
 /// Daemon → Agent: shell exited (payload: exit_code i32 BE, then optionally one
-/// end-cause byte, #5732 — see [`encode_exit`]).
+/// end-cause byte, #5732, and one exit-status byte, #5742 — see [`encode_exit`]).
 pub const MSG_EXITED: u8 = 0x83;
 /// Daemon → Agent: error message (payload: UTF-8 string).
 pub const MSG_ERROR: u8 = 0x84;
@@ -539,22 +539,46 @@ const END_CAUSE_IO_ERROR: u8 = 2;
 /// End-cause byte: the link timed out.
 const END_CAUSE_TIMEOUT: u8 = 3;
 
+/// End-cause byte: no cause (only written ahead of an exit-status byte).
+const END_CAUSE_NONE: u8 = 0;
+/// Exit-status byte of a [`MSG_EXITED`] payload (#5742): the exit code is the
+/// process's real status, read from the backend.
+const EXIT_STATUS_KNOWN: u8 = 1;
+
 /// Encode a [`MSG_EXITED`] payload: the exit code (4 bytes BE), followed by
-/// one end-cause byte when the backend knows why its link ended (#5732).
+/// one end-cause byte when the backend knows why its link ended (#5732), and
+/// by one exit-status byte when `exit_status` is the process's real status
+/// (#5742). Without a status the code is `0`, as every daemon sent before.
 ///
-/// The cause byte is a pure extension: a worker that predates it reads only
-/// the first four bytes ([`decode_exit_code`]), and a payload without it (from
-/// an older daemon) decodes to no cause ([`decode_end_cause`]).
-pub fn encode_exit(code: i32, end_cause: Option<SessionEndCause>) -> Vec<u8> {
-    let mut payload = encode_exit_code(code).to_vec();
-    if let Some(cause) = end_cause {
-        payload.push(match cause {
-            SessionEndCause::RemoteClosed => END_CAUSE_REMOTE_CLOSED,
-            SessionEndCause::IoError => END_CAUSE_IO_ERROR,
-            SessionEndCause::Timeout => END_CAUSE_TIMEOUT,
-        });
+/// Both bytes are pure extensions: a worker that predates them reads only the
+/// first four bytes ([`decode_exit_code`]) and the cause byte, which is `0`
+/// ("no cause", unknown to every worker) when only the status is known. A
+/// payload without them (from an older daemon) decodes to no cause
+/// ([`decode_end_cause`]) and no status ([`decode_exit_status`]).
+pub fn encode_exit(exit_status: Option<i32>, end_cause: Option<SessionEndCause>) -> Vec<u8> {
+    let mut payload = encode_exit_code(exit_status.unwrap_or(0)).to_vec();
+    let cause = end_cause.map(|cause| match cause {
+        SessionEndCause::RemoteClosed => END_CAUSE_REMOTE_CLOSED,
+        SessionEndCause::IoError => END_CAUSE_IO_ERROR,
+        SessionEndCause::Timeout => END_CAUSE_TIMEOUT,
+    });
+    if cause.is_some() || exit_status.is_some() {
+        payload.push(cause.unwrap_or(END_CAUSE_NONE));
+    }
+    if exit_status.is_some() {
+        payload.push(EXIT_STATUS_KNOWN);
     }
     payload
+}
+
+/// Decode the process's real exit status from a [`MSG_EXITED`] payload (see
+/// [`encode_exit`]), `None` when the daemon could not read one or predates
+/// #5742 (its code is then always `0`).
+pub fn decode_exit_status(payload: &[u8]) -> Option<i32> {
+    match payload.get(5) {
+        Some(&EXIT_STATUS_KNOWN) => decode_exit_code(payload),
+        _ => None,
+    }
 }
 
 /// Decode the end cause of a [`MSG_EXITED`] payload (see [`encode_exit`]).
@@ -642,25 +666,56 @@ mod tests {
             SessionEndCause::IoError,
             SessionEndCause::Timeout,
         ] {
-            let payload = encode_exit(0, Some(cause));
+            let payload = encode_exit(None, Some(cause));
             let mut buf = Vec::new();
             write_frame(&mut buf, MSG_EXITED, &payload).unwrap();
             let frame = read_frame(&mut Cursor::new(&buf)).unwrap().unwrap();
             assert_eq!(decode_exit_code(&frame.payload), Some(0));
             assert_eq!(decode_end_cause(&frame.payload), Some(cause));
+            assert_eq!(decode_exit_status(&frame.payload), None);
         }
     }
 
     #[test]
     fn exit_payload_without_a_cause_keeps_the_four_byte_shape() {
-        // No cause: byte-identical to the pre-#5732 payload.
-        assert_eq!(encode_exit(7, None), encode_exit_code(7).to_vec());
+        // No cause, no status: byte-identical to the pre-#5732 payload.
+        assert_eq!(encode_exit(None, None), encode_exit_code(0).to_vec());
         assert_eq!(decode_end_cause(&encode_exit_code(7)), None);
         // An unknown cause byte (a newer daemon) reads as no cause.
         let mut payload = encode_exit_code(7).to_vec();
         payload.push(0xEE);
         assert_eq!(decode_end_cause(&payload), None);
         assert_eq!(decode_exit_code(&payload), Some(7));
+    }
+
+    #[test]
+    fn exit_payload_carries_the_real_exit_status() {
+        // #5742: the shell's real status, with and without a cause.
+        let payload = encode_exit(Some(3), None);
+        assert_eq!(decode_exit_status(&payload), Some(3));
+        assert_eq!(decode_exit_code(&payload), Some(3));
+        assert_eq!(decode_end_cause(&payload), None);
+        let payload = encode_exit(Some(0), Some(SessionEndCause::RemoteClosed));
+        assert_eq!(decode_exit_status(&payload), Some(0));
+        assert_eq!(
+            decode_end_cause(&payload),
+            Some(SessionEndCause::RemoteClosed)
+        );
+        let payload = encode_exit(Some(-1), None);
+        assert_eq!(decode_exit_status(&payload), Some(-1));
+    }
+
+    #[test]
+    fn exit_payload_from_an_older_daemon_has_no_exit_status() {
+        // A pre-#5742 daemon always sent code 0: never read as a real status.
+        assert_eq!(decode_exit_status(&encode_exit_code(0)), None);
+        let mut with_cause = encode_exit_code(0).to_vec();
+        with_cause.push(END_CAUSE_REMOTE_CLOSED);
+        assert_eq!(decode_exit_status(&with_cause), None);
+        // An unknown status byte (a newer daemon) reads as no status.
+        let mut unknown = encode_exit_code(4).to_vec();
+        unknown.extend([END_CAUSE_NONE, 0xEE]);
+        assert_eq!(decode_exit_status(&unknown), None);
     }
 
     #[test]
