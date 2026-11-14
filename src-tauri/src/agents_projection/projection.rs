@@ -176,6 +176,7 @@ fn saved_agent_seed(agent: SavedRemoteAgent) -> SavedAgentSeed {
     SavedAgentSeed {
         id: agent.id,
         name: agent.name,
+        description: agent.description,
         config: serde_json::to_value(agent.config).unwrap_or(Value::Null),
         agent_settings: serde_json::to_value(agent.agent_settings).unwrap_or(Value::Null),
     }
@@ -229,6 +230,16 @@ pub fn seed_agents_from_manager(store: &AgentsStore, manager: &ConnectionManager
     }
 }
 
+/// The optional `description` string of an `agent.add` / `agent.update`
+/// payload (#5770); absent or not a string means none.
+fn optional_description(intent: &Intent) -> Option<String> {
+    intent
+        .payload
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 /// Register the `agent.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`AgentsStore`] lazily (so it rejects
@@ -239,24 +250,28 @@ pub fn register_agent_intents(registry: &mut HandlerRegistry, app_handle: AppHan
     let handle = app_handle.clone();
     registry.route("agent.add", move |intent, projector| {
         let store = store_of(&handle)?;
+        let id = required_str(intent, "id")?;
         store.add(
-            &required_str(intent, "id")?,
+            &id,
             &required_str(intent, "name")?,
             optional_value(intent, "config"),
             optional_value(intent, "agentSettings"),
         );
+        store.set_description(&id, optional_description(intent));
         Ok(publish_agents(projector, &store))
     });
 
     let handle = app_handle.clone();
     registry.route("agent.update", move |intent, projector| {
         let store = store_of(&handle)?;
+        let id = required_str(intent, "id")?;
         store.update(
-            &required_str(intent, "id")?,
+            &id,
             &required_str(intent, "name")?,
             optional_value(intent, "config"),
             optional_value(intent, "agentSettings"),
         );
+        store.set_description(&id, optional_description(intent));
         Ok(publish_agents(projector, &store))
     });
 

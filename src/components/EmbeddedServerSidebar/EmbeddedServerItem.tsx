@@ -176,6 +176,8 @@ export function EmbeddedServerItem({
               testId={`server-status-${config.id}`}
             />
           }
+          description={config.description}
+          descriptionTestId={`server-description-${config.id}`}
           tooltip={tooltip}
           tooltipTestId={`server-tooltip-${config.id}`}
           actions={

@@ -327,12 +327,14 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     mirrorAgentIntent("agent.add", {
       id: agent.id,
       name: agent.name,
+      description: agent.description,
       config: agent.config,
       agentSettings: agent.agentSettings,
     });
     persistAgent({
       id: agent.id,
       name: agent.name,
+      description: agent.description,
       config: agent.config,
       agentSettings: agent.agentSettings,
     }).catch((err) => {
@@ -346,12 +348,14 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
     mirrorAgentIntent("agent.update", {
       id: agent.id,
       name: agent.name,
+      description: agent.description,
       config: agent.config,
       agentSettings: agent.agentSettings,
     });
     persistAgent({
       id: agent.id,
       name: agent.name,
+      description: agent.description,
       config: agent.config,
       agentSettings: agent.agentSettings,
     }).catch((err) => {

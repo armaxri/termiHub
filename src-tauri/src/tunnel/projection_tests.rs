@@ -30,6 +30,7 @@ use crate::tunnel::config::{
 
 pub(super) fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
     TunnelConfig {
+        description: None,
         id: id.to_string(),
         name: name.to_string(),
         ssh_connection_id: "conn-1".to_string(),
@@ -49,6 +50,7 @@ pub(super) fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
 
 pub(super) fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
     TunnelConfig {
+        description: None,
         id: id.to_string(),
         name: name.to_string(),
         ssh_connection_id: "conn-1".to_string(),

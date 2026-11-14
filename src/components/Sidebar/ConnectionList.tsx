@@ -1652,7 +1652,7 @@ export function ConnectionList() {
   const normalizedAgentQuery = agentFilterQuery.trim().toLowerCase();
   const agentNameMatches = useCallback(
     (agent: (typeof remoteAgents)[number]) =>
-      agentNameMatchesQuery(agent.name, normalizedAgentQuery),
+      agentNameMatchesQuery(agent.name, normalizedAgentQuery, agent.description),
     [normalizedAgentQuery]
   );
   const agentHasDefinitionMatch = useCallback(

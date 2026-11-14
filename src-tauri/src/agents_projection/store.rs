@@ -71,6 +71,9 @@ pub struct AgentEntry {
     pub id: String,
     /// Human-readable agent name shown in the sidebar.
     pub name: String,
+    /// The user's short description (#5770), shown muted under the name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// The agent's `RemoteAgentConfig` (opaque here).
     pub config: Value,
     /// The agent's `AgentSettings` (opaque here).
@@ -95,6 +98,7 @@ impl AgentEntry {
         Self {
             id: id.to_string(),
             name: name.to_string(),
+            description: None,
             config,
             agent_settings,
             is_expanded: false,
@@ -120,6 +124,8 @@ pub struct SavedAgentSeed {
     pub id: String,
     /// Human-readable agent name.
     pub name: String,
+    /// The user's short description (#5770); `None` when unset.
+    pub description: Option<String>,
     /// The agent's `RemoteAgentConfig`, serialised opaquely (matches the shape
     /// the frontend stores, so the render cut was a parity swap).
     pub config: Value,
@@ -428,17 +434,18 @@ impl AgentsStore {
                 // Existing agent: refresh persisted fields, preserve live status.
                 Some(mut entry) => {
                     entry.name = seed.name;
+                    entry.description = seed.description;
                     entry.config = seed.config;
                     entry.agent_settings = seed.agent_settings;
                     next.push(entry);
                 }
                 // New agent: a fresh disconnected entry.
-                None => next.push(AgentEntry::new(
-                    &seed.id,
-                    &seed.name,
-                    seed.config,
-                    seed.agent_settings,
-                )),
+                None => {
+                    let mut entry =
+                        AgentEntry::new(&seed.id, &seed.name, seed.config, seed.agent_settings);
+                    entry.description = seed.description;
+                    next.push(entry);
+                }
             }
         }
         inner.agents = next;
@@ -461,6 +468,18 @@ impl AgentsStore {
             agent.name = name.to_string();
             agent.config = config;
             agent.agent_settings = agent_settings;
+        }
+    }
+
+    /// Set one agent's description (#5770), carried by `agent.add` and
+    /// `agent.update`. Blank text clears it. A no-op for an unknown id.
+    pub fn set_description(&self, id: &str, description: Option<String>) {
+        let description = description
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty());
+        let mut inner = self.lock();
+        if let Some(agent) = inner.touch_agent(id) {
+            agent.description = description;
         }
     }
 

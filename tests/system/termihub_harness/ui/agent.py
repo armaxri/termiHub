@@ -127,6 +127,7 @@ class AgentUi(HarnessMixin):
         username: str,
         auth_method: str = "password",
         agent_path: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> dict[str, Any]:
         """Create a remote-agent definition via the New Remote Agent editor.
 
@@ -134,11 +135,14 @@ class AgentUi(HarnessMixin):
         renders the same ``field-host`` / ``field-port`` / ``field-username`` /
         ``field-authMethod`` fields as SSH. Returns the saved agent. A non-None
         ``agent_path`` is then stored as its ``agentPath`` (:meth:`set_agent_path`).
+        ``description`` fills the optional one-line description (#5770).
         """
         self.open_agents_sidebar()
         self.driver.click(self.NEW_AGENT)
         self.wait(lambda: self.driver.exists(self.EDITOR_NAME), what="the agent editor")
         self.driver.type(self.EDITOR_NAME, name)
+        if description is not None:
+            self.driver.type("connection-editor-description-input", description)
         self.driver.type("field-host", str(host))
         self.driver.type("field-port", str(port))
         self.driver.type("field-username", username)

@@ -979,6 +979,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("create temp dir");
         std::fs::write(dir.path().join("fw.bin"), "firmware").expect("write file");
         let config = EmbeddedServerConfig {
+            description: None,
             id: "test-http-log".to_string(),
             name: "test".to_string(),
             server_type: ServerType::Http,
@@ -1099,6 +1100,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("create temp dir");
         let config = EmbeddedServerConfig {
+            description: None,
             id: "test-http-shutdown".to_string(),
             name: "test".to_string(),
             server_type: ServerType::Http,

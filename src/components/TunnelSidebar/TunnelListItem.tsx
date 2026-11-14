@@ -204,6 +204,8 @@ export function TunnelListItem({
           testId={`tunnel-status-${tunnel.id}`}
         />
       }
+      description={tunnel.description}
+      descriptionTestId={`tunnel-description-${tunnel.id}`}
       tooltip={tooltip}
       tooltipTestId={`tunnel-tooltip-${tunnel.id}`}
       actions={

@@ -125,6 +125,7 @@ mod tests {
             version: "1".to_string(),
             extra: Default::default(),
             tunnels: vec![TunnelConfig {
+                description: None,
                 id: "tun-1".to_string(),
                 name: "db".to_string(),
                 ssh_connection_id: "conn-1".to_string(),

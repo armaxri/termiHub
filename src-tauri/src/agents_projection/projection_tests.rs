@@ -661,6 +661,7 @@ fn server_side_fold_is_a_noop_without_managed_state() {
 /// A persisted-list seed carrying only the backend-owned fields.
 fn seed(id: &str, name: &str, host: &str) -> SavedAgentSeed {
     SavedAgentSeed {
+        description: None,
         id: id.to_string(),
         name: name.to_string(),
         config: json!({ "host": host }),

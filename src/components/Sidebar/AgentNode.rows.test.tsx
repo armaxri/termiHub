@@ -168,6 +168,16 @@ describe("AgentNode — names, not settings (#5770)", () => {
     expect(q(`agent-version-badge-${AGENT_ID}`)?.textContent).toContain("v1.2.0");
   });
 
+  it("shows the agent's description muted under its name", () => {
+    renderAgent(makeAgent({ description: "Lab bench" }));
+    expect(q(`agent-description-${AGENT_ID}`)?.textContent).toBe("Lab bench");
+  });
+
+  it("shows no description line without one", () => {
+    renderAgent(makeAgent());
+    expect(q(`agent-description-${AGENT_ID}`)).toBeNull();
+  });
+
   it("shows a saved definition by name, without its session type", () => {
     renderAgent(makeAgent());
     const row = q("agent-definition-def-1")!;

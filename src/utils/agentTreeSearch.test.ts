@@ -34,6 +34,11 @@ describe("agentDefinitionMatchesQuery", () => {
 });
 
 describe("agentNameMatchesQuery", () => {
+  it("matches the agent's description too (#5770)", () => {
+    expect(agentNameMatchesQuery("Build box", "lab", "Lab bench")).toBe(true);
+    expect(agentNameMatchesQuery("Build box", "lab")).toBe(false);
+  });
+
   it("matches everything on an empty query", () => {
     expect(agentNameMatchesQuery("Dev Agent (dev0)", "")).toBe(true);
   });

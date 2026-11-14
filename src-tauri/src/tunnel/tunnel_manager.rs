@@ -2971,6 +2971,7 @@ mod tests {
     /// Build a minimal desktop `-L` config, optionally linked to a parent.
     fn tunnel(id: &str, companion_of: Option<&str>) -> TunnelConfig {
         TunnelConfig {
+            description: None,
             id: id.to_string(),
             name: id.to_string(),
             ssh_connection_id: "conn-1".to_string(),

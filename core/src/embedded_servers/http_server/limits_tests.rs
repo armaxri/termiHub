@@ -24,6 +24,7 @@ const SAFETY_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn test_config(root: &Path) -> EmbeddedServerConfig {
     EmbeddedServerConfig {
+        description: None,
         id: "test-http-limits".to_string(),
         name: "test".to_string(),
         server_type: ServerType::Http,

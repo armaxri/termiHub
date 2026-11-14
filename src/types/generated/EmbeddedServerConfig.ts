@@ -16,6 +16,12 @@ id: string,
  */
 name: string, 
 /**
+ * Optional short description the user wrote (#5770), shown muted under
+ * the name in the sidebar. Absent when unset, so older files round-trip
+ * unchanged.
+ */
+description?: string, 
+/**
  * Protocol type.
  */
 serverType: ServerType, 

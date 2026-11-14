@@ -60,6 +60,7 @@ fn session(id: &str) -> AgentSession {
 /// `reflect_saved_agents`, carrying only the persisted fields the backend owns.
 fn seed(id: &str, name: &str, host: &str) -> SavedAgentSeed {
     SavedAgentSeed {
+        description: None,
         id: id.to_string(),
         name: name.to_string(),
         config: config(host),
@@ -830,4 +831,41 @@ fn definition_icon_style_round_trips_camel_case() {
     assert!(bare.get("iconColor").is_none() && bare.get("iconEmoji").is_none());
     let parsed: AgentDefinition = serde_json::from_value(bare).unwrap();
     assert!(parsed.icon_color.is_none() && parsed.icon_emoji.is_none());
+}
+
+/// #5770: an agent's description is set by `agent.add` / `agent.update`,
+/// cleared by blank text, reflected from the persisted list, and absent from
+/// the snapshot when unset.
+#[test]
+fn description_is_set_cleared_and_reflected() {
+    let store = AgentsStore::new();
+    store.add("a1", "Agent One", config("h1"), settings());
+    assert!(store.snapshot()["agents"][0].get("description").is_none());
+
+    store.set_description("a1", Some("  Lab bench  ".to_string()));
+    assert_eq!(
+        store.get("a1").unwrap().description.as_deref(),
+        Some("Lab bench")
+    );
+    assert_eq!(store.snapshot()["agents"][0]["description"], "Lab bench");
+
+    store.set_description("a1", Some("   ".to_string()));
+    assert_eq!(store.get("a1").unwrap().description, None);
+
+    let mut persisted = seed("a1", "Agent One", "h1");
+    persisted.description = Some("From disk".to_string());
+    let mut fresh = seed("a2", "Agent Two", "h2");
+    fresh.description = Some("New one".to_string());
+    store.reflect_saved_agents(vec![persisted, fresh]);
+    assert_eq!(
+        store.get("a1").unwrap().description.as_deref(),
+        Some("From disk")
+    );
+    assert_eq!(
+        store.get("a2").unwrap().description.as_deref(),
+        Some("New one")
+    );
+
+    // An unknown id is a no-op.
+    store.set_description("nope", Some("x".to_string()));
 }

@@ -709,6 +709,7 @@ mod tests {
 
     fn http_config(port: u16) -> EmbeddedServerConfig {
         EmbeddedServerConfig {
+            description: None,
             id: "srv-http".to_string(),
             name: "Test HTTP".to_string(),
             server_type: ServerType::Http,

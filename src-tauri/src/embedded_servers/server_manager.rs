@@ -990,6 +990,7 @@ mod tests {
 
     fn sample_config() -> EmbeddedServerConfig {
         EmbeddedServerConfig {
+            description: None,
             id: "srv-1".to_string(),
             name: "Test HTTP".to_string(),
             server_type: ServerType::Http,

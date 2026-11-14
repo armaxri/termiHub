@@ -83,6 +83,27 @@ describe("EmbeddedServerItem — names, not settings (#5770)", () => {
     expect(row().getAttribute("aria-description")).toContain("3 connections");
   });
 
+  it("shows the description muted under the name (#5770)", () => {
+    act(() => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <EmbeddedServerItem
+            config={{ ...config, description: "Lab firmware" }}
+            state={undefined}
+            onStart={vi.fn()}
+            onStop={vi.fn()}
+            onEdit={vi.fn()}
+            onDuplicate={vi.fn()}
+            onDelete={vi.fn()}
+          />
+        </TooltipProvider>
+      );
+    });
+    expect(container.querySelector('[data-testid="server-description-srv-1"]')?.textContent).toBe(
+      "Lab firmware"
+    );
+  });
+
   it("keeps an error on the row", () => {
     render({
       serverId: "srv-1",

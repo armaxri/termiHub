@@ -57,6 +57,12 @@ pub struct TunnelConfig {
     pub id: String,
     /// User-friendly name for this tunnel.
     pub name: String,
+    /// Optional short description the user wrote (#5770), shown muted under
+    /// the name in the sidebar. Absent when unset, so older files round-trip
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// ID of the saved SSH connection to use for this tunnel.
     pub ssh_connection_id: String,
     /// Tunnel type and its specific configuration.
@@ -275,9 +281,30 @@ impl crate::utils::migrate::VersionedStore for TunnelStore {
 mod tests {
     use super::*;
 
+    /// #5770: the description is optional and backward compatible — a file
+    /// without one loads as none and saves without the key; a set one
+    /// round-trips.
+    #[test]
+    fn tunnel_description_is_optional_and_round_trips() {
+        let json = r#"{"id":"t","name":"db","sshConnectionId":"c","tunnelType":{"type":"dynamic",
+            "config":{"localHost":"127.0.0.1","localPort":1080}},"autoStart":false,
+            "reconnectOnDisconnect":false}"#;
+        let mut tunnel: TunnelConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(tunnel.description, None);
+        assert!(!serde_json::to_string(&tunnel)
+            .unwrap()
+            .contains("description"));
+
+        tunnel.description = Some("Reaches the prod DB".to_string());
+        let back: TunnelConfig =
+            serde_json::from_str(&serde_json::to_string(&tunnel).unwrap()).unwrap();
+        assert_eq!(back.description.as_deref(), Some("Reaches the prod DB"));
+    }
+
     #[test]
     fn tunnel_config_local_serde_round_trip() {
         let config = TunnelConfig {
+            description: None,
             id: "tun-1".to_string(),
             name: "Dev DB".to_string(),
             ssh_connection_id: "conn-1".to_string(),
@@ -309,6 +336,7 @@ mod tests {
     #[test]
     fn tunnel_config_remote_serde_round_trip() {
         let config = TunnelConfig {
+            description: None,
             id: "tun-2".to_string(),
             name: "Expose Web".to_string(),
             ssh_connection_id: "conn-2".to_string(),
@@ -339,6 +367,7 @@ mod tests {
     #[test]
     fn tunnel_config_dynamic_serde_round_trip() {
         let config = TunnelConfig {
+            description: None,
             id: "tun-3".to_string(),
             name: "SOCKS Proxy".to_string(),
             ssh_connection_id: "conn-3".to_string(),
@@ -367,6 +396,7 @@ mod tests {
             version: "1".to_string(),
             extra: Default::default(),
             tunnels: vec![TunnelConfig {
+                description: None,
                 id: "tun-1".to_string(),
                 name: "Test".to_string(),
                 ssh_connection_id: "conn-1".to_string(),
@@ -492,6 +522,7 @@ mod tests {
     fn host_round_trips_and_defaults_to_this_computer() {
         // Explicit agent host round-trips through the tagged run-location shape.
         let config = TunnelConfig {
+            description: None,
             id: "tun-agent".to_string(),
             name: "Agent DB".to_string(),
             ssh_connection_id: "conn-1".to_string(),
@@ -522,6 +553,7 @@ mod tests {
         // A companion carries its parent's id; it round-trips as camelCase
         // `companionOf`.
         let companion = TunnelConfig {
+            description: None,
             id: "tun-companion".to_string(),
             name: "hop on this computer".to_string(),
             ssh_connection_id: "conn-agent".to_string(),
@@ -562,6 +594,7 @@ mod tests {
     #[test]
     fn serde_produces_correct_json_shape() {
         let config = TunnelConfig {
+            description: None,
             id: "test".to_string(),
             name: "Test".to_string(),
             ssh_connection_id: "conn-1".to_string(),
@@ -592,6 +625,7 @@ mod tests {
     #[test]
     fn tunnels_follow_connection_id_changes_simultaneously() {
         let tunnel = |id: &str, conn: &str| TunnelConfig {
+            description: None,
             id: id.to_string(),
             name: id.to_string(),
             ssh_connection_id: conn.to_string(),

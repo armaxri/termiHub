@@ -23,6 +23,7 @@ use crate::tunnel::projection::{tunnel_view_from, TUNNELS_REGION};
 
 fn tunnel(id: &str, ssh_connection_id: &str) -> TunnelConfig {
     TunnelConfig {
+        description: None,
         id: id.to_string(),
         name: format!("Tunnel {id}"),
         ssh_connection_id: ssh_connection_id.to_string(),
