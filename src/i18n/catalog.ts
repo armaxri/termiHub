@@ -329,7 +329,6 @@ const en = {
   "workspace.tooltip.tabsInGroups": "Opens {count} tabs in {groups} groups",
   "agent.tooltip.address": "{user}@{host}:{port}",
   "agent.tooltip.version": "Agent version {version}",
-  "agent.tooltip.session": "{type} session",
   "recent.marker.pinned": "Pinned",
   "recent.tooltip.lastUsed": "Last used {when}",
   "recent.tooltip.uses": "Used {count} times",
