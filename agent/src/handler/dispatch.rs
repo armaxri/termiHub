@@ -236,7 +236,11 @@ use termihub_core::monitoring::{
 /// `end_cause` (#5783), and a Docker session's real `exit_status`: a serial
 /// port that is gone for good, or a stopped container, ends its tab instead of
 /// leaving it open. An older desktop reads the unknown cause as absent.
-const AGENT_PROTOCOL_VERSION: &str = "0.40.0";
+/// Bumped to 0.41.0 for the additive `connection.files.truncate` method and
+/// its `capabilities.fileTruncate` flag (#5736): a resumed agent-hosted upload
+/// trims its crashed partial back to the last checkpoint instead of
+/// restarting from zero. An older agent is never asked; its uploads restart.
+const AGENT_PROTOCOL_VERSION: &str = "0.41.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -1117,6 +1121,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 file_create_new: true,
                 definition_icon_style: true,
                 serial_port_rescan: true,
+                file_truncate: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -4053,10 +4058,12 @@ mod tests {
     /// `connection.files.realpath` (#5333), and 0.37.0 the
     /// `connection.reconnect` notification (#5396), and 0.38.0 the optional
     /// `end_cause` of `connection.exit` (#5732), and 0.39.0 its optional
-    /// `exit_status` (#5742), and 0.40.0 its `device_gone` cause (#5783).
+    /// `exit_status` (#5742), and 0.40.0 its `device_gone` cause (#5783),
+    /// and 0.41.0 `connection.files.truncate` with its `fileTruncate`
+    /// capability (#5736).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.40.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.41.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

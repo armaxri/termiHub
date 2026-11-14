@@ -8,18 +8,59 @@
 //! executor drives the transfer — progress, pause/resume, retry and cancel —
 //! one bounded request per chunk. Offered only by an agent that advertises
 //! `fileRanges`; see [`FileBrowser::ranged`].
+//!
+//! An agent that also advertises `fileTruncate` (protocol 0.41.0, #5736)
+//! shortens a crashed upload's remote partial back to its last checkpoint
+//! through `connection.files.truncate`, so the relaunched upload resumes there
+//! instead of restarting from zero.
 
 use termihub_core::errors::FileError;
 use termihub_core::files::paste_guard::PathCanonicalizer;
 use termihub_core::files::transfer::ranged::RangedTransferTarget;
 use termihub_core::files::{FileBrowser, FileEntry, RangedFileAccess};
 use termihub_core::protocol::methods::{
-    FilesReadRangeParams, FilesReadRangeResult, FilesWriteRangeParams, CONNECTION_FILES_READ_RANGE,
+    FilesReadRangeParams, FilesReadRangeResult, FilesTruncateParams, FilesTruncateResult,
+    FilesWriteRangeParams, CONNECTION_FILES_READ_RANGE, CONNECTION_FILES_TRUNCATE,
     CONNECTION_FILES_WRITE_RANGE,
 };
 
 use super::{base64_decode, RemoteFileBrowserProxy};
 use crate::files::transfer::relaunch_agent::AgentSessionIdentity;
+
+/// Read a `connection.files.truncate` reply (#5736) and confirm the file holds
+/// exactly `len` bytes afterwards: any other size fails the trim, so the
+/// upload restarts from zero instead of appending to a partial it could not
+/// verify.
+pub(crate) fn confirm_truncated(
+    reply: serde_json::Value,
+    path: &str,
+    len: u64,
+) -> Result<(), FileError> {
+    let size = serde_json::from_value::<FilesTruncateResult>(reply)
+        .map_err(|e| FileError::OperationFailed(format!("unexpected truncate reply: {e}")))?
+        .size;
+    if size == len {
+        Ok(())
+    } else {
+        Err(FileError::OperationFailed(format!(
+            "{path} holds {size} bytes after the trim, expected {len}"
+        )))
+    }
+}
+
+/// The `connection.files.truncate` params for `path` on `connection_id`
+/// (`None`: the agent host itself).
+pub(crate) fn truncate_params(
+    connection_id: Option<String>,
+    path: &str,
+    len: u64,
+) -> FilesTruncateParams {
+    FilesTruncateParams {
+        connection_id,
+        path: path.to_string(),
+        length: len,
+    }
+}
 
 impl RemoteFileBrowserProxy {
     /// Ask the agent whether this session serves ranged slices: a zero-length
@@ -94,6 +135,32 @@ impl RangedTransferTarget for RemoteFileBrowserProxy {
 
     async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         FileBrowser::delete(self, path).await
+    }
+
+    /// `connection.files.truncate` (protocol 0.41.0, #5736): a crashed
+    /// upload's partial is cut back to its checkpoint, confirmed by the size
+    /// the agent measures afterwards. An agent that does not advertise
+    /// `fileTruncate` is never asked — the upload restarts from zero with the
+    /// usual row note — and a backend that cannot shorten (FTP), or a session
+    /// started by an older agent's daemon, answers `-32013`, read the same.
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+        if !self.file_truncate {
+            return Err(FileError::NotSupported);
+        }
+        let params = serde_json::to_value(truncate_params(
+            Some(self.remote_session_id.clone()),
+            path,
+            len,
+        ))
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        let mgr = self.agent_manager.clone();
+        let agent_id = self.agent_id.clone();
+        let reply = tokio::task::spawn_blocking(move || {
+            mgr.send_file_request(&agent_id, CONNECTION_FILES_TRUNCATE, params)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("spawn_blocking join: {e}")))??;
+        confirm_truncated(reply, path, len)
     }
 
     /// `connection.files.realpath` (#5333): the same-session copy guard sees

@@ -34,6 +34,7 @@
       "embeddedServerActivity": false,
       "fileCreateNew": true,
       "fileRanges": false,
+      "fileTruncate": true,
       "hostFileAttributeOps": {
         "owner": false,
         "permissions": false,
@@ -64,6 +65,7 @@
       "embeddedServerActivity": false,
       "fileCreateNew": false,
       "fileRanges": false,
+      "fileTruncate": false,
       "maxSessions": 4,
       "monitoringSupported": false,
       "outputFlow": false,

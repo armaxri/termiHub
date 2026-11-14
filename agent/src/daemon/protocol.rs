@@ -243,6 +243,18 @@ pub const CAP_OUTPUT_CREDIT: u8 = 0x40;
 /// falls back to the lexical paste check instead.
 pub const CAP_FILE_REALPATH: u8 = 0x80;
 
+/// Second [`MSG_CAPABILITIES`] flag byte (#5736): the first byte ran out of
+/// bits. A worker from before it reads only the first byte and ignores the
+/// rest; a daemon from before it sends one byte, which a current worker
+/// reads as "none of the second-byte features".
+///
+/// Flag: the daemon also serves the `truncate` file request in
+/// [`MSG_FILE_REQUEST`], shortening a regular file through its session
+/// backend. A daemon from before it would drop the unknown request, so the
+/// worker answers "not supported" without asking and the upload restarts
+/// from zero.
+pub const CAP2_FILE_TRUNCATE: u8 = 0x01;
+
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
 
