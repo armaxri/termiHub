@@ -20,7 +20,8 @@
         },
         "icon": "server",
         "icon_color": null,
-        "icon_emoji": null
+        "icon_emoji": null,
+        "description": null
       }
     },
     {
@@ -35,7 +36,8 @@
         "terminal_options": null,
         "icon": null,
         "icon_color": null,
-        "icon_emoji": null
+        "icon_emoji": null,
+        "description": null
       }
     },
     {
@@ -58,7 +60,8 @@
         },
         "icon": "server",
         "icon_color": null,
-        "icon_emoji": null
+        "icon_emoji": null,
+        "description": null
       }
     },
     {
@@ -73,7 +76,8 @@
         "terminal_options": null,
         "icon": null,
         "icon_color": null,
-        "icon_emoji": null
+        "icon_emoji": null,
+        "description": null
       }
     },
     {
@@ -88,7 +92,8 @@
         "terminal_options": null,
         "icon": null,
         "icon_color": "#336699",
-        "icon_emoji": "🚀"
+        "icon_emoji": "🚀",
+        "description": null
       }
     },
     {
@@ -103,7 +108,44 @@
         "terminal_options": null,
         "icon": null,
         "icon_color": "#336699",
-        "icon_emoji": "🚀"
+        "icon_emoji": "🚀",
+        "description": null
+      }
+    },
+    {
+      "name": "create: description (#5769)",
+      "method": "connections.create",
+      "params": {
+        "name": "Bench",
+        "type": "serial",
+        "config": {
+          "port": "/dev/ttyUSB0"
+        },
+        "persistent": false,
+        "folder_id": null,
+        "terminal_options": null,
+        "icon": null,
+        "icon_color": null,
+        "icon_emoji": null,
+        "description": "Lab bench console"
+      }
+    },
+    {
+      "name": "update: editor save with a description (#5769)",
+      "method": "connections.update",
+      "params": {
+        "id": "conn-5",
+        "name": "Bench",
+        "type": "serial",
+        "config": {
+          "port": "/dev/ttyUSB0"
+        },
+        "persistent": false,
+        "terminal_options": null,
+        "icon": null,
+        "icon_color": null,
+        "icon_emoji": null,
+        "description": "Lab bench console"
       }
     },
     {

@@ -32,4 +32,9 @@ icon_color?: string | null,
  * Single-emoji icon (#5021). Use JSON `null` to clear, omit to leave
  * unchanged.
  */
-icon_emoji?: string | null, };
+icon_emoji?: string | null, 
+/**
+ * One-line description (#5769). Use JSON `null` to clear, omit to leave
+ * unchanged. Ignored by an agent older than protocol 0.42.0.
+ */
+description?: string | null, };
