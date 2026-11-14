@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { ShieldCheck, ShieldAlert, Copy } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Modal } from "./Modal";
@@ -113,10 +113,11 @@ export interface TrustPromptProps {
  * - **Accept once** (secondary) — trust for this session only.
  * - **Accept for host** (primary) — trust and remember.
  *
- * For a *changed* identity the safe choice leads (#5185): **Reject** becomes the
- * primary action, **Accept for host** stays `danger`, and **Accept once** is
- * demoted to a small ghost button set apart at the far left, so a quick
- * "continue" never reads as the default while the MITM warning is up.
+ * For a *changed* identity the safe choice leads (#5185, #5751): **Reject** is the
+ * primary action and takes focus when the dialog opens, so Enter and Escape both
+ * reject. Both accepting verdicts — **Accept once** (set apart at the far left)
+ * and **Accept for host** (e.g. "Replace trusted key") — use the `danger` style,
+ * so neither reads as a harmless "continue" while the MITM warning is up.
  *
  * Composed from the shared {@link Modal} + {@link Button} primitives; all values
  * come from design tokens. Facts marked `copyable` grow a copy button that
@@ -142,6 +143,23 @@ export function TrustPrompt({
   acceptForHostTestId,
   warningTestId,
 }: TrustPromptProps) {
+  // On a changed identity, Reject is the default action (#5751): it takes focus
+  // on open, so Enter on it rejects, and an Enter that reaches the dialog from
+  // anywhere that is not itself a control rejects too.
+  const rejectRef = useRef<HTMLButtonElement>(null);
+  const rejectOnEnter = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" || e.defaultPrevented) return;
+    const target = e.target as HTMLElement;
+    const control = target.closest(
+      "button, a[href], input, select, textarea, [contenteditable='true']"
+    );
+    // Any other control (an accept verdict, a copy button) keeps its own Enter.
+    if (control && control !== rejectRef.current) return;
+    // Handled here, so the focused Reject's native click does not fire twice.
+    e.preventDefault();
+    onReject();
+  };
+
   const copyFact = (fact: TrustFact): Promise<void> => {
     const noun = fact.label.toLowerCase();
     return writeClipboard(fact.value)
@@ -172,19 +190,20 @@ export function TrustPrompt({
         </span>
       }
       data-testid={modalTestId}
+      initialFocusRef={changed ? rejectRef : undefined}
+      onKeyDown={changed ? rejectOnEnter : undefined}
       footer={
         changed ? (
           <div className="ui-trust-prompt__actions ui-trust-prompt__actions--changed">
             <Button
-              variant="ghost"
-              size="sm"
-              className="ui-trust-prompt__demoted"
+              variant="danger"
+              className="ui-trust-prompt__apart"
               onClick={onAcceptOnce}
               data-testid={acceptOnceTestId}
             >
               Accept once
             </Button>
-            <Button variant="primary" onClick={onReject} data-testid={rejectTestId}>
+            <Button ref={rejectRef} variant="primary" onClick={onReject} data-testid={rejectTestId}>
               Reject
             </Button>
             <Button variant="danger" onClick={onAcceptForHost} data-testid={acceptForHostTestId}>
