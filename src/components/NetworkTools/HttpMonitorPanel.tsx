@@ -35,6 +35,7 @@ import { httpMonitorChecksToCsv, mergeChecks } from "./httpMonitorHistory";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 
 /** How many of the newest checks the chart shows (and loads from history). */
 const MAX_HISTORY = 120;
@@ -66,6 +67,10 @@ export function HttpMonitorPanel() {
   // SEC-008 opt-in: loopback / private / unique-local targets are refused unless
   // the user allows them for this monitor. Off by default (#4017).
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(false);
+  // The row name and one-line description the sidebar shows (#5789); blank
+  // means the row falls back to the URL / shows no description.
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [monitors, setMonitors] = useState<HttpMonitorState[]>([]);
   const [history, setHistory] = useState<HttpCheckResult[]>([]);
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
@@ -241,7 +246,9 @@ export function HttpMonitorPanel() {
         expectedStatus !== "" ? expectedStatus : undefined,
         Number(timeoutSecs) * 1000,
         runLocation,
-        allowPrivateNetwork
+        allowPrivateNetwork,
+        normalizeItemDescription(name),
+        normalizeItemDescription(description)
       );
       // Remember where this monitor runs so its row can show the vantage.
       setMonitorLocation(monitorId, runLocation);
@@ -270,6 +277,8 @@ export function HttpMonitorPanel() {
     timeoutSecs,
     runLocation,
     allowPrivateNetwork,
+    name,
+    description,
     setMonitorLocation,
     loadMonitors,
     stopListening,
@@ -500,6 +509,35 @@ export function HttpMonitorPanel() {
             checked={allowPrivateNetwork}
             onCheckedChange={setAllowPrivateNetwork}
             data-testid="http-monitor-allow-private"
+          />
+        </Field>
+        <Field
+          className="network-panel__field"
+          label="Name (optional)"
+          htmlFor="http-monitor-name"
+          hint="Shown in the sidebar instead of the URL."
+        >
+          <Input
+            id="http-monitor-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Shop front page"
+            data-testid="http-monitor-name"
+          />
+        </Field>
+        <Field
+          className="network-panel__field"
+          label="Description (optional)"
+          htmlFor="http-monitor-description"
+          hint="One short line shown under the name in the sidebar."
+        >
+          <Input
+            id="http-monitor-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+            placeholder="What this monitor watches"
+            data-testid="http-monitor-description"
           />
         </Field>
       </div>

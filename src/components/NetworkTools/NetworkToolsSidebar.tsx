@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type MouseEvent } from "react";
 import "./NetworkTools.css";
 import {
   Activity,
@@ -25,13 +25,14 @@ import { frontendLog } from "@/utils/frontendLog";
 import { Button, Tooltip, EmptyState, StatusDot, toast } from "@/components/ui";
 import type { StatusTone } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
-import { isMonitorStale, formatCheckedAgo } from "./monitorStaleness";
+import { isMonitorStale } from "./monitorStaleness";
+import { monitorRowMarker, monitorRowName, monitorRowTooltip } from "./monitorRow";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * How often the sidebar re-evaluates monitor ages/staleness. The backend poller
  * only emits on each check, so without this tick a long-interval monitor's
- * "checked N ago" label would freeze and it would never flip to overdue between
+ * "checked N ago" tooltip line would freeze and it would never flip to overdue between
  * polls (audit gap #11).
  */
 const STALENESS_TICK_MS = 5_000;
@@ -83,8 +84,11 @@ function monitorStatus(
 
 /**
  * One HTTP monitor in the sidebar, built on the shared {@link SidebarListItem}
- * like the tunnel and service rows (#5193): status dot, URL and hover/focus
- * actions on the first line, the latest reading and its age on the second.
+ * like the tunnel and service rows (#5193). Per the list-row rule (#5789,
+ * docs/copy-style.md -> "List rows"): the status dot, the monitor's name (its
+ * URL when it has none) and its description; a marker only when the state
+ * needs attention (stopped, paused, overdue, down). The URL, method, interval
+ * and the latest reading are in the row's tooltip.
  */
 function MonitorRow({
   monitor,
@@ -96,31 +100,14 @@ function MonitorRow({
   onOpen,
 }: MonitorRowProps) {
   const { config, running, paused, lastResult } = monitor;
-  // CSS cuts the URL to the row; the tooltip then shows it in full (#4954).
-  const shortUrl = config.url.replace(/^https?:\/\//, "");
   const stale = isMonitorStale(lastResult?.timestampMs, config.intervalMs, now);
   const status = monitorStatus(monitor, stale);
-  // The status and age read as the Open button's description, its name being
-  // the full URL (the visible one is truncated) (#4349).
+  const marker = monitorRowMarker(monitor, now);
+  const label = config.name?.trim() || config.url;
+  // The marker reads as the Open button's description, its name being the
+  // monitor's name or full URL (#4349).
   const idBase = useId();
-  const resultId = `${idBase}-result`;
-  const stateId = `${idBase}-state`;
-  const ageId = `${idBase}-age`;
-  const checking = !lastResult && running && !paused;
-  const stateText = checking
-    ? "checking…"
-    : running && paused
-      ? "paused"
-      : !running
-        ? "stopped"
-        : null;
-  const describedBy = [
-    lastResult ? resultId : null,
-    stateText ? stateId : null,
-    lastResult ? ageId : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const markerId = `${idBase}-marker`;
 
   /** Run a row action without the click also opening the monitor. */
   const act = (fn: (id: string) => void) => (e: MouseEvent) => {
@@ -128,61 +115,43 @@ function MonitorRow({
     fn(config.id);
   };
 
-  const parts: ReactNode[] = [];
-  if (lastResult) {
-    parts.push(
-      <span
-        key="result"
-        id={resultId}
-        className={lastResult.ok ? undefined : "network-sidebar__monitor-down"}
+  const markerEl =
+    marker === null ? null : marker.kind === "overdue" ? (
+      <Tooltip
+        content={`Overdue: last check was more than 2× the ${Math.round(
+          config.intervalMs / 1000
+        )}s interval ago; this reading may be out of date`}
+        side="left"
       >
-        {lastResult.ok ? `${lastResult.statusCode} · ${lastResult.latencyMs}ms` : "✗ down"}
-      </span>
-    );
-  }
-  if (stateText) {
-    parts.push(
-      <span key="state" id={stateId}>
-        {stateText}
-      </span>
-    );
-  }
-  if (lastResult) {
-    parts.push(
+        <span
+          id={markerId}
+          className="network-sidebar__monitor-stale"
+          data-testid={`monitor-stale-${config.id}`}
+        >
+          <AlertTriangle size={10} aria-hidden="true" />
+          {marker.label}
+        </span>
+      </Tooltip>
+    ) : (
       <span
-        key="age"
-        id={ageId}
-        className={`network-sidebar__monitor-age${
-          stale ? " network-sidebar__monitor-age--stale" : ""
-        }`}
+        id={markerId}
+        className={marker.kind === "down" ? "network-sidebar__monitor-down" : undefined}
+        data-testid={`monitor-marker-${config.id}`}
       >
-        {stale && (
-          <Tooltip
-            content={`Overdue: last check was more than 2× the ${Math.round(
-              config.intervalMs / 1000
-            )}s interval ago; this reading may be out of date`}
-            side="left"
-          >
-            <span
-              className="network-sidebar__monitor-stale"
-              data-testid={`monitor-stale-${config.id}`}
-            >
-              <AlertTriangle size={10} aria-hidden="true" />
-              overdue
-            </span>
-          </Tooltip>
-        )}
-        {formatCheckedAgo(lastResult.timestampMs, now)}
+        {marker.label}
       </span>
     );
-  }
 
   return (
     <SidebarListItem
       testId={`monitor-row-${config.id}`}
       nameTestId={`monitor-url-${config.id}`}
-      name={shortUrl}
-      nameTooltip={config.url}
+      name={monitorRowName(monitor)}
+      nameTooltip={label}
+      description={config.description}
+      descriptionTestId={`monitor-description-${config.id}`}
+      tooltip={monitorRowTooltip(monitor, now)}
+      tooltipTestId={`monitor-tooltip-${config.id}`}
       onClick={() => onOpen(config.id)}
       status={
         <StatusDot
@@ -199,8 +168,8 @@ function MonitorRow({
               variant="ghost"
               size="sm"
               iconOnly
-              aria-label={`Open monitor ${config.url}`}
-              aria-describedby={describedBy || undefined}
+              aria-label={`Open monitor ${label}`}
+              aria-describedby={marker ? markerId : undefined}
               data-testid={`monitor-open-${config.id}`}
               icon={<Activity size={12} />}
               onClick={act(onOpen)}
@@ -255,9 +224,11 @@ function MonitorRow({
         </>
       }
       details={
-        <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
-          {parts}
-        </span>
+        markerEl && (
+          <span className="network-sidebar__monitor-meta" data-testid={`monitor-meta-${config.id}`}>
+            {markerEl}
+          </span>
+        )
       }
     />
   );
