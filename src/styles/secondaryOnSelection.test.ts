@@ -47,8 +47,6 @@ const ROW_STATE_REDIRECTS: [string, string][] = [
   ["components/TransferQueue/TransferQueue.css", ".transfer-row:hover"],
   ["components/TransferView/TransferView.css", ".transfer-pane__row:hover"],
   ["components/WorkflowSidebar/WorkflowEditorDialog.css", ".workflow-step"],
-  ["components/WorkflowSidebar/WorkflowSidebar.css", ".workflow-item__tag"],
-  ["components/MacroSidebar/MacroSidebar.css", ".macro-item__tag"],
   ["components/ui/ui.css", ".ui-select__item[data-highlighted]"],
   ["components/ui/ui.css", ".ui-menu__item:hover"],
   ["components/ui/ui.css", '.ui-menu__sub-trigger[data-state="open"]'],
