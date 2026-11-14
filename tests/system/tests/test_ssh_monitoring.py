@@ -1,6 +1,6 @@
 """SSH monitoring system tests (ported from infrastructure/ssh-monitoring.test.js).
 
-Covers monitoring auto-connect, the status-bar stats/refresh/disconnect controls,
+Covers monitoring auto-connect, the status-bar stats/refresh/stop-monitoring controls,
 and hide-on-non-SSH behavior. Monitoring opens its own SSH session for stats, so
 these require the ssh-password container (2201).
 """
@@ -75,19 +75,17 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
             self.monitoring_visible, what="monitoring back on the first tab"
         )
 
-    def test_disconnect_triggers_reconnect(self):
-        # On an SSH tab monitoring auto-connects, so a manual Disconnect is
-        # immediately followed by an auto-reconnect with a *fresh* session — the
-        # deterministic, observable proof that the Disconnect control fired.
-        # (The original "stays disconnected" / "returns to Monitor button"
-        # assertions are not portable: auto-connect never lets that state settle.)
+    def test_stop_then_start_monitoring(self):
+        # "Stop monitoring" (#5750) latches the monitor off (#5628): the session
+        # stays open, every metric chip goes and "Monitoring off · Start
+        # monitoring" restarts it with a *fresh* collector.
         #
-        # The monitor is keyed by the terminal session id, so a reconnect keeps
+        # The monitor is keyed by the terminal session id, so a restart keeps
         # its key (and its `monitorSessionId`, which equals the key). What marks
-        # the fresh session is its sample counter: every (re)connect restarts
+        # the fresh collector is its sample counter: every (re)connect restarts
         # `sampleCount` at 0 (`SystemMonitorStore::open`). So let a few samples
-        # accumulate, disconnect, and wait for the count to drop below that mark.
-        name = unique_name("ssh-mon-disc")
+        # accumulate, stop, and wait for the count to drop below that mark.
+        name = unique_name("ssh-mon-stop")
         self.connect_ssh_password(name)
         self.wait_for_monitoring_stats()
         # Earlier tests in this class leave their SSH tabs (and monitors) open,
@@ -101,16 +99,20 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
             timeout=30.0,
             what="the monitor to collect a few samples",
         )
-        self.monitoring_disconnect()
+        self.monitoring_stop()
+        self.wait(lambda: self.driver.exists("monitoring-stopped"), what="the stopped state")
+        assert not self.driver.exists("monitoring-cpu"), "a metric chip survived Stop monitoring"
+        assert "Start monitoring" in self.driver.get_text("monitoring-start-btn")
+        self.driver.click("monitoring-start-btn")
         self.wait(
             lambda: (lambda n: n is None or n < before)(self._sample_count(key)),
             timeout=30.0,
-            what="monitoring to drop the old session",
+            what="monitoring to restart with a fresh collector",
         )
         self.wait(
             lambda: self._live_monitor(key) is not None,
             timeout=30.0,
-            what="monitoring to reconnect with a new session",
+            what="monitoring to be live again",
         )
 
     def _live_monitor(self, key: str):
@@ -152,11 +154,13 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
         )
         assert self.monitoring_stats() is not None
 
-    def test_dropdown_has_disconnect(self):
+    def test_dropdown_has_stop_monitoring(self):
         self.connect_ssh_password(unique_name("ssh-mon-dropdown"))
         self.wait_for_monitoring_stats()
         self.open_monitoring_dropdown()
-        assert self.driver.exists("monitoring-disconnect")
+        assert self.driver.exists("monitoring-stop")
+        # It stops the readings, not the session, so it is not "Disconnect" (#5750).
+        assert self.driver.get_text("monitoring-stop").strip() == "Stop monitoring"
 
     # ── Hide on non-SSH tab ───────────────────────────────────────────────────
     def test_hides_on_settings_tab(self):
