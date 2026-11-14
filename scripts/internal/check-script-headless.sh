@@ -100,6 +100,7 @@ SCRIPTS=(
   "scripts/internal/macos-codesign.sh"
   "scripts/internal/macos-dmg-layout.sh"
   "scripts/internal/macos-signing-keychain.sh"
+  "scripts/internal/macos-release-signing.sh"
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/plugin-index-signing.sh"
   "scripts/internal/plugin-ipc-fuzz.sh"
@@ -116,6 +117,7 @@ SCRIPTS=(
   "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/setup-plugin-publisher-key.sh"
   "scripts/internal/setup-updater-signing-key.sh"
+  "scripts/internal/test-macos-release-signing.sh"
   "scripts/internal/updater-signing.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/internal/verify-plugin-runner-bundle.sh"
@@ -405,6 +407,19 @@ if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
   fi
 else
   echo "skip  signing lifecycle: macOS identity setup needs macOS (security, codesign)"
+fi
+
+# --- Isolated macOS release signing phases, dry run (#5781) ---
+# The four phases release.yml runs (build helpers, sign-helpers, stage-helpers
+# + app build, sign-app) on a fake app with a THROWAWAY identity in a temporary
+# keychain, with the identity and ad hoc, plus the refusals. The script checks
+# itself that the keychain search list and default keychain are unchanged.
+if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1 &&
+  command -v cc >/dev/null 2>&1 && command -v hdiutil >/dev/null 2>&1; then
+  lc_step "macOS release signing: four-phase dry run (throwaway identity)" \
+    bash scripts/internal/test-macos-release-signing.sh
+else
+  echo "skip  signing lifecycle: macOS release signing phases need macOS (codesign, cc, hdiutil)"
 fi
 
 lifecycle_failures=$((failures - help_failures))
