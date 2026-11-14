@@ -116,6 +116,7 @@ SCRIPTS=(
   "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/setup-plugin-publisher-key.sh"
   "scripts/internal/setup-updater-signing-key.sh"
+  "scripts/internal/updater-signing.sh"
   "scripts/internal/shell-integration-cli-smoke.sh"
   "scripts/internal/verify-plugin-runner-bundle.sh"
   "scripts/internal/verify-rdp-helper-bundle.sh"
@@ -333,6 +334,42 @@ if [ -x node_modules/.bin/tauri ]; then
   fi
 else
   echo "skip  signing lifecycle: updater key setup needs the Tauri CLI (pnpm install)"
+fi
+
+# --- In-app updater bundle signing, sign-updater's path (#5761) ---
+# A throwaway key signs dummy bundles through updater-signing.sh sign exactly as
+# release.yml's sign-updater job does, with the repo's Tauri CLI standing in for
+# the pinned release binary (install-signer needs the network; every release and
+# dry run executes it). Bundles must match build-app's digests, and every .sig
+# must verify against the public key and carry the app version.
+US_SIGNING="scripts/internal/updater-signing.sh"
+if [ -x node_modules/.bin/tauri ]; then
+  US="$LC/us"
+  mkdir -p "$US/assets" "$US/digests"
+  node_modules/.bin/tauri signer generate --ci -p lifecycle -w "$US/k.key" -f >/dev/null
+  node -e 'const fs = require("fs"); const d = process.argv[1];
+    fs.writeFileSync(d + "/conf.json", JSON.stringify({ plugins: { updater: {
+      pubkey: fs.readFileSync(d + "/k.key.pub", "utf8").trim() } } }));' "$US"
+  for a in $(node scripts/internal/updater-manifest.mjs assets --version 0.0.0-dryrun); do
+    printf 'bundle %s\n' "$a" >"$US/assets/$a"
+    (cd "$US/assets" && openssl dgst -sha256 -r "$a" | sed 's/ \*/  /') >>"$US/digests/all.sha256"
+  done
+  us_sign() {
+    TAURI_SIGNING_PRIVATE_KEY="$(cat "$US/k.key")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$1" \
+      bash "$US_SIGNING" sign --signer node_modules/.bin/tauri --version 0.0.0-dryrun \
+      --app-version 0.1.0 --dir "$US/assets" --digests "$US/digests" --config "$US/conf.json"
+  }
+  lc_step "updater: sign + verify the bundles (digests checked)" us_sign lifecycle
+  lc_step "updater: latest.json passes the checker" node scripts/internal/updater-manifest.mjs \
+    write --version 0.0.0-dryrun --signed-version 0.1.0 --dir "$US/assets" --config "$US/conf.json"
+  lc_refuse "updater: sign with the wrong password" us_sign wrong
+  lc_refuse "updater: sign without the key" env -u TAURI_SIGNING_PRIVATE_KEY bash "$US_SIGNING" \
+    sign --signer node_modules/.bin/tauri --version 0.0.0-dryrun --app-version 0.1.0 \
+    --dir "$US/assets" --digests "$US/digests"
+  printf 'tampered\n' >>"$US/assets/termiHub-0.0.0-dryrun-windows-x64.msi"
+  lc_refuse "updater: sign a bundle that differs from build-app's digest" us_sign lifecycle
+else
+  echo "skip  signing lifecycle: updater bundle signing needs the Tauri CLI (pnpm install)"
 fi
 
 # --- macOS signing identity setup, dry-run (#5545) ---
