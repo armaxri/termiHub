@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -270,7 +271,7 @@ export function WorkflowEditorDialog({
     const values = getValues();
     return onSave({
       name: values.name.trim(),
-      description: values.description.trim() || undefined,
+      description: normalizeItemDescription(values.description),
       tags: parseTags(values.tags),
       steps: entries.map((e) => e.step),
       triggers,
@@ -344,6 +345,7 @@ export function WorkflowEditorDialog({
                 onChange={(e) => field.onChange(e.target.value)}
                 onBlur={field.onBlur}
                 placeholder="What this workflow does"
+                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
                 data-testid="workflow-editor-description"
               />
             </Field>

@@ -115,19 +115,13 @@
   white-space: nowrap;
 }
 
-/* The last run's outcome dot sits inline before "Last: …" (#5612); the row's
-   leading dot shows whether the schedule is on. */
-.schedules__last .status-dot {
-  margin-right: var(--spacing-xs);
-}
-
-/* The toggle's icon starts where the meta text starts (R-082, #5680): pull the
-   ghost button left by its own inline padding instead of indenting it. */
-.schedules__attempts-toggle {
-  align-self: flex-start;
-  margin-top: var(--spacing-xxs);
-  margin-left: calc(-1 * var(--spacing-sm));
-  font-size: var(--font-size-2xs);
+/* A failed last run is a state that needs attention (#5757): a compact marker
+   on the row; the run's details are in the row tooltip. */
+.schedules__last-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--color-error);
 }
 
 .schedule-attempts {

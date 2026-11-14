@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
+import { tagsLine } from "@/components/SidebarListItem/rowTooltip";
 import { triggerKindLabel } from "./workflowStepMeta";
 
 /** How many bound connection names a trigger lists before collapsing to "+N". */
@@ -37,9 +38,9 @@ function connectionList(ids: string[], connectionName: (id: string) => string | 
 }
 
 /**
- * The muted second line of a workflow row (#5635): how it is launched and
- * what it targets, e.g. `On output match · pr-auto-local` or `Manual`. Never
- * a step count — the name leads and this line only says when/where it runs.
+ * How a workflow is launched and what it targets (#5635), e.g.
+ * `On output match · pr-auto-local` or `Manual`. Never a step count. Shown in
+ * the row's tooltip, not on the row (#5757): it is configuration.
  */
 export function workflowRowSummary(
   workflow: Workflow,
@@ -56,6 +57,20 @@ export function workflowRowSummary(
     }
   }
   return parts.length > 0 ? parts.join("; ") : triggerKindLabel("manual");
+}
+
+/**
+ * The workflow row's tooltip lines (#5757): how it is launched and what it
+ * targets, then its tags when it has any.
+ */
+export function workflowRowTooltip(
+  workflow: Workflow,
+  connectionName: (id: string) => string | undefined
+): string[] {
+  const lines = [workflowRowSummary(workflow, connectionName)];
+  const tags = tagsLine(workflow.tags);
+  if (tags) lines.push(tags);
+  return lines;
 }
 
 /** What each armed trigger watches, e.g. `on output match of prod; on connect of a, b`. */

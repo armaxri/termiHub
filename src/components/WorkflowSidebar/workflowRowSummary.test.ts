@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
-import { armedDescription, armedTriggers, workflowRowSummary } from "./workflowRowSummary";
+import {
+  armedDescription,
+  armedTriggers,
+  workflowRowSummary,
+  workflowRowTooltip,
+} from "./workflowRowSummary";
 
 function workflow(triggers: WorkflowTrigger[]): Workflow {
   return {
@@ -42,5 +47,16 @@ describe("workflowRowSummary (#5635)", () => {
     const w = workflow([{ kind: "on-output-match", connectionIds: ["a"], pattern: "x" }]);
     expect(armedTriggers(w)).toHaveLength(1);
     expect(armedDescription(w, name)).toBe("Runs automatically: on output match of alpha");
+  });
+});
+
+describe("workflowRowTooltip (#5757)", () => {
+  it("leads with how it runs, then its tags", () => {
+    const w = { ...workflow([{ kind: "on-connect", connectionIds: ["a"] }]), tags: ["ops"] };
+    expect(workflowRowTooltip(w, name)).toEqual(["On connect · alpha", "Tags: ops"]);
+  });
+
+  it("has no tags line without tags", () => {
+    expect(workflowRowTooltip(workflow([{ kind: "manual" }]), name)).toEqual(["Manual"]);
   });
 });
