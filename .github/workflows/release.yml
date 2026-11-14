@@ -377,9 +377,9 @@ jobs:
           mv release_notes.marked.md release_notes.md
 
       - name: Append macOS unsigned-beta bypass note
-        # v0.x ships as an UNSIGNED public beta (maintainer decision 2026-09-06):
-        # no Apple Developer-ID / notarization yet. build-app re-signs the
-        # .app ad-hoc so it launches (and satisfies the Apple Silicon kernel), but
+        # No Apple Developer ID / notarization (maintainer decisions 2026-09-06,
+        # 2026-11-13): build-app signs the .app with the project's self-signed
+        # identity (#5545; ad hoc until it is set up) so it launches, but
         # Gatekeeper still shows an "unverified developer" prompt on first open.
         # Document the one-time approval in every release body so the beta stays
         # turnkey for users. The text comes from scripts/internal/macos-first-launch.mjs,
@@ -566,6 +566,25 @@ jobs:
       # missing externalBin. `externalBin` lives in the bundle-only config
       # fragment tauri.sidecar.conf.json (merged via --config below), so per-PR
       # compile/test jobs stay sidecar-free. Run through Git Bash on all runners.
+      # Stable macOS signing identity (#5545): a self-signed certificate held as
+      # the MACOS_SIGNING_P12_BASE64 / _PASSWORD secrets, pinned by SHA-1 in
+      # scripts/internal/macos-signing-identity.json. Every release signed with
+      # it has the same designated requirement, so the keychain items a user's
+      # termiHub saved stay readable after an update (an ad-hoc build's
+      # requirement is its build hash, new every release). The helper imports
+      # it into a temporary keychain (never the search list or default) and
+      # exports TERMIHUB_MACOS_SIGNING_IDENTITY/_KEYCHAIN for the sidecar builds
+      # and the re-sign below. No pin: ad hoc with a ::notice::; a pin without
+      # a matching secret fails the build.
+      - name: Import macOS signing identity
+        if: startsWith(matrix.os, 'macos')
+        id: macsign
+        shell: bash
+        env:
+          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: scripts/internal/macos-signing-keychain.sh ci-import
+
       - name: Build RDP sidecar for bundling
         shell: bash
         run: ./scripts/build-rdp-sidecar.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
@@ -574,8 +593,9 @@ jobs:
       # tauri.sidecar.conf.json (#4202). Stage it before tauri-action too:
       # core/build.rs embeds the staged runner's SHA-256, which the app checks
       # before spawning the bundled runner. Windows MSVC links the static VC
-      # runtime (#4172); macOS ad-hoc signs it under its installed name so the
-      # re-sign below leaves its bytes, and so the digest, unchanged.
+      # runtime (#4172); macOS signs it under its installed name (ad hoc, or
+      # with the identity imported above) so the re-sign below leaves its
+      # bytes, and so the digest, unchanged.
       - name: Build plugin runner for bundling
         shell: bash
         run: ./scripts/build-plugin-runner.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
@@ -584,7 +604,7 @@ jobs:
       # verified to carry the binary's build id. Linux: split the DWARF out of
       # the STAGED copy in place, before tauri-action hashes it (core/build.rs
       # embeds that digest), and refresh the transparency .sha256 next to it.
-      # macOS/Windows: the staged copy is the target-dir binary (macOS: ad-hoc
+      # macOS/Windows: the staged copy is the target-dir binary (macOS:
       # re-signed, same LC_UUID), whose .dSYM/.pdb cargo left next to it.
       - name: Stage sidecar debug symbols
         shell: bash
@@ -856,13 +876,16 @@ jobs:
 
       # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
       # (inner components signed in the wrong order), which Gatekeeper classifies as
-      # "damaged" — no bypass path exists for that error. A *fully consistent* ad-hoc
-      # signature instead triggers "unverified developer", which users can bypass via
-      # System Settings → Privacy & Security → Open Anyway (see the release notes).
-      # We re-sign the entire bundle ourselves, inside-out, to guarantee consistency. Ad-hoc signatures are also
-      # required by the Apple Silicon kernel — a completely unsigned binary is killed
-      # immediately at exec time on M1/M2/M3/M4. Ported verbatim from dev-build.yml.
-      - name: Re-sign macOS DMG with consistent ad-hoc signature
+      # "damaged" — no bypass path exists for that error. A *fully consistent*
+      # signature that is not a Developer ID instead triggers "unverified developer",
+      # which users can bypass via System Settings → Privacy & Security → Open Anyway
+      # (see the release notes). We re-sign the entire bundle ourselves, inside-out,
+      # to guarantee consistency: with the self-signed identity imported above when
+      # it is set up (#5545), ad hoc otherwise. A signature is also required by the
+      # Apple Silicon kernel — a completely unsigned binary is killed immediately at
+      # exec time on M1/M2/M3/M4. The signing order, the strict verification and the
+      # designated-requirement checks live in scripts/internal/macos-codesign.sh.
+      - name: Re-sign macOS app inside the DMG
         if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
@@ -880,54 +903,24 @@ jobs:
 
           APP="$WORKDIR/$APP_NAME"
 
-          # Sign inside-out: individual Mach-O files first, then nested bundles,
-          # then the top-level app. This matches the required codesign ordering and
-          # produces a CodeResources manifest that is consistent with all signed content.
-
-          # 1. Sign all individual Mach-O binaries (dylibs, executables, helpers)
-          # Every codesign failure is FATAL (PKG-005): a swallowed inner-sign
-          # failure is exactly how an inconsistent, Gatekeeper-"damaged" bundle
-          # would ship while the job reports success.
-          while IFS= read -r -d '' f; do
-            if file "$f" 2>/dev/null | grep -q 'Mach-O'; then
-              if ! codesign -s - --force "$f"; then
-                echo "::error::codesign failed for Mach-O file: $f"
-                exit 1
-              fi
-            fi
-          done < <(find "$APP" -type f -print0)
-
-          # 2. Sign nested bundle types as bundles (frameworks, plugins, XPC services)
-          while IFS= read -r -d '' bundle; do
-            if ! codesign -s - --force "$bundle"; then
-              echo "::error::codesign failed for nested bundle: $bundle"
-              exit 1
-            fi
-          done < <(find "$APP" -mindepth 1 -type d \( \
-            -name "*.framework" -o -name "*.app" -o \
-            -name "*.bundle" -o -name "*.appex" -o -name "*.xpc" \) -print0)
-
-          # 3. Sign the top-level app bundle (no --deep; inner content already signed)
-          codesign -s - --force "$APP"
-
-          # 3a. The re-signed RDP helper must still match the digest the app
-          #     embeds (#1762), or RDP is refused as tampered (#4222).
-          #     build-rdp-sidecar.sh signed it under its installed name before
-          #     staging, so the re-sign above is byte-identical.
+          # 1-4. Sign inside-out (Mach-O files, nested bundles, the app; no
+          #      --deep), then HARD GATE `codesign --verify --deep --strict` (the
+          #      "damaged" guard, PKG-005). With the identity, also prove the
+          #      designated requirements of the app and both helpers name the
+          #      pinned certificate. Every codesign failure is fatal.
+          scripts/internal/macos-codesign.sh resign-app "$APP"
           EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+
+          # 4a. The RDP helper must still match the digest the app embeds
+          #     (#1762), or RDP is refused as tampered (#4222).
+          #     build-rdp-sidecar.sh signed it under its installed name before
+          #     staging: an ad-hoc re-sign is byte-identical, and with the
+          #     identity the re-sign keeps its signature.
           scripts/internal/verify-rdp-helper-bundle.sh "$APP/Contents/MacOS/$EXE_NAME"
 
-          # 4. HARD GATE: the whole bundle must verify as consistently signed.
-          #    This is what catches the "damaged" (inconsistent) state.
-          echo "=== Signature verification (strict, deep) ==="
-          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
-            echo "::error::codesign --verify --deep --strict failed for $APP — the bundle is inconsistently signed"
-            exit 1
-          fi
-
-          # 5. The re-signed plugin runner (#4202) must still match the digest
-          #    the app embeds (the staged runner was signed under the same
-          #    name, so the re-sign is byte-identical). --no-run: the x64
+          # 5. The plugin runner (#4202) must still match the digest the app
+          #    embeds (the staged runner was signed under the same name, so
+          #    the re-sign leaves it byte-identical). --no-run: the x64
           #    bundle is cross-built here; Release macOS Smoke runs it natively.
           scripts/internal/verify-plugin-runner-bundle.sh --no-run "$APP/Contents/MacOS/$EXE_NAME"
 
@@ -939,15 +932,16 @@ jobs:
             termihub-rdp-helper="$M/termihub-rdp-helper" \
             termihub-plugin-runner="$M/termihub-plugin-runner"
 
-          # Advisory only: Gatekeeper always rejects an ad-hoc (non-Developer ID)
-          # bundle — the project ships unsigned-beta by maintainer decision — so
-          # spctl cannot be a gate. Its verdict is logged, never discarded.
+          # Advisory only: Gatekeeper always rejects a bundle without a Developer
+          # ID (self-signed or ad hoc; no Apple Developer account by maintainer
+          # decision), so spctl cannot be a gate. Its verdict is logged.
           echo "=== Gatekeeper assessment (advisory) ==="
           if ! spctl --assess --type exec --verbose=2 "$APP" 2>&1; then
-            echo "::notice::spctl rejected the ad-hoc bundle (expected without a Developer ID)"
+            echo "::notice::spctl rejected the bundle (expected without a Developer ID)"
           fi
           echo "=== Signature info ==="
           codesign -dv "$APP" 2>&1
+          codesign -d -r- "$APP" 2>&1
           find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
 
           # Swap the re-signed .app into Tauri's own image instead of rebuilding
@@ -1004,7 +998,7 @@ jobs:
       # scripts/internal/updater-platforms.json). Windows and the Linux AppImage
       # update from the installer itself, signed by the bundler. macOS updates
       # from a .app.tar.gz: Tauri's own one holds the bundle from BEFORE the
-      # ad-hoc re-sign above, so it is rebuilt from the re-signed app in the DMG
+      # re-sign above, so it is rebuilt from the re-signed app in the DMG
       # and signed here (bound to the app version, like the bundler does).
       # Linux ARM64 ships only .deb/.rpm, which keep the downloads page.
       - name: Stage the updater bundle and signature
@@ -1030,6 +1024,14 @@ jobs:
             ditto "$app" "$work/$name"
             hdiutil detach "$work/mount" -quiet
             codesign --verify --deep --strict "$work/$name"
+            # The bundle the updater installs must carry the stable identity
+            # (#5545), or the update itself would cost the keychain access.
+            if [ -n "${TERMIHUB_MACOS_SIGNING_IDENTITY:-}" ]; then
+              node scripts/internal/macos-signing.mjs check \
+                --cert-sha1 "$TERMIHUB_MACOS_SIGNING_IDENTITY" \
+                --identifier "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$work/$name/Contents/Info.plist")" \
+                "$work/$name"
+            fi
             out="release-assets/termiHub-${VERSION}-${PLATFORM}.app.tar.gz"
             # No AppleDouble (._*) entries: the updater unpacks this over the app.
             COPYFILE_DISABLE=1 tar -czf "$out" -C "$work" "$name"
@@ -1061,6 +1063,13 @@ jobs:
           path: release-assets/
           if-no-files-found: error
           retention-days: 7
+
+      # The temporary signing keychain dies with the hosted runner anyway;
+      # remove it explicitly so the private key never outlives its use.
+      - name: Remove the macOS signing keychain
+        if: always() && startsWith(matrix.os, 'macos') && steps.macsign.outputs.enabled == 'true'
+        shell: bash
+        run: scripts/internal/macos-signing-keychain.sh delete "$TERMIHUB_MACOS_SIGNING_KEYCHAIN"
 
       # One archive per platform with the desktop, RDP sidecar and plugin runner
       # symbols plus their SYMBOLS.txt manifest (#4504). Published by
@@ -2208,7 +2217,7 @@ jobs:
 
           # Desktop bundles — names mirror build-app's rename logic
           # (termiHub-<version>-<platform><ext>) plus its .deb/.rpm side-uploads.
-          # DMG ×2 are re-signed ad-hoc before upload.
+          # DMG ×2 are re-signed (self-signed identity or ad hoc) before upload.
           expected=(
             "termiHub-${VERSION}-macos-x64.dmg"
             "termiHub-${VERSION}-macos-arm64.dmg"

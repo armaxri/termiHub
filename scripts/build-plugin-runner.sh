@@ -19,7 +19,8 @@
 #                         Tauri `externalBin` expects, plus a .sha256 file.
 #                         core/build.rs embeds that file's SHA-256, which the
 #                         app checks before spawning the bundled runner. macOS:
-#                         ad-hoc signed first, under its installed name, so the
+#                         signed first, under its installed name (ad hoc, or
+#                         with TERMIHUB_MACOS_SIGNING_IDENTITY, #5545), so the
 #                         release re-sign leaves the bytes (and digest) as is.
 #                         Linux: RUNPATH set to $ORIGIN/../lib first (needs
 #                         patchelf), so the AppImage bundler leaves it as is.
@@ -136,10 +137,13 @@ if [ "$EXTERNALBIN" -eq 1 ]; then
         if command -v codesign >/dev/null 2>&1; then
             SIGN_DIR="$(mktemp -d)"
             cp "$BIN_PATH" "$SIGN_DIR/termihub-plugin-runner"
-            codesign -s - --force "$SIGN_DIR/termihub-plugin-runner"
+            # With TERMIHUB_MACOS_SIGNING_IDENTITY set (release.yml, #5545) this
+            # is the project's self-signed identity, and the release re-sign
+            # keeps this signature; otherwise ad hoc.
+            bash scripts/internal/macos-codesign.sh sign "$SIGN_DIR/termihub-plugin-runner"
             cp "$SIGN_DIR/termihub-plugin-runner" "$STAGE_DIR/$STAGE_NAME"
             rm -rf "$SIGN_DIR"
-            echo "Ad-hoc signed as termihub-plugin-runner"
+            echo "Signed as termihub-plugin-runner (${TERMIHUB_MACOS_SIGNING_IDENTITY:-ad hoc})"
         else
             echo "WARNING: codesign not found; staging the runner unsigned. A macOS" >&2
             echo "  bundle re-signed later will not match the embedded digest." >&2

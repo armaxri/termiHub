@@ -1512,6 +1512,9 @@ Before creating a release, run the quality scripts and verify:
 - [ ] The [in-app updater signing key](#updater-signing-key) is set up, or you accept that this
       release ships without `latest.json` (installed copies then keep "Open downloads page";
       the Release run logs a notice). Once it is set up, release.yml fails if the secret is missing
+- [ ] The [macOS signing identity](#macos-signing-identity) is set up, or you accept that this
+      release is ad-hoc signed (macOS keychain access then does not survive the update; the
+      Release run logs a notice). Once it is pinned, release.yml fails if the secret is missing
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] Every `docs/marketing/*.md` draft you fold into `README.md` / `CHANGELOG.md` was
       re-verified against the app on the release commit first, and its
@@ -1688,7 +1691,8 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
 2. Create a **draft** GitHub Release with notes extracted from `CHANGELOG.md`
    (`scripts/internal/release-draft.sh`); nobody sees it until step 7
 3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb).
-   The macOS legs re-sign the app ad-hoc and swap it back into Tauri's own DMG, so the
+   The macOS legs re-sign the app with the [macOS signing identity](#macos-signing-identity)
+   (ad hoc until it is set up) and swap it back into Tauri's own DMG, so the
    drag-to-install `Applications` link and volume layout are kept
    (`scripts/internal/macos-dmg-layout.sh`). The build jobs hold a read-only token and
    hand their outputs on as workflow artifacts; `check-release-assets` checks the full set
@@ -2364,13 +2368,13 @@ termiHub's release layout.
 **Per platform** (the targets in
 [`scripts/internal/updater-platforms.json`](../scripts/internal/updater-platforms.json)):
 
-| Install                                      | Updates in place?                                      | Bundle the updater installs | Warnings that remain                                                                                                                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Windows x64 MSI                              | Yes (installer runs in passive mode, restarts the app) | `…-windows-x64.msi`         | SmartScreen may warn on the first download of an unsigned installer from the browser; the in-app update starts the MSI itself. The installer's UAC prompt stays                                              |
-| macOS `.app` (arm64 and x64)                 | Yes (the `.app` is replaced, then the app relaunches)  | `…-macos-<arch>.app.tar.gz` | Gatekeeper's "unverified developer" step on the first install from the DMG (the steps are in the release notes). The ad-hoc signature changes with every release, so macOS may ask again for keychain access |
-| Linux x64 AppImage                           | Yes (the AppImage file is replaced, then relaunched)   | `…-linux-x64.AppImage`      | None                                                                                                                                                                                                         |
-| Linux `.deb` / `.rpm` (x64, ARM64)           | No: the package manager owns the files                 | —                           | "Open downloads page", with a hint                                                                                                                                                                           |
-| Portable copy, develop build, dev/test build | No                                                     | —                           | "Open downloads page" (today's behaviour)                                                                                                                                                                    |
+| Install                                      | Updates in place?                                      | Bundle the updater installs | Warnings that remain                                                                                                                                                                                                      |
+| -------------------------------------------- | ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows x64 MSI                              | Yes (installer runs in passive mode, restarts the app) | `…-windows-x64.msi`         | SmartScreen may warn on the first download of an unsigned installer from the browser; the in-app update starts the MSI itself. The installer's UAC prompt stays                                                           |
+| macOS `.app` (arm64 and x64)                 | Yes (the `.app` is replaced, then the app relaunches)  | `…-macos-<arch>.app.tar.gz` | Gatekeeper's "unverified developer" step on the first install from the DMG (the steps are in the release notes). Keychain access survives the update once the [macOS signing identity](#macos-signing-identity) is set up |
+| Linux x64 AppImage                           | Yes (the AppImage file is replaced, then relaunched)   | `…-linux-x64.AppImage`      | None                                                                                                                                                                                                                      |
+| Linux `.deb` / `.rpm` (x64, ARM64)           | No: the package manager owns the files                 | —                           | "Open downloads page", with a hint                                                                                                                                                                                        |
+| Portable copy, develop build, dev/test build | No                                                     | —                           | "Open downloads page" (today's behaviour)                                                                                                                                                                                 |
 
 **How an update runs.** The update check is unchanged (release/develop channels, "Skip this
 version", the explicit check outcome). For an available stable release the check also reports
@@ -2398,7 +2402,8 @@ flowchart LR
 [`src-tauri/tauri.updater.conf.json`](../src-tauri/tauri.updater.conf.json), which only the
 release workflow merges, so `main`/`develop` builds never try to sign and never offer an
 in-place update. `build-app` stages each bundle's `.sig` next to it (macOS rebuilds the
-`.app.tar.gz` from the ad-hoc re-signed app in the DMG and signs it there); the read-only
+`.app.tar.gz` from the re-signed app in the DMG, checks its designated requirement and signs it
+there); the read-only
 `updater-manifest` job writes `latest.json` with
 [`updater-manifest.mjs`](../scripts/internal/updater-manifest.mjs) and checks every published
 target, every URL and every signature against the configured key and the app version before
@@ -2437,6 +2442,85 @@ password exist as the GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and
   installed; "Open downloads page" still works); announce a manual reinstall.
 - **Exposure:** the bundler signs during `tauri build`, so the secret is passed to that one
   build step (and to the macOS staging step), not to the whole job.
+
+### macOS Signing Identity
+
+There is no Apple Developer account (maintainer decision, [#5545](https://github.com/armaxri/termiHub/issues/5545)),
+so there is no Developer ID and no notarization. Once the one-time setup below is done, release builds are signed with a **self-signed
+code-signing certificate** that the project holds itself. It changes nothing for Gatekeeper (the
+"unverified developer" step on first install stays, see the release notes); what it fixes is
+the **keychain**.
+
+macOS ties a keychain item to the _designated requirement_ (DR) of the app that saved it, and
+only an app satisfying that DR reads it without a prompt:
+
+| Signature             | Designated requirement                                                 | After an update                                                                       |
+| --------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Ad hoc (before #5545) | `cdhash H"<build hash>"`, new for every build                          | The new build is a stranger: access prompt or `errSecAuthFailed` for every saved item |
+| Self-signed identity  | `identifier "com.termihub.app" and certificate root = H"<cert SHA-1>"` | Same DR as the build that saved the item: read silently                               |
+
+(A self-signed certificate is its own root, so codesign writes `certificate root`; it is the
+same certificate as the leaf.)
+
+**Per-platform signing status:**
+
+| Platform | Code signature                                                                                    | First-launch warning                      | Keychain / credential access after an update |
+| -------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| macOS    | Self-signed identity (ad hoc until the identity is set up)                                        | Gatekeeper "unverified developer", once   | Kept (with the identity)                     |
+| Windows  | Unsigned (no Authenticode certificate)                                                            | SmartScreen on the first browser download | Kept (Credential Manager is per user)        |
+| Linux    | Unsigned (packages and AppImage; the in-app updater checks its own minisign signature everywhere) | None                                      | Kept (Secret Service is per user)            |
+
+**How release.yml uses it:** `Import macOS signing identity`
+([`macos-signing-keychain.sh`](../scripts/internal/macos-signing-keychain.sh) `ci-import`) puts
+the `.p12` into a temporary keychain on the runner (never the search list or the default
+keychain) and exports the identity to the later steps. The RDP helper and plugin runner are
+signed with it by their build scripts, before the app embeds their SHA-256;
+[`macos-codesign.sh`](../scripts/internal/macos-codesign.sh) `resign-app` then signs the rest
+inside-out, keeps the two helpers' signatures (a certificate signature carries its signing time,
+so a re-sign would change their bytes), verifies the bundle with `codesign --verify --deep
+--strict` and checks with [`macos-signing.mjs`](../scripts/internal/macos-signing.mjs) that the
+app's and both helpers' DRs name the pinned certificate. The updater's `.app.tar.gz` is rebuilt
+from that app and checked again. The SHA-1 is pinned in
+[`macos-signing-identity.json`](../scripts/internal/macos-signing-identity.json):
+
+- nothing pinned: ad-hoc signing, with a `::notice::` (today's behaviour);
+- pinned, but the `MACOS_SIGNING_P12_BASE64` / `MACOS_SIGNING_P12_PASSWORD` secrets missing, or
+  holding another certificate: the build fails, because an ad-hoc or differently signed release
+  would cost every user their keychain access.
+
+Hardened runtime (`--options runtime`) is not enabled: it is only needed for notarization, it
+does not change the DR, and its library validation would stop the plugin runner from loading
+third-party plugin libraries (a self-signed identity has no Team ID to match). The standalone
+agent binaries are not signed with the identity: they are not in the app bundle and run on
+remote hosts, where no keychain item depends on them.
+
+- **One-time setup (maintainer, on a Mac):**
+
+  ```bash
+  ./scripts/internal/setup-macos-signing-identity.sh --backup-dir ~/macos-signing-backup
+  ```
+
+  It generates an RSA key and a self-signed certificate with the code-signing extended key usage
+  (valid 30 years), self-tests it in a throwaway keychain (two different binaries signed with it
+  must share one DR naming the certificate; your login keychain, default keychain and search
+  list are never touched), prints the certificate SHA-1, writes it into
+  `scripts/internal/macos-signing-identity.json`, and pipes the base64 `.p12` and its random
+  password to `gh secret set MACOS_SIGNING_P12_BASE64` / `MACOS_SIGNING_P12_PASSWORD` (never
+  echoed; shredded on exit). Then commit the pin file in a PR into `develop`, as the script
+  prints. From the first release built after that, keychain items survive updates. `--dry-run`
+  does everything except the `gh` calls and writes to a temp copy of the pin (the
+  `Shell Script Quality` lane runs it where macOS is available).
+
+- **Keep the backup.** Move `macos-signing.p12` and `macos-signing.p12.password` from
+  `--backup-dir` into your password manager and delete them from disk.
+- **Loss or compromise:** re-run with `--force` and commit the new pin. Nothing breaks: the
+  in-app updater trusts its own minisign key, not this certificate, so updates keep installing.
+  The cost is one more keychain approval per user: the first release signed with the new
+  certificate has a new DR, so macOS asks once more for each saved item (or the user saves the
+  password again, see below); from then on the new certificate is stable again.
+- **The fallback for users stays:** if macOS asks for keychain access, **Always Allow** trusts the
+  build that asked. People who never want OS keychain prompts can use the master-password
+  credential store instead (Settings ▸ Security), which no code signature affects.
 
 ### Hotfix Process
 
