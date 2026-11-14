@@ -37,7 +37,7 @@ use termihub_core::backends::ssh::remote_shell::{detect_remote_shell, RemoteShel
 use termihub_core::backends::ssh::{
     probe_exec_capability, ssh_exec_with_stdin, SftpAdvancedOps, SftpFileBrowser, Ssh,
 };
-use termihub_core::connection::ConnectionType;
+use termihub_core::connection::{ConnectionType, SessionEndCause};
 use termihub_core::session::prompt_ready::{wait_for_prompt, PromptSignal};
 use termihub_core::tunnel::config::LocalForwardConfig;
 use termihub_core::tunnel::local_forward::LocalForwarder;
@@ -1435,6 +1435,37 @@ async fn native_05f_prompt_probe_recognises_the_login_shells_prompt() {
     }
     ssh.disconnect().await.expect("disconnect cleanly");
     reader.abort();
+}
+
+/// #5801: a shell the user exits with a status reports it from `exit_code`,
+/// once the session's output ended — OpenSSH sends it after the EOF.
+#[tokio::test]
+async fn native_05m_exit_reports_the_remote_shell_status() {
+    let sshd = require_native_sshd!();
+
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(false);
+    ssh.connect(settings).await.expect("shell session connects");
+    let mut rx = ssh.subscribe_output();
+    assert_eq!(ssh.exit_code(), None, "no status while the shell runs");
+
+    let line = if cfg!(windows) { "exit 5\r" } else { "exit 5\n" };
+    ssh.write(line.as_bytes()).expect("write to the shell");
+    let ended = tokio::time::timeout(Duration::from_secs(30), async {
+        while rx.recv().await.is_some() {}
+    })
+    .await;
+    assert!(ended.is_ok(), "the session never ended after `exit 5`");
+
+    assert_eq!(ssh.exit_code(), Some(5), "the remote shell's status");
+    assert_eq!(
+        ssh.end_cause(),
+        Some(SessionEndCause::RemoteClosed),
+        "the server closed the shell channel"
+    );
+    ssh.disconnect().await.expect("disconnect cleanly");
+    assert_eq!(ssh.exit_code(), None, "a disconnect drops the status");
 }
 
 #[tokio::test]
