@@ -95,10 +95,11 @@ describe("TunnelListItem — reported reachability note (#2199)", () => {
     expect(reach()?.getAttribute("title")).toContain("127.0.0.1:8080");
   });
 
-  it("reads plainly for a widened bind on the agent LAN", () => {
+  it("puts a widened bind on the agent LAN in the tooltip, not on the row (#5770)", () => {
     renderItem(AGENT_TUNNEL, stateWith("agentLan"));
-    expect(reach()?.textContent).toContain("reachable on build-box's network");
-    expect(reach()?.getAttribute("data-warn")).toBe("false");
+    expect(reach()).toBeNull();
+    const row = container.querySelector('[data-testid="tunnel-item-tun-1"]');
+    expect(row?.getAttribute("aria-description")).toContain("reachable on build-box's network");
   });
 
   it("shows no note before the agent has reported reachability", () => {

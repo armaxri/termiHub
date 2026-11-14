@@ -3,6 +3,21 @@ import { Play, Pencil, Copy, Trash2 } from "lucide-react";
 import { Button, Tooltip, Spinner } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { WorkspaceSummary } from "@/types/workspace";
+import { tf } from "@/i18n/catalog";
+
+/**
+ * The workspace row's tooltip lines (#5770): how many tabs it opens, and in
+ * how many groups. The row shows only the name and the description.
+ */
+export function workspaceRowTooltip(workspace: WorkspaceSummary): string[] {
+  const count = workspace.connectionCount;
+  if (count === 0) return [];
+  return [
+    workspace.groupCount && workspace.groupCount > 1
+      ? tf("workspace.tooltip.tabsInGroups", { count, groups: workspace.groupCount })
+      : tf(count === 1 ? "workspace.tooltip.tab" : "workspace.tooltip.tabs", { count }),
+  ];
+}
 
 interface WorkspaceListItemProps {
   workspace: WorkspaceSummary;
@@ -103,11 +118,10 @@ export function WorkspaceListItem({
           </Tooltip>
         </>
       }
-      details={
-        workspace.description ? (
-          <span className="workspace-item__description">{workspace.description}</span>
-        ) : undefined
-      }
+      description={workspace.description}
+      descriptionTestId={`workspace-description-${workspace.id}`}
+      tooltip={workspaceRowTooltip(workspace)}
+      tooltipTestId={`workspace-tooltip-${workspace.id}`}
     />
   );
 }

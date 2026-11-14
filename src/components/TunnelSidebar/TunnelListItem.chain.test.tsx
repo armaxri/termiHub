@@ -96,7 +96,7 @@ describe("TunnelListItem — chained pair (#2597)", () => {
     onDelete: noop,
   };
 
-  it("nests the companion with a link badge and a 'this computer' host badge", () => {
+  it("nests the companion with a link badge; 'this computer' is in its tooltip", () => {
     render(
       <TunnelListItem
         {...common}
@@ -107,10 +107,12 @@ describe("TunnelListItem — chained pair (#2597)", () => {
       />
     );
     expect(q('[aria-label="Chained companion"]')).toBeTruthy();
-    expect(q('[data-testid="tunnel-host-p1-hop"]')?.textContent).toContain("this computer");
+    expect(q('[data-testid="tunnel-item-p1-hop"]')?.getAttribute("aria-description")).toContain(
+      "Hosted on this computer"
+    );
   });
 
-  it("shows the combined 'Linked · connected' status on the parent row", () => {
+  it("puts a healthy 'Linked · connected' status in the parent row's tooltip (#5770)", () => {
     render(
       <TunnelListItem
         {...common}
@@ -119,9 +121,24 @@ describe("TunnelListItem — chained pair (#2597)", () => {
         pairStatus="connected"
       />
     );
+    expect(q('[data-testid="tunnel-pair-status-p1"]')).toBeNull();
+    expect(q('[data-testid="tunnel-item-p1"]')?.getAttribute("aria-description")).toContain(
+      "Linked · connected"
+    );
+  });
+
+  it("keeps a degraded pair status on the parent row as an attention marker", () => {
+    render(
+      <TunnelListItem
+        {...common}
+        tunnel={PARENT}
+        state={stateOf("p1", "connected")}
+        pairStatus="degraded"
+      />
+    );
     const pair = q('[data-testid="tunnel-pair-status-p1"]');
-    expect(pair?.textContent).toContain("Linked · connected");
-    expect(pair?.getAttribute("data-warn")).toBe("false");
+    expect(pair?.textContent).toContain("Linked · degraded");
+    expect(pair?.getAttribute("data-warn")).toBe("true");
   });
 
   it("renders the degraded inline fix (Retry + different local port) on the companion", () => {

@@ -1,7 +1,8 @@
 /**
- * Vantage host-badge tests for the tunnel list item (S3, #2155): every row shows
+ * Vantage host tests for the tunnel list item (S3, #2155): every row says
  * where the tunnel is hosted — "this computer" for desktop tunnels, the agent
- * name for agent-hosted ones.
+ * name for agent-hosted ones. Since #5770 this is in the row's tooltip (its
+ * accessible description), not on the row.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -56,13 +57,17 @@ function renderItem(tunnel: TunnelConfig): void {
   });
 }
 
-function badge(): HTMLElement | null {
-  return container.querySelector<HTMLElement>('[data-testid="tunnel-host-tun-1"]');
+function row(): HTMLElement {
+  return container.querySelector<HTMLElement>('[data-testid="tunnel-item-tun-1"]')!;
+}
+
+function rowTooltip(): string {
+  return row().getAttribute("aria-description") ?? "";
 }
 
 setupAgentsRegion();
 
-describe("TunnelListItem — vantage host badge (S3, #2155)", () => {
+describe("TunnelListItem — vantage host in the tooltip (S3, #2155, #5770)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -79,18 +84,18 @@ describe("TunnelListItem — vantage host badge (S3, #2155)", () => {
 
   it("reads 'this computer' for a desktop-hosted tunnel (default)", () => {
     renderItem({ ...BASE, host: { kind: "thisComputer" } });
-    expect(badge()?.textContent).toContain("this computer");
-    expect(badge()?.getAttribute("data-on-agent")).toBe("false");
+    expect(rowTooltip()).toContain("Hosted on this computer");
+    expect(row().textContent).not.toContain("this computer");
   });
 
   it("reads 'this computer' when the host field is absent (legacy config)", () => {
     renderItem({ ...BASE } as TunnelConfig);
-    expect(badge()?.textContent).toContain("this computer");
+    expect(rowTooltip()).toContain("Hosted on this computer");
   });
 
   it("names the agent for an agent-hosted tunnel", () => {
     renderItem({ ...BASE, host: { kind: "agent", agentId: "agent-1" } });
-    expect(badge()?.textContent).toContain("build-box");
-    expect(badge()?.getAttribute("data-on-agent")).toBe("true");
+    expect(rowTooltip()).toContain("Hosted on agent build-box");
+    expect(row().textContent).not.toContain("build-box");
   });
 });

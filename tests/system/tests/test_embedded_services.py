@@ -111,7 +111,9 @@ class TestEmbeddedServices(
         name = unique_name("http")
         server = self.create_server(name, proto="http", port=self.free_port())
         assert self.driver.exists(f"server-item-{server['id']}")
-        assert self.driver.get_text(f"server-type-{server['id']}") == "HTTP"
+        # The protocol is in the row's tooltip, not on the row (#5770).
+        tip = self.driver.get_attribute(f"server-item-{server['id']}", "aria-description") or ""
+        assert tip.startswith("HTTP · http://"), tip
 
     # ── SVC-03: start / stop HTTP + it actually responds ─────────────────────
     def test_start_and_stop_http_server(self):
@@ -192,7 +194,8 @@ class TestEmbeddedServices(
     @pytest.mark.parametrize("proto,badge", [("ftp", "FTP"), ("tftp", "TFTP")])
     def test_ftp_tftp_lifecycle(self, proto: str, badge: str):
         server = self.create_server(unique_name(proto), proto=proto, port=self.free_port())
-        assert self.driver.get_text(f"server-type-{server['id']}") == badge
+        tip = self.driver.get_attribute(f"server-item-{server['id']}", "aria-description") or ""
+        assert tip.startswith(f"{badge} · {proto}://"), tip
         self.start_server(server["id"])
         assert self.server_running(server["id"])
 

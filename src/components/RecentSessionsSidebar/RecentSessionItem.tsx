@@ -1,5 +1,5 @@
 import type React from "react";
-import { Pin, PinOff, Plug, Save, Copy, Trash2, Star, SplitSquareHorizontal } from "lucide-react";
+import { Pin, PinOff, Plug, Save, Copy, Trash2, SplitSquareHorizontal } from "lucide-react";
 import {
   Button,
   Tooltip,
@@ -14,6 +14,24 @@ import { ConnectionIcon } from "@/utils/connectionIcons";
 import { formatRelativeTime } from "@/utils/formatters";
 import { sessionTypeBadge } from "@/utils/sessionHistoryTitle";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
+import { t, tf } from "@/i18n/catalog";
+
+/**
+ * The recent-session row's tooltip lines (#5770): the connection type, when
+ * it was last used, how often, and whether it is saved as a connection. The
+ * row shows only the session's title and a pin marker.
+ */
+export function recentSessionRowTooltip(entry: SessionHistoryEntry): string[] {
+  const out = [
+    sessionTypeBadge(entry.connectionType),
+    tf("recent.tooltip.lastUsed", {
+      when: formatRelativeTime(new Date(entry.lastUsed).toISOString()),
+    }),
+  ];
+  if (entry.useCount > 1) out.push(tf("recent.tooltip.uses", { count: entry.useCount }));
+  if (entry.promoted) out.push(t("recent.tooltip.saved"));
+  return out;
+}
 
 interface RecentSessionItemProps {
   entry: SessionHistoryEntry;
@@ -30,8 +48,9 @@ interface RecentSessionItemProps {
 }
 
 /**
- * A single recorded-session row: connection-type icon, `user@host` title, a
- * type badge, and relative last-used time. Single/double click reconnects; a
+ * A single recorded-session row: connection-type icon, `user@host` title and
+ * a pin marker; the type, last use and use count are in its tooltip (#5770).
+ * Single/double click reconnects; a
  * right-click context menu offers connect-in-new-panel, pin,
  * save-as-connection, copy, and remove.
  */
@@ -57,8 +76,8 @@ export function RecentSessionItem({
           testId={`recent-session-${key}`}
           nameTestId={`recent-session-name-${key}`}
           name={entry.title}
-          badge={sessionTypeBadge(entry.connectionType)}
-          badgeTestId={`recent-session-type-${key}`}
+          tooltip={recentSessionRowTooltip(entry)}
+          tooltipTestId={`recent-session-tooltip-${key}`}
           onDoubleClick={() => onConnect(entry)}
           status={
             <span className="recent-sessions__item-icon" aria-hidden="true">
@@ -112,18 +131,15 @@ export function RecentSessionItem({
             </>
           }
           details={
-            <span className="recent-sessions__item-meta" data-testid={`recent-session-meta-${key}`}>
-              {entry.pinned && (
-                <Pin size={10} className="recent-sessions__item-pin" aria-label="Pinned" />
-              )}
-              <span>{formatRelativeTime(new Date(entry.lastUsed).toISOString())}</span>
-              {entry.useCount > 1 && <span>· {entry.useCount}×</span>}
-              {entry.promoted && (
-                <span className="recent-sessions__item-saved">
-                  <Star size={10} /> Saved
-                </span>
-              )}
-            </span>
+            entry.pinned ? (
+              <span
+                className="recent-sessions__item-meta"
+                data-testid={`recent-session-meta-${key}`}
+              >
+                <Pin size={10} className="recent-sessions__item-pin" aria-hidden="true" />
+                <span>{t("recent.marker.pinned")}</span>
+              </span>
+            ) : undefined
           }
         />
       </ContextMenuTrigger>

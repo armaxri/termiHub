@@ -60,26 +60,33 @@ describe("RecentSessionItem", () => {
     container.remove();
   });
 
-  it("renders the title and an uppercased type badge", () => {
+  const tooltip = () => query(`recent-session-${KEY}`)?.getAttribute("aria-description") ?? "";
+
+  it("renders the title only; the type and last use are in the tooltip (#5770)", () => {
     render(entry());
     expect(query(`recent-session-name-${KEY}`)?.textContent).toBe("admin@prod");
-    expect(query(`recent-session-type-${KEY}`)?.textContent).toBe("SSH");
+    expect(query(`recent-session-type-${KEY}`)).toBeNull();
+    expect(query(`recent-session-meta-${KEY}`)).toBeNull();
+    expect(tooltip()).toMatch(/^SSH\. Last used /);
   });
 
-  it("shows the use-count only when connected more than once", () => {
+  it("puts the use-count in the tooltip only when connected more than once", () => {
     render(entry({ useCount: 4 }));
-    expect(query(`recent-session-meta-${KEY}`)?.textContent).toContain("4×");
+    expect(tooltip()).toContain("Used 4 times");
+    expect(query(`recent-session-${KEY}`)?.textContent).not.toContain("4");
   });
 
   it("omits the use-count for a single connection", () => {
     render(entry({ useCount: 1 }));
-    expect(query(`recent-session-meta-${KEY}`)?.textContent).not.toContain("×");
+    expect(tooltip()).not.toContain("Used");
   });
 
-  it("labels the pin action Unpin and shows a saved marker for a promoted, pinned entry", () => {
+  it("marks a pinned entry and puts its saved state in the tooltip", () => {
     render(entry({ pinned: true, promoted: true }));
     expect(query(`recent-session-pin-${KEY}`)?.getAttribute("aria-label")).toBe("Unpin");
-    expect(query(`recent-session-meta-${KEY}`)?.textContent).toContain("Saved");
+    expect(query(`recent-session-meta-${KEY}`)?.textContent).toBe("Pinned");
+    expect(query(`recent-session-${KEY}`)?.textContent).not.toContain("Saved");
+    expect(tooltip()).toContain("Saved as a connection");
   });
 
   it("labels the pin action Pin to top for an unpinned entry", () => {

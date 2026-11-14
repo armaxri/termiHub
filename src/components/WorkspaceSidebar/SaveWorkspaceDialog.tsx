@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Modal, Button, Input, RadioGroup } from "@/components/ui";
 
 /** id linking the footer submit Button to the body <form> (they render in separate Modal regions). */
@@ -32,7 +33,11 @@ export function SaveWorkspaceDialog({
   // (the Button's native-submit bridge); the empty-name gate is the disabled
   // prop, so this never runs while invalid.
   const handleSave = useCallback((): void | Promise<void> => {
-    return onSave(name.trim(), showScopeSelector ? scope : "all", description.trim() || undefined);
+    return onSave(
+      name.trim(),
+      showScopeSelector ? scope : "all",
+      normalizeItemDescription(description)
+    );
   }, [name, description, scope, showScopeSelector, onSave]);
 
   return (
@@ -79,7 +84,8 @@ export function SaveWorkspaceDialog({
             id="ws-save-desc"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional description"
+            maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+            placeholder="What this workspace is for"
             data-testid="save-workspace-description"
           />
         </div>

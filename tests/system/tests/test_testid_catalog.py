@@ -277,13 +277,13 @@ def test_catalog_contains_forwarded_sidebar_prop_ids(generated_catalog: str):
         "`server-item-*`",
         "`server-name-*`",
         "`server-status-*`",
-        "`server-type-*`",
+        "`server-tooltip-*`",
         "`workspace-item-*`",
         "`workspace-name-*`",
         "`tunnel-item-*`",
         "`tunnel-name-*`",
         "`tunnel-status-*`",
-        "`tunnel-type-*`",
+        "`tunnel-tooltip-*`",
     ):
         assert pattern in generated_catalog, f"{pattern} missing from catalog"
 

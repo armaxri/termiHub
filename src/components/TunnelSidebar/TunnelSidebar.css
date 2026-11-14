@@ -14,20 +14,10 @@
 /*
  * Tunnel rows are composed from the shared `SidebarListItem` shell (issue 1383),
  * so the row layout (container, header, status dot, name, badge, actions,
- * details) lives in `SidebarListItem.css`. Only the tunnel-specific detail lines
- * — stats, the errored resting row, and the reconnecting row — remain here.
+ * details) lives in `SidebarListItem.css`. Only the tunnel-specific attention
+ * lines — the errored resting row, the reconnecting row, an agent-only bind and
+ * a degraded chain — remain here; the rest is in the row's tooltip (#5770).
  */
-.tunnel-item__stats {
-  display: flex;
-  gap: var(--spacing-sm);
-  color: var(--text-secondary);
-  padding-top: var(--spacing-xxs);
-}
-
-/* Live smoothed rate after each running total (PROD-038). */
-.tunnel-item__rate {
-  font-variant-numeric: tabular-nums;
-}
 
 .tunnel-item__error {
   display: flex;
@@ -67,22 +57,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Vantage host badge on a tunnel row (S3, #2155). */
-.tunnel-item__host {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xxs);
-  color: var(--text-secondary);
-}
-
-.tunnel-item__host[data-on-agent="true"] {
-  color: var(--text-accent);
-}
-
-.tunnel-item__host-icon {
-  flex-shrink: 0;
 }
 
 /* Runtime reachability note from the agent's report (#2199). Neutral by
