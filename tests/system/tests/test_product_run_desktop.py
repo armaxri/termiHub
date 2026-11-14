@@ -76,8 +76,9 @@ RDP_PASSWORD = "product-run-rdp-pw"
 #: The settings categories (``settingsRegistry.ts`` CATEGORIES).
 SETTINGS_CATEGORIES = (
     "general", "appearance", "accessibility", "keyboard", "updates", "terminal",
-    "shell-integration", "sessions", "editor", "serial", "external-files", "security",
-    "safety-prompts", "backup", "plugins", "import", "schedules", "portable", "x-server",
+    "shell-integration", "sessions", "monitoring", "editor", "serial", "external-files",
+    "security", "safety-prompts", "backup", "plugins", "import", "schedules", "portable",
+    "x-server",
 )
 #: Numeric settings and where they live: (category, testid, key, label); ids from #5573.
 NUMERIC_SETTINGS = (

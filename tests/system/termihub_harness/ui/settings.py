@@ -78,7 +78,7 @@ class SettingsUi(HarnessMixin):
         """Open Settings and select a category nav item (e.g. ``external-files``).
 
         Only the active category's fields are mounted, so a setting like
-        ``toggle-power-monitoring`` (under *external-files*) must be navigated to.
+        ``toggle-power-monitoring`` (under *monitoring*, #5775) must be navigated to.
         """
         self.open_settings_tab()
         nav = f"settings-nav-{category}"
