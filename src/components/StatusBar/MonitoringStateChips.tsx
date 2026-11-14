@@ -10,8 +10,9 @@ export interface MonitoringStoppedProps {
 
 /**
  * Status-bar state after the user stopped monitoring from the host menu
- * (#5628): every metric chip is gone and one muted `Monitoring off · Start`
- * button restarts it, so a stopped monitor never shows stale numbers.
+ * (#5628): every metric chip is gone and one muted `Monitoring off · Start monitoring`
+ * button restarts it, so a stopped monitor never shows stale numbers. The verb
+ * pairs with the menu's "Stop monitoring" item (#5750).
  */
 export function MonitoringStopped({ onStart }: MonitoringStoppedProps) {
   return (
@@ -25,7 +26,7 @@ export function MonitoringStopped({ onStart }: MonitoringStoppedProps) {
         >
           <Activity size={12} />
           Monitoring off
-          <span className="monitoring-status__action">· Start</span>
+          <span className="monitoring-status__action">· Start monitoring</span>
         </button>
       </Tooltip>
     </span>

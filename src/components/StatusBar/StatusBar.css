@@ -195,7 +195,7 @@
   Quiet capability / off states (#5628): an unsupported host or a monitor the
   user stopped. Muted, never the error colour — neither is a failure.
 */
-/* The restart verb in "Monitoring off · Start" reads as the action. */
+/* The restart verb in "Monitoring off · Start monitoring" reads as the action. */
 .monitoring-status__action {
   color: var(--text-primary);
 }

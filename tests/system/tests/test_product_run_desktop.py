@@ -408,8 +408,8 @@ class TestProductRunMonitoring(
             self.evidence(f"before {first}; after {changed}")
         with self.step(
             "monitoring.dropdown",
-            "The host chip opens a compact menu that fits 800x600; Disconnect stops monitoring",
-            expect="the status bar after Disconnect: no metric chip, only 'Monitoring off · Start'",
+            "The host chip opens a compact menu that fits 800x600; Stop monitoring stops it",
+            expect="the status bar after Stop monitoring: no metric chip, only 'Monitoring off · Start monitoring'",
         ):
             self.require("monitoring.stats")
             # The menu must fit the 800x600 minimum window (#5628, R-042).
@@ -422,7 +422,10 @@ class TestProductRunMonitoring(
                 self.evidence(f"menu height {menu['height']:.0f}px, status bar {bar['height']:.0f}px")
                 assert menu["height"] <= 600 - bar["height"], f"menu {menu} does not fit 800x600"
                 assert menu["top"] >= 0, f"menu clipped at the top: {menu}"
-                self.driver.click("monitoring-disconnect")
+                stop = self.driver.get_text("monitoring-stop").strip()
+                self.evidence(f"menu item {stop!r}")
+                assert stop == "Stop monitoring", stop
+                self.driver.click("monitoring-stop")
             finally:
                 self.driver.resize_window(1280, 800)
             self.wait(lambda: self.driver.exists("monitoring-stopped"), what="the stopped state")
@@ -430,8 +433,8 @@ class TestProductRunMonitoring(
             # Swap / Net behind (R-040). Hold a few samples to prove it stays off.
             time.sleep(6.0)
             left = [c for c in _METRIC_CHIPS if self.driver.exists(f"monitoring-{c}")]
-            self.evidence(f"metric chips after Disconnect: {left}")
-            assert not left, f"metric chips survived Disconnect: {left}"
+            self.evidence(f"metric chips after Stop monitoring: {left}")
+            assert not left, f"metric chips survived Stop monitoring: {left}"
         self.close_all_tabs()
 
     def test_02_unsupported_host(self):

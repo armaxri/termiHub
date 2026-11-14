@@ -1,0 +1,13 @@
+/* One row of metric checkboxes under "Status bar metrics" (#5754). */
+.monitoring-settings__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm) var(--spacing-lg);
+}
+
+.monitoring-settings__metric {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  font-size: var(--font-size-md);
+}

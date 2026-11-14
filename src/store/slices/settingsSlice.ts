@@ -1,7 +1,8 @@
 import { StateCreator } from "zustand";
 
 import type { AppState } from "../appStore";
-import { getActiveTab } from "../layoutHelpers";
+import { collectWindowTabs, getActiveTab } from "../layoutHelpers";
+import { monitorKeyForTab } from "../tabQueries";
 import type {
   AppSettings,
   ShellIntegrationSettings,
@@ -75,6 +76,17 @@ export const createSettingsSlice: StateCreator<AppState, [], [], SettingsSlice> 
         const hasOverride = readConfigBoolean(activeTab?.config, "enableMonitoring") === true;
         if (!hasOverride) {
           get().disconnectMonitoring();
+        }
+      }
+      // Turning "Monitor local shells" off stops every local tab's monitor,
+      // except a connection that opted in itself (#5754). Remote monitors stay.
+      if (oldSettings.monitorLocalShells && !newSettings.monitorLocalShells) {
+        for (const tab of collectWindowTabs(get())) {
+          const hasOverride = readConfigBoolean(tab.config, "enableMonitoring") === true;
+          const key = monitorKeyForTab(tab);
+          if (tab.connectionType === "local" && !hasOverride && key) {
+            void get().disconnectMonitoring(key);
+          }
         }
       }
       if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {

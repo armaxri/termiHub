@@ -349,4 +349,20 @@ combineEmoji?: boolean,
  * answered). `None` → the frontend default (`"address"`). Owned by the
  * frontend `AppSettings.networkHostOrder`; the backend only persists it.
  */
-networkHostOrder?: "address" | "response", };
+networkHostOrder?: "address" | "response", 
+/**
+ * Collect host metrics (CPU, memory, disk, network) for local shell tabs
+ * (#5754). `None`/`Some(false)` keeps them off, the frontend default: the
+ * machine termiHub runs on has its own system monitor. Remote sessions
+ * keep monitoring on through `power_monitoring_enabled`. A local
+ * connection's own `enableMonitoring` still wins. Owned by the frontend
+ * `AppSettings.monitorLocalShells`; the backend only persists it.
+ */
+monitorLocalShells?: boolean, 
+/**
+ * The host-metric chips shown in the status bar (#5754). `None` → the
+ * frontend default set (CPU, memory, disk, network); swap is selectable
+ * but not in the default set. An explicit list is kept verbatim. Owned by
+ * the frontend `AppSettings.statusBarMetrics`; the backend only persists it.
+ */
+statusBarMetrics?: Array<"cpu" | "memory" | "disk" | "swap" | "network">, };

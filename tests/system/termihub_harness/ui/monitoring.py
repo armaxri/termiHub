@@ -1,7 +1,7 @@
 """Remote system-monitoring status-bar helpers (issue #831).
 
 ``MonitoringUi`` reads the monitoring chips in the status bar (cpu/mem/disk) and
-drives the host dropdown's refresh/disconnect actions. SSH suites that assert on
+drives the host dropdown's refresh / stop-monitoring actions. SSH suites that assert on
 monitoring mix this in alongside :class:`~termihub_harness.SystemTest`.
 """
 
@@ -14,7 +14,7 @@ from .base import HarnessMixin
 
 
 class MonitoringUi(HarnessMixin):
-    """Read monitoring stats and drive the host refresh/disconnect dropdown."""
+    """Read monitoring stats and drive the host refresh / stop-monitoring dropdown."""
 
     def monitoring_visible(self) -> bool:
         """Whether any monitoring status-bar element is present (any state)."""
@@ -45,14 +45,14 @@ class MonitoringUi(HarnessMixin):
         )
 
     def open_monitoring_dropdown(self) -> None:
-        """Click the monitoring host chip to open its refresh/disconnect menu."""
+        """Click the monitoring host chip to open its refresh / stop-monitoring menu."""
         self.driver.click("monitoring-host")
         self.wait(
-            lambda: self.driver.exists("monitoring-disconnect"),
+            lambda: self.driver.exists("monitoring-stop"),
             what="the monitoring dropdown",
         )
 
-    def monitoring_disconnect(self) -> None:
-        """Open the monitoring dropdown and click Disconnect."""
+    def monitoring_stop(self) -> None:
+        """Open the monitoring dropdown and click "Stop monitoring" (#5750)."""
         self.open_monitoring_dropdown()
-        self.driver.click("monitoring-disconnect")
+        self.driver.click("monitoring-stop")

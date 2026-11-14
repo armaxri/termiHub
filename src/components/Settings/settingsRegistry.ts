@@ -1064,6 +1064,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced"],
   },
   {
+    id: "monitorLocalShells",
+    label: "Monitor local shells",
+    description: "Show CPU, memory, disk and network for this computer in local shell tabs",
+    category: "external-files",
+    keywords: ["monitoring", "local", "shell", "cpu", "memory", "host metrics", "advanced"],
+  },
+  {
+    id: "statusBarMetrics",
+    label: "Status bar metrics",
+    description: "The host metrics shown in the status bar: CPU, memory, disk, swap, network",
+    category: "external-files",
+    keywords: ["status bar", "metrics", "chips", "swap", "cpu", "memory", "disk", "network"],
+  },
+  {
     id: "fileBrowser",
     label: "File browser",
     description: "Enable the SFTP file browser for SSH agent sessions",
