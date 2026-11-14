@@ -115,6 +115,35 @@ pub fn resolve_portable_placeholder(value: &str) -> String {
     resolve_portable_placeholder_with(value, portable_base_dir())
 }
 
+/// The app-owned temporary directory, published once at boot by the desktop
+/// app in portable mode (#5764).
+static APP_TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Publish the directory termiHub's own temporary and staging files go to.
+///
+/// The desktop app calls this once at boot in portable mode with a `tmp/`
+/// folder inside the portable `data/` directory, so staging files (remote
+/// clipboard files, edit-in-VS-Code copies, X server cookies) stay on the
+/// portable medium instead of the host's temp folder. It is never called in
+/// installed mode. Write-once: a second call is ignored and returns `false`.
+pub fn set_app_temp_dir(dir: PathBuf) -> bool {
+    APP_TEMP_DIR.set(dir).is_ok()
+}
+
+/// The directory for termiHub's own temporary and staging files: the one
+/// published by [`set_app_temp_dir`] (portable mode), otherwise the OS temp
+/// directory. Callers create their own subdirectory below it.
+pub fn app_temp_dir() -> PathBuf {
+    app_temp_dir_with(APP_TEMP_DIR.get().map(PathBuf::as_path), std::env::temp_dir)
+}
+
+/// Pure core of [`app_temp_dir`]: the published directory wins, otherwise
+/// `os_temp` is consulted. Taking both explicitly keeps tests free of the
+/// process-global state.
+pub fn app_temp_dir_with(published: Option<&Path>, os_temp: impl FnOnce() -> PathBuf) -> PathBuf {
+    published.map_or_else(os_temp, Path::to_path_buf)
+}
+
 /// Pure core of [`resolve_portable_placeholder`], taking the base directory
 /// explicitly (`None` = installed mode) so tests need no process-global state.
 ///
@@ -1224,6 +1253,19 @@ fn default_ftp_keep_alive_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_temp_dir_uses_the_published_portable_dir() {
+        let published = PathBuf::from("/usb/termiHub/data/tmp");
+        let resolved = app_temp_dir_with(Some(&published), || PathBuf::from("/os-temp"));
+        assert_eq!(resolved, published);
+    }
+
+    #[test]
+    fn app_temp_dir_falls_back_to_the_os_temp_dir() {
+        let resolved = app_temp_dir_with(None, || PathBuf::from("/os-temp"));
+        assert_eq!(resolved, PathBuf::from("/os-temp"));
+    }
 
     // --- terminal_size_from_settings tests (#4102) ---
 

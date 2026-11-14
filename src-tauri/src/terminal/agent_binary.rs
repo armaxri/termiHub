@@ -66,13 +66,14 @@ pub fn artifact_name_for_os_arch(uname_os: &str, uname_arch: &str) -> Option<&'s
 
 /// Return the cache directory for agent binaries.
 ///
-/// Defaults to `~/.cache/termihub/agent-binaries/` on Linux/macOS,
-/// or the platform-appropriate cache directory via `dirs::cache_dir()`.
+/// Installed mode: `termihub/agent-binaries/` under the platform cache
+/// directory (`dirs::cache_dir()`, e.g. `~/.cache` on Linux). Portable mode:
+/// `data/cache/agent-binaries/` in the portable folder (#5764), see
+/// [`crate::utils::app_dirs::agent_binary_cache_dir`].
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("termihub")
-        .join("agent-binaries")
+    let mode = crate::utils::portable::detect_app_mode()
+        .unwrap_or(crate::utils::portable::AppMode::Installed);
+    crate::utils::app_dirs::agent_binary_cache_dir(&mode, dirs::cache_dir())
 }
 
 /// Return the expected path for a cached binary of a given version and arch.

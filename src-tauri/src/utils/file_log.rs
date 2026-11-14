@@ -180,7 +180,7 @@ pub const LOG_DIR_ENV: &str = "TERMIHUB_LOG_DIR";
 /// the portable `data/` directory, otherwise the platform directory. Split out
 /// from [`log_dir`] so the precedence is testable without a real portable
 /// install or a process-wide environment variable.
-fn resolve_log_dir(
+pub(crate) fn resolve_log_dir(
     override_dir: Option<PathBuf>,
     portable_data_dir: Option<&Path>,
     platform: Option<PathBuf>,

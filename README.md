@@ -483,7 +483,9 @@ termiHub also writes a durable, size-capped log file that survives restarts and 
 | Windows  | `%LOCALAPPDATA%\com.termihub.app\logs\termihub.log` |
 | Linux    | `~/.local/share/com.termihub.app/logs/termihub.log` |
 
-In portable mode (a `portable.marker` file or `data/` folder next to the executable) the log lives in the portable folder instead, at `data/logs/termihub.log`, so nothing is written to the host's profile. Session transcripts and crash reports beside it follow the same rule. Setting the `TERMIHUB_LOG_DIR` environment variable before launch overrides both locations.
+In portable mode (a `portable.marker` file or `data/` folder next to the executable) the log lives in the portable folder instead, at `data/logs/termihub.log`. Session transcripts and crash reports beside it follow the same rule. Setting the `TERMIHUB_LOG_DIR` environment variable before launch overrides both locations.
+
+The rest of what termiHub writes on its own follows portable mode too: caches (downloaded agent binaries, plugin downloads, drag-out staging) go to `data/cache/`, the web view's data to `data/webview/` (Windows and Linux), and temporary files (files opened in VS Code, X server cookies, RDP clipboard files) to `data/tmp/`, which is emptied at start and exit. On macOS the web view's data folder cannot be moved, so a portable copy keeps web view data in memory only. termiHub stores nothing there, so nothing is lost. macOS itself may still keep its own per-app state (such as saved window state) under `~/Library`, and actions you start that change the system on purpose (registering a shell integration or file-manager menu entry, storing a secret in the OS keychain) write where the OS expects them.
 
 The file is rotated automatically and capped at roughly 15 MB total (the current file plus two archives named `termihub.1.log` / `termihub.2.log`), so it can never grow without bound. Passwords, key material, and terminal contents are never written to it.
 

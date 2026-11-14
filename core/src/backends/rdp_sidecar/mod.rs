@@ -299,13 +299,14 @@ fn sanitize_leaf(name: &str) -> Option<&str> {
 }
 
 /// Build the staging path a fetched clipboard file's bytes are written to
-/// (#1793): a per-fetch subdirectory of the OS temp dir holding the sanitized
+/// (#1793): a per-fetch subdirectory of the app temp dir (the OS temp dir, or
+/// the portable `data/tmp/` in portable mode, #5764) holding the sanitized
 /// basename. A fresh directory per `request_id` means two files with the same
 /// name never collide, and the sanitized leaf cannot escape it.
 fn staged_path_for(meta: &RemoteClipboardFile, request_id: u64) -> Result<PathBuf, SessionError> {
     let name = sanitize_leaf(&meta.name)
         .ok_or_else(|| io_error(format!("unsafe clipboard file name {:?}", meta.name)))?;
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::config::app_temp_dir().join(format!(
         "termihub-rdp-clip-{}-{}",
         std::process::id(),
         request_id
