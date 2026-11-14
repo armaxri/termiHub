@@ -94,6 +94,18 @@ pub fn register_http_monitor(registry: &mut ServiceRegistry) {
 #[serde(rename_all = "camelCase")]
 pub struct HttpMonitorConfig {
     pub id: String,
+    /// Optional name the user gave the monitor (#5789), shown as its sidebar
+    /// row's name instead of the URL. Absent when unset, so older files
+    /// round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub name: Option<String>,
+    /// Optional short description the user wrote (#5789), shown muted under
+    /// the name in the sidebar. Absent when unset, so older files round-trip
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     pub url: String,
     #[cfg_attr(test, ts(type = "number"))]
     pub interval_ms: u64,
@@ -184,6 +196,8 @@ impl HttpMonitorConfig {
     ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
+            name: None,
+            description: None,
             url,
             interval_ms: interval_ms.max(MIN_INTERVAL_MS),
             method,
@@ -1607,6 +1621,27 @@ mod tests {
                 panic!("a successful build must map to Ready, not Failed")
             }
         }
+    }
+
+    /// #5789: the name and description are optional and backward
+    /// compatible — a stored monitor without them loads as none and saves
+    /// without the keys; set ones round-trip.
+    #[test]
+    fn name_and_description_are_optional_and_round_trip() {
+        let json = r#"{"id":"m","url":"https://example.com","intervalMs":30000,
+            "method":"GET","expectedStatus":200,"timeoutMs":5000}"#;
+        let mut config: HttpMonitorConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.name, None);
+        assert_eq!(config.description, None);
+        let saved = serde_json::to_string(&config).unwrap();
+        assert!(!saved.contains("name") && !saved.contains("description"));
+
+        config.name = Some("Shop".into());
+        config.description = Some("Front page health".into());
+        let back: HttpMonitorConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(back.name.as_deref(), Some("Shop"));
+        assert_eq!(back.description.as_deref(), Some("Front page health"));
     }
 
     // ── Service trait impl ────────────────────────────────────────────────────

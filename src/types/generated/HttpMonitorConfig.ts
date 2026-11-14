@@ -7,7 +7,19 @@
  * DTOs via ts-rs (audit DUP-030, #3802); see `crate::network::types` for the
  * `Option` → `field?: T | null` convention used.
  */
-export type HttpMonitorConfig = { id: string, url: string, intervalMs: number, method: string, expectedStatus: number, timeoutMs: number, 
+export type HttpMonitorConfig = { id: string, 
+/**
+ * Optional name the user gave the monitor (#5789), shown as its sidebar
+ * row's name instead of the URL. Absent when unset, so older files
+ * round-trip unchanged.
+ */
+name?: string, 
+/**
+ * Optional short description the user wrote (#5789), shown muted under
+ * the name in the sidebar. Absent when unset, so older files round-trip
+ * unchanged.
+ */
+description?: string, url: string, intervalMs: number, method: string, expectedStatus: number, timeoutMs: number, 
 /**
  * Opt-in escape hatch for monitoring an internal host (SEC-008).
  *

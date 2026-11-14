@@ -349,7 +349,8 @@ pub fn network_wol_device_delete(
 /// `run_location` chooses where the monitor runs (default:
 /// [`RunLocation::ThisComputer`]); an agent choice hosts the poll loop on that
 /// agent, which probes the target from its own vantage and streams the checks
-/// back (#2592).
+/// back (#2592). `name` and `description` are the optional row name and
+/// one-line description the user gave the monitor (#5789); blank means none.
 // Tauri maps each IPC argument to a parameter; the flat list is the wire shape.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -361,9 +362,11 @@ pub fn network_http_monitor_start(
     timeout_ms: Option<u64>,
     run_location: Option<RunLocation>,
     allow_private_network: Option<bool>,
+    name: Option<String>,
+    description: Option<String>,
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<String, TerminalError> {
-    let config = http_monitor_start_config(
+    let mut config = http_monitor_start_config(
         url,
         interval_ms,
         method,
@@ -371,7 +374,16 @@ pub fn network_http_monitor_start(
         timeout_ms,
         allow_private_network,
     );
+    config.name = optional_label(name);
+    config.description = optional_label(description);
     manager.start_http_monitor(config, run_location.unwrap_or_default())
+}
+
+/// A monitor's optional name or description as stored (#5789): line breaks
+/// and runs of whitespace collapse to one space, and a blank value is `None`.
+fn optional_label(value: Option<String>) -> Option<String> {
+    let text = value?.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
 }
 
 /// Build the config for a new monitor from the start command's arguments,
@@ -550,6 +562,18 @@ mod tests {
         );
         assert!(allowed.allow_private_network);
         assert_eq!(allowed.method, "HEAD");
+    }
+
+    /// #5789: a blank name or description is none; others are collapsed to
+    /// one line.
+    #[test]
+    fn optional_label_drops_blank_and_collapses_whitespace() {
+        assert_eq!(optional_label(None), None);
+        assert_eq!(optional_label(Some("  \n ".into())), None);
+        assert_eq!(
+            optional_label(Some(" Shop\n  health ".into())).as_deref(),
+            Some("Shop health")
+        );
     }
 
     #[tokio::test]
