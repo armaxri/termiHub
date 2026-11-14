@@ -7,7 +7,7 @@ export type BottomBannerTone = "warning" | "info";
 
 /** Props for {@link BottomBanner}. */
 export interface BottomBannerProps {
-  /** `warning` (crash notices) or `info` (promotional prompts). */
+  /** `warning` (crash notices) or `info` (neutral notices). */
   tone: BottomBannerTone;
   /** Leading 16px lucide icon; colored by the tone. */
   icon: ReactNode;

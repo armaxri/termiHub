@@ -38,6 +38,8 @@ registeredExePath?: string,
  */
 linuxFileManagers: LinuxFileManagerToggles, 
 /**
- * Whether the user dismissed the first-launch install banner.
+ * Whether the one-time "Open in termiHub" offer was already shown (#5753),
+ * or the user opted out of the first-launch banner it replaced. The key keeps
+ * its old name so existing profiles carry over unchanged.
  */
 firstLaunchBannerDismissed: boolean, };

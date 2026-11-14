@@ -17,7 +17,7 @@ export function measureBottomBannerInset(el: HTMLElement, viewportHeight: number
 }
 
 /**
- * Hosts the app-level bottom banners (crash notices, the file-manager prompt).
+ * Hosts the app-level bottom banners (the local and agent crash notices).
  * Which one renders is decided by {@link useBottomBannerSlot}; this region only
  * publishes the space they take so floating layers (toasts) can stay clear.
  */
