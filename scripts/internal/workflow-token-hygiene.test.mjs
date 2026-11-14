@@ -450,3 +450,78 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
     expect(jobs.get(id).needs).toContain("check-release-assets");
   });
 });
+
+describe("the updater private key never meets third-party build code (#5761)", () => {
+  const jobs = [...releaseJobs().keys()];
+  const KEY = /TAURI_SIGNING_PRIVATE_KEY/;
+  const holders = jobs.filter((id) => KEY.test(stripComments(jobBody(RELEASE, id))));
+
+  it("only sign-updater references the key, and no other workflow does", () => {
+    expect(holders).toEqual(["sign-updater"]);
+    for (const [file, text] of workflowFiles()) {
+      if (file.endsWith("/release.yml")) continue;
+      expect(stripComments(text), file).not.toMatch(KEY);
+    }
+  });
+
+  it("no job that installs dependencies or compiles receives it", () => {
+    const offenders = jobs.filter((id) => {
+      const code = stripComments(jobBody(RELEASE, id));
+      return RUNS_DEPENDENCY_CODE.test(code) && KEY.test(code);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("sign-updater is read-only, environment-bound and runs only first-party code", () => {
+    const body = jobBody(RELEASE, "sign-updater");
+    const code = stripComments(body);
+    expect(jobPermissions(body)).toEqual({ contents: "read" });
+    expect(code).toMatch(/\n {4}environment: updater-signing\n/);
+    expect(code).not.toMatch(RUNS_DEPENDENCY_CODE);
+    const uses = [...code.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((m) => m[1]);
+    for (const u of uses) expect(u, u).toMatch(/^actions\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/);
+    expect(code).toMatch(/persist-credentials: false/);
+    expect(code).toMatch(/sparse-checkout: \|\n\s+scripts\/internal\n\s+src-tauri\n/);
+    expect(code).toContain("scripts/internal/updater-signing.sh install-signer");
+    expect(code).toContain("scripts/internal/updater-signing.sh sign");
+    expect(code).toContain("--digests updater-digests");
+    // The key is in exactly one step's env (plus the presence check).
+    expect(code.match(/secrets\.TAURI_SIGNING_PRIVATE_KEY \}\}/g)).toHaveLength(1);
+    expect(code.match(/secrets\.TAURI_SIGNING_PRIVATE_KEY_PASSWORD \}\}/g)).toHaveLength(1);
+  });
+
+  it("build-app stages unsigned bundles and their digests for sign-updater", () => {
+    const build = stripComments(jobBody(RELEASE, "build-app"));
+    expect(build).toMatch(/name: release-updater-digest-\$\{\{ matrix\.platform \}\}\n/);
+    expect(build).not.toMatch(/signer sign/);
+    const sign = releaseJobs().get("sign-updater");
+    expect(sign.needs).toContain("build-app");
+    expect(sign.needs).not.toContain("create-release");
+    expect(stripComments(jobBody(RELEASE, "sign-updater"))).toMatch(
+      /name: release-app-updater-signatures\n/
+    );
+    for (const id of ["updater-manifest", "check-release-assets", "upload-app"]) {
+      expect(releaseJobs().get(id).needs, id).toContain("sign-updater");
+    }
+  });
+
+  it("the release config does not make tauri build sign (no createUpdaterArtifacts)", () => {
+    const config = JSON.parse(
+      readFileSync(path.join(ROOT, "src-tauri", "tauri.updater.conf.json"), "utf8")
+    );
+    expect(config.bundle?.createUpdaterArtifacts).toBeUndefined();
+  });
+
+  it("pins the standalone signer by version and SHA-256", () => {
+    const pin = JSON.parse(
+      readFileSync(path.join(ROOT, "scripts", "internal", "updater-signer.json"), "utf8")
+    );
+    expect(pin.repo).toBe("tauri-apps/tauri");
+    expect(pin.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(Object.keys(pin.assets)).toContain("linux-x86_64");
+    for (const [host, asset] of Object.entries(pin.assets)) {
+      expect(asset.sha256, host).toMatch(/^[0-9a-f]{64}$/);
+      expect(asset.name, host).toMatch(/^cargo-tauri-[a-z0-9_-]+\.(tgz|zip)$/);
+    }
+  });
+});
