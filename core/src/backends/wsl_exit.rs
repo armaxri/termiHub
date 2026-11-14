@@ -96,12 +96,15 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    fn session() -> (
+    /// What a watcher shares with its session, plus the subscriber's end.
+    type Session = (
         Arc<WslExit>,
         Arc<AtomicBool>,
         Arc<Mutex<Option<OutputSender>>>,
-        tokio::sync::mpsc::Receiver<Vec<u8>>,
-    ) {
+        crate::connection::OutputReceiver,
+    );
+
+    fn session() -> Session {
         let (tx, rx) = tokio::sync::mpsc::channel(4);
         (
             Arc::new(WslExit::default()),
