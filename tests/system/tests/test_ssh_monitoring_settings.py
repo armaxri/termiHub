@@ -2,7 +2,8 @@
 "Optional monitoring and file browser settings" group).
 
 Drives the Settings toggles (`toggle-power-monitoring` under Monitoring since #5775,
-`toggle-file-browser` under External files) and asserts they gate monitoring and the SFTP browser.
+`toggle-file-browser` under General since #5786) and asserts they gate monitoring and the SFTP
+browser.
 
 The per-connection override tests from the original are intentionally not ported:
 the `enableMonitoring` / `enableFileBrowser` fields exist only for *agent*
@@ -37,8 +38,9 @@ pytestmark = pytest.mark.integration
 #: ``settings`` slice).
 POWER = ("toggle-power-monitoring", "powerMonitoringEnabled")
 FILES = ("toggle-file-browser", "fileBrowserEnabled")
-#: The settings category that holds each toggle (Power monitoring moved, #5775).
-CATEGORY = {POWER[0]: "monitoring", FILES[0]: "external-files"}
+#: The settings category that holds each toggle (Power monitoring moved, #5775;
+#: File browser moved to General ▸ New connection defaults, #5786).
+CATEGORY = {POWER[0]: "monitoring", FILES[0]: "general"}
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
@@ -57,7 +59,7 @@ class TestSshMonitoringSettings(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Pa
         assert self.wait(
             lambda: self.driver.exists("toggle-power-monitoring"), what="the power toggle"
         )
-        self.open_settings_category("external-files")
+        self.open_settings_category(CATEGORY[FILES[0]])
         assert self.wait(
             lambda: self.driver.exists("toggle-file-browser"), what="the file-browser toggle"
         )

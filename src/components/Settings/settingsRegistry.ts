@@ -155,6 +155,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "fileBrowser",
+    label: "File browser",
+    description: "Enable the SFTP file browser for SSH agent sessions",
+    category: "general",
+    // "advanced" / "external" keep the pre-#5786 home (External files ▸ Advanced) findable.
+    keywords: [
+      "file browser",
+      "sftp",
+      "files",
+      "agent",
+      "ssh",
+      "remote",
+      "defaults",
+      "new connection",
+      "advanced",
+      "external",
+    ],
+  },
+  {
     id: "theme",
     label: "Theme",
     description: "Application color theme",
@@ -1100,13 +1119,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "advanced",
       "external",
     ],
-  },
-  {
-    id: "fileBrowser",
-    label: "File browser",
-    description: "Enable the SFTP file browser for SSH agent sessions",
-    category: "external-files",
-    keywords: ["file browser", "sftp", "files", "agent", "ssh", "advanced"],
   },
   {
     id: "trustedPublishers",

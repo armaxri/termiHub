@@ -130,7 +130,21 @@ describe("settingsRegistry", () => {
           expect(filterSettings(query).some((s) => s.id === id)).toBe(true);
         }
       }
-      expect(categoryOf("fileBrowser")).toBe("external-files");
+    });
+
+    it("files the File browser default under General with the new-connection defaults (#5786)", () => {
+      expect(categoryOf("fileBrowser")).toBe("general");
+      // The old home's words (External files ▸ Advanced) and the new ones all find it.
+      for (const query of ["file browser", "sftp", "advanced", "external", "new connection"]) {
+        expect(
+          filterSettings(query).some((s) => s.id === "fileBrowser"),
+          query
+        ).toBe(true);
+      }
+      // External files now holds only the external connection file list.
+      expect(
+        SETTINGS_REGISTRY.filter((s) => s.category === "external-files").map((s) => s.id)
+      ).toEqual(["externalConnectionFiles"]);
     });
 
     it("routes every setting to a category that exists in the nav", () => {
@@ -184,13 +198,14 @@ describe("settingsRegistry", () => {
       );
     });
 
-    it("keeps only connection/shell/SSH defaults, the diagnostics controls, and the experimental flag in General", () => {
+    it("keeps only connection/shell/SSH defaults (incl. File browser, #5786), the diagnostics controls, and the experimental flag in General", () => {
       const general = SETTINGS_REGISTRY.filter((s) => s.category === "general").map((s) => s.id);
       expect(general).toEqual([
         "defaultUser",
         "defaultSshKeyPath",
         "defaultShell",
         "defaultX11Forwarding",
+        "fileBrowser",
         "fileLogLevel",
         "showCrashReportNotice",
         "experimentalFeaturesEnabled",

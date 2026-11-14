@@ -52,6 +52,18 @@ function search(query: string) {
   });
 }
 
+/**
+ * Search, then let the mounted sections' async loads settle inside act(). A
+ * query that matches General mounts its log-path and shell lookups, whose
+ * late state updates would otherwise each log an act() warning.
+ */
+async function searchSettled(query: string) {
+  search(query);
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 function navItem(id: string): HTMLElement | null {
   return container.querySelector(`[data-testid='settings-nav-${id}']`);
 }
@@ -128,14 +140,35 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     }
     act(() => navItem("external-files")!.click());
     expect(container.querySelector("[data-testid='toggle-power-monitoring']")).toBeNull();
-    expect(container.querySelector("[data-testid='toggle-file-browser']")).not.toBeNull();
+  });
+
+  it("shows the File browser toggle under General, not External files (#5786)", async () => {
+    await render();
+    act(() => navItem("external-files")!.click());
+    expect(container.querySelector("[data-testid='external-files-add']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='toggle-file-browser']")).toBeNull();
+    await act(async () => navItem("general")!.click());
+    const toggle = container.querySelector("[data-testid='toggle-file-browser']");
+    expect(toggle).not.toBeNull();
+    expect(
+      container.querySelector("[data-testid='settings-default-x11-forwarding']")
+    ).not.toBeNull();
+  });
+
+  it("finds the File browser toggle by its old and new search words (#5786)", async () => {
+    await render();
+    for (const query of ["file browser", "sftp", "advanced", "external", "new connection"]) {
+      await searchSettled(query);
+      expect(container.querySelector("[data-testid='toggle-file-browser']"), query).not.toBeNull();
+      expect(navItem("general")?.className, query).not.toContain("settings-nav__item--dimmed");
+    }
   });
 
   it.each(["monitoring", "advanced", "external"])(
     "finds the monitoring settings by searching '%s' (#5775)",
     async (query) => {
       await render();
-      search(query);
+      await searchSettled(query);
       expect(container.querySelector("[data-testid='toggle-power-monitoring']")).not.toBeNull();
       expect(container.querySelector("[data-testid='toggle-monitor-local-shells']")).not.toBeNull();
       expect(navItem("monitoring")?.className).not.toContain("settings-nav__item--dimmed");
