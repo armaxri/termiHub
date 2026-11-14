@@ -12,7 +12,6 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
-import { MonitoringSettingsFields } from "./MonitoringSettingsFields";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -223,27 +222,10 @@ export function ExternalFilesSettings() {
           <SettingsSectionHeading>Advanced</SettingsSectionHeading>
         </div>
         <p className="settings-panel__description">
-          Default settings for new SSH connections. Individual connections can override these in
-          their SSH settings. Disabling a default disconnects active sessions that use the default.
+          Default for new SSH connections. Individual connections can override it in their SSH
+          settings. Turning it off disconnects active sessions that use the default. Host monitoring
+          settings are under Monitoring.
         </p>
-        <SettingsField
-          label="Power monitoring"
-          hint="Monitor CPU, memory, and power events via SSH agent connections."
-        >
-          <Toggle
-            checked={settings.powerMonitoringEnabled}
-            onCheckedChange={() =>
-              updateSettings({
-                ...settings,
-                powerMonitoringEnabled: !settings.powerMonitoringEnabled,
-              })
-            }
-            data-testid="toggle-power-monitoring"
-          />
-        </SettingsField>
-
-        <MonitoringSettingsFields />
-
         <SettingsField
           label="File browser"
           hint="Enable the SFTP file browser for SSH agent sessions."

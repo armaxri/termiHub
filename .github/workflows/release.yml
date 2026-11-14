@@ -687,16 +687,14 @@ jobs:
           echo "config=--config $fragment" >> "$GITHUB_OUTPUT"
 
       # In-app updater (#5758): merge the release-only tauri.updater.conf.json
-      # (updater public key + createUpdaterArtifacts) once the maintainer ran
+      # (updater public key) once the maintainer ran
       # scripts/internal/setup-updater-signing-key.sh. Until its pubkey is filled
       # in, the release ships without updater artifacts and installed apps keep
-      # opening the downloads page. A committed key without the secret fails:
-      # builds carrying that key could never be updated.
-      - name: Decide updater signing
+      # opening the downloads page. This job never sees the updater private key
+      # (#5761): it stages the bundles unsigned and sign-updater signs them.
+      - name: Decide updater bundles
         id: updater
         shell: bash
-        env:
-          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
           pubkey="$(node -p "require('./src-tauri/tauri.updater.conf.json').plugins.updater.pubkey || ''")"
@@ -705,11 +703,7 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$HAS_SIGNING_KEY" != "true" ]; then
-            echo "::error::src-tauri/tauri.updater.conf.json holds an updater public key, but the TAURI_SIGNING_PRIVATE_KEY secret is missing. Run scripts/internal/setup-updater-signing-key.sh (maintainer) - see docs/contributing.md -> 'Updater signing key'."
-            exit 1
-          fi
-          echo "Updater signing enabled: merging src-tauri/tauri.updater.conf.json"
+          echo "Updater bundles enabled: merging src-tauri/tauri.updater.conf.json"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "config=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_OUTPUT"
 
@@ -717,10 +711,6 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The bundler signs the updater artifacts (createUpdaterArtifacts in
-          # tauri.updater.conf.json); empty unless the step above enabled it.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updater.outputs.enabled == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updater.outputs.enabled == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         with:
           tagName: ''
           releaseName: ''
@@ -993,26 +983,23 @@ jobs:
             mv "$RPM_FILE" "release-assets/$RPM_FILENAME"
           fi
 
-      # In-app updater (#5758): stage each platform's updater bundle and its
-      # minisign .sig next to the installer (published names, see
-      # scripts/internal/updater-platforms.json). Windows and the Linux AppImage
-      # update from the installer itself, signed by the bundler. macOS updates
-      # from a .app.tar.gz: Tauri's own one holds the bundle from BEFORE the
-      # re-sign above, so it is rebuilt from the re-signed app in the DMG
-      # and signed here (bound to the app version, like the bundler does).
-      # Linux ARM64 ships only .deb/.rpm, which keep the downloads page.
-      - name: Stage the updater bundle and signature
+      # In-app updater (#5758): stage each platform's updater bundle next to
+      # the installer (published names, see scripts/internal/updater-platforms.json),
+      # UNSIGNED: sign-updater signs it in a job that runs no third-party build
+      # code (#5761). Windows and the Linux AppImage update from the installer
+      # itself. macOS updates from a .app.tar.gz rebuilt here from the re-signed
+      # app in the DMG (Tauri's own one would hold the app from BEFORE the
+      # re-sign). The bundle's SHA-256 goes to sign-updater as its own artifact,
+      # so it signs only the bytes staged here. Linux ARM64 ships only
+      # .deb/.rpm, which keep the downloads page.
+      - name: Stage the updater bundle
         if: steps.updater.outputs.enabled == 'true' && matrix.platform != 'linux-arm64'
         shell: bash
         env:
           VERSION: ${{ needs.release-version.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
-          T: ${{ matrix.rust_target }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(matrix.os, 'macos') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(matrix.os, 'macos') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           set -euo pipefail
-          bundle="target/$T/release/bundle"
           case "$PLATFORM" in
           macos-*)
             work="$(mktemp -d)"
@@ -1035,26 +1022,32 @@ jobs:
             out="release-assets/termiHub-${VERSION}-${PLATFORM}.app.tar.gz"
             # No AppleDouble (._*) entries: the updater unpacks this over the app.
             COPYFILE_DISABLE=1 tar -czf "$out" -C "$work" "$name"
-            app_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-            pnpm tauri signer sign --app-version "$app_version" "$out"
             rm -rf "$work"
+            asset="$(basename "$out")"
             ;;
-          windows-x64)
-            sig="$(find "$bundle/msi" -name '*.msi.sig' | head -n 1)"
-            [ -n "$sig" ] || { echo "::error::no .msi.sig in $bundle/msi"; exit 1; }
-            cp "$sig" "release-assets/termiHub-${VERSION}-${PLATFORM}.msi.sig"
-            ;;
-          linux-x64)
-            sig="$(find "$bundle/appimage" -name '*.AppImage.sig' | head -n 1)"
-            [ -n "$sig" ] || { echo "::error::no .AppImage.sig in $bundle/appimage"; exit 1; }
-            cp "$sig" "release-assets/termiHub-${VERSION}-${PLATFORM}.AppImage.sig"
-            ;;
+          windows-x64) asset="termiHub-${VERSION}-${PLATFORM}.msi" ;;
+          linux-x64) asset="termiHub-${VERSION}-${PLATFORM}.AppImage" ;;
           *)
             echo "::error::no updater bundle defined for ${PLATFORM}"
             exit 1
             ;;
           esac
+          [ -s "release-assets/$asset" ] || { echo "::error::$asset was not staged"; exit 1; }
+          mkdir -p updater-digest
+          sha=(sha256sum)
+          command -v sha256sum > /dev/null || sha=(shasum -a 256)
+          (cd release-assets && "${sha[@]}" "$asset") > "updater-digest/${PLATFORM}.sha256"
+          cat "updater-digest/${PLATFORM}.sha256"
           ls -l release-assets
+
+      - name: Hand the updater bundle digest to sign-updater
+        if: steps.updater.outputs.enabled == 'true' && matrix.platform != 'linux-arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-updater-digest-${{ matrix.platform }}
+          path: updater-digest/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Hand the bundles to upload-app
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1096,15 +1089,123 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # In-app updater manifest (#5758): write latest.json from the bundles and
-  # .sig files build-app staged, then check it (every published target present,
+  # Sign the in-app updater bundles (#5761), shaped like sign-agent-binaries:
+  # the ONLY job that receives TAURI_SIGNING_PRIVATE_KEY, and it runs no
+  # third-party build code. It checks out only scripts/internal + src-tauri
+  # (first-party, dependency-free helpers and configs), installs no project
+  # dependencies and compiles nothing: the signer is the standalone Tauri CLI
+  # release binary pinned by SHA-256 in scripts/internal/updater-signer.json.
+  # It signs only bundles matching the digests build-app staged, verifies every
+  # .sig against the configured public key and hands the .sig files to
+  # updater-manifest (and, as a release-app-* artifact, to upload-app). The
+  # updater-signing environment lets the maintainer hold the two secrets there
+  # (docs/contributing.md -> "Updater Signing Key"). Read-only; runs in a dry run
+  # too, so a dry run proves latest.json end to end.
+  sign-updater:
+    name: Sign Updater Bundles
+    needs: [verify-version, verify-supply-chain, release-version, build-app]
+    runs-on: ubuntu-latest
+    environment: updater-signing
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.decide.outputs.enabled }}
+
+    steps:
+      - name: Checkout the signing helpers and config
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/internal
+            src-tauri
+
+      # No key: skip with a notice (the release ships without updater
+      # artifacts, as before). A committed public key without the secret fails:
+      # builds carrying that key could never be updated.
+      - name: Decide updater signing
+        id: decide
+        env:
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(node scripts/internal/updater-manifest.mjs pubkey)" ]; then
+            echo "::notice::No updater public key in src-tauri/tauri.updater.conf.json yet: nothing to sign, this release ships without in-app update artifacts (see docs/contributing.md -> 'Updater signing key')."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$HAS_SIGNING_KEY" != "true" ]; then
+            echo "::error::src-tauri/tauri.updater.conf.json holds an updater public key, but the TAURI_SIGNING_PRIVATE_KEY secret is missing. Run scripts/internal/setup-updater-signing-key.sh (maintainer) - see docs/contributing.md -> 'Updater signing key'."
+            exit 1
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download app bundles
+        if: steps.decide.outputs.enabled == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-app-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download the staged bundle digests
+        if: steps.decide.outputs.enabled == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-updater-digest-*
+          merge-multiple: true
+          path: updater-digests
+
+      - name: Install the pinned signer
+        id: signer
+        if: steps.decide.outputs.enabled == 'true'
+        env:
+          # Authenticated release download (#5105); read-only token.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bin="$(scripts/internal/updater-signing.sh install-signer --out "$RUNNER_TEMP/signer")"
+          echo "path=$bin" >> "$GITHUB_OUTPUT"
+
+      # The key reaches the signer through this one step's environment only.
+      - name: Sign and verify the updater bundles
+        if: steps.decide.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          SIGNER: ${{ steps.signer.outputs.path }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Bound to the version the app inside carries (a dry run names its
+          # assets 0.0.0-dryrun, the app keeps the tauri.conf.json version).
+          app_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          scripts/internal/updater-signing.sh sign --signer "$SIGNER" --version "$VERSION" \
+            --app-version "$app_version" --dir release-assets --digests updater-digests
+          mkdir -p updater-signatures
+          cp release-assets/*.sig updater-signatures/
+          ls -l updater-signatures
+
+      # Named release-app-* so updater-manifest, check-release-assets and
+      # upload-app pick the signatures up with the bundles.
+      - name: Hand the signatures on
+        if: steps.decide.outputs.enabled == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-app-updater-signatures
+          path: updater-signatures/
+          if-no-files-found: error
+          retention-days: 7
+
+  # In-app updater manifest (#5758): write latest.json from the bundles
+  # build-app staged and the .sig files sign-updater wrote (#5761), then check it (every published target present,
   # each url the target's bundle in this release, each signature verifying
   # against the configured public key and bound to the app version). Read-only;
   # runs in a dry run too. Until the updater key is set up it only reports
   # enabled=false with a notice, and nothing below expects updater assets.
   updater-manifest:
     name: Updater Manifest
-    needs: [verify-version, verify-supply-chain, release-version, build-app]
+    needs: [verify-version, verify-supply-chain, release-version, build-app, sign-updater]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1175,6 +1276,7 @@ jobs:
         verify-supply-chain,
         release-version,
         build-app,
+        sign-updater,
         updater-manifest,
         agent-binaries-linux,
         agent-binaries-macos,
@@ -1360,6 +1462,7 @@ jobs:
         create-release,
         check-release-assets,
         build-app,
+        sign-updater,
         updater-manifest,
       ]
     runs-on: ubuntu-latest

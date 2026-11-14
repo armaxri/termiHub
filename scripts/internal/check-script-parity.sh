@@ -76,6 +76,9 @@ ALLOWLIST=(
   # In-app updater signing key (#5758): one-time maintainer tool around the Tauri
   # CLI signer + `gh secret set`; Git Bash works on Windows, a .cmd adds nothing.
   "scripts/internal/setup-updater-signing-key.sh"  # one-time maintainer key setup
+  # Its CI-only signing half (#5761): run by release.yml's sign-updater job on
+  # Ubuntu (the only job holding the updater key); no Windows caller exists.
+  "scripts/internal/updater-signing.sh"  # CI-only install-signer/sign helper
   # macOS signing identity (#5545): macOS-only by nature (security, codesign);
   # a one-time maintainer tool plus the release-CI keychain and codesign helpers.
   "scripts/internal/setup-macos-signing-identity.sh"  # one-time maintainer identity setup

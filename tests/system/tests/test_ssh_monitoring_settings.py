@@ -1,8 +1,8 @@
 """Global monitoring / file-browser settings (ported from infrastructure/ssh-monitoring.test.js,
 "Optional monitoring and file browser settings" group).
 
-Drives the Settings > External Files toggles (`toggle-power-monitoring` /
-`toggle-file-browser`) and asserts they gate monitoring and the SFTP browser.
+Drives the Settings toggles (`toggle-power-monitoring` under Monitoring since #5775,
+`toggle-file-browser` under External files) and asserts they gate monitoring and the SFTP browser.
 
 The per-connection override tests from the original are intentionally not ported:
 the `enableMonitoring` / `enableFileBrowser` fields exist only for *agent*
@@ -37,6 +37,8 @@ pytestmark = pytest.mark.integration
 #: ``settings`` slice).
 POWER = ("toggle-power-monitoring", "powerMonitoringEnabled")
 FILES = ("toggle-file-browser", "fileBrowserEnabled")
+#: The settings category that holds each toggle (Power monitoring moved, #5775).
+CATEGORY = {POWER[0]: "monitoring", FILES[0]: "external-files"}
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
@@ -51,11 +53,14 @@ class TestSshMonitoringSettings(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Pa
         self.close_all_tabs()
 
     def test_toggles_present_in_settings(self):
+        self.open_settings_category("monitoring")
+        assert self.wait(
+            lambda: self.driver.exists("toggle-power-monitoring"), what="the power toggle"
+        )
         self.open_settings_category("external-files")
         assert self.wait(
-            lambda: self.driver.exists("toggle-power-monitoring"), what="the toggles"
+            lambda: self.driver.exists("toggle-file-browser"), what="the file-browser toggle"
         )
-        assert self.driver.exists("toggle-file-browser")
 
     def test_global_disable_hides_monitoring(self):
         self._set_setting(*POWER, False)
@@ -84,7 +89,7 @@ class TestSshMonitoringSettings(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, Pa
 
     # ── helpers ────────────────────────────────────────────────────────────────
     def _set_setting(self, toggle: str, field: str, desired: bool) -> None:
-        self.open_settings_category("external-files")
+        self.open_settings_category(CATEGORY[toggle])
         self.wait(lambda: self.driver.exists(toggle), what=f"the {toggle} toggle")
         if self._setting(field) != desired:
             self.driver.click(toggle)
