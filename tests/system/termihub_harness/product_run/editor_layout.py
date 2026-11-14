@@ -1,4 +1,5 @@
-"""Measure the connection editor for :func:`~.grades.editor_layout_problems` (#5641)."""
+"""Measure the connection editor for :func:`~.grades.editor_layout_problems` (#5641)
+and :func:`~.grades.editor_primary_problems` (#5755)."""
 
 from __future__ import annotations
 
@@ -37,3 +38,23 @@ def measure_editor_layout(driver: Any) -> dict[str, dict]:
         for role, test_id in ids.items()
         if role not in optional or driver.exists(test_id)
     }
+
+
+#: The editor's footer (Cancel / Test / Save / Save and connect).
+ACTIONS = "connection-editor-actions"
+
+
+def measure_editor_footer(driver: Any) -> list[dict]:
+    """The open editor's visible footer buttons, each ``{testId, rect, primary}``.
+
+    ``primary`` is whether the button carries the primary skin (``ui-btn--primary``).
+    """
+    items = driver.measure_element(ACTIONS, descendants="buttons").get("items", [])
+    buttons = []
+    for item in items:
+        test_id = item.get("testId")
+        if not test_id or not item.get("visible", True):
+            continue
+        classes = (driver.get_attribute(test_id, "class") or "").split()
+        buttons.append({"testId": test_id, "rect": item["rect"], "primary": "ui-btn--primary" in classes})
+    return buttons

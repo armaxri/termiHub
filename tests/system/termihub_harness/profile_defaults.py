@@ -9,6 +9,12 @@ changed log content and update-UI state mid-test. Before each launch
   it even for the check the frontend schedules before settings load).
 * ``pluginUpdateCheckEnabled = false``: no periodic plugin update check, which
   fetches the plugin index and each plugin's ``updateUrl``.
+* ``shellIntegration.firstLaunchBannerDismissed = true``: the one-time
+  "Open in termiHub" file-manager offer counts as already shown (#5753). It is
+  a persistent toast, so in a fresh profile it would sit in every screenshot
+  and take a slot in every toast-stack grade. A suite that grades the offer
+  opts out with ``file_manager_offer = True`` (``SystemTest``), which launches
+  the app with ``AppInstance(file_manager_offer=True)``.
 
 Only *missing* keys are added, so a test that seeds its own value keeps it, and
 a file that is not a JSON object (a corrupt-config test) is left untouched. A
@@ -29,9 +35,19 @@ SETTINGS_FILE = "settings.json"
 SEED_VERSION = "1"
 
 
-def hermetic_defaults() -> dict[str, Any]:
-    """The settings every harness launch gets unless the test set them."""
-    return {"updates": {"autoCheck": False}, "pluginUpdateCheckEnabled": False}
+def hermetic_defaults(*, file_manager_offer: bool = False) -> dict[str, Any]:
+    """The settings every harness launch gets unless the test set them.
+
+    ``file_manager_offer`` leaves the one-time file-manager offer pending, for
+    a suite that grades it (#5753).
+    """
+    defaults: dict[str, Any] = {
+        "updates": {"autoCheck": False},
+        "pluginUpdateCheckEnabled": False,
+    }
+    if not file_manager_offer:
+        defaults["shellIntegration"] = {"firstLaunchBannerDismissed": True}
+    return defaults
 
 
 def merge_missing(data: dict[str, Any], defaults: dict[str, Any]) -> bool:
@@ -50,11 +66,12 @@ def merge_missing(data: dict[str, Any], defaults: dict[str, Any]) -> bool:
     return changed
 
 
-def seed(config_dir: Path) -> bool:
+def seed(config_dir: Path, *, file_manager_offer: bool = False) -> bool:
     """Write the hermetic defaults into ``config_dir/settings.json``.
 
     Creates the file when absent; otherwise adds only missing keys. A file that
     cannot be read as a JSON object is left untouched. Returns whether it wrote.
+    ``file_manager_offer`` is passed to :func:`hermetic_defaults`.
     """
     path = config_dir / SETTINGS_FILE
     exists = path.exists()
@@ -67,7 +84,7 @@ def seed(config_dir: Path) -> bool:
         if not isinstance(loaded, dict):
             return False
         data = loaded
-    changed = merge_missing(data, hermetic_defaults())
+    changed = merge_missing(data, hermetic_defaults(file_manager_offer=file_manager_offer))
     if exists and not changed:
         return False
     config_dir.mkdir(parents=True, exist_ok=True)

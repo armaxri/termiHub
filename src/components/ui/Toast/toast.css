@@ -196,6 +196,26 @@
   box-shadow: var(--shadow-focus);
 }
 
+/*
+ * An offer toast (#5753) has two buttons: the quieter cancel ("Not now") on
+ * the left as a ghost button, the action ("Install") on the right. Both share
+ * the row under the message.
+ */
+.th-toast [data-cancel] {
+  background: transparent;
+  border-color: transparent;
+}
+.th-toast [data-cancel]:hover {
+  background: var(--bg-hover);
+}
+.th-toast [data-cancel] ~ [data-action] {
+  justify-self: end;
+}
+/* Docked over a dialog the toast is one line: the close button declines. */
+:root.th-toast-docked .th-toast [data-cancel] {
+  display: none;
+}
+
 /* ── Intent accents ─────────────────────────────────────────────────── */
 .th-toast[data-type="success"] {
   border-left-color: var(--color-success);

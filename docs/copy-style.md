@@ -47,6 +47,9 @@ One primary button per footer. Cancel is on the left; the primary action is on t
 
 - A `<Button>` without a `variant` is primary, so the others in the footer say
   `variant="secondary"` (or `"ghost"`).
+- The primary is the action the user most likely wants, and Enter runs it. A new
+  connection is saved to be used, so its editor reads Cancel · Test · Save ·
+  **Save and connect**; editing an existing connection keeps **Save** primary (#5755).
 - Label a button with a verb that says what happens: "Delete connection", "Save", "Reconnect".
   Avoid "Yes" and "No".
 

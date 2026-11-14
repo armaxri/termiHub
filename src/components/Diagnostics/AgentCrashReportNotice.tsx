@@ -7,7 +7,12 @@ import { onAgentCrashNoticesChanged } from "@/services/events";
 import type { AgentCrashNotice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
-import { BottomBanner, BottomBannerAction, useBottomBannerSlot } from "@/components/BottomBanners";
+import {
+  BottomBanner,
+  BottomBannerAction,
+  useBottomBannerSlot,
+  useBottomBannerStore,
+} from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
@@ -35,16 +40,29 @@ export function AgentCrashReportNotice() {
   const { remoteAgents } = useProjectedAgents();
   const setViewedAgentReport = useDiagnosticsDialogStore((s) => s.setViewedAgentReport);
   const [notices, setNotices] = useState<AgentCrashNotice[]>([]);
+  const markCrashChecked = useBottomBannerStore((s) => s.markCrashChecked);
 
   useEffect(() => {
-    if (!enabled) return;
+    // #5753: the one-time file-manager offer waits for this check and stays
+    // away for the whole session when a crash notice shows (also a later one,
+    // pushed after an agent connects — see useBottomBannerSlot).
+    if (!enabled) {
+      markCrashChecked("agent", false);
+      return;
+    }
     let cancelled = false;
     let unlisten: (() => void) | null = null;
     getAgentCrashNotices()
       .then((list) => {
-        if (!cancelled) setNotices(asList(list));
+        if (cancelled) return;
+        const pending = asList(list);
+        markCrashChecked("agent", pending.length > 0);
+        setNotices(pending);
       })
-      .catch((e) => frontendLog("crash_report", `agent notice check failed: ${errorMessage(e)}`));
+      .catch((e) => {
+        markCrashChecked("agent", false);
+        frontendLog("crash_report", `agent notice check failed: ${errorMessage(e)}`);
+      });
     onAgentCrashNoticesChanged((list) => setNotices(asList(list)))
       .then((fn) => {
         if (cancelled) fn();
@@ -57,7 +75,7 @@ export function AgentCrashReportNotice() {
       cancelled = true;
       unlisten?.();
     };
-  }, [enabled]);
+  }, [enabled, markCrashChecked]);
 
   const dismiss = useCallback((notice: AgentCrashNotice) => {
     setNotices((prev) => prev.filter((n) => n.agentId !== notice.agentId));

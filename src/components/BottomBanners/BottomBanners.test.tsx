@@ -5,10 +5,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import * as api from "@/services/api";
 import * as events from "@/services/events";
-import type { ShellIntegrationStatus } from "@/types/connection";
-import { defaultShellIntegrationSettings } from "@/components/Settings/shellIntegrationEntries";
 import { CrashReportNotice, AgentCrashReportNotice } from "@/components/Diagnostics";
-import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
 import { BottomBannerRegion, BOTTOM_BANNER_INSET_VAR } from "./BottomBannerRegion";
 import { measureBottomBannerInset } from "./BottomBannerRegion";
 import { activeBottomBanner, useBottomBannerStore } from "./bottomBannerStore";
@@ -26,9 +23,6 @@ vi.mock("@/services/api", async (importOriginal) => {
     acknowledgeCrashReports: vi.fn(),
     getAgentCrashNotices: vi.fn(),
     acknowledgeAgentCrashNotice: vi.fn(),
-    getShellIntegrationStatus: vi.fn(),
-    saveShellIntegrationSettings: vi.fn(),
-    installShellIntegration: vi.fn(),
     saveSettings: vi.fn(),
   };
 });
@@ -45,14 +39,6 @@ vi.mock("@/store/useProjectedAgents", () => ({
 const mockedApi = vi.mocked(api);
 const mockedEvents = vi.mocked(events);
 
-const SHELL_STATUS: ShellIntegrationStatus = {
-  registered: false,
-  exePathMatches: true,
-  stale: false,
-  portable: false,
-  detectedFileManagers: [],
-};
-
 let container: HTMLDivElement;
 let root: Root;
 
@@ -62,7 +48,6 @@ async function renderAll() {
       <BottomBannerRegion>
         <CrashReportNotice />
         <AgentCrashReportNotice />
-        <ShellIntegrationBanner />
       </BottomBannerRegion>
     );
   });
@@ -92,8 +77,11 @@ describe("bottom banner ranking (#5548, #5549)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useBottomBannerStore.setState({ wanting: {} });
-    seedSettings({ shellIntegration: defaultShellIntegrationSettings() });
+    useBottomBannerStore.setState({
+      wanting: {},
+      crashNoticeThisSession: false,
+      crashChecked: { local: false, agent: false },
+    });
     mockedApi.getCrashReportNotice.mockResolvedValue({
       name: "crash-1.txt",
       path: "/logs/crash-1.txt",
@@ -104,7 +92,6 @@ describe("bottom banner ranking (#5548, #5549)", () => {
       { agentId: "agent-a", name: "crash-a.txt", newCount: 1 },
     ]);
     mockedApi.acknowledgeAgentCrashNotice.mockResolvedValue(undefined);
-    mockedApi.getShellIntegrationStatus.mockResolvedValue(SHELL_STATUS);
     mockedEvents.onAgentCrashNoticesChanged.mockResolvedValue(vi.fn());
   });
 
@@ -124,17 +111,43 @@ describe("bottom banner ranking (#5548, #5549)", () => {
     await click("crash-report-notice-dismiss");
     expect(visibleBanners()).toEqual(["agent-crash-notice-agent-a"]);
     await click("agent-crash-notice-dismiss-agent-a");
-    // The promotional prompt only appears once no crash notice is left.
-    expect(visibleBanners()).toEqual(["shell-integration-banner"]);
-    await click("shell-integration-banner-not-now");
     expect(visibleBanners()).toEqual([]);
   });
 
-  it("shows the file-manager prompt directly when nothing crashed", async () => {
+  it("records a crash notice for the session, even after it is closed (#5753)", async () => {
+    await renderAll();
+    const s = useBottomBannerStore.getState();
+    expect(s.crashChecked).toEqual({ local: true, agent: true });
+    expect(s.crashNoticeThisSession).toBe(true);
+    await click("crash-report-notice-dismiss");
+    await click("agent-crash-notice-dismiss-agent-a");
+    expect(useBottomBannerStore.getState().crashNoticeThisSession).toBe(true);
+  });
+
+  it("reports both checks done and no crash when nothing crashed (#5753)", async () => {
     mockedApi.getCrashReportNotice.mockResolvedValue(null);
     mockedApi.getAgentCrashNotices.mockResolvedValue([]);
     await renderAll();
-    expect(visibleBanners()).toEqual(["shell-integration-banner"]);
+    expect(visibleBanners()).toEqual([]);
+    const s = useBottomBannerStore.getState();
+    expect(s.crashChecked).toEqual({ local: true, agent: true });
+    expect(s.crashNoticeThisSession).toBe(false);
+  });
+
+  it("reports the checks done when a check fails (#5753)", async () => {
+    mockedApi.getCrashReportNotice.mockRejectedValue(new Error("io"));
+    mockedApi.getAgentCrashNotices.mockRejectedValue(new Error("io"));
+    await renderAll();
+    expect(useBottomBannerStore.getState().crashChecked).toEqual({ local: true, agent: true });
+    expect(useBottomBannerStore.getState().crashNoticeThisSession).toBe(false);
+  });
+
+  it("reports the checks done without a crash when notices are turned off (#5753)", async () => {
+    seedSettings({ showCrashReportNotice: false });
+    await renderAll();
+    expect(mockedApi.getCrashReportNotice).not.toHaveBeenCalled();
+    expect(useBottomBannerStore.getState().crashChecked).toEqual({ local: true, agent: true });
+    expect(useBottomBannerStore.getState().crashNoticeThisSession).toBe(false);
   });
 
   it("never renders a filled primary button in any banner", async () => {
@@ -143,9 +156,6 @@ describe("bottom banner ranking (#5548, #5549)", () => {
       expect(byTestId("bottom-banners")?.querySelector(".ui-btn--primary")).toBeNull();
       await click(id);
     }
-    expect(byTestId("shell-integration-banner")).not.toBeNull();
-    expect(byTestId("bottom-banners")?.querySelector(".ui-btn--primary")).toBeNull();
-    expect(byTestId("shell-integration-banner-install")?.className).toContain("ui-btn--secondary");
   });
 });
 
@@ -154,13 +164,7 @@ describe("activeBottomBanner", () => {
     expect(activeBottomBanner({})).toBeNull();
   });
 
-  it("ranks crash notices above the promotional prompt", () => {
-    expect(activeBottomBanner({ "shell-integration": true, "crash-report": true })).toBe(
-      "crash-report"
-    );
-    expect(activeBottomBanner({ "shell-integration": true, "agent-crash-report": true })).toBe(
-      "agent-crash-report"
-    );
+  it("ranks the local crash notice above the agent crash notices", () => {
     expect(activeBottomBanner({ "agent-crash-report": true, "crash-report": true })).toBe(
       "crash-report"
     );

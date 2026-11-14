@@ -620,8 +620,10 @@
           An <strong>entry-editor dialog</strong> (add / edit) collects the entry name, connection
           type (or "Show session picker"), Windows visibility (Always / Extended-only), and the
           "Show for" targets (Folders / Files / Folder background). A
-          <strong>first-launch install banner</strong> offers to add the entries to the file manager
-          with "Not now / Don't ask again / Install Now". See the mockups below.
+          <strong>one-time install offer</strong> (a toast since #5753; formerly a docked banner)
+          offers to add the entries to the file manager with "Not now / Install". It is shown once,
+          never in a session with the crash banner, and the install stays available in Settings ›
+          File manager integration. See the mockups below.
         </p>
 
         <!-- ── Mockup: spawn-session-picker ──────────────────────────── -->
@@ -1234,9 +1236,13 @@
             </div>
           </div>
 
-          <h3>3 · First-launch install banner</h3>
+          <h3>3 · One-time install offer</h3>
           <div class="mockup-note">
-            Non-blocking banner shown on first launch (or if shell integration was never set up).
+            Since #5753 (maintainer decision 2026-11-13) this is a <strong>toast</strong>, not a
+            docked banner: shown once (recorded as soon as it shows), with "Not now" and "Install"
+            (closing it counts as "Not now"), never in a session that shows the crash banner, and
+            persistent until answered. The layout below shows its content; the actions are "Not
+            now" (ghost) and "Install" (outlined).
           </div>
           <div class="banner">
             <span class="banner__icon"
@@ -1248,8 +1254,7 @@
             </div>
             <div class="banner__actions">
               <button class="btn btn--link">Not now</button>
-              <button class="btn btn--link">Don't ask again</button>
-              <button class="btn btn--primary">Install Now</button>
+              <button class="btn">Install</button>
             </div>
           </div>
         </div>

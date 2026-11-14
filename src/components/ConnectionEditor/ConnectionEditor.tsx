@@ -1674,10 +1674,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     closeThisTab();
   }, [tabId, rootPanel, setPendingCloseRequest, closeThisTab]);
 
-  // Enter (from a single-line text field) saves; Escape cancels. Jump-host list
-  // inputs are exempt so Enter there doesn't save the whole connection.
+  // Which footer action is primary (#5755): a new connection or agent
+  // connection is saved to be used, so "Save and connect" is primary; editing
+  // an existing one keeps "Save". The remote-agent editor has no connect action.
+  const saveAndConnectIsPrimary =
+    !isAgentTransportMode && (isAgentDefinitionMode ? !existingAgentDef : !existingConnection);
+  // The primary footer Button. Enter clicks it, so the keyboard runs the same
+  // action — with the same pending state and error handling — as the button
+  // the user sees highlighted.
+  const primaryButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Enter (from a single-line text field) runs the primary action; Escape
+  // cancels. Jump-host list inputs are exempt so Enter there doesn't save the
+  // whole connection.
   const handleKeyDown = useEditorKeyboard({
-    onSubmit: () => void handleSave(),
+    onSubmit: () => primaryButtonRef.current?.click(),
     onCancel: handleCancel,
     exemptSelector: '[data-testid="jump-host-section"]',
   });
@@ -2161,6 +2172,32 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   };
 
+  const saveAndConnectButton = (
+    <Button
+      ref={saveAndConnectIsPrimary ? primaryButtonRef : undefined}
+      variant={saveAndConnectIsPrimary ? "primary" : "secondary"}
+      onClick={handleSaveAndConnect}
+      errorToast={false}
+      aria-disabled={!canSave}
+      data-invalid={!canSave || undefined}
+      data-testid="connection-editor-save-connect"
+    >
+      Save and connect
+    </Button>
+  );
+  const saveButton = (
+    <Button
+      ref={saveAndConnectIsPrimary ? undefined : primaryButtonRef}
+      variant={saveAndConnectIsPrimary ? "secondary" : "primary"}
+      onClick={handleSave}
+      aria-disabled={!canSave}
+      data-invalid={!canSave || undefined}
+      data-testid="connection-editor-save"
+    >
+      Save
+    </Button>
+  );
+
   const categories = isAgentTransportMode
     ? AGENT_TRANSPORT_CATEGORIES
     : isAgentDefinitionMode
@@ -2233,29 +2270,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 Cancel test
               </Button>
             )}
-            {/* One primary per footer (copy style guide): Save is primary, so Enter's
-                default action and the highlighted button agree. */}
-            <Button
-              variant="secondary"
-              onClick={handleSaveAndConnect}
-              errorToast={false}
-              aria-disabled={!canSave}
-              data-invalid={!canSave || undefined}
-              data-testid="connection-editor-save-connect"
-            >
-              Save and connect
-            </Button>
+            {/* One primary per footer, on the right (copy style guide). */}
+            {!saveAndConnectIsPrimary && saveAndConnectButton}
           </>
         )}
-        <Button
-          variant="primary"
-          onClick={handleSave}
-          aria-disabled={!canSave}
-          data-invalid={!canSave || undefined}
-          data-testid="connection-editor-save"
-        >
-          Save
-        </Button>
+        {saveButton}
+        {saveAndConnectIsPrimary && saveAndConnectButton}
       </div>
       <UnsavedChangesDialog
         open={pendingCloseRequest?.tabId === tabId}

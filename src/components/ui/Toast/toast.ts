@@ -44,6 +44,12 @@ export interface ToastOptions {
   /** Optional inline action button (e.g. a retry affordance). */
   action?: ToastAction;
   /**
+   * Optional second, quieter button that declines the offer and closes the
+   * toast (e.g. "Not now" beside an "Install" action, #5753). It renders
+   * before the action, as a ghost button. Pressing it closes the toast.
+   */
+  cancel?: ToastAction;
+  /**
    * `data-testid` rendered on the toast element, so a system test can assert a
    * specific toast appeared (e.g. the external-spawn outcome toasts, #4010).
    */
@@ -216,6 +222,7 @@ function showTransient(spec: TransientSpec): string | number {
     description: spec.opts.description,
     duration: spec.opts.duration,
     action: sonnerAction(spec.opts.action),
+    cancel: sonnerAction(spec.opts.cancel),
     testId: spec.opts.testId,
     onDismiss: forget,
     onAutoClose: forget,
@@ -327,6 +334,7 @@ export const toast: ToastApi = {
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
+      cancel: sonnerAction(opts?.cancel),
       testId: opts?.testId,
     });
     trackTransient(id ?? opts?.id, false);
@@ -346,6 +354,7 @@ export const toast: ToastApi = {
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
+      cancel: sonnerAction(opts?.cancel),
       testId: opts?.testId,
     });
     trackTransient(id ?? opts?.id, false);
