@@ -194,7 +194,10 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     await flushSessionRegion();
 
     expect(container.textContent).toContain("Session disconnected");
-    expect(container.textContent).toContain("137");
+    expect(container.textContent).toContain("The process exited with code 137");
+    // A local shell's exit is not a lost link, nor necessarily remote (#5784).
+    expect(container.textContent).not.toContain("connection was lost");
+    expect(container.textContent).not.toContain("remote process");
     // Non-zero exit is not a clean exit.
     expect(container.textContent).not.toContain("Session ended");
   });

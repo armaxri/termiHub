@@ -190,6 +190,19 @@ describe("Terminal — drop separators (#5619)", () => {
     expect(written()).toContain("[Process exited]");
   });
 
+  it("writes the code a direct local shell exited with (#5784)", async () => {
+    await mount({ type: "local", config: { shell: "/bin/bash" } });
+    await fireExit(7);
+    expect(written()).toContain("[Process exited with code 7]");
+    expect(written()).not.toContain("connection lost");
+  });
+
+  it("writes code 0 for a direct local shell exited plainly (#5784)", async () => {
+    await mount({ type: "local", config: { shell: "/bin/bash" } });
+    await fireExit(0);
+    expect(written()).toContain("[Process exited with code 0]");
+  });
+
   it("keeps the exit code for a remote process that exited", async () => {
     await mount({ type: "ssh", config: { host: "bastion" } });
     await fireExit(0);
