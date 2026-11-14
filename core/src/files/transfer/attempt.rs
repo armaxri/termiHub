@@ -480,8 +480,9 @@ impl PartialProbe {
     }
 }
 
-/// Row message for an upload whose remote partial runs past the checkpoint on
-/// a protocol that cannot shorten a remote file (FTP, an agent-hosted session).
+/// Row message for an upload (or a remote-to-remote copy, #5737) whose remote
+/// partial runs past the checkpoint on a protocol that cannot shorten a remote
+/// file (FTP, an agent-hosted session).
 pub(super) const UNTRIMMABLE_PARTIAL_NOTE: &str =
     "remote partial is past the last checkpoint and cannot be trimmed; restarting from start";
 

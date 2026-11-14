@@ -844,9 +844,11 @@ async fn a_relaunch_whose_trim_fails_restarts_with_the_reason() {
     assert_eq!(terminal(&events), TransferPhase::Done);
     assert_eq!(dst.opens(), [Open::Write(0)]);
     assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
-    assert!(messages(&events).iter().any(|m| m.contains("could not trim")
-        && m.contains("setstat refused")
-        && m.ends_with("restarting from start")));
+    assert!(messages(&events)
+        .iter()
+        .any(|m| m.contains("could not trim")
+            && m.contains("setstat refused")
+            && m.ends_with("restarting from start")));
 }
 
 /// Trimming never bypasses the source check: a source rewritten while the
