@@ -101,18 +101,32 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(openScheduleEditor).toHaveBeenCalledWith();
   });
 
-  it("summarises the rule, action and target hosts", async () => {
+  const tip = (id: string) => query(`schedule-item-${id}`)!.getAttribute("aria-description");
+
+  it("puts the next run, rule, action and target hosts in the tooltip (#5757)", async () => {
     await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
-    expect(query("schedule-summary-s1")!.textContent).toBe(
-      'Every 15 minutes · workflow "Uptime" on web-1, web-2'
+    expect(tip("s1")).toMatch(
+      /^Next: today .*\. Every 15 minutes · workflow "Uptime" on web-1, web-2$/
     );
-    expect(query("schedule-status-s1")!.textContent).toMatch(/^Next: today/);
+    // An enabled schedule with a run coming shows only its name (and dot).
+    expect(query("schedule-summary-s1")).toBeNull();
+    expect(query("schedule-status-s1")).toBeNull();
+    expect(query("schedule-item-s1")!.textContent).toBe("Health");
   });
 
-  it("truncates the summary on one line with a tooltip, not a mid-name wrap (R-082)", async () => {
+  it("reveals the details in the name's tooltip", async () => {
     await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
-    // TruncatedText: ellipsizes and reveals the full text only when clipped.
-    expect(query("schedule-summary-s1")!.classList.contains("ui-truncate")).toBe(true);
+    act(() => {
+      query("schedule-name-s1")!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    const content = query("schedule-tooltip-s1")!.textContent ?? "";
+    expect(content).toContain("Health");
+    expect(content).toContain("web-1, web-2");
+  });
+
+  it("marks an enabled schedule with no run coming as needing attention", async () => {
+    await render([view({ enabled: true, confirmedAt: "x" })]);
+    expect(query("schedule-status-s1")!.textContent).toBe("Not scheduled");
   });
 
   it("asks for confirmation listing the hosts before the first enable", async () => {
@@ -177,9 +191,10 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-status-a")!.textContent).toBe("Paused");
     expect(query("schedule-status-b")!.textContent).toBe("Running now");
     expect(query("schedule-status-c")!.textContent).toBe("Disabled");
-    expect(query("schedule-last-c")!.textContent).toContain(
-      "skipped — None of the target connections is connected"
-    );
+    expect(tip("c")).toContain("skipped — None of the target connections is connected");
+    expect(query("schedule-last-c")).toBeNull();
+    // A skipped run is not a failure: no marker.
+    expect(query("schedule-last-failed-c")).toBeNull();
   });
 
   it("drives the row dot from the schedule state, not the last run (#5612)", async () => {
@@ -205,10 +220,11 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(dot("on").classList.contains("status-dot--success")).toBe(true);
     // A schedule that never ran still shows its state.
     expect(dot("never").classList.contains("status-dot--disabled")).toBe(true);
-    // The last-run outcome moves to its own line.
-    expect(query("schedule-last-dot-off")!.classList.contains("status-dot--success")).toBe(true);
-    expect(query("schedule-last-dot-on")!.classList.contains("status-dot--error")).toBe(true);
-    expect(query("schedule-last-dot-never")).toBeNull();
+    // The last run is in the tooltip; only a failed one is marked on the row.
+    expect(tip("off")).toContain("completed");
+    expect(query("schedule-last-failed-off")).toBeNull();
+    expect(query("schedule-last-failed-on")!.textContent).toBe("Last run failed");
+    expect(query("schedule-last-failed-never")).toBeNull();
   });
 
   it("tones a paused schedule as a warning", async () => {
@@ -259,11 +275,14 @@ describe("SchedulesSection (PROD-043)", () => {
 
     expect(query("schedule-attempts-s1")).toBeNull();
     const toggle = query("schedule-attempts-toggle-s1")!;
-    expect(toggle.textContent).toContain("Show recent attempts (3)");
+    // An icon action: no text on the row (#5757).
+    expect(toggle.textContent).toBe("");
+    expect(toggle.getAttribute("aria-label")).toBe("Show recent attempts (3)");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
 
     act(() => toggle.click());
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toBe("Hide recent attempts");
     const items = query("schedule-attempts-s1")!.querySelectorAll("li");
     expect(items).toHaveLength(3);
     expect(items[0].textContent).toContain("Completed");

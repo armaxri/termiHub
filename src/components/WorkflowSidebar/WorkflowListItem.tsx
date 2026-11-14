@@ -19,7 +19,7 @@ import {
   armedDescription,
   armedTriggers,
   disarmedDescription,
-  workflowRowSummary,
+  workflowRowTooltip,
 } from "./workflowRowSummary";
 
 /**
@@ -77,10 +77,12 @@ const noConnectionName = (): undefined => undefined;
 
 /**
  * A single workflow row in the manager sidebar: the name first (it is what users
- * scan and search for, #5519; no leading step-count badge), then a muted line
- * saying how it is launched and what it targets — with an "Armed" marker when a
- * trigger runs it automatically (#5635) — its description and tags, and the
- * Run / Run on… / Edit / Duplicate / Export / Delete actions. Double-click runs the
+ * scan and search for, #5519; no leading step-count badge), then the user's
+ * description when there is one, an "Armed"/"Off" marker (with its switch) when
+ * a trigger runs it automatically (#5635, #5674), the per-terminal progress of a
+ * running fan-out, and the Run / Run on… / Edit / Duplicate / Export / Delete
+ * actions. How it is launched, what it targets and its tags are settings, not
+ * names: they live in the name's tooltip (#5757). Double-click runs the
  * workflow against the active session (matching the macro row's affordance).
  * Composed from the shared list-item shell.
  */
@@ -118,6 +120,10 @@ export function WorkflowListItem({
       testId={`workflow-item-${workflow.id}`}
       nameTestId={`workflow-name-${workflow.id}`}
       name={workflow.name}
+      description={workflow.description}
+      descriptionTestId={`workflow-description-${workflow.id}`}
+      tooltip={workflowRowTooltip(workflow, connectionName)}
+      tooltipTestId={`workflow-tooltip-${workflow.id}`}
       onDoubleClick={() => onRun(workflow.id)}
       actions={
         <>
@@ -242,100 +248,82 @@ export function WorkflowListItem({
         </>
       }
       details={
-        <>
-          <span className="workflow-item__summary">
+        armed || (runs && runs.length > 1) ? (
+          <>
             {armed ? (
-              <span
-                className={
-                  enabled
-                    ? "workflow-item__armed"
-                    : "workflow-item__armed workflow-item__armed--off"
-                }
-                role="img"
-                aria-label={markerDescription}
-                title={markerDescription}
-                data-testid={`workflow-armed-${workflow.id}`}
-                data-armed={enabled ? "true" : "false"}
-              >
-                <Zap size={10} aria-hidden="true" />
-                <span aria-hidden="true">{enabled ? "Armed" : "Off"}</span>
-              </span>
-            ) : null}
-            {armed && onSetTriggersEnabled ? (
-              // Keep the switch's own clicks and Enter/Space off the row: the row
-              // runs on double-click and the list's roving nav claims Enter.
-              <span
-                className="workflow-item__arm-toggle"
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                }}
-              >
-                <Toggle
-                  checked={enabled}
-                  onCheckedChange={(next) => onSetTriggersEnabled(workflow.id, next)}
-                  aria-label={`${enabled ? "Disarm" : "Arm"} workflow ${workflow.name}`}
-                  data-testid={`workflow-arm-toggle-${workflow.id}`}
-                />
-              </span>
-            ) : null}
-            <span
-              className="workflow-item__summary-text"
-              data-testid={`workflow-summary-${workflow.id}`}
-            >
-              {workflowRowSummary(workflow, connectionName)}
-            </span>
-          </span>
-          {workflow.description ? (
-            <span className="workflow-item__description">{workflow.description}</span>
-          ) : null}
-          {runs && runs.length > 1 ? (
-            <ul
-              className="workflow-item__targets"
-              aria-label="Running terminals"
-              data-testid={`workflow-targets-${workflow.id}`}
-            >
-              {runs.map((run) => (
-                <li
-                  key={run.runId}
-                  className="workflow-item__target"
-                  data-testid={`workflow-target-${run.runId}`}
+              <span className="workflow-item__summary">
+                <span
+                  className={
+                    enabled
+                      ? "workflow-item__armed"
+                      : "workflow-item__armed workflow-item__armed--off"
+                  }
+                  role="img"
+                  aria-label={markerDescription}
+                  title={markerDescription}
+                  data-testid={`workflow-armed-${workflow.id}`}
+                  data-armed={enabled ? "true" : "false"}
                 >
-                  <span className="workflow-item__target-name">{run.label || run.tabId}</span>
-                  <span className="workflow-item__target-progress">
-                    {run.completed} / {run.total}
-                  </span>
-                  {onCancelRun ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label={`Stop on ${run.label || run.tabId}`}
-                      data-testid={`workflow-target-stop-${run.runId}`}
-                      icon={<Square size={10} fill="currentColor" />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCancelRun(run.runId);
-                      }}
+                  <Zap size={10} aria-hidden="true" />
+                  <span aria-hidden="true">{enabled ? "Armed" : "Off"}</span>
+                </span>
+                {onSetTriggersEnabled ? (
+                  // Keep the switch's own clicks and Enter/Space off the row: the row
+                  // runs on double-click and the list's roving nav claims Enter.
+                  <span
+                    className="workflow-item__arm-toggle"
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                    }}
+                  >
+                    <Toggle
+                      checked={enabled}
+                      onCheckedChange={(next) => onSetTriggersEnabled(workflow.id, next)}
+                      aria-label={`${enabled ? "Disarm" : "Arm"} workflow ${workflow.name}`}
+                      data-testid={`workflow-arm-toggle-${workflow.id}`}
                     />
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {workflow.tags.length > 0 ? (
-            <span className="workflow-item__meta">
-              <span className="workflow-item__tags" data-testid={`workflow-tags-${workflow.id}`}>
-                {workflow.tags.map((tag) => (
-                  <span className="workflow-item__tag" key={tag}>
-                    {tag}
                   </span>
-                ))}
+                ) : null}
               </span>
-            </span>
-          ) : null}
-        </>
+            ) : null}
+            {runs && runs.length > 1 ? (
+              <ul
+                className="workflow-item__targets"
+                aria-label="Running terminals"
+                data-testid={`workflow-targets-${workflow.id}`}
+              >
+                {runs.map((run) => (
+                  <li
+                    key={run.runId}
+                    className="workflow-item__target"
+                    data-testid={`workflow-target-${run.runId}`}
+                  >
+                    <span className="workflow-item__target-name">{run.label || run.tabId}</span>
+                    <span className="workflow-item__target-progress">
+                      {run.completed} / {run.total}
+                    </span>
+                    {onCancelRun ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label={`Stop on ${run.label || run.tabId}`}
+                        data-testid={`workflow-target-stop-${run.runId}`}
+                        icon={<Square size={10} fill="currentColor" />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCancelRun(run.runId);
+                        }}
+                      />
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : null
       }
     />
   );

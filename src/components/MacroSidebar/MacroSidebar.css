@@ -18,62 +18,6 @@
   padding: var(--spacing-xs) 0;
 }
 
-/*
- * Macro rows compose from the shared `SidebarListItem` shell, so the row layout
- * (container, header, badge, name, actions, details) lives in
- * `SidebarListItem.css`. Only the macro-specific detail lines remain here.
- */
-.macro-item__description {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The first line the macro types, in the row's secondary text (R-112, #5680):
-   not a dim joined monospace dump — the whole input is in the tooltip. */
-.macro-item__preview,
-.macro-item__last-run {
-  display: block;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The tooltip's step list: one input line per row, monospace so the commands
-   read as typed. */
-.macro-item__steps {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  font-family: var(--font-mono);
-}
-
-.macro-item__step {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.macro-item__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-  padding-top: var(--spacing-xxs);
-}
-
-.macro-item__tag {
-  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
-  --text-secondary: var(--text-secondary-on-selection);
-  padding: 0 var(--spacing-xs-sm);
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-  line-height: 16px;
-}
-
 /* Persisted macro run-history panel (#3543), mirroring the workflow one. */
 .macro-history {
   display: flex;

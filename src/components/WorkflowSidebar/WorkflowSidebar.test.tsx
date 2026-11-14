@@ -160,8 +160,11 @@ describe("WorkflowSidebar", () => {
     await render();
     expect(query("workflow-armed-workflow-2")).not.toBeNull();
     expect(query("workflow-armed-workflow-1")).toBeNull();
-    expect(query("workflow-summary-workflow-2")?.textContent).toBe("On connect · prod-web");
-    expect(query("workflow-summary-workflow-1")?.textContent).toBe("Manual");
+    // The trigger text is in the row tooltip, not on the row (#5757).
+    const tip = (id: string) => query(`workflow-item-${id}`)?.getAttribute("aria-description");
+    expect(tip("workflow-2")).toContain("On connect · prod-web");
+    expect(tip("workflow-1")).toContain("Manual");
+    expect(query("workflow-summary-workflow-2")).toBeNull();
   });
 
   it("disarms an armed workflow from its row switch (#5674)", async () => {

@@ -38,6 +38,16 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
+/** The row's tooltip text, as its accessible description (#5757). */
+function rowTooltip(): string | null {
+  return query("workflow-item-w1")?.getAttribute("aria-description") ?? null;
+}
+
+/** The text the row itself shows (no tooltip content is in the DOM at rest). */
+function rowText(): string {
+  return query("workflow-item-w1")?.textContent ?? "";
+}
+
 const CONNECTION_NAMES: Record<string, string> = { c1: "Prod shell", c2: "Staging" };
 const connectionName = (id: string): string | undefined => CONNECTION_NAMES[id];
 
@@ -94,22 +104,53 @@ describe("WorkflowListItem", () => {
     expect(query("workflow-run-w1")).toBeNull();
   });
 
-  it("shows a muted 'Manual' second line after the name for a manual workflow", () => {
+  it("shows only the name for a manual workflow; 'Manual' is in the tooltip (#5757)", () => {
     render(workflow());
-    const summary = query("workflow-summary-w1");
-    expect(summary?.textContent).toBe("Manual");
-    expect(summary?.closest(".workflow-item__summary")).not.toBeNull();
+    expect(rowText()).toBe("Bootstrap");
+    expect(query("workflow-summary-w1")).toBeNull();
+    expect(rowTooltip()).toBe("Manual");
     // Never a step count (#5519/#5635).
-    expect(summary?.textContent).not.toMatch(/step/i);
+    expect(rowTooltip()).not.toMatch(/step/i);
     expect(query("workflow-armed-w1")).toBeNull();
   });
 
-  it("names the trigger and the connection it watches on the second line", () => {
+  it("puts the trigger and the connection it watches in the tooltip, not the row", () => {
     const triggers: WorkflowTrigger[] = [
       { kind: "on-output-match", connectionIds: ["c1"], pattern: "FIRE" },
     ];
     render(workflow({ triggers }));
-    expect(query("workflow-summary-w1")?.textContent).toBe("On output match · Prod shell");
+    expect(rowTooltip()).toBe("On output match · Prod shell");
+    expect(rowText()).not.toContain("On output match");
+    expect(rowText()).not.toContain("Prod shell");
+  });
+
+  it("reveals the tooltip with the full name and the trigger on the name", () => {
+    const triggers: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: ["c1"] }];
+    render(workflow({ triggers, tags: ["deploy", "prod"] }));
+    act(() => {
+      query("workflow-name-w1")?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    const tip = document.querySelector('[data-testid="workflow-tooltip-w1"]');
+    expect(tip?.textContent).toContain("Bootstrap");
+    expect(tip?.textContent).toContain("On connect · Prod shell");
+    expect(tip?.textContent).toContain("Tags: deploy, prod");
+  });
+
+  it("shows the user's description muted under the name, and nothing when unset", () => {
+    render(workflow({ description: "Sets up a fresh box" }));
+    const description = query("workflow-description-w1");
+    expect(description?.textContent).toBe("Sets up a fresh box");
+    expect(description?.classList.contains("sidebar-list-item__description")).toBe(true);
+    expect(rowText()).toBe("BootstrapSets up a fresh box");
+    render(workflow({ description: "" }));
+    expect(query("workflow-description-w1")).toBeNull();
+  });
+
+  it("keeps tags off the row and lists them in the tooltip (#5757)", () => {
+    render(workflow({ tags: ["deploy"] }));
+    expect(query("workflow-tags-w1")).toBeNull();
+    expect(rowText()).not.toContain("deploy");
+    expect(rowTooltip()).toBe("Manual. Tags: deploy");
   });
 
   it("marks an armed workflow and names what it watches", () => {
@@ -121,7 +162,9 @@ describe("WorkflowListItem", () => {
     expect(armed?.getAttribute("aria-label")).toBe(
       "Runs automatically: on connect of Prod shell, Staging"
     );
-    expect(query("workflow-summary-w1")?.textContent).toBe("On connect · Prod shell, Staging");
+    expect(rowTooltip()).toBe("On connect · Prod shell, Staging");
+    // Only the marker reaches the row: no trigger or connection text.
+    expect(rowText()).toBe("BootstrapArmed");
   });
 
   describe("arm toggle (#5674)", () => {
@@ -161,8 +204,8 @@ describe("WorkflowListItem", () => {
       expect(marker?.getAttribute("aria-label")).toBe(
         "Disarmed, will not run automatically: on output match of Prod shell"
       );
-      // The bindings are untouched: the summary still names the connection.
-      expect(query("workflow-summary-w1")?.textContent).toBe("On output match · Prod shell");
+      // The bindings are untouched: the tooltip still names the connection.
+      expect(rowTooltip()).toBe("On output match · Prod shell");
       const toggle = query("workflow-arm-toggle-w1");
       expect(toggle?.getAttribute("aria-checked")).toBe("false");
       expect(toggle?.getAttribute("aria-label")).toBe("Arm workflow Bootstrap");
@@ -216,20 +259,21 @@ describe("WorkflowListItem", () => {
     const empty: WorkflowTrigger[] = [{ kind: "on-connect", connectionIds: [] }];
     render(workflow({ triggers: empty }));
     expect(query("workflow-armed-w1")).toBeNull();
-    expect(query("workflow-summary-w1")?.textContent).toBe("Manual");
+    expect(rowTooltip()).toBe("Manual");
   });
 
-  it("shows a hotkey trigger with its binding but not as armed", () => {
+  it("puts a hotkey trigger's binding in the tooltip, not as armed", () => {
     render(workflow({ triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+H" }] }));
-    expect(query("workflow-summary-w1")?.textContent).toBe("Hotkey Ctrl+Alt+H");
+    expect(rowTooltip()).toBe("Hotkey Ctrl+Alt+H");
+    expect(rowText()).toBe("Bootstrap");
     expect(query("workflow-armed-w1")).toBeNull();
   });
 
-  it("keeps the name first, before the second line", () => {
+  it("keeps the name first, before the armed marker", () => {
     render(workflow({ triggers: [{ kind: "on-disconnect", connectionIds: ["c1"] }] }));
-    const row = query("workflow-item-w1");
-    const text = row?.textContent ?? "";
-    expect(text.indexOf("Bootstrap")).toBeLessThan(text.indexOf("On disconnect"));
+    const text = rowText();
+    expect(text.indexOf("Bootstrap")).toBeLessThan(text.indexOf("Armed"));
+    expect(text).not.toContain("On disconnect");
   });
 
   it("runs on click and stops the click from bubbling to the row", () => {

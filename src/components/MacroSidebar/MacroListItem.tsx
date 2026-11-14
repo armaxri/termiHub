@@ -4,9 +4,7 @@ import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Macro, MacroRun } from "@/types/macro";
 import { t, tf } from "@/i18n/catalog";
-import { formatAbsoluteTime, formatRelativeTime } from "@/utils/formatters";
-import { MAX_PREVIEW_LINES, macroPreviewLines } from "./macroStepFormat";
-import { macroRunTargetsText } from "./macroRunFormat";
+import { macroRowTooltip } from "./macroRowTooltip";
 
 interface MacroListItemProps {
   macro: Macro;
@@ -25,7 +23,7 @@ interface MacroListItemProps {
    * terminal is active.
    */
   playTarget?: string | null;
-  /** This macro's most recent playback, for the "Last run" line (#5680). */
+  /** This macro's most recent playback, for the tooltip's "Last run" line (#5680). */
   lastRun?: MacroRun;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
@@ -35,10 +33,10 @@ interface MacroListItemProps {
 
 /**
  * A single macro row in the manager sidebar: the name first (it is what users
- * scan and search for, #5519; no leading step-count badge), the first line it
- * types (the full input in a tooltip, R-112), when and where it last ran
- * (#5680), and the Play / Edit / Duplicate /
- * Delete actions. Play is always visible after the name (#5636: playing is the
+ * scan and search for, #5519; no leading step-count badge), the user's
+ * description when there is one, and the Play / Edit / Duplicate / Delete
+ * actions. What it types, its last run and its tags are in the name's tooltip
+ * ({@link macroRowTooltip}, #5757). Play is always visible after the name (#5636: playing is the
  * panel's main purpose, so it must not depend on hover discovery); the other
  * actions form a group revealed on hover/focus that overlays the name's tail.
  * Double-click plays the macro (matching the workspace row's
@@ -58,8 +56,6 @@ export function MacroListItem({
   rowRef,
   rowProps,
 }: MacroListItemProps) {
-  const lines = macroPreviewLines(macro.steps);
-  const shownLines = lines.slice(0, MAX_PREVIEW_LINES);
   const playTooltip = playTarget
     ? tf("macro.play.target", { target: playTarget })
     : t("macro.play.noTarget");
@@ -71,6 +67,10 @@ export function MacroListItem({
       testId={`macro-item-${macro.id}`}
       nameTestId={`macro-name-${macro.id}`}
       name={macro.name}
+      description={macro.description}
+      descriptionTestId={`macro-description-${macro.id}`}
+      tooltip={macroRowTooltip(macro, lastRun)}
+      tooltipTestId={`macro-tooltip-${macro.id}`}
       className="macro-item"
       onDoubleClick={() => onPlay(macro.id)}
       actionsVisible
@@ -185,53 +185,6 @@ export function MacroListItem({
               />
             </Tooltip>
           </span>
-        </>
-      }
-      details={
-        <>
-          {macro.description ? (
-            <span className="macro-item__description">{macro.description}</span>
-          ) : null}
-          {lines.length > 0 ? (
-            <Tooltip
-              side="bottom"
-              align="start"
-              content={
-                <span className="macro-item__steps" data-testid={`macro-steps-${macro.id}`}>
-                  {shownLines.map((line, i) => (
-                    <span className="macro-item__step" key={i}>
-                      {line}
-                    </span>
-                  ))}
-                  {lines.length > shownLines.length ? (
-                    <span className="macro-item__step">…</span>
-                  ) : null}
-                </span>
-              }
-            >
-              <span className="macro-item__preview" data-testid={`macro-preview-${macro.id}`}>
-                {lines[0]}
-              </span>
-            </Tooltip>
-          ) : null}
-          {lastRun ? (
-            <span className="macro-item__last-run" data-testid={`macro-last-run-${macro.id}`}>
-              {t("macro.lastRun.label")}{" "}
-              <time dateTime={lastRun.endedAt} title={formatAbsoluteTime(lastRun.endedAt)}>
-                {formatRelativeTime(lastRun.endedAt)}
-              </time>{" "}
-              {tf("macro.lastRun.on", { target: macroRunTargetsText(lastRun) })}
-            </span>
-          ) : null}
-          {macro.tags.length > 0 ? (
-            <span className="macro-item__tags" data-testid={`macro-tags-${macro.id}`}>
-              {macro.tags.map((tag) => (
-                <span className="macro-item__tag" key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </span>
-          ) : null}
         </>
       }
     />

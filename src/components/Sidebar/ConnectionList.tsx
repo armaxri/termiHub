@@ -609,8 +609,8 @@ function ConnectionItem({
                   connections (ssh/docker/wsl/serial/local) are multi-instance
                   and die with the window, so they carry NO persistence marker —
                   no ∞, no hourglass, no state dot. The ∞ lives only on agent
-                  persistent shells (see AgentNode.tsx). */}
-              <span className="connection-tree__type">{connection.config.type}</span>
+                  persistent shells (see AgentNode.tsx). The row shows the name
+                  only; the type is the icon (#5757). */}
               {persistentCapable && !isPersistentTransitioning && (
                 <span className="connection-tree__persistent-actions">
                   {isPersistentStopped ? (

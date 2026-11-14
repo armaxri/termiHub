@@ -1,6 +1,8 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { StatusDot } from "../ui/StatusDot";
+import { Tooltip } from "../ui/Tooltip";
 import { TruncatedText } from "../ui/TruncatedText";
+import { rowTooltipDescription } from "./rowTooltip";
 import type { StatusTone } from "../ui/StatusDot";
 import "./SidebarListItem.css";
 
@@ -55,6 +57,24 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
    * schedule's enable switch). The name ellipsizes before them.
    */
   actionsVisible?: boolean;
+  /**
+   * The short description the user wrote for the item (#5757), shown muted
+   * on one line under the name. Omitted, empty or blank: no line.
+   */
+  description?: string;
+  /** Test hook for the description line. */
+  descriptionTestId?: string;
+  /**
+   * The item's configuration and detail text (#5757): how it is launched,
+   * what it targets, when it last ran, its tags. Rows show the name, the
+   * description and markers that need attention; everything else goes here.
+   * Shown in a tooltip on the name (under the full name), and set as the
+   * row's accessible description so keyboard and screen-reader users reach it
+   * too. Omitted or empty: the name keeps its clip-only tooltip.
+   */
+  tooltip?: readonly string[];
+  /** Test hook for the tooltip content. */
+  tooltipTestId?: string;
 }
 
 /**
@@ -120,6 +140,10 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       className,
       error = false,
       actionsVisible = false,
+      description,
+      descriptionTestId,
+      tooltip,
+      tooltipTestId,
       ...rest
     },
     ref
@@ -177,8 +201,47 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       .filter(Boolean)
       .join(" ");
 
+    const tooltipLines = (tooltip ?? []).filter((line) => line.trim() !== "");
+    const shownDescription = description?.trim() ? description.trim() : null;
+    const nameEl =
+      tooltipLines.length > 0 ? (
+        <Tooltip
+          side="bottom"
+          align="start"
+          data-testid={tooltipTestId}
+          content={
+            <span className="sidebar-list-item__tooltip">
+              <span className="sidebar-list-item__tooltip-name">{nameTooltip ?? name}</span>
+              {tooltipLines.map((line, i) => (
+                <span className="sidebar-list-item__tooltip-line" key={i}>
+                  {line}
+                </span>
+              ))}
+            </span>
+          }
+        >
+          <span className="sidebar-list-item__name ui-truncate" data-testid={nameTestId}>
+            {name}
+          </span>
+        </Tooltip>
+      ) : (
+        <TruncatedText
+          className="sidebar-list-item__name"
+          data-testid={nameTestId}
+          tooltip={nameTooltip}
+        >
+          {name}
+        </TruncatedText>
+      );
+
     return (
-      <div ref={ref} className={classes} data-testid={testId} {...rest}>
+      <div
+        ref={ref}
+        className={classes}
+        data-testid={testId}
+        aria-description={rowTooltipDescription(tooltipLines)}
+        {...rest}
+      >
         <div ref={headerRef} className="sidebar-list-item__header">
           {status}
           {badge != null && (
@@ -186,16 +249,22 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
               {badge}
             </span>
           )}
-          <TruncatedText
-            className="sidebar-list-item__name"
-            data-testid={nameTestId}
-            tooltip={nameTooltip}
-          >
-            {name}
-          </TruncatedText>
+          {nameEl}
           {actions != null && <div className="sidebar-list-item__actions">{actions}</div>}
         </div>
-        {details && <div className="sidebar-list-item__details">{details}</div>}
+        {(shownDescription || details) && (
+          <div className="sidebar-list-item__details">
+            {shownDescription ? (
+              <TruncatedText
+                className="sidebar-list-item__description"
+                data-testid={descriptionTestId}
+              >
+                {shownDescription}
+              </TruncatedText>
+            ) : null}
+            {details}
+          </div>
+        )}
       </div>
     );
   }

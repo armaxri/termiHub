@@ -19,18 +19,6 @@
 }
 
 /*
- * Workflow rows compose from the shared `SidebarListItem` shell, so the row
- * layout lives in `SidebarListItem.css`. Only workflow-specific detail lines
- * remain here.
- */
-.workflow-item__description {
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
  * The row just saved from the editor (#5687): an accent tint and leading bar so
  * the user sees which workflow changed. It holds, then fades out over
  * WORKFLOW_JUST_SAVED_MS (3 s); under reduced motion it stays static until the
@@ -91,15 +79,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.workflow-item__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spacing-xs-sm);
-  padding-top: var(--spacing-xxs);
-}
-
-/* The muted second line: how the workflow is launched and what it targets (#5635). */
+/* The Armed/Off marker line (#5635, #5674); the trigger text is in the tooltip (#5757). */
 .workflow-item__summary {
   display: flex;
   align-items: center;
@@ -107,13 +87,6 @@
   min-width: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
-}
-
-.workflow-item__summary-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* A trigger runs this workflow by itself (and may type into a terminal). */
@@ -137,23 +110,6 @@
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-}
-
-.workflow-item__tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-}
-
-.workflow-item__tag {
-  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
-  --text-secondary: var(--text-secondary-on-selection);
-  padding: 0 var(--spacing-xs-sm);
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-  line-height: 16px;
 }
 
 /* Persisted run-history panel (PROD-0046). */

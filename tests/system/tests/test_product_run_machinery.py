@@ -24,7 +24,11 @@ from termihub_harness.product_run.hosts import (
     parse_exports,
     target_from_exports,
 )
-from termihub_harness.product_run.grades import is_sentence_case, mix_with_transparent
+from termihub_harness.product_run.grades import (
+    is_sentence_case,
+    mix_with_transparent,
+    row_leftover_text,
+)
 from termihub_harness.product_run.recorder import PAGE_TEMPLATE, safe_step_id
 from termihub_harness.product_run.server import answer_human, make_server
 from termihub_harness.product_run.ui import profile_env, run_dev_name
@@ -198,6 +202,17 @@ def test_sentence_case_rule():
     assert is_sentence_case("Backup & restore") and is_sentence_case("X server")
     assert is_sentence_case("Right-click behavior")
     assert not is_sentence_case("Backup & Restore") and not is_sentence_case("font family")
+
+
+def test_row_leftover_text_is_what_a_row_shows_beyond_name_description_markers():
+    # A clean row: name, description and an attention marker only (#5757).
+    assert row_leftover_text("Deploy  Ships it\nArmed", ["Deploy", "Ships it", "Armed"]) == ""
+    # Settings text on the row is left over.
+    left = row_leftover_text("Deploy On connect · prod", ["Deploy"])
+    assert left == "On connect · prod"
+    # Each piece is removed once: a name repeated in the settings line still shows.
+    assert row_leftover_text("Every minute Every minute", ["Every minute"]) == "Every minute"
+    assert row_leftover_text("Deploy", ["Deploy", ""]) == ""
 
 
 def test_color_mix_with_transparent_is_the_colour_at_that_alpha():

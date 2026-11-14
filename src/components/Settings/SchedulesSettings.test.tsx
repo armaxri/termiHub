@@ -107,8 +107,11 @@ describe("SchedulesSettings (#4623)", () => {
     await render([view(), view({ id: "s2", name: "Health", enabled: false })]);
     expect(query("schedule-item-s1")).not.toBeNull();
     expect(query("schedule-item-s2")).not.toBeNull();
-    expect(query("schedule-summary-s1")!.textContent).toContain("Every 30 minutes");
-    expect(query("schedule-summary-s1")!.textContent).toContain("db-1");
+    // Rule and targets are in the row tooltip, not on the row (#5757).
+    const tip = query("schedule-item-s1")!.getAttribute("aria-description") ?? "";
+    expect(tip).toContain("Every 30 minutes");
+    expect(tip).toContain("db-1");
+    expect(query("schedule-item-s1")!.textContent).not.toContain("db-1");
     expect(query("schedule-status-s2")!.textContent).toBe("Disabled");
     expect(query("schedule-edit-s1")).toBeNull();
     act(() => query("schedules-new-btn")!.click());

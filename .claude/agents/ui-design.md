@@ -94,6 +94,14 @@ concept and allow-listed in `tokenDiscipline.test.ts`). Use `--transition-*` tok
 wrap motion in `@media (prefers-reduced-motion: reduce)`; use the shared enter/exit
 (fade + 8px rise) for overlays and toasts.
 
+### 6. List rows show names, not settings
+
+A sidebar or list row shows the user's name for the item, its optional short description
+(muted, one line) and only state markers that need attention. Configuration and history
+(host/user/port, trigger, target, step previews, last run, tags) go in the row tooltip
+(`SidebarListItem`'s `tooltip` prop), the editor or a detail view. See
+`docs/copy-style.md` → "List rows: names, not settings" (#5757).
+
 ## Coding standards (inherit the repo's)
 
 - No `any`; one component per file with a named export; props interface always

@@ -82,6 +82,13 @@ describe("MacroEditorDialog", () => {
     return { onSave, onOpenChange };
   }
 
+  it("keeps the description a short single line (#5757)", () => {
+    render();
+    const input = query("macro-editor-description") as HTMLInputElement;
+    expect(input.tagName).toBe("INPUT");
+    expect(input.maxLength).toBe(80);
+  });
+
   it("pre-fills the fields and step list from the macro", () => {
     render();
     expect((query("macro-editor-name") as HTMLInputElement).value).toBe("Deploy sequence");

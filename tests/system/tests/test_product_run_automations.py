@@ -13,7 +13,8 @@ Steps (in order): macro create, edit, play on the local shell, play on SSH;
 workflow create (send-command, wait, a delayed output, wait-for-output,
 send-command), edit, run on both terminals at once ("Run on…"); an
 on-output-match trigger fired by real terminal output; macro and workflow run
-history; workflow rows naming trigger, target and armed state (#5635); the
+history; workflow rows showing name and armed state, with trigger and target in
+the tooltip (#5635, #5757); the
 command palette; a 1-minute schedule that fires on the local
 connection (Settings -> Schedules), then is switched off.
 """
@@ -41,6 +42,7 @@ from termihub_harness import (
 )
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
+from termihub_harness.product_run.grades import row_leftover_text
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 
 pytestmark = [
@@ -305,30 +307,46 @@ class TestProductRunAutomations(
             self.shot(label="workflows")
 
     def test_45_workflow_rows(self):
-        """Workflow rows and history show trigger, target and armed state (#5635)."""
+        """Workflow rows show the name and armed state; trigger and target in the tooltip.
+
+        #5635 put the trigger and target on the row; #5757 moved them to the
+        row's tooltip (rows show names, not settings). History rows still name
+        the terminal each run went to.
+        """
         t = self.tag
         with self.step(
             "automations.workflow.rows",
-            "Workflow rows say how each runs and which terminal each history run went to",
-            expect="the Workflows sidebar: 'Deploy smoke' with 'Manual' under its name; "
-            "'Answer on match' with an 'Armed' marker and 'On output match · pr-auto-local…' "
-            "under its name; the two Deploy smoke history rows name different terminals",
+            "Workflow rows show names and the armed state; trigger and target are in the "
+            "tooltip; history names each run's terminal",
+            expect="the Workflows sidebar: 'Deploy smoke' shows only its name (and its "
+            "description once edited); 'Answer on match' shows its name and an 'Armed' marker "
+            "with its switch, no 'On output match' text on the row; the two Deploy smoke "
+            "history rows name different terminals (#5635, #5757)",
         ):
             self.require("automations.workflow.run-on", "automations.trigger.output-match")
             self.open_workflows_sidebar()
             manual = self.ids["workflow"]
             armed = self.workflow_id(f"Answer on match {t}")
-            self.wait(lambda: self.driver.exists(f"workflow-summary-{armed}"),
-                      what="the workflow rows' second line")
-            manual_line = self.driver.get_text(f"workflow-summary-{manual}").strip()
-            armed_line = self.driver.get_text(f"workflow-summary-{armed}").strip()
-            self.evidence(f"Deploy smoke line: {manual_line!r}; Answer on match line: {armed_line!r}")
-            assert manual_line == "Manual", f"manual workflow line: {manual_line!r}"
+            self.wait(lambda: self.driver.exists(f"workflow-armed-{armed}"),
+                      what="the armed workflow's marker")
+            for wid in (manual, armed):
+                row = f"workflow-item-{wid}"
+                data = self.workflow(wid) or {}
+                marker = (self.driver.get_text(f"workflow-armed-{wid}")
+                          if self.driver.exists(f"workflow-armed-{wid}") else "")
+                text = self.row_text(row)
+                tip = self.row_tooltip(row)
+                left = row_leftover_text(text, [data.get("name", ""),
+                                                data.get("description") or "", marker])
+                self.evidence(f"{data.get('name')!r}: row {text!r}; tooltip {tip!r}")
+                assert left == "", f"settings text on the workflow row: {left!r}"
+            manual_tip = self.row_tooltip(f"workflow-item-{manual}")
+            armed_tip = self.row_tooltip(f"workflow-item-{armed}")
+            assert manual_tip.startswith("Manual"), f"manual workflow tooltip: {manual_tip!r}"
             assert not self.driver.exists(f"workflow-armed-{manual}"), "a manual workflow is marked armed"
-            assert self.driver.exists(f"workflow-armed-{armed}"), "the armed workflow has no marker"
-            assert armed_line.startswith("On output match"), f"trigger missing: {armed_line!r}"
-            assert f"pr-auto-local-{t}" in armed_line, f"watched connection missing: {armed_line!r}"
-            assert "step" not in armed_line.lower(), f"step count on the row: {armed_line!r}"
+            assert armed_tip.startswith("On output match"), f"trigger missing: {armed_tip!r}"
+            assert f"pr-auto-local-{t}" in armed_tip, f"watched connection missing: {armed_tip!r}"
+            assert "step" not in armed_tip.lower(), f"step count in the tooltip: {armed_tip!r}"
             fresh = sorted(self.workflow_runs(manual), key=lambda r: r["startedAt"])[-2:]
             targets = []
             for run in fresh:
@@ -371,10 +389,11 @@ class TestProductRunAutomations(
         with self.step(
             "automations.schedule",
             "A 1-minute schedule plays the macro on the local connection by itself",
-            expect="Settings -> Schedules with the schedule switched off after its run, its "
-            "history showing one completed attempt; the row leads with its name, its dot is grey "
-            "(not green) once switched off, 'Disabled' sits on the line under the name in "
-            "sentence case, and the switch and delete are visible without a hover (#5612)",
+            expect="Settings -> Schedules with the schedule switched off after its run; the row "
+            "leads with its name, its dot is grey (not green) once switched off, 'Disabled' sits "
+            "on the line under the name in sentence case, no 'Next: …', rule or 'Last run' text "
+            "on the row (they are in the tooltip), and the switch and delete are visible "
+            "without a hover (#5612, #5757)",
             screenshot=False,
         ):
             self.require("automations.macro.edit", "automations.targets")
@@ -402,12 +421,14 @@ class TestProductRunAutomations(
             self._grade_schedule_row(sid, enabled=False)
 
     def _grade_schedule_row(self, sid: str, *, enabled: bool) -> None:
-        """Grade a Settings -> Schedules row (#5612).
+        """Grade a Settings -> Schedules row (#5612, #5757).
 
         The leading dot shows whether the schedule is on (the disabled tone
-        when off, never the last run's green); the state line ("Disabled",
-        "Next: …") is sentence case and follows the name; the enable switch
-        and delete are visible without a hover.
+        when off, never the last run's green). The row shows the name and,
+        only when it needs attention, the state ("Disabled", "Paused", …) in
+        sentence case after the name; the next run, rule, targets and last
+        result are in the tooltip. The switch and delete are visible without a
+        hover.
         """
         dot = self.driver.get_attribute(f"schedule-dot-{sid}", "class") or ""
         self.evidence(f"row dot (enabled={enabled}): {dot}")
@@ -416,23 +437,39 @@ class TestProductRunAutomations(
         else:
             assert "status-dot--disabled" in dot, f"a disabled schedule's dot is not grey: {dot}"
             assert "status-dot--success" not in dot, f"a disabled schedule's dot is green: {dot}"
+        row_id = f"schedule-item-{sid}"
         status_id = f"schedule-status-{sid}"
-        text = self.driver.get_text(status_id).strip()
+        status = self.driver.get_text(status_id).strip() if self.driver.exists(status_id) else ""
+        failed_id = f"schedule-last-failed-{sid}"
+        failed = self.driver.get_text(failed_id).strip() if self.driver.exists(failed_id) else ""
+        name_text = (self.schedule(sid) or {}).get("name", "")
+        text = self.row_text(row_id)
+        tip = self.row_tooltip(row_id)
+        self.evidence(f"row {text!r}; state {status!r}; tooltip {tip!r}")
+        left = row_leftover_text(text, [name_text, status, failed])
+        assert left == "", f"settings text on the schedule row: {left!r}"
+        assert "Next:" not in text, f"the next run is on the row: {text!r}"
+        assert " on " in tip, f"the tooltip does not name the targets: {tip!r}"
+        row_class = self.driver.get_attribute(row_id, "class") or ""
+        assert "sidebar-list-item--actions-visible" in row_class, (
+            f"row actions hidden behind hover: {row_class}"
+        )
+        for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
+            assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
+        if enabled:
+            assert status in ("", "Running now"), f"routine state shown on the row: {status!r}"
+            if not status:
+                assert "Next:" in tip, f"the tooltip has no next run: {tip!r}"
+            return
+        assert status == "Disabled", f"state line of a disabled schedule: {status!r}"
         transform = self.driver.get_computed_style("text-transform", status_id)
-        self.evidence(f"state line: {text!r} (text-transform {transform})")
-        if not enabled:
-            assert text == "Disabled", f"state line of a disabled schedule: {text!r}"
-        assert transform != "uppercase", f"the state line is rendered uppercase: {text!r}"
-        assert text[:1].isupper() and not text.isupper(), f"not sentence case: {text!r}"
+        assert transform != "uppercase", f"the state line is rendered uppercase: {status!r}"
+        assert status[:1].isupper() and not status.isupper(), f"not sentence case: {status!r}"
         name = self.driver.measure_element(f"schedule-name-{sid}")["rect"]
         state = self.driver.measure_element(status_id)["rect"]
         below = state["y"] >= name["y"] + name["height"] - 1
         after = state["x"] >= name["x"] + name["width"] - 1
         assert below or after, f"the state {state} leads the name {name}"
-        row = self.driver.get_attribute(f"schedule-item-{sid}", "class") or ""
-        assert "sidebar-list-item--actions-visible" in row, f"row actions hidden behind hover: {row}"
-        for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
-            assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
 
     # ── macro row + history header grade (#5636) ─────────────────────────────
     def test_70_macro_row_actions(self):
@@ -563,11 +600,11 @@ class TestProductRunAutomations(
     def test_90_macro_row_polish(self):
         with self.step(
             "automations.macro.row-polish",
-            "A macro row shows the first line it types and its last run; the toolbar and "
-            "history read cleanly",
-            expect="the Macros sidebar at rest: the macro row shows its name, then "
-            "'echo PR_MACRO_EDITED_…' in the normal secondary text (no ⏎ glyphs, no step "
-            "count), then 'Last run: … on pr-auto-…'; the toolbar is a text 'New' plus icon-only "
+            "A macro row shows its name; what it types and its last run are in the tooltip; "
+            "the toolbar and history read cleanly",
+            expect="the Macros sidebar at rest: the macro row shows only its name and Play (no "
+            "'echo …' preview, no 'Last run' line, no step count); the toolbar is a text 'New' "
+            "plus icon-only "
             "record dot, export and import; the history rows read 'Manual' / 'Palette' / "
             "'Scheduled' in sentence case, each on one line (#5680)",
         ):
@@ -579,29 +616,31 @@ class TestProductRunAutomations(
             self._grade_macro_history_polish(mid)
 
     def _grade_macro_row_polish(self, mid: str) -> None:
-        """Grade the macro row's preview, last-run line and toolbar (#5680).
+        """Grade the macro row and toolbar (#5680, #5757).
 
-        R-112: the preview is the first line the macro types, in the row's
-        proportional secondary text, with no ⏎ glyph and no step count. R-113:
-        a "Last run: … on <terminal>" line names where it last played. R-079:
-        "Record new" is an icon-only record dot next to the text "New".
+        The row shows the name (and the description when set) only: what the
+        macro types (R-112) and where it last ran (R-113) are in the row's
+        tooltip, not on the row (#5757). R-079: "Record new" is an icon-only
+        record dot next to the text "New".
         """
-        data = "".join(s.get("data", "") for s in (self.macro(mid) or {}).get("steps", []))
-        lines = [ln for ln in re.split(r"\r\n|\r|\n", data) if ln.strip()]
-        preview = self.driver.get_text(f"macro-preview-{mid}").strip()
-        font = self.driver.get_computed_style("font-family", f"macro-preview-{mid}")
-        self.evidence(f"preview {preview!r} (font {font}); first input line {lines[:1]!r}")
-        assert lines and preview == lines[0][:80].rstrip(), f"preview {preview!r} != {lines[:1]!r}"
-        assert "⏎" not in preview, f"the preview joins steps with ⏎: {preview!r}"
-        assert "mono" not in font.lower(), f"the preview is still monospace: {font}"
-        row = self.driver.get_text(f"macro-item-{mid}")
-        assert not re.search(r"\b\d+\s+steps?\b", row), f"a step count on the row: {row!r}"
-
-        self.wait(lambda: self.driver.exists(f"macro-last-run-{mid}"), what="the last-run line")
-        last = self.driver.get_text(f"macro-last-run-{mid}").strip()
-        self.evidence(f"last-run line: {last!r}")
-        assert last.startswith("Last run:"), f"last-run line: {last!r}"
-        assert re.search(r" on (pr-auto-|\d+ terminals)", last), f"no terminal named: {last!r}"
+        data = self.macro(mid) or {}
+        joined = "".join(s.get("data", "") for s in data.get("steps", []))
+        lines = [ln for ln in re.split(r"\r\n|\r|\n", joined) if ln.strip()]
+        row_id = f"macro-item-{mid}"
+        text = self.row_text(row_id)
+        tip = self.row_tooltip(row_id)
+        self.evidence(f"row {text!r}; tooltip {tip!r}; first input line {lines[:1]!r}")
+        left = row_leftover_text(text, [data.get("name", ""), data.get("description") or ""])
+        assert left == "", f"settings text on the macro row: {left!r}"
+        assert not self.driver.exists(f"macro-preview-{mid}"), "the step preview is on the row"
+        assert not self.driver.exists(f"macro-last-run-{mid}"), "the last-run line is on the row"
+        assert lines and lines[0][:80].rstrip() in tip, f"the tooltip lacks {lines[:1]!r}: {tip!r}"
+        assert "⏎" not in tip, f"the tooltip joins steps with ⏎: {tip!r}"
+        self.wait(lambda: "Last run:" in self.row_tooltip(row_id), what="the tooltip's last run")
+        tip = self.row_tooltip(row_id)
+        assert re.search(r"Last run: .+ on (pr-auto-|\d+ terminals)", tip), (
+            f"the tooltip names no terminal: {tip!r}"
+        )
 
         record = "macro-record-btn"
         label = self.driver.get_attribute(record, "aria-label")
@@ -679,7 +718,7 @@ class TestProductRunAutomations(
             "Saving an edited workflow marks its row briefly so the change is easy to find",
             expect="the Workflows sidebar right after a save: the edited workflow's row is "
             "tinted with the accent colour and a 2px accent bar on its leading edge, the "
-            "other rows are not; the row's name and summary stay readable (#5687)",
+            "other rows are not; the row's name and description stay readable (#5687)",
             screenshot=False,
         ):
             self.require("automations.workflow.edit")
