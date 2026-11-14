@@ -997,3 +997,158 @@ async fn realpath_respects_session_ownership() {
     .await;
     assert_eq!(r["error"]["code"], errors::NOT_INITIALIZED, "{r}");
 }
+
+// ── connection.files.truncate (#5736) ─────────────────────────────
+
+#[tokio::test]
+async fn initialize_advertises_file_truncate() {
+    let handler = make_handler();
+    let r = dispatch(&handler, "initialize", init_params(), 1).await;
+    assert_eq!(r["result"]["capabilities"]["fileTruncate"], true, "{r}");
+}
+
+/// A handler whose `local-session` browses the agent host, like the host-level
+/// requests without a `connection_id`.
+async fn local_truncate_handler() -> AgentHandler {
+    let sessions = FilesSessionManager::new();
+    sessions.script(
+        "local-session",
+        Ok(Arc::new(LocalFileBrowser::new()) as Arc<dyn FileBrowser + Send + Sync>),
+    );
+    handler_with(sessions).await
+}
+
+async fn truncate(handler: &AgentHandler, connection_id: Value, path: &str, length: u64) -> Value {
+    dispatch(
+        handler,
+        pm::CONNECTION_FILES_TRUNCATE,
+        json!({"connection_id": connection_id, "path": path, "length": length}),
+        7,
+    )
+    .await
+}
+
+/// The happy path, on the agent host and in an agent-hosted local session:
+/// the file is cut to `length` and the result reports the size afterwards.
+#[tokio::test]
+async fn truncate_shortens_a_file_and_reports_its_size() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let handler = local_truncate_handler().await;
+    for (connection_id, length) in [(json!(null), 6u64), (json!("local-session"), 2)] {
+        let path = dir.path().join("partial.bin");
+        std::fs::write(&path, b"checkpoint+junk").unwrap();
+        let r = truncate(&handler, connection_id, path.to_str().unwrap(), length).await;
+        assert_eq!(r["result"]["size"], length, "{r}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            &b"checkpoint+junk"[..length as usize]
+        );
+    }
+}
+
+/// A length past the current size is refused and the file keeps its bytes:
+/// the call never extends (or zero-fills) a file.
+#[tokio::test]
+async fn truncate_never_extends_a_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("f");
+    std::fs::write(&path, b"abc").unwrap();
+    let handler = local_truncate_handler().await;
+    let r = truncate(&handler, json!(null), path.to_str().unwrap(), 4).await;
+    assert_eq!(r["error"]["code"], errors::FILE_OPERATION_FAILED, "{r}");
+    assert!(
+        r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("refusing to extend"),
+        "{r}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+}
+
+/// A missing file is `FILE_NOT_FOUND`, and nothing is created in its place.
+#[tokio::test]
+async fn truncate_of_a_missing_file_is_not_found() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("gone");
+    let handler = local_truncate_handler().await;
+    let r = truncate(&handler, json!(null), path.to_str().unwrap(), 0).await;
+    assert_eq!(r["error"]["code"], errors::FILE_NOT_FOUND, "{r}");
+    assert!(!path.exists(), "no file created");
+}
+
+/// A symlink in the path's place is never followed out to its target — the
+/// file it points at keeps every byte — and a directory is refused too.
+#[cfg(unix)]
+#[tokio::test]
+async fn truncate_refuses_a_symlink_escape_and_a_directory() {
+    let outside = tempfile::tempdir().expect("tempdir");
+    let secret = outside.path().join("secret");
+    std::fs::write(&secret, b"do not cut").unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let link = dir.path().join("upload.bin");
+    std::os::unix::fs::symlink(&secret, &link).unwrap();
+    let handler = local_truncate_handler().await;
+
+    for connection_id in [json!(null), json!("local-session")] {
+        let r = truncate(&handler, connection_id, link.to_str().unwrap(), 0).await;
+        assert_eq!(r["error"]["code"], errors::FILE_OPERATION_FAILED, "{r}");
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not a regular file"),
+            "{r}"
+        );
+    }
+    assert_eq!(std::fs::read(&secret).unwrap(), b"do not cut");
+
+    let r = truncate(&handler, json!(null), dir.path().to_str().unwrap(), 0).await;
+    assert_eq!(r["error"]["code"], errors::FILE_OPERATION_FAILED, "{r}");
+}
+
+/// A session backend that cannot shorten answers `-32013`, which the desktop
+/// reads as "restart the upload from zero"; a backend without ranged access
+/// at all answers the same.
+#[tokio::test]
+async fn truncate_on_a_backend_that_cannot_shorten_is_not_supported() {
+    let sessions = FilesSessionManager::new();
+    let ftp = FakeBrowser::new("ftp");
+    ftp.files
+        .lock()
+        .unwrap()
+        .insert("/f".into(), b"abcdef".to_vec());
+    sessions.script("ftp-session", Ok(ftp.clone()));
+    sessions.script("old-session", Ok(FakeBrowser::without_ranges("wsl")));
+    let handler = handler_with(sessions).await;
+    for id in ["ftp-session", "old-session"] {
+        let r = truncate(&handler, json!(id), "/f", 2).await;
+        assert_eq!(
+            r["error"]["code"],
+            errors::FILE_BROWSING_NOT_SUPPORTED,
+            "{id}: {r}"
+        );
+    }
+    assert_eq!(ftp.files.lock().unwrap()["/f"], b"abcdef");
+}
+
+/// Like every `connection.files.*` method, truncate refuses a session this
+/// client does not hold, and needs `initialize` first.
+#[tokio::test]
+async fn truncate_respects_session_ownership() {
+    let sessions = FilesSessionManager::new();
+    sessions.script("theirs", Err(SessionProcessError::HeldElsewhere));
+    let handler = handler_with(sessions).await;
+    let r = truncate(&handler, json!("theirs"), "/srv/x", 0).await;
+    assert_eq!(r["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{r}");
+
+    let fresh = make_handler();
+    let r = dispatch(
+        &fresh,
+        pm::CONNECTION_FILES_TRUNCATE,
+        json!({"path": "/", "length": 0}),
+        3,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::NOT_INITIALIZED, "{r}");
+}

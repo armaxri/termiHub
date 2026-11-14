@@ -508,6 +508,7 @@ async fn daemon_loop_with_reopen(
         file_job_tx.is_some(),
         file_ranges,
     );
+    let capability_flags2 = capability_flags2(file_job_tx.is_some(), file_ranges);
 
     // When the current unattached stretch began (`None` while a worker is
     // attached). Recomputed from `agent_writer` at the top of every iteration,
@@ -971,8 +972,10 @@ async fn daemon_loop_with_reopen(
 
         // Advertise optional features before Ready (#3210). A
         // pre-#3210 worker skips the unknown handshake frame.
-        if capability_flags != 0 {
-            sink.send(MSG_CAPABILITIES, &[capability_flags]);
+        // The second flag byte (#5736) rides behind the first, which a
+        // worker from before it reads alone.
+        if capability_flags != 0 || capability_flags2 != 0 {
+            sink.send(MSG_CAPABILITIES, &[capability_flags, capability_flags2]);
         }
 
         // Send ready signal
@@ -1062,6 +1065,17 @@ fn capability_flags(processes: bool, monitoring: bool, files: bool, file_ranges:
     // Every daemon answers heartbeat probes (#3140) and honors output flow
     // control (#4416), whatever its backend.
     flags | CAP_HEARTBEAT | CAP_OUTPUT_FLOW | CAP_OUTPUT_CREDIT
+}
+
+/// The second [`MSG_CAPABILITIES`] flag byte (#5736): a file browser with
+/// ranged access also shortens files ([`CAP2_FILE_TRUNCATE`]), answering
+/// `NotSupported` when its backend cannot.
+fn capability_flags2(files: bool, file_ranges: bool) -> u8 {
+    if files && file_ranges {
+        CAP2_FILE_TRUNCATE
+    } else {
+        0
+    }
 }
 
 /// Whether the daemon may read (and forward) more output (#4439): always, unless
@@ -1539,6 +1553,14 @@ pub(crate) mod tests {
     }
 
     // ── output credit (#4439) ─────────────────────────────────────────
+
+    /// #5736: only a daemon whose browser serves slices advertises truncate.
+    #[test]
+    fn truncate_is_advertised_in_the_second_byte_with_ranged_files() {
+        assert_eq!(capability_flags2(true, true), CAP2_FILE_TRUNCATE);
+        assert_eq!(capability_flags2(true, false), 0);
+        assert_eq!(capability_flags2(false, false), 0);
+    }
 
     #[test]
     fn output_credit_limits_only_a_worker_that_takes_part() {

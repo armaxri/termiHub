@@ -534,6 +534,7 @@ impl AgentRpcClient for FakeAgent {
             definition_icon_style: false,
             connection_description: false,
             serial_port_rescan: false,
+            file_truncate: false,
             agent_version: "0.8.1".to_string(),
         })
     }

@@ -226,6 +226,7 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.definitionIconStyle).toBe(true);
     expect(result.capabilities.connectionDescription).toBe(true);
     expect(result.capabilities.serialPortRescan).toBe(true);
+    expect(result.capabilities.fileTruncate).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
       displayName: "Local shell",
@@ -250,6 +251,7 @@ describe("wire contract: agent connect / definitions", () => {
       "embeddedServerActivity",
       "fileCreateNew",
       "fileRanges",
+      "fileTruncate",
       "maxSessions",
       "monitoringSupported",
       "outputFlow",
@@ -271,6 +273,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.connectionDescription).toBe(false);
     // #5069: an older agent keeps its connect-time serial port snapshot.
     expect(result.capabilities.serialPortRescan).toBe(false);
+    // #5736: an older agent's crashed uploads restart from zero.
+    expect(result.capabilities.fileTruncate).toBe(false);
   });
 
   it("decodes saved definitions with null vs absent optionals", async () => {

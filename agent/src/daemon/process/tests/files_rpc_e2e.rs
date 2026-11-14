@@ -85,6 +85,21 @@ impl RangedFileAccess for FakeFiles {
         file.extend_from_slice(data);
         Ok(())
     }
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        let mut files = self.files.lock().unwrap();
+        let file = files
+            .get_mut(path)
+            .ok_or_else(|| FileError::NotFound(path.into()))?;
+        if len > file.len() as u64 {
+            return Err(termihub_core::files::ranged::shorten_would_extend(
+                path,
+                file.len() as u64,
+                len,
+            ));
+        }
+        file.truncate(len as usize);
+        Ok(file.len() as u64)
+    }
 }
 
 #[async_trait::async_trait]
@@ -760,5 +775,81 @@ async fn a_pre_realpath_daemon_keeps_the_lexical_check() {
     .expect("answered at once");
     assert!(guard.is_err(), "a respelled path is still refused");
     tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(requests.load(Ordering::SeqCst), 0, "nothing was sent");
+}
+
+/// The worker shortens files through the session daemon's backend (#5736):
+/// the size afterwards comes back, a length past the end is refused with the
+/// backend's own message, and a missing file stays `NotFound`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_daemon_session_shortens_files_through_its_backend() {
+    let endpoint = unique_endpoint("truncate");
+    let files = Arc::new(FakeFiles {
+        ranges: true,
+        ..FakeFiles::default()
+    });
+    files
+        .files
+        .lock()
+        .unwrap()
+        .insert("/up.bin".into(), b"checkpoint+junk".to_vec());
+    let _out = spawn_daemon(&endpoint, Some(files.clone())).await;
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("file capability");
+    let ranged = browser.ranged().expect("ranges advertised");
+
+    assert_eq!(ranged.shorten("/up.bin", 10).await.unwrap(), 10);
+    assert_eq!(files.files.lock().unwrap()["/up.bin"], b"checkpoint");
+    let err = ranged.shorten("/up.bin", 11).await.unwrap_err();
+    assert!(err.to_string().contains("refusing to extend"), "{err}");
+    assert_eq!(files.files.lock().unwrap()["/up.bin"], b"checkpoint");
+    assert!(matches!(
+        ranged.shorten("/gone", 0).await,
+        Err(FileError::NotFound(_))
+    ));
+}
+
+/// A daemon from before #5736 (it survives agent upgrades) sends a one-byte
+/// capabilities frame: the worker reads "no truncate" and answers
+/// `NotSupported` at once, without a request the daemon would drop.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pre_truncate_daemon_is_never_asked_to_shorten() {
+    let endpoint = unique_endpoint("pre-truncate");
+    let mut listener = DaemonListener::bind(&endpoint).await.expect("bind");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let seen = requests.clone();
+    tokio::spawn(async move {
+        let (mut reader, mut writer) = listener.accept().await.expect("accept");
+        let intent = protocol::read_frame_async(&mut reader).await;
+        assert!(matches!(intent, Ok(Some(f)) if f.msg_type == MSG_ATTACH_INTENT));
+        protocol::write_frame_async(
+            &mut writer,
+            protocol::MSG_CAPABILITIES,
+            &[protocol::CAP_FILES | protocol::CAP_FILE_RANGES | protocol::CAP_FILE_REALPATH],
+        )
+        .await
+        .unwrap();
+        protocol::write_frame_async(&mut writer, MSG_READY, &[])
+            .await
+            .unwrap();
+        while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+            if frame.msg_type == protocol::MSG_FILE_REQUEST {
+                seen.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        listener.cleanup();
+    });
+
+    let client = DaemonClient::connect("s".into(), endpoint, notification_tx())
+        .await
+        .expect("worker attaches");
+    let browser = client.file_browser().expect("files advertised");
+    let ranged = browser.ranged().expect("ranges advertised");
+    let shortened = tokio::time::timeout(Duration::from_secs(5), ranged.shorten("/up.bin", 0))
+        .await
+        .expect("answered at once, without a request");
+    assert!(matches!(shortened, Err(FileError::NotSupported)));
     assert_eq!(requests.load(Ordering::SeqCst), 0, "nothing was sent");
 }

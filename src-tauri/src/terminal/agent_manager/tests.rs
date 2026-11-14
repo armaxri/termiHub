@@ -337,6 +337,7 @@ fn capabilities_round_trip_serialization() {
         definition_icon_style: false,
         connection_description: false,
         serial_port_rescan: false,
+        file_truncate: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -957,6 +958,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             definition_icon_style: false,
             connection_description: false,
             serial_port_rescan: false,
+            file_truncate: false,
             agent_version: String::new(),
         }
         .into(),
@@ -1165,6 +1167,7 @@ pub(super) fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::J
             definition_icon_style: false,
             connection_description: false,
             serial_port_rescan: false,
+            file_truncate: false,
             agent_version: String::new(),
         }
         .into(),

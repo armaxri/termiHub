@@ -643,6 +643,7 @@ fn connection(
             definition_icon_style: false,
             connection_description: false,
             serial_port_rescan: false,
+            file_truncate: false,
             agent_version: String::new(),
         }
         .into(),

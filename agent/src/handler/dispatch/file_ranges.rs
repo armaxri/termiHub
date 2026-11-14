@@ -24,6 +24,13 @@
 //! already exists) without writing otherwise. The agent host's own file system
 //! performs it atomically; a target without an atomic exclusive create answers
 //! `-32013` rather than emulating one.
+//!
+//! `connection.files.truncate` (protocol 0.41.0, #5736) shortens a regular
+//! file to `length` bytes through the same ranged capability
+//! ([`RangedFileAccess::shorten`]) and answers the size it holds afterwards.
+//! It never extends a file, never follows a symlink in the path's place and
+//! refuses directories and special files; a backend that cannot shorten
+//! answers `-32013`, and a resumed upload then restarts from zero.
 
 use base64::Engine;
 use jsonrpsee::core::server::RpcModule;
@@ -33,7 +40,8 @@ use tokio::sync::Mutex;
 
 use termihub_core::files::{FileBrowser, RangedFileAccess, MAX_RANGE_BYTES};
 use termihub_core::protocol::methods::{
-    FilesReadRangeParams, FilesReadRangeResult, FilesWriteRangeParams,
+    FilesReadRangeParams, FilesReadRangeResult, FilesTruncateParams, FilesTruncateResult,
+    FilesWriteRangeParams,
 };
 
 use super::{
@@ -47,6 +55,7 @@ use crate::protocol::methods as pm;
 pub(super) fn register(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     register_read_range(module)?;
     register_write_range(module)?;
+    register_truncate(module)?;
     Ok(())
 }
 
@@ -144,6 +153,26 @@ fn register_write_range(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
             }
             .map_err(map_file_error)?;
             Ok::<Value, ErrorObjectOwned>(json!({}))
+        },
+    )?;
+    Ok(())
+}
+
+fn register_truncate(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_FILES_TRUNCATE,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+            let p: FilesTruncateParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.truncate", e))?;
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+            let size = ranged(browser.as_ref())?
+                .shorten(&p.path, p.length)
+                .await
+                .map_err(map_file_error)?;
+            to_result_value(&FilesTruncateResult { size })
         },
     )?;
     Ok(())

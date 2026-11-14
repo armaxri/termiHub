@@ -236,8 +236,11 @@ use termihub_core::monitoring::{
 /// `end_cause` (#5783), and a Docker session's real `exit_status`: a serial
 /// port that is gone for good, or a stopped container, ends its tab instead of
 /// leaving it open. An older desktop reads the unknown cause as absent.
-/// Bumped to 0.42.0 (0.41.0 is taken by `connection.files.truncate`, #5736)
-/// for the additive, optional `description` on `connections.create` /
+/// Bumped to 0.41.0 for the additive `connection.files.truncate` method and
+/// its `capabilities.fileTruncate` flag (#5736): a resumed agent-hosted upload
+/// trims its crashed partial back to the last checkpoint instead of
+/// restarting from zero. An older agent is never asked; its uploads restart.
+/// Bumped to 0.42.0 for the additive, optional `description` on `connections.create` /
 /// `connections.update` and the definitions the agent reports, with the
 /// matching `capabilities.connectionDescription` flag (#5769). An older agent
 /// ignores the unknown key, so the desktop shows the Description field only to
@@ -1124,6 +1127,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 definition_icon_style: true,
                 connection_description: true,
                 serial_port_rescan: true,
+                file_truncate: true,
             },
         };
         result.to_wire_value(&negotiated_version).map_err(|e| {
@@ -4064,6 +4068,8 @@ mod tests {
     /// `connection.reconnect` notification (#5396), and 0.38.0 the optional
     /// `end_cause` of `connection.exit` (#5732), and 0.39.0 its optional
     /// `exit_status` (#5742), and 0.40.0 its `device_gone` cause (#5783),
+    /// and 0.41.0 `connection.files.truncate` with its `fileTruncate`
+    /// capability (#5736),
     /// and 0.42.0 the definition `description` with its
     /// `connectionDescription` capability (#5769).
     #[tokio::test]

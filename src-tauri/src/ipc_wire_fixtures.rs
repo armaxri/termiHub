@@ -244,6 +244,8 @@ fn agent_fixture() -> Value {
             "connectionDescription": true,
             // Live serial port rescans via `serial.list_ports` (#5069).
             "serialPortRescan": true,
+            // Crashed uploads trim their remote partial (#5736).
+            "fileTruncate": true,
             "agentVersion": "1.4.2"
         }),
     );

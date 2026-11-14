@@ -743,6 +743,14 @@ impl super::RangedFileAccess for LocalFileBrowser {
         let path = expand_tilde_only(path);
         super::ranged::fs_create_new(path.clone().into(), path, data.to_vec()).await
     }
+
+    /// Shorten a regular file without following a symlink (#5736): what the
+    /// agent's `connection.files.truncate` runs on for the agent host and an
+    /// agent-hosted local session.
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        let path = expand_tilde_only(path);
+        super::ranged::fs_shorten(path.clone().into(), path, len).await
+    }
 }
 
 /// Apply Unix permission bits to a local path (Unix only).

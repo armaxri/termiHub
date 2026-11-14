@@ -777,12 +777,16 @@ impl RemoteProxy {
                     // Queued transfers (#3587) need ranged slices on top.
                     let file_ranges =
                         !agent_outdated && agent_caps.as_ref().is_some_and(|caps| caps.file_ranges);
+                    // A crashed upload trims its partial (#5736) on top.
+                    let file_truncate =
+                        file_ranges && agent_caps.as_ref().is_some_and(|caps| caps.file_truncate);
                     self.file_browser_proxy = Some(RemoteFileBrowserProxy {
                         agent_id: self.agent_id.clone(),
                         remote_session_id: remote_sid.clone(),
                         agent_manager: self.agent_manager.clone(),
                         agent_outdated,
                         file_ranges,
+                        file_truncate,
                         definition_id: definition_id.clone(),
                         filesystem: hosted_filesystem(&self.agent_id, &session_type, &config),
                         filesystem_hint: hosted_filesystem_hint(
@@ -888,6 +892,12 @@ pub struct RemoteFileBrowserProxy {
     /// 0.26.0, #3587), so the session can run queued transfers (see
     /// [`ranged`]).
     file_ranges: bool,
+    /// The agent shortens files (`fileTruncate`, protocol 0.41.0, #5736), so
+    /// a crashed queued upload resumes from its checkpoint (see
+    /// [`RangedTransferTarget::truncate`]).
+    ///
+    /// [`RangedTransferTarget::truncate`]: termihub_core::files::transfer::ranged::RangedTransferTarget::truncate
+    file_truncate: bool,
     /// The agent-side saved connection definition the session was opened
     /// from, if any — with `agent_id`, the identity a queued transfer records
     /// so a relaunch after a restart can find the reopened session (#4114).
@@ -993,6 +1003,7 @@ pub(crate) fn hosted_attribute_ops(
 }
 
 mod ranged;
+pub(crate) use ranged::{confirm_truncated, truncate_params};
 
 /// Message of the `agent_outdated` file-browser failure (#3242).
 const FILES_AGENT_OUTDATED: &str =
@@ -3864,6 +3875,9 @@ mod tests {
 
     /// Same-session pastes resolved on the agent host (#5333).
     mod realpath_tests;
+
+    /// Crashed agent-hosted uploads trimmed back to their checkpoint (#5736).
+    mod truncate_tests;
 
     /// Pastes between two sessions that reach one filesystem (#5355).
     mod cross_session_tests;

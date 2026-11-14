@@ -70,6 +70,32 @@ const SIZE_SCRIPT: &str = r#"exec wc -c < "$1""#;
 const TRUNCATE_SCRIPT: &str = r#"if command -v truncate >/dev/null 2>&1; then exec truncate -s "$2" -- "$1"; fi
 exec dd if=/dev/null of="$1" bs=1 seek="$2" count=0 2>/dev/null"#;
 
+/// Print what holds `$1` without following a symlink (#5736): `link`,
+/// `file` (a regular file), `other` (a directory, device or pipe) or
+/// `missing`.
+const FILE_KIND_SCRIPT: &str = r#"if [ -L "$1" ]; then echo link
+elif [ -f "$1" ]; then echo file
+elif [ -e "$1" ]; then echo other
+else echo missing; fi"#;
+
+/// What [`FILE_KIND_SCRIPT`] found at a path (#5736).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileKind {
+    Regular,
+    NotRegular,
+    Missing,
+}
+
+/// Parse [`FILE_KIND_SCRIPT`] output. Anything unexpected is
+/// [`FileKind::NotRegular`], so it is never shortened. Pure.
+fn parse_file_kind(output: &str) -> FileKind {
+    match output.trim() {
+        "file" => FileKind::Regular,
+        "missing" => FileKind::Missing,
+        _ => FileKind::NotRegular,
+    }
+}
+
 /// Print the real spelling of `$1` (#5330): symlinks, `.` and `..` resolved.
 /// A folder resolves with `pwd -P`, an existing entry with `readlink -f`, and
 /// a missing one (a copy destination) through its parent folder. Exits
@@ -676,6 +702,30 @@ impl crate::files::RangedFileAccess for DockerFileBrowser {
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
         self.transfer_target().write_range(path, offset, data).await
     }
+
+    /// Shorten a regular container file (#5736): a symlink, directory or
+    /// special file is refused, a `len` past the current size never extends
+    /// it, and the trim is confirmed by measuring the size again.
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        let target = self.transfer_target();
+        let argv = ["sh", "-c", FILE_KIND_SCRIPT, "sh", path];
+        let kind = exec_command(&target.client, &target.container_id, argv.to_vec()).await?;
+        match parse_file_kind(&kind) {
+            FileKind::Regular => {}
+            FileKind::Missing => return Err(FileError::NotFound(path.to_string())),
+            FileKind::NotRegular => return Err(crate::files::ranged::shorten_not_regular(path)),
+        }
+        let present = target.file_size(path).await.ok_or_else(|| {
+            FileError::OperationFailed(format!("{path}: cannot measure the file"))
+        })?;
+        if len > present {
+            return Err(crate::files::ranged::shorten_would_extend(
+                path, present, len,
+            ));
+        }
+        target.truncate_file(path, len).await?;
+        Ok(len)
+    }
 }
 
 #[cfg(test)]
@@ -685,6 +735,15 @@ mod tests {
     /// A hostile path: quotes, `$(...)`, backticks, `;`, spaces, newline, and
     /// a leading dash — every shell metacharacter class at once.
     const HOSTILE: &str = "-x '$(rm -rf /)`id`; echo \"pwn\"\n.bin";
+
+    #[test]
+    fn file_kind_output_is_parsed_conservatively() {
+        assert_eq!(parse_file_kind("file\n"), FileKind::Regular);
+        assert_eq!(parse_file_kind("missing\n"), FileKind::Missing);
+        assert_eq!(parse_file_kind("link\n"), FileKind::NotRegular);
+        assert_eq!(parse_file_kind("other\n"), FileKind::NotRegular);
+        assert_eq!(parse_file_kind(""), FileKind::NotRegular);
+    }
 
     #[test]
     fn probe_output_parses_every_capability() {
