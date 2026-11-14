@@ -149,6 +149,15 @@ const en = {
     "Enter the passphrase for key {keyPath}, used by {target}",
   "passwordPrompt.input.password": "{transport} password",
   "passwordPrompt.input.keyPassphrase": "SSH key passphrase",
+  // A telnet password travels in clear text (#5749).
+  "passwordPrompt.unencrypted": "Telnet sends this password unencrypted.",
+
+  // ── Unencrypted session marker (#5749) ───────────────────────────────────
+  // A state badge on telnet tabs and in the status-bar telnet chip.
+  "session.unencrypted.badge": "Unencrypted",
+  "session.unencrypted.tooltip": "Telnet sends everything unencrypted, passwords included.",
+  "statusBar.telnet.label": "Telnet: {endpoint}",
+  "statusBar.telnet.labelNoHost": "Telnet",
 
   // ── Unlock dialog raised by a connect (UnlockDialog, #5684) ──────────────
   // Names the connection waiting on the unlock; several waiting connects

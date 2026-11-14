@@ -1,0 +1,18 @@
+/* The "Unencrypted" state badge (#5749). #5740: status text misses AA on its
+   own tint, so the label and icon use --text-primary; the warning tint and
+   border keep the warning cue. */
+.unencrypted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  flex-shrink: 0;
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.4;
+  white-space: nowrap;
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  background: var(--bg-warning);
+  border: 1px solid var(--border-warning);
+}

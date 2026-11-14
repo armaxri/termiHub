@@ -129,6 +129,27 @@ describe("StatusBar — session chips (#5628)", () => {
     expect(chip!.textContent).toContain("/dev/ttyPR0 · 9600 8N1");
   });
 
+  it("shows the telnet chip with the Unencrypted badge (#5749)", async () => {
+    setActiveTab({ type: "telnet", config: { host: "10.0.0.7", port: 2323 } });
+    await render();
+
+    const chip = container.querySelector('[data-testid="status-bar-telnet"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toContain("Telnet: 10.0.0.7:2323");
+    const badge = chip!.querySelector('[data-testid="status-bar-telnet-unencrypted"]');
+    expect(badge?.textContent).toBe("Unencrypted");
+    expect(container.querySelector('[data-testid="status-bar-ssh"]')).toBeNull();
+  });
+
+  it("shows no telnet chip or Unencrypted badge on an SSH tab (#5749)", async () => {
+    setActiveTab({ type: "ssh", config: { host: "h", username: "u" } });
+    await render();
+
+    expect(container.querySelector('[data-testid="status-bar-telnet"]')).toBeNull();
+    expect(container.querySelector('[data-testid="status-bar-telnet-unencrypted"]')).toBeNull();
+    expect(container.textContent).not.toContain("Unencrypted");
+  });
+
   it("pins the credential-lock item to the right group", async () => {
     setActiveTab({ type: "ssh", config: { host: "h", username: "u" } });
     await render();

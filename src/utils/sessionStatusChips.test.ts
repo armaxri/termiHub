@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ConnectionConfig } from "@/types/terminal";
 import type { SshHostKeyTrust } from "@/types/generated/SshHostKeyTrust";
 import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
-import { serialStatusChip, sshStatusChip } from "./sessionStatusChips";
+import { serialStatusChip, sshStatusChip, telnetStatusChip } from "./sessionStatusChips";
 
 function ssh(config: Record<string, unknown>): ConnectionConfig {
   return { type: "ssh", config } as ConnectionConfig;
@@ -141,5 +141,35 @@ describe("sshStatusChip host-key trust (#5669)", () => {
       "Host key: first seen, trusted once (this session only) (SHA256:t2200)"
     );
     expect(chip?.tooltip).not.toContain("SHA256:b22");
+  });
+});
+
+describe("telnetStatusChip (#5749)", () => {
+  it("labels a telnet tab with its endpoint and says it is unencrypted", () => {
+    const chip = telnetStatusChip({ type: "telnet", config: { host: " 10.0.0.7 ", port: 2323 } });
+    expect(chip?.label).toBe("Telnet: 10.0.0.7:2323");
+    expect(chip?.tooltip).toBe(
+      "Telnet: 10.0.0.7:2323\nTelnet sends everything unencrypted, passwords included."
+    );
+  });
+
+  it("falls back to the default telnet port", () => {
+    expect(telnetStatusChip({ type: "telnet", config: { host: "sw1" } })?.label).toBe(
+      "Telnet: sw1:23"
+    );
+  });
+
+  it("reads just Telnet for an agent telnet session without a host", () => {
+    const chip = telnetStatusChip({
+      type: "remote-session",
+      config: { sessionType: "telnet", agentId: "a1" },
+    } as ConnectionConfig);
+    expect(chip?.label).toBe("Telnet");
+  });
+
+  it("returns null for non-telnet tabs", () => {
+    expect(telnetStatusChip(ssh({ host: "h" }))).toBeNull();
+    expect(telnetStatusChip(serial({ port: "COM3" }))).toBeNull();
+    expect(telnetStatusChip(undefined)).toBeNull();
   });
 });

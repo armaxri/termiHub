@@ -1279,3 +1279,50 @@ describe("command-mark colours on the terminal background (WCAG 2.2 SC 1.4.11, #
     );
   });
 });
+
+/**
+ * The "Unencrypted" badge on telnet tabs and in the status-bar telnet chip, and
+ * the telnet password prompt's unencrypted line (#5749). Following #5740, the
+ * label is `--text-primary` on the `--bg-warning` tint (never warning text on
+ * its own tint), graded on every surface the badge sits on: inactive, hovered
+ * and active tabs, the status bar and the dialog.
+ */
+describe("unencrypted badge contrast (WCAG 2.2 AA, #5749)", () => {
+  function declarations(file: string, selector: string): string {
+    const css = readFileSync(join(SRC_DIR, file), "utf8");
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css);
+    if (!m) throw new Error(`no ${selector} rule in ${file}`);
+    return m[1];
+  }
+
+  it.each([
+    ["components/UnencryptedBadge/UnencryptedBadge.css", ".unencrypted-badge"],
+    ["components/PasswordPrompt/PasswordPrompt.css", ".password-prompt__unencrypted"],
+  ])("%s paints primary text on the warning tint", (file, selector) => {
+    const rule = declarations(file, selector);
+    expect(rule).toMatch(/(?:^|\n)\s*color:\s*var\(--text-primary\);/);
+    expect(rule).toMatch(/background:\s*var\(--bg-warning\);/);
+    expect(rule).toMatch(/border:\s*1px solid var\(--border-warning\);/);
+  });
+
+  const varsCss = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
+  const warnMix =
+    /--bg-warning:\s*color-mix\(in srgb, var\(--color-warning\) (\d+)%, transparent\)/.exec(
+      varsCss
+    );
+  const BG_WARNING_ALPHA = Number(warnMix?.[1] ?? NaN) / 100;
+
+  for (const theme of BUILT_IN_THEMES) {
+    const c = theme.colors;
+    it(`${theme.id} badge text meets AA on the warning tint on every host surface`, () => {
+      expect(Number.isFinite(BG_WARNING_ALPHA)).toBe(true);
+      for (const surface of [c.tabBg, c.tabActiveBg, c.bgHover, c.bgSecondary, c.bgPrimary]) {
+        const bg = composite(c.colorWarning, surface, BG_WARNING_ALPHA);
+        expect(contrastRatio(c.textPrimary, bg), `on ${surface}`).toBeGreaterThanOrEqual(
+          AA_NORMAL_TEXT
+        );
+      }
+    });
+  }
+});
