@@ -311,6 +311,28 @@ const en = {
   "schedule.marker.lastFailed": "Last run failed",
   "schedule.attempts.show": "Show recent attempts ({count})",
   "schedule.attempts.hide": "Hide recent attempts",
+
+  // ── Terminal toolbar (#5756) ────────────────────────────────────────────
+  // Layout icons stay visible; session and macro actions live in the "…"
+  // menu, and an active one shows as a chip beside the icons.
+  "terminalToolbar.newTerminal": "New terminal",
+  "terminalToolbar.splitRight": "Split terminal right",
+  "terminalToolbar.splitDown": "Split terminal down",
+  "terminalToolbar.closePanel": "Close panel",
+  "terminalToolbar.toggleSidebar": "Toggle sidebar",
+  "terminalToolbar.more": "More terminal actions",
+  "terminalToolbar.broadcast.start": "Broadcast input…",
+  "terminalToolbar.broadcast.stop": "Stop broadcast",
+  "terminalToolbar.logging.start": "Log session output",
+  "terminalToolbar.logging.stop": "Stop logging output",
+  "terminalToolbar.record.start": "Record macro",
+  "terminalToolbar.record.stop": "Stop recording macro",
+  "terminalToolbar.play.start": "Play macro…",
+  "terminalToolbar.play.stop": "Stop macro playback ({played}/{total})",
+  "terminalToolbar.chip.broadcast": "Broadcasting",
+  "terminalToolbar.chip.logging": "Logging",
+  "terminalToolbar.chip.recording": "Recording",
+  "terminalToolbar.chip.playback": "Playing {played}/{total}",
 } as const;
 
 /** A stable id naming one catalog message. */
