@@ -163,3 +163,20 @@ def editor_layout_problems(rects: dict[str, dict]) -> list[str]:
     if port is not None and float(port["width"]) > NARROW_INPUT_WIDTH + _SLACK:
         problems.append(f"the port input is {port['width']:.0f}px wide, not narrow")
     return problems
+
+
+def row_leftover_text(text: str, allowed: "list[str]") -> str:
+    """What a list row shows beyond its allowed pieces (#5757), whitespace-collapsed.
+
+    A list row may show the item's name, its user-written description and
+    compact state markers ("Armed", "Disabled", ...). Each allowed piece is
+    removed once, in order; anything left over is settings text that belongs
+    in the row's tooltip. ``""`` means the row passes.
+    """
+    rest = " ".join(text.split())
+    for piece in allowed:
+        piece = " ".join(piece.split())
+        if piece and piece in rest:
+            rest = rest.replace(piece, " ", 1)
+    return " ".join(rest.split())
+

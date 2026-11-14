@@ -164,3 +164,27 @@
 .sidebar-list-item__error {
   color: var(--color-error);
 }
+
+/* The user's short description of the item (#5757): one muted line under the
+   name, ellipsized with the full text in a tooltip. */
+.sidebar-list-item__description {
+  display: block;
+  color: var(--text-secondary);
+}
+
+/* The row tooltip (#5757): the full name, then the item's configuration and
+   detail lines (trigger, target, last run, tags) that the row leaves out. */
+.sidebar-list-item__tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.sidebar-list-item__tooltip-name {
+  font-weight: var(--font-weight-semibold);
+}
+
+.sidebar-list-item__tooltip-line {
+  overflow-wrap: anywhere;
+}

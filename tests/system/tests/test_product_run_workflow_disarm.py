@@ -74,7 +74,8 @@ class TestProductRunWorkflowDisarm(
             "workflow-disarm.armed",
             "An on-output-match workflow on a local shell shows Armed and an on switch",
             expect="#5674: the Workflows sidebar; the 'Disarm check' row reads 'Armed' with a "
-            "lightning icon next to an on (accent) switch, then 'On output match · <connection>'",
+            "lightning icon next to an on (accent) switch; the trigger text ('On output match · "
+            "<connection>') is in the row tooltip, not on the row (#5757)",
         ):
             self.enable_experimental_features()
             local = f"pr-disarm-local-{t}"
@@ -106,7 +107,7 @@ class TestProductRunWorkflowDisarm(
             "One click on the row switch disarms the workflow; its trigger stays bound and "
             "matching output no longer runs it",
             expect="#5674: the 'Disarm check' row now reads 'Off' in muted text next to an off "
-            "(grey) switch, its 'On output match · <connection>' line unchanged; the local "
+            "(grey) switch, its trigger (in the tooltip) unchanged; the local "
             "terminal shows PR_DISARM_FIRE_OFF but no PR_DISARM_ANSWER_42 line",
         ):
             self.require("workflow-disarm.armed")

@@ -199,8 +199,10 @@ describe("MacroSidebar", () => {
       ],
     });
     await render();
-    expect(query("macro-last-run-macro-1")?.textContent).toBe("Last run: just now on new-tab");
-    expect(query("macro-last-run-macro-2")).toBeNull();
+    // In the row tooltip, not on the row (#5757).
+    const tip = (id: string) => query(`macro-item-${id}`)?.getAttribute("aria-description") ?? "";
+    expect(tip("macro-1")).toContain("Last run: just now on new-tab");
+    expect(tip("macro-2")).not.toContain("Last run");
   });
 
   it("records from an icon-only filled record dot next to the text New (R-079, #5680)", async () => {

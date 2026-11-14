@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller, useFieldArray } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -189,7 +190,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
     }
     return onSave({
       name: current.name.trim(),
-      description: current.description.trim() || undefined,
+      description: normalizeItemDescription(current.description),
       tags: parseTags(current.tags),
       steps,
     });
@@ -358,6 +359,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
               onChange={(e) => field.onChange(e.target.value)}
               onBlur={field.onBlur}
               placeholder="What this macro does"
+              maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
               data-testid="macro-editor-description"
             />
           </Field>

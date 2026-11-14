@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { SidebarListItem, SidebarStatusDot } from "./SidebarListItem";
+import { withTooltip } from "@/test/tooltip";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -110,5 +111,65 @@ describe("SidebarListItem", () => {
     const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
     expect(dot.getAttribute("role")).toBeNull();
     expect(dot.getAttribute("aria-label")).toBeNull();
+  });
+
+  describe("names and descriptions, settings in the tooltip (#5757)", () => {
+    const q = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+    it("shows the description muted under the name only when set", () => {
+      act(() =>
+        root.render(
+          <SidebarListItem
+            testId="row"
+            name="Prod"
+            actions={null}
+            description="  Main web box  "
+            descriptionTestId="desc"
+          />
+        )
+      );
+      const desc = q("desc")!;
+      expect(desc.textContent).toBe("Main web box");
+      expect(desc.classList.contains("sidebar-list-item__description")).toBe(true);
+      expect(q("row")!.textContent).toBe("ProdMain web box");
+
+      act(() =>
+        root.render(<SidebarListItem testId="row" name="Prod" actions={null} description="   " />)
+      );
+      expect(q("row")!.querySelector(".sidebar-list-item__details")).toBeNull();
+    });
+
+    it("keeps tooltip lines off the row and exposes them as its description", () => {
+      act(() =>
+        root.render(
+          withTooltip(
+            <SidebarListItem
+              testId="row"
+              nameTestId="name"
+              name="Prod"
+              actions={null}
+              tooltip={["On connect · web-1", "", "Tags: ops"]}
+              tooltipTestId="tip"
+            />
+          )
+        )
+      );
+      expect(q("row")!.textContent).toBe("Prod");
+      expect(q("row")!.getAttribute("aria-description")).toBe("On connect · web-1. Tags: ops");
+      act(() => {
+        q("name")!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      });
+      const tip = q("tip")!;
+      expect(tip.querySelector(".sidebar-list-item__tooltip-name")?.textContent).toBe("Prod");
+      const lines = Array.from(tip.querySelector(".sidebar-list-item__tooltip")!.children).map(
+        (el) => el.textContent
+      );
+      expect(lines).toEqual(["Prod", "On connect · web-1", "Tags: ops"]);
+    });
+
+    it("has no description attribute without tooltip lines", () => {
+      act(() => root.render(<SidebarListItem testId="row" name="Prod" actions={null} />));
+      expect(q("row")!.hasAttribute("aria-description")).toBe(false);
+    });
   });
 });

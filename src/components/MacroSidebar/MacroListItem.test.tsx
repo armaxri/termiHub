@@ -128,7 +128,7 @@ describe("MacroListItem", () => {
     }
   });
 
-  it("shows the first line it types in the secondary text, not a joined dump (R-112)", () => {
+  it("keeps what it types off the row and lists it in the tooltip (R-112, #5757)", () => {
     render(
       macro({
         steps: [
@@ -137,35 +137,25 @@ describe("MacroListItem", () => {
         ],
       })
     );
-    const preview = query("macro-preview-m1")!;
-    expect(preview.textContent).toBe("echo one");
-    expect(preview.tagName).not.toBe("CODE");
-    expect(preview.classList.contains("macro-item__preview")).toBe(true);
+    const row = query("macro-item-m1")!;
+    expect(query("macro-preview-m1")).toBeNull();
+    expect(row.textContent).not.toContain("echo one");
     // No step count on the row (#5519).
-    expect(query("macro-item-m1")!.textContent).not.toMatch(/\bsteps?\b/);
-  });
-
-  it("lists every line it types in the preview's tooltip (R-112)", () => {
-    render(
-      macro({
-        steps: [
-          { data: "echo one\r", delayMs: 0 },
-          { data: "echo two\r", delayMs: 0 },
-        ],
-      })
+    expect(row.textContent).not.toMatch(/\bsteps?\b/);
+    expect(row.getAttribute("aria-description")).toBe("Types: echo one. echo two");
+    revealTooltip(query("macro-name-m1")!);
+    const tip = document.querySelector(
+      '[data-testid="macro-tooltip-m1"] .sidebar-list-item__tooltip'
     );
-    revealTooltip(query("macro-preview-m1")!);
-    const steps = document.querySelector('[data-testid="macro-steps-m1"]');
-    expect(steps).not.toBeNull();
-    const lines = Array.from(steps!.querySelectorAll(".macro-item__step")).map(
+    const lines = Array.from(tip!.querySelectorAll(".sidebar-list-item__tooltip-line")).map(
       (el) => el.textContent
     );
-    expect(lines).toEqual(["echo one", "echo two"]);
+    expect(lines).toEqual(["Types:", "echo one", "echo two"]);
   });
 
-  it("omits the preview for a macro with no input", () => {
+  it("has no tooltip lines for a macro with no input, tags or runs", () => {
     render(macro({ steps: [] }));
-    expect(query("macro-preview-m1")).toBeNull();
+    expect(query("macro-item-m1")!.getAttribute("aria-description")).toBeNull();
   });
 
   it("names the terminal Play types into (R-113)", () => {
@@ -180,36 +170,33 @@ describe("MacroListItem", () => {
     expect(tooltipText()).toContain("no active terminal");
   });
 
-  it("shows when and where it last ran (R-113)", () => {
-    render(macro(), handlers(), { lastRun: run() });
-    const line = query("macro-last-run-m1")!;
-    expect(line.textContent).toBe("Last run: just now on pr-auto-local");
-    expect(line.querySelector("time")).not.toBeNull();
+  it("puts when and where it last ran in the tooltip, not on the row (R-113, #5757)", () => {
+    render(macro({ steps: [] }), handlers(), { lastRun: run() });
+    expect(query("macro-last-run-m1")).toBeNull();
+    expect(query("macro-item-m1")!.textContent).not.toContain("Last run");
+    expect(query("macro-item-m1")!.getAttribute("aria-description")).toBe(
+      "Last run: just now on pr-auto-local"
+    );
   });
 
   it("names the terminal count for a multi-terminal last run", () => {
-    render(macro(), handlers(), {
+    render(macro({ steps: [] }), handlers(), {
       lastRun: run({ targetCount: 3, targetLabels: ["a", "b", "c"] }),
     });
-    expect(query("macro-last-run-m1")!.textContent).toContain("on 3 terminals");
+    expect(query("macro-item-m1")!.getAttribute("aria-description")).toContain("on 3 terminals");
   });
 
-  it("has no last-run line before the first playback", () => {
-    render(macro());
-    expect(query("macro-last-run-m1")).toBeNull();
-  });
-
-  it("shows the description and tags when present", () => {
-    render(macro({ description: "nightly job", tags: ["ops", "prod"] }));
-    expect(container.textContent).toContain("nightly job");
-    const tags = query("macro-tags-m1");
-    expect(tags?.textContent).toContain("ops");
-    expect(tags?.textContent).toContain("prod");
-  });
-
-  it("omits the tags element when there are no tags", () => {
-    render(macro({ tags: [] }));
+  it("shows the description on the row and the tags in the tooltip (#5757)", () => {
+    render(macro({ steps: [], description: "nightly job", tags: ["ops", "prod"] }));
+    expect(query("macro-description-m1")?.textContent).toBe("nightly job");
     expect(query("macro-tags-m1")).toBeNull();
+    expect(query("macro-item-m1")!.textContent).toBe("Deploynightly job");
+    expect(query("macro-item-m1")!.getAttribute("aria-description")).toBe("Tags: ops, prod");
+  });
+
+  it("shows no description line when none is set", () => {
+    render(macro({ description: undefined }));
+    expect(query("macro-description-m1")).toBeNull();
   });
 
   it("invokes each action handler with the macro id on click", () => {

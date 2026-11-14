@@ -286,14 +286,21 @@ const en = {
   // run histories (R-081).
   "macro.play.target": "Play in: {target}",
   "macro.play.noTarget": "Play: no active terminal",
-  "macro.lastRun.label": "Last run:",
-  "macro.lastRun.on": "on {target}",
   "macro.run.origin.manual": "Manual",
   "macro.run.origin.palette": "Palette",
   "macro.run.origin.workflowStep": "Workflow step",
   "macro.run.origin.scheduled": "Scheduled",
   "runHistory.empty": "No runs yet.",
   "macroHistory.empty.filtered": "No runs of this macro yet.",
+
+  // ── List rows: names on the row, settings in the tooltip (#5757) ────────
+  "row.tooltip.tags": "Tags: {tags}",
+  "macro.tooltip.types": "Types:",
+  "macro.tooltip.lastRun": "Last run: {when} on {target}",
+  "schedule.tooltip.last": "Last run: {when} · {outcome}",
+  "schedule.marker.lastFailed": "Last run failed",
+  "schedule.attempts.show": "Show recent attempts ({count})",
+  "schedule.attempts.hide": "Hide recent attempts",
 } as const;
 
 /** A stable id naming one catalog message. */
