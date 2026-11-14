@@ -3892,6 +3892,9 @@ mod telnet_drop;
 /// An agent-hosted session ends with the cause the agent reported (#5732).
 mod agent_end_cause;
 
+/// A direct SSH tab reports the remote shell's exit status (#5801).
+mod ssh_exit_status;
+
 /// A direct local shell reports the code the user exited it with (#5784).
 #[cfg(unix)]
 mod direct_local_exit;

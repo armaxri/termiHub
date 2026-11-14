@@ -371,14 +371,9 @@ fn decode_output(msg: &Value) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// A correct one-time code completes the connect: the session is created, the
-/// daemon's SSH session reaches the server's shell, and data round-trips.
-#[test]
-fn answered_otp_prompt_connects_the_session() {
-    let fixture = Fixture::start();
-    let mut agent = StdioAgent::spawn(&fixture);
-    agent.initialize(true);
-
+/// Create an `ssh` session on `fixture`, answering the OTP round with the
+/// good code; returns its id once the daemon reaped later is registered.
+fn create_session(agent: &mut StdioAgent, fixture: &Fixture) -> String {
     let create = agent.start_create(fixture.ssh_config("password"));
     let request_id = agent.expect_otp_prompt(fixture.port());
     agent.respond(&request_id, Some(GOOD_CODE));
@@ -391,14 +386,11 @@ fn answered_otp_prompt_connects_the_session() {
     if let Some(guard) = DaemonGuard::discover(&session_endpoint(&session_id)) {
         agent.daemons.push(guard);
     }
+    session_id
+}
 
-    // The saved password was auto-answered; only the OTP was relayed.
-    assert_eq!(
-        fixture.responses(),
-        vec![vec![PASSWORD.to_string()], vec![GOOD_CODE.to_string()]]
-    );
-    assert_eq!(fixture.authenticated(), 1);
-
+/// Attach `session_id` and wait until the server started its shell.
+fn attach_shell(agent: &mut StdioAgent, fixture: &Fixture, session_id: &str) {
     let attach = agent.rpc(pm::CONNECTION_ATTACH, json!({"session_id": session_id}));
     assert!(attach["result"].is_object(), "attach failed: {attach}");
     // The shell request carries no reply, so attach can return before the
@@ -409,24 +401,68 @@ fn answered_otp_prompt_connects_the_session() {
         || fixture.shells(),
         || format!("agent stderr:\n{}", agent.stderr_log()),
     );
+}
 
-    // Round-trip data through the daemon's SSH channel: the server's shell
-    // echoes what it receives.
-    let marker = "otp-e2e-echo-marker";
+/// Type `line` into the session's shell.
+fn type_line(agent: &mut StdioAgent, session_id: &str, line: &str) {
     let write = agent.rpc(
         pm::CONNECTION_WRITE,
         json!({
             "session_id": session_id,
-            "data": base64::engine::general_purpose::STANDARD.encode(format!("{marker}\n")),
+            "data": base64::engine::general_purpose::STANDARD.encode(format!("{line}\n")),
         }),
     );
     assert!(write.get("error").is_none(), "write failed: {write}");
+}
+
+/// A correct one-time code completes the connect: the session is created, the
+/// daemon's SSH session reaches the server's shell, and data round-trips.
+#[test]
+fn answered_otp_prompt_connects_the_session() {
+    let fixture = Fixture::start();
+    let mut agent = StdioAgent::spawn(&fixture);
+    agent.initialize(true);
+
+    let session_id = create_session(&mut agent, &fixture);
+
+    // The saved password was auto-answered; only the OTP was relayed.
+    assert_eq!(
+        fixture.responses(),
+        vec![vec![PASSWORD.to_string()], vec![GOOD_CODE.to_string()]]
+    );
+    assert_eq!(fixture.authenticated(), 1);
+
+    attach_shell(&mut agent, &fixture, &session_id);
+
+    // Round-trip data through the daemon's SSH channel: the server's shell
+    // echoes what it receives.
+    let marker = "otp-e2e-echo-marker";
+    type_line(&mut agent, &session_id, marker);
     agent.wait_for("the echoed marker", |m| {
         m["method"] == pm::CONNECTION_OUTPUT && decode_output(m).contains(marker)
     });
 
     let close = agent.rpc(pm::CONNECTION_CLOSE, json!({"session_id": session_id}));
     assert!(close.get("error").is_none(), "close failed: {close}");
+}
+
+/// #5801: a shell the user exits with a status on an agent-hosted SSH session
+/// ends it with a `connection.exit` that carries the status, so the desktop
+/// shows "[Process exited with code 5]" and does not reconnect the tab.
+#[test]
+fn exited_ssh_shell_reports_its_status_on_connection_exit() {
+    let fixture = Fixture::start();
+    let mut agent = StdioAgent::spawn(&fixture);
+    agent.initialize(true);
+    let session_id = create_session(&mut agent, &fixture);
+    attach_shell(&mut agent, &fixture, &session_id);
+
+    type_line(&mut agent, &session_id, "exit 5");
+    let exit = agent.wait_for("connection.exit", |m| {
+        m["method"] == pm::CONNECTION_EXIT && m["params"]["session_id"] == json!(session_id)
+    });
+    assert_eq!(exit["params"]["exit_status"], 5, "{exit}");
+    assert_eq!(exit["params"]["end_cause"], "remote_closed", "{exit}");
 }
 
 /// Dismissing the dialog fails the create with the typed `AUTH_CANCELLED`, and
