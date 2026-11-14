@@ -165,6 +165,32 @@ def editor_layout_problems(rects: dict[str, dict]) -> list[str]:
     return problems
 
 
+#: The connection editor's two save actions (#5755).
+EDITOR_SAVE = "connection-editor-save"
+EDITOR_SAVE_CONNECT = "connection-editor-save-connect"
+
+
+def editor_primary_problems(buttons: "list[dict]", *, editing: bool) -> list[str]:
+    """What is wrong with the editor footer's primary action; empty when right (#5755).
+
+    ``buttons`` are the footer's buttons in DOM order, each ``{testId, rect,
+    primary}`` (``primary``: it carries the primary skin). A new connection's
+    primary is Save and connect; an edited one's is Save. The footer has exactly
+    one primary, and it is the right-most button (copy style guide).
+    """
+    expected = EDITOR_SAVE if editing else EDITOR_SAVE_CONNECT
+    mode = "editing" if editing else "a new connection"
+    primaries = [b["testId"] for b in buttons if b.get("primary")]
+    problems: list[str] = []
+    if primaries != [expected]:
+        problems.append(f"{mode}: primary is {primaries or 'none'}, expected [{expected!r}]")
+    if buttons:
+        rightmost = max(buttons, key=lambda b: float(b["rect"]["x"]) + float(b["rect"]["width"]))
+        if rightmost["testId"] != expected:
+            problems.append(f"{mode}: the right-most button is {rightmost['testId']!r}, not {expected!r}")
+    return problems
+
+
 def row_leftover_text(text: str, allowed: "list[str]") -> str:
     """What a list row shows beyond its allowed pieces (#5757), whitespace-collapsed.
 
