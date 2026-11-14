@@ -124,6 +124,24 @@ describe("AboutSettings", () => {
     );
   });
 
+  it("has a privacy link", async () => {
+    await render();
+    const btn = container.querySelector("[data-testid='about-privacy-link']");
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toContain("Privacy");
+  });
+
+  it("opens the privacy notice on GitHub in the browser when the privacy link is clicked", async () => {
+    await render();
+    const btn = container.querySelector("[data-testid='about-privacy-link']") as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    expect(mockedOpenUrl).toHaveBeenCalledWith(
+      "https://github.com/armaxri/termiHub/blob/main/docs/privacy.md"
+    );
+  });
+
   it("has a link to the third-party licenses", async () => {
     await render();
     const btn = container.querySelector("[data-testid='about-third-party-licenses-link']");
