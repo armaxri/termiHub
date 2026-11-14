@@ -8,7 +8,9 @@
   border-radius: var(--radius-sm);
   background: var(--bg-warning);
   font-size: var(--font-size-sm);
-  color: var(--text-secondary);
+  /* #5744: --text-secondary misses AA on the warning tint (Dark, Light,
+     Solarized Dark); the tint, border and icon carry the warning cue. */
+  color: var(--text-primary);
 }
 
 .workspace-override-notice__icon {

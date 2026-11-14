@@ -61,5 +61,6 @@
 
 .update-agent-dialog__warning-hint {
   margin-top: var(--spacing-xs);
-  color: var(--text-secondary);
+  /* #5744: --text-secondary misses AA on the warning tint (Dark, Light, Solarized Dark). */
+  color: var(--text-primary);
 }

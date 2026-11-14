@@ -393,7 +393,8 @@
 }
 
 .plugin-install__native-desc {
-  color: var(--text-secondary);
+  /* #5744: --text-secondary misses AA on the warning tint (Dark, Light, Solarized Dark). */
+  color: var(--text-primary);
   overflow-wrap: anywhere;
 }
 

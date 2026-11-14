@@ -12,7 +12,9 @@
   border-top: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  color: var(--text-secondary);
+  /* #5744: --text-secondary misses AA on the warning tint (4.49:1 Dark); the
+     tint, border and icon carry the warning cue. */
+  color: var(--text-primary);
   pointer-events: all;
 }
 
