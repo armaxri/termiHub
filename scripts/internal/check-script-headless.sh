@@ -97,7 +97,9 @@ SCRIPTS=(
   "scripts/internal/fetch-github-release-asset.sh"
   "scripts/internal/fetch-wsl-distro.sh"
   "scripts/internal/harness-coverage.sh"
+  "scripts/internal/macos-codesign.sh"
   "scripts/internal/macos-dmg-layout.sh"
+  "scripts/internal/macos-signing-keychain.sh"
   "scripts/internal/native-sshd-fixture.sh"
   "scripts/internal/plugin-index-signing.sh"
   "scripts/internal/plugin-ipc-fuzz.sh"
@@ -110,6 +112,7 @@ SCRIPTS=(
   "scripts/internal/run-native-sshd-fish3-suite.sh"
   "scripts/internal/run-native-sshd-suites.sh"
   "scripts/internal/setup-agent-signing-key.sh"
+  "scripts/internal/setup-macos-signing-identity.sh"
   "scripts/internal/setup-plugin-index-signing-key.sh"
   "scripts/internal/setup-plugin-publisher-key.sh"
   "scripts/internal/setup-updater-signing-key.sh"
@@ -330,6 +333,41 @@ if [ -x node_modules/.bin/tauri ]; then
   fi
 else
   echo "skip  signing lifecycle: updater key setup needs the Tauri CLI (pnpm install)"
+fi
+
+# --- macOS signing identity setup, dry-run (#5545) ---
+# Needs macOS (security, codesign); skipped elsewhere. The dry run creates a
+# throwaway certificate and a throwaway keychain, self-tests that two signed
+# binaries share one designated requirement, and touches neither the repo pin
+# nor the user's keychain search list or default keychain.
+MS_SETUP="scripts/internal/setup-macos-signing-identity.sh"
+MS_PIN="scripts/internal/macos-signing-identity.json"
+if [ "$(uname -s)" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
+  ms_before="$(cat "$MS_PIN")"
+  ms_keychains="$(security list-keychains -d user; security default-keychain -d user)"
+  mkdir -p "$LC/ms"
+  cp "$MS_PIN" "$LC/ms/pin.json"
+  lc_step "macOS identity: setup --dry-run (temp pin copy)" bash "$MS_SETUP" --dry-run
+  lc_step "macOS identity: setup --dry-run writes a given pin" \
+    bash "$MS_SETUP" --dry-run --pin-file "$LC/ms/pin.json"
+  lc_refuse "macOS identity: setup over a pinned certificate without --force" \
+    bash "$MS_SETUP" --dry-run --pin-file "$LC/ms/pin.json"
+  lc_step "macOS identity: setup --force over a pinned certificate" \
+    bash "$MS_SETUP" --dry-run --force --pin-file "$LC/ms/pin.json"
+  if [ "$(cat "$MS_PIN")" = "$ms_before" ]; then
+    echo "ok    signing lifecycle: $MS_PIN left untouched"
+  else
+    echo "::error::signing lifecycle: a macOS identity dry run modified the repo tree"
+    failures=$((failures + 1))
+  fi
+  if [ "$(security list-keychains -d user; security default-keychain -d user)" = "$ms_keychains" ]; then
+    echo "ok    signing lifecycle: keychain search list and default keychain unchanged"
+  else
+    echo "::error::signing lifecycle: a macOS identity dry run changed the keychain configuration"
+    failures=$((failures + 1))
+  fi
+else
+  echo "skip  signing lifecycle: macOS identity setup needs macOS (security, codesign)"
 fi
 
 lifecycle_failures=$((failures - help_failures))
