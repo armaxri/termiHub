@@ -65,7 +65,11 @@ function primeSshTab() {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: "tab-1" };
   useAppStore.setState({ connectionTypes: [sshType] });
   seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
-  seedSettings({ powerMonitoringEnabled: true });
+  // Every chip, swap included (#5754), so the stop proves all of them go.
+  seedSettings({
+    powerMonitoringEnabled: true,
+    statusBarMetrics: ["cpu", "memory", "disk", "swap", "network"],
+  });
 }
 
 function setMonitor(patch: Partial<MonitoringEntry> | null) {
@@ -124,7 +128,7 @@ describe("StatusBar — stop monitoring, compact menu, unsupported host (#5628)"
 
   async function clickStop() {
     openMenu();
-    const item = q("monitoring-disconnect");
+    const item = q("monitoring-stop");
     expect(item).not.toBeNull();
     await act(async () => {
       item!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -132,7 +136,7 @@ describe("StatusBar — stop monitoring, compact menu, unsupported host (#5628)"
     await flushAsync();
   }
 
-  it("removes every metric chip after Disconnect and does not reconnect", async () => {
+  it("removes every metric chip after Stop monitoring and does not reconnect", async () => {
     liveMonitor();
     await renderStatusBar();
     for (const chip of METRIC_CHIPS) expect(q(`monitoring-${chip}`)).not.toBeNull();
@@ -145,6 +149,16 @@ describe("StatusBar — stop monitoring, compact menu, unsupported host (#5628)"
     const stopped = q("monitoring-stopped");
     expect(stopped).not.toBeNull();
     expect(stopped!.textContent).toContain("Monitoring off");
+    expect(stopped!.textContent).toContain("Start monitoring");
+  });
+
+  it('labels the menu item "Stop monitoring", not "Disconnect" (#5750)', async () => {
+    liveMonitor();
+    await renderStatusBar();
+    openMenu();
+    const item = q("monitoring-stop");
+    expect(item!.textContent).toBe("Stop monitoring");
+    expect(document.body.textContent).not.toContain("Disconnect");
   });
 
   it("keeps the chips hidden even before the backend drops the entry", async () => {

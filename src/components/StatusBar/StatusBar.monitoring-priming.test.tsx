@@ -96,7 +96,12 @@ function primeMonitoringTab(kind: "ssh" | "local" = "ssh") {
 
   useAppStore.setState({ connectionTypes: [sshType] });
   seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
-  seedSettings({ powerMonitoringEnabled: true });
+  // An opted-in user (#5754): local shells monitored and every chip, swap included.
+  seedSettings({
+    powerMonitoringEnabled: true,
+    monitorLocalShells: true,
+    statusBarMetrics: ["cpu", "memory", "disk", "swap", "network"],
+  });
 }
 
 /** MonitorKey for the primed SSH tab: the owning terminal session id (#1232). */

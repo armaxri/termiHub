@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   Activity,
   AlertTriangle,
-  Unplug,
+  Square,
   Server,
   RotateCw,
   Pause,
@@ -44,7 +44,6 @@ import {
   MonitorStatusReason,
   DEFAULT_MONITORING_INTERVAL_MS,
 } from "@/types/monitoring";
-import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { connectionConfigFields, readConfigString } from "@/utils/connectionConfigFields";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
@@ -89,6 +88,7 @@ import {
   monitorOfflineReasonText,
 } from "@/utils/monitorStatusReason";
 import { MonitoringStopped, MonitoringUnsupported } from "./MonitoringStateChips";
+import { isMonitoringEnabledForTab, resolveStatusBarMetrics } from "./statusBarMetrics";
 import { sshTunnelVia } from "@/components/RemoteDesktop/graphicalStages";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
 import { errorMessage } from "@/utils/errorMessage";
@@ -557,7 +557,13 @@ function AgentUpdatesIndicator() {
  * Shows a connection picker when disconnected, and compact stats when connected.
  */
 function MonitoringStatus() {
-  const globalMonitoringEnabled = useProjectedSettings().powerMonitoringEnabled;
+  const {
+    powerMonitoringEnabled: globalMonitoringEnabled,
+    monitorLocalShells,
+    statusBarMetrics,
+  } = useProjectedSettings();
+  // Which metric chips the user shows (#5754); unset = CPU, Mem, Disk, Net.
+  const shownMetrics = resolveStatusBarMetrics(statusBarMetrics);
   const stopMonitoring = useAppStore((s) => s.stopMonitoring);
   const startMonitoring = useAppStore((s) => s.startMonitoring);
   const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
@@ -606,8 +612,15 @@ function MonitoringStatus() {
     sessionCapabilities,
     activeMonitorKey
   );
+  // Local shells are off unless the user opts in (#5754); remote sessions follow
+  // the global default. A connection's own `enableMonitoring` always wins.
   const monitoringEnabled = activeTabSupportsMonitoring
-    ? resolveFeatureEnabled(activeTabConfig, "enableMonitoring", globalMonitoringEnabled)
+    ? isMonitoringEnabledForTab({
+        connectionType: activeTabConnectionType,
+        config: activeTabConfig,
+        globalEnabled: globalMonitoringEnabled,
+        monitorLocalShells,
+      })
     : false;
 
   /** Tracks which monitor key already failed auto-connect to prevent retry loops. */
@@ -901,7 +914,7 @@ function MonitoringStatus() {
         paused={monitoringPaused}
         intervalMs={monitoringInterval}
         histories={monitorHistories}
-        onDisconnect={() => activeMonitorKey && stopMonitoring(activeMonitorKey)}
+        onStop={() => activeMonitorKey && stopMonitoring(activeMonitorKey)}
         onSetPaused={handleSetPaused}
         onSetInterval={handleSetInterval}
         onCancel={handleCancel}
@@ -981,7 +994,7 @@ function MonitoringStatus() {
             yet measured". Memory and disk are correct on the first sample and
             always render numerically.
           */}
-          {isMetricUnavailable(monitoringStats, "cpu") ? (
+          {!shownMetrics.has("cpu") ? null : isMetricUnavailable(monitoringStats, "cpu") ? (
             <UnavailableStat
               label="CPU"
               stats={monitoringStats}
@@ -997,7 +1010,7 @@ function MonitoringStatus() {
               CPU {monitoringStats.cpuUsagePercent.toFixed(0)}%
             </span>
           )}
-          {isMetricUnavailable(monitoringStats, "memory") ? (
+          {!shownMetrics.has("memory") ? null : isMetricUnavailable(monitoringStats, "memory") ? (
             <UnavailableStat
               label="Mem"
               stats={monitoringStats}
@@ -1013,7 +1026,7 @@ function MonitoringStatus() {
               Mem {monitoringStats.memoryUsedPercent.toFixed(0)}%
             </span>
           )}
-          {isMetricUnavailable(monitoringStats, "disk") ? (
+          {!shownMetrics.has("disk") ? null : isMetricUnavailable(monitoringStats, "disk") ? (
             <UnavailableStat
               label="Disk"
               stats={monitoringStats}
@@ -1035,20 +1048,22 @@ function MonitoringStatus() {
             noise. Older agents / non-Linux SSH remotes also report 0 here and
             so render nothing.
           */}
-          {monitoringStats.swapTotalKb > 0 && !isMetricUnavailable(monitoringStats, "swap") && (
-            <span
-              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${statusStatSeverity(monitoringStats.swapUsedPercent)}${staleModifier}`}
-              title={`Swap: ${formatKb(monitoringStats.swapUsedKb)} / ${formatKb(monitoringStats.swapTotalKb)}`}
-              data-testid="monitoring-swap"
-            >
-              Swap {monitoringStats.swapUsedPercent.toFixed(0)}%
-            </span>
-          )}
+          {shownMetrics.has("swap") &&
+            monitoringStats.swapTotalKb > 0 &&
+            !isMetricUnavailable(monitoringStats, "swap") && (
+              <span
+                className={`status-bar__item monitoring-status__stat monitoring-status__stat--${statusStatSeverity(monitoringStats.swapUsedPercent)}${staleModifier}`}
+                title={`Swap: ${formatKb(monitoringStats.swapUsedKb)} / ${formatKb(monitoringStats.swapTotalKb)}`}
+                data-testid="monitoring-swap"
+              >
+                Swap {monitoringStats.swapUsedPercent.toFixed(0)}%
+              </span>
+            )}
           {/*
             Network throughput (rates). formatRate returns "" for a zero/idle
             rate, so a quiet link falls back to "0 B/s" rather than a blank.
           */}
-          {isMetricUnavailable(monitoringStats, "network") ? (
+          {!shownMetrics.has("network") ? null : isMetricUnavailable(monitoringStats, "network") ? (
             <UnavailableStat
               label="Net"
               stats={monitoringStats}
@@ -1106,7 +1121,8 @@ interface MonitoringDetailDropdownProps {
   intervalMs: number;
   /** Rolling per-metric history for the sparklines and history panel (PROD-0030). */
   histories: MonitorHistories;
-  onDisconnect: () => void;
+  /** Stop collecting readings; the terminal session stays open (#5750). */
+  onStop: () => void;
   /** Pause/resume collection (#1233). */
   onSetPaused: (paused: boolean) => void | Promise<void>;
   /** Change the refresh interval (#1233). */
@@ -1121,7 +1137,7 @@ interface MonitoringDetailDropdownProps {
  * Hostname button with dropdown showing full monitoring details plus lifecycle
  * controls: Pause/Resume, a refresh-interval selector, and — depending on the
  * collector status — a Cancel (connecting) or Retry (offline) affordance, plus
- * Disconnect (#1233).
+ * Stop monitoring (#1233, #5750).
  */
 function MonitoringDetailDropdown({
   host,
@@ -1134,7 +1150,7 @@ function MonitoringDetailDropdown({
   paused,
   intervalMs,
   histories,
-  onDisconnect,
+  onStop,
   onSetPaused,
   onSetInterval,
   onCancel,
@@ -1286,9 +1302,10 @@ function MonitoringDetailDropdown({
 
           <MenuSeparator />
 
-          <MenuItem onSelect={onDisconnect} data-testid="monitoring-disconnect">
-            <Unplug size={14} />
-            Disconnect
+          {/* Only the readings stop, never the session (#5750), so not "Disconnect". */}
+          <MenuItem onSelect={onStop} data-testid="monitoring-stop">
+            <Square size={14} />
+            Stop monitoring
           </MenuItem>
         </DropdownMenuContent>
       </DropdownMenuRoot>
