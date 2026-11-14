@@ -4144,8 +4144,11 @@ desktop reads a value it does not know as absent.
 
 `exit_status` (0.39.0+, #5742) is the real status of the session's own process — a local shell
 on the agent, which reads `1` when a signal killed it, and (0.40.0+, #5783) a Docker session: the
-exec's code when the user exited the shell, the container's when it stopped underneath. It is
-omitted for sessions without a process status (a network session), after a
+exec's code when the user exited the shell, the container's when it stopped underneath. An SSH
+session reports the remote shell's status the server sent (#5801): its `exit-status`, or
+`128 + signum` for an `exit-signal` other than `HUP` / `TERM` (a host going down), which report
+none. It is omitted for sessions without a process status (another network session, an SSH link
+lost without a status), after a
 [`connection.close`](#connectionclose), and by an agent older than 0.39.0, whose `exit_code` is
 `0` for every end and so never tells how a process ended. When present, `exit_code` carries the
 same value.
