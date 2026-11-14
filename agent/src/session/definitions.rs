@@ -49,6 +49,12 @@ pub struct Connection {
     /// Single-emoji icon (#5021). Opaque to the agent; omitted when unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_emoji: Option<String>,
+    /// Optional one-line description shown under the name (#5769). Opaque to
+    /// the agent (the desktop normalizes it); omitted from disk when unset, so
+    /// an undescribed file is unchanged. An older agent keeps the key verbatim
+    /// in its `extra` map (#3931), so a downgrade-then-upgrade keeps it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Fields this agent does not know (e.g. written by a newer agent at the
     /// same schema version). Kept on disk verbatim across load and save, never
     /// sent on the wire (#3931).
@@ -80,6 +86,8 @@ struct RawConnection {
     icon_color: Option<String>,
     #[serde(default)]
     icon_emoji: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -97,6 +105,7 @@ impl From<RawConnection> for Connection {
             icon: raw.icon,
             icon_color: raw.icon_color,
             icon_emoji: raw.icon_emoji,
+            description: raw.description,
             extra: raw.extra,
         };
         conn.normalize_settings();
@@ -139,6 +148,7 @@ impl Connection {
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             icon_emoji: self.icon_emoji.clone(),
+            description: self.description.clone(),
             source_file: None,
         }
     }
@@ -204,6 +214,7 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
         icon: Option<Option<String>>,
         icon_color: Option<Option<String>>,
         icon_emoji: Option<Option<String>>,
+        description: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError>;
 
     /// List all connections and folders.
@@ -506,6 +517,7 @@ impl ConnectionStore {
         icon: Option<Option<String>>,
         icon_color: Option<Option<String>>,
         icon_emoji: Option<Option<String>>,
+        description: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
         self.mutate(|defs| {
             let Some(conn) = defs.connections.get_mut(id) else {
@@ -538,6 +550,9 @@ impl ConnectionStore {
             }
             if let Some(icon_emoji) = icon_emoji {
                 conn.icon_emoji = icon_emoji;
+            }
+            if let Some(description) = description {
+                conn.description = description;
             }
             conn.normalize_settings();
 
@@ -586,6 +601,7 @@ impl ConnectionStore {
                                 icon: conn.icon,
                                 icon_color: conn.icon_color,
                                 icon_emoji: conn.icon_emoji,
+                                description: conn.description,
                                 source_file: Some(path.clone()),
                             });
                         }
@@ -694,6 +710,7 @@ impl ConnectionStore {
                     icon: None,
                     icon_color: None,
                     icon_emoji: None,
+                    description: None,
                     extra: serde_json::Map::new(),
                 };
 
@@ -787,6 +804,7 @@ impl ConnectionStore {
                                 icon: None,
                                 icon_color: None,
                                 icon_emoji: None,
+                                description: None,
                                 extra: serde_json::Map::new(),
                             };
                             conn.normalize_settings();
@@ -1226,6 +1244,7 @@ impl ConnectionStoreApi for ConnectionStore {
         icon: Option<Option<String>>,
         icon_color: Option<Option<String>>,
         icon_emoji: Option<Option<String>>,
+        description: Option<Option<String>>,
     ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
         ConnectionStore::update(
             self,
@@ -1239,6 +1258,7 @@ impl ConnectionStoreApi for ConnectionStore {
             icon,
             icon_color,
             icon_emoji,
+            description,
         )
         .await
     }
@@ -1422,6 +1442,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             extra: Default::default(),
         }
     }
@@ -1466,6 +1487,7 @@ mod tests {
             .update(
                 "c1",
                 Some("renamed".into()),
+                None,
                 None,
                 None,
                 None,
@@ -1535,6 +1557,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap()
@@ -1570,6 +1593,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 extra: Default::default(),
             })
             .await
@@ -1585,6 +1609,7 @@ mod tests {
                 None,
                 None,
                 Some(json!({ "host": "h", "timeoutSecs": 60 })),
+                None,
                 None,
                 None,
                 None,
@@ -1695,6 +1720,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -1714,6 +1740,7 @@ mod tests {
             .update(
                 "nonexistent",
                 Some("Name".to_string()),
+                None,
                 None,
                 None,
                 None,
@@ -1756,6 +1783,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap()
@@ -1771,6 +1799,7 @@ mod tests {
                 None,
                 None,
                 Some(None),
+                None,
                 None,
                 None,
                 None,
@@ -2208,6 +2237,7 @@ mod tests {
                 None,
                 Some(Some("#336699".to_string())),
                 Some(None),
+                None,
             )
             .await
             .unwrap()
@@ -2257,6 +2287,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap()
@@ -2267,6 +2298,140 @@ mod tests {
         let new = raw_entry(&raw, "connections", "new");
         assert_eq!(new["icon_color"], json!("teal"));
         assert_eq!(new["icon_emoji"], json!("\u{1F525}"));
+    }
+
+    /// #5769: a definition's description persists to disk and reloads; an
+    /// update that omits it keeps it, a new string replaces it and `Some(None)`
+    /// clears it (and drops the key from disk).
+    #[tokio::test]
+    async fn description_persists_and_updates() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        {
+            let store = ConnectionStore::new_temp(path.clone());
+            let mut conn = make_connection("conn-1", "Bench", false);
+            conn.description = Some("Lab bench console".to_string());
+            store.create(conn).await.unwrap();
+        }
+        let raw = read_json(&path);
+        let entry = raw_entry(&raw, "connections", "conn-1");
+        assert_eq!(entry["description"], json!("Lab bench console"));
+
+        let store = ConnectionStore::new(path.clone());
+        let snap = store.get("conn-1").await.unwrap();
+        assert_eq!(snap.description.as_deref(), Some("Lab bench console"));
+
+        let rename = |name: &str| {
+            let name = name.to_string();
+            let store = &store;
+            async move {
+                store
+                    .update(
+                        "conn-1",
+                        Some(name),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let snap = rename("Bench 2").await;
+        assert_eq!(snap.description.as_deref(), Some("Lab bench console"));
+
+        let set = |value: Option<&str>| {
+            let value = value.map(str::to_string);
+            let store = &store;
+            async move {
+                store
+                    .update(
+                        "conn-1",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(value),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let snap = set(Some("Rack 3")).await;
+        assert_eq!(snap.description.as_deref(), Some("Rack 3"));
+        let snap = set(None).await;
+        assert_eq!(snap.description, None);
+        let raw = read_json(&path);
+        let entry = raw_entry(&raw, "connections", "conn-1");
+        assert!(entry.get("description").is_none(), "{entry}");
+    }
+
+    /// #5769: a file written before descriptions (no key) loads with none and
+    /// re-saves without a stray key; an entry carrying one keeps it across a
+    /// save of another entry. The key is additive and needs no schema step.
+    #[tokio::test]
+    async fn description_is_compatible_with_older_files() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "version": "1",
+                "connections": [
+                    {"id": "old", "name": "Old", "session_type": "shell"},
+                    {"id": "new", "name": "New", "session_type": "shell",
+                     "description": "Kept as is"}
+                ],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let store = ConnectionStore::new(path.clone());
+        assert!(store.get("old").await.unwrap().description.is_none());
+        assert_eq!(
+            store.get("new").await.unwrap().description.as_deref(),
+            Some("Kept as is")
+        );
+        store
+            .update(
+                "old",
+                Some("Old 2".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let raw = read_json(&path);
+        let old = raw_entry(&raw, "connections", "old");
+        assert!(old.get("description").is_none(), "{old}");
+        let new = raw_entry(&raw, "connections", "new");
+        assert_eq!(new["description"], json!("Kept as is"));
+        // The key is a typed field now, never spilled into `extra`.
+        let reloaded = ConnectionStore::new(path.clone());
+        let defs = reloaded.definitions.lock().await;
+        assert!(defs.connections["new"].extra.get("description").is_none());
     }
 
     #[tokio::test]
@@ -2301,6 +2466,7 @@ mod tests {
             .update(
                 "conn-1",
                 Some("Prod renamed".to_string()),
+                None,
                 None,
                 None,
                 None,
@@ -2579,6 +2745,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             extra: Default::default(),
         };
         let json = serde_json::to_string(&conn).unwrap();
@@ -2644,6 +2811,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             extra: Default::default(),
         };
         assert_eq!(
@@ -2940,6 +3108,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .is_err());
@@ -3109,6 +3278,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -3170,6 +3340,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -3223,6 +3394,7 @@ mod tests {
                 None,
                 None,
                 Some(Some("red".into())),
+                None,
                 None,
             )
             .await
@@ -3309,6 +3481,7 @@ mod tests {
             .update(
                 "conn-1",
                 Some("Renamed".into()),
+                None,
                 None,
                 None,
                 None,
