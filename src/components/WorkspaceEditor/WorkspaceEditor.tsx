@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Pencil, Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
@@ -232,7 +233,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     const definition: WorkspaceDefinition = {
       id: meta.workspaceId ?? newId("ws"),
       name: name || "Untitled Workspace",
-      description: description || undefined,
+      description: normalizeItemDescription(description),
       tabGroups: tabGroupDefs,
       ...(windows ? { windows } : {}),
       ...(normalizedSettings ? { settings: normalizedSettings } : {}),
@@ -381,7 +382,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional description"
+            maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+            placeholder="What this workspace is for"
             data-testid="workspace-description-input"
           />
         </Field>

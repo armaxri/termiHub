@@ -13,15 +13,6 @@
 
 /* Workspace rows compose the shared SidebarListItem shell (issue 1358). */
 
-.workspace-item__description {
-  padding: var(--spacing-xxs) 0 0 0;
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Save Workspace Dialog — content-specific styles (shell/buttons via ui primitives) */
 .save-workspace-dialog__form {
   display: flex;

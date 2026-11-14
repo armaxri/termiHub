@@ -84,7 +84,12 @@ describe("EmbeddedServerItem — names, not settings (#5770)", () => {
   });
 
   it("keeps an error on the row", () => {
-    render({ serverId: "srv-1", status: "error", error: "Port 8080 is in use" });
+    render({
+      serverId: "srv-1",
+      status: "error",
+      error: "Port 8080 is in use",
+      stats: { activeConnections: 0, totalConnections: 0, bytesSent: 0, bytesReceived: 0 },
+    });
     expect(row().textContent).toContain("Port 8080 is in use");
   });
 });
