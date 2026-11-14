@@ -1,0 +1,13 @@
+.app-update-install__progress {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.app-update-install__label {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}

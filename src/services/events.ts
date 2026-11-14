@@ -3,6 +3,7 @@
  */
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import type { AppUpdateProgress } from "@/types/generated/AppUpdateProgress";
 import { TAURI_EVENT } from "./eventNames";
 import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
@@ -91,6 +92,15 @@ export async function onTerminalOutput(
   return await listen<TerminalOutputEvent>(TAURI_EVENT.terminalOutput, (event) => {
     const { session_id, data } = event.payload;
     callback(session_id, base64ToBytes(data));
+  });
+}
+
+/** Subscribe to download progress of an in-app update (#5758). */
+export async function onAppUpdateDownloadProgress(
+  callback: (payload: AppUpdateProgress) => void
+): Promise<UnlistenFn> {
+  return await listen<AppUpdateProgress>(TAURI_EVENT.appUpdateDownloadProgress, (event) => {
+    callback(event.payload);
   });
 }
 

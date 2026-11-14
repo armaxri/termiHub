@@ -9,6 +9,9 @@ use super::update_develop::{
     evaluate_develop_release, parse_build_commit_time, select_channel, GitHubDevRelease,
     UpdateChannel, DEVELOP_RELEASE_API_URL,
 };
+use super::update_install::{
+    install_route, live_context, route_summary, ReleasePageReason, UpdateInstallMethod,
+};
 use crate::connection::manager::ConnectionManager;
 use crate::connection::settings::UpdateSettings;
 
@@ -31,6 +34,15 @@ fn resolve_is_dev(tauri_is_dev: bool, ci_is_dev: bool) -> bool {
 #[inline]
 fn is_ci_dev_build() -> bool {
     env!("TERMIHUB_IS_DEV_BUILD") == "1"
+}
+
+/// The update channel of the running build.
+pub(crate) fn build_channel() -> UpdateChannel {
+    select_channel(
+        tauri::is_dev(),
+        is_ci_dev_build(),
+        env!("TERMIHUB_BUILD_BRANCH"),
+    )
 }
 
 /// Build-time information exposed to the frontend.
@@ -132,6 +144,16 @@ pub struct UpdateInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub failure_reason: Option<String>,
+    /// How this machine installs the update (#5758): in place through the
+    /// signed updater, or from the release page. Always sent; optional in the
+    /// generated type so a missing value reads as the release page.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<UpdateInstallMethod>", optional))]
+    pub install_method: UpdateInstallMethod,
+    /// `releasePage` only: why the in-place update does not apply here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub release_page_reason: Option<ReleasePageReason>,
 }
 
 impl UpdateInfo {
@@ -153,6 +175,8 @@ impl UpdateInfo {
             build_published_at: None,
             outcome,
             failure_reason: None,
+            install_method: UpdateInstallMethod::ReleasePage,
+            release_page_reason: None,
         }
     }
 
@@ -262,6 +286,8 @@ fn evaluate_stable_release(
         build_published_at: None,
         outcome: checked_outcome(available),
         failure_reason: None,
+        install_method: UpdateInstallMethod::ReleasePage,
+        release_page_reason: None,
     })
 }
 
@@ -448,11 +474,7 @@ pub async fn check_for_updates(
     } else {
         base_version
     };
-    let channel = select_channel(
-        tauri::is_dev(),
-        is_ci_dev_build(),
-        env!("TERMIHUB_BUILD_BRANCH"),
-    );
+    let channel = build_channel();
     debug!("Checking for updates (running={running_version}, channel={channel:?}, force={force})");
 
     let update_settings = manager.get_settings().updates;
@@ -477,7 +499,13 @@ pub async fn check_for_updates(
         },
     )
     .await;
-    Ok(info)
+    let (install_method, release_page_reason) =
+        route_summary(&install_route(&live_context(&app_handle, channel)));
+    Ok(UpdateInfo {
+        install_method,
+        release_page_reason,
+        ..info
+    })
 }
 
 /// Persist the user's choice to skip a specific version.

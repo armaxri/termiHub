@@ -1,0 +1,27 @@
+{
+  "$comment": "In-app updater (#5758): the bundles that update in place, keyed by the updater target the app asks for. Read by updater-manifest.mjs (release.yml writes and checks latest.json from it) and pinned against src-tauri/src/commands/update_install.rs by a Rust test. A target missing here keeps the downloads page.",
+  "endpoint": "https://github.com/armaxri/termiHub/releases/latest/download/latest.json",
+  "downloadBase": "https://github.com/armaxri/termiHub/releases/download/v{version}/",
+  "platforms": [
+    {
+      "releasePlatform": "macos-x64",
+      "target": "darwin-x86_64-app",
+      "asset": "termiHub-{version}-macos-x64.app.tar.gz"
+    },
+    {
+      "releasePlatform": "macos-arm64",
+      "target": "darwin-aarch64-app",
+      "asset": "termiHub-{version}-macos-arm64.app.tar.gz"
+    },
+    {
+      "releasePlatform": "windows-x64",
+      "target": "windows-x86_64-msi",
+      "asset": "termiHub-{version}-windows-x64.msi"
+    },
+    {
+      "releasePlatform": "linux-x64",
+      "target": "linux-x86_64-appimage",
+      "asset": "termiHub-{version}-linux-x64.AppImage"
+    }
+  ]
+}

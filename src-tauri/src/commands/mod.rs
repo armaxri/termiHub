@@ -50,6 +50,7 @@ mod test_http_server;
 pub mod transfer;
 pub mod update;
 pub mod update_develop;
+pub mod update_install;
 pub mod window;
 // Static guard: no synchronous command may reach window creation (#4024).
 #[cfg(test)]
