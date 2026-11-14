@@ -1026,6 +1026,7 @@ mod tests {
     pub(super) fn ftp_test_config(root: &Path) -> EmbeddedServerConfig {
         use crate::embedded_servers::config::ServerType;
         EmbeddedServerConfig {
+            description: None,
             id: "test-ftp-shutdown".to_string(),
             name: "test".to_string(),
             server_type: ServerType::Ftp,

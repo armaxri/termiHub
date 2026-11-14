@@ -156,6 +156,7 @@ fn session(id: &str) -> AgentSession {
 
 fn seed(id: &str, host: &str) -> SavedAgentSeed {
     SavedAgentSeed {
+        description: None,
         id: id.to_string(),
         name: format!("Agent {id}"),
         config: json!({ "host": host }),

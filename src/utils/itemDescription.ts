@@ -1,6 +1,7 @@
 /**
  * The short user-written description a list item can carry (#5757):
- * connections, workflows, macros and schedules. A list row shows it muted
+ * connections, workflows, macros and schedules; tunnels, services, workspaces
+ * and remote agents since #5770. A list row shows it muted
  * under the name, so it is one line and short; configuration never goes in it
  * (see docs/copy-style.md -> "List rows").
  */

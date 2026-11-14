@@ -33,6 +33,7 @@ fn conn(id: &str, name: &str, settings: Value) -> SavedConnection {
 
 fn agent(id: &str, name: &str, credential_ref: Option<&str>) -> SavedRemoteAgent {
     SavedRemoteAgent {
+        description: None,
         extra: Default::default(),
         id: id.to_string(),
         name: name.to_string(),

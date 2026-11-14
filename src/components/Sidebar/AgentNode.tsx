@@ -1878,6 +1878,15 @@ export function AgentNode({
                 </div>
               )}
             </div>
+            {/* The user's description (#5770), muted under the name. */}
+            {agent.description && (
+              <span
+                className="connection-list__group-description"
+                data-testid={`agent-description-${agent.id}`}
+              >
+                {agent.description}
+              </span>
+            )}
             {isConnected && (
               <div className="connection-list__group-actions">
                 <Tooltip content="New folder" side="top">

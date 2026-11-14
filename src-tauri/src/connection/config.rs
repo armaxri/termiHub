@@ -275,6 +275,12 @@ pub enum ConnectionTreeNode {
 pub struct SavedRemoteAgent {
     pub id: String,
     pub name: String,
+    /// Optional short description the user wrote (#5770), shown muted under
+    /// the name in the sidebar. Absent when unset, so older files round-trip
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     pub config: RemoteAgentConfig,
     /// Runtime preferences sent to the agent on startup and on live updates.
     #[serde(default)]
@@ -887,6 +893,25 @@ mod tests {
     }
 
     #[test]
+    fn saved_remote_agent_description_is_optional_and_round_trips() {
+        // #5770: absent on disk = none, and it is not written back; a set one
+        // round-trips and is not swallowed by the flattened `extra` map.
+        let json = r#"{"id":"a","name":"Pi","config":{"host":"pi","port":22,"username":"pi",
+            "authMethod":"key"}}"#;
+        let mut agent: SavedRemoteAgent = serde_json::from_str(json).unwrap();
+        assert_eq!(agent.description, None);
+        assert!(!serde_json::to_string(&agent)
+            .unwrap()
+            .contains("description"));
+
+        agent.description = Some("Lab bench".to_string());
+        let back: SavedRemoteAgent =
+            serde_json::from_str(&serde_json::to_string(&agent).unwrap()).unwrap();
+        assert_eq!(back.description.as_deref(), Some("Lab bench"));
+        assert!(!back.extra.contains_key("description"));
+    }
+
+    #[test]
     fn connection_store_with_agents_backward_compat() {
         // agents field missing from JSON should default to empty
         let json = r#"{"version":"2","children":[]}"#;
@@ -897,6 +922,7 @@ mod tests {
     #[test]
     fn saved_remote_agent_serde_round_trip() {
         let agent = SavedRemoteAgent {
+            description: None,
             extra: Default::default(),
             id: "agent-1".to_string(),
             name: "Pi Agent".to_string(),

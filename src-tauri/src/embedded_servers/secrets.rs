@@ -546,6 +546,7 @@ pub(crate) mod tests {
 
     pub(crate) fn ftp(id: &str, password: &str) -> EmbeddedServerConfig {
         EmbeddedServerConfig {
+            description: None,
             id: id.to_string(),
             name: format!("{id} name"),
             server_type: ServerType::Ftp,

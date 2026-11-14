@@ -99,6 +99,12 @@ pub struct EmbeddedServerConfig {
     pub id: String,
     /// User-friendly name.
     pub name: String,
+    /// Optional short description the user wrote (#5770), shown muted under
+    /// the name in the sidebar. Absent when unset, so older files round-trip
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// Protocol type.
     pub server_type: ServerType,
     /// Root directory to serve files from.
@@ -351,9 +357,27 @@ impl AtomicServerStats {
 mod tests {
     use super::*;
 
+    /// #5770: the description is optional and backward compatible.
+    #[test]
+    fn embedded_server_description_is_optional_and_round_trips() {
+        let json = r#"{"id":"s","name":"docs","serverType":"http","rootDirectory":"/tmp",
+            "bindHost":"127.0.0.1","port":8080}"#;
+        let mut config: EmbeddedServerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.description, None);
+        assert!(!serde_json::to_string(&config)
+            .unwrap()
+            .contains("description"));
+
+        config.description = Some("Firmware for the lab".to_string());
+        let back: EmbeddedServerConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(back.description.as_deref(), Some("Firmware for the lab"));
+    }
+
     #[test]
     fn embedded_server_config_serde_round_trip() {
         let config = EmbeddedServerConfig {
+            description: None,
             id: "srv-1".to_string(),
             name: "Test HTTP".to_string(),
             server_type: ServerType::Http,

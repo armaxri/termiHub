@@ -384,7 +384,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         existingAgentDef?.name ??
         existingConnection?.name ??
         (isAgentDefinitionMode ? "" : (existingAgent?.name ?? "")),
-      description: existingConnection?.description ?? "",
+      description:
+        existingConnection?.description ??
+        (isAgentDefinitionMode ? "" : (existingAgent?.description ?? "")),
       sourceFile: existingConnection?.sourceFile ?? null,
       persistent: existingAgentDef?.persistent ?? false,
       icon: existingAgentDef?.icon ?? existingConnection?.icon ?? null,
@@ -1102,6 +1104,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         const updated: RemoteAgentDefinition = {
           ...existingAgent,
           name,
+          description: normalizeItemDescription(description),
           config: agentConfig,
           agentSettings,
         };
@@ -1111,6 +1114,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         const newAgent: RemoteAgentDefinition = {
           id: newId("agent"),
           name,
+          description: normalizeItemDescription(description),
           config: agentConfig,
           agentSettings,
           isExpanded: false,
@@ -1833,7 +1837,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             </Field>
           )}
         />
-        {!isAgentTransportMode && !isAgentDefinitionMode && (
+        {/* A saved agent connection (definition) lives on the agent, whose
+            store cannot hold a description yet (#5769); the agent itself is
+            saved here and can (#5770). */}
+        {!isAgentDefinitionMode && (
           <Controller
             name="description"
             control={topLevelControl}
@@ -1851,7 +1858,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                   onChange={(e) => field.onChange(e.target.value)}
                   onBlur={field.onBlur}
                   maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-                  placeholder="What this connection is for"
+                  placeholder={
+                    isAgentTransportMode ? "What this agent is for" : "What this connection is for"
+                  }
                   data-testid="connection-editor-description-input"
                 />
               </Field>

@@ -81,21 +81,35 @@ class EmbeddedServicesUi(HarnessMixin):
         self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the New Service dialog")
 
     def fill_dialog(
-        self, name: str, *, proto: str = "http", root: str = "/tmp", port: Optional[int] = None
+        self,
+        name: str,
+        *,
+        proto: str = "http",
+        root: str = "/tmp",
+        port: Optional[int] = None,
+        description: Optional[str] = None,
     ) -> None:
         """Fill the (already-open) service dialog. Does not submit."""
         self.driver.type(self.DIALOG_NAME, name)
+        if description is not None:
+            self.driver.type("server-dialog-description", description)
         self.driver.click(f"server-dialog-proto-{proto}")
         self.driver.type(self.DIALOG_ROOT, root)
         if port is not None:
             self.driver.type(self.DIALOG_PORT, str(port))
 
     def create_server(
-        self, name: str, *, proto: str = "http", root: str = "/tmp", port: Optional[int] = None
+        self,
+        name: str,
+        *,
+        proto: str = "http",
+        root: str = "/tmp",
+        port: Optional[int] = None,
+        description: Optional[str] = None,
     ) -> dict[str, Any]:
         """Create a server through the dialog and return its persisted config."""
         self.open_new_dialog()
-        self.fill_dialog(name, proto=proto, root=root, port=port)
+        self.fill_dialog(name, proto=proto, root=root, port=port, description=description)
         self.driver.click(self.DIALOG_SAVE)
         return self.require_server(name)
 

@@ -1473,6 +1473,7 @@ mod tests {
     fn tftp_test_config(root: &Path, port: u16) -> EmbeddedServerConfig {
         use crate::embedded_servers::config::ServerType;
         EmbeddedServerConfig {
+            description: None,
             id: "test-tftp-shutdown".to_string(),
             name: "test".to_string(),
             server_type: ServerType::Tftp,

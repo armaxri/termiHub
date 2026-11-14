@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -104,6 +105,8 @@ function defaultTunnelType(type: "local" | "remote" | "dynamic"): TunnelType {
 /** Editing shape of a {@link TunnelConfig} (the fields the form owns). */
 interface TunnelFormState {
   name: string;
+  /** Short one-line description (#5770); `""` = none. */
+  description: string;
   sshConnectionId: string;
   tunnelType: TunnelType;
   host: RunLocation;
@@ -133,6 +136,7 @@ interface TunnelFormState {
 const tunnelFormSchema = z
   .object({
     name: z.string(),
+    description: z.string(),
     sshConnectionId: z.string(),
     tunnelType: z.custom<TunnelType>(),
     host: z.custom<RunLocation>(),
@@ -225,6 +229,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     schema: tunnelFormSchema,
     defaultValues: {
       name: existingTunnel?.name ?? "",
+      description: existingTunnel?.description ?? "",
       // A new tunnel opened from a connection's "Port Forwarding" section
       // (PROD-023) pre-selects that connection when it is a saved SSH one.
       sshConnectionId:
@@ -268,6 +273,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     if (existingTunnel) {
       const loaded: TunnelFormState = {
         name: existingTunnel.name,
+        description: existingTunnel.description ?? "",
         sshConnectionId: existingTunnel.sshConnectionId,
         tunnelType: existingTunnel.tunnelType,
         host: existingTunnel.host ?? THIS_COMPUTER,
@@ -354,6 +360,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     // Save refuses to save while the name is blank (UX-022, #5284), so this
     // fallback only ever guards the non-Save caller (chaining a hop).
     name: values.name.trim() || "Untitled Tunnel",
+    description: normalizeItemDescription(values.description),
     sshConnectionId: values.sshConnectionId,
     tunnelType: values.tunnelType,
     host: values.host,
@@ -579,6 +586,29 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                 onBlur={field.onBlur}
                 placeholder="e.g. Dev Database"
                 data-testid="tunnel-editor-name"
+              />
+            </Field>
+          )}
+        />
+
+        <Controller
+          name="description"
+          control={control}
+          render={({ field }) => (
+            <Field
+              label="Description (optional)"
+              htmlFor={`tunnel-description-${tabId}`}
+              hint="One short line shown under the name in the sidebar."
+            >
+              <Input
+                id={`tunnel-description-${tabId}`}
+                type="text"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                placeholder="What this tunnel is for"
+                data-testid="tunnel-editor-description"
               />
             </Field>
           )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
@@ -79,6 +80,7 @@ const serverFormSchema = z
   .object({
     id: z.string(),
     name: z.string(),
+    description: z.string().optional(),
     serverType: z.enum(["http", "ftp", "tftp"]),
     rootDirectory: z.string(),
     bindHost: z.string(),
@@ -211,7 +213,10 @@ export function EmbeddedServerDialog({
     if (!canSave || values.port === "") return;
     // Close only when the save actually succeeded; on failure the dialog stays
     // open (the sidebar surfaces the error via toast) so the user can retry.
-    const saved = await onSave({ ...values, port: values.port }, location);
+    const saved = await onSave(
+      { ...values, port: values.port, description: normalizeItemDescription(values.description) },
+      location
+    );
     if (saved) onOpenChange(false);
   };
 
@@ -311,6 +316,30 @@ export function EmbeddedServerDialog({
                   error={Boolean(errors["name"])}
                   data-testid="server-dialog-name"
                   autoFocus
+                />
+              </Field>
+            )}
+          />
+
+          {/* Description (#5770): one short line shown under the name. */}
+          <Controller
+            name="description"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label="Description (optional)"
+                htmlFor="server-dialog-description-input"
+                hint="One short line shown under the name in the sidebar."
+                className="server-dialog__label"
+              >
+                <Input
+                  id="server-dialog-description-input"
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                  placeholder="What this service is for"
+                  data-testid="server-dialog-description"
                 />
               </Field>
             )}

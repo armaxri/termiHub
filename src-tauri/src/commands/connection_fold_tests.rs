@@ -156,6 +156,7 @@ impl Harness {
         self.connections
             .replace(Vec::new(), vec![connection(SENTINEL, None)]);
         self.agents.reflect_saved_agents(vec![SavedAgentSeed {
+            description: None,
             id: SENTINEL.to_string(),
             name: SENTINEL.to_string(),
             config: json!({}),

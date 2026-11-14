@@ -32,8 +32,16 @@ function parentOf(value: string | null | undefined): string | null {
  * agent in the Remote Agents search even when none of its saved connections
  * match (#2485).
  */
-export function agentNameMatchesQuery(agentName: string, normalizedQuery: string): boolean {
-  return textFieldsMatchQuery([agentName], normalizedQuery);
+export function agentNameMatchesQuery(
+  agentName: string,
+  normalizedQuery: string,
+  description?: string
+): boolean {
+  // The agent's own description (#5770) counts as part of its label.
+  return textFieldsMatchQuery(
+    description ? [agentName, description] : [agentName],
+    normalizedQuery
+  );
 }
 
 /**

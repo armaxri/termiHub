@@ -80,6 +80,7 @@ impl Machine {
     fn save_agent(&self, name: &str, credential_ref: &str) {
         self.connections
             .save_agent(SavedRemoteAgent {
+                description: None,
                 extra: Default::default(),
                 id: name.to_string(),
                 name: name.to_string(),

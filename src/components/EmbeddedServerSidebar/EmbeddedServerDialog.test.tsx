@@ -110,6 +110,30 @@ describe("EmbeddedServerDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("saves a one-line description of at most 80 characters (#5770)", async () => {
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
+    await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+    const desc = document.querySelector(
+      '[data-testid="server-dialog-description"]'
+    ) as HTMLInputElement;
+    expect(desc.getAttribute("maxlength")).toBe("80");
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
+      "Firmware"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
+      "/srv/fw"
+    );
+    typeInto(desc, "  Lab   firmware ");
+    await act(async () => {
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onSave.mock.calls[0][0].description).toBe("Lab firmware");
+  });
+
   it("selecting the 0.0.0.0 bind address opens the LAN security warning", async () => {
     await render(<EmbeddedServerDialog {...baseProps} />);
     const bind = document.querySelector(

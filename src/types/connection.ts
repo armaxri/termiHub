@@ -181,6 +181,11 @@ export type { AgentCapabilities };
 export interface RemoteAgentDefinition {
   id: string;
   name: string;
+  /**
+   * The user's short description (#5770), shown muted under the name in the
+   * Remote Agents tree. One line, at most 80 characters; absent = none.
+   */
+  description?: string;
   config: RemoteAgentConfig;
   agentSettings: AgentSettings;
   isExpanded: boolean;

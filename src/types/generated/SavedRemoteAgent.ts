@@ -5,7 +5,13 @@ import type { RemoteAgentConfig } from "./RemoteAgentConfig";
 /**
  * A saved remote agent definition (SSH transport config only, no ephemeral state).
  */
-export type SavedRemoteAgent = { id: string, name: string, config: RemoteAgentConfig, 
+export type SavedRemoteAgent = { id: string, name: string, 
+/**
+ * Optional short description the user wrote (#5770), shown muted under
+ * the name in the sidebar. Absent when unset, so older files round-trip
+ * unchanged.
+ */
+description?: string, config: RemoteAgentConfig, 
 /**
  * Runtime preferences sent to the agent on startup and on live updates.
  */

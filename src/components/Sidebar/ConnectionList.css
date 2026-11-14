@@ -169,6 +169,18 @@
   min-width: 0;
 }
 
+/* An agent's description (#5770): one muted line under its name, indented to
+   the name past the chevron, dot and server icon. */
+.connection-list__group-description {
+  display: block;
+  overflow: hidden;
+  padding-left: calc(var(--spacing-xl) + var(--spacing-md));
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .connection-list__group-row .connection-list__group-toggle {
   flex: 1 1 auto;
 }

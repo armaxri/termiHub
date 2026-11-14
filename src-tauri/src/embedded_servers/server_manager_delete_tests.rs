@@ -19,6 +19,7 @@ const CLOSE_DEADLINE: Duration = Duration::from_secs(5);
 
 fn config(id: &str, server_type: ServerType, root: &std::path::Path) -> EmbeddedServerConfig {
     EmbeddedServerConfig {
+        description: None,
         id: id.to_string(),
         name: format!("{id} server"),
         server_type,

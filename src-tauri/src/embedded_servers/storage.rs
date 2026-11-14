@@ -207,6 +207,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
         let server = |id: &str| EmbeddedServerConfig {
+            description: None,
             id: id.to_string(),
             name: id.to_string(),
             server_type: ServerType::Ftp,
@@ -288,6 +289,7 @@ mod tests {
             version: "1".to_string(),
             extra: Default::default(),
             servers: vec![EmbeddedServerConfig {
+                description: None,
                 id: "srv-1".to_string(),
                 name: "docs".to_string(),
                 server_type: ServerType::Http,
@@ -379,6 +381,7 @@ mod tests {
             version: "1".to_string(),
             extra: Default::default(),
             servers: vec![EmbeddedServerConfig {
+                description: None,
                 id: "srv-1".to_string(),
                 name: "docs".to_string(),
                 server_type: ServerType::Http,

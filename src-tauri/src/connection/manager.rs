@@ -2093,6 +2093,7 @@ mod tests {
         save_password: Option<bool>,
     ) -> SavedRemoteAgent {
         SavedRemoteAgent {
+            description: None,
             extra: Default::default(),
             id: id.to_string(),
             name: "Agent".to_string(),

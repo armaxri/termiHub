@@ -15,8 +15,9 @@ description and markers only; the settings must be in its tooltip.
 
 #5770 extends the grade to the other lists: a tunnel (its forwarding, SSH
 connection and host), a service (its protocol, address and folder), a
-workspace (its tab count) and a remote agent (its address). None of them is
-started or connected; the rows are graded at rest.
+workspace (its tab count) and a remote agent (its address), each with a
+description. None of them is started or connected; the rows are graded at
+rest.
 """
 
 from __future__ import annotations
@@ -226,9 +227,10 @@ class TestProductRunRowsNames(
         t = self.tag
         with self.step(
             "rows-names.tunnel",
-            "A tunnel row shows its name only; the forwarding, SSH connection and host are in "
-            "the tooltip",
-            expect="the Tunnels sidebar: 'Rows tunnel …' with a grey dot and its name; no "
+            "A tunnel row shows its name and description; the forwarding, SSH connection and "
+            "host are in the tooltip",
+            expect="the Tunnels sidebar: 'Rows tunnel …' with a grey dot and 'Reaches the DB' "
+            "muted under the name; no "
             "'Local' badge, no '127.0.0.1:…' mapping, no 'via …' and no 'this computer' on "
             "the row (#5770)",
         ):
@@ -244,6 +246,7 @@ class TestProductRunRowsNames(
             self.driver.click("tunnel-new-btn")
             self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
             self.driver.type("tunnel-editor-name", name)
+            self.driver.type("tunnel-editor-description", "Reaches the DB")
             self.wait(
                 lambda: self._try_select("tunnel-editor-ssh-connection", ssh),
                 what="the SSH connection option",
@@ -266,33 +269,38 @@ class TestProductRunRowsNames(
             self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
             self._grade_row(
                 f"tunnel-item-{tunnel['id']}",
-                [name],
+                [name, "Reaches the DB"],
                 [
                     "Local · 127.0.0.1:18577 → db.internal:5432",
                     f"Via {ssh}",
                     "Hosted on this computer",
                 ],
             )
+            desc = self.driver.get_text(f"tunnel-description-{tunnel['id']}").strip()
+            assert desc == "Reaches the DB", f"the tunnel description reads {desc!r}"
             self.shot(label="tunnel")
 
     def test_60_service_row(self):
         t = self.tag
         with self.step(
             "rows-names.service",
-            "A service row shows its name only; the protocol, address and folder are in the "
-            "tooltip, and Run on is in the editor",
-            expect="the Services sidebar: 'Rows service …' with a grey dot and its name; no "
+            "A service row shows its name and description; the protocol, address and folder "
+            "are in the tooltip, and Run on is in the editor",
+            expect="the Services sidebar: 'Rows service …' with a grey dot and 'Lab firmware' "
+            "muted under the name; no "
             "'HTTP' badge, no ':port → folder' line and no 'Run on' selector on the row "
             "(#5770)",
         ):
             self.require("rows-names.items")
             name = f"Rows service {t}"
             port = self.free_port()
-            server = self.create_server(name, proto="http", root="/tmp", port=port)
+            server = self.create_server(
+                name, proto="http", root="/tmp", port=port, description="Lab firmware"
+            )
             row = f"server-item-{server['id']}"
             self.wait(lambda: self.driver.exists(row), what="the service row")
             self._grade_row(
-                row, [name], [f"HTTP · http://127.0.0.1:{port}", "Serves /tmp"]
+                row, [name, "Lab firmware"], [f"HTTP · http://127.0.0.1:{port}", "Serves /tmp"]
             )
             assert not self.driver.exists(f"server-runloc-{server['id']}"), (
                 "the Run on selector is still on the row"
@@ -339,20 +347,25 @@ class TestProductRunRowsNames(
         t = self.tag
         with self.step(
             "rows-names.agent",
-            "A remote agent row shows its name, state dot and Connect; its address is in the "
-            "tooltip",
+            "A remote agent row shows its name, description, state dot and Connect; its "
+            "address is in the tooltip",
             expect="the Connections sidebar, Remote Agents: 'Rows agent …' with a grey dot, "
-            "its name and Connect; no 'rows@127.0.0.1:22' and no version on the row (#5770)",
+            "its name, Connect and 'Lab bench' muted under it; no 'rows@127.0.0.1:22' and no "
+            "version on the row (#5770)",
         ):
             self.require("rows-names.items")
             name = f"Rows agent {t}"
-            agent = self.create_remote_agent(name, host="127.0.0.1", port=22, username="rows")
+            agent = self.create_remote_agent(
+                name, host="127.0.0.1", port=22, username="rows", description="Lab bench"
+            )
             header = self.agent_header_testid(agent["id"])
             self.wait(lambda: self.driver.exists(header), what="the agent header")
             text = self.row_text(header)
             tip = self.driver.get_attribute(header, "title") or ""
             self.evidence(f"agent header {text!r}; tooltip {tip!r}")
-            left = row_leftover_text(text, [name, "Connect"])
+            left = row_leftover_text(text, [name, "Connect", "Lab bench"])
             assert left == "", f"the agent row shows settings text: {left!r}"
             assert "rows@127.0.0.1:22" in tip, f"the address is not in the tooltip {tip!r}"
+            desc = self.driver.get_text(f"agent-description-{agent['id']}").strip()
+            assert desc == "Lab bench", f"the agent description reads {desc!r}"
             self.shot(label="agent")
