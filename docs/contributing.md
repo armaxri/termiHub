@@ -2446,7 +2446,7 @@ password exist as the GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and
 ### macOS Signing Identity
 
 There is no Apple Developer account (maintainer decision, [#5545](https://github.com/armaxri/termiHub/issues/5545)),
-so there is no Developer ID and no notarization. Release builds are signed with a **self-signed
+so there is no Developer ID and no notarization. Once the one-time setup below is done, release builds are signed with a **self-signed
 code-signing certificate** that the project holds itself. It changes nothing for Gatekeeper (the
 "unverified developer" step on first install stays, see the release notes); what it fixes is
 the **keychain**.

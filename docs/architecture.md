@@ -1643,7 +1643,7 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
   - **Items another build wrote** (#5514, #5527). On macOS a keychain item trusts the app that
     wrote it by its designated requirement (DR). An ad-hoc signed build's DR is its build hash, so
     every ad-hoc build (each dev rebuild, and every release before #5545) is a stranger to the
-    items of the one before. Release builds are signed with the project's self-signed identity
+    items of the one before. Once it is set up, release builds are signed with the project's self-signed identity
     (#5545; [Contributing → macOS Signing Identity](contributing.md#macos-signing-identity)),
     whose DR names the certificate and stays the same across updates, so an updated release reads
     its predecessor's items silently. A stranger's read is `errSecAuthFailed`, or an access

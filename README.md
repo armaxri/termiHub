@@ -22,7 +22,7 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 
 Download the latest release for your platform from the [GitHub Releases page](https://github.com/armaxri/termiHub/releases). Release assets follow the naming pattern `termiHub-<version>-<platform>.<ext>` (for example, `termiHub-0.1.0-macos-arm64.dmg`).
 
-> **Beta note:** termiHub has no Apple Developer ID and no Windows Authenticode certificate. The macOS app is signed with termiHub's own (self-signed) certificate, the Windows and Linux binaries are unsigned. macOS Gatekeeper and Windows SmartScreen will warn on first launch — the per-platform steps below explain how to proceed.
+> **Beta note:** termiHub has no Apple Developer ID and no Windows Authenticode certificate, so the binaries are not signed by Apple or a Windows certificate authority. macOS Gatekeeper and Windows SmartScreen will warn on first launch — the per-platform steps below explain how to proceed.
 
 ### macOS (Apple Silicon & Intel)
 
@@ -38,7 +38,7 @@ Download the latest release for your platform from the [GitHub Releases page](ht
 
    macOS remembers the approval, so later launches work normally.
 
-4. **Saved passwords and the macOS keychain:** releases are signed with the same termiHub certificate every time, so passwords termiHub saved in the macOS keychain stay readable after an update. If macOS does ask whether termiHub may use a keychain item (for example the first time after switching from an older, ad-hoc signed release), choose **Always Allow**. To avoid OS keychain prompts altogether, use the master-password credential store instead (Settings → Security).
+4. **Saved passwords and the macOS keychain:** once release builds carry termiHub's own signing identity, passwords termiHub saved in the macOS keychain stay readable after an update; until then, macOS may ask again after an update (see [macOS Signing Identity](docs/contributing.md#macos-signing-identity)). If macOS asks whether termiHub may use a keychain item, choose **Always Allow**. To avoid OS keychain prompts altogether, use the master-password credential store instead (Settings → Security).
 
 ### Windows x64
 
