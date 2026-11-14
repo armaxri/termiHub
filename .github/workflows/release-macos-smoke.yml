@@ -10,7 +10,8 @@ name: Release macOS Smoke
 #   2. asserts the image keeps Tauri's drag-to-install layout (one .app and an
 #      Applications link, scripts/internal/macos-dmg-layout.sh check, #4361),
 #      then mounts it with hdiutil and copies termiHub.app out,
-#   3. asserts the bundle is consistently ad-hoc signed
+#   3. asserts the bundle is consistently signed (self-signed identity, #5545,
+#      or ad hoc before it is set up)
 #      (`codesign --verify --deep --strict`) — the "damaged" guard (PKG-005),
 #   4. asserts Info.plist carries the release version and the main executable is
 #      built for the runner's architecture,
@@ -40,8 +41,9 @@ name: Release macOS Smoke
 # retired) and asserts `uname -m` is x86_64 so it cannot silently run under
 # Rosetta on an arm64 host.
 #
-# Unsigned beta (maintainer decision): the bundle is ad-hoc signed, not Developer
-# ID signed or notarized, so Gatekeeper (`spctl`) always rejects it. The verify
+# No Apple Developer account (maintainer decision): the bundle is self-signed (or
+# ad hoc), not Developer ID signed or notarized, so Gatekeeper (`spctl`) always
+# rejects it. The verify
 # step logs spctl's verdict; the Gatekeeper step asserts that rejection on a
 # quarantined copy, and that the README's workaround then lets the app start.
 #
@@ -226,7 +228,7 @@ jobs:
 
           echo "=== Gatekeeper assessment (advisory: unsigned beta, no Developer ID) ==="
           if ! spctl --assess --type exec --verbose=2 "$APP" 2>&1; then
-            echo "::notice::spctl rejected the ad-hoc bundle (expected without a Developer ID)"
+            echo "::notice::spctl rejected the bundle (expected without a Developer ID)"
           fi
 
           PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"

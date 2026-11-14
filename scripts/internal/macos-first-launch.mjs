@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// The single source of the macOS first-launch steps for the unsigned beta (#4279).
+// The single source of the macOS first-launch steps for the beta (#4279).
 //
-// v0.x ships unsigned (no Apple Developer ID / notarization), so every macOS user
+// v0.x has no Apple Developer ID / notarization (self-signed or ad hoc, #5545), so every macOS user
 // has to approve the app once on first launch. macOS 15 (Sequoia) removed the
 // right-click → Open override for unnotarized apps: the approval now lives in
 // System Settings → Privacy & Security → Open Anyway. The `xattr` one-liner
@@ -49,11 +49,11 @@ export function renderReleaseBody() {
     "",
     "---",
     "",
-    "### macOS — unsigned public beta (one-time approval)",
+    "### macOS — one-time approval (no Apple Developer ID)",
     "",
-    "termiHub is an **unsigned public beta** (no Apple Developer ID / notarization yet).",
-    "The app is ad-hoc signed so it runs, but on first launch macOS warns that the",
-    "developer cannot be verified. Approve it once, either way:",
+    "termiHub is a public beta without an Apple Developer ID or notarization (no Apple",
+    "Developer account), so on first launch macOS warns that the developer cannot be",
+    "verified. Approve it once, either way:",
     "",
     FIRST_LAUNCH_STEPS,
     "",
