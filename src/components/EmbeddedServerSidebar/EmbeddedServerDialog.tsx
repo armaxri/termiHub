@@ -23,6 +23,10 @@ import {
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { frontendWarn } from "@/utils/frontendLog";
+import { RunLocationSelect } from "@/components/RunLocationSelect";
+import type { RemoteAgentDefinition } from "@/types/connection";
+import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
+import { t } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 
 interface Props {
@@ -31,10 +35,18 @@ interface Props {
   /** Existing config to edit, or null for a new server. */
   config: EmbeddedServerConfig | null;
   /**
-   * Persist the config. Resolve `true` when the save succeeded (the dialog
-   * closes) or `false` on failure (the dialog stays open so the user can retry).
+   * Persist the config and the chosen run-location. Resolve `true` when the
+   * save succeeded (the dialog closes) or `false` on failure (the dialog stays
+   * open so the user can retry).
    */
-  onSave: (config: EmbeddedServerConfig) => boolean | Promise<boolean>;
+  onSave: (config: EmbeddedServerConfig, runLocation: RunLocation) => boolean | Promise<boolean>;
+  /** Agents offered as run targets in the "Run on" selector (#2191). */
+  agents?: RemoteAgentDefinition[];
+  /**
+   * The server's current run-location. Chosen here rather than on the row
+   * (#5770): a row shows names, not settings.
+   */
+  runLocation?: RunLocation;
 }
 
 /**
@@ -121,8 +133,16 @@ function defaultConfig(): ServerFormState {
  * driven imperatively through `setValue` because they touch several fields at
  * once, matching the previous hand-rolled behavior exactly.
  */
-export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Props) {
+export function EmbeddedServerDialog({
+  open,
+  onOpenChange,
+  config,
+  onSave,
+  agents = [],
+  runLocation = THIS_COMPUTER,
+}: Props) {
   const [lanWarning, setLanWarning] = useState(false);
+  const [location, setLocation] = useState<RunLocation>(runLocation);
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
     { name: "Loopback", addr: "127.0.0.1" },
     { name: "All interfaces", addr: "0.0.0.0" },
@@ -146,6 +166,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
   useEffect(() => {
     if (open) {
       reset(config ? { ...config } : defaultConfig());
+      setLocation(runLocation);
       setLanWarning(false);
       listNetworkInterfaces()
         .then(setInterfaces)
@@ -157,7 +178,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           );
         });
     }
-  }, [open, config, reset]);
+  }, [open, config, reset, runLocation]);
 
   const handleProtocolChange = (type: ServerType) => {
     const cur = getValues();
@@ -190,7 +211,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     if (!canSave || values.port === "") return;
     // Close only when the save actually succeeded; on failure the dialog stays
     // open (the sidebar surfaces the error via toast) so the user can retry.
-    const saved = await onSave({ ...values, port: values.port });
+    const saved = await onSave({ ...values, port: values.port }, location);
     if (saved) onOpenChange(false);
   };
 
@@ -335,6 +356,18 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
               </Field>
             )}
           />
+
+          {/* Run on (#2191): this computer or an agent. */}
+          <div className="server-dialog__label">
+            <span id="server-dialog-runloc-label">{t("server.editor.runOn")}</span>
+            <RunLocationSelect
+              value={location}
+              agents={agents}
+              onChange={setLocation}
+              aria-label={t("server.editor.runOn")}
+              data-testid="server-dialog-runloc"
+            />
+          </div>
 
           {/* Network */}
           <fieldset className="server-dialog__fieldset">

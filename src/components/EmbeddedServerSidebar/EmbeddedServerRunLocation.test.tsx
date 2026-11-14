@@ -1,7 +1,9 @@
 /**
  * Wiring tests for the per-server "Run on" run-location selector (#2191):
- * picking an agent records the preference on the desktop backend and mirrors it
- * in the run-location store, and a backend rejection rolls the mirror back.
+ * picking an agent in the editor and saving records the preference on the
+ * desktop backend and mirrors it in the run-location store, and a backend
+ * rejection rolls the mirror back. The selector lives in the editor, not on the
+ * row (#5770): a row shows names, not settings.
  *
  * The Radix-backed selector is replaced with a trivial harness so the wiring is
  * tested without driving Radix's portal/pointer machinery in jsdom.
@@ -110,6 +112,23 @@ function seedStore() {
   });
 }
 
+/** Open the editor for srv-1, pick the agent and save. */
+async function pickAgentInEditorAndSave() {
+  act(() => {
+    (document.querySelector('[data-testid="server-edit-srv-1"]') as HTMLButtonElement).click();
+  });
+  await flush();
+  const picker = document.querySelector('[data-testid="server-dialog-runloc"]');
+  expect(picker?.getAttribute("data-value")).toBe("this");
+  act(() => {
+    (picker!.querySelector('[data-testid="pick-agent"]') as HTMLButtonElement).click();
+  });
+  act(() => {
+    (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
+  });
+  await flush();
+}
+
 describe("EmbeddedServer run-location wiring", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -125,6 +144,20 @@ describe("EmbeddedServer run-location wiring", () => {
     vi.clearAllMocks();
   });
 
+  it("has no Run on selector on the row", () => {
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <EmbeddedServerSidebar />
+        </TooltipProvider>
+      )
+    );
+    expect(document.querySelector('[data-testid="server-runloc-srv-1"]')).toBeNull();
+    expect(document.querySelector('[data-testid="server-item-srv-1"]')?.textContent).not.toContain(
+      "Run on"
+    );
+  });
+
   it("records an agent choice on the backend and mirrors it in the store", async () => {
     act(() =>
       root.render(
@@ -133,10 +166,7 @@ describe("EmbeddedServer run-location wiring", () => {
         </TooltipProvider>
       )
     );
-    act(() => {
-      (document.querySelector('[data-testid="pick-agent"]') as HTMLButtonElement).click();
-    });
-    await flush();
+    await pickAgentInEditorAndSave();
 
     expect(setEmbeddedServerRunLocation).toHaveBeenCalledWith("srv-1", {
       kind: "agent",
@@ -159,10 +189,7 @@ describe("EmbeddedServer run-location wiring", () => {
         </TooltipProvider>
       )
     );
-    act(() => {
-      (document.querySelector('[data-testid="pick-agent"]') as HTMLButtonElement).click();
-    });
-    await flush();
+    await pickAgentInEditorAndSave();
 
     expect(useRunLocationStore.getState().serverLocations["srv-1"]).toEqual({
       kind: "thisComputer",

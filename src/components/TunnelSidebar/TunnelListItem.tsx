@@ -8,8 +8,6 @@ import {
   RotateCw,
   Info,
   AlertTriangle,
-  Monitor,
-  Server,
   Link2,
 } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
@@ -17,8 +15,6 @@ import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem"
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
-import { formatBytes, formatRate } from "@/utils/formatters";
-import { tunnelPortMapping } from "@/utils/tunnelSummary";
 import { useByteRate } from "@/hooks/useByteRate";
 import { connectionStateLabel } from "@/utils/statusLabel";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -30,6 +26,7 @@ import {
 } from "@/utils/tunnelHost";
 import { pairStatusLabel, type PairStatus } from "@/utils/tunnelChain";
 import { t } from "@/i18n/catalog";
+import { tunnelRowTooltip } from "./tunnelRowTooltip";
 
 interface TunnelListItemProps {
   tunnel: TunnelConfig;
@@ -91,10 +88,11 @@ function statusTone(status: TunnelStatus): SidebarStatusTone {
 
 /**
  * A single SSH tunnel entry in the Tunnels sidebar. Composes the shared
- * {@link SidebarListItem} shell (status dot / badge / name / actions / details)
- * so tunnel rows share one structure and token'd styling with the other
- * management sidebars; only the stats / error / reconnecting detail lines stay
- * tunnel-specific.
+ * {@link SidebarListItem} shell (status dot / name / actions / details) so
+ * tunnel rows share one structure and token'd styling with the other
+ * management sidebars. The row shows the name and only the lines that need
+ * attention (an error, a deleted SSH connection, a degraded chain); the
+ * forwarding, host and traffic are in its tooltip (#5770).
  */
 export function TunnelListItem({
   tunnel,
@@ -142,8 +140,6 @@ export function TunnelListItem({
     isActive && state?.reachableFrom
       ? reportedReachability(state.reachableFrom, hostBadge.label)
       : null;
-  const typeLabel =
-    tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
   /** Surface the persisted last-error message (View last error affordance). */
   const handleViewError = () => {
@@ -156,6 +152,27 @@ export function TunnelListItem({
     !nested && pairStatus && pairStatus !== "none" ? pairStatusLabel(pairStatus) : null;
   const pairWarn = pairStatus === "degraded" || pairStatus === "down";
   const showDegradedFix = nested && pairStatus === "degraded";
+  // Names, not settings (#5770): the forwarding, the SSH connection, the host,
+  // the traffic and a healthy reachability or pair note go in the tooltip;
+  // only what needs attention stays on the row.
+  const hasDetails =
+    !!reach?.warn ||
+    isMissingConnection ||
+    (isError && !!lastError) ||
+    (status === "reconnecting" && !!lastError) ||
+    (!!pairLabel && pairWarn) ||
+    (companionRedundant && !!onRemoveCompanion) ||
+    showDegradedFix;
+  const tooltip = tunnelRowTooltip(tunnel, {
+    sshLabel,
+    host: hostBadge,
+    stats: isActive ? state?.stats : undefined,
+    upRate,
+    downRate,
+    reach: reach && !reach.warn ? reach.label : null,
+    boundAddress: state?.boundAddress,
+    pair: pairLabel && !pairWarn ? pairLabel : null,
+  });
 
   return (
     <SidebarListItem
@@ -187,8 +204,8 @@ export function TunnelListItem({
           testId={`tunnel-status-${tunnel.id}`}
         />
       }
-      badge={typeLabel}
-      badgeTestId={`tunnel-type-${tunnel.id}`}
+      tooltip={tooltip}
+      tooltipTestId={`tunnel-tooltip-${tunnel.id}`}
       actions={
         <>
           {status === "connected" && (
@@ -322,155 +339,117 @@ export function TunnelListItem({
         </>
       }
       details={
-        <>
-          <span>{tunnelPortMapping(tunnel)}</span>
-          <span>via {sshLabel}</span>
-          <span
-            className="tunnel-item__host"
-            data-testid={`tunnel-host-${tunnel.id}`}
-            data-on-agent={hostBadge.onAgent}
-            title={
-              hostBadge.onAgent ? `Hosted on agent ${hostBadge.label}` : "Hosted on this computer"
-            }
-          >
-            {hostBadge.onAgent ? (
-              <Server size={11} className="tunnel-item__host-icon" />
-            ) : (
-              <Monitor size={11} className="tunnel-item__host-icon" />
-            )}
-            <span className="tunnel-item__host-label">{hostBadge.label}</span>
-          </span>
-          {isActive && state?.stats && (
-            <div className="tunnel-item__stats" data-testid={`tunnel-stats-${tunnel.id}`}>
-              <span data-testid={`tunnel-up-stat-${tunnel.id}`}>
-                ↑ {formatBytes(state.stats.bytesSent)}
-                {formatRate(upRate) && (
-                  <span className="tunnel-item__rate" title="Current upload rate">
-                    {` · ${formatRate(upRate)}`}
-                  </span>
-                )}
-              </span>
-              <span data-testid={`tunnel-down-stat-${tunnel.id}`}>
-                ↓ {formatBytes(state.stats.bytesReceived)}
-                {formatRate(downRate) && (
-                  <span className="tunnel-item__rate" title="Current download rate">
-                    {` · ${formatRate(downRate)}`}
-                  </span>
-                )}
-              </span>
+        hasDetails ? (
+          <>
+            {reach?.warn && (
               <span
-                data-testid={`tunnel-conn-stat-${tunnel.id}`}
-                title="Active / total connections"
+                className="tunnel-item__reach"
+                data-testid={`tunnel-reach-${tunnel.id}`}
+                data-warn={reach.warn}
+                title={
+                  state?.boundAddress ? `Bound ${state.boundAddress} — ${reach.label}` : reach.label
+                }
               >
-                {state.stats.activeConnections} / {state.stats.totalConnections} conn
+                <AlertTriangle size={11} className="tunnel-item__reach-icon" />
+                <span className="tunnel-item__reach-text">{reach.label}</span>
               </span>
-            </div>
-          )}
-          {reach && (
-            <span
-              className="tunnel-item__reach"
-              data-testid={`tunnel-reach-${tunnel.id}`}
-              data-warn={reach.warn}
-              title={
-                state?.boundAddress ? `Bound ${state.boundAddress} — ${reach.label}` : reach.label
-              }
-            >
-              {reach.warn && <AlertTriangle size={11} className="tunnel-item__reach-icon" />}
-              <span className="tunnel-item__reach-text">{reach.label}</span>
-            </span>
-          )}
-          {isMissingConnection && (
-            <span
-              className="tunnel-item__missing-connection"
-              data-testid={`tunnel-missing-connection-${tunnel.id}`}
-            >
-              <AlertTriangle size={11} className="tunnel-item__missing-connection-icon" />
-              <span>{t("tunnel.missingConnection.detail")}</span>
-              <button
-                type="button"
-                className="tunnel-item__inline-action"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(tunnel.id);
-                }}
-                data-testid={`tunnel-choose-connection-${tunnel.id}`}
+            )}
+            {isMissingConnection && (
+              <span
+                className="tunnel-item__missing-connection"
+                data-testid={`tunnel-missing-connection-${tunnel.id}`}
               >
-                {t("tunnel.missingConnection.choose")}
-              </button>
-            </span>
-          )}
-          {isError && lastError && (
-            <span className="tunnel-item__error" title={lastError}>
-              <AlertTriangle size={12} className="tunnel-item__error-icon" />
-              <span className="tunnel-item__error-text">{lastError}</span>
-            </span>
-          )}
-          {status === "reconnecting" && lastError && (
-            <span className="tunnel-item__reconnecting" title={lastError}>
-              <RotateCw size={12} className="tunnel-item__reconnecting-icon" />
-              <span className="tunnel-item__reconnecting-text">{lastError}</span>
-            </span>
-          )}
-          {pairLabel && (
-            <span
-              className="tunnel-item__pair"
-              data-testid={`tunnel-pair-status-${tunnel.id}`}
-              data-warn={pairWarn}
-            >
-              {pairWarn && <AlertTriangle size={11} className="tunnel-item__pair-icon" />}
-              <Link2 size={11} className="tunnel-item__pair-icon" aria-hidden="true" />
-              <span>{pairLabel}</span>
-            </span>
-          )}
-          {companionRedundant && onRemoveCompanion && (
-            <span className="tunnel-item__redundant" data-testid={`tunnel-redundant-${tunnel.id}`}>
-              <AlertTriangle size={11} className="tunnel-item__redundant-icon" />
-              <span>Linked hop is now redundant.</span>
-              <button
-                type="button"
-                className="tunnel-item__inline-action"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemoveCompanion();
-                }}
-                data-testid={`tunnel-remove-redundant-${tunnel.id}`}
+                <AlertTriangle size={11} className="tunnel-item__missing-connection-icon" />
+                <span>{t("tunnel.missingConnection.detail")}</span>
+                <button
+                  type="button"
+                  className="tunnel-item__inline-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(tunnel.id);
+                  }}
+                  data-testid={`tunnel-choose-connection-${tunnel.id}`}
+                >
+                  {t("tunnel.missingConnection.choose")}
+                </button>
+              </span>
+            )}
+            {isError && lastError && (
+              <span className="tunnel-item__error" title={lastError}>
+                <AlertTriangle size={12} className="tunnel-item__error-icon" />
+                <span className="tunnel-item__error-text">{lastError}</span>
+              </span>
+            )}
+            {status === "reconnecting" && lastError && (
+              <span className="tunnel-item__reconnecting" title={lastError}>
+                <RotateCw size={12} className="tunnel-item__reconnecting-icon" />
+                <span className="tunnel-item__reconnecting-text">{lastError}</span>
+              </span>
+            )}
+            {pairLabel && pairWarn && (
+              <span
+                className="tunnel-item__pair"
+                data-testid={`tunnel-pair-status-${tunnel.id}`}
+                data-warn={pairWarn}
               >
-                Remove hop
-              </button>
-            </span>
-          )}
-          {showDegradedFix && (
-            <span
-              className="tunnel-item__degraded-fix"
-              data-testid={`tunnel-degraded-fix-${tunnel.id}`}
-            >
-              <AlertTriangle size={11} className="tunnel-item__degraded-icon" />
-              <span>Hop down — localhost is unreachable.</span>
-              <button
-                type="button"
-                className="tunnel-item__inline-action"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  return onStart(tunnel.id);
-                }}
-                data-testid={`tunnel-degraded-retry-${tunnel.id}`}
+                <AlertTriangle size={11} className="tunnel-item__pair-icon" />
+                <Link2 size={11} className="tunnel-item__pair-icon" aria-hidden="true" />
+                <span>{pairLabel}</span>
+              </span>
+            )}
+            {companionRedundant && onRemoveCompanion && (
+              <span
+                className="tunnel-item__redundant"
+                data-testid={`tunnel-redundant-${tunnel.id}`}
               >
-                Retry
-              </button>
-              <button
-                type="button"
-                className="tunnel-item__inline-action"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(tunnel.id);
-                }}
-                data-testid={`tunnel-degraded-port-${tunnel.id}`}
+                <AlertTriangle size={11} className="tunnel-item__redundant-icon" />
+                <span>Linked hop is now redundant.</span>
+                <button
+                  type="button"
+                  className="tunnel-item__inline-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveCompanion();
+                  }}
+                  data-testid={`tunnel-remove-redundant-${tunnel.id}`}
+                >
+                  Remove hop
+                </button>
+              </span>
+            )}
+            {showDegradedFix && (
+              <span
+                className="tunnel-item__degraded-fix"
+                data-testid={`tunnel-degraded-fix-${tunnel.id}`}
               >
-                Use a different local port
-              </button>
-            </span>
-          )}
-        </>
+                <AlertTriangle size={11} className="tunnel-item__degraded-icon" />
+                <span>Hop down — localhost is unreachable.</span>
+                <button
+                  type="button"
+                  className="tunnel-item__inline-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    return onStart(tunnel.id);
+                  }}
+                  data-testid={`tunnel-degraded-retry-${tunnel.id}`}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  className="tunnel-item__inline-action"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(tunnel.id);
+                  }}
+                  data-testid={`tunnel-degraded-port-${tunnel.id}`}
+                >
+                  Use a different local port
+                </button>
+              </span>
+            )}
+          </>
+        ) : undefined
       }
     />
   );

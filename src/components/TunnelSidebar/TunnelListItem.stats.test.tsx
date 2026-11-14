@@ -2,7 +2,8 @@
  * Stats-line tests for the tunnel list item (PROD-037): an active tunnel surfaces
  * both the live active-connection count and the cumulative total-connection count
  * the stats already carry. Display-only — the counts flow straight from
- * `state.stats`; nothing here changes how they are collected.
+ * `state.stats`; nothing here changes how they are collected. Since #5770 the
+ * traffic is in the row's tooltip (its accessible description), not on the row.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -58,8 +59,17 @@ async function renderItem(tunnel: TunnelConfig, state: TunnelState): Promise<voi
   await flushAsync();
 }
 
-function connStat(): HTMLElement | null {
-  return container.querySelector<HTMLElement>('[data-testid="tunnel-conn-stat-tun-1"]');
+function rowTooltip(): string {
+  return (
+    container
+      .querySelector<HTMLElement>('[data-testid="tunnel-item-tun-1"]')
+      ?.getAttribute("aria-description") ?? ""
+  );
+}
+
+/** The traffic part of the tooltip, or `null` without one. */
+function connStat(): string | null {
+  return rowTooltip().match(/\d+ \/ \d+ connections/)?.[0] ?? null;
 }
 
 setupAgentsRegion();
@@ -82,9 +92,9 @@ describe("TunnelListItem — connection stats (PROD-037)", () => {
       TUNNEL,
       stateWith({ bytesSent: 0, bytesReceived: 0, activeConnections: 2, totalConnections: 17 })
     );
-    const stat = connStat();
-    expect(stat).not.toBeNull();
-    expect(stat?.textContent).toContain("2 / 17 conn");
+    expect(connStat()).toBe("2 / 17 connections");
+    const row = container.querySelector('[data-testid="tunnel-item-tun-1"]');
+    expect(row?.textContent).not.toContain("2 / 17");
   });
 
   it("still renders when no connections have been seen yet", async () => {
@@ -92,7 +102,7 @@ describe("TunnelListItem — connection stats (PROD-037)", () => {
       TUNNEL,
       stateWith({ bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 })
     );
-    expect(connStat()?.textContent).toContain("0 / 0 conn");
+    expect(connStat()).toBe("0 / 0 connections");
   });
 
   it("shows no stats line while the tunnel is inactive", async () => {
@@ -130,8 +140,8 @@ describe("TunnelListItem — live rate (PROD-038)", () => {
     activeConnections: 1,
     totalConnections: 1,
   });
-  const up = () => container.querySelector('[data-testid="tunnel-up-stat-tun-1"]')?.textContent;
-  const down = () => container.querySelector('[data-testid="tunnel-down-stat-tun-1"]')?.textContent;
+  const up = () => rowTooltip().match(/↑ [^·]*/)?.[0] ?? "";
+  const down = () => rowTooltip().match(/↓ [^·]*/)?.[0] ?? "";
 
   it("shows a smoothed KB/s rate next to each running total", async () => {
     await renderItem(TUNNEL, stateWith(stats(0, 0)));
