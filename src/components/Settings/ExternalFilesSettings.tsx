@@ -12,6 +12,7 @@ import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
+import { MonitoringSettingsFields } from "./MonitoringSettingsFields";
 
 /**
  * External connection file management, extracted from SettingsPanel.
@@ -240,6 +241,8 @@ export function ExternalFilesSettings() {
             data-testid="toggle-power-monitoring"
           />
         </SettingsField>
+
+        <MonitoringSettingsFields />
 
         <SettingsField
           label="File browser"

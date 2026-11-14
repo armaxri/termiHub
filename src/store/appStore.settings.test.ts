@@ -224,6 +224,78 @@ describe("appStore — settings toggles", () => {
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
   });
 
+  /** A panel with one local shell tab, optionally with its own enableMonitoring. */
+  function localTabPanel(enableMonitoring?: boolean): {
+    rootPanel: LeafPanel;
+    activePanelId: string;
+  } {
+    const tab: TerminalTab = {
+      id: "tab-1",
+      sessionId: "sess-local",
+      title: "zsh",
+      connectionType: "local",
+      contentType: "terminal",
+      config: {
+        type: "local",
+        config: { shell: "zsh", ...(enableMonitoring === undefined ? {} : { enableMonitoring }) },
+      },
+      panelId: "panel-1",
+      isActive: true,
+    };
+    return {
+      rootPanel: { type: "leaf", id: "panel-1", tabs: [tab], activeTabId: "tab-1" },
+      activePanelId: "panel-1",
+    };
+  }
+
+  it("turning Monitor local shells off stops local monitors only (#5754)", async () => {
+    await ensureMonitorsSubscribed();
+    transport.seed(
+      monitorsView([
+        fakeMonitor("sess-local", { host: "zsh", monitorSessionId: "sess-local" }),
+        fakeMonitor("mon-remote", { host: "pi", monitorSessionId: "mon-remote" }),
+      ])
+    );
+    await flushMacrotask();
+    seedLayoutState(localTabPanel());
+    seedSettings({
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      monitorLocalShells: true,
+    });
+
+    await useAppStore.getState().updateSettings(
+      settingsDoc({
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        monitorLocalShells: false,
+      })
+    );
+
+    expect(mockSessionMonitoringClose).toHaveBeenCalledWith("sess-local");
+    expect(mockSessionMonitoringClose).not.toHaveBeenCalledWith("mon-remote");
+  });
+
+  it("turning Monitor local shells off keeps a local connection that opted in (#5754)", async () => {
+    await seedMonitor("sess-local", "zsh");
+    seedLayoutState(localTabPanel(true));
+    seedSettings({
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      monitorLocalShells: true,
+    });
+
+    await useAppStore.getState().updateSettings(
+      settingsDoc({
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        monitorLocalShells: false,
+      })
+    );
+
+    expect(mockSessionMonitoringClose).not.toHaveBeenCalled();
+  });
+
   it("calls applyTheme when theme changes via updateSettings", async () => {
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "dark" });
 
