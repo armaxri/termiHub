@@ -126,6 +126,12 @@ node scripts\internal\check-marketing-drafts.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === Privacy notice ===
+REM PRIVACY.md / docs\privacy.md links resolve; the notice names every app endpoint (#5759).
+node scripts\internal\check-privacy-notice.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === ADR-14 projection region list ===
 REM Every registered projection region is named in ADR-14's status paragraph (#4586).
 node scripts\internal\check-adr14-regions.mjs

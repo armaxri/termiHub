@@ -76,6 +76,11 @@ ALLOWLIST=(
   # In-app updater signing key (#5758): one-time maintainer tool around the Tauri
   # CLI signer + `gh secret set`; Git Bash works on Windows, a .cmd adds nothing.
   "scripts/internal/setup-updater-signing-key.sh"  # one-time maintainer key setup
+  # macOS signing identity (#5545): macOS-only by nature (security, codesign);
+  # a one-time maintainer tool plus the release-CI keychain and codesign helpers.
+  "scripts/internal/setup-macos-signing-identity.sh"  # one-time maintainer identity setup
+  "scripts/internal/macos-signing-keychain.sh"  # temp keychain for the identity (release CI)
+  "scripts/internal/macos-codesign.sh"          # sign/re-sign the .app (release CI, sidecar builds)
   # Branch protection as code (CI-017, #3675): admin-only maintainer tool around
   # `gh api`; Git Bash works on Windows.
   "scripts/internal/apply-branch-protection.sh"  # maintainer applies .github/branch-protection.json

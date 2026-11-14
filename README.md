@@ -22,13 +22,13 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 
 Download the latest release for your platform from the [GitHub Releases page](https://github.com/armaxri/termiHub/releases). Release assets follow the naming pattern `termiHub-<version>-<platform>.<ext>` (for example, `termiHub-0.1.0-macos-arm64.dmg`).
 
-> **Beta note:** v0.1.0 binaries are **unsigned**. macOS Gatekeeper and Windows SmartScreen will warn on first launch — the per-platform steps below explain how to proceed.
+> **Beta note:** termiHub has no Apple Developer ID and no Windows Authenticode certificate, so the binaries are not signed by Apple or a Windows certificate authority. macOS Gatekeeper and Windows SmartScreen will warn on first launch — the per-platform steps below explain how to proceed.
 
 ### macOS (Apple Silicon & Intel)
 
 1. Download the `.dmg` for your architecture — `termiHub-0.1.0-macos-arm64.dmg` (Apple Silicon) or `termiHub-0.1.0-macos-x64.dmg` (Intel).
 2. Open the DMG and drag **termiHub** into your **Applications** folder.
-3. Because the app is unsigned, Gatekeeper blocks the first launch with an "unverified developer" warning. Approve it once, either way:
+3. Because the app is not signed with an Apple Developer ID, Gatekeeper blocks the first launch with an "unverified developer" warning. Approve it once, either way:
 
    <!-- macos-first-launch:begin -->
    - **macOS 15 (Sequoia) and later:** open the app once and dismiss the warning, then open **System Settings → Privacy & Security**, scroll to **Security** and click **Open Anyway**. Confirm with **Open** (and your password if asked).
@@ -37,6 +37,8 @@ Download the latest release for your platform from the [GitHub Releases page](ht
    <!-- macos-first-launch:end -->
 
    macOS remembers the approval, so later launches work normally.
+
+4. **Saved passwords and the macOS keychain:** once release builds carry termiHub's own signing identity, passwords termiHub saved in the macOS keychain stay readable after an update; until then, macOS may ask again after an update (see [macOS Signing Identity](docs/contributing.md#macos-signing-identity)). If macOS asks whether termiHub may use a keychain item, choose **Always Allow**. To avoid OS keychain prompts altogether, use the master-password credential store instead (Settings → Security).
 
 ### Windows x64
 
@@ -97,12 +99,12 @@ See [Verifying release artifacts](docs/contributing.md#verifying-release-artifac
 
 ### Known limitations (beta)
 
-- **Unsigned binaries** — macOS shows a Gatekeeper prompt (System Settings → Privacy & Security → Open Anyway) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.
+- **No Developer ID / Authenticode signature** — macOS shows a Gatekeeper prompt (System Settings → Privacy & Security → Open Anyway) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.
 - **No silent auto-update** — termiHub never installs an update on its own. Where a release carries the signed in-app updater (Windows MSI, macOS app, Linux AppImage), **Settings → Updates → Download and install** downloads the new version and verifies its signature, and **Restart to update** installs it; other installs (`.deb`/`.rpm`, portable copies) take new versions from the [Releases page](https://github.com/armaxri/termiHub/releases). It does **check for updates** on startup (see the privacy note below).
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
 
-> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases (develop-branch dev builds instead query the rolling `dev-develop-latest` pre-release on the same API, to tell you when a newer develop build exists). That is the only network call termiHub makes on its own (Settings → Plugins → **Browse plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**; if you turn on Settings → Plugins → **Check for plugin updates automatically**, which is off by default, termiHub also checks, once a day, the update URL of each installed plugin that publishes one and the plugin index) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically: it notifies you, downloads an update from the termiHub GitHub releases only when you click **Download and install**, and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
+> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases (develop-branch dev builds instead query the rolling `dev-develop-latest` pre-release on the same API, to tell you when a newer develop build exists). That is the only network call termiHub makes on its own (Settings → Plugins → **Browse plugins** fetches the plugin index, by default from `raw.githubusercontent.com/armaxri/termiHub`, only when you click **Load plugin index**; if you turn on Settings → Plugins → **Check for plugin updates automatically**, which is off by default, termiHub also checks, once a day, the update URL of each installed plugin that publishes one and the plugin index) — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically: it notifies you, downloads an update from the termiHub GitHub releases only when you click **Download and install**, and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**. Every connection termiHub makes and everything it stores is listed in the [privacy notice](docs/privacy.md).
 
 Prefer to build it yourself? See [Development](#development) below.
 
@@ -796,6 +798,7 @@ cd examples
 - **[Remote Protocol](docs/remote-protocol.md)** — Desktop-to-agent JSON-RPC specification
 - **[Keyboard Shortcuts](docs/keyboard-shortcuts.md)** — Default keybindings, conflict avoidance with shell keys, prompt navigation
 - **[Plugin Authoring](docs/plugin-authoring.md)** — Package format, manifest, extension points, native backends and their sandbox, packaging, signing, and updates
+- **[Privacy](docs/privacy.md)** — Every connection termiHub makes, the data it keeps on your computer and how to delete it (summary: [PRIVACY.md](PRIVACY.md))
 
 ## Built With
 

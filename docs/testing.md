@@ -1784,7 +1784,8 @@ binary wrote (`/usr/bin/security`, the shape an earlier, differently signed
 build leaves), which must read as absent, not block a switch, and be replaced
 when the same account is saved (#5527, both the dev-build and the release item
 policy). An update test re-signs a copy of the test binary ad-hoc (a new code
-directory hash, as every update of the unsigned beta has) and runs one ignored
+directory hash, as every ad-hoc signed update has; a release signed with the stable identity
+of #5545 keeps its designated requirement instead) and runs one ignored
 helper test in it: the copy cannot read what the original saved, gets the
 recovery message, and saves over it. They disable keychain user interaction,
 so no access prompt appears.

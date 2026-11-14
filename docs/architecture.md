@@ -1633,18 +1633,21 @@ termiHub provides optional credential storage with three modes (`StorageMode` in
     lazy:** right before a vault export or a store switch, termiHub probes every derivable key —
     saved connections (file-scoped and legacy bare ids) and agents, embedded servers and shared
     named credentials, each with every credential type — plus the recorded candidates, and indexes
-    the items it finds. Probing reads the keychain, and on an updated unsigned build macOS may ask
-    for access, so **keychain access prompts can appear only when the user exports credentials or
+    the items it finds. Probing reads the keychain, and on a build with another code signature
+    macOS may ask for access, so **keychain access prompts can appear only when the user exports credentials or
     switches the credential store**, never at startup. The export and the switch then carry, or
     (for a switch to `none`) remove, per-connection, graphical and host-label secrets alike.
     **Limitation:** a keychain item that was never indexed and whose key cannot be derived (e.g. a
     file-editor sudo password saved under a host label by a build that predates the index) cannot
     be discovered; re-saving it records it.
-  - **Items another build wrote** (#5514, #5527). On macOS a keychain item trusts only the build
-    that wrote it, by its code signature, and every ad-hoc signed build (each dev rebuild, each
-    update of the unsigned beta) has a new one. Such an item reads as `errSecAuthFailed`, or
-    shows an access prompt; "Always Allow" trusts only the build that asked, so the next update
-    asks again. termiHub reads an unindexed one as absent and fails closed on an indexed one with
+  - **Items another build wrote** (#5514, #5527). On macOS a keychain item trusts the app that
+    wrote it by its designated requirement (DR). An ad-hoc signed build's DR is its build hash, so
+    every ad-hoc build (each dev rebuild, and every release before #5545) is a stranger to the
+    items of the one before. Once it is set up, release builds are signed with the project's self-signed identity
+    (#5545; [Contributing → macOS Signing Identity](contributing.md#macos-signing-identity)),
+    whose DR names the certificate and stays the same across updates, so an updated release reads
+    its predecessor's items silently. A stranger's read is `errSecAuthFailed`, or an access
+    prompt; "Always Allow" trusts only the build that asked. termiHub reads an unindexed one as absent and fails closed on an indexed one with
     a message that names the recovery (allow the prompt, or save the secret again). Saving
     replaces an item this build may not read: it is looked up by its attributes and deleted
     without reading its value (no prompt), then written again
@@ -1978,8 +1981,9 @@ vault key or the wrapping key. The wrapping key is held in one of two ways
 | **App-enforced** (fallback, legacy) | Random key in the login Keychain (`termiHub-biometric-unlock`), read after termiHub's `LAContext` verification                                                                                                                                                                                                                             | Random key in Credential Manager (DPAPI), read after termiHub's `UserConsentVerifier` verification                                                                                                                                                                                                                                               |
 
 Runtime selection: on macOS the probe writes and removes a throwaway data-protection item without
-access control; `errSecMissingEntitlement` (every unsigned / ad-hoc build, including the v0.1.0
-beta) selects app-enforced. The entitlement is deliberately **not** added to unsigned builds —
+access control; `errSecMissingEntitlement` (every build without a Developer ID provisioning
+profile: ad hoc, and the self-signed releases of #5545, including the v0.1.0 beta) selects
+app-enforced. The entitlement is deliberately **not** added to unsigned builds —
 `keychain-access-groups` is restricted and needs a provisioning profile, without which macOS refuses
 to launch the app. On Windows, `KeyCredentialManager::IsSupportedAsync` decides. Settings shows
 "OS-enforced: yes / no" under the toggle (`BiometricUnlockStatus.protection` /
@@ -2023,7 +2027,7 @@ as a password unlock.
 | Malware running as the logged-in user                                    | **OS-enforced:** cannot obtain the wrapping key without the OS showing its own Touch ID / Hello prompt; it can still read termiHub's memory while the store is unlocked, or keylog the master password. **App-enforced (unsigned builds, fallback):** not in scope — it can read the keychain item without a prompt; Settings says "OS-enforced: no"                  |
 | Unit tests popping real prompts or silently succeeding                   | Under `cfg(test)` the platform verifier and the OS-enforced protector are always the unavailable ones and the wrapping-key slot is in-memory; tests inject a scripted `MockVerifier` / `MockHwKey`                                                                                                                                                                    |
 
-**Known limitations.** The v0.1.0 beta ships **unsigned**, so on macOS every build uses the
+**Known limitations.** The v0.1.0 beta has **no Developer ID** (self-signed, #5545), so on macOS every build uses the
 app-enforced path ("OS-enforced: no") until Developer ID signing with the `keychain-access-groups`
 entitlement lands (pre-v1.0); signed builds then upgrade existing enrollments on their next unlock.
 Windows uses the OS-enforced Hello key wherever Hello key credentials are set up. Windows cannot
