@@ -191,6 +191,15 @@ else
 fi
 
 echo ""
+echo "=== Privacy notice ==="
+# PRIVACY.md / docs/privacy.md links resolve; the notice names every app endpoint (#5759).
+if node scripts/internal/check-privacy-notice.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== ADR-14 projection region list ==="
 # Every registered projection region is named in ADR-14's status paragraph (#4586).
 if node scripts/internal/check-adr14-regions.mjs; then
