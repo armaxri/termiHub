@@ -102,6 +102,7 @@ fn start(every_minutes: u32, policy: MissedRunPolicy) -> Harness {
             ScheduleInput {
                 id: "s1".into(),
                 name: "Ping".into(),
+                description: None,
                 action: ScheduleAction::Workflow {
                     workflow_id: "wf".into(),
                 },

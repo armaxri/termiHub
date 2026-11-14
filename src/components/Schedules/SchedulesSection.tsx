@@ -268,6 +268,8 @@ export function SchedulesSection({
                 testId={`schedule-item-${s.id}`}
                 name={s.name}
                 nameTestId={`schedule-name-${s.id}`}
+                description={s.description}
+                descriptionTestId={`schedule-description-${s.id}`}
                 tooltip={tooltip}
                 tooltipTestId={`schedule-tooltip-${s.id}`}
                 actionsVisible

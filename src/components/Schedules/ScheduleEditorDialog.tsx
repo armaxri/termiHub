@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { draftKey } from "@/utils/draftKey";
@@ -200,6 +201,27 @@ export function ScheduleEditorDialog({
               onBlur={field.onBlur}
               placeholder="Nightly health check"
               data-testid="schedule-editor-name"
+            />
+          </Field>
+        )}
+      />
+      <Controller
+        name="description"
+        control={control}
+        render={({ field }) => (
+          <Field
+            label="Description (optional)"
+            htmlFor="schedule-editor-description"
+            error={errorFor("description")}
+          >
+            <Input
+              id="schedule-editor-description"
+              value={field.value}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+              placeholder="What this schedule is for"
+              data-testid="schedule-editor-description"
             />
           </Field>
         )}

@@ -258,8 +258,11 @@ class ConnectionsUi(HarnessMixin):
         starting_directory: Optional[str] = None,
         command_marks: Optional[bool] = None,
         connect: bool = False,
+        description: Optional[str] = None,
     ) -> str:
         """Create a local-shell connection (the default editor type).
+
+        ``description`` fills the optional one-line description (#5757).
 
         ``shell`` selects a specific entry in the ``field-shell`` dropdown (e.g.
         ``"powershell"``, ``"cmd"``, ``"gitbash"``); when omitted the platform
@@ -274,6 +277,8 @@ class ConnectionsUi(HarnessMixin):
         """
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
+        if description is not None:
+            self.driver.type("connection-editor-description-input", description)
         if shell is not None:
             self.select_shell(shell)
         if starting_directory is not None:

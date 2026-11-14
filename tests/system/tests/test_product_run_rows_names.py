@@ -85,7 +85,7 @@ class TestProductRunRowsNames(
             self.enable_experimental_features()
             local = f"pr-rows-local-{t}"
             self.switch_to_connections_sidebar()
-            self.create_local_connection(local)
+            self.create_local_connection(local, description="Scratch shell")
             self.ids["conn_name"] = local
             self.ids["conn"] = self.require_connection(local)["id"]
 
@@ -113,7 +113,8 @@ class TestProductRunRowsNames(
             self.ids["workflow"] = self.workflow_id(f"Answer rows {t}")
 
             self.ids["schedule"] = self.schedule_macro(
-                self.ids["macro"], f"Rows schedule {t}", self.ids["conn"]
+                self.ids["macro"], f"Rows schedule {t}", self.ids["conn"],
+                description="Every minute check",
             )
             self.open_workflows_sidebar()
 
@@ -121,17 +122,24 @@ class TestProductRunRowsNames(
     def test_10_connection_row(self):
         with self.step(
             "rows-names.connection",
-            "A connection row shows its name only: no host, user, port or type text",
-            expect="the Connections sidebar: the 'pr-rows-local-…' row shows its icon and "
-            "name, nothing else (#5757)",
+            "A connection row shows its name and description: no host, user, port or type text",
+            expect="the Connections sidebar: the 'pr-rows-local-…' row shows its icon, its "
+            "name and 'Scratch shell' muted under it, nothing else (#5757)",
         ):
             self.require("rows-names.items")
             self.switch_to_connections_sidebar()
             row = f"connection-item-{self.ids['conn']}"
             text = self.row_text(row)
             self.evidence(f"connection row {text!r}")
-            left = row_leftover_text(text, [self.ids["conn_name"]])
+            left = row_leftover_text(text, [self.ids["conn_name"], "Scratch shell"])
             assert left == "", f"the connection row shows more than its name: {left!r}"
+            desc = self.driver.get_text(f"connection-description-{self.ids['conn']}").strip()
+            assert desc == "Scratch shell", f"the connection description reads {desc!r}"
+            self.switch_to_connections_sidebar()
+            self.driver.type("connection-filter-input", "scratch")
+            self.wait(lambda: self.driver.exists(row), what="the row found by its description")
+            self.driver.type("connection-filter-input", "")
+            self.shot(label="connection")
 
     def test_20_macro_row(self):
         t = self.tag
@@ -181,8 +189,9 @@ class TestProductRunRowsNames(
             "rows-names.schedule",
             "A schedule row shows its name and the Disabled marker; the rule and targets are "
             "in the tooltip",
-            expect="Settings -> Schedules: 'Rows schedule …' with a grey dot and 'Disabled' "
-            "under the name; no 'Every …' rule or 'on pr-rows-local-…' text on the row (#5757)",
+            expect="Settings -> Schedules: 'Rows schedule …' with a grey dot, 'Every minute "
+            "check' muted under the name and 'Disabled'; no rule or 'on pr-rows-local-…' "
+            "text on the row (#5757)",
         ):
             self.require("rows-names.items")
             self.open_settings_category("schedules")
@@ -193,7 +202,7 @@ class TestProductRunRowsNames(
             assert status == "Disabled", f"the state marker reads {status!r}"
             self._grade_row(
                 row,
-                [f"Rows schedule {t}", status],
-                [f"on {self.ids['conn_name']}", "Every"],
+                [f"Rows schedule {t}", "Every minute check", status],
+                [f"on {self.ids['conn_name']}"],
             )
             self.shot(label="schedule")

@@ -114,6 +114,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: source.map(str::to_string),
         }
     }

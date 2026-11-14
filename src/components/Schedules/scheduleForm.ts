@@ -7,6 +7,7 @@
  * `src-tauri/src/schedules/{timing,wire}.rs` so the Save gate matches it.
  */
 import { z } from "zod";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 
 import type { BroadcastGroup } from "@/types/terminal";
 import type {
@@ -48,6 +49,8 @@ export function weekdayLabel(day: ScheduleWeekday): string {
 /** The flat values the editor form holds. */
 export interface ScheduleFormValues {
   name: string;
+  /** Short one-line description (#5757); `""` = none. */
+  description: string;
   actionKind: ScheduleAction["kind"];
   workflowId: string;
   macroId: string;
@@ -67,6 +70,7 @@ export interface ScheduleFormValues {
 export const scheduleFormSchema = z
   .object({
     name: z.string(),
+    description: z.string(),
     actionKind: z.enum(["workflow", "macro"]),
     workflowId: z.string(),
     macroId: z.string(),
@@ -87,6 +91,9 @@ export const scheduleFormSchema = z
     if (name === "") issue("name", "Name is required.");
     else if (name.length > MAX_SCHEDULE_NAME_CHARS) {
       issue("name", `At most ${MAX_SCHEDULE_NAME_CHARS} characters.`);
+    }
+    if ((normalizeItemDescription(v.description) ?? "").length > ITEM_DESCRIPTION_MAX_LENGTH) {
+      issue("description", `At most ${ITEM_DESCRIPTION_MAX_LENGTH} characters.`);
     }
     if (v.actionKind === "workflow" && v.workflowId === "") issue("workflowId", "Pick a workflow.");
     if (v.actionKind === "macro" && v.macroId === "") issue("macroId", "Pick a macro.");
@@ -113,6 +120,7 @@ export const scheduleFormSchema = z
 export function blankScheduleForm(action?: ScheduleAction): ScheduleFormValues {
   return {
     name: "",
+    description: "",
     actionKind: action?.kind ?? "workflow",
     workflowId: action?.kind === "workflow" ? action.workflowId : "",
     macroId: action?.kind === "macro" ? action.macroId : "",
@@ -134,6 +142,7 @@ export function scheduleToForm(input: ScheduleInput): ScheduleFormValues {
   return {
     ...base,
     name: input.name,
+    description: input.description ?? "",
     targetsKind: input.targets.kind,
     connectionIds: input.targets.kind === "connections" ? [...input.targets.connectionIds] : [],
     groupId: input.targets.kind === "broadcast-group" ? input.targets.groupId : "",
@@ -169,6 +178,7 @@ export function formToScheduleInput(id: string, v: ScheduleFormValues): Schedule
   return {
     id,
     name: v.name.trim(),
+    description: normalizeItemDescription(v.description),
     action,
     targets,
     rule,

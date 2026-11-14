@@ -105,6 +105,7 @@ fn shared_ssh(
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: None,
     };
     prepare_for_storage(connection, None, store).unwrap()

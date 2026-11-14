@@ -67,6 +67,7 @@ pub fn flatten_tree(
                 icon,
                 icon_color,
                 icon_emoji,
+                description,
                 extra,
             } => {
                 let conn_id = compute_connection_id(parent_path, name);
@@ -79,6 +80,7 @@ pub fn flatten_tree(
                     icon: icon.clone(),
                     icon_color: icon_color.clone(),
                     icon_emoji: icon_emoji.clone(),
+                    description: description.clone(),
                     source_file: None,
                     extra: extra.clone(),
                 });
@@ -135,6 +137,7 @@ fn build_tree_for_parent(
                 icon: conn.icon.clone(),
                 icon_color: conn.icon_color.clone(),
                 icon_emoji: conn.icon_emoji.clone(),
+                description: conn.description.clone(),
                 extra: conn.extra.clone(),
             });
         }
@@ -352,6 +355,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 name: "Local".to_string(),
                 config: make_local_config(),
                 terminal_options: None,
@@ -361,6 +365,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
                 terminal_options: None,
@@ -391,6 +396,7 @@ mod tests {
                     icon: None,
                     icon_color: None,
                     icon_emoji: None,
+                    description: None,
                     name: "Prod".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
@@ -400,6 +406,7 @@ mod tests {
                     icon: None,
                     icon_color: None,
                     icon_emoji: None,
+                    description: None,
                     name: "Dev".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
@@ -439,6 +446,7 @@ mod tests {
                     icon: None,
                     icon_color: None,
                     icon_emoji: None,
+                    description: None,
                     name: "Deep SSH".to_string(),
                     config: make_ssh_config(),
                     terminal_options: None,
@@ -468,6 +476,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             name: "A/B".to_string(),
             config: make_local_config(),
             terminal_options: None,
@@ -502,6 +511,7 @@ mod tests {
             icon: None,
             icon_color: Some("#ff8800".to_string()),
             icon_emoji: Some("\u{1F525}".to_string()),
+            description: None,
             source_file: None,
         }];
         let tree = build_tree(&conns, &[]);
@@ -515,6 +525,47 @@ mod tests {
         assert_eq!(loaded[0].icon_color.as_deref(), Some("#ff8800"));
         assert_eq!(loaded[0].icon_emoji.as_deref(), Some("\u{1F525}"));
         assert!(loaded[0].extra.is_empty(), "known keys leaked into extra");
+    }
+
+    #[test]
+    fn connection_description_survives_save_load_round_trip() {
+        // #5757: the short description travels flat -> tree -> JSON on disk ->
+        // tree -> flat, as a known key (never in `extra`).
+        let conns = vec![SavedConnection {
+            extra: Default::default(),
+            id: "Prod".to_string(),
+            name: "Prod".to_string(),
+            config: make_ssh_config(),
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            icon_color: None,
+            icon_emoji: None,
+            description: Some("Main shop front".to_string()),
+            source_file: None,
+        }];
+        let json = serde_json::to_string(&build_tree(&conns, &[])).expect("serialize tree");
+        assert!(
+            json.contains("\"description\":\"Main shop front\""),
+            "{json}"
+        );
+        let parsed: Vec<ConnectionTreeNode> =
+            serde_json::from_str(&json).expect("deserialize tree");
+        let (loaded, _) = flatten_tree(&parsed, None);
+        assert_eq!(loaded[0].description.as_deref(), Some("Main shop front"));
+        assert!(loaded[0].extra.is_empty(), "known keys leaked into extra");
+    }
+
+    #[test]
+    fn a_connection_without_a_description_round_trips_without_the_key() {
+        // #5757: older files have no `description`; they load as `None` and
+        // are written back without the key (absent, not null).
+        let json = r#"[{"type":"connection","name":"Old","config":{"type":"local","config":{}}}]"#;
+        let parsed: Vec<ConnectionTreeNode> = serde_json::from_str(json).expect("parse old file");
+        let (loaded, folders) = flatten_tree(&parsed, None);
+        assert!(loaded[0].description.is_none());
+        let written = serde_json::to_string(&build_tree(&loaded, &folders)).expect("serialize");
+        assert!(!written.contains("description"), "{written}");
     }
 
     #[test]
@@ -558,6 +609,7 @@ mod tests {
             icon: Some("server".to_string()),
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
         }];
         let folders = vec![ConnectionFolder {
@@ -598,6 +650,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "Local".to_string(),
                 name: "Local".to_string(),
                 config: make_local_config(),
@@ -610,6 +663,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -646,6 +700,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "Work/Prod".to_string(),
                 name: "Prod".to_string(),
                 config: make_ssh_config(),
@@ -658,6 +713,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "Root Conn".to_string(),
                 name: "Root Conn".to_string(),
                 config: make_local_config(),
@@ -710,6 +766,7 @@ mod tests {
                             icon: None,
                             icon_color: None,
                             icon_emoji: None,
+                            description: None,
                             name: "Dev SSH".to_string(),
                             config: make_ssh_config(),
                             terminal_options: None,
@@ -720,6 +777,7 @@ mod tests {
                         icon: None,
                         icon_color: None,
                         icon_emoji: None,
+                        description: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
                         terminal_options: None,
@@ -731,6 +789,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 name: "Local".to_string(),
                 config: make_local_config(),
                 terminal_options: None,
@@ -775,6 +834,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
                 config: make_local_config(),
@@ -787,6 +847,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "B".to_string(),
                 name: "B".to_string(),
                 config: make_local_config(),
@@ -810,6 +871,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -822,6 +884,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -845,6 +908,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
                 config: make_local_config(),
@@ -857,6 +921,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
                 config: make_local_config(),
@@ -869,6 +934,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "X".to_string(),
                 name: "X".to_string(),
                 config: make_local_config(),
@@ -893,6 +959,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
                 config: make_local_config(),
@@ -905,6 +972,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "A (1)".to_string(),
                 name: "A (1)".to_string(),
                 config: make_local_config(),
@@ -917,6 +985,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "A".to_string(),
                 name: "A".to_string(),
                 config: make_local_config(),
@@ -962,6 +1031,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "F1/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -974,6 +1044,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "F2/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -1005,6 +1076,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             id: "Work".to_string(),
             name: "Work".to_string(),
             config: make_local_config(),
@@ -1075,6 +1147,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "TestDir/Zsh".to_string(),
                 name: "Zsh".to_string(),
                 config: make_local_config(),
@@ -1088,6 +1161,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "TestDir/Zsh".to_string(),
                 name: "Zsh".to_string(),
                 config: make_local_config(),
@@ -1125,6 +1199,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -1138,6 +1213,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "SSH".to_string(),
                 name: "SSH".to_string(),
                 config: make_ssh_config(),
@@ -1215,6 +1291,7 @@ mod tests {
                         icon: None,
                         icon_color: None,
                         icon_emoji: None,
+                        description: None,
                         name: "C1".to_string(),
                         config: make_local_config(),
                         terminal_options: None,
@@ -1224,6 +1301,7 @@ mod tests {
                         icon: None,
                         icon_color: None,
                         icon_emoji: None,
+                        description: None,
                         name: "C2".to_string(),
                         config: make_local_config(),
                         terminal_options: None,
@@ -1235,6 +1313,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 name: "C3".to_string(),
                 config: make_local_config(),
                 terminal_options: None,

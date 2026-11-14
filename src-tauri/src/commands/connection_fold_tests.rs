@@ -60,6 +60,7 @@ fn connection(name: &str, folder_id: Option<&str>) -> SavedConnection {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         id: format!("conn-{name}"),
         name: name.to_string(),
         config: ConnectionConfig {

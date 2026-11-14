@@ -124,6 +124,15 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(content).toContain("web-1, web-2");
   });
 
+  it("shows the user's description muted under the name, only when set (#5757)", async () => {
+    await render([
+      view({ id: "a", description: "Checks the web hosts" }),
+      view({ id: "b", description: undefined }),
+    ]);
+    expect(query("schedule-description-a")!.textContent).toBe("Checks the web hosts");
+    expect(query("schedule-description-b")).toBeNull();
+  });
+
   it("marks an enabled schedule with no run coming as needing attention", async () => {
     await render([view({ enabled: true, confirmedAt: "x" })]);
     expect(query("schedule-status-s1")!.textContent).toBe("Not scheduled");

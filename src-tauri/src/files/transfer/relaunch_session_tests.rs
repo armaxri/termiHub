@@ -111,6 +111,7 @@ fn saved(name: &str, type_id: &str, settings: Value) -> SavedConnection {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         id: name.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {
