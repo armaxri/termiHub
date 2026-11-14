@@ -14,8 +14,9 @@ mod local_shell_cwd;
 mod cwd_follow_thread;
 #[cfg(feature = "local-shell")]
 mod local_shell_env;
-// The exit status of a local shell that ended on its own (#5742).
-#[cfg(feature = "local-shell")]
+// The exit status of a local shell that ended on its own (#5742); also the
+// slot behind the WSL shell's (#5796).
+#[cfg(any(feature = "local-shell", all(feature = "wsl", windows), test))]
 mod local_shell_exit;
 #[cfg(feature = "local-shell")]
 mod local_shell_ready;
@@ -71,6 +72,11 @@ pub(crate) mod wsl_shell_ready;
 // Compiled on every platform under `test`.
 #[cfg(any(all(feature = "wsl", windows), test))]
 pub(crate) mod wsl_cwd;
+
+// The exit status of a WSL shell that ended on its own (#5796). Compiled on
+// every platform under `test`.
+#[cfg(any(all(feature = "wsl", windows), test))]
+pub(crate) mod wsl_exit;
 
 // Answers ConPTY's opening cursor-position query (portable-pty 0.9 sets
 // PSUEDOCONSOLE_INHERIT_CURSOR; #3974). Wired into the Windows PTY readers;
