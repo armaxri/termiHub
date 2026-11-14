@@ -31,6 +31,13 @@ describe("agentDefinitionMatchesQuery", () => {
   it("keeps substring semantics: an unordered character set is not a match", () => {
     expect(agentDefinitionMatchesQuery(def("d1", "Web Server"), "ws")).toBe(false);
   });
+
+  it("matches the definition's description too (#5769)", () => {
+    const described = { ...def("d1", "Bench"), description: "Lab bench console" };
+    expect(agentDefinitionMatchesQuery(described, "console")).toBe(true);
+    expect(agentDefinitionMatchesQuery(described, "rack")).toBe(false);
+    expect(agentDefinitionMatchesQuery(def("d2", "Bench"), "console")).toBe(false);
+  });
 });
 
 describe("agentNameMatchesQuery", () => {

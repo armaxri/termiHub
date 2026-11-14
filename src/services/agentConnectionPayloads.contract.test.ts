@@ -41,6 +41,15 @@ const STYLED_DRAFT: AgentConnectionDraft = {
   iconEmoji: "🚀",
 };
 
+/** A definition carrying a description (#5769). */
+const DESCRIBED_DRAFT: AgentConnectionDraft = {
+  name: "Bench",
+  type: "serial",
+  config: { port: "/dev/ttyUSB0" },
+  persistent: false,
+  description: "Lab bench console",
+};
+
 const BARE_DRAFT: AgentConnectionDraft = {
   name: "Scratch",
   type: "local",
@@ -80,6 +89,16 @@ function buildCases(): Array<{ name: string; method: string; params: unknown }> 
       name: "update: editor save with icon colour and emoji (#5021)",
       method: "connections.update",
       params: buildAgentConnectionUpdate("conn-4", STYLED_DRAFT),
+    },
+    {
+      name: "create: description (#5769)",
+      method: "connections.create",
+      params: buildAgentConnectionCreate(DESCRIBED_DRAFT, null),
+    },
+    {
+      name: "update: editor save with a description (#5769)",
+      method: "connections.update",
+      params: buildAgentConnectionUpdate("conn-5", DESCRIBED_DRAFT),
     },
     {
       name: "update: move into a folder",
