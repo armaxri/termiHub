@@ -527,3 +527,118 @@ describe("the updater private key never meets third-party build code (#5761)", (
     }
   });
 });
+
+describe("the macOS signing identity never meets third-party build code (#5781)", () => {
+  const jobs = releaseJobs();
+  const ids = [...jobs.keys()];
+  const SECRET = /\bMACOS_SIGNING_[A-Z0-9_]+/;
+  const SIGNERS = ["sign-macos-app", "sign-macos-helpers"];
+  const code = (id) => stripComments(jobBody(RELEASE, id));
+  const PHASES = readFileSync(
+    path.join(ROOT, "scripts", "internal", "macos-release-signing.sh"),
+    "utf8"
+  );
+
+  it("only the sign-macos-* jobs reference MACOS_SIGNING_* secrets, in no other workflow", () => {
+    expect(ids.filter((id) => SECRET.test(code(id))).sort()).toEqual(SIGNERS);
+    for (const [file, text] of workflowFiles()) {
+      if (file.endsWith("/release.yml")) continue;
+      expect(stripComments(text), file).not.toMatch(SECRET);
+    }
+  });
+
+  it("no job that installs dependencies or compiles receives them or imports the identity", () => {
+    const offenders = ids.filter((id) => {
+      const body = code(id);
+      return (
+        RUNS_DEPENDENCY_CODE.test(body) &&
+        (SECRET.test(body) ||
+          /macos-signing-keychain\.sh|TERMIHUB_MACOS_SIGNING_|environment: macos-signing/.test(
+            body
+          ))
+      );
+    });
+    expect(offenders).toEqual([]);
+    for (const id of ["build-app", "build-macos-helpers"]) {
+      expect(code(id), id).not.toMatch(/macos-signing-keychain\.sh|TERMIHUB_MACOS_SIGNING_/);
+    }
+  });
+
+  it.each(SIGNERS)("%s is read-only, environment-bound and installs or compiles nothing", (id) => {
+    const body = jobBody(RELEASE, id);
+    const c = code(id);
+    expect(jobPermissions(body)).toEqual({ contents: "read" });
+    expect(c).toMatch(/\n {4}runs-on: macos-latest\n/);
+    expect(c).toMatch(/\n {4}environment: macos-signing\n/);
+    expect(c).not.toMatch(RUNS_DEPENDENCY_CODE);
+    const uses = [...c.matchAll(/^\s*(?:-\s+)?uses:\s*(\S+)/gm)].map((m) => m[1]);
+    expect(uses.length).toBeGreaterThan(0);
+    for (const u of uses) expect(u, u).toMatch(/^actions\/[A-Za-z0-9_.-]+@[0-9a-f]{40}$/);
+    expect(c).toMatch(/persist-credentials: false/);
+    expect(c).toMatch(/sparse-checkout: \|\n\s+scripts\/internal\n/);
+    // The secrets reach one step's env only: the temporary-keychain import.
+    expect(c.match(/secrets\.MACOS_SIGNING_P12_BASE64 \}\}/g)).toHaveLength(1);
+    expect(c.match(/secrets\.MACOS_SIGNING_P12_PASSWORD \}\}/g)).toHaveLength(1);
+    expect(c).toContain("run: scripts/internal/macos-signing-keychain.sh ci-import");
+    expect(c).toMatch(
+      /if: always\(\) && steps\.macsign\.outputs\.enabled == 'true'\n(?:[^\n]*\n)*?\s+run: scripts\/internal\/macos-signing-keychain\.sh delete /
+    );
+    // Signing goes through the first-party phase helper only.
+    expect(c).toMatch(/scripts\/internal\/macos-release-signing\.sh sign-(helpers|app)\b/);
+    expect(c).not.toMatch(/\bcodesign\b/);
+  });
+
+  it("the signing jobs execute nothing that was built", () => {
+    const runnerChecks = PHASES.match(/verify-plugin-runner-bundle\.sh"[^\n]*/g) ?? [];
+    expect(runnerChecks.length).toBeGreaterThan(0);
+    for (const call of runnerChecks) expect(call).toContain("--no-run");
+  });
+
+  it("phases the macOS build: helpers -> sign -> app -> sign -> updater/upload", () => {
+    expect(jobs.get("build-macos-helpers").needs).not.toContain("sign-macos-helpers");
+    expect(jobs.get("sign-macos-helpers").needs).toContain("build-macos-helpers");
+    expect(jobs.get("build-app").needs).toContain("sign-macos-helpers");
+    expect(jobs.get("sign-macos-app").needs).toEqual(
+      expect.arrayContaining(["build-app", "sign-macos-helpers"])
+    );
+    for (const id of ["sign-updater", "updater-manifest", "check-release-assets", "upload-app"]) {
+      expect(jobs.get(id).needs, id).toContain("sign-macos-app");
+    }
+    // The helpers' digests travel as a job output, not as an artifact.
+    expect(code("sign-macos-helpers")).toMatch(
+      /\n {6}sums: \$\{\{ steps\.sign\.outputs\.sums \}\}\n/
+    );
+    for (const id of ["build-app", "sign-macos-app"]) {
+      expect(code(id), id).toContain("HELPER_SUMS: ${{ needs.sign-macos-helpers.outputs.sums }}");
+    }
+    const build = code("build-app");
+    expect(build).toContain("scripts/internal/macos-release-signing.sh stage-helpers");
+    for (const step of ["Build RDP sidecar for bundling", "Build plugin runner for bundling"]) {
+      expect(build).toContain(
+        `- name: ${step}\n        if: \${{ !startsWith(matrix.os, 'macos') }}\n`
+      );
+    }
+    // macOS legs hand their DMG on unsigned; only sign-macos-app ships it.
+    expect(build).toContain(
+      "name: ${{ startsWith(matrix.os, 'macos') && 'macos-unsigned-app' || 'release-app' }}-${{ matrix.platform }}"
+    );
+    expect(build).not.toMatch(/resign-app|macos-dmg-layout\.sh replace-app/);
+    const sign = code("sign-macos-app");
+    expect(sign).toMatch(/pattern: macos-unsigned-app-\*\n/);
+    expect(sign).toMatch(/name: release-app-macos\n/);
+    expect(sign).toMatch(/name: release-updater-digest-macos\n/);
+  });
+
+  it("a dry run signs the macOS bundles read-only", () => {
+    const reached = (id, seen = new Set()) => {
+      if (seen.has(id)) return true;
+      seen.add(id);
+      const job = jobs.get(id);
+      return job.if !== TAG_PUSH_ONLY && job.needs.every((n) => reached(n, seen));
+    };
+    for (const id of ["build-macos-helpers", ...SIGNERS]) {
+      expect(reached(id), id).toBe(true);
+      expect(code(id), id).not.toContain("needs.create-release");
+    }
+  });
+});
