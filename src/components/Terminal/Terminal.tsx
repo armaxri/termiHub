@@ -1197,7 +1197,7 @@ export function Terminal({
           sandboxNotifySessionEnd(sessionId);
           sessionIdRef.current = null;
           unregisterSession(tabId);
-          store.setTerminalExited(tabId, { code: exitCode, reason });
+          store.setTerminalExited(tabId, { code: exitCode, reason }, endCause);
         });
 
         // Send user input to backend
