@@ -232,7 +232,11 @@ use termihub_core::monitoring::{
 /// `connection.exit` (#5742): the real exit status of a session's process, so
 /// a shell the user exited on the agent ends its tab instead of reconnecting.
 /// An older desktop ignores the field.
-const AGENT_PROTOCOL_VERSION: &str = "0.39.0";
+/// Bumped to 0.40.0 for the additive `device_gone` value of `connection.exit`'s
+/// `end_cause` (#5783), and a Docker session's real `exit_status`: a serial
+/// port that is gone for good, or a stopped container, ends its tab instead of
+/// leaving it open. An older desktop reads the unknown cause as absent.
+const AGENT_PROTOCOL_VERSION: &str = "0.40.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -4049,10 +4053,10 @@ mod tests {
     /// `connection.files.realpath` (#5333), and 0.37.0 the
     /// `connection.reconnect` notification (#5396), and 0.38.0 the optional
     /// `end_cause` of `connection.exit` (#5732), and 0.39.0 its optional
-    /// `exit_status` (#5742).
+    /// `exit_status` (#5742), and 0.40.0 its `device_gone` cause (#5783).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.39.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.40.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

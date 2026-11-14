@@ -170,3 +170,23 @@ async fn a_shell_that_exits_on_its_own_reports_its_real_status() {
         assert_eq!(protocol::decode_end_cause(&payload), None);
     }
 }
+
+#[tokio::test]
+async fn a_serial_port_gone_for_good_reports_device_gone() {
+    // #5783: what a serial reopen that gave up (or a lost port) reports.
+    let daemon = spawn_daemon_with(Box::new(EndedConnection {
+        cause: Some(SessionEndCause::DeviceGone),
+        status: None,
+    }));
+    let mut worker = Worker::connect(&daemon, INTENT_TAKEOVER).await;
+    assert_eq!(worker.handshake().await, Some(Attach::Ready(Vec::new())));
+
+    drop(daemon.output);
+    let payload = exited_payload(&mut worker).await;
+
+    assert_eq!(
+        protocol::decode_end_cause(&payload),
+        Some(SessionEndCause::DeviceGone)
+    );
+    assert_eq!(protocol::decode_exit_status(&payload), None);
+}
