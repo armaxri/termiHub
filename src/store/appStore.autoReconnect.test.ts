@@ -241,6 +241,18 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     expect(reconnectKinds(fake, killedTab)).toContain("session.disconnect");
   });
 
+  it("does NOT reconnect a process that exited with a code (#5742)", async () => {
+    // An agent-hosted shell the user ended with `exit 3` reports its code:
+    // a process exit, settled as dropped — never a reconnect.
+    const tabId = makeSshTab(true);
+    useAppStore.getState().setTerminalExited(tabId, { code: 3, reason: "dropped" });
+    await flush();
+
+    const kinds = reconnectKinds(fake, tabId);
+    expect(kinds).toContain("session.dropped");
+    expect(kinds).not.toContain("session.reconnect");
+  });
+
   it("re-drives the tab when the backend timer projects Waiting→Connecting", async () => {
     const tabId = makeSshTab(true);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
