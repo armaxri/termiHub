@@ -54,7 +54,7 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
     const subheading =
       info.code === null
         ? `The connection was lost. ${SCROLLBACK_KEPT}`
-        : `The remote process exited unexpectedly (exit code ${info.code}). ${SCROLLBACK_KEPT}`;
+        : `The process exited with code ${info.code}. ${SCROLLBACK_KEPT}`;
     return { heading: "Session disconnected", subheading, clean: false };
   }
 
