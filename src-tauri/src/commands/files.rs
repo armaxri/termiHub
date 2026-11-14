@@ -267,7 +267,8 @@ pub(crate) async fn open_remote_in_vscode(
         .unwrap_or_else(|| "untitled".to_string());
 
     // Create a temp directory for editing
-    let temp_dir = std::env::temp_dir().join("termihub-edit");
+    // The app temp dir is the portable `data/tmp/` in portable mode (#5764).
+    let temp_dir = termihub_core::config::app_temp_dir().join("termihub-edit");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| TerminalError::EditorError(format!("Failed to create temp dir: {}", e)))?;
 

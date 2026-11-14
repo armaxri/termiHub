@@ -1,6 +1,8 @@
 pub mod agent_crash_notice;
 pub mod agent_crash_reports;
 pub mod agent_logs;
+/// Every app-owned write location, resolved for installed/portable mode (#5764).
+pub mod app_dirs;
 pub mod config_paths;
 /// Exclusive OS lock on the portable `data/` dir so the same portable folder
 /// cannot run twice and clobber its own config (#3100).

@@ -158,8 +158,14 @@ includes transcripts, terminal content, connection settings or the credential st
 uploaded; you decide whether to share it.
 
 **Portable mode.** When termiHub runs in portable mode (a `portable.marker` file or `data/`
-folder next to the program), the config folder, the logs, crash reports and transcripts live in
-that `data/` folder instead. Cache files still go to the folders listed below.
+folder next to the program), everything termiHub writes on its own stays in that `data/` folder:
+the config files, the logs, crash reports and transcripts (`data/logs`), the caches (`data/cache`),
+the web view's data on Windows and Linux (`data/webview`) and temporary files such as files opened
+in VS Code (`data/tmp`, emptied when termiHub starts and quits). On macOS the web view's data
+folder cannot be moved, so a portable copy keeps web view data in memory only; macOS itself may
+still keep its own per-app state, such as saved window state, under `~/Library`. Saved passwords
+in the system keychain and system integrations you add yourself (such as the shell integration)
+are stored where the system keeps them.
 
 ### On servers running the agent
 
