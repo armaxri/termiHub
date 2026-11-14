@@ -195,7 +195,10 @@ fn the_release_fragment_enforces_signed_versions_and_points_at_latest_json() {
     ))
     .unwrap();
     let updater = &fragment["plugins"]["updater"];
-    assert_eq!(fragment["bundle"]["createUpdaterArtifacts"], true);
+    // The bundler must not sign (#5761): `createUpdaterArtifacts` would make
+    // `tauri build` demand TAURI_SIGNING_PRIVATE_KEY in a job that runs
+    // third-party build code. release.yml's sign-updater job signs instead.
+    assert!(fragment["bundle"].get("createUpdaterArtifacts").is_none());
     assert_eq!(updater["requireSignedVersion"], true);
     assert_ne!(updater["allowDowngrades"], true);
     assert_eq!(
