@@ -28,6 +28,12 @@ import type { ThemeColors, ThemeDefinition } from "./types";
  * 2. a contrast grade: every tint the stylesheets actually use, over the
  *    surfaces it can sit on, keeps the label it declares at ≥4.5:1 in all four
  *    built-in themes.
+ *
+ * #5744 widened the grade from `--text-primary` labels to every neutral text
+ * foreground on a tint: secondary body copy (`--text-secondary` measured 4.49:1
+ * on the Dark warning tint over the terminal background) and links (`--text-link`
+ * 3.4–4.2:1). Body copy reads `--text-primary`; a link reads `--text-link-on-tint`.
+ * `--text-disabled` is exempt (WCAG 1.4.3 excludes inactive controls).
  */
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -94,10 +100,24 @@ function staticVar(name: string): string {
   return m[1];
 }
 
+/**
+ * A `:root` token derived as `color-mix(in srgb, var(--a) N%, var(--b))` in
+ * variables.css (e.g. `--text-link-on-tint`), as [a, weight, b] — or `null`.
+ */
+function derivedMix(name: string): [string, number, string] | null {
+  const m = new RegExp(
+    `${name}:\\s*color-mix\\(in srgb,\\s*var\\((--[a-z0-9-]+)\\)\\s+(\\d+(?:\\.\\d+)?)%,\\s*var\\((--[a-z0-9-]+)\\)\\s*\\)`
+  ).exec(VARIABLES_CSS);
+  return m ? [m[1], Number(m[2]) / 100, m[3]] : null;
+}
+
 /** Resolve a CSS custom property to its hex in `theme`. */
 function resolve(theme: ThemeDefinition, cssVar: string): string {
   const key = CSS_VAR_TO_KEY[cssVar];
-  return key ? theme.colors[key] : staticVar(cssVar);
+  if (key) return theme.colors[key];
+  const mix = derivedMix(cssVar);
+  if (mix) return composite(resolve(theme, mix[0]), resolve(theme, mix[2]), mix[1]);
+  return staticVar(cssVar);
 }
 
 function cssFiles(dir: string): string[] {
@@ -274,12 +294,26 @@ describe("status text never sits on a status tint (#5740)", () => {
 
 describe("status tints keep their labels at AA in every built-in theme (#5740)", () => {
   const labelled = PAIRS.filter((p) => !(STATUS_VARS as readonly string[]).includes(p.fg));
-  // The tinted labels in scope are the ones this issue moved to --text-primary
-  // (plus those that already read it). Other neutrals on a tint are a separate audit.
-  const primary = labelled.filter((p) => p.fg === "--text-primary");
+  // Every neutral text foreground on a tint (#5744), not just --text-primary.
+  // --text-disabled is exempt: WCAG 1.4.3 excludes inactive controls.
+  const primary = labelled.filter((p) => p.fg !== "--text-disabled");
 
   it("grades a representative set of tints", () => {
     expect(primary.length).toBeGreaterThan(20);
+    const keys = primary.map((p) => p.key);
+    // The #5744 secondary-text and link pairs stay in scope.
+    expect(keys).toContain(
+      "components/Terminal/TerminalReconnectStrip.css :: .terminal-reconnect-strip"
+    );
+    expect(keys).toContain("components/Plugins/Plugins.css :: .plugin-install__native-desc");
+    expect(keys).toContain(
+      "components/TunnelEditor/TunnelEditor.css :: .tunnel-editor__reachability-action"
+    );
+  });
+
+  it("resolves the derived on-tint link token (#5744)", () => {
+    expect(derivedMix("--text-link-on-tint")?.[0]).toBe("--text-link");
+    expect(resolve(darkTheme, "--text-link-on-tint")).toMatch(/^#[0-9a-f]{6}$/);
   });
 
   for (const theme of BUILT_IN_THEMES) {
@@ -318,5 +352,21 @@ describe("status tints keep their labels at AA in every built-in theme (#5740)",
     expect(on18(lightTheme, "--color-success")).toBeLessThan(AA_NORMAL_TEXT);
     expect(on18(solarizedDarkTheme, "--color-info")).toBeLessThan(AA_NORMAL_TEXT);
     expect(on18(lightTheme, "--color-notice")).toBeLessThan(UI_COMPONENT_MIN);
+  });
+
+  it("documents the #5744 regression: secondary text and links miss AA on a warning tint", () => {
+    const on12 = (theme: ThemeDefinition, cssVar: string, base: keyof ThemeColors) =>
+      contrastRatio(
+        resolve(theme, cssVar),
+        composite(theme.colors.colorWarning, theme.colors[base], 0.12)
+      );
+    expect(on12(darkTheme, "--text-secondary", "terminalBg")).toBeLessThan(AA_NORMAL_TEXT);
+    expect(on12(lightTheme, "--text-secondary", "bgSecondary")).toBeLessThan(AA_NORMAL_TEXT);
+    for (const theme of BUILT_IN_THEMES) {
+      expect(on12(theme, "--text-link", "bgSecondary"), theme.id).toBeLessThan(AA_NORMAL_TEXT);
+      expect(on12(theme, "--text-link-on-tint", "bgSecondary"), theme.id).toBeGreaterThanOrEqual(
+        AA_NORMAL_TEXT
+      );
+    }
   });
 });
