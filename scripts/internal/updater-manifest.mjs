@@ -16,7 +16,12 @@
 //          the release config and is bound to the release version (minisign
 //          trusted comment `version:<v>`, what `requireSignedVersion` checks).
 //
-// `write` runs `check` on what it wrote. Both read only local files.
+//   assets List the published updater bundle names of a version, one per line
+//          (what the sign-updater job signs, #5761).
+//   verify Verify each bundle's `.sig` in a directory against the configured key
+//          and the signed version, without a latest.json (sign-updater's self-check).
+//
+// `write` runs `check` on what it wrote. All of them read only local files.
 //
 // The idea of a release-time manifest check comes from browsitory
 // (github.com/rene-langer/browsitory, MIT, scripts/check-updater-manifest.py);
@@ -33,6 +38,9 @@
 //   the app inside still carries the tauri.conf.json version it was signed for.
 //   node scripts/internal/updater-manifest.mjs pubkey [--config FILE]
 //       prints the configured public key (empty when none is set up yet)
+//   node scripts/internal/updater-manifest.mjs assets --version X.Y.Z
+//   node scripts/internal/updater-manifest.mjs verify --version X.Y.Z --dir DIR
+//       [--signed-version V] [--config FILE]
 //
 // Exit status: 0 ok, 1 the manifest or a signature is wrong, 2 bad arguments.
 
@@ -136,6 +144,45 @@ function readAsset(dir, name, encoding) {
   return existsSync(file) ? readFileSync(file, encoding) : null;
 }
 
+/** The published updater bundle names of release `version`. */
+export function assetNames(platforms, version) {
+  return platforms.platforms.map((p) => fill(p.asset, version));
+}
+
+/**
+ * The problem with one bundle's `.sig` in `dir` (missing, not verifying against
+ * `pubkey`, or bound to a version other than `signedVersion`), or null.
+ */
+function signatureProblem({ dir, asset, pubkey, signedVersion, sig }) {
+  const data = readAsset(dir, asset);
+  if (sig === null || data === null) return `${asset} or its .sig is not in ${dir}`;
+  try {
+    const fields = verifySignature(sig, data, pubkey);
+    if (fields.version !== signedVersion) {
+      return `signed for version ${JSON.stringify(fields.version)}, expected "${signedVersion}"`;
+    }
+  } catch (err) {
+    return err.message;
+  }
+  return null;
+}
+
+/**
+ * Every problem with the `.sig` files of release `version` in `dir`, or []:
+ * each published bundle is there with a `.sig` that verifies against `pubkey`
+ * and is bound to `signedVersion`.
+ */
+export function signatureProblems({ version, dir, pubkey, platforms, signedVersion = version }) {
+  const problems = [];
+  for (const p of platforms.platforms) {
+    const asset = fill(p.asset, version);
+    const sig = readAsset(dir, `${asset}.sig`, "utf8");
+    const problem = signatureProblem({ dir, asset, pubkey, signedVersion, sig });
+    if (problem) problems.push(`${p.target}: ${problem}`);
+  }
+  return problems;
+}
+
 /**
  * Every problem with `manifest` for release `version`, or [] when there is
  * none. `dir` holds the bundles and their `.sig` files under their published
@@ -174,26 +221,14 @@ export function manifestProblems({
     const url = fill(platforms.downloadBase, version) + encodeURIComponent(asset);
     if (entry.url !== url) problems.push(`${p.target}: url is ${entry.url}, expected ${url}`);
     const sig = readAsset(dir, `${asset}.sig`, "utf8");
-    const data = readAsset(dir, asset);
-    if (sig === null || data === null) {
-      problems.push(`${p.target}: ${asset} or its .sig is not in ${dir}`);
-      continue;
-    }
-    if (typeof entry.signature !== "string" || entry.signature.trim() !== sig.trim()) {
-      problems.push(`${p.target}: signature differs from ${asset}.sig`);
-      continue;
-    }
-    try {
-      const fields = verifySignature(sig, data, pubkey);
-      if (fields.version !== signedVersion) {
-        problems.push(
-          `${p.target}: signed for version ${JSON.stringify(fields.version)}, ` +
-            `expected "${signedVersion}"`
-        );
+    if (sig !== null && readAsset(dir, asset) !== null) {
+      if (typeof entry.signature !== "string" || entry.signature.trim() !== sig.trim()) {
+        problems.push(`${p.target}: signature differs from ${asset}.sig`);
+        continue;
       }
-    } catch (err) {
-      problems.push(`${p.target}: ${err.message}`);
     }
+    const problem = signatureProblem({ dir, asset, pubkey, signedVersion, sig });
+    if (problem) problems.push(`${p.target}: ${problem}`);
   }
   return problems;
 }
@@ -231,14 +266,14 @@ function parseArgs(argv) {
     opts[keys[flag]] = value;
     i += 1;
   }
-  if (!["write", "check", "pubkey"].includes(command)) {
-    throw new Error("command must be write, check or pubkey");
+  if (!["write", "check", "verify", "assets", "pubkey"].includes(command)) {
+    throw new Error("command must be write, check, verify, assets or pubkey");
   }
   if (command !== "pubkey") {
     if (!opts.version || !VERSION_RE.test(opts.version)) {
       throw new Error("--version X.Y.Z is required");
     }
-    if (!opts.dir) throw new Error("--dir is required");
+    if (command !== "assets" && !opts.dir) throw new Error("--dir is required");
   }
   return opts;
 }
@@ -252,6 +287,11 @@ export function main(argv, out = console) {
     out.error(`updater-manifest: ${err.message}`);
     return 2;
   }
+  const platforms = loadPlatforms();
+  if (opts.command === "assets") {
+    for (const name of assetNames(platforms, opts.version)) out.log(name);
+    return 0;
+  }
   const pubkey = configuredPubkey(opts.config);
   if (opts.command === "pubkey") {
     out.log(pubkey);
@@ -261,7 +301,26 @@ export function main(argv, out = console) {
     out.error(`updater-manifest: no updater public key in ${opts.config}`);
     return 1;
   }
-  const platforms = loadPlatforms();
+  const signedVersion = opts.signedVersion ?? opts.version;
+  if (opts.command === "verify") {
+    const problems = signatureProblems({
+      version: opts.version,
+      dir: opts.dir,
+      pubkey,
+      platforms,
+      signedVersion,
+    });
+    if (problems.length > 0) {
+      out.error(`updater signatures of ${opts.version} do not verify:`);
+      for (const problem of problems) out.error(`  ${problem}`);
+      return 1;
+    }
+    out.log(
+      `${platforms.platforms.length} updater bundles of ${opts.version}: each .sig verifies ` +
+        `against the configured key and is bound to version ${signedVersion}`
+    );
+    return 0;
+  }
   const manifestFile = path.join(opts.dir, "latest.json");
   try {
     if (opts.command === "write") {
@@ -282,7 +341,7 @@ export function main(argv, out = console) {
       dir: opts.dir,
       pubkey,
       platforms,
-      signedVersion: opts.signedVersion ?? opts.version,
+      signedVersion,
     });
     if (problems.length > 0) {
       out.error(`latest.json of ${opts.version} is not right:`);
