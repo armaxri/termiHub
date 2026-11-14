@@ -19,8 +19,13 @@ const COMPONENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "comp
 const ROW_HINT_OVERRIDES: [string, string][] = [
   ["Spawn/SpawnPicker.css", ".spawn-picker__row:hover .spawn-picker__row-hint"],
   ["Spawn/SpawnPicker.css", ".spawn-picker__row--selected .spawn-picker__row-hint"],
-  ["Plugins/Plugins.css", ".plugin-row:hover .plugin-row__ver"],
-  ["Plugins/Plugins.css", ".plugin-row--selected .plugin-row__ver"],
+  ["Plugins/Plugins.css", ".plugin-row:hover .plugin-row__description"],
+  ["Plugins/Plugins.css", ".plugin-row--selected .plugin-row__description"],
+  ["Plugins/Plugins.css", ".plugin-row:hover .plugin-row__marker:not(.plugin-row__marker--error)"],
+  [
+    "Plugins/Plugins.css",
+    ".plugin-row--selected .plugin-row__marker:not(.plugin-row__marker--error)",
+  ],
   ["OpenConnections/OpenConnectionsModal.css", ".oc-row:hover .oc-row__title--muted"],
   ["OpenConnections/OpenConnectionsModal.css", ".oc-row:hover .oc-row__detail"],
   ["OpenConnections/OpenConnectionsModal.css", ".oc-row:hover .oc-row__window:not(:hover)"],

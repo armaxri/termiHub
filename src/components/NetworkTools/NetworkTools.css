@@ -336,8 +336,9 @@
 }
 
 /* Monitor rows are SidebarListItem rows (#5193); only the second line — the
-   latest reading and its age — is styled here. Muted, not disabled: it is the
-   answer to "is my service up?" and has to stay readable (UI-002). */
+   state marker that needs attention (#5789; the reading and its age are in the
+   tooltip) — is styled here. Muted, not disabled: it has to stay readable
+   (UI-002). */
 .network-sidebar__monitor-meta {
   display: flex;
   flex-wrap: wrap;
@@ -369,12 +370,6 @@
 
 .network-sidebar__monitor-down {
   color: var(--color-error);
-}
-
-/* Relative "checked N ago" label; the freshest reading's age lives here so a
-   long-interval monitor no longer looks perpetually current (audit gap #11). */
-.network-sidebar__monitor-age--stale {
-  color: var(--color-warning);
 }
 
 /* Overdue chip: shown when the last check is older than 2× the interval. */

@@ -3,10 +3,17 @@ import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
 import { open } from "@/services/nativeDialog";
 import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin } from "@/types/plugin";
-import { Button, SearchInput, StatusDot, toast, EmptyState } from "@/components/ui";
+import { Button, SearchInput, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
+import { rowTooltipDescription } from "@/components/SidebarListItem/rowTooltip";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
-import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentation";
+import {
+  pluginDotState,
+  pluginDotTone,
+  pluginRowMarker,
+  pluginRowTooltip,
+  pluginTypeIcon,
+} from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
 import "./Plugins.css";
@@ -18,10 +25,13 @@ import {
 } from "@/plugins/pluginUpdateStore";
 
 /**
- * Searchable text of a plugin: its manifest name. Module-level so the
- * {@link useListFilter} memo stays stable.
+ * Searchable text of a plugin: its manifest name and short description
+ * (#5789). Module-level so the {@link useListFilter} memo stays stable.
  */
-const pluginNameFields: ListFilterFields<InstalledPlugin> = (plugin) => [plugin.manifest.name];
+const pluginNameFields: ListFilterFields<InstalledPlugin> = (plugin) => [
+  plugin.manifest.name,
+  plugin.manifest.description,
+];
 
 /**
  * The Plugins sidebar view (#1997): a search box, the installed-plugin list, and
@@ -125,33 +135,69 @@ export function PluginManagerView() {
             const dot = pluginDotState(state);
             const TypeIcon = pluginTypeIcon(manifest.extensions);
             const isSelected = manifest.id === selectedPluginId;
+            const marker = pluginRowMarker(state);
+            const tooltip = pluginRowTooltip(manifest);
+            const description = manifest.description.trim();
             return (
-              <button
+              <Tooltip
                 key={manifest.id}
-                type="button"
-                className={`plugin-row${isSelected ? " plugin-row--selected" : ""}${
-                  dot === "disabled" ? " plugin-row--disabled" : ""
-                }`}
-                onClick={() => selectPlugin(manifest.id)}
-                title={`${manifest.name} v${manifest.version}`}
-                data-testid={`plugin-row-${manifest.id}`}
+                side="right"
+                align="start"
+                data-testid={`plugin-tooltip-${manifest.id}`}
+                content={
+                  <span className="plugin-row__tooltip">
+                    <span className="plugin-row__tooltip-name">{manifest.name}</span>
+                    {tooltip.map((line) => (
+                      <span key={line}>{line}</span>
+                    ))}
+                  </span>
+                }
               >
-                <StatusDot
-                  tone={pluginDotTone(dot)}
-                  testId={`plugin-state-dot-${manifest.id}`}
-                  ariaHidden
-                />
-                <TypeIcon className="plugin-row__icon" aria-hidden="true" />
-                <span className="plugin-row__name">{manifest.name}</span>
-                {hasAvailableUpdate(updateEntries, plugin, indexOffers) && (
-                  <CircleArrowUp
-                    className="plugin-row__update"
-                    aria-label="Update available"
-                    data-testid={`plugin-update-badge-${manifest.id}`}
+                <button
+                  type="button"
+                  className={`plugin-row${isSelected ? " plugin-row--selected" : ""}${
+                    dot === "disabled" ? " plugin-row--disabled" : ""
+                  }`}
+                  onClick={() => selectPlugin(manifest.id)}
+                  aria-description={rowTooltipDescription(tooltip)}
+                  data-testid={`plugin-row-${manifest.id}`}
+                >
+                  <StatusDot
+                    tone={pluginDotTone(dot)}
+                    testId={`plugin-state-dot-${manifest.id}`}
+                    ariaHidden
                   />
-                )}
-                <span className="plugin-row__ver">v{manifest.version}</span>
-              </button>
+                  <TypeIcon className="plugin-row__icon" aria-hidden="true" />
+                  <span className="plugin-row__text">
+                    <span className="plugin-row__name">{manifest.name}</span>
+                    {description && (
+                      <span
+                        className="plugin-row__description"
+                        data-testid={`plugin-description-${manifest.id}`}
+                      >
+                        {description}
+                      </span>
+                    )}
+                  </span>
+                  {hasAvailableUpdate(updateEntries, plugin, indexOffers) && (
+                    <CircleArrowUp
+                      className="plugin-row__update"
+                      aria-label="Update available"
+                      data-testid={`plugin-update-badge-${manifest.id}`}
+                    />
+                  )}
+                  {marker && (
+                    <span
+                      className={`plugin-row__marker${
+                        dot === "error" ? " plugin-row__marker--error" : ""
+                      }`}
+                      data-testid={`plugin-marker-${manifest.id}`}
+                    >
+                      {marker}
+                    </span>
+                  )}
+                </button>
+              </Tooltip>
             );
           })
         )}

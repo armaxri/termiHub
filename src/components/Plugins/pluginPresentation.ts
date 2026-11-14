@@ -28,6 +28,7 @@ import type {
   ResolvedFilesystemPath,
 } from "@/types/plugin";
 import type { StatusTone } from "@/components/ui";
+import { tf } from "@/i18n/catalog";
 
 /** Coarse visual state of a plugin's status dot. */
 export type PluginDotState = "enabled" | "disabled" | "error";
@@ -281,4 +282,25 @@ export function describeFilesystemPath(
   return match.resolved
     ? `${declared} → ${match.resolved}`
     : `${declared} (not available on this computer)`;
+}
+
+/**
+ * The state marker a plugin row in the Plugins sidebar shows (#5789), only
+ * when the state needs attention: error, incompatible or disabled. An enabled
+ * plugin has none; its green dot says so.
+ */
+export function pluginRowMarker(state: PluginState): string | null {
+  return state === "active" ? null : pluginStatusLabel(state);
+}
+
+/**
+ * The plugin row's tooltip lines (#5789): its version, author and id. The row
+ * shows only the name, the plugin's own short description and markers that
+ * need attention. See docs/copy-style.md -> "List rows".
+ */
+export function pluginRowTooltip(manifest: PluginManifest): string[] {
+  const out = [tf("plugin.tooltip.version", { version: manifest.version })];
+  if (manifest.author.trim()) out.push(tf("plugin.tooltip.author", { author: manifest.author }));
+  out.push(tf("plugin.tooltip.id", { id: manifest.id }));
+  return out;
 }

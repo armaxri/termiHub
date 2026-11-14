@@ -258,6 +258,8 @@ describe("networkApi", () => {
         timeoutMs: null,
         runLocation: null,
         allowPrivateNetwork: null,
+        name: null,
+        description: null,
       });
       expect(result).toBe("monitor-1");
     });
@@ -272,7 +274,9 @@ describe("networkApi", () => {
         200,
         10000,
         { kind: "agent", agentId: "edge" },
-        true
+        true,
+        "API",
+        "Public health check"
       );
 
       expect(mockedInvoke).toHaveBeenCalledWith("network_http_monitor_start", {
@@ -283,6 +287,8 @@ describe("networkApi", () => {
         timeoutMs: 10000,
         runLocation: { kind: "agent", agentId: "edge" },
         allowPrivateNetwork: true,
+        name: "API",
+        description: "Public health check",
       });
     });
 

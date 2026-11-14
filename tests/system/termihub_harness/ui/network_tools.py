@@ -128,15 +128,28 @@ class NetworkToolsUi(HarnessMixin):
         )
         return self.driver.get_text("open-ports-panel") or ""
 
-    def start_http_monitor(self, url: str, *, allow_private_network: bool = False) -> None:
+    def start_http_monitor(
+        self,
+        url: str,
+        *,
+        allow_private_network: bool = False,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> None:
         """Open the HTTP Monitor panel, target ``url``, and start monitoring.
 
         ``allow_private_network`` ticks the panel's "Private network" opt-in: the
         SSRF guard (SEC-008) refuses loopback/private targets without it, so a
         suite monitoring its local fixture server must pass ``True`` (#4017).
+        ``name`` and ``description`` fill the optional row name and one-line
+        description the sidebar shows (#5789).
         """
         self.open_http_monitor()
         self.driver.type("http-monitor-url", url)
+        if name is not None:
+            self.driver.type("http-monitor-name", name)
+        if description is not None:
+            self.driver.type("http-monitor-description", description)
         if allow_private_network:
             self.driver.click("http-monitor-allow-private")
             self.wait(

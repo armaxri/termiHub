@@ -88,9 +88,11 @@ describe("NetworkToolsSidebar — staleness indicator (#1147, gap #11)", () => {
     expect(row).not.toBeNull();
     const stale = container.querySelector('[data-testid="monitor-stale-stale-1"]');
     expect(stale).not.toBeNull();
-    expect(row?.textContent).toContain("overdue");
-    // The relative age is shown so the user knows how old the reading is.
-    expect(row?.textContent).toContain("5m ago");
+    expect(row?.textContent).toContain("Overdue");
+    // The relative age is in the tooltip so the user knows how old the reading
+    // is; the row shows only the marker (#5789).
+    expect(row?.getAttribute("aria-description")).toContain("5m ago");
+    expect(row?.textContent).not.toContain("5m ago");
   });
 
   it("does not mark a freshly checked monitor overdue", async () => {
@@ -107,7 +109,7 @@ describe("NetworkToolsSidebar — staleness indicator (#1147, gap #11)", () => {
     const row = container.querySelector('[data-testid="monitor-row-fresh-1"]');
     expect(row).not.toBeNull();
     expect(container.querySelector('[data-testid="monitor-stale-fresh-1"]')).toBeNull();
-    expect(row?.textContent).not.toContain("overdue");
-    expect(row?.textContent).toContain("10s ago");
+    expect(row?.textContent).not.toContain("Overdue");
+    expect(row?.getAttribute("aria-description")).toContain("10s ago");
   });
 });
