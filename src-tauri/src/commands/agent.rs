@@ -1345,7 +1345,8 @@ mod tests {
             "terminal_options": null,
             "icon": null,
             "icon_color": null,
-            "icon_emoji": null
+            "icon_emoji": null,
+            "description": null
         });
         let params: ConnectionCreateParams =
             decode_agent_params(CONNECTIONS_CREATE, payload.clone()).expect("decodes");
