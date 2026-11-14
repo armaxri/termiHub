@@ -6,8 +6,9 @@
 // /Applications drop link (drag-to-install), volume icon and layout. Now
 // macos-dmg-layout.sh swaps the re-signed app into Tauri's own image. These
 // tests pin:
-//   - both workflows call `replace-app` + `check` and no longer rebuild the
-//     image from the bare app; the macOS install smoke runs `check`;
+//   - dev-build.yml and release.yml (through macos-release-signing.sh sign-app,
+//     #5781) call `replace-app` + `check` and no longer rebuild the image from
+//     the bare app; the macOS install smoke runs `check`;
 //   - the helper, executed against a stub `hdiutil` (an image is a tar file),
 //     keeps every other volume entry, adds a missing Applications link,
 //     leaves the original image untouched on any failure and never leaves a
@@ -47,36 +48,53 @@ function stepBody(text, name) {
   return next === -1 ? rest : rest.slice(0, next);
 }
 
+/** A top-level shell function's body in a script (`name() {` to column-0 `}`). */
+function functionBody(text, name) {
+  const start = text.indexOf(`\n${name}() {\n`);
+  expect(start, name).toBeGreaterThan(-1);
+  const end = text.indexOf("\n}\n", start);
+  return text.slice(start, end);
+}
+
 describe.each([
-  // release.yml signs through macos-codesign.sh (self-signed identity or ad hoc, #5545),
-  // whose resign-app ends in `codesign --verify --deep --strict`.
+  // release.yml signs in sign-macos-app through macos-release-signing.sh sign-app
+  // (#5781), which re-signs with macos-codesign.sh (self-signed identity or ad
+  // hoc, #5545), whose resign-app ends in `codesign --verify --deep --strict`.
   [
-    ".github/workflows/release.yml",
-    "Re-sign macOS app inside the DMG",
-    "macos-codesign.sh resign-app",
+    "scripts/internal/macos-release-signing.sh",
+    functionBody(read("scripts/internal/macos-release-signing.sh"), "sign_app"),
+    'bash "$CODESIGN_TOOL" resign-app',
+    'bash "$DMG_TOOL" replace-app "$dmg" "$app"',
+    'bash "$DMG_TOOL" check "$dmg"',
   ],
   [
     ".github/workflows/dev-build.yml",
-    "Re-sign macOS DMG with consistent ad-hoc signature",
+    stepBody(
+      read(".github/workflows/dev-build.yml"),
+      "Re-sign macOS DMG with consistent ad-hoc signature"
+    ),
     "codesign --verify --deep --strict",
+    'scripts/internal/macos-dmg-layout.sh replace-app "$DMG" "$APP"',
+    'scripts/internal/macos-dmg-layout.sh check "$DMG"',
   ],
-])("%s keeps the DMG layout when re-signing (#4361)", (file, stepName, verifyCall) => {
-  const body = stepBody(read(file), stepName);
+])(
+  "%s keeps the DMG layout when re-signing (#4361)",
+  (_file, body, verifyCall, replaceCall, checkCall) => {
+    it("swaps the re-signed app into Tauri's image and checks the layout", () => {
+      const replace = body.indexOf(replaceCall);
+      const check = body.indexOf(checkCall);
+      const verify = body.indexOf(verifyCall);
+      expect(verify).toBeGreaterThan(-1);
+      expect(replace).toBeGreaterThan(verify);
+      expect(check).toBeGreaterThan(replace);
+    });
 
-  it("swaps the re-signed app into Tauri's image and checks the layout", () => {
-    const replace = body.indexOf('scripts/internal/macos-dmg-layout.sh replace-app "$DMG" "$APP"');
-    const check = body.indexOf('scripts/internal/macos-dmg-layout.sh check "$DMG"');
-    const verify = body.indexOf(verifyCall);
-    expect(verify).toBeGreaterThan(-1);
-    expect(replace).toBeGreaterThan(verify);
-    expect(check).toBeGreaterThan(replace);
-  });
-
-  it("no longer rebuilds the image from the bare app", () => {
-    expect(body).not.toMatch(/hdiutil create\b/);
-    expect(body).not.toMatch(/rm "\$DMG"/);
-  });
-});
+    it("no longer rebuilds the image from the bare app", () => {
+      expect(body).not.toMatch(/hdiutil create\b/);
+      expect(body).not.toMatch(/rm "\$DMG"/);
+    });
+  }
+);
 
 describe("release-macos-smoke.yml checks the DMG layout (#4361)", () => {
   it("runs macos-dmg-layout.sh check on the downloaded DMG", () => {

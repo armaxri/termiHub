@@ -424,16 +424,201 @@ jobs:
             "${prerelease_flag[@]}" \
             --notes release_notes.md
 
+  # macOS phase 1 of 4 (#5781): build the two bundled helpers (RDP helper,
+  # plugin runner) WITHOUT the signing identity. The macOS signing identity
+  # (#5545) never shares a runner with dependency or build code: this job and
+  # build-app compile, and the two sign-macos-* jobs, which install and compile
+  # nothing, sign. The helpers must be signed BEFORE the app is compiled,
+  # because core/build.rs embeds their SHA-256 (#1762, #4202, #4222) and a
+  # certificate signature carries its signing time, so signing them later would
+  # change their bytes. The build scripts ad-hoc sign them under their installed
+  # names as before; sign-macos-helpers re-signs them. Their .dSYMs go to
+  # build-app with them (codesign keeps LC_UUID).
+  build-macos-helpers:
+    name: Build macOS Helpers - ${{ matrix.platform }}
+    needs: [verify-version, verify-supply-chain, release-version]
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    # Split debug symbols (#4504), as in build-app's macOS legs.
+    env:
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+      CARGO_PROFILE_RELEASE_STRIP: debuginfo
+      TERMIHUB_SYMBOLS_VERSION: ${{ needs.release-version.outputs.version }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-x64'
+            rust_target: 'x86_64-apple-darwin'
+          - platform: 'macos-arm64'
+            rust_target: 'aarch64-apple-darwin'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Reader/writer split (#3328, #5328): restore everywhere, save only on develop/main.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+          key: release-helpers-${{ matrix.platform }}
+
+      - name: Build RDP sidecar for bundling
+        shell: bash
+        run: ./scripts/build-rdp-sidecar.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
+
+      - name: Build plugin runner for bundling
+        shell: bash
+        run: ./scripts/build-plugin-runner.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
+
+      # The staged copies are the target-dir binaries signed under their
+      # installed names (same LC_UUID), whose .dSYMs cargo left next to them.
+      - name: Stage the helpers and their debug symbols
+        shell: bash
+        env:
+          T: ${{ matrix.rust_target }}
+        run: |
+          set -euo pipefail
+          stage() { node scripts/internal/debug-symbols.mjs stage --out debug-symbols --name "$1" "$2"; }
+          stage termihub-rdp-helper "rdp-sidecar/target/$T/release/termihub-rdp-helper"
+          stage termihub-plugin-runner "target/$T/release/termihub-plugin-runner"
+          mkdir -p macos-helpers
+          for n in termihub-rdp-helper termihub-plugin-runner; do
+            cp "src-tauri/binaries/$n-$T" macos-helpers/
+          done
+          node scripts/internal/debug-symbols.mjs check debug-symbols \
+            termihub-rdp-helper="macos-helpers/termihub-rdp-helper-$T" \
+            termihub-plugin-runner="macos-helpers/termihub-plugin-runner-$T"
+          ls -l macos-helpers
+
+      - name: Hand the helpers to sign-macos-helpers
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-helpers-unsigned-${{ matrix.platform }}
+          path: macos-helpers/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Hand the helper debug symbols to build-app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-helper-symbols-${{ matrix.platform }}
+          path: debug-symbols/
+          if-no-files-found: error
+          retention-days: 7
+
+  # macOS phase 2 of 4 (#5781): sign the helpers with the identity. One of the
+  # only two jobs that receive MACOS_SIGNING_P12_BASE64 / _PASSWORD (the other is
+  # sign-macos-app), shaped like sign-updater: it sparse-checks-out
+  # scripts/internal (first-party, dependency-free helpers), installs nothing,
+  # compiles nothing and executes nothing that was built; it uses only pinned
+  # actions/* actions, and the identity lives in a temporary keychain
+  # (macos-signing-keychain.sh: never the search list or the default keychain)
+  # that is deleted at the end. No pin: ad hoc with a ::notice::; a pin without
+  # the secret fails. The signed helpers' SHA-256s leave as a job OUTPUT, so
+  # build-app and sign-macos-app check the bytes against what this job signed,
+  # not against an artifact any job of the run could replace. The
+  # macos-signing environment lets the maintainer hold the secrets there
+  # (docs/contributing.md -> "macOS Signing Identity"). Read-only; runs in a dry
+  # run too.
+  sign-macos-helpers:
+    name: Sign macOS Helpers
+    needs: [verify-version, verify-supply-chain, release-version, build-macos-helpers]
+    runs-on: macos-latest
+    environment: macos-signing
+    permissions:
+      contents: read
+    outputs:
+      sums: ${{ steps.sign.outputs.sums }}
+
+    steps:
+      - name: Checkout the signing helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/internal
+
+      - name: Download the unsigned helpers
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: macos-helpers-unsigned-*
+          merge-multiple: true
+          path: helpers-unsigned
+
+      # The secrets reach this one step only; it exports the certificate SHA-1
+      # and the keychain path (no secret) to the signing step.
+      - name: Import macOS signing identity
+        id: macsign
+        shell: bash
+        env:
+          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: scripts/internal/macos-signing-keychain.sh ci-import
+
+      - name: Sign the helpers
+        id: sign
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/internal/macos-release-signing.sh sign-helpers helpers-unsigned helpers-signed
+          {
+            echo "sums<<SHA256SUMS_EOF"
+            cat helpers-signed/SHA256SUMS
+            echo "SHA256SUMS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Hand the signed helpers to build-app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-helpers-signed
+          path: helpers-signed/
+          if-no-files-found: error
+          retention-days: 7
+
+      # The keychain dies with the hosted runner anyway; remove it explicitly
+      # so the private key never outlives its use.
+      - name: Remove the macOS signing keychain
+        if: always() && steps.macsign.outputs.enabled == 'true'
+        shell: bash
+        run: scripts/internal/macos-signing-keychain.sh delete "$TERMIHUB_MACOS_SIGNING_KEYCHAIN"
+
   # Build the desktop installers (read-only, CI2-007 / #4730). This job runs
   # third-party code (pnpm packages, every crate's build.rs, tauri-action), so it
-  # holds no write, OIDC or attestation token: it stages the renamed bundles as
-  # the release-app-<platform> workflow artifact, and upload-app attests and
-  # publishes them.
+  # holds no write, OIDC or attestation token and no signing secret: it stages
+  # the renamed bundles as the release-app-<platform> workflow artifact, and
+  # upload-app attests and publishes them. macOS (phase 3 of 4, #5781) stages
+  # the helpers sign-macos-helpers signed and hands its unsigned DMG to
+  # sign-macos-app as macos-unsigned-app-<platform> instead.
   build-app:
     name: Build App - ${{ matrix.platform }}
     # third-party-notices generates the THIRD_PARTY_NOTICES.txt every installer
     # bundles (PKG-009) — generated once so all platforms ship the same file.
-    needs: [verify-version, verify-supply-chain, release-version, third-party-notices]
+    # sign-macos-helpers: the macOS legs bundle its signed helpers (the other
+    # legs wait for it too; a job's needs cannot differ per matrix leg).
+    needs:
+      [
+        verify-version,
+        verify-supply-chain,
+        release-version,
+        third-party-notices,
+        sign-macos-helpers,
+      ]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -566,26 +751,10 @@ jobs:
       # missing externalBin. `externalBin` lives in the bundle-only config
       # fragment tauri.sidecar.conf.json (merged via --config below), so per-PR
       # compile/test jobs stay sidecar-free. Run through Git Bash on all runners.
-      # Stable macOS signing identity (#5545): a self-signed certificate held as
-      # the MACOS_SIGNING_P12_BASE64 / _PASSWORD secrets, pinned by SHA-1 in
-      # scripts/internal/macos-signing-identity.json. Every release signed with
-      # it has the same designated requirement, so the keychain items a user's
-      # termiHub saved stay readable after an update (an ad-hoc build's
-      # requirement is its build hash, new every release). The helper imports
-      # it into a temporary keychain (never the search list or default) and
-      # exports TERMIHUB_MACOS_SIGNING_IDENTITY/_KEYCHAIN for the sidecar builds
-      # and the re-sign below. No pin: ad hoc with a ::notice::; a pin without
-      # a matching secret fails the build.
-      - name: Import macOS signing identity
-        if: startsWith(matrix.os, 'macos')
-        id: macsign
-        shell: bash
-        env:
-          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
-          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
-        run: scripts/internal/macos-signing-keychain.sh ci-import
-
+      # macOS stages the helpers build-macos-helpers built and sign-macos-helpers
+      # signed instead (below): the signing identity never reaches this job.
       - name: Build RDP sidecar for bundling
+        if: ${{ !startsWith(matrix.os, 'macos') }}
         shell: bash
         run: ./scripts/build-rdp-sidecar.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
 
@@ -593,19 +762,48 @@ jobs:
       # tauri.sidecar.conf.json (#4202). Stage it before tauri-action too:
       # core/build.rs embeds the staged runner's SHA-256, which the app checks
       # before spawning the bundled runner. Windows MSVC links the static VC
-      # runtime (#4172); macOS signs it under its installed name (ad hoc, or
-      # with the identity imported above) so the re-sign below leaves its
-      # bytes, and so the digest, unchanged.
+      # runtime (#4172).
       - name: Build plugin runner for bundling
+        if: ${{ !startsWith(matrix.os, 'macos') }}
         shell: bash
         run: ./scripts/build-plugin-runner.sh --release --locked --target ${{ matrix.rust_target }} --tauri-externalbin
+
+      # macOS phase 3 of 4 (#5781): stage exactly the bytes sign-macos-helpers
+      # signed, checked against its job output (not the artifact), so
+      # core/build.rs embeds the SHA-256 of the signed helpers.
+      - name: Download the signed macOS helpers
+        if: startsWith(matrix.os, 'macos')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-helpers-signed
+          path: ${{ runner.temp }}/helpers-signed
+
+      - name: Download the macOS helper debug symbols
+        if: startsWith(matrix.os, 'macos')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-helper-symbols-${{ matrix.platform }}
+          path: debug-symbols/
+
+      - name: Stage the signed macOS helpers
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          T: ${{ matrix.rust_target }}
+          HELPER_SUMS: ${{ needs.sign-macos-helpers.outputs.sums }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$HELPER_SUMS" > "$RUNNER_TEMP/helper-sums"
+          scripts/internal/macos-release-signing.sh stage-helpers "$RUNNER_TEMP/helper-sums" \
+            "$RUNNER_TEMP/helpers-signed" "$T" src-tauri/binaries
 
       # Collect both sidecars' debug symbols into debug-symbols/ (#4504), each
       # verified to carry the binary's build id. Linux: split the DWARF out of
       # the STAGED copy in place, before tauri-action hashes it (core/build.rs
       # embeds that digest), and refresh the transparency .sha256 next to it.
-      # macOS/Windows: the staged copy is the target-dir binary (macOS:
-      # re-signed, same LC_UUID), whose .dSYM/.pdb cargo left next to it.
+      # Windows: the staged copy is the target-dir binary, whose .pdb cargo left
+      # next to it. macOS: build-macos-helpers staged the .dSYMs (downloaded
+      # above); the signed helpers keep their LC_UUID.
       - name: Stage sidecar debug symbols
         shell: bash
         env:
@@ -622,8 +820,10 @@ jobs:
               (cd src-tauri/binaries && sha256sum "$n-$T" > "$n-$T.sha256")
             done
           else
-            stage termihub-rdp-helper "rdp-sidecar/target/$T/release/termihub-rdp-helper$EXE"
-            stage termihub-plugin-runner "target/$T/release/termihub-plugin-runner$EXE"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              stage termihub-rdp-helper "rdp-sidecar/target/$T/release/termihub-rdp-helper$EXE"
+              stage termihub-plugin-runner "target/$T/release/termihub-plugin-runner$EXE"
+            fi
             node scripts/internal/debug-symbols.mjs check debug-symbols \
               termihub-rdp-helper="src-tauri/binaries/termihub-rdp-helper-$T$EXE" \
               termihub-plugin-runner="src-tauri/binaries/termihub-plugin-runner-$T$EXE"
@@ -733,7 +933,7 @@ jobs:
             node scripts/internal/debug-symbols.mjs stage --out debug-symbols --name termihub "$BIN"
           fi
           if [ "$RUNNER_OS" = "macOS" ]; then
-            # The sidecars are checked inside the re-signed .app below.
+            # The sidecars are checked inside the signed .app by sign-macos-app.
             node scripts/internal/debug-symbols.mjs check debug-symbols termihub="$BIN"
           else
             # tauri-build copied the staged sidecars next to termihub.
@@ -796,7 +996,7 @@ jobs:
       # (tauri-build copies the staged sidecars next to termihub). Linux also
       # inside every package: the AppImage bundler (linuxdeploy) patchelfs each
       # ELF in usr/bin, which once broke both digests (#4243). macOS is checked
-      # inside the re-signed .app below.
+      # inside the signed .app by sign-macos-app.
       - name: Verify the bundled sidecars
         if: ${{ !startsWith(matrix.os, 'macos') }}
         shell: bash
@@ -864,84 +1064,6 @@ jobs:
             rm -rf "$X"
           fi
 
-      # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
-      # (inner components signed in the wrong order), which Gatekeeper classifies as
-      # "damaged" — no bypass path exists for that error. A *fully consistent*
-      # signature that is not a Developer ID instead triggers "unverified developer",
-      # which users can bypass via System Settings → Privacy & Security → Open Anyway
-      # (see the release notes). We re-sign the entire bundle ourselves, inside-out,
-      # to guarantee consistency: with the self-signed identity imported above when
-      # it is set up (#5545), ad hoc otherwise. A signature is also required by the
-      # Apple Silicon kernel — a completely unsigned binary is killed immediately at
-      # exec time on M1/M2/M3/M4. The signing order, the strict verification and the
-      # designated-requirement checks live in scripts/internal/macos-codesign.sh.
-      - name: Re-sign macOS app inside the DMG
-        if: startsWith(matrix.os, 'macos')
-        shell: bash
-        run: |
-          set -euo pipefail
-          DMG=$(find "target/${{ matrix.rust_target }}/release/bundle/dmg" -name "*.dmg" | head -n 1)
-          WORKDIR=$(mktemp -d)
-          MOUNT="$WORKDIR/mount"
-          mkdir "$MOUNT"
-
-          hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
-          APP_PATH=$(find "$MOUNT" -mindepth 1 -maxdepth 1 -name '*.app' | head -n 1)
-          APP_NAME=$(basename "$APP_PATH")
-          ditto "$MOUNT/$APP_NAME" "$WORKDIR/$APP_NAME"
-          hdiutil detach "$MOUNT" -quiet
-
-          APP="$WORKDIR/$APP_NAME"
-
-          # 1-4. Sign inside-out (Mach-O files, nested bundles, the app; no
-          #      --deep), then HARD GATE `codesign --verify --deep --strict` (the
-          #      "damaged" guard, PKG-005). With the identity, also prove the
-          #      designated requirements of the app and both helpers name the
-          #      pinned certificate. Every codesign failure is fatal.
-          scripts/internal/macos-codesign.sh resign-app "$APP"
-          EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
-
-          # 4a. The RDP helper must still match the digest the app embeds
-          #     (#1762), or RDP is refused as tampered (#4222).
-          #     build-rdp-sidecar.sh signed it under its installed name before
-          #     staging: an ad-hoc re-sign is byte-identical, and with the
-          #     identity the re-sign keeps its signature.
-          scripts/internal/verify-rdp-helper-bundle.sh "$APP/Contents/MacOS/$EXE_NAME"
-
-          # 5. The plugin runner (#4202) must still match the digest the app
-          #    embeds (the staged runner was signed under the same name, so
-          #    the re-sign leaves it byte-identical). --no-run: the x64
-          #    bundle is cross-built here; Release macOS Smoke runs it natively.
-          scripts/internal/verify-plugin-runner-bundle.sh --no-run "$APP/Contents/MacOS/$EXE_NAME"
-
-          # 6. The re-signed binaries must still match the .dSYMs in the
-          #    debug-symbols asset (#4504): codesign leaves LC_UUID unchanged.
-          M="$APP/Contents/MacOS"
-          dwarfdump --uuid "$M/$EXE_NAME" debug-symbols/termihub.dSYM
-          node scripts/internal/debug-symbols.mjs check debug-symbols termihub="$M/$EXE_NAME" \
-            termihub-rdp-helper="$M/termihub-rdp-helper" \
-            termihub-plugin-runner="$M/termihub-plugin-runner"
-
-          # Advisory only: Gatekeeper always rejects a bundle without a Developer
-          # ID (self-signed or ad hoc; no Apple Developer account by maintainer
-          # decision), so spctl cannot be a gate. Its verdict is logged.
-          echo "=== Gatekeeper assessment (advisory) ==="
-          if ! spctl --assess --type exec --verbose=2 "$APP" 2>&1; then
-            echo "::notice::spctl rejected the bundle (expected without a Developer ID)"
-          fi
-          echo "=== Signature info ==="
-          codesign -dv "$APP" 2>&1
-          codesign -d -r- "$APP" 2>&1
-          find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
-
-          # Swap the re-signed .app into Tauri's own image instead of rebuilding
-          # it from the bare .app, which dropped the /Applications drag-to-install
-          # link, volume icon and layout (PKG2-009, #4361). The helper rewrites
-          # $DMG only after the new image verifies, then `check` re-asserts it.
-          scripts/internal/macos-dmg-layout.sh replace-app "$DMG" "$APP"
-          scripts/internal/macos-dmg-layout.sh check "$DMG"
-          rm -rf "$WORKDIR"
-
       # Stage the release assets under their published names in release-assets/
       # (the upload job publishes that directory as-is): the primary bundle
       # termiHub-<version>-<platform><ext>, plus the .deb (linux-x64) and .rpm
@@ -987,13 +1109,13 @@ jobs:
       # the installer (published names, see scripts/internal/updater-platforms.json),
       # UNSIGNED: sign-updater signs it in a job that runs no third-party build
       # code (#5761). Windows and the Linux AppImage update from the installer
-      # itself. macOS updates from a .app.tar.gz rebuilt here from the re-signed
-      # app in the DMG (Tauri's own one would hold the app from BEFORE the
-      # re-sign). The bundle's SHA-256 goes to sign-updater as its own artifact,
-      # so it signs only the bytes staged here. Linux ARM64 ships only
-      # .deb/.rpm, which keep the downloads page.
+      # itself. macOS updates from a .app.tar.gz that sign-macos-app builds from
+      # the signed app in the DMG (#5781; Tauri's own one would hold the app
+      # from BEFORE signing). The bundle's SHA-256 goes to sign-updater as its
+      # own artifact, so it signs only the bytes staged here. Linux ARM64 ships
+      # only .deb/.rpm, which keep the downloads page.
       - name: Stage the updater bundle
-        if: steps.updater.outputs.enabled == 'true' && matrix.platform != 'linux-arm64'
+        if: steps.updater.outputs.enabled == 'true' && matrix.platform != 'linux-arm64' && !startsWith(matrix.os, 'macos')
         shell: bash
         env:
           VERSION: ${{ needs.release-version.outputs.version }}
@@ -1001,30 +1123,6 @@ jobs:
         run: |
           set -euo pipefail
           case "$PLATFORM" in
-          macos-*)
-            work="$(mktemp -d)"
-            mkdir "$work/mount"
-            hdiutil attach "release-assets/termiHub-${VERSION}-${PLATFORM}.dmg" \
-              -mountpoint "$work/mount" -nobrowse -readonly -quiet
-            app="$(find "$work/mount" -mindepth 1 -maxdepth 1 -name '*.app' | head -n 1)"
-            name="$(basename "$app")"
-            ditto "$app" "$work/$name"
-            hdiutil detach "$work/mount" -quiet
-            codesign --verify --deep --strict "$work/$name"
-            # The bundle the updater installs must carry the stable identity
-            # (#5545), or the update itself would cost the keychain access.
-            if [ -n "${TERMIHUB_MACOS_SIGNING_IDENTITY:-}" ]; then
-              node scripts/internal/macos-signing.mjs check \
-                --cert-sha1 "$TERMIHUB_MACOS_SIGNING_IDENTITY" \
-                --identifier "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$work/$name/Contents/Info.plist")" \
-                "$work/$name"
-            fi
-            out="release-assets/termiHub-${VERSION}-${PLATFORM}.app.tar.gz"
-            # No AppleDouble (._*) entries: the updater unpacks this over the app.
-            COPYFILE_DISABLE=1 tar -czf "$out" -C "$work" "$name"
-            rm -rf "$work"
-            asset="$(basename "$out")"
-            ;;
           windows-x64) asset="termiHub-${VERSION}-${PLATFORM}.msi" ;;
           linux-x64) asset="termiHub-${VERSION}-${PLATFORM}.AppImage" ;;
           *)
@@ -1041,7 +1139,7 @@ jobs:
           ls -l release-assets
 
       - name: Hand the updater bundle digest to sign-updater
-        if: steps.updater.outputs.enabled == 'true' && matrix.platform != 'linux-arm64'
+        if: steps.updater.outputs.enabled == 'true' && matrix.platform != 'linux-arm64' && !startsWith(matrix.os, 'macos')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-updater-digest-${{ matrix.platform }}
@@ -1049,20 +1147,15 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # macOS: the DMG is still unsigned (only the helpers inside are signed);
+      # sign-macos-app signs it and hands it on as release-app-macos.
       - name: Hand the bundles to upload-app
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-app-${{ matrix.platform }}
+          name: ${{ startsWith(matrix.os, 'macos') && 'macos-unsigned-app' || 'release-app' }}-${{ matrix.platform }}
           path: release-assets/
           if-no-files-found: error
           retention-days: 7
-
-      # The temporary signing keychain dies with the hosted runner anyway;
-      # remove it explicitly so the private key never outlives its use.
-      - name: Remove the macOS signing keychain
-        if: always() && startsWith(matrix.os, 'macos') && steps.macsign.outputs.enabled == 'true'
-        shell: bash
-        run: scripts/internal/macos-signing-keychain.sh delete "$TERMIHUB_MACOS_SIGNING_KEYCHAIN"
 
       # One archive per platform with the desktop, RDP sidecar and plugin runner
       # symbols plus their SYMBOLS.txt manifest (#4504). Published by
@@ -1089,21 +1182,144 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # macOS phase 4 of 4 (#5781): sign the app. The other job that receives
+  # MACOS_SIGNING_P12_BASE64 / _PASSWORD, shaped like sign-macos-helpers (sparse
+  # checkout of first-party, dependency-free scripts; pinned actions/* actions
+  # only; installs, compiles and executes nothing built; temporary keychain;
+  # macos-signing environment). For each macOS DMG build-app staged,
+  # macos-release-signing.sh sign-app checks that its helpers are the bytes
+  # sign-macos-helpers signed (job output), re-signs the app inside-out around
+  # them (macos-codesign.sh resign-app: the helpers' signatures are kept, only
+  # verified), proves `codesign --verify --deep --strict` and the designated
+  # requirements, that the helpers still match the digests the app embeds
+  # (verify-*-bundle.sh, --no-run) and the debug symbols (debug-symbols.mjs),
+  # swaps the app into Tauri's DMG (drag-to-install layout kept) and, when the
+  # updater is set up, builds the .app.tar.gz from the app in that DMG. The
+  # DMGs and updater bundles go on as release-app-macos, their digests as
+  # release-updater-digest-macos for sign-updater. Read-only; runs in a dry run.
+  sign-macos-app:
+    name: Sign macOS App
+    needs: [verify-version, verify-supply-chain, release-version, sign-macos-helpers, build-app]
+    runs-on: macos-latest
+    environment: macos-signing
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout the signing helpers and config
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/internal
+            src-tauri
+
+      # Same decision as build-app's: updater bundles only once the updater
+      # public key is configured (#5758).
+      - name: Decide updater bundles
+        id: updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(node scripts/internal/updater-manifest.mjs pubkey)" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the unsigned macOS bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: macos-unsigned-app-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download the macOS debug symbols
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-symbols-desktop-macos-*
+          merge-multiple: true
+          path: release-symbols
+
+      # The secrets reach this one step only.
+      - name: Import macOS signing identity
+        id: macsign
+        shell: bash
+        env:
+          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: scripts/internal/macos-signing-keychain.sh ci-import
+
+      - name: Sign the apps and rebuild the DMGs and updater bundles
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-version.outputs.version }}
+          HELPER_SUMS: ${{ needs.sign-macos-helpers.outputs.sums }}
+          UPDATER: ${{ steps.updater.outputs.enabled }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$HELPER_SUMS" > "$RUNNER_TEMP/helper-sums"
+          mkdir -p updater-digest
+          for spec in macos-x64:x86_64-apple-darwin macos-arm64:aarch64-apple-darwin; do
+            platform="${spec%%:*}"
+            target="${spec#*:}"
+            echo "=== ${platform} ==="
+            symbols="$RUNNER_TEMP/symbols-${platform}"
+            mkdir -p "$symbols"
+            tar -xzf "release-symbols/termiHub-${VERSION}-debug-symbols-desktop-${platform}.tar.gz" \
+              -C "$symbols"
+            args=(--sums "$RUNNER_TEMP/helper-sums" --target "$target" --symbols "$symbols")
+            bundle="termiHub-${VERSION}-${platform}.app.tar.gz"
+            if [ "$UPDATER" = "true" ]; then
+              args+=(--updater-bundle "release-assets/$bundle")
+            fi
+            scripts/internal/macos-release-signing.sh sign-app "${args[@]}" \
+              "release-assets/termiHub-${VERSION}-${platform}.dmg"
+            if [ "$UPDATER" = "true" ]; then
+              (cd release-assets && shasum -a 256 "$bundle") > "updater-digest/${platform}.sha256"
+              cat "updater-digest/${platform}.sha256"
+            fi
+          done
+          ls -l release-assets
+
+      - name: Hand the signed bundles to upload-app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-app-macos
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Hand the updater bundle digests to sign-updater
+        if: steps.updater.outputs.enabled == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-updater-digest-macos
+          path: updater-digest/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove the macOS signing keychain
+        if: always() && steps.macsign.outputs.enabled == 'true'
+        shell: bash
+        run: scripts/internal/macos-signing-keychain.sh delete "$TERMIHUB_MACOS_SIGNING_KEYCHAIN"
+
   # Sign the in-app updater bundles (#5761), shaped like sign-agent-binaries:
   # the ONLY job that receives TAURI_SIGNING_PRIVATE_KEY, and it runs no
   # third-party build code. It checks out only scripts/internal + src-tauri
   # (first-party, dependency-free helpers and configs), installs no project
   # dependencies and compiles nothing: the signer is the standalone Tauri CLI
   # release binary pinned by SHA-256 in scripts/internal/updater-signer.json.
-  # It signs only bundles matching the digests build-app staged, verifies every
-  # .sig against the configured public key and hands the .sig files to
-  # updater-manifest (and, as a release-app-* artifact, to upload-app). The
-  # updater-signing environment lets the maintainer hold the two secrets there
-  # (docs/contributing.md -> "Updater Signing Key"). Read-only; runs in a dry run
-  # too, so a dry run proves latest.json end to end.
+  # It signs only bundles matching the digests build-app (macOS: sign-macos-app)
+  # staged, verifies every .sig against the configured public key and hands the
+  # .sig files to updater-manifest (and, as a release-app-* artifact, to
+  # upload-app). The updater-signing environment lets the maintainer hold the
+  # two secrets there (docs/contributing.md -> "Updater Signing Key").
+  # Read-only; runs in a dry run too, so a dry run proves latest.json end to
+  # end.
   sign-updater:
     name: Sign Updater Bundles
-    needs: [verify-version, verify-supply-chain, release-version, build-app]
+    needs: [verify-version, verify-supply-chain, release-version, build-app, sign-macos-app]
     runs-on: ubuntu-latest
     environment: updater-signing
     permissions:
@@ -1205,7 +1421,8 @@ jobs:
   # enabled=false with a notice, and nothing below expects updater assets.
   updater-manifest:
     name: Updater Manifest
-    needs: [verify-version, verify-supply-chain, release-version, build-app, sign-updater]
+    needs:
+      [verify-version, verify-supply-chain, release-version, build-app, sign-macos-app, sign-updater]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1276,6 +1493,7 @@ jobs:
         verify-supply-chain,
         release-version,
         build-app,
+        sign-macos-app,
         sign-updater,
         updater-manifest,
         agent-binaries-linux,
@@ -1462,6 +1680,7 @@ jobs:
         create-release,
         check-release-assets,
         build-app,
+        sign-macos-app,
         sign-updater,
         updater-manifest,
       ]
@@ -2320,7 +2539,7 @@ jobs:
 
           # Desktop bundles — names mirror build-app's rename logic
           # (termiHub-<version>-<platform><ext>) plus its .deb/.rpm side-uploads.
-          # DMG ×2 are re-signed (self-signed identity or ad hoc) before upload.
+          # DMG ×2 are signed by sign-macos-app (self-signed identity or ad hoc).
           expected=(
             "termiHub-${VERSION}-macos-x64.dmg"
             "termiHub-${VERSION}-macos-arm64.dmg"

@@ -84,6 +84,10 @@ ALLOWLIST=(
   "scripts/internal/setup-macos-signing-identity.sh"  # one-time maintainer identity setup
   "scripts/internal/macos-signing-keychain.sh"  # temp keychain for the identity (release CI)
   "scripts/internal/macos-codesign.sh"          # sign/re-sign the .app (release CI, sidecar builds)
+  # Isolated macOS signing phases (#5781): run by release.yml's macOS-only
+  # sign-macos-* jobs and build-app's macOS legs, plus its local macOS dry run.
+  "scripts/internal/macos-release-signing.sh"       # CI-only helper/app signing phases (macOS)
+  "scripts/internal/test-macos-release-signing.sh"  # macOS-only throwaway-identity dry run
   # Branch protection as code (CI-017, #3675): admin-only maintainer tool around
   # `gh api`; Git Bash works on Windows.
   "scripts/internal/apply-branch-protection.sh"  # maintainer applies .github/branch-protection.json

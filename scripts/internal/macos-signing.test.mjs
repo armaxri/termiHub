@@ -205,7 +205,15 @@ describe("pin file", () => {
     expect(PIN_FILE).toBe(path.join(ROOT, "scripts", "internal", "macos-signing-identity.json"));
     const release = readFileSync(path.join(ROOT, ".github/workflows/release.yml"), "utf8");
     expect(release).toContain("scripts/internal/macos-signing-keychain.sh ci-import");
-    expect(release).toContain("node scripts/internal/macos-signing.mjs check");
+    // The release signing phases (#5781) run the DR checks through
+    // macos-release-signing.sh, which release.yml calls.
+    expect(release).toContain("scripts/internal/macos-release-signing.sh sign-app");
+    const phases = readFileSync(
+      path.join(ROOT, "scripts/internal/macos-release-signing.sh"),
+      "utf8"
+    );
+    expect(phases).toContain('SIGNING_TOOL="$SCRIPT_DIR/macos-signing.mjs"');
+    expect(phases).toMatch(/node "\$SIGNING_TOOL" check --cert-sha1/);
     const setup = readFileSync(
       path.join(ROOT, "scripts/internal/setup-macos-signing-identity.sh"),
       "utf8"
