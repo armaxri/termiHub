@@ -234,7 +234,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         )}
       </div>
 
-      {show("defaultX11Forwarding") && (
+      {(show("defaultX11Forwarding") || show("fileBrowser")) && (
         <div className="settings-panel__category">
           <SettingsSectionHeading>New connection defaults</SettingsSectionHeading>
 
@@ -249,6 +249,22 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
                   onChange((prev) => ({ ...prev, defaultX11Forwarding: checked }))
                 }
                 data-testid="settings-default-x11-forwarding"
+              />
+            </SettingsField>
+          )}
+
+          {/* Lived under External files ▸ Advanced until #5786; the key is unchanged. */}
+          {show("fileBrowser") && (
+            <SettingsField
+              label="File browser"
+              hint="Enable the SFTP file browser for SSH agent sessions. Individual connections can override it in their settings. Turning it off disconnects active sessions that use the default."
+            >
+              <Toggle
+                checked={settings.fileBrowserEnabled}
+                onCheckedChange={(checked) =>
+                  onChange((prev) => ({ ...prev, fileBrowserEnabled: checked }))
+                }
+                data-testid="toggle-file-browser"
               />
             </SettingsField>
           )}

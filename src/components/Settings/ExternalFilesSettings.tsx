@@ -7,14 +7,16 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { ExternalFileConfig } from "@/types/connection";
 import { Button, Input, Toggle, Tooltip, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
-import { SettingsField } from "./SettingsField";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
- * External connection file management, extracted from SettingsPanel.
+ * External connection file management, extracted from SettingsPanel. Only the
+ * shared connection files live here: the host-monitoring toggles moved to
+ * Monitoring (#5775) and the File browser default to General ▸ New connection
+ * defaults (#5786).
  */
 export function ExternalFilesSettings() {
   const settings = useProjectedSettings();
@@ -215,32 +217,6 @@ export function ExternalFilesSettings() {
             ))}
           </ul>
         )}
-      </div>
-
-      <div className="settings-panel__section">
-        <div className="settings-panel__section-header">
-          <SettingsSectionHeading>Advanced</SettingsSectionHeading>
-        </div>
-        <p className="settings-panel__description">
-          Default for new SSH connections. Individual connections can override it in their SSH
-          settings. Turning it off disconnects active sessions that use the default. Host monitoring
-          settings are under Monitoring.
-        </p>
-        <SettingsField
-          label="File browser"
-          hint="Enable the SFTP file browser for SSH agent sessions."
-        >
-          <Toggle
-            checked={settings.fileBrowserEnabled}
-            onCheckedChange={() =>
-              updateSettings({
-                ...settings,
-                fileBrowserEnabled: !settings.fileBrowserEnabled,
-              })
-            }
-            data-testid="toggle-file-browser"
-          />
-        </SettingsField>
       </div>
     </div>
   );

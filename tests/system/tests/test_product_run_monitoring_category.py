@@ -4,8 +4,9 @@ Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 ``--product-run``). Power monitoring, Monitor local shells and Status bar
 metrics used to sit under Settings ▸ External files ▸ Advanced, where nobody
 looked for them. Since #5775 they have their own Monitoring category in the
-Terminal nav group; the setting keys did not change, and the File browser
-toggle stays under External files.
+Terminal nav group; the setting keys did not change. (The File browser toggle
+moved to General in #5786; ``test_product_run_file_browser_setting.py`` grades
+that.)
 
 The placement check is a pure function, graded without an app in the per-PR
 lane by the tests at the bottom of this file.
@@ -71,7 +72,6 @@ class TestProductRunMonitoringCategory(ProductRunUi, SettingsUi, SystemTest):
             "Status bar metrics",
         ):
             on_external_files = self._fields_on("external-files")
-            assert self.driver.exists("toggle-file-browser"), "File browser left External files"
             on_monitoring = self._fields_on("monitoring")
             self.wait(
                 lambda: self.driver.exists("settings-monitoring"), what="the Monitoring page"
