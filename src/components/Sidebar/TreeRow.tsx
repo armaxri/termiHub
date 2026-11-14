@@ -176,12 +176,14 @@ function treeItemClassName({
   persistent,
   reorderOver,
   unavailable,
+  described,
 }: {
   dragging?: boolean;
   selected?: boolean;
   persistent?: boolean;
   reorderOver?: boolean;
   unavailable?: boolean;
+  described?: boolean;
 }): string {
   let className = "connection-tree__item";
   if (dragging) className += " connection-tree__item--dragging";
@@ -189,6 +191,7 @@ function treeItemClassName({
   if (persistent) className += " connection-tree__item--persistent";
   if (reorderOver) className += " connection-tree__item--reorder-over";
   if (unavailable) className += " connection-tree__item--unavailable";
+  if (described) className += " connection-tree__item--described";
   return className;
 }
 
@@ -225,6 +228,11 @@ export interface TreeItemRowProps extends Omit<
    * plugin is missing, #3344) — rendered muted but still selectable/editable.
    */
   unavailable?: boolean;
+  /**
+   * Modifier flag → `--described`: the row shows a description line under
+   * its name (#5757), so it grows past the single-line height.
+   */
+  described?: boolean;
   /** Native `title` (hover help). */
   title?: string;
   /** Optional `data-testid` for the button. */
@@ -256,6 +264,7 @@ export const TreeItemRow = React.forwardRef<HTMLButtonElement, TreeItemRowProps>
       persistent,
       reorderOver,
       unavailable,
+      described,
       title,
       testId,
       dragAttributes,
@@ -271,6 +280,7 @@ export const TreeItemRow = React.forwardRef<HTMLButtonElement, TreeItemRowProps>
       persistent,
       reorderOver,
       unavailable,
+      described,
     });
     // Merge the dnd-kit attributes/listeners with any Radix `asChild`-injected
     // props (`rest`), composing overlapping handlers (e.g. `onPointerDown` is set

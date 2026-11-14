@@ -28,6 +28,12 @@ describe("connectionMatchesQuery", () => {
     expect(connectionMatchesQuery(conn("c1", "Production DB"), "xyz")).toBe(false);
   });
 
+  it("matches by description (#5757)", () => {
+    const c = { ...conn("c1", "Box"), description: "Shop front" };
+    expect(connectionMatchesQuery(c, "shop")).toBe(true);
+    expect(connectionMatchesQuery(conn("c1", "Box"), "shop")).toBe(false);
+  });
+
   it("matches by host", () => {
     expect(connectionMatchesQuery(conn("c1", "Box", { host: "10.0.0.5" }), "10.0.0")).toBe(true);
   });

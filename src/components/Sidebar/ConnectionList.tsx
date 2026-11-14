@@ -557,6 +557,7 @@ function ConnectionItem({
               persistent={persistentCapable}
               reorderOver={isConnectionReorderOver}
               unavailable={pluginIssue !== null}
+              described={!!connection.description}
               title={
                 pluginIssue
                   ? `${connection.name}: ${pluginIssue.message}`
@@ -579,7 +580,19 @@ function ConnectionItem({
                 size={16}
                 testId={`connection-icon-${connection.id}`}
               />
-              <span className="connection-tree__label">{connection.name}</span>
+              {connection.description ? (
+                <span className="connection-tree__text">
+                  <span className="connection-tree__label">{connection.name}</span>
+                  <span
+                    className="connection-tree__description"
+                    data-testid={`connection-description-${connection.id}`}
+                  >
+                    {connection.description}
+                  </span>
+                </span>
+              ) : (
+                <span className="connection-tree__label">{connection.name}</span>
+              )}
               {pluginIssue && (
                 <Tooltip content={pluginIssue.message} side="top">
                   <span

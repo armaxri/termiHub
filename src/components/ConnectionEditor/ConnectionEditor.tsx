@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo, useId } from "react";
+import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { useZodValidity } from "@/hooks/useZodEditorForm";
 import { z } from "zod";
@@ -224,6 +225,8 @@ interface ConnectionEditorProps {
  */
 interface TopLevelFormValues {
   name: string;
+  /** Short one-line description (#5757); `""` = none. Saved connections only. */
+  description: string;
   sourceFile: string | null;
   persistent: boolean;
   /** Connection icon; `null` = no icon (mapped to `undefined` in payloads). */
@@ -381,6 +384,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         existingAgentDef?.name ??
         existingConnection?.name ??
         (isAgentDefinitionMode ? "" : (existingAgent?.name ?? "")),
+      description: existingConnection?.description ?? "",
       sourceFile: existingConnection?.sourceFile ?? null,
       persistent: existingAgentDef?.persistent ?? false,
       icon: existingAgentDef?.icon ?? existingConnection?.icon ?? null,
@@ -409,6 +413,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // for validation, the Save gate, dirty tracking, and the save payload.
   const watchedTopLevel = useWatch({ control: topLevelControl });
   const name = watchedTopLevel.name ?? initialTopLevel.name;
+  const description = watchedTopLevel.description ?? initialTopLevel.description;
   const sourceFile =
     watchedTopLevel.sourceFile !== undefined
       ? watchedTopLevel.sourceFile
@@ -589,6 +594,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // The baseline is what the editor opened on, never a draft carried in from
   // another window (#4500), so a moved draft keeps comparing against the record.
   const initialName = useRef(initialTopLevel.name);
+  const initialDescription = useRef(initialTopLevel.description);
   const initialSelectedType = useRef(initialTypeAndSettings.typeId);
   const initialConnSettings = useRef({
     ...connSettingsSchemaDefaults,
@@ -686,6 +692,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     };
     const isDirty =
       name !== initialName.current ||
+      description !== initialDescription.current ||
       selectedType !== initialSelectedType.current ||
       JSON.stringify(normalizedConnSettings) !== JSON.stringify(initialConnSettings.current) ||
       JSON.stringify(terminalOptions) !== JSON.stringify(initialTerminalOptions.current) ||
@@ -700,6 +707,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     setEditorDirty(tabId, isDirty);
   }, [
     name,
+    description,
     selectedType,
     connSettings,
     terminalOptions,
@@ -732,6 +740,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       z
         .object({
           name: z.string(),
+          description: z.string(),
           sourceFile: z.string().nullable(),
           persistent: z.boolean(),
           icon: z.string().nullable(),
@@ -809,6 +818,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // useZodEditorForm rather than the whole scaffold.
   const topLevelValidity = useZodValidity(topLevelSchema, {
     name,
+    description,
     sourceFile,
     persistent,
     icon: icon ?? null,
@@ -1145,6 +1155,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       const saved: SavedConnection = {
         ...existingConnection,
         name,
+        description: normalizeItemDescription(description),
         config: connectionConfig,
         folderId,
         terminalOptions: opts,
@@ -1171,6 +1182,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       const saved: SavedConnection = {
         id: newId("conn"),
         name,
+        description: normalizeItemDescription(description),
         config: connectionConfig,
         folderId,
         terminalOptions: opts,
@@ -1197,6 +1209,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     icon,
     iconColor,
     iconEmoji,
+    description,
     sourceFile,
     existingConnection,
     existingAgent,
@@ -1672,6 +1685,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // Autofocus (and select any prefilled name when editing) the primary field.
   const nameRef = useAutofocusSelect<HTMLInputElement>();
   const nameInputId = useId();
+  const descriptionInputId = useId();
   const typeSelectId = useId();
 
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
@@ -1689,6 +1703,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     const settingsPart = clearDraftSecrets(connSettings, draftSchema);
     const topLevelPart = clearDraftSecrets<TopLevelFormValues>({
       name,
+      description,
       sourceFile,
       persistent,
       icon: icon ?? null,
@@ -1807,6 +1822,31 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             </Field>
           )}
         />
+        {!isAgentTransportMode && !isAgentDefinitionMode && (
+          <Controller
+            name="description"
+            control={topLevelControl}
+            render={({ field }) => (
+              <Field
+                variant="settings"
+                label="Description (optional)"
+                htmlFor={descriptionInputId}
+                hint="One short line shown under the name in the sidebar."
+              >
+                <Input
+                  id={descriptionInputId}
+                  type="text"
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                  placeholder="What this connection is for"
+                  data-testid="connection-editor-description-input"
+                />
+              </Field>
+            )}
+          />
+        )}
         {!isAgentTransportMode && (
           <Field variant="settings" label="Type" htmlFor={typeSelectId}>
             <Select
