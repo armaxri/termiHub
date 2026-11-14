@@ -271,7 +271,9 @@ pub struct ShellIntegrationSettings {
     pub registered_exe_path: Option<String>,
     /// Linux per-file-manager install toggles.
     pub linux_file_managers: LinuxFileManagerToggles,
-    /// Whether the user dismissed the first-launch install banner.
+    /// Whether the one-time "Open in termiHub" offer was already shown (#5753),
+    /// or the user opted out of the first-launch banner it replaced. The key keeps
+    /// its old name so existing profiles carry over unchanged.
     pub first_launch_banner_dismissed: bool,
 }
 

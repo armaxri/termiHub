@@ -7,8 +7,9 @@
 }
 
 /*
- * Shared bottom-banner shell (#5638): crash notices (warning) and the
- * file-manager prompt (info) share one layout and one button pattern.
+ * Shared bottom-banner shell (#5638): every bottom banner (the crash notices
+ * are warnings; `info` is kept for neutral notices) shares one layout and one
+ * button pattern. The file-manager offer is a toast since #5753.
  */
 .bottom-banner {
   display: flex;

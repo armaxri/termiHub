@@ -7,7 +7,12 @@ import { acknowledgeCrashReports, getCrashReportNotice } from "@/services/api";
 import type { CrashReportNotice as Notice } from "@/types/diagnostics";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDiagnosticsDialogStore } from "./diagnosticsDialogStore";
-import { BottomBanner, BottomBannerAction, useBottomBannerSlot } from "@/components/BottomBanners";
+import {
+  BottomBanner,
+  BottomBannerAction,
+  useBottomBannerSlot,
+  useBottomBannerStore,
+} from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
 import "./Diagnostics.css";
 
@@ -30,19 +35,30 @@ export function CrashReportNotice() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setViewedReport = useDiagnosticsDialogStore((s) => s.setViewedReport);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const markCrashChecked = useBottomBannerStore((s) => s.markCrashChecked);
 
   useEffect(() => {
-    if (!enabled) return;
+    // #5753: the one-time file-manager offer waits for this check and stays
+    // away for the whole session when it finds a crash.
+    if (!enabled) {
+      markCrashChecked("local", false);
+      return;
+    }
     let cancelled = false;
     getCrashReportNotice()
       .then((n) => {
-        if (!cancelled) setNotice(n);
+        if (cancelled) return;
+        markCrashChecked("local", n != null);
+        setNotice(n);
       })
-      .catch((e) => frontendLog("crash_report", `notice check failed: ${errorMessage(e)}`));
+      .catch((e) => {
+        markCrashChecked("local", false);
+        frontendLog("crash_report", `notice check failed: ${errorMessage(e)}`);
+      });
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, markCrashChecked]);
 
   const dismiss = useCallback(() => {
     setNotice(null);

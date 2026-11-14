@@ -4,7 +4,7 @@ import { ActivityBar } from "@/components/ActivityBar";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
 import { TransferQueue } from "@/components/TransferQueue";
-import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
+import { FileManagerOffer } from "@/components/FileManagerOffer";
 import { BottomBannerRegion } from "@/components/BottomBanners";
 import {
   AgentCrashReportNotice,
@@ -381,8 +381,8 @@ function App() {
           <BottomBannerRegion>
             <CrashReportNotice />
             <AgentCrashReportNotice />
-            <ShellIntegrationBanner />
           </BottomBannerRegion>
+          <FileManagerOffer />
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />

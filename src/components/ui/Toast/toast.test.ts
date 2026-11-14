@@ -94,6 +94,26 @@ describe("toast API", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it("passes a cancel button through, tagged with its testId (#5753)", () => {
+    const onClick = vi.fn();
+    toast.info("Offer", {
+      action: { label: "Install", onClick: vi.fn() },
+      cancel: { label: "Not now", onClick, testId: "x-not-now" },
+      duration: Infinity,
+    });
+    const opts = info.mock.calls[0][1] as {
+      duration: number;
+      cancel: { label: { props: Record<string, unknown> }; onClick: () => void };
+    };
+    expect(opts.duration).toBe(Infinity);
+    expect(opts.cancel.label.props).toMatchObject({
+      "data-testid": "x-not-now",
+      children: "Not now",
+    });
+    opts.cancel.onClick();
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it("promise resolves the loading toast in place into success", async () => {
     const p = Promise.resolve("done");
     await toast.promise(p, { loading: "Load", success: "OK", error: "Err" });
