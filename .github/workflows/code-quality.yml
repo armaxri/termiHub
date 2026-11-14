@@ -515,13 +515,16 @@ jobs:
       # docs/concepts/README.md (MKT2-008); README.md's Activity Bar views, SSH
       # auth methods and default-shortcut table match the code (MKT2-002/-004/
       # -005); every docs/marketing draft carries one "Last verified" stamp
-      # (MKT2-003). Their vitest suites run the same checks, but this job also
+      # (MKT2-003); PRIVACY.md / docs/privacy.md links resolve and the notice
+      # names every endpoint the app contacts on its own (#5759). Their vitest
+      # suites run the same checks, but this job also
       # runs on docs-only PRs, where the test lane skips.
-      - name: Check docs consistency (concept index, README parity, marketing stamps)
+      - name: Check docs consistency (concept index, README parity, marketing stamps, privacy notice)
         run: |
           node scripts/internal/check-concept-index.mjs
           node scripts/internal/check-readme-parity.mjs
           node scripts/internal/check-marketing-drafts.mjs
+          node scripts/internal/check-privacy-notice.mjs
 
       - name: Lint Markdown
         run: pnpm run markdownlint
