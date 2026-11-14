@@ -103,6 +103,12 @@ pub(crate) fn build_app_window(app: &AppHandle, label: &str) -> tauri::Result<We
         .title("termiHub")
         .inner_size(1280.0, 800.0)
         .min_inner_size(800.0, 600.0)
+        // Same in-memory web data store as the main window in portable mode on
+        // macOS (#5764): WKWebView cannot move its data folder.
+        .incognito(crate::utils::app_dirs::use_ephemeral_webview_store(
+            &crate::utils::portable::detect_app_mode()
+                .unwrap_or(crate::utils::portable::AppMode::Installed),
+        ))
         .build()
 }
 
