@@ -557,17 +557,12 @@ async fn test_shell_exit() {
     // Read until the Exited frame. It carries the shell's real exit status
     // (#5742): the code, an empty end-cause byte and the status byte.
     let mut exited: Option<Vec<u8>> = None;
-    loop {
-        match reader.next_frame(Duration::from_secs(10)).await {
-            Ok(Some(frame)) => {
-                if frame.msg_type == MSG_EXITED {
-                    exited = Some(frame.payload);
-                    break;
-                }
-                // Skip output frames.
-            }
-            Ok(None) | Err(_) => break,
+    while let Ok(Some(frame)) = reader.next_frame(Duration::from_secs(10)).await {
+        if frame.msg_type == MSG_EXITED {
+            exited = Some(frame.payload);
+            break;
         }
+        // Skip output frames.
     }
 
     let payload = exited.expect("Expected an Exited frame after the shell exits");
