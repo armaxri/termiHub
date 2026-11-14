@@ -55,6 +55,7 @@ from termihub_harness import (
 from termihub_harness.native_ssh import NativeBastionControl, NativeSshServerControl
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.editor_layout import measure_editor_layout
+from termihub_harness.product_run.hostkey_emphasis import enter_default_problems
 from termihub_harness.product_run.grades import editor_layout_problems
 from termihub_harness.product_run.hosts import (
     COMPOSE_MFA,
@@ -125,6 +126,19 @@ class TestProductRunSsh(
         type(self)._hostkey_layout[screen] = problems
         self.evidence(f"{screen} layout: {problems or 'ok'}")
 
+    #: Button-emphasis problems per host-key screen, graded by
+    #: ``test_10c_hostkey_emphasis`` (#5751).
+    _hostkey_emphasis: ClassVar[dict[str, list[str]]] = {}
+
+    def _measure_hostkey_emphasis(self, screen: str, measure: Callable[[], list[str]]) -> None:
+        """Record ``screen``'s emphasis problems; a slip never fails the step itself."""
+        try:
+            problems = measure()
+        except Exception as exc:  # noqa: BLE001 - graded later, never fails this step
+            problems = [f"could not measure: {exc}"]
+        type(self)._hostkey_emphasis[screen] = problems
+        self.evidence(f"{screen} emphasis: {problems or 'ok'}")
+
     def _trusted(self, port: int) -> list[str]:
         """Fingerprints termiHub remembered for ``127.0.0.1:<port>`` (Accept for host)."""
         path = self.config_dir / "ssh_known_hosts.json"
@@ -154,6 +168,9 @@ class TestProductRunSsh(
             shown = self.wait_hostkey_prompt()
             self.shot(label=None)
             self._measure_hostkey_layout("first-contact prompt", self.hostkey_layout_problems)
+            self._measure_hostkey_emphasis(
+                "first-contact prompt", lambda: self.hostkey_emphasis_problems(changed=False)
+            )
             self.evidence(f"prompt: {shown}")
             self.evidence(f"server fingerprint (ssh-keygen): {want}")
             assert str(port) in shown["host"], f"host line {shown['host']!r} lacks port {port}"
@@ -241,10 +258,25 @@ class TestProductRunSsh(
                 assert wrong_fp not in shown["fingerprint"], "the presented key is the recorded one"
                 assert "ed25519" in shown["type"].lower(), shown["type"]
                 assert shown["remember"] == "Replace trusted key", shown["remember"]
-                self.answer_hostkey_prompt(HOSTKEY_REJECT)
+                self._measure_hostkey_emphasis(
+                    "changed-key prompt", lambda: self.hostkey_emphasis_problems(changed=True)
+                )
+                # Reject is the default (#5751): Enter on the focused element
+                # answers the prompt as Reject. Fall back to clicking Reject so
+                # the step still grades the rejected outcome.
+                self.driver.press_key("Enter")
+                try:
+                    self.wait(lambda: not self.hostkey_prompt_open(), timeout=5.0, what="Enter to reject")
+                    closed = True
+                except AssertionError:
+                    closed = False
+                    self.answer_hostkey_prompt(HOSTKEY_REJECT)
                 tab_id = self.tab_id_of(name)
                 time.sleep(3.0)
                 status = self.session_status(tab_id)
+                type(self)._hostkey_emphasis["Enter on the changed-key prompt"] = enter_default_problems(
+                    closed=closed, connected=status == "connected"
+                )
                 self.evidence(f"after Reject: session status {status!r}; {self.terminal_tail(tab_id)}")
                 assert status != "connected", "Reject still connected"
                 kept = known_hosts.known_hosts_file().read_text()
@@ -582,6 +614,25 @@ class TestProductRunSsh(
                 for screen in ("first-contact prompt", "changed-key prompt", "rejected-key screen")
                 if screen not in measured
             ]
+            assert not missing, f"not measured: {missing}"
+            problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
+            assert not problems, problems
+
+    # ── host-key emphasis ────────────────────────────────────────────────────
+    def test_10c_hostkey_emphasis(self):
+        with self.step(
+            "ssh.hostkey.emphasis",
+            "Changed host key: both accepts are danger-styled and Reject is the default"
+            " (Enter rejects); first contact keeps Accept for host primary (#5751)",
+            expect="no new screen: graded on the ssh.hostkey.prompt / changed captures",
+            screenshot=False,
+        ):
+            self.require("ssh.hostkey.prompt", "ssh.hostkey.changed")
+            measured = type(self)._hostkey_emphasis
+            screens = ("first-contact prompt", "changed-key prompt", "Enter on the changed-key prompt")
+            for screen in screens:
+                self.evidence(f"{screen}: {measured.get(screen, 'not measured')}")
+            missing = [screen for screen in screens if screen not in measured]
             assert not missing, f"not measured: {missing}"
             problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
             assert not problems, problems

@@ -179,7 +179,8 @@ class TestGuidedCredentials(
             "Settings, then lock and unlock again.",
             "Touch ID unlocks and the connection proceeds; the master-password fallback "
             "works; after the fingerprint change the app says biometric unlock was "
-            "turned off; an unsigned build shows 'OS-enforced: no' under the toggle.",
+            "turned off; an unsigned build shows 'Less secure: other apps running as you could "
+            "read the unlock key.' with a warning icon under the toggle while it is on.",
         )
 
     @pytest.mark.manual(platforms=["macos"])
@@ -190,8 +191,9 @@ class TestGuidedCredentials(
             "On a signed build: turn on Unlock with Touch ID, lock and unlock with Touch "
             "ID. With an enrollment made by an unsigned build, install the signed build "
             "and unlock once. Add a fingerprint in System Settings, lock and unlock again.",
-            "Settings shows 'OS-enforced: yes' and unlock shows one Touch ID sheet; the "
-            "upgraded enrollment shows 'OS-enforced: yes'; after the fingerprint change "
+            "Settings shows 'Protected by the operating system' and unlock shows one Touch ID "
+            "sheet; the upgraded enrollment shows 'Protected by the operating system'; after "
+            "the fingerprint change "
             "the app says biometric unlock was turned off.",
         )
 
@@ -202,7 +204,7 @@ class TestGuidedCredentials(
         self.manual_step(
             "Turn on Unlock with Windows Hello and confirm each Hello dialog. Lock the "
             "store and unlock with Hello. Lock again and cancel the Hello dialog.",
-            "Every Hello dialog is in front of termiHub; Settings shows 'OS-enforced: "
-            "yes'; unlock shows one dialog; Cancel keeps the store locked and the master "
+            "Every Hello dialog is in front of termiHub; Settings shows 'Protected by the "
+            "operating system'; unlock shows one dialog; Cancel keeps the store locked and the master "
             "password still works.",
         )

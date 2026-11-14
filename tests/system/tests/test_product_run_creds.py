@@ -250,7 +250,10 @@ class TestProductRunCredentials(_CredsBase):
             self.open_settings_category("security")
             if not self._within(lambda: self.driver.exists("biometric-unlock-toggle"), 5.0):
                 pytest.skip("Security shows no biometric unlock here (no Touch ID hardware?)")
-            self.evidence(f"protection: {self.driver.get_text('biometric-unlock-protection')!r}")
+            # #5752: the protection note shows only while the unlock is on.
+            if self.driver.exists("biometric-unlock-protection"):
+                note = self.driver.get_text("biometric-unlock-protection")
+                self.evidence(f"protection: {note!r}")
             self.human_step(
                 "In the test window: Settings ▸ Security ▸ turn on Touch ID unlock, type the master "
                 f"password '{MASTER_PASSWORD}', confirm with Touch ID. Then click the lock in the "

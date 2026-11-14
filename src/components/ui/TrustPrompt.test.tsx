@@ -144,18 +144,74 @@ describe("TrustPrompt", () => {
     expect(variantOf("tp-accept-remember")).toBe("ui-btn--primary");
   });
 
-  it("leads with Reject and demotes Accept once when the identity changed (#5185)", () => {
+  it("leads with Reject and danger-styles both accepts when the identity changed (#5751)", () => {
     renderPrompt({ changed: true });
     expect(variantOf("tp-reject")).toBe("ui-btn--primary");
-    expect(variantOf("tp-accept-once")).toBe("ui-btn--ghost");
+    expect(variantOf("tp-accept-once")).toBe("ui-btn--danger");
     expect(variantOf("tp-accept-remember")).toBe("ui-btn--danger");
     const once = document.querySelector('[data-testid="tp-accept-once"]');
-    expect(once?.classList.contains("ui-trust-prompt__demoted")).toBe(true);
-    // Set apart first in the footer, away from the safe action.
+    expect(once?.classList.contains("ui-trust-prompt__apart")).toBe(true);
+    // Set apart first in the footer, away from the safe action (#5185).
     expect(once?.parentElement?.firstElementChild).toBe(once);
     // The MITM warning stays the first thing in the body.
     const warning = document.querySelector('[data-testid="tp-mitm-warning"]');
     expect(warning?.parentElement?.firstElementChild).toBe(warning);
+  });
+
+  /** Dispatch a real `keydown` for `key` on `target`, as a keyboard would. */
+  const press = (target: Element | null, key: string) => {
+    act(() => {
+      target?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+  };
+  const byTestId = (testid: string) => document.querySelector(`[data-testid="${testid}"]`);
+
+  it("focuses Reject when a changed identity opens (#5751)", () => {
+    renderPrompt({ changed: true });
+    expect(document.activeElement).toBe(byTestId("tp-reject"));
+  });
+
+  it("does not move first-contact focus to Reject", () => {
+    renderPrompt({ changed: false });
+    expect(document.activeElement).not.toBe(byTestId("tp-reject"));
+    // First contact keeps the modal's default: the first control in the body.
+    expect(document.activeElement).toBe(byTestId("tp-fingerprint-copy"));
+  });
+
+  it("rejects on Enter on a changed identity, once (#5751)", () => {
+    const { onReject, onAcceptOnce, onAcceptForHost } = renderPrompt({ changed: true });
+    press(document.activeElement, "Enter");
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onAcceptOnce).not.toHaveBeenCalled();
+    expect(onAcceptForHost).not.toHaveBeenCalled();
+  });
+
+  it("rejects on Enter from a non-control spot in a changed dialog", () => {
+    const { onReject } = renderPrompt({ changed: true });
+    press(byTestId("tp-mitm-warning"), "Enter");
+    expect(onReject).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Enter on an accept verdict or a copy button to that control", () => {
+    const { onReject } = renderPrompt({ changed: true });
+    press(byTestId("tp-accept-once"), "Enter");
+    press(byTestId("tp-accept-remember"), "Enter");
+    press(byTestId("tp-fingerprint-copy"), "Enter");
+    expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it("does not reject on Enter for a first-contact identity", () => {
+    const { onReject } = renderPrompt({ changed: false });
+    press(byTestId("tp-host"), "Enter");
+    expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])("rejects on Escape (changed=%s)", (changed) => {
+    const { onReject, onAcceptOnce, onAcceptForHost } = renderPrompt({ changed });
+    press(document.activeElement, "Escape");
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onAcceptOnce).not.toHaveBeenCalled();
+    expect(onAcceptForHost).not.toHaveBeenCalled();
   });
 
   it("still routes every verdict on the changed layout", () => {
