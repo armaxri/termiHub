@@ -118,6 +118,42 @@ termiHub uses US English.
 
 "Cancellation" has two l's in US English too.
 
+## List rows: names, not settings
+
+> "Users are looking for names and maybe for a short description, but not the settings."
+> (maintainer, 2026-11-13, [#5757](https://github.com/armaxri/termiHub/issues/5757))
+
+A row in a sidebar or list (connections, workflows, macros, schedules, agents, tunnels,
+services) shows:
+
+- **The name the user gave the item.**
+- **Its short description**, when the user wrote one: muted, one line, under the name. A
+  description is optional, single line and at most 80 characters
+  (`ITEM_DESCRIPTION_MAX_LENGTH` in `src/utils/itemDescription.ts`). No description, no line.
+- **A compact state marker, only when the state needs attention:** running, error or failed,
+  armed/off, connected, disabled, paused. A routine state that the dot already says ("on,
+  next run at 09:10") is not a marker.
+
+Everything else is configuration or history and goes in the row's **tooltip**, the editor or a
+detail view, never on the row: host, user and port, the trigger and its target, step or command
+previews, the last run and where it went, prefixes, tags. Pass these lines to
+`SidebarListItem`'s `tooltip` prop; they show in a tooltip on the name and are the row's
+accessible description.
+
+| Do                                     | Don't                                             |
+| -------------------------------------- | ------------------------------------------------- |
+| Prod web · _Main shop front_           | Prod web · _deploy@10.0.0.4:22\_                  |
+| Answer on match · ⚡ Armed             | Answer on match · _On output match · prod-shell_  |
+| Release check                          | Release check · _echo start_ · _Last run: 5m ago_ |
+| Nightly backup (dot: on)               | Nightly backup · _Next: today 09:10_              |
+| Nightly backup (dot: off) · _Disabled_ | Nightly backup · _Every day 09:10 · on db-1_      |
+
+Not list rows, so this rule does not apply: location context that says where a view is (the
+file browser's host label), detail areas (the status bar's SSH and serial chips) and naming
+parts that tell two items apart (a duplicate tab's "(2)").
+
+The product run grades this in `tests/system/tests/test_product_run_rows_names.py`.
+
 ## Changing existing copy
 
 - Update every test, system test and visual expectation that asserts the old string.
