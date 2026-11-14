@@ -25,7 +25,11 @@ fn mock_app_for(mode: &AppMode) -> tauri::App<tauri::test::MockRuntime> {
 
 /// Where each app-owned location actually resolves to in a running app for
 /// `mode`, through the same code paths production uses.
-fn resolved(dir: AppOwnedDir, mode: &AppMode, app: &tauri::App<tauri::test::MockRuntime>) -> PathBuf {
+fn resolved(
+    dir: AppOwnedDir,
+    mode: &AppMode,
+    app: &tauri::App<tauri::test::MockRuntime>,
+) -> PathBuf {
     let path = app.path();
     match dir {
         // Startup's config resolution: the portable `data/` dir.

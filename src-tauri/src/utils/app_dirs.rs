@@ -151,6 +151,11 @@ pub fn portable_temp_dir(mode: &AppMode) -> Option<PathBuf> {
 /// publishes it to core's [`termihub_core::config::app_temp_dir`]. A no-op in
 /// installed mode.
 pub fn publish_app_temp_dir(mode: &AppMode) {
+    if let Some(data_dir) = mode.data_dir() {
+        for dir in AppOwnedDir::ALL {
+            tracing::debug!(kind = ?dir, path = %dir.portable_path(data_dir).display(), "Portable app dir");
+        }
+    }
     if let Some(dir) = portable_temp_dir(mode) {
         purge_dir(&dir);
         termihub_core::config::set_app_temp_dir(dir);
