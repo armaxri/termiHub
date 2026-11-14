@@ -211,10 +211,11 @@ describe("CATEGORY_GROUPS (#5561)", () => {
     expect(CATEGORIES.map((c) => c.id)).toEqual(grouped);
   });
 
-  it("keeps at most five headings and at most 14 always-visible categories", () => {
+  // 15 since Monitoring (#5775); settingsPolish.spec.ts proves the nav still fits 1280x800.
+  it("keeps at most five headings and at most 15 always-visible categories", () => {
     expect(CATEGORY_GROUPS.length).toBeLessThanOrEqual(5);
     const visible = CATEGORY_GROUPS.filter((g) => !g.collapsible).flatMap((g) => g.categories);
-    expect(visible.length).toBeLessThanOrEqual(14);
+    expect(visible.length).toBeLessThanOrEqual(15);
     expect(visible).toContain("general");
     expect(visible).toContain("security");
   });

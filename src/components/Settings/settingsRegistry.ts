@@ -13,6 +13,7 @@ export type SettingsCategory =
   | "x-server"
   | "security"
   | "external-files"
+  | "monitoring"
   | "editor"
   | "plugins"
   | "backup"
@@ -62,7 +63,7 @@ export const CATEGORY_GROUPS: CategoryGroupDefinition[] = [
   {
     id: "terminal",
     label: "Terminal",
-    categories: ["terminal", "shell-integration", "sessions", "editor"],
+    categories: ["terminal", "shell-integration", "sessions", "monitoring", "editor"],
   },
   { id: "connections", label: "Connections", categories: ["serial", "external-files"] },
   {
@@ -93,6 +94,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "terminal", label: "Terminal" },
   { id: "shell-integration", label: "File manager integration" },
   { id: "sessions", label: "Sessions" },
+  { id: "monitoring", label: "Monitoring" },
   { id: "editor", label: "Editor" },
   { id: "serial", label: "Serial" },
   { id: "external-files", label: "External files" },
@@ -1060,22 +1062,44 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "powerMonitoring",
     label: "Power monitoring",
     description: "Monitor CPU, memory, and power events via SSH agent connections",
-    category: "external-files",
-    keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced"],
+    category: "monitoring",
+    // "advanced" / "external" keep the pre-#5775 home (External files ▸ Advanced) findable.
+    keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced", "external"],
   },
   {
     id: "monitorLocalShells",
     label: "Monitor local shells",
     description: "Show CPU, memory, disk and network for this computer in local shell tabs",
-    category: "external-files",
-    keywords: ["monitoring", "local", "shell", "cpu", "memory", "host metrics", "advanced"],
+    category: "monitoring",
+    keywords: [
+      "monitoring",
+      "local",
+      "shell",
+      "cpu",
+      "memory",
+      "host metrics",
+      "advanced",
+      "external",
+    ],
   },
   {
     id: "statusBarMetrics",
     label: "Status bar metrics",
     description: "The host metrics shown in the status bar: CPU, memory, disk, swap, network",
-    category: "external-files",
-    keywords: ["status bar", "metrics", "chips", "swap", "cpu", "memory", "disk", "network"],
+    category: "monitoring",
+    keywords: [
+      "status bar",
+      "metrics",
+      "chips",
+      "swap",
+      "cpu",
+      "memory",
+      "disk",
+      "network",
+      "monitoring",
+      "advanced",
+      "external",
+    ],
   },
   {
     id: "fileBrowser",

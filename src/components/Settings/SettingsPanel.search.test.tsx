@@ -113,6 +113,35 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     expect(navItem("external-files")?.className).not.toContain("settings-nav__item--dimmed");
   });
 
+  it("offers a Monitoring category with the host-monitoring settings (#5775)", async () => {
+    await render();
+    expect(navItem("monitoring")).not.toBeNull();
+    act(() => navItem("monitoring")!.click());
+    const page = container.querySelector("[data-testid='settings-monitoring']");
+    expect(page).not.toBeNull();
+    for (const id of [
+      "toggle-power-monitoring",
+      "toggle-monitor-local-shells",
+      "settings-status-bar-metrics",
+    ]) {
+      expect(page!.querySelector(`[data-testid='${id}']`)).not.toBeNull();
+    }
+    act(() => navItem("external-files")!.click());
+    expect(container.querySelector("[data-testid='toggle-power-monitoring']")).toBeNull();
+    expect(container.querySelector("[data-testid='toggle-file-browser']")).not.toBeNull();
+  });
+
+  it.each(["monitoring", "advanced", "external"])(
+    "finds the monitoring settings by searching '%s' (#5775)",
+    async (query) => {
+      await render();
+      search(query);
+      expect(container.querySelector("[data-testid='toggle-power-monitoring']")).not.toBeNull();
+      expect(container.querySelector("[data-testid='toggle-monitor-local-shells']")).not.toBeNull();
+      expect(navItem("monitoring")?.className).not.toContain("settings-nav__item--dimmed");
+    }
+  );
+
   it("offers a Schedules category and finds it by searching 'pause' (#4623)", async () => {
     await render();
     expect(navItem("schedules")).not.toBeNull();

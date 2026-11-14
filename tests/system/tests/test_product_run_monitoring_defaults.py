@@ -6,7 +6,7 @@ Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 * **Local shells show no metric chips by default (#5754).** The machine
   termiHub runs on has its own system monitor, so a local shell tab starts no
   monitor and the status bar shows no CPU / Mem / Disk / Net chip, unless the
-  user turned on Settings ▸ Monitor local shells.
+  user turned on Settings ▸ Monitoring ▸ Monitor local shells.
 * **Remote sessions keep them, without Swap (#5754).** An SSH tab on the run's
   native sshd shows CPU, Mem, Disk and Net; Swap is selectable but not a
   default chip.

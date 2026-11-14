@@ -32,6 +32,7 @@ import {
   RefreshCw,
   Check,
   CalendarClock,
+  Activity,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -69,6 +70,7 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { AccessibilitySettings } from "./AccessibilitySettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
+import { MonitoringSettings } from "./MonitoringSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { RdpTrustSettings } from "./RdpTrustSettings";
@@ -113,6 +115,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   "x-server": Monitor,
   security: Shield,
   "external-files": FileJson,
+  monitoring: Activity,
   editor: FileCode2,
   plugins: Puzzle,
   backup: DatabaseBackup,
@@ -497,6 +500,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       </>
     ),
     "external-files": () => <ExternalFilesSettings />,
+    monitoring: () => <MonitoringSettings />,
     editor: (fields) => (
       <Suspense fallback={<div className="settings-panel__lazy-fallback" />}>
         <EditorSettingsSection visibleFields={fields} />
