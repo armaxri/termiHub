@@ -35,6 +35,17 @@ enum Open {
     Write(u64),
 }
 
+/// How a mock end answers a request to shorten a file (#5737).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Trim {
+    /// Shortens the file (SFTP `setstat`, a container's `truncate`).
+    Supported,
+    /// Cannot shorten a file at all.
+    Unsupported,
+    /// Tries and fails (a server refusing the size change).
+    Fails,
+}
+
 /// Called by a mock writer with the absolute byte count written so far.
 type WriteHook = Arc<dyn Fn(u64) + Send + Sync>;
 
@@ -58,6 +69,10 @@ struct MockEndpoint {
     /// Park every `link` call from this (1-based) index on forever — a dead
     /// connection (#4672). `0` never parks.
     park_link_from: usize,
+    /// How this end answers a trim of a partial past the checkpoint.
+    trim: Trim,
+    /// Length of every trim requested, in order.
+    trims: Arc<Mutex<Vec<u64>>>,
 }
 
 impl MockEndpoint {
@@ -74,6 +89,8 @@ impl MockEndpoint {
             opens: Arc::new(Mutex::new(Vec::new())),
             link_calls: AtomicUsize::new(0),
             park_link_from: 0,
+            trim: Trim::Supported,
+            trims: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -98,6 +115,8 @@ impl MockEndpoint {
             opens: Arc::new(Mutex::new(Vec::new())),
             link_calls: AtomicUsize::new(0),
             park_link_from: 0,
+            trim: Trim::Supported,
+            trims: Arc::new(Mutex::new(Vec::new())),
         };
         f(&mut ep);
         Arc::new(ep)
@@ -120,6 +139,10 @@ impl MockEndpoint {
 
     fn opens(&self) -> Vec<Open> {
         self.opens.lock().expect("opens").clone()
+    }
+
+    fn trims(&self) -> Vec<u64> {
+        self.trims.lock().expect("trims").clone()
     }
 
     fn set_hook(&self, hook: WriteHook) {
@@ -150,6 +173,8 @@ impl CopyEndpoint for MockEndpoint {
             fail_read_at: self.fail_read_at.clone(),
             on_write: self.on_write.lock().expect("hook").clone(),
             opens: self.opens.clone(),
+            trim: self.trim,
+            trims: self.trims.clone(),
         }))
     }
 
@@ -168,6 +193,8 @@ struct MockLink {
     on_write: Option<WriteHook>,
     /// Shared with the owning endpoint, which the assertions read.
     opens: Arc<Mutex<Vec<Open>>>,
+    trim: Trim,
+    trims: Arc<Mutex<Vec<u64>>>,
 }
 
 impl MockLink {
@@ -203,6 +230,23 @@ impl EndpointLink for MockLink {
 
     fn can_resume_write(&self) -> bool {
         self.resume_write
+    }
+
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+        match self.trim {
+            Trim::Unsupported => return Err(FileError::NotSupported),
+            Trim::Fails => {
+                return Err(FileError::OperationFailed("setstat refused".into()));
+            }
+            Trim::Supported => {}
+        }
+        self.trims.lock().expect("trims").push(len);
+        let mut fs = self.fs.lock().expect("fs");
+        let file = fs
+            .get_mut(path)
+            .ok_or_else(|| FileError::NotFound(path.into()))?;
+        file.data.truncate(len as usize);
+        Ok(())
     }
 
     async fn open_read(&self, path: &str, offset: u64) -> Result<Box<dyn CopyReader>, OpenError> {
@@ -701,6 +745,127 @@ async fn a_relaunched_copy_restarts_when_the_source_size_changed() {
     assert_eq!(terminal(&events), TransferPhase::Done);
     assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
     assert_eq!(dst.opens(), [Open::Write(0)]);
+}
+
+// ── a relaunch trims a destination partial past the checkpoint (#5737) ────
+
+/// Bytes a crash left at the destination after the last persisted
+/// checkpoint: written by the copy, but never confirmed.
+const PAST_CHECKPOINT: usize = 300;
+
+/// A crashed copy's destination: the checkpointed prefix of `data` plus
+/// bytes written after it (here junk, so a resume that kept them would
+/// corrupt the file).
+fn crashed_partial(data: &[u8]) -> Vec<u8> {
+    let mut partial = data[..MIB].to_vec();
+    partial.extend(content(PAST_CHECKPOINT, 200));
+    partial
+}
+
+/// Relaunch a copy from the `MIB` checkpoint whose destination partial runs
+/// past it, and return the row messages.
+async fn relaunch_past_the_checkpoint(
+    src: &Arc<MockEndpoint>,
+    dst: &Arc<MockEndpoint>,
+    data: &[u8],
+) -> Vec<TransferProgress> {
+    src.put(SRC, data.to_vec(), 42);
+    dst.put(DST, crashed_partial(data), 1);
+    let run = Run::start(src, dst, MIB as u64, Some((data.len() as u64, 42)));
+    run.finish().await
+}
+
+fn messages(events: &[TransferProgress]) -> Vec<String> {
+    events.iter().filter_map(|p| p.message.clone()).collect()
+}
+
+/// An SFTP destination is trimmed back to the checkpoint and the copy
+/// resumes there, reading the source from the offset.
+#[tokio::test]
+async fn a_relaunch_trims_an_sftp_partial_past_the_checkpoint_and_resumes() {
+    let src = MockEndpoint::container();
+    let dst = MockEndpoint::server();
+    let data = content(2 * MIB, 11);
+
+    let events = relaunch_past_the_checkpoint(&src, &dst, &data).await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(events.first().map(|p| p.transferred), Some(MIB as u64));
+    assert_eq!(dst.trims(), [MIB as u64]);
+    assert_eq!(src.opens(), [Open::Read(MIB as u64)]);
+    assert_eq!(dst.opens(), [Open::Write(MIB as u64)]);
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
+}
+
+/// A container destination is trimmed back to the checkpoint too.
+#[tokio::test]
+async fn a_relaunch_trims_a_docker_partial_past_the_checkpoint_and_resumes() {
+    let src = MockEndpoint::server();
+    let dst = MockEndpoint::container();
+    let data = content(2 * MIB + 17, 12);
+
+    let events = relaunch_past_the_checkpoint(&src, &dst, &data).await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(dst.trims(), [MIB as u64]);
+    assert_eq!(src.opens(), [Open::Read(MIB as u64)]);
+    assert_eq!(dst.opens(), [Open::Write(MIB as u64)]);
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
+}
+
+/// A destination that cannot shorten a file restarts from zero, and the row
+/// says why.
+#[tokio::test]
+async fn a_relaunch_into_an_untrimmable_partial_restarts_and_says_why() {
+    let src = MockEndpoint::server();
+    let dst = MockEndpoint::with("server", |ep| ep.trim = Trim::Unsupported);
+    let data = content(2 * MIB, 13);
+
+    let events = relaunch_past_the_checkpoint(&src, &dst, &data).await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(src.opens(), [Open::Read(0)]);
+    assert_eq!(dst.opens(), [Open::Write(0)]);
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
+    assert!(messages(&events)
+        .iter()
+        .any(|m| m == super::super::attempt::UNTRIMMABLE_PARTIAL_NOTE));
+}
+
+/// A trim the destination refuses restarts from zero with its reason.
+#[tokio::test]
+async fn a_relaunch_whose_trim_fails_restarts_with_the_reason() {
+    let src = MockEndpoint::server();
+    let dst = MockEndpoint::with("server", |ep| ep.trim = Trim::Fails);
+    let data = content(2 * MIB, 14);
+
+    let events = relaunch_past_the_checkpoint(&src, &dst, &data).await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(dst.opens(), [Open::Write(0)]);
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
+    assert!(messages(&events).iter().any(|m| m.contains("could not trim")
+        && m.contains("setstat refused")
+        && m.ends_with("restarting from start")));
+}
+
+/// Trimming never bypasses the source check: a source rewritten while the
+/// app was closed still restarts the copy from zero.
+#[tokio::test]
+async fn a_relaunch_past_the_checkpoint_from_a_changed_source_restarts() {
+    let src = MockEndpoint::container();
+    let dst = MockEndpoint::server();
+    let data = content(2 * MIB, 15);
+    src.put(SRC, data.clone(), 43);
+    dst.put(DST, crashed_partial(&data), 1);
+
+    let run = Run::start(&src, &dst, MIB as u64, Some((data.len() as u64, 42)));
+    let events = run.finish().await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(src.opens(), [Open::Read(0)]);
+    assert_eq!(dst.opens(), [Open::Write(0)]);
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
 }
 
 #[test]

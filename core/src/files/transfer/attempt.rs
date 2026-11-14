@@ -383,10 +383,10 @@ pub(super) fn rebase_cursor(
 /// may have changed while the transfer was paused or backing off. Any doubt
 /// restarts from byte zero, which is always correct. `backend` labels the logs.
 #[cfg_attr(
-    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    not(feature = "local-transfer"),
     allow(
         dead_code,
-        reason = "the FTP executor gates through apply_partial_gate"
+        reason = "only the local-disk executor gates through apply_resume_gate"
     )
 )]
 pub(super) fn apply_resume_gate(
