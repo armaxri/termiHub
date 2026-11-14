@@ -302,8 +302,8 @@ describe("NativePluginGateSettings", () => {
     it("shows widened access as needing re-approval, with a review action", async () => {
       getNativePluginTrust.mockResolvedValue(ackIn("accessChanged", ["network"]));
       await renderFlushed();
-      expect(rowText()).toContain("needs re-approval");
-      expect(rowText()).not.toContain("· trusted");
+      expect(rowText()).toContain("Needs re-approval");
+      expect(rowText()).not.toContain("Not trusted");
       // No isolation badge: a stale plugin does not load.
       expect(query("native-plugin-isolation-echo")).toBeNull();
       expect(query("native-plugin-stale-echo")!.textContent).toContain(
@@ -341,7 +341,7 @@ describe("NativePluginGateSettings", () => {
     it("treats an acknowledgement without recorded access as untrusted", async () => {
       getNativePluginTrust.mockResolvedValue(ackIn("accessNotRecorded", ["terminal", "network"]));
       await renderFlushed();
-      expect(rowText()).toContain("needs re-approval");
+      expect(rowText()).toContain("Needs re-approval");
       expect(query("native-plugin-stale-echo")!.textContent).toContain(
         "Permissions changed — review"
       );
@@ -353,7 +353,7 @@ describe("NativePluginGateSettings", () => {
     it("offers Trust new build when only the library changed", async () => {
       getNativePluginTrust.mockResolvedValue(ackIn("libraryChanged"));
       await renderFlushed();
-      expect(rowText()).toContain("needs re-approval");
+      expect(rowText()).toContain("Needs re-approval");
       expect(query("native-plugin-stale-echo")!.textContent).toContain(
         "changed since you trusted it"
       );
@@ -438,15 +438,20 @@ describe("NativePluginGateSettings", () => {
     it("never offers trust for a plugin termiHub cannot read", async () => {
       getNativePluginTrust.mockResolvedValue(ackIn("unavailable"));
       await renderFlushed();
-      expect(rowText()).toContain("needs re-approval");
+      expect(rowText()).toContain("Needs re-approval");
       expect(query("native-plugin-trust-echo")).toBeNull();
       expect(query("native-plugin-revoke-echo")).not.toBeNull();
     });
 
-    it("shows a current acknowledgement as trusted", async () => {
+    it("shows a current acknowledgement as trusted: no trust marker (#5789)", async () => {
       getNativePluginTrust.mockResolvedValue(ackIn("current"));
       await renderFlushed();
-      expect(rowText()).toContain("· trusted");
+      expect(query("native-plugin-trust-marker-echo")).toBeNull();
+      expect(rowText()).not.toMatch(/trusted|re-approval/i);
+      // The version is in the tooltip (the row's description), not on the row.
+      const row = query("native-plugin-row-echo")!;
+      expect(row.getAttribute("aria-description")).toMatch(/^Version \S+\. .*ID echo$/);
+      expect(rowText()).not.toMatch(/\bv\d/);
       expect(query("native-plugin-stale-echo")).toBeNull();
       expect(query("native-plugin-trust-echo")).toBeNull();
     });

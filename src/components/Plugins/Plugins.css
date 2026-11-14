@@ -97,26 +97,53 @@
   color: var(--text-secondary);
 }
 
-.plugin-row__name {
+/* Name with the plugin's own short description muted under it (#5789);
+   version, author and id are in the row's tooltip. */
+.plugin-row__text {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.plugin-row__name,
+.plugin-row__description {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.plugin-row__ver {
-  margin-left: auto;
+.plugin-row__description,
+.plugin-row__marker {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
-  font-family: var(--font-mono);
+}
+
+.plugin-row__marker {
   flex: 0 0 auto;
+}
+
+.plugin-row__marker--error {
+  color: var(--color-error);
 }
 
 /* #5200: muted hints switch to the row-state muted token on hover/selection,
    where --text-muted falls below AA on --bg-hover / --bg-active. */
-.plugin-row:hover .plugin-row__ver,
-.plugin-row--selected .plugin-row__ver {
+.plugin-row:hover .plugin-row__description,
+.plugin-row--selected .plugin-row__description,
+.plugin-row:hover .plugin-row__marker:not(.plugin-row__marker--error),
+.plugin-row--selected .plugin-row__marker:not(.plugin-row__marker--error) {
   color: var(--text-muted-on-selection);
+}
+
+.plugin-row__tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.plugin-row__tooltip-name {
+  font-weight: var(--font-weight-semibold);
 }
 
 .plugin-manager__footer {

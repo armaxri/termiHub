@@ -127,7 +127,7 @@ termiHub uses US English.
 > (maintainer, 2026-11-13, [#5757](https://github.com/armaxri/termiHub/issues/5757))
 
 A row in a sidebar or list (connections, workflows, macros, schedules, agents, tunnels,
-services) shows:
+services, HTTP monitors, plugins) shows:
 
 - **The name the user gave the item.**
 - **Its short description**, when the user wrote one: muted, one line, under the name. A
@@ -153,6 +153,8 @@ accessible description.
 | Prod DB (dot: connected)               | Prod DB · LOCAL · _127.0.0.1:5432 → db:5432_      |
 | Docs share · _Error: port in use_      | Docs share · HTTP · _:8080 → /srv/docs_           |
 | Build box (dot: connected)             | Build box · v0.4.1 ✓                              |
+| Shop health (dot: down) · _Down_       | shop.example.com/health · ✗ down · 2m ago         |
+| Log colorizer · _Colours log levels_   | Log colorizer · v0.3.0                            |
 
 Not list rows, so this rule does not apply: location context that says where a view is (the
 file browser's host label), detail areas (the status bar's SSH and serial chips, a service's

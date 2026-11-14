@@ -71,9 +71,9 @@ describe("NetworkToolsSidebar — monitor info is a button (#4349)", () => {
     expect(info!.getAttribute("type")).toBe("button");
     expect(info!.getAttribute("aria-label")).toBe("Open monitor https://example.com/health");
     expect(info!.tabIndex).toBe(0);
-    // The visible status is kept as the description, every reference resolving.
-    const described = (info!.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
-    expect(described.map((id) => document.getElementById(id)?.textContent)).toEqual(["checking…"]);
+    // A monitor still on its first check shows no marker (#5789), so the
+    // button has no description reference (the dot says "Checking").
+    expect(info!.getAttribute("aria-describedby")).toBeNull();
     // Enter/Space on a native button dispatch click.
     act(() => info!.click());
     expect(openTab).toHaveBeenCalledWith("http-monitor");

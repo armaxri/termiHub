@@ -212,7 +212,8 @@ export async function networkWolDeviceDelete(deviceId: string): Promise<void> {
  *
  * `runLocation` chooses where the monitor runs — "This computer" (default) or a
  * named agent, which probes the target from its own vantage and streams the
- * checks back (#2592).
+ * checks back (#2592). `name` and `description` are the optional row name and
+ * one-line description the user gave the monitor (#5789).
  */
 export async function networkHttpMonitorStart(
   url: string,
@@ -221,7 +222,9 @@ export async function networkHttpMonitorStart(
   expectedStatus?: number,
   timeoutMs?: number,
   runLocation?: RunLocation,
-  allowPrivateNetwork?: boolean
+  allowPrivateNetwork?: boolean,
+  name?: string,
+  description?: string
 ): Promise<string> {
   return await invoke<string>("network_http_monitor_start", {
     url,
@@ -231,6 +234,8 @@ export async function networkHttpMonitorStart(
     timeoutMs: timeoutMs ?? null,
     runLocation: runLocation ?? null,
     allowPrivateNetwork: allowPrivateNetwork ?? null,
+    name: name ?? null,
+    description: description ?? null,
   });
 }
 

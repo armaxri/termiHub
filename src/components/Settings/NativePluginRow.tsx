@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { RotateCcw, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
-import { Button, ConfirmDialog } from "@/components/ui";
+import { Button, ConfirmDialog, Tooltip } from "@/components/ui";
+import { rowTooltipDescription } from "@/components/SidebarListItem/rowTooltip";
+import { pluginRowTooltip } from "@/components/Plugins/pluginPresentation";
 import type { PluginSandboxStatus, PluginSandboxView } from "@/store/pluginSandboxBridge";
 import type { InstalledPlugin } from "@/types/plugin";
 import type { NativeAckInfo } from "@/types/generated/NativeAckInfo";
@@ -67,7 +69,9 @@ export interface NativePluginRowProps {
 
 /**
  * One row of Settings → Plugins → Native plugins (concept
- * `plugin-os-sandbox.html`, "UI Interface"): name, trust state, the sandbox
+ * `plugin-os-sandbox.html`, "UI Interface"): name and the plugin's own short
+ * description, a trust marker only when the plugin is not trusted (#5789; its
+ * version, author and id are in the name's tooltip), the sandbox
  * status (isolation badge, process status, access chips) and the actions the
  * state allows — Trust & load, Load with reduced isolation…, Restart /
  * Re-enable and Revoke. Reduced isolation is a recorded, hash-bound choice
@@ -103,6 +107,12 @@ export function NativePluginRow({
   const badge = isolationBadge(plugin, status, isTrusted);
   const missing = status?.missing ?? [];
   const sessions = status?.process?.sessions ?? 0;
+  // Per the list-row rule (#5789, docs/copy-style.md -> "List rows"): the
+  // version and ids go in the tooltip; trust shows only when it needs
+  // attention.
+  const tooltip = pluginRowTooltip(plugin.manifest);
+  const trustMarker = isTrusted ? null : stale ? "Needs re-approval" : "Not trusted";
+  const description = plugin.manifest.description.trim();
 
   const handleConfirmReduced = useCallback(async () => {
     await onAcceptReducedIsolation(plugin, legacyAbi);
@@ -185,15 +195,44 @@ export function NativePluginRow({
     <li
       className="settings-panel__file-item native-plugin-row"
       data-testid={`native-plugin-row-${id}`}
+      aria-description={rowTooltipDescription(tooltip)}
     >
       <div className="native-plugin-row__main">
         <div>
-          <span className="settings-panel__subsection-title">{name}</span>{" "}
-          <span className="settings-panel__section-badge">
-            · {isTrusted ? "trusted" : stale ? "needs re-approval" : "not trusted"} · v
-            {plugin.manifest.version}
-          </span>
+          <Tooltip
+            side="bottom"
+            align="start"
+            data-testid={`native-plugin-tooltip-${id}`}
+            content={
+              <span className="native-plugin-row__tooltip">
+                {tooltip.map((line) => (
+                  <span key={line}>{line}</span>
+                ))}
+              </span>
+            }
+          >
+            <span className="settings-panel__subsection-title">{name}</span>
+          </Tooltip>
+          {trustMarker && (
+            <>
+              {" "}
+              <span
+                className="settings-panel__section-badge"
+                data-testid={`native-plugin-trust-marker-${id}`}
+              >
+                · {trustMarker}
+              </span>
+            </>
+          )}
         </div>
+        {description && (
+          <p
+            className="settings-panel__description"
+            data-testid={`native-plugin-description-${id}`}
+          >
+            {description}
+          </p>
+        )}
         {staleReason && (
           <p className="settings-panel__description" data-testid={`native-plugin-stale-${id}`}>
             {staleReason}

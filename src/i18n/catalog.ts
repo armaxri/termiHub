@@ -333,6 +333,18 @@ const en = {
   "recent.tooltip.lastUsed": "Last used {when}",
   "recent.tooltip.uses": "Used {count} times",
   "recent.tooltip.saved": "Saved as a connection",
+  // HTTP monitors and plugins (#5789).
+  "monitor.tooltip.check": "{method} every {interval} · expects {status}",
+  "monitor.tooltip.lastOk": "Last check: {status} in {latency} ms, {age}",
+  "monitor.tooltip.lastDown": "Last check failed {age}",
+  "monitor.tooltip.lastDownError": "Last check failed {age}: {error}",
+  "monitor.marker.down": "Down",
+  "monitor.marker.overdue": "Overdue",
+  "monitor.marker.paused": "Paused",
+  "monitor.marker.stopped": "Stopped",
+  "plugin.tooltip.version": "Version {version}",
+  "plugin.tooltip.author": "By {author}",
+  "plugin.tooltip.id": "ID {id}",
 
   // ── Terminal toolbar (#5756) ────────────────────────────────────────────
   // Layout icons stay visible; session and macro actions live in the "…"
