@@ -1485,7 +1485,13 @@ async fn read_frames(
                     // Why the backend's link ended (#5732); an older daemon
                     // sends no cause byte.
                     let end_cause = protocol::decode_end_cause(&frame.payload);
-                    info!("Session {session_id} exited with code {code} (cause {end_cause:?})");
+                    // The process's real exit status (#5742); an older daemon
+                    // always sent code 0 and no status byte.
+                    let exit_status = protocol::decode_exit_status(&frame.payload);
+                    info!(
+                        "Session {session_id} exited with code {code} \
+                         (status {exit_status:?}, cause {end_cause:?})"
+                    );
                     alive.store(false, Ordering::SeqCst);
 
                     let notification = JsonRpcNotification::new(
@@ -1494,6 +1500,7 @@ async fn read_frames(
                             session_id: session_id.to_owned(),
                             exit_code: Some(code),
                             end_cause,
+                            exit_status,
                         }),
                     );
                     let _ = notification_tx.send(notification);
@@ -2481,7 +2488,7 @@ mod tests {
     async fn reader_loop_forwards_the_daemon_end_cause() {
         let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
         tokio::spawn(async move {
-            let payload = protocol::encode_exit(0, Some(SessionEndCause::RemoteClosed));
+            let payload = protocol::encode_exit(None, Some(SessionEndCause::RemoteClosed));
             protocol::write_frame_async(&mut server_sock, MSG_EXITED, &payload)
                 .await
                 .unwrap();
@@ -2508,6 +2515,38 @@ mod tests {
                 "exit_code": 0,
                 "end_cause": "remote_closed",
             })
+        );
+    }
+
+    /// The daemon's real exit status reaches the desktop as the exit's
+    /// `exit_status` (#5742), so a shell the user exited ends the tab instead
+    /// of reconnecting it.
+    #[tokio::test]
+    async fn reader_loop_forwards_the_real_exit_status() {
+        let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            let payload = protocol::encode_exit(Some(3), None);
+            protocol::write_frame_async(&mut server_sock, MSG_EXITED, &payload)
+                .await
+                .unwrap();
+        });
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (on_exit, _ran) = recording_exit_hook();
+        reader_loop(
+            Box::new(client_sock),
+            "sess",
+            &tx,
+            &Arc::new(AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            on_exit,
+        )
+        .await;
+
+        let exit = rx.try_recv().unwrap();
+        assert_eq!(
+            exit.params,
+            serde_json::json!({ "session_id": "sess", "exit_code": 3, "exit_status": 3 })
         );
     }
 
