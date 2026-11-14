@@ -102,14 +102,14 @@ function click(el: HTMLElement) {
 setupConnectionsRegion();
 
 describe("ConnectionEditor — description (#5757)", () => {
-  let updateConnection: ReturnType<typeof vi.fn>;
+  let updateConnection: ReturnType<typeof vi.fn<(c: SavedConnection) => Promise<string | null>>>;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    updateConnection = vi.fn(() => Promise.resolve(CONN_ID));
+    updateConnection = vi.fn((_c: SavedConnection) => Promise.resolve<string | null>(CONN_ID));
     seedConnectionsRegion({ connections: [{ ...EXISTING_CONN, description: "Old note" }] });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
@@ -146,7 +146,7 @@ describe("ConnectionEditor — description (#5757)", () => {
     await flush();
     click(container.querySelector<HTMLElement>('[data-testid="connection-editor-save"]')!);
     await flush();
-    const saved = updateConnection.mock.calls[0][0] as SavedConnection;
+    const saved = updateConnection.mock.calls[0][0];
     expect(saved.description).toBe("Shop front");
   });
 
@@ -157,7 +157,7 @@ describe("ConnectionEditor — description (#5757)", () => {
     await flush();
     click(container.querySelector<HTMLElement>('[data-testid="connection-editor-save"]')!);
     await flush();
-    const saved = updateConnection.mock.calls[0][0] as SavedConnection;
+    const saved = updateConnection.mock.calls[0][0];
     expect(saved.description).toBeUndefined();
   });
 
