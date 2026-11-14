@@ -219,7 +219,7 @@ Persistent (reconnectable) sessions run in a detached session-daemon process. Th
 | Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
 | Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
 
-Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The worker and its daemon also watch each other for a **fully silent wedge** (#3140): each side advertises heartbeat support (the daemon in its capabilities frame, the worker in a capabilities frame of its own right after its attach intent), and when both did, a side that has received nothing for 15 s sends a ping, which the other answers with an empty pong and nothing else. Any received byte counts as liveness — output, a pong, or part of a large frame still arriving — so an idle but healthy session is never torn down; a peer that stays silent through four pings (75 s in all) is dropped, and the worker then reports the session as lost exactly as for any other broken daemon connection. A daemon or worker from before the heartbeat advertises nothing and is never pinged or dropped. The heartbeat is internal to the agent host and does not change the desktop protocol version. Since 0.26.0 (#3587) the capabilities frame also says whether that file browser serves ranged slices; only then does the worker send it the `read_range` / `write_range` file requests, whose bytes travel in the same data frames, so a daemon from an older agent is never asked. A `read_range` of length 0 is the per-session probe: the daemon answers it from its live browser (an empty read, or the browser's not-supported error), without reading any file (#4146). Since 0.25.0 (#4081) a daemon whose SSH backend kept the session up **files-only** (the host refused the shell but SFTP works) tells the worker that holds the session with a files-only frame, and repeats it right after the ready frame to every worker that attaches later; the worker relays it as [`connection.filesOnly`](#connectionfilesonly). The daemon also never lets a worker that has stopped **reading** stall it (#3890): its frames to the worker are queued and written by a separate task, a worker that accepts no byte for 30 s is dropped (the session keeps running and its output is replayed on the next attach), and while more than 1 MiB is queued the daemon pauses forwarding output rather than dropping any, so a slow worker that keeps reading is never dropped. Since 0.27.0 (#4416) the capabilities frame also says whether the daemon honors **output flow control**; only then does the worker relay [`connection.output_flow`](#connectionoutput_flow) to it as a one-byte output-flow frame (`1` pause, `0` resume). While the attached worker is paused the daemon stops reading its backend's output, so the program is backpressured through its PTY; input and every other frame keep flowing. The pause belongs to that worker: a newly attached worker starts flowing, and an unattached daemon always reads into its ring buffer. Since #4439 both sides may also advertise **output credit** (the daemon in its capabilities frame, the worker in its own): when both did, the worker returns the output bytes it has written to its transport (or discarded) in output-ack frames (`u32` BE byte count), and the daemon keeps at most 512 KiB of output sent but unacknowledged, stopping reading its backend's output while that window is used up. Replies and every other frame are not counted. Credit starts afresh on each connection (the buffer replay counts against it), and the window holds from the moment a worker attaches: until its capabilities frame arrives the daemon treats it as taking credit (#4768), and only a worker that declares none within 5 s is let flow unlimited. Either side from before it simply never limits or acks; this is internal to the agent host and does not change the desktop protocol version. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The frame protocol is append-only: since 0.20.0 (#3210) a daemon whose backend can manage processes sends a capabilities frame before its ready frame, and then answers process list / kill request frames from the worker that holds the session — replies go only to that connection. A worker ignores unknown frames and a daemon started by an older agent sends no capabilities frame, so mixed versions keep working (process management of such a session reports "not supported"). Since 0.21.0 (#3871) the capabilities frame also says whether the daemon's backend has a monitoring provider; the worker that holds the session then sends monitoring request frames (subscribe, unsubscribe, set interval, pause), and the daemon answers each one and streams the provider's samples and status transitions back in monitoring event frames — to that connection only. The daemon stops the provider as soon as that connection no longer holds the session (detach, drop, takeover) or the session ends. Since 0.22.0 (#3242) the capabilities frame also says whether the daemon's backend has a file browser; the worker that holds the session then sends file request frames (list, stat, read, write, delete, rename, mkdir, chmod, chown, symlink, copy) and the daemon answers each one — to that connection only — through the backend's own browser, one request after another and each under a timeout. File contents never ride in the JSON: a write's bytes follow its request, and a read's bytes precede its reply, in separate data frames of at most 64 KiB each, so terminal output and input interleave between the chunks of a large transfer instead of waiting behind it. The worker and its daemon also watch each other for a **fully silent wedge** (#3140): each side advertises heartbeat support (the daemon in its capabilities frame, the worker in a capabilities frame of its own right after its attach intent), and when both did, a side that has received nothing for 15 s sends a ping, which the other answers with an empty pong and nothing else. Any received byte counts as liveness — output, a pong, or part of a large frame still arriving — so an idle but healthy session is never torn down; a peer that stays silent through four pings (75 s in all) is dropped, and the worker then reports the session as lost exactly as for any other broken daemon connection. A daemon or worker from before the heartbeat advertises nothing and is never pinged or dropped. The heartbeat is internal to the agent host and does not change the desktop protocol version. Since 0.26.0 (#3587) the capabilities frame also says whether that file browser serves ranged slices; only then does the worker send it the `read_range` / `write_range` file requests, whose bytes travel in the same data frames, so a daemon from an older agent is never asked. A `read_range` of length 0 is the per-session probe: the daemon answers it from its live browser (an empty read, or the browser's not-supported error), without reading any file (#4146). Since 0.41.0 (#5736) the capabilities frame carries a **second flag byte** (the first ran out of bits); a daemon whose browser serves slices sets its truncate flag there, and only then does the worker send it the `truncate` file request. A worker from before it reads the first byte alone, and a daemon from before it sends one byte, which the worker reads as "no truncate" — it answers `-32013` without asking. Since 0.25.0 (#4081) a daemon whose SSH backend kept the session up **files-only** (the host refused the shell but SFTP works) tells the worker that holds the session with a files-only frame, and repeats it right after the ready frame to every worker that attaches later; the worker relays it as [`connection.filesOnly`](#connectionfilesonly). The daemon also never lets a worker that has stopped **reading** stall it (#3890): its frames to the worker are queued and written by a separate task, a worker that accepts no byte for 30 s is dropped (the session keeps running and its output is replayed on the next attach), and while more than 1 MiB is queued the daemon pauses forwarding output rather than dropping any, so a slow worker that keeps reading is never dropped. Since 0.27.0 (#4416) the capabilities frame also says whether the daemon honors **output flow control**; only then does the worker relay [`connection.output_flow`](#connectionoutput_flow) to it as a one-byte output-flow frame (`1` pause, `0` resume). While the attached worker is paused the daemon stops reading its backend's output, so the program is backpressured through its PTY; input and every other frame keep flowing. The pause belongs to that worker: a newly attached worker starts flowing, and an unattached daemon always reads into its ring buffer. Since #4439 both sides may also advertise **output credit** (the daemon in its capabilities frame, the worker in its own): when both did, the worker returns the output bytes it has written to its transport (or discarded) in output-ack frames (`u32` BE byte count), and the daemon keeps at most 512 KiB of output sent but unacknowledged, stopping reading its backend's output while that window is used up. Replies and every other frame are not counted. Credit starts afresh on each connection (the buffer replay counts against it), and the window holds from the moment a worker attaches: until its capabilities frame arrives the daemon treats it as taking credit (#4768), and only a worker that declares none within 5 s is let flow unlimited. Either side from before it simply never limits or acks; this is internal to the agent host and does not change the desktop protocol version. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
 
 ### Default Shell and Local Shell Spawning
 
@@ -339,6 +339,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.41.0        | Yes (the desktop requests 0.24.0; `fileTruncate` lets a crashed agent-hosted upload resume from its last checkpoint)                  |
 | 0.24.0          | 0.40.0        | Yes (the desktop requests 0.24.0; a serial port gone for good or a stopped container on the agent ends its tab via `connection.exit`) |
 | 0.24.0          | 0.39.0        | Yes (the desktop requests 0.24.0; a shell the user exited on the agent ends its tab via `connection.exit`'s `exit_status`)            |
 | 0.24.0          | 0.38.0        | Yes (the desktop requests 0.24.0; a server-closed session on the agent reads "closed by server" via `connection.exit`'s `end_cause`)  |
@@ -423,6 +424,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.41.0 (additive, minor)** — adds [`connection.files.truncate`](#connectionfilestruncate) (#5736), and the `initialize` result gains `capabilities.fileTruncate: true` to say so. It shortens a regular file to a given length through the same target resolution and ranged access as [`write_range`](#connectionfileswrite_range), and answers the size the file holds afterwards. It never extends a file, never follows a symlink in the path's place and refuses directories and special files. The desktop calls it when a queued upload into an agent-hosted session is relaunched after a crash and the remote partial holds bytes past the last checkpoint: the partial is trimmed back and the upload resumes there instead of starting over. Negotiation is by **capability**: the desktop calls it only on an agent that advertises the flag. An older agent, a backend that cannot shorten (FTP) and a session started by an older agent's session daemon answer `-32601` or `-32013`, and the upload restarts from zero with the existing row note. An older desktop ignores the flag.
 
 **0.40.0 (additive, minor)** — adds the `device_gone` value of [`connection.exit`](#connectionexit)'s `end_cause` (#5783): the device behind a serial session is gone for good — its in-place reopen gave up, or the port was lost with Auto-Reconnect off. The desktop ends the tab with "— device disconnected —" and does not reconnect it. A Docker session also reports its real `exit_status` now: the shell's code when the user exited it, the container's when it stopped. An older desktop reads the unknown cause as absent, so its tab behaves as before.
 
@@ -596,6 +599,7 @@ On a successful `initialize`, the agent records the client (`client`, `client_ve
 | `capabilities.hostFileAttributeOps`       | `object`               | `{ permissions, owner, symlink }` booleans: the chmod / chown / symlink the agent host's own file system performs, for local sessions and host-level file requests (0.29.0+; absent = by session type) |
 | `capabilities.definitionIconStyle`        | `boolean`              | Saved connection definitions store `icon_color` / `icon_emoji` (0.33.0+; absent = `false`, the desktop hides the icon colour / emoji controls)                                                         |
 | `capabilities.serialPortRescan`           | `boolean`              | [`serial.list_ports`](#seriallist_ports) re-enumerates the host's serial ports on demand (0.34.0+; absent = `false`, the desktop keeps the `availableSerialPorts` snapshot)                            |
+| `capabilities.fileTruncate`               | `boolean`              | [`connection.files.truncate`](#connectionfilestruncate) shortens a file so a crashed upload resumes from its checkpoint (0.41.0+; absent = `false`)                                                    |
 | `capabilities.fileCreateNew`              | `boolean`              | [`write_range`](#connectionfileswrite_range) honors `create_new` as an exclusive create on the agent host's own file system (0.30.0+; absent = `false`, never send the flag)                           |
 
 > **Field-casing note.** The `initialize` params and result are both `camelCase` (#3051) — the
@@ -3050,6 +3054,73 @@ An agent-hosted session's daemon serves it only when it advertised it in its own
 - `-32010` Neither the path nor its parent folder resolves
 - `-32013` The backend cannot resolve paths (the desktop then compares the paths lexically)
 - An older agent answers `-32601`, which the desktop treats like `-32013`
+
+---
+
+### `connection.files.truncate`
+
+Shorten a file to a given length (0.41.0+, #5736) and answer the size it holds afterwards. When a queued upload into an agent-hosted session is relaunched after a crash, the remote partial may hold bytes the upload wrote after its last persisted checkpoint; the desktop trims them off with this call, checks the reported size, and resumes the upload at the checkpoint with [`write_range`](#connectionfileswrite_range).
+
+The target resolves exactly as for `write_range` — the agent host, or the session's own backend — and the same rules protect it:
+
+- Only a **regular file** is shortened. A symlink in the path's place is never followed (`O_NOFOLLOW` on the agent host, `lstat` over SFTP, `[ -L ]` in a container), and a directory, device or pipe is refused.
+- `length` must not exceed the file's current size: the call never extends or zero-fills a file.
+- A missing file is `-32010`; nothing is created.
+
+| Backend                    | Shortened with                                                       |
+| -------------------------- | -------------------------------------------------------------------- |
+| Agent host / local session | `set_len` on a handle opened without following a symlink             |
+| SSH session                | SFTP `setstat` (size only) after an `lstat`, re-checked with `lstat` |
+| Docker session             | `truncate` or `dd` inside the container, re-checked with `stat`      |
+| WSL session                | `set_len` through the `\\wsl$` share                                 |
+| FTP session                | Not supported (`-32013`)                                             |
+
+An agent-hosted session's daemon serves it only when it advertised it in its own handshake; a session started by an older agent answers `-32013`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.files.truncate",
+  "params": {
+    "connection_id": "sess-ssh-1",
+    "path": "/data/upload.bin",
+    "length": 786432
+  },
+  "id": 26
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "size": 786432
+  },
+  "id": 26
+}
+```
+
+| Param           | Type      | Description                                                              |
+| --------------- | --------- | ------------------------------------------------------------------------ |
+| `connection_id` | `string?` | Connection or session to scope the operation to. Omit for the agent host |
+| `path`          | `string`  | Regular file to shorten                                                  |
+| `length`        | `integer` | Length to shorten it to; at most its current size                        |
+
+| Result Field | Type      | Description                    |
+| ------------ | --------- | ------------------------------ |
+| `size`       | `integer` | The file's size after the call |
+
+**Errors:**
+
+- `-32010` File not found
+- `-32011` Permission denied
+- `-32012` File operation failed (including a `length` past the file's size, or a path that is not a regular file)
+- `-32013` The backend cannot shorten files, or ranged access is not supported for this session (the desktop then restarts the upload from zero)
+- An older agent answers `-32601`, which the desktop never sees: it calls the method only on an agent that advertises `fileTruncate`
 
 ---
 

@@ -2781,10 +2781,14 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   local file with `set_len`, an SFTP upload's remote file with a size-only
   `setstat` (re-checked with `stat`), a Docker upload's with `truncate` or
   `dd` in the container, and a ranged upload's through
-  `RangedTransferTarget::truncate`. FTP has no command to shorten a remote
-  file and the agent's `write_range` cannot either, so such an upload restarts
-  from zero and the row says why ("remote partial is past the last checkpoint
-  and cannot be trimmed"); a failed trim restarts the same way with the error.
+  `RangedTransferTarget::truncate` — for an agent-hosted session the agent's
+  `connection.files.truncate` (protocol 0.41.0, #5736), which shortens a
+  regular file without following a symlink, never extends it and answers the
+  size afterwards. FTP has no command to shorten a remote file, and an agent
+  without `fileTruncate` (or a session started by an older agent) cannot
+  either, so such an upload restarts from zero and the row says why ("remote
+  partial is past the last checkpoint and cannot be trimmed"); a failed trim
+  restarts the same way with the error.
   A **remote-to-remote** copy
   streams between two sessions with no local staging file
   (`core/src/files/transfer/remote_copy.rs`); either end may be SFTP (a
