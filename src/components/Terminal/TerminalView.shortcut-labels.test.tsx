@@ -19,32 +19,9 @@ vi.mock("./TerminalRegistry", () => ({
 vi.mock("./TerminalCommandBridge", () => ({ TerminalCommandBridge: () => null }));
 vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
-vi.mock("@/components/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  Button: ({
-    icon,
-    children,
-    className,
-    variant: _variant,
-    size: _size,
-    iconOnly: _iconOnly,
-    fullWidth: _fullWidth,
-    pendingLabel: _pendingLabel,
-    errorToast: _errorToast,
-    ...rest
-  }: {
-    icon?: React.ReactNode;
-    children?: React.ReactNode;
-    className?: string;
-    [key: string]: unknown;
-  }) => (
-    <button className={["ui-btn", className].filter(Boolean).join(" ")} {...rest}>
-      {icon}
-      {children}
-    </button>
-  ),
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
+vi.mock("@/components/ui", async () =>
+  (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
+);
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
 vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
@@ -101,19 +78,19 @@ describe("TerminalView — Toggle Sidebar shortcut label (#4374, WA-FE2-003)", (
   it("shows Ctrl+Shift+B on Windows/Linux (Ctrl+B is the tmux prefix)", () => {
     setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     renderView();
-    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle Sidebar (Ctrl+Shift+B)");
+    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle sidebar (Ctrl+Shift+B)");
   });
 
   it("shows the Cmd binding on macOS", () => {
     setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     renderView();
-    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle Sidebar (Cmd+B)");
+    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle sidebar (Cmd+B)");
   });
 
   it("shows the user's customised binding", () => {
     setOverride("toggle-sidebar", { key: "F9" });
     renderView();
-    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle Sidebar (F9)");
+    expect(sidebarToggle().getAttribute("aria-label")).toBe("Toggle sidebar (F9)");
   });
 });
 

@@ -48,21 +48,44 @@
   color: var(--text-primary);
 }
 
-/* Active-broadcast indicator: the broadcast toggle takes the accent color while
-   typed input is being mirrored to every target terminal (#1955). */
-.ui-btn.terminal-view__toolbar-action--broadcast,
-.ui-btn.terminal-view__toolbar-action--broadcast:hover {
+/* #5756: a running "…"-menu action (broadcast, recording, playback, logging)
+   stays visible as a labelled chip left of the layout icons; a click stops it. */
+.terminal-view__active-states {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  margin-right: var(--spacing-xs);
+}
+
+.ui-btn.terminal-view__state-chip {
+  gap: var(--spacing-xxs);
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-full);
+}
+
+.ui-btn.terminal-view__state-chip--active,
+.ui-btn.terminal-view__state-chip--active:hover {
+  color: var(--text-primary);
+}
+
+.ui-btn.terminal-view__state-chip--broadcast,
+.ui-btn.terminal-view__state-chip--broadcast:hover {
   color: var(--text-accent);
 }
 
-/* Active-recording indicator: the record button turns the error/red accent and
-   gently pulses so the user always knows input is being captured (#1674). */
-.ui-btn.terminal-view__toolbar-action--recording,
-.ui-btn.terminal-view__toolbar-action--recording:hover {
+.ui-btn.terminal-view__state-chip--recording,
+.ui-btn.terminal-view__state-chip--recording:hover {
   color: var(--color-error);
+}
+
+.ui-btn.terminal-view__state-chip--recording .ui-btn__icon {
   animation: terminal-view-record-pulse 1.6s ease-in-out infinite;
 }
 
+/* The recording chip's icon pulses gently so the user always knows input is
+   being captured (#1674). */
 @keyframes terminal-view-record-pulse {
   0%,
   100% {
@@ -74,7 +97,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ui-btn.terminal-view__toolbar-action--recording {
+  .ui-btn.terminal-view__state-chip--recording .ui-btn__icon {
     animation: none;
   }
 }

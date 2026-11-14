@@ -16,6 +16,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { closePanelGuarded } from "@/utils/tabGroupCloseGuard";
+import { clearOverrides, setOverride } from "@/services/keybindings";
 import { getAllLeaves } from "@/utils/panelTree";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
@@ -39,29 +40,9 @@ vi.mock("./TerminalRegistry", () => ({
 vi.mock("./TerminalCommandBridge", () => ({ TerminalCommandBridge: () => null }));
 vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
-vi.mock("@/components/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  Button: ({
-    icon,
-    children,
-    className,
-    variant: _variant,
-    size: _size,
-    iconOnly: _iconOnly,
-    ...rest
-  }: {
-    icon?: React.ReactNode;
-    children?: React.ReactNode;
-    className?: string;
-    [key: string]: unknown;
-  }) => (
-    <button className={className} {...rest}>
-      {icon}
-      {children}
-    </button>
-  ),
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
+vi.mock("@/components/ui", async () =>
+  (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
+);
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({
   MacroRecordSaveDialog: (p: MacroRecordSaveDialogProps) => {
@@ -155,6 +136,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   harness.teardown();
+  clearOverrides();
   vi.clearAllMocks();
 });
 
@@ -169,8 +151,8 @@ describe("TerminalView — broadcast toggle (#5172)", () => {
     });
     await renderView();
     const btn = button("terminal-view-broadcast")!;
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.getAttribute("aria-label")).toBe("Stop broadcast");
+    expect(btn.getAttribute("data-active")).toBe("true");
+    expect(btn.textContent).toContain("Stop broadcast");
 
     await act(async () => {
       btn.click();
@@ -273,8 +255,8 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     const btn = button("terminal-view-play-macro")!;
-    expect(btn.getAttribute("aria-label")).toBe("Stop macro playback");
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(btn.textContent).toBe("Stop macro playback (2/5)");
+    expect(btn.getAttribute("data-active")).toBe("true");
 
     click("terminal-view-play-macro");
 
@@ -309,16 +291,16 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
   });
 });
 
-describe("TerminalView — toolbar grouping (#5559)", () => {
-  function groupIds(groupTestId: string): string[] {
-    const group = container.querySelector(`[data-testid="${groupTestId}"]`);
-    expect(group, groupTestId).not.toBeNull();
-    return Array.from(group!.querySelectorAll("button")).map(
+describe("TerminalView — toolbar layout icons and the … menu (#5559, #5756)", () => {
+  function ids(selector: string): string[] {
+    const el = container.querySelector(selector);
+    expect(el, selector).not.toBeNull();
+    return Array.from(el!.querySelectorAll("button")).map(
       (b) => b.getAttribute("data-testid") ?? ""
     );
   }
 
-  it("groups session, macro and layout actions, in that order, with separators", async () => {
+  it("keeps the layout icons visible and moves session and macro actions into the menu", async () => {
     seed(
       {
         type: "split",
@@ -331,30 +313,49 @@ describe("TerminalView — toolbar grouping (#5559)", () => {
     );
     await renderView();
 
-    const actions = container.querySelector(".terminal-view__toolbar-actions")!;
-    const children = Array.from(actions.children).map((el) =>
-      el.getAttribute("role") === "separator" ? "|" : el.getAttribute("aria-label")
-    );
-    expect(children).toEqual(["Session", "|", "Macros", "|", "Layout"]);
-    for (const sep of actions.querySelectorAll("[role='separator']")) {
-      expect(sep.getAttribute("aria-orientation")).toBe("vertical");
-    }
-
-    expect(groupIds("terminal-view-toolbar-session")).toEqual([
+    expect(ids('[data-testid="terminal-view-toolbar-layout"]')).toEqual([
       "terminal-view-new-terminal",
-      "terminal-view-broadcast",
-      "terminal-view-toggle-logging",
-    ]);
-    expect(groupIds("terminal-view-toolbar-macros")).toEqual([
-      "terminal-view-record-macro",
-      "terminal-view-play-macro",
-    ]);
-    expect(groupIds("terminal-view-toolbar-layout")).toEqual([
       "terminal-view-split-horizontal",
       "terminal-view-split-vertical",
       "terminal-view-close-panel",
       "terminal-view-toggle-sidebar",
     ]);
+    expect(button("terminal-view-more-actions")).not.toBeNull();
+    expect(ids('[data-testid="terminal-view-more-menu"]')).toEqual([
+      "terminal-view-broadcast",
+      "terminal-view-toggle-logging",
+      "terminal-view-record-macro",
+      "terminal-view-play-macro",
+    ]);
+    // The old session and macro groups are gone from the toolbar.
+    expect(container.querySelector('[data-testid="terminal-view-toolbar-session"]')).toBeNull();
+    expect(container.querySelector('[data-testid="terminal-view-toolbar-macros"]')).toBeNull();
+  });
+
+  it("names the registry shortcut in each layout icon's tooltip label", async () => {
+    setOverride("new-terminal", { key: "F7" });
+    setOverride("split-right", { key: "F8" });
+    setOverride("split-down", { key: "F9" });
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    expect(button("terminal-view-new-terminal")!.getAttribute("aria-label")).toBe(
+      "New terminal (F7)"
+    );
+    expect(button("terminal-view-split-horizontal")!.getAttribute("aria-label")).toBe(
+      "Split terminal right (F8)"
+    );
+    expect(button("terminal-view-split-vertical")!.getAttribute("aria-label")).toBe(
+      "Split terminal down (F9)"
+    );
+  });
+
+  it("right-aligns the broadcast shortcut in its menu row", async () => {
+    setOverride("toggle-broadcast", { key: "F6" });
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    const row = button("terminal-view-broadcast")!;
+    expect(row.querySelector(".ui-menu__shortcut")?.textContent).toBe("F6");
+    expect(row.textContent).toContain("Broadcast input…");
   });
 
   it("draws record macro as a record glyph, not a plain circle", async () => {
@@ -367,8 +368,67 @@ describe("TerminalView — toolbar grouping (#5559)", () => {
   it("keeps every icon-only action named for tooltips and assistive tech", async () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
-    const buttons = container.querySelectorAll(".terminal-view__toolbar-actions button");
-    expect(buttons.length).toBeGreaterThanOrEqual(8);
+    const buttons = container.querySelectorAll(
+      ".terminal-view__toolbar-actions button:not([role='menuitem'])"
+    );
+    expect(buttons.length).toBeGreaterThanOrEqual(5);
     for (const b of buttons) expect(b.getAttribute("aria-label")).toBeTruthy();
+  });
+});
+
+describe("TerminalView — running actions stay visible as chips (#5756)", () => {
+  it("shows no chip while nothing runs", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    expect(container.querySelector('[data-testid="terminal-view-active-states"]')).toBeNull();
+    expect(button("terminal-view-more-actions")!.getAttribute("data-active-count")).toBe("0");
+  });
+
+  it("names an active broadcast and stops it from the chip", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    harness.transport.seed({
+      active: true,
+      sourceTabId: "t1",
+      scope: "all",
+      targetTabIds: ["t1"],
+    });
+    await renderView();
+    const chip = button("terminal-view-active-broadcast")!;
+    expect(chip.textContent).toBe("Broadcasting");
+    expect(chip.getAttribute("aria-label")).toMatch(/^Stop broadcast/);
+    expect(button("terminal-view-more-actions")!.getAttribute("data-active-count")).toBe("1");
+
+    await act(async () => {
+      chip.click();
+      await Promise.resolve();
+    });
+    expect(harness.transport.dispatched.map((i) => i.kind)).toEqual(["broadcast.stop"]);
+  });
+
+  it("names a running recording and playback, each stoppable from its chip", async () => {
+    const cancelMacroPlayback = vi.fn();
+    const toggleMacroRecording = vi.fn();
+    useAppStore.setState({
+      cancelMacroPlayback,
+      toggleMacroRecording,
+      macroRecording: true,
+      macroPlayback: {
+        macroId: "m1",
+        macroName: "Deploy",
+        tabId: "t1",
+        timingMode: "fixed",
+        played: 1,
+        total: 3,
+      },
+    } as unknown as Parameters<typeof useAppStore.setState>[0]);
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    expect(button("terminal-view-active-recording")!.textContent).toBe("Recording");
+    expect(button("terminal-view-active-playback")!.textContent).toBe("Playing 1/3");
+
+    click("terminal-view-active-recording");
+    click("terminal-view-active-playback");
+    expect(toggleMacroRecording).toHaveBeenCalledTimes(1);
+    expect(cancelMacroPlayback).toHaveBeenCalledTimes(1);
   });
 });

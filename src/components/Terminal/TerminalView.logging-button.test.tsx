@@ -20,32 +20,9 @@ vi.mock("./TerminalRegistry", () => ({
 vi.mock("./TerminalCommandBridge", () => ({ TerminalCommandBridge: () => null }));
 vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
-vi.mock("@/components/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  Button: ({
-    icon,
-    children,
-    className,
-    variant: _variant,
-    size: _size,
-    iconOnly: _iconOnly,
-    fullWidth: _fullWidth,
-    pendingLabel: _pendingLabel,
-    errorToast: _errorToast,
-    ...rest
-  }: {
-    icon?: React.ReactNode;
-    children?: React.ReactNode;
-    className?: string;
-    [key: string]: unknown;
-  }) => (
-    <button className={["ui-btn", className].filter(Boolean).join(" ")} {...rest}>
-      {icon}
-      {children}
-    </button>
-  ),
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
+vi.mock("@/components/ui", async () =>
+  (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
+);
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
 vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
@@ -89,8 +66,10 @@ describe("TerminalView — session logging button (#1960)", () => {
   it("renders the logging button in an idle (not-logging) state", () => {
     const btn = loggingButton();
     expect(btn).toBeTruthy();
-    expect(btn.getAttribute("aria-pressed")).toBe("false");
-    expect(btn.className).not.toContain("terminal-view__toolbar-action--active");
+    expect(btn.getAttribute("data-active")).toBe("false");
+    expect(btn.textContent).toBe("Log session output");
+    // #5756: no running-logging chip while idle.
+    expect(document.querySelector('[data-testid="terminal-view-active-logging"]')).toBeNull();
   });
 
   it("guides the user instead of logging when no terminal is focused", () => {
