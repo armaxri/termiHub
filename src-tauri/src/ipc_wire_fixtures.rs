@@ -240,6 +240,8 @@ fn agent_fixture() -> Value {
             "fileCreateNew": true,
             // Icon colour / emoji on saved definitions (#5021).
             "definitionIconStyle": true,
+            // A description on saved definitions (#5769).
+            "connectionDescription": true,
             // Live serial port rescans via `serial.list_ports` (#5069).
             "serialPortRescan": true,
             "agentVersion": "1.4.2"
@@ -268,6 +270,8 @@ fn agent_fixture() -> Value {
             // Icon colour + emoji on an agent definition (#5021).
             icon_color: Some("teal".into()),
             icon_emoji: Some("\u{1F680}".into()),
+            // A description on an agent definition (#5769).
+            description: Some("Lab bench console".into()),
             source_file: Some("/etc/termihub/shared.json".into()),
         },
         AgentDefinitionInfo {
@@ -281,6 +285,7 @@ fn agent_fixture() -> Value {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
         },
     ];

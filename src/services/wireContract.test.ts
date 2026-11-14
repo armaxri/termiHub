@@ -224,6 +224,7 @@ describe("wire contract: agent connect / definitions", () => {
     });
     expect(result.capabilities.fileCreateNew).toBe(true);
     expect(result.capabilities.definitionIconStyle).toBe(true);
+    expect(result.capabilities.connectionDescription).toBe(true);
     expect(result.capabilities.serialPortRescan).toBe(true);
     expect(result.capabilities.connectionTypes[0]).toMatchObject({
       typeId: "local",
@@ -242,6 +243,7 @@ describe("wire contract: agent connect / definitions", () => {
       "availableDockerImages",
       "availableSerialPorts",
       "availableShells",
+      "connectionDescription",
       "connectionTypes",
       "definitionIconStyle",
       "dockerAvailable",
@@ -265,6 +267,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(result.capabilities.fileCreateNew).toBe(false);
     // #5021: an older agent cannot store definition icon styles.
     expect(result.capabilities.definitionIconStyle).toBe(false);
+    // #5769: an older agent cannot store definition descriptions.
+    expect(result.capabilities.connectionDescription).toBe(false);
     // #5069: an older agent keeps its connect-time serial port snapshot.
     expect(result.capabilities.serialPortRescan).toBe(false);
   });
@@ -278,6 +282,7 @@ describe("wire contract: agent connect / definitions", () => {
     expect(folders).toEqual([]);
     expect(keys(serial)).toEqual([
       "config",
+      "description",
       "folderId",
       "icon",
       "iconColor",
@@ -295,6 +300,8 @@ describe("wire contract: agent connect / definitions", () => {
     // #5021: the definition's icon colour / emoji.
     expect(serial.iconColor).toBe("teal");
     expect(serial.iconEmoji).toBe("🚀");
+    // #5769: the definition's description.
+    expect(serial.description).toBe("Lab bench console");
 
     expect(keys(shell)).toEqual(["config", "folderId", "id", "name", "persistent", "sessionType"]);
     expect(shell.folderId).toBeNull();

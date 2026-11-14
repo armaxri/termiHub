@@ -27,6 +27,7 @@ fn create_params(session_type: &str, config: Value) -> ConnectionCreateParams {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
     }
 }
 
@@ -46,6 +47,7 @@ fn update_params(
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
     }
 }
 
@@ -61,6 +63,7 @@ fn info(id: &str, session_type: &str, config: Value) -> AgentDefinitionInfo {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: None,
     }
 }

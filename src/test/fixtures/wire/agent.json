@@ -13,6 +13,7 @@
         "/bin/bash",
         "/bin/zsh"
       ],
+      "connectionDescription": true,
       "connectionTypes": [
         {
           "capabilities": {
@@ -58,6 +59,7 @@
       "availableDockerImages": [],
       "availableSerialPorts": [],
       "availableShells": [],
+      "connectionDescription": false,
       "connectionTypes": [],
       "definitionIconStyle": false,
       "dockerAvailable": false,
@@ -84,6 +86,7 @@
           "dataBits": 8,
           "port": "/dev/ttyUSB0"
         },
+        "description": "Lab bench console",
         "folderId": "folder-lab",
         "icon": "cpu",
         "iconColor": "teal",

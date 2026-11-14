@@ -94,6 +94,13 @@ fileCreateNew?: boolean,
  */
 definitionIconStyle?: boolean, 
 /**
+ * Whether the agent stores an optional one-line description on its saved
+ * connection definitions (protocol 0.42.0, #5769). `false` for older
+ * agents: they would ignore the key, so the connection editor hides the
+ * Description field for their definitions.
+ */
+connectionDescription?: boolean, 
+/**
  * Whether the agent serves `serial.list_ports` — a fresh enumeration of
  * its host's serial ports (protocol 0.34.0, #5069), which the connection
  * editor polls while an agent-hosted serial Port field is visible. `false`

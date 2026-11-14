@@ -14,6 +14,10 @@ iconColor?: string,
  */
 iconEmoji?: string, 
 /**
+ * Optional one-line description shown muted under the name (#5769).
+ */
+description?: string, 
+/**
  * Source file path on the remote host, or `None` for the primary store.
  */
 sourceFile?: string, };

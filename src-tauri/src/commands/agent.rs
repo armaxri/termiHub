@@ -115,6 +115,7 @@ fn to_store_definition(info: &AgentDefinitionInfo) -> StoreAgentDefinition {
         icon: info.icon.clone(),
         icon_color: info.icon_color.clone(),
         icon_emoji: info.icon_emoji.clone(),
+        description: info.description.clone(),
         source_file: info.source_file.clone(),
     }
 }
