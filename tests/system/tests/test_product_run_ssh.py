@@ -54,9 +54,9 @@ from termihub_harness import (
 )
 from termihub_harness.native_ssh import NativeBastionControl, NativeSshServerControl
 from termihub_harness.product_run import ProductRunUi
-from termihub_harness.product_run.editor_layout import measure_editor_layout
+from termihub_harness.product_run.editor_layout import measure_editor_footer, measure_editor_layout
 from termihub_harness.product_run.hostkey_emphasis import enter_default_problems
-from termihub_harness.product_run.grades import editor_layout_problems
+from termihub_harness.product_run.grades import editor_layout_problems, editor_primary_problems
 from termihub_harness.product_run.hosts import (
     COMPOSE_MFA,
     COMPOSE_PASSWORD,
@@ -642,7 +642,7 @@ class TestProductRunSsh(
         with self.step(
             "ssh.editor-layout",
             "SSH editor: hints under their own fields, ${VAR} note in the section header, "
-            "form width capped (#5641)",
+            "form width capped (#5641), Save and connect primary for a new connection (#5755)",
             expect=(
                 "the SSH editor: a capped-width form, the ${VAR} note under the Connection "
                 "title above its divider, each hint directly under its field, a narrow Port input"
@@ -655,6 +655,10 @@ class TestProductRunSsh(
             rects = measure_editor_layout(self.driver)
             self.evidence(f"form {rects['form']['width']:.0f}px wide, port {rects['port_input']['width']:.0f}px")
             problems = editor_layout_problems(rects)
+            # #5755: a new connection's primary is Save and connect, right-most.
+            footer = measure_editor_footer(self.driver)
+            self.evidence(f"footer {[(b['testId'], b['primary']) for b in footer]}")
+            problems += editor_primary_problems(footer, editing=False)
             assert not problems, problems
         try:
             if self.driver.exists("connection-editor-cancel"):
