@@ -87,6 +87,9 @@ pub const CONNECTION_FILES_WRITE_RANGE: &str = "connection.files.write_range";
 /// Resolve a path to its real spelling on the agent host (protocol 0.36.0,
 /// #5333).
 pub const CONNECTION_FILES_REALPATH: &str = "connection.files.realpath";
+/// Shorten a file to a given length, never extending it (protocol 0.41.0,
+/// #5736).
+pub const CONNECTION_FILES_TRUNCATE: &str = "connection.files.truncate";
 
 // Connection-scoped system monitoring.
 pub const CONNECTION_MONITORING_SUBSCRIBE: &str = "connection.monitoring.subscribe";
@@ -408,6 +411,12 @@ pub struct Capabilities {
     /// Absent (read as `false`) on older agents, for which the desktop keeps
     /// the `availableSerialPorts` snapshot taken at `initialize`.
     pub serial_port_rescan: bool,
+    /// Whether the agent serves [`CONNECTION_FILES_TRUNCATE`]: shortening a
+    /// regular file to a given length, which a resumed agent-hosted upload
+    /// trims its crashed partial back to the last checkpoint with (protocol
+    /// 0.41.0, #5736). Absent (read as `false`) on older agents, whose
+    /// uploads restart from zero instead.
+    pub file_truncate: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -1455,6 +1464,26 @@ pub struct FilesRealpathResult {
     /// The real spelling: symlinks, `.` and `..` resolved; a missing final
     /// name appended to its parent folder's real spelling.
     pub path: String,
+}
+
+/// Params for [`CONNECTION_FILES_TRUNCATE`] (#5736).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesTruncateParams {
+    pub connection_id: Option<String>,
+    /// The regular file to shorten. A symlink, directory or other
+    /// non-regular file is refused.
+    pub path: String,
+    /// The length to shorten it to. Larger than the file's current size is
+    /// refused: the call never extends a file.
+    pub length: u64,
+}
+
+/// Result of [`CONNECTION_FILES_TRUNCATE`] (#5736).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilesTruncateResult {
+    /// The file's size after the call, measured afterwards, so the caller
+    /// can confirm it before appending.
+    pub size: u64,
 }
 
 /// Type alias for backward compatibility — stat results use the same shape
@@ -2964,6 +2993,7 @@ mod tests {
                 file_create_new: true,
                 definition_icon_style: true,
                 serial_port_rescan: true,
+                file_truncate: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -3003,6 +3033,8 @@ mod tests {
         assert_eq!(v["capabilities"]["definitionIconStyle"], true);
         // #5069: the agent serves `serial.list_ports`.
         assert_eq!(v["capabilities"]["serialPortRescan"], true);
+        // #5736: the agent serves `connection.files.truncate`.
+        assert_eq!(v["capabilities"]["fileTruncate"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3904,6 +3936,22 @@ mod tests {
     }
 
     #[test]
+    fn files_truncate_wire_shape() {
+        let v = serde_json::to_value(FilesTruncateParams {
+            connection_id: Some("sess-1".into()),
+            path: "/srv/up.bin".into(),
+            length: 4096,
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({"connection_id": "sess-1", "path": "/srv/up.bin", "length": 4096})
+        );
+        let back: FilesTruncateResult = serde_json::from_value(json!({"size": 4096})).unwrap();
+        assert_eq!(back.size, 4096);
+    }
+
+    #[test]
     fn files_realpath_wire_shape() {
         let v = serde_json::to_value(FilesRealpathParams {
             connection_id: Some("sess-1".into()),
@@ -4385,6 +4433,7 @@ mod tests {
         assert_eq!(CONNECTION_FILES_READ_RANGE, "connection.files.read_range");
         assert_eq!(CONNECTION_FILES_WRITE_RANGE, "connection.files.write_range");
         assert_eq!(CONNECTION_FILES_REALPATH, "connection.files.realpath");
+        assert_eq!(CONNECTION_FILES_TRUNCATE, "connection.files.truncate");
         assert_eq!(
             CONNECTION_MONITORING_SUBSCRIBE,
             "connection.monitoring.subscribe"

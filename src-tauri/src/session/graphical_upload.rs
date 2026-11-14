@@ -435,6 +435,13 @@ pub(crate) trait AgentRequests: Send + Sync {
     fn supports_file_create_new(&self, _agent_id: &str) -> bool {
         false
     }
+
+    /// Whether the agent shortens files (`capabilities.fileTruncate`,
+    /// protocol 0.41.0, #5736). `false` when the agent is older or not
+    /// connected: a crashed upload then restarts from zero.
+    fn supports_file_truncate(&self, _agent_id: &str) -> bool {
+        false
+    }
 }
 
 impl AgentRequests for Arc<dyn AgentRpcClient> {
@@ -450,6 +457,11 @@ impl AgentRequests for Arc<dyn AgentRpcClient> {
     fn supports_file_create_new(&self, agent_id: &str) -> bool {
         self.get_capabilities(agent_id)
             .is_some_and(|caps| caps.file_create_new)
+    }
+
+    fn supports_file_truncate(&self, agent_id: &str) -> bool {
+        self.get_capabilities(agent_id)
+            .is_some_and(|caps| caps.file_ranges && caps.file_truncate)
     }
 }
 
@@ -566,6 +578,22 @@ impl RangedTransferTarget for AgentHostFiles {
         )
         .await
         .map(|_| ())
+    }
+
+    /// `connection.files.truncate` on the agent host's own file system
+    /// (protocol 0.41.0, #5736), for an agent that advertises `fileTruncate`;
+    /// an older agent is never asked.
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+        if !self.agents.supports_file_truncate(&self.agent_id) {
+            return Err(FileError::NotSupported);
+        }
+        let reply = self
+            .call(
+                termihub_core::protocol::methods::CONNECTION_FILES_TRUNCATE,
+                crate::session::remote_proxy::truncate_params(None, path, len),
+            )
+            .await?;
+        crate::session::remote_proxy::confirm_truncated(reply, path, len)
     }
 }
 

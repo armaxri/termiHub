@@ -815,6 +815,51 @@ impl RangedFileAccess for SftpFileBrowser {
             .map_err(|e| FileError::OperationFailed(format!("write failed: {e}")))?;
         Ok(())
     }
+
+    /// Shorten a regular remote file via SFTP `setstat` (#5736): `lstat`
+    /// first, so a symlink, directory or special file in `path`'s place is
+    /// refused and a `len` past the current size never extends the file; the
+    /// size is measured again afterwards.
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        let path = &self.resolve_home(path).await?;
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+        let meta = state
+            .sftp
+            .symlink_metadata(path)
+            .await
+            .map_err(|e| stat_error(path, e))?;
+        if !meta.file_type().is_file() {
+            return Err(crate::files::ranged::shorten_not_regular(path));
+        }
+        let present = meta.size.unwrap_or_default();
+        if len > present {
+            return Err(crate::files::ranged::shorten_would_extend(
+                path, present, len,
+            ));
+        }
+        state
+            .sftp
+            .set_metadata(
+                path,
+                russh_sftp::protocol::FileAttributes {
+                    size: Some(len),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("trim failed: {e}")))?;
+        state
+            .sftp
+            .symlink_metadata(path)
+            .await
+            .map_err(|e| stat_error(path, e))?
+            .size
+            .ok_or_else(|| FileError::OperationFailed(format!("{path}: size unknown after trim")))
+    }
 }
 
 /// Join a remote (POSIX) directory path with a child name.
