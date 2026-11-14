@@ -48,7 +48,7 @@ use serde_json::Value;
 use tracing::{debug, warn};
 
 use termihub_core::connection::{
-    Capabilities, ConnectionType, EndCauseSlot, OutputReceiver, SessionEndCause, SettingsSchema,
+    Capabilities, ConnectionType, OutputReceiver, SessionEndCause, SettingsSchema,
 };
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::paste_guard::PathCanonicalizer;
@@ -65,7 +65,7 @@ use termihub_core::protocol::methods::{
 };
 
 use crate::session::ssh_keyboard_interactive::current_prompt_owner;
-use crate::terminal::agent_manager::AgentRpcClient;
+use crate::terminal::agent_manager::{AgentRpcClient, SessionEndSlot};
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
 use crate::utils::errors::TerminalError;
 
@@ -99,11 +99,13 @@ pub struct RemoteProxy {
     /// SSH host refused the shell but serves files. Read through
     /// [`files_only_watch`](ConnectionType::files_only_watch).
     files_only: tokio::sync::watch::Sender<bool>,
-    /// Why the remote session ended on its own (#5732): recorded by the agent
-    /// manager when the agent's `connection.exit` carries an `end_cause`,
-    /// read through [`end_cause`](ConnectionType::end_cause) once the output
-    /// stream ended. Empty for an agent older than protocol 0.38.0.
-    end_cause: EndCauseSlot,
+    /// How the remote session ended on its own: recorded by the agent manager
+    /// when the agent's `connection.exit` carries an `end_cause` (#5732) or a
+    /// real `exit_status` (#5742), read through
+    /// [`end_cause`](ConnectionType::end_cause) and
+    /// [`exit_code`](ConnectionType::exit_code) once the output stream ended.
+    /// Empty for an agent older than protocol 0.38.0.
+    end_cause: SessionEndSlot,
 }
 
 impl RemoteProxy {
@@ -135,7 +137,7 @@ impl RemoteProxy {
             monitoring_proxy: None,
             process_proxy: None,
             files_only: tokio::sync::watch::channel(false).0,
-            end_cause: EndCauseSlot::new(),
+            end_cause: SessionEndSlot::new(),
         }
     }
 
@@ -181,7 +183,7 @@ impl RemoteProxy {
         // A files-only session (#4081) says so again on this attach.
         let files_only = tokio::sync::watch::channel(false).0;
         register_files_only(&*agent_manager, &agent_id, &remote_session_id, &files_only);
-        let end_cause = EndCauseSlot::new();
+        let end_cause = SessionEndSlot::new();
         register_session_end(&*agent_manager, &agent_id, &remote_session_id, &end_cause);
 
         let outcome = match agent_manager.attach_session(&agent_id, &remote_session_id) {
@@ -461,7 +463,15 @@ impl ConnectionType for RemoteProxy {
     /// protocol 0.38.0, and when the agent's backend could not tell — the tab
     /// then reads "connection lost".
     fn end_cause(&self) -> Option<SessionEndCause> {
-        self.end_cause.get()
+        self.end_cause.end_cause()
+    }
+
+    /// The remote session's real process exit status (#5742): a shell on the
+    /// agent the user exited reports its code. `None` while it runs, for an
+    /// agent older than protocol 0.39.0, and for a session without a process
+    /// of its own.
+    fn exit_code(&self) -> Option<i32> {
+        self.end_cause.exit_status()
     }
 }
 
@@ -472,7 +482,7 @@ fn register_session_end(
     agent_manager: &dyn AgentRpcClient,
     agent_id: &str,
     remote_session_id: &str,
-    end_cause: &EndCauseSlot,
+    end_cause: &SessionEndSlot,
 ) {
     if let Err(e) =
         agent_manager.register_session_end(agent_id, remote_session_id, end_cause.clone())
@@ -701,7 +711,7 @@ impl RemoteProxy {
             &self.files_only,
         );
         // Route why the session ends to us (#5732); a fresh slot per session.
-        self.end_cause = EndCauseSlot::new();
+        self.end_cause = SessionEndSlot::new();
         register_session_end(
             &*self.agent_manager,
             self.agent_id(),

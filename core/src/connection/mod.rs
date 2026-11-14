@@ -419,6 +419,16 @@ pub trait ConnectionType: Send + Sync {
         None
     }
 
+    /// The exit status of the session's process when it exited on its own
+    /// (#5742): a local shell where the user typed `exit` reports `0`.
+    /// Recorded before the output channel closes, so it is set by the time the
+    /// session owner sees the output end. `None` while running, after a
+    /// deliberate [`disconnect`](Self::disconnect), when the status cannot be
+    /// read, and for backends without a process of their own (the default).
+    fn exit_code(&self) -> Option<i32> {
+        None
+    }
+
     /// Why a plugin session served out of process ended on its own (#4184):
     /// the cause of its plugin runner's exit (crash, not responding, out of
     /// memory, invalid data), for the crash overlay. `None` while connected,

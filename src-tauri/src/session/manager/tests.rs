@@ -1777,11 +1777,12 @@ fn drop_fold_classifies_a_genuine_exit_like_the_client() {
     // Clean exit (code 0) folds nothing — mirrors the client's `"clean"` reason.
     assert_eq!(drop_fold_for(Some(0), false), None);
     assert_eq!(drop_fold_for(Some(0), true), None);
-    // A non-zero code is a drop: resilient → reconnect, otherwise dropped.
+    // A non-zero code is a process that exited (#5742): dropped, never
+    // reconnected, even on a resilient tab.
     assert_eq!(drop_fold_for(Some(1), false), Some(DropFold::Dropped));
-    assert_eq!(drop_fold_for(Some(1), true), Some(DropFold::Reconnect));
-    // An unknown code (`None`) — what the desktop `terminal-exit` always emits —
-    // is a drop too, resilient-gated.
+    assert_eq!(drop_fold_for(Some(1), true), Some(DropFold::Dropped));
+    // An unknown code (`None`) — a lost link, what every direct session emits —
+    // is a drop, resilient-gated.
     assert_eq!(drop_fold_for(None, false), Some(DropFold::Dropped));
     assert_eq!(drop_fold_for(None, true), Some(DropFold::Reconnect));
 }

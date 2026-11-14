@@ -113,6 +113,7 @@ mod reconnect;
 mod reconnect_notice;
 mod recovery;
 mod session_exit;
+pub(crate) use session_exit::SessionEndSlot;
 mod state_events;
 mod stdout_reader;
 mod update_reconnect;
@@ -350,7 +351,7 @@ pub(crate) enum AgentIoCommand {
     /// recorded by the agent's `connection.exit` when it carries one.
     RegisterSessionEnd {
         session_id: String,
-        end_cause: termihub_core::connection::EndCauseSlot,
+        end_cause: SessionEndSlot,
     },
     /// Register the watch a session's proxy reads its files-only verdict from
     /// (#4081), flipped by the agent's `connection.filesOnly` notification.
@@ -901,7 +902,7 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         &self,
         _agent_id: &str,
         _remote_session_id: &str,
-        _end_cause: termihub_core::connection::EndCauseSlot,
+        _end_cause: SessionEndSlot,
     ) -> Result<(), TerminalError> {
         Ok(())
     }
@@ -2792,7 +2793,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         &self,
         agent_id: &str,
         remote_session_id: &str,
-        end_cause: termihub_core::connection::EndCauseSlot,
+        end_cause: SessionEndSlot,
     ) -> Result<(), TerminalError> {
         let agents = self
             .agents
@@ -3508,7 +3509,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         &self,
         agent_id: &str,
         remote_session_id: &str,
-        end_cause: termihub_core::connection::EndCauseSlot,
+        end_cause: SessionEndSlot,
     ) -> Result<(), TerminalError> {
         AgentConnectionManager::register_session_end(self, agent_id, remote_session_id, end_cause)
     }

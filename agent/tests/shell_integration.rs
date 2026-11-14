@@ -554,31 +554,22 @@ async fn test_shell_exit() {
         .await
         .expect("Failed to send exit command");
 
-    // Read until we get an Exited frame or EOF.
-    // The daemon sends exit code 0 because ConnectionType does not
-    // propagate the actual process exit code through the output channel.
-    let mut got_exit = false;
-    loop {
-        match reader.next_frame(Duration::from_secs(10)).await {
-            Ok(Some(frame)) => {
-                if frame.msg_type == MSG_EXITED {
-                    got_exit = true;
-                    break;
-                }
-                // Skip output frames.
-            }
-            Ok(None) => {
-                // EOF — daemon closed the connection after shell exited.
-                got_exit = true;
-                break;
-            }
-            Err(_) => break,
+    // Read until the Exited frame. It carries the shell's real exit status
+    // (#5742): the code, an empty end-cause byte and the status byte.
+    let mut exited: Option<Vec<u8>> = None;
+    while let Ok(Some(frame)) = reader.next_frame(Duration::from_secs(10)).await {
+        if frame.msg_type == MSG_EXITED {
+            exited = Some(frame.payload);
+            break;
         }
+        // Skip output frames.
     }
 
-    assert!(
-        got_exit,
-        "Expected an Exited frame or EOF after shell exits"
+    let payload = exited.expect("Expected an Exited frame after the shell exits");
+    assert_eq!(
+        payload,
+        [42i32.to_be_bytes().as_slice(), &[0, 1]].concat(),
+        "the Exited frame must carry the shell's real exit status"
     );
 
     // The daemon itself must then exit on its own. Waiting for it also keeps

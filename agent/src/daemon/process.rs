@@ -633,7 +633,14 @@ async fn daemon_loop_with_reopen(
                         }
                         // Why the link ended (#5732), recorded by the backend
                         // before it closed the output channel.
-                        send_exited_async(&mut agent_writer, 0, connection.end_cause()).await;
+                        // The process's real exit status (#5742), read once
+                        // its output ended.
+                        send_exited_async(
+                            &mut agent_writer,
+                            connection.exit_code(),
+                            connection.end_cause(),
+                        )
+                        .await;
                         return Ok(());
                     }
                 }
@@ -765,7 +772,7 @@ async fn daemon_loop_with_reopen(
                         if let Err(e) = connection.disconnect().await {
                             warn!("Disconnect error: {e}");
                         }
-                        send_exited_async(&mut agent_writer, 0, None).await;
+                        send_exited_async(&mut agent_writer, None, None).await;
                         return Ok(());
                     }
                     Some(AgentCommand::OutputFlow(paused)) => {
@@ -1501,15 +1508,16 @@ fn abort_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
 const EXIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Send an Exited frame to the agent if connected, after the frames already
-/// queued for it, and close the connection. `end_cause` says why the
-/// backend's link ended on its own (#5732); `None` after a kill.
+/// queued for it, and close the connection. `exit_status` is the process's
+/// real exit status (#5742) and `end_cause` why the backend's link ended on
+/// its own (#5732); both `None` after a kill.
 async fn send_exited_async(
     agent_writer: &mut Option<WorkerSink>,
-    code: i32,
+    exit_status: Option<i32>,
     end_cause: Option<SessionEndCause>,
 ) {
     if let Some(sink) = agent_writer.take() {
-        sink.send(MSG_EXITED, &protocol::encode_exit(code, end_cause));
+        sink.send(MSG_EXITED, &protocol::encode_exit(exit_status, end_cause));
         sink.close(EXIT_DRAIN_TIMEOUT).await;
     }
 }

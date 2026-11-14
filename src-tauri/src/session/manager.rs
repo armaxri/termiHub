@@ -570,17 +570,20 @@ pub(crate) enum DropFold {
 ///
 /// The client computes `reason = exitCode === 0 ? "clean" : "dropped"` for a
 /// non-killed exit, then folds `session.reconnect` for a resilient-reconnect
-/// tab's drop, `session.dropped` for a non-resilient drop, and **nothing** for a
+/// tab's lost link, `session.dropped` for any other drop, and **nothing** for a
 /// clean exit. This reproduces that: `Some(0)` → `None` (clean folds neither);
-/// any other code (or an unknown `None`, which the desktop `terminal-exit`
-/// currently always emits) → a drop, resilient-gated. The *killed* case never
-/// reaches here — a deliberate close clears the tab binding before the exit
-/// fires (see `close_session`), so this is only called for genuine drops.
+/// another code → `Dropped`, never a reconnect — the process exited, as an
+/// agent-hosted shell reports it (#5742), so reconnecting would restart a shell
+/// the user ended; an unknown `None` (a lost link — what every direct session
+/// emits) → a drop, resilient-gated. The *killed* case never reaches here — a
+/// deliberate close clears the tab binding before the exit fires (see
+/// `close_session`), so this is only called for genuine drops.
 pub(super) fn drop_fold_for(exit_code: Option<i32>, resilient: bool) -> Option<DropFold> {
     match exit_code {
         Some(0) => None,
-        _ if resilient => Some(DropFold::Reconnect),
-        _ => Some(DropFold::Dropped),
+        Some(_) => Some(DropFold::Dropped),
+        None if resilient => Some(DropFold::Reconnect),
+        None => Some(DropFold::Dropped),
     }
 }
 
@@ -2655,6 +2658,16 @@ impl SessionManager {
             .write(data);
     }
 
+    /// The exit code a session's `terminal-exit` carries (#5742): an
+    /// agent-hosted session's real process exit status, as its agent reported
+    /// it. A direct session reports none, as before.
+    fn reported_exit_code(entry: &SessionEntry) -> Option<i32> {
+        entry
+            .remote_session_id
+            .as_ref()
+            .and_then(|_| entry.connection.exit_code())
+    }
+
     /// Emit remaining data (if any), send the exit event, and remove the session.
     ///
     /// Intentionally does NOT touch `persistent_sessions`: when an agent SSH
@@ -2692,15 +2705,18 @@ impl SessionManager {
             None
         };
 
-        let end_cause = {
+        let (end_cause, exit_code) = {
             let sessions = sessions.lock().await;
-            sessions
-                .get(session_id)
-                .and_then(|entry| entry.connection.end_cause())
+            sessions.get(session_id).map_or((None, None), |entry| {
+                (
+                    entry.connection.end_cause(),
+                    Self::reported_exit_code(entry),
+                )
+            })
         };
         let exit_event = TerminalExitEvent {
             session_id: session_id.to_string(),
-            exit_code: None,
+            exit_code,
             end_cause,
         };
         emitter.emit_exit(&exit_event);
