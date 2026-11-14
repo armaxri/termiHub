@@ -45,8 +45,9 @@ export function agentNameMatchesQuery(
 }
 
 /**
- * Whether an agent definition matches the (already normalized) query by name.
- * An empty query matches everything.
+ * Whether an agent definition matches the (already normalized) query by its
+ * name or its description (#5769), like a local saved connection. An empty
+ * query matches everything.
  *
  * Matching goes through {@link textFieldsMatchQuery} (match-sorter), so it is
  * case- and diacritic-insensitive while keeping substring semantics.
@@ -55,7 +56,10 @@ export function agentDefinitionMatchesQuery(
   definition: AgentDefinitionInfo,
   normalizedQuery: string
 ): boolean {
-  return textFieldsMatchQuery([definition.name], normalizedQuery);
+  return textFieldsMatchQuery(
+    definition.description ? [definition.name, definition.description] : [definition.name],
+    normalizedQuery
+  );
 }
 
 /**
