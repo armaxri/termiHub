@@ -36,6 +36,7 @@ const PRE_GATE = new Set([
 const BUILD_JOBS = [
   "create-release",
   "build-app",
+  "build-app-macos",
   "upload-app",
   "agent-binaries-linux",
   "agent-binaries-macos",
@@ -170,9 +171,10 @@ describe("release.yml --locked builds (#4282)", () => {
   });
 
   it("tauri-action forwards --locked to cargo", () => {
+    // build-app (Windows/Linux) and build-app-macos (#5804).
     const args = RELEASE.split("\n").filter((l) => /^\s+args: .*--target/.test(l));
-    expect(args.length).toBe(1);
-    expect(args[0].trimEnd()).toMatch(/ -- --locked$/);
+    expect(args.length).toBe(2);
+    for (const line of args) expect(line.trimEnd()).toMatch(/ -- --locked$/);
   });
 
   it.each(["build-rdp-sidecar.sh", "build-plugin-runner.sh"])(

@@ -16,6 +16,9 @@
 //   - the split debug symbols take the same path: packaged by the read-only
 //     build jobs, checked by check-release-assets, published by
 //     upload-debug-symbols (#4504).
+//   - the macOS signing phases (#5781) hold only the macOS app build
+//     (build-app-macos), never the Windows/Linux build-app legs, and the steps
+//     both app build jobs share stay identical (#5804).
 // Text-based like release-draft.test.mjs: the workflow layout is the contract.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -155,6 +158,7 @@ describe("app build jobs run no dependency lifecycle scripts (CI2-007)", () => {
   it.each([
     ["dev-build.yml", "build-app", DEV_BUILD],
     ["release.yml", "build-app", RELEASE],
+    ["release.yml", "build-app-macos", RELEASE],
   ])("%s %s installs with --ignore-scripts", (_name, job, text) => {
     const installs = jobBody(text, job).match(/pnpm install[^\n]*/g) ?? [];
     expect(installs.length).toBeGreaterThan(0);
@@ -182,6 +186,18 @@ function stripComments(text) {
     .filter((l) => !/^\s*#/.test(l))
     .map((l) => l.replace(/\s+#.*$/, ""))
     .join("\n");
+}
+
+/** A job's steps as { name: step text without comments }, in order. */
+function jobSteps(body) {
+  const steps = new Map();
+  const list = body.split("\n    steps:\n")[1] ?? "";
+  for (const chunk of list.split(/\n(?= {6}- )/)) {
+    const text = stripComments(chunk).trimEnd();
+    const name = text.match(/^ {6}- name: ([^\n]+)/)?.[1];
+    if (name) steps.set(name, text);
+  }
+  return steps;
 }
 
 /** Scopes a job body grants `write` (the workflow default when it has no block). */
@@ -226,6 +242,7 @@ describe("release.yml token scope (CI2-007, #4730)", () => {
 
   it.each([
     "build-app",
+    "build-app-macos",
     "agent-binaries-linux",
     "agent-binaries-macos",
     "agent-binaries-windows",
@@ -249,11 +266,13 @@ describe("release.yml token scope (CI2-007, #4730)", () => {
 
   it.each([
     ["upload-app", "build-app"],
+    ["upload-app", "build-app-macos"],
     ["upload-agent-binaries", "agent-binaries-linux"],
     ["upload-agent-binaries", "agent-binaries-macos"],
     ["upload-agent-binaries", "agent-binaries-windows"],
     ["upload-third-party-notices", "third-party-notices"],
     ["upload-debug-symbols", "build-app"],
+    ["upload-debug-symbols", "build-app-macos"],
     ["upload-debug-symbols", "agent-binaries-linux"],
     ["upload-debug-symbols", "agent-binaries-macos"],
     ["upload-debug-symbols", "agent-binaries-windows"],
@@ -382,6 +401,7 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
         "verify-integration",
         "release-version",
         "build-app",
+        "build-app-macos",
         "agent-binaries-linux",
         "agent-binaries-macos",
         "agent-binaries-windows",
@@ -423,6 +443,7 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
   it("a dry run packages and checks the debug symbols read-only (#4504)", () => {
     for (const id of [
       "build-app",
+      "build-app-macos",
       "agent-binaries-linux",
       "agent-binaries-macos",
       "agent-binaries-windows",
@@ -496,8 +517,11 @@ describe("the updater private key never meets third-party build code (#5761)", (
     const build = stripComments(jobBody(RELEASE, "build-app"));
     expect(build).toMatch(/name: release-updater-digest-\$\{\{ matrix\.platform \}\}\n/);
     expect(build).not.toMatch(/signer sign/);
+    // macOS: sign-macos-app builds the updater bundle from the signed app.
+    const mac = stripComments(jobBody(RELEASE, "build-app-macos"));
+    expect(mac).not.toMatch(/release-updater-digest|signer sign/);
     const sign = releaseJobs().get("sign-updater");
-    expect(sign.needs).toContain("build-app");
+    expect(sign.needs).toEqual(expect.arrayContaining(["build-app", "build-app-macos"]));
     expect(sign.needs).not.toContain("create-release");
     expect(stripComments(jobBody(RELEASE, "sign-updater"))).toMatch(
       /name: release-app-updater-signatures\n/
@@ -538,6 +562,13 @@ describe("the macOS signing identity never meets third-party build code (#5781)"
     path.join(ROOT, "scripts", "internal", "macos-release-signing.sh"),
     "utf8"
   );
+  /** Whether job `id` needs `target`, directly or transitively. */
+  const dependsOn = (id, target, seen = new Set()) => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    const needs = jobs.get(id)?.needs ?? [];
+    return needs.includes(target) || needs.some((n) => dependsOn(n, target, seen));
+  };
 
   it("only the sign-macos-* jobs reference MACOS_SIGNING_* secrets, in no other workflow", () => {
     expect(ids.filter((id) => SECRET.test(code(id))).sort()).toEqual(SIGNERS);
@@ -559,7 +590,7 @@ describe("the macOS signing identity never meets third-party build code (#5781)"
       );
     });
     expect(offenders).toEqual([]);
-    for (const id of ["build-app", "build-macos-helpers"]) {
+    for (const id of ["build-app", "build-app-macos", "build-macos-helpers"]) {
       expect(code(id), id).not.toMatch(/macos-signing-keychain\.sh|TERMIHUB_MACOS_SIGNING_/);
     }
   });
@@ -597,36 +628,125 @@ describe("the macOS signing identity never meets third-party build code (#5781)"
   it("phases the macOS build: helpers -> sign -> app -> sign -> updater/upload", () => {
     expect(jobs.get("build-macos-helpers").needs).not.toContain("sign-macos-helpers");
     expect(jobs.get("sign-macos-helpers").needs).toContain("build-macos-helpers");
-    expect(jobs.get("build-app").needs).toContain("sign-macos-helpers");
+    expect(jobs.get("build-app-macos").needs).toContain("sign-macos-helpers");
     expect(jobs.get("sign-macos-app").needs).toEqual(
-      expect.arrayContaining(["build-app", "sign-macos-helpers"])
+      expect.arrayContaining(["build-app-macos", "sign-macos-helpers"])
     );
-    for (const id of ["sign-updater", "updater-manifest", "check-release-assets", "upload-app"]) {
-      expect(jobs.get(id).needs, id).toContain("sign-macos-app");
+    expect(jobs.get("sign-macos-app").needs).not.toContain("build-app");
+    for (const id of [
+      "sign-updater",
+      "updater-manifest",
+      "check-release-assets",
+      "upload-app",
+      "upload-debug-symbols",
+    ]) {
+      expect(jobs.get(id).needs, id).toEqual(
+        expect.arrayContaining(["build-app", "build-app-macos"])
+      );
+      if (id !== "upload-debug-symbols") {
+        expect(jobs.get(id).needs, id).toContain("sign-macos-app");
+      }
     }
     // The helpers' digests travel as a job output, not as an artifact.
     expect(code("sign-macos-helpers")).toMatch(
       /\n {6}sums: \$\{\{ steps\.sign\.outputs\.sums \}\}\n/
     );
-    for (const id of ["build-app", "sign-macos-app"]) {
+    for (const id of ["build-app-macos", "sign-macos-app"]) {
       expect(code(id), id).toContain("HELPER_SUMS: ${{ needs.sign-macos-helpers.outputs.sums }}");
     }
-    const build = code("build-app");
-    expect(build).toContain("scripts/internal/macos-release-signing.sh stage-helpers");
-    for (const step of ["Build RDP sidecar for bundling", "Build plugin runner for bundling"]) {
-      expect(build).toContain(
-        `- name: ${step}\n        if: \${{ !startsWith(matrix.os, 'macos') }}\n`
-      );
+    const mac = code("build-app-macos");
+    expect(mac).toContain("scripts/internal/macos-release-signing.sh stage-helpers");
+    // It bundles the signed helpers and builds none itself.
+    expect(mac).not.toMatch(/build-rdp-sidecar\.sh|build-plugin-runner\.sh/);
+    // It hands its DMG on unsigned; only sign-macos-app ships it.
+    expect(mac).toContain("name: macos-unsigned-app-${{ matrix.platform }}\n");
+    expect(mac).not.toMatch(/name: release-app-/);
+    for (const id of ["build-app", "build-app-macos"]) {
+      expect(code(id), id).not.toMatch(/resign-app|macos-dmg-layout\.sh replace-app/);
     }
-    // macOS legs hand their DMG on unsigned; only sign-macos-app ships it.
-    expect(build).toContain(
-      "name: ${{ startsWith(matrix.os, 'macos') && 'macos-unsigned-app' || 'release-app' }}-${{ matrix.platform }}"
-    );
-    expect(build).not.toMatch(/resign-app|macos-dmg-layout\.sh replace-app/);
     const sign = code("sign-macos-app");
     expect(sign).toMatch(/pattern: macos-unsigned-app-\*\n/);
     expect(sign).toMatch(/name: release-app-macos\n/);
     expect(sign).toMatch(/name: release-updater-digest-macos\n/);
+  });
+
+  // #5804: a job's needs cannot differ per matrix leg, so the macOS legs are
+  // their own job and the Windows/Linux legs do not wait for (or get skipped
+  // with) the macOS signing phases.
+  it("the Windows/Linux build-app legs never wait for the macOS phases", () => {
+    expect(jobs.get("build-app").needs.sort()).toEqual(
+      ["release-version", "third-party-notices", "verify-supply-chain", "verify-version"].sort()
+    );
+    for (const phase of ["build-macos-helpers", "sign-macos-helpers", "sign-macos-app"]) {
+      expect(dependsOn("build-app", phase), phase).toBe(false);
+    }
+    const build = code("build-app");
+    expect(build).not.toMatch(/macos|darwin|HELPER_SUMS|stage-helpers/i);
+    const platforms = (id) => [...code(id).matchAll(/- platform: '([^']+)'/g)].map((m) => m[1]);
+    expect(platforms("build-app").sort()).toEqual(
+      ["linux-arm64", "linux-x64", "windows-x64"].sort()
+    );
+    expect(platforms("build-app-macos").sort()).toEqual(["macos-arm64", "macos-x64"]);
+    expect(code("build-app-macos")).not.toMatch(/\bos: (?!macos-)/);
+    expect(build).toContain("name: release-app-${{ matrix.platform }}\n");
+  });
+
+  it("build-app-macos runs the steps it shares with build-app unchanged", () => {
+    const app = jobSteps(jobBody(RELEASE, "build-app"));
+    const mac = jobSteps(jobBody(RELEASE, "build-app-macos"));
+    // Steps whose macOS form intentionally differs, each checked below.
+    const DIFFERS = new Set([
+      "Stage sidecar debug symbols",
+      "Stage desktop debug symbols",
+      "Build Tauri app for release",
+    ]);
+    const shared = [...mac.keys()].filter((name) => app.has(name));
+    expect(shared).toEqual(
+      expect.arrayContaining([
+        "Checkout code",
+        "Setup pnpm",
+        "Setup Node.js",
+        "Setup Rust",
+        "Cache Rust dependencies",
+        "Install frontend dependencies",
+        "Download third-party notices for bundling",
+        "Decide updater bundles",
+        "Assert the app binary has no test-bridge code",
+        "Find and rename release artifact",
+        "Package debug symbols",
+        "Hand the debug symbols to upload-debug-symbols",
+        ...DIFFERS,
+      ])
+    );
+    for (const name of shared) {
+      if (!DIFFERS.has(name)) expect(mac.get(name), name).toBe(app.get(name));
+    }
+    // Same token, env and runner-matrix contract.
+    const head = (id) => stripComments(jobBody(RELEASE, id).split("\n    steps:\n")[0]);
+    const block = (text, key) =>
+      text.match(new RegExp(`\\n {4}${key}:\\n((?: {6}[^\\n]*\\n)*)`))?.[1];
+    for (const key of ["permissions", "env"]) {
+      expect(block(head("build-app-macos"), key), key).toBe(block(head("build-app"), key));
+    }
+    // tauri-action: build-app's arguments minus the Windows/Linux-only fragments.
+    const args = (steps) => steps.get("Build Tauri app for release").match(/args: ([^\n]*)/)[1];
+    const windowsLinuxOnly = [
+      " ${{ matrix.extra_config }}",
+      " ${{ steps.wix_version.outputs.config }}",
+      " ${{ steps.symbols_hook.outputs.config }}",
+      " ${{ matrix.extra_args }}",
+    ];
+    expect(args(mac)).toBe(windowsLinuxOnly.reduce((a, f) => a.replace(f, ""), args(app)));
+    expect(mac.get("Build Tauri app for release").replace(args(mac), "")).toBe(
+      app.get("Build Tauri app for release").replace(args(app), "")
+    );
+    // The macOS symbol steps check everything they stage, as build-app does.
+    expect(mac.get("Stage sidecar debug symbols")).toMatch(
+      /debug-symbols\.mjs check debug-symbols \\\n\s+termihub-rdp-helper=[^\n]*\\\n\s+termihub-plugin-runner=/
+    );
+    expect(mac.get("Stage desktop debug symbols")).toMatch(
+      /debug-symbols\.mjs stage --out debug-symbols --name termihub "\$BIN"\n\s+node scripts\/internal\/debug-symbols\.mjs check debug-symbols termihub="\$BIN"/
+    );
   });
 
   it("a dry run signs the macOS bundles read-only", () => {

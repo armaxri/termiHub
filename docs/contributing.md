@@ -2511,7 +2511,7 @@ bytes), so the macOS build runs in four phases:
 ```mermaid
 flowchart LR
     A["build-macos-helpers<br/>(compiles, no identity)"] -->|unsigned helpers + .dSYMs| B["sign-macos-helpers<br/>(identity, compiles nothing)"]
-    B -->|signed helpers; SHA-256s as job output| C["build-app macOS<br/>(compiles, no identity)"]
+    B -->|signed helpers; SHA-256s as job output| C["build-app-macos<br/>(compiles, no identity)"]
     C -->|unsigned DMG + debug symbols| D["sign-macos-app<br/>(identity, compiles nothing)"]
     D -->|signed DMG + .app.tar.gz + digest| E["sign-updater / upload-app"]
 ```
@@ -2521,9 +2521,13 @@ flowchart LR
 2. `sign-macos-helpers` signs them with the identity
    ([`macos-release-signing.sh`](../scripts/internal/macos-release-signing.sh) `sign-helpers`)
    and publishes their SHA-256s as a **job output**.
-3. `build-app`'s macOS legs stage exactly those bytes (`stage-helpers` checks them against the
-   job output, not against an artifact any job of the run could replace), so the app embeds the
-   digests of the signed helpers, and hand the unsigned DMG on.
+3. `build-app-macos` stages exactly those bytes (`stage-helpers` checks them against the job
+   output, not against an artifact any job of the run could replace), so the app embeds the
+   digests of the signed helpers, and hands the unsigned DMG on. It is a separate job from
+   `build-app` (Windows/Linux) because a job's `needs` cannot differ per matrix leg: only the
+   macOS legs wait for `sign-macos-helpers`, and a macOS signing failure does not skip the other
+   platforms ([#5804](https://github.com/armaxri/termiHub/issues/5804)). The steps both jobs
+   share are kept identical; `workflow-token-hygiene.test.mjs` compares them.
 4. `sign-macos-app` (`sign-app`) checks that the DMG's helpers are the signed ones, re-signs the
    app inside-out with [`macos-codesign.sh`](../scripts/internal/macos-codesign.sh) `resign-app`
    (the helpers' signatures are kept, only verified), proves `codesign --verify --deep
