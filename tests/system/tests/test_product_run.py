@@ -7,8 +7,11 @@ the live progress page shows them as they run.
 
 The checklist (supersedes the hand-run kit and #5516):
 
-1. Crash banner (#5454): wording and buttons, **Close** removes it; it and the
-   file-manager banner share one button pattern (#5638).
+1. Crash banner (#5454): wording and buttons, **Close** removes it; its
+   buttons follow the bottom-banner pattern (#5638). The one-time file-manager
+   offer (a toast since #5753) never shows in this crash session, not even
+   after the banner is closed (its own grade:
+   ``test_product_run_file_manager_offer.py``).
 2. First-save credential chooser (#5409, #5484): OS Keychain pre-selected with
    *Recommended* and the change-later hint; master-password footers
    Cancel·Continue → Cancel·Back·Create vault; Back; OS Keychain + Continue
@@ -72,7 +75,11 @@ QUESTION_CONN = "Startup question (zsh)"
 CHOOSER_CONN = "Chooser test (SSH)"
 QUESTION = "Continue startup? Press y or n:"
 CRASH_EXPORT = "crash-report-notice-export"
-SHELL_BANNER = "shell-integration-banner"
+#: The one-time file-manager offer toast (#5753) and the docked bar it replaced.
+FILE_MANAGER_OFFER = "file-manager-offer"
+OLD_SHELL_BANNER = "shell-integration-banner"
+#: How long the offer must stay away after the crash banner closes (#5753).
+OFFER_QUIET_SECONDS = 6.0
 CHOOSER = "credential-storage-chooser"
 CHOOSER_OPTION = "credential-storage-chooser-option-"
 CHOOSER_CANCEL = "credential-storage-chooser-cancel"
@@ -285,38 +292,38 @@ class TestProductRunChecklist(
     def test_01b_banner_button_pattern(self):
         with self.step(
             "checklist.banner.buttons",
-            "Crash and file-manager banners share one button pattern (#5638)",
-            expect="the file-manager banner with Don't show again, Not now and Install now, all "
-            "the same height as the crash banner's buttons, Install now the only outlined one",
+            "The crash banner follows the bottom-banner button pattern (#5638)",
+            expect="the main window after the crash banner closed; its buttons were Don't show "
+            "again, Close and View report, all the same height, View report the only outlined one",
+            screenshot=False,
         ):
             self.require("checklist.banner.close")
             crash = type(self)._crash_actions
             assert crash, "the crash banner's buttons were not recorded"
-            self.wait(
-                lambda: self.driver.exists(SHELL_BANNER), what="the file-manager banner"
-            )
-            files = self._banner_actions(SHELL_BANNER)
             self.evidence(f"crash actions: {crash}")
-            self.evidence(f"file-manager actions: {files}")
             assert [a["text"] for a in crash] == ["Don't show again", "Close", "View report"], crash
-            assert [a["text"] for a in files] == [
-                "Don't show again",
-                "Not now",
-                "Install now",
-            ], files
             self._assert_banner_button_pattern(crash, "View report", type(self)._crash_text_color)
-            self._assert_banner_button_pattern(
-                files, "Install now", self.driver.get_computed_style("color", SHELL_BANNER)
-            )
-            heights = {a["height"] for a in crash + files}
+            heights = {a["height"] for a in crash}
             assert len(heights) == 1, f"banner buttons differ in height: {heights}"
-            # Same component and label for "stop asking" in both banners.
-            never_classes = {
-                " ".join(sorted(a["class"].split()))
-                for a in crash + files
-                if a["text"] == "Don't show again"
-            }
-            assert len(never_classes) == 1, f"Don't show again differs: {never_classes}"
+
+    def test_01c_no_file_manager_offer_in_crash_session(self):
+        with self.step(
+            "checklist.banner.no-offer",
+            "The file-manager offer never shows in a session with the crash banner (#5753)",
+            expect="the main window with no 'Add Open in termiHub' toast and no docked "
+            "file-manager bar, several seconds after the crash banner closed",
+        ):
+            self.require("checklist.banner.close")
+            deadline = time.monotonic() + OFFER_QUIET_SECONDS
+            while time.monotonic() < deadline:
+                assert not self.driver.exists(
+                    FILE_MANAGER_OFFER
+                ), "the file-manager offer toast showed in the crash session"
+                assert not self.driver.exists(
+                    OLD_SHELL_BANNER
+                ), "the docked file-manager bar is back (#5753 replaced it with a toast)"
+                time.sleep(0.25)
+            self.evidence(f"no offer within {OFFER_QUIET_SECONDS:.0f}s of the banner closing")
 
     # ── 2. credential chooser ─────────────────────────────────────────────────
     def _option_checked(self, mode: str) -> bool:
