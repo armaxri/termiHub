@@ -211,12 +211,17 @@ class TestAgentUpdateRealSwapLive(
         self._disconnect(applier["name"])
         self._connect(holder["name"])
 
-        # The swapped agent answers and renders its version badge; it is the same
-        # build version (see the module docstring), now running the staged bytes.
-        badge = f"agent-version-badge-{holder['id']}"
-        self.wait(lambda: self.driver.exists(badge), what="the agent version badge")
+        # The swapped agent answers and reports its version; it is the same build
+        # version (see the module docstring), now running the staged bytes. An
+        # up-to-date agent shows its version in the header tooltip, not as a
+        # badge on the row (#5770).
+        header = f"agent-header-{holder['id']}"
+        self.wait(
+            lambda: f"Agent version {version_before}"
+            in (self.driver.get_attribute(header, "title") or ""),
+            what="the agent version in the header tooltip",
+        )
         assert self._agent_version(holder["name"]) == version_before
-        assert f"v{version_before}" in self.driver.get_text(badge)
         # The applied update is consumed: nothing pending, no banner, and the
         # armed hook stands down instead of re-staging the installed binary — it
         # announced nothing on the reconnect, or the dismissed banner would be

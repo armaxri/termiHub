@@ -102,11 +102,6 @@ const MIGRATED: [string, string, string][] = [
   ["components/LogViewer/LogViewer.css", ".log-viewer__level--INFO", "--text-accent"],
   ["components/WorkflowSidebar/WorkflowSidebar.css", ".workflow-item__armed", "--text-accent"],
   [
-    "components/RecentSessionsSidebar/RecentSessionsSidebar.css",
-    ".recent-sessions__item-saved",
-    "--text-accent",
-  ],
-  [
     "components/OpenConnections/OpenConnectionsModal.css",
     ".oc-row__badge--managed",
     "--text-primary",

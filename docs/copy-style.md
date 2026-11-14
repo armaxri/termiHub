@@ -150,10 +150,14 @@ accessible description.
 | Release check                          | Release check · _echo start_ · _Last run: 5m ago_ |
 | Nightly backup (dot: on)               | Nightly backup · _Next: today 09:10_              |
 | Nightly backup (dot: off) · _Disabled_ | Nightly backup · _Every day 09:10 · on db-1_      |
+| Prod DB (dot: connected)               | Prod DB · LOCAL · _127.0.0.1:5432 → db:5432_      |
+| Docs share · _Error: port in use_      | Docs share · HTTP · _:8080 → /srv/docs_           |
+| Build box (dot: connected)             | Build box · v0.4.1 ✓                              |
 
 Not list rows, so this rule does not apply: location context that says where a view is (the
-file browser's host label), detail areas (the status bar's SSH and serial chips) and naming
-parts that tell two items apart (a duplicate tab's "(2)").
+file browser's host label), detail areas (the status bar's SSH and serial chips, a service's
+activity panel) and naming parts that tell two items apart (a duplicate tab's "(2)"). A choice
+that configures the item ("Run on") goes in its editor, not on the row.
 
 The product run grades this in `tests/system/tests/test_product_run_rows_names.py`.
 

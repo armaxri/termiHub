@@ -9,7 +9,7 @@ import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
-import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
+import { THIS_COMPUTER, encodeRunLocation, type RunLocation } from "@/utils/runLocation";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
@@ -19,6 +19,11 @@ import { errorMessage } from "@/utils/errorMessage";
 /**
  * Services sidebar panel for managing embedded HTTP/FTP/TFTP servers.
  */
+/** Whether two run-locations name the same machine. */
+function sameRunLocation(a: RunLocation, b: RunLocation): boolean {
+  return encodeRunLocation(a) === encodeRunLocation(b);
+}
+
 export function EmbeddedServerSidebar() {
   const servers = useAppStore((s) => s.embeddedServers);
   const serverStates = useAppStore((s) => s.embeddedServerStates);
@@ -86,7 +91,7 @@ export function EmbeddedServerSidebar() {
    * (so the dialog closes) and `false` on failure (dialog stays open to retry).
    */
   const handleSave = useCallback(
-    async (config: EmbeddedServerConfig): Promise<boolean> => {
+    async (config: EmbeddedServerConfig, location: RunLocation): Promise<boolean> => {
       const isNew = !config.id;
       const cfg = isNew
         ? {
@@ -97,6 +102,9 @@ export function EmbeddedServerSidebar() {
       try {
         await saveEmbeddedServer(cfg);
         toast.success(isNew ? `Created "${cfg.name}"` : `Saved "${cfg.name}"`);
+        if (!sameRunLocation(serverLocations[cfg.id] ?? THIS_COMPUTER, location)) {
+          handleRunLocationChange(cfg.id, location);
+        }
         return true;
       } catch (err) {
         toast.error(`Failed to save "${cfg.name}"`, {
@@ -105,7 +113,7 @@ export function EmbeddedServerSidebar() {
         return false;
       }
     },
-    [saveEmbeddedServer]
+    [saveEmbeddedServer, serverLocations, handleRunLocationChange]
   );
 
   const handleDuplicate = useCallback(
@@ -198,7 +206,6 @@ export function EmbeddedServerSidebar() {
                 state={serverStates[cfg.id]}
                 agents={agents}
                 runLocation={serverLocations[cfg.id] ?? THIS_COMPUTER}
-                onRunLocationChange={(location) => handleRunLocationChange(cfg.id, location)}
                 onStart={startEmbeddedServer}
                 onStop={stopEmbeddedServer}
                 onEdit={handleEdit}
@@ -217,6 +224,10 @@ export function EmbeddedServerSidebar() {
         onOpenChange={setDialogOpen}
         config={editingConfig}
         onSave={handleSave}
+        agents={agents}
+        runLocation={
+          editingConfig ? (serverLocations[editingConfig.id] ?? THIS_COMPUTER) : THIS_COMPUTER
+        }
       />
 
       <ConfirmDialog

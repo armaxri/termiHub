@@ -113,13 +113,6 @@
   color: var(--text-accent);
 }
 
-.recent-sessions__item-saved {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xxs);
-  color: var(--text-accent);
-}
-
 /* --- Save-as-connection dialog: icon row --- */
 .recent-sessions__save-icon-row {
   display: flex;

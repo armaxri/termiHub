@@ -311,6 +311,28 @@ const en = {
   "schedule.marker.lastFailed": "Last run failed",
   "schedule.attempts.show": "Show recent attempts ({count})",
   "schedule.attempts.hide": "Hide recent attempts",
+  // Tunnels, services, workspaces, agents and recent sessions (#5770).
+  "tunnel.tooltip.forward": "{type} · {mapping}",
+  "tunnel.tooltip.via": "Via {connection}",
+  "tunnel.tooltip.hostLocal": "Hosted on this computer",
+  "tunnel.tooltip.hostAgent": "Hosted on agent {agent}",
+  "tunnel.tooltip.traffic": "↑ {up} · ↓ {down} · {active} / {total} connections",
+  "tunnel.tooltip.bound": "Bound {address}: {reach}",
+  "server.tooltip.listen": "{protocol} · {url}",
+  "server.tooltip.root": "Serves {path}",
+  "server.tooltip.readOnly": "Read only",
+  "server.tooltip.agent": "Runs on agent {agent}",
+  "server.editor.runOn": "Run on",
+  "server.tooltip.traffic": "{active} connections · ↑ {up} · ↓ {down}",
+  "workspace.tooltip.tab": "Opens {count} tab",
+  "workspace.tooltip.tabs": "Opens {count} tabs",
+  "workspace.tooltip.tabsInGroups": "Opens {count} tabs in {groups} groups",
+  "agent.tooltip.address": "{user}@{host}:{port}",
+  "agent.tooltip.version": "Agent version {version}",
+  "recent.marker.pinned": "Pinned",
+  "recent.tooltip.lastUsed": "Last used {when}",
+  "recent.tooltip.uses": "Used {count} times",
+  "recent.tooltip.saved": "Saved as a connection",
 
   // ── Terminal toolbar (#5756) ────────────────────────────────────────────
   // Layout icons stay visible; session and macro actions live in the "…"

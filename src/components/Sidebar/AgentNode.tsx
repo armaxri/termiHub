@@ -115,11 +115,38 @@ import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 import { errorMessage } from "@/utils/errorMessage";
+import { tf } from "@/i18n/catalog";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 const EMPTY_FOLDERS: AgentFolderInfo[] = [];
 const NO_SERIAL_PORTS: string[] = [];
+
+/**
+ * The agent header's hover help (#5770): the name, then the address and the
+ * agent version. The header itself shows only the name, the state dot and a
+ * version badge when an update needs attention.
+ */
+export function agentHeaderTooltip(
+  agent: Pick<RemoteAgentDefinition, "name" | "config">,
+  version?: string
+): string {
+  const lines = [
+    agent.name,
+    tf("agent.tooltip.address", {
+      user: agent.config.username,
+      host: agent.config.host,
+      port: agent.config.port,
+    }),
+  ];
+  if (version) lines.push(tf("agent.tooltip.version", { version }));
+  return lines.join("\n");
+}
+
+/** A live agent session's status as a marker word (`exited` → `Exited`). */
+export function agentSessionStatusLabel(status: string): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
 
 /** How an agent row presents its connection state (#5621). */
 export interface AgentRowPresentation {
@@ -455,9 +482,7 @@ function AgentConnectionItem({
                 </>
               ) : null}
             </span>
-          ) : (
-            <span className="connection-tree__type">{definition.sessionType}</span>
-          )}
+          ) : null}
         </TreeItemRow>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -1757,7 +1782,7 @@ export function AgentNode({
           <div
             className="connection-list__group-header connection-list__group-header--agent"
             data-testid={`agent-header-${agent.id}`}
-            title={`Remote agent: ${agent.name}`}
+            title={agentHeaderTooltip(agent, agentVersion)}
             {...attributes}
             {...listeners}
             onKeyDown={handleHeaderKeyDown}
@@ -1787,11 +1812,15 @@ export function AgentNode({
                 >
                   {agent.name}
                 </span>
-                <AgentVersionBadge
-                  version={agentVersion}
-                  state={agentUpdateState}
-                  data-testid={`agent-version-badge-${agent.id}`}
-                />
+                {/* The version is in the tooltip; the badge shows only when
+                    the agent needs attention (#5770). */}
+                {agentUpdateState !== "up-to-date" && (
+                  <AgentVersionBadge
+                    version={agentVersion}
+                    state={agentUpdateState}
+                    data-testid={`agent-version-badge-${agent.id}`}
+                  />
+                )}
               </button>
               {isConnecting && (
                 // Inline Cancel so a stuck connect is abortable without opening the
@@ -2133,7 +2162,16 @@ export function AgentNode({
                       >
                         <SessionTypeIcon type={session.type} />
                         <span className="connection-tree__label">{session.title}</span>
-                        <span className="connection-tree__type">{session.status}</span>
+                        {/* Names, not settings (#5770): a running session is
+                            routine; only an exited one gets a marker. */}
+                        {session.status !== "running" && (
+                          <span
+                            className="connection-tree__type"
+                            data-testid={`agent-session-status-${session.sessionId}`}
+                          >
+                            {agentSessionStatusLabel(session.status)}
+                          </span>
+                        )}
                       </TreeItemRow>
                     );
                   })}

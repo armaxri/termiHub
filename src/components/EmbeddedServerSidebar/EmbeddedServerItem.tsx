@@ -24,31 +24,25 @@ import {
 } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
-import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
 import { serverStatusLabel } from "@/utils/statusLabel";
-import { formatBytes } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocation";
-import {
-  EmbeddedServerConfig,
-  ServerState,
-  ServerStats,
-  ServerStatus,
-  PROTOCOL_LABELS,
-} from "@/types/embeddedServer";
+import { EmbeddedServerConfig, ServerState, ServerStatus } from "@/types/embeddedServer";
+import { serverRowTooltip, serverUrl } from "./serverRowTooltip";
 
 interface Props {
   config: EmbeddedServerConfig;
   state: ServerState | undefined;
-  /** Agents offered as run targets for this server's "Run on" selector. */
+  /** Configured agents, to name the one this server runs on. */
   agents?: RemoteAgentDefinition[];
-  /** The server's current run-location (This computer or an agent). */
+  /**
+   * The server's run-location (This computer or an agent). Chosen in the
+   * editor (#5770); the row names an agent host in its tooltip.
+   */
   runLocation?: RunLocation;
-  /** Called when the user picks a new run-location for this server. */
-  onRunLocationChange?: (location: RunLocation) => void;
   onStart: (id: string) => void | Promise<void>;
   onStop: (id: string) => void | Promise<void>;
   onEdit: (id: string) => void;
@@ -58,11 +52,6 @@ interface Props {
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
   rowProps?: React.HTMLAttributes<HTMLDivElement>;
-}
-
-function serverUrl(config: EmbeddedServerConfig): string {
-  const scheme = config.serverType === "ftp" ? "ftp" : config.serverType;
-  return `${scheme}://${config.bindHost}:${config.port}`;
 }
 
 function statusTone(status: ServerStatus | undefined): SidebarStatusTone {
@@ -109,7 +98,6 @@ export function EmbeddedServerItem({
   state,
   agents = [],
   runLocation = THIS_COMPUTER,
-  onRunLocationChange,
   onStart,
   onStop,
   onEdit,
@@ -161,8 +149,14 @@ export function EmbeddedServerItem({
     }
   };
 
-  const statsLine = (stats: ServerStats) =>
-    `${stats.activeConnections} conn · ↑ ${formatBytes(stats.bytesSent, { maxUnit: "MB" })} ↓ ${formatBytes(stats.bytesReceived, { maxUnit: "MB" })}`;
+  // Names, not settings (#5770): protocol, address, folder, host and traffic
+  // are in the tooltip; the row keeps the name and an error.
+  const hostAgent = hostAgentFor(runLocation, agents);
+  const tooltip = serverRowTooltip(config, {
+    stats: active ? state?.stats : undefined,
+    agentName: hostAgent?.name,
+  });
+  const errorText = status === "error" ? state?.error : undefined;
 
   return (
     <ContextMenuRoot>
@@ -182,8 +176,8 @@ export function EmbeddedServerItem({
               testId={`server-status-${config.id}`}
             />
           }
-          badge={PROTOCOL_LABELS[config.serverType]}
-          badgeTestId={`server-type-${config.id}`}
+          tooltip={tooltip}
+          tooltipTestId={`server-tooltip-${config.id}`}
           actions={
             <>
               {active ? (
@@ -279,38 +273,18 @@ export function EmbeddedServerItem({
             </>
           }
           details={
-            <>
-              <span>
-                :{config.port} → {config.rootDirectory}
-              </span>
-              {active && state?.stats && <span>{statsLine(state.stats)}</span>}
-              {status === "error" && state?.error && (
-                <span className="sidebar-list-item__error">{state.error}</span>
-              )}
-              {/* Run-location selector (#2191). Stop click/double-click from
-                  bubbling to the row's edit/context handlers. */}
-              <span
-                className="server-item__runon"
-                onClick={(e) => e.stopPropagation()}
-                onDoubleClick={(e) => e.stopPropagation()}
-              >
-                <span className="server-item__runon-label">Run on</span>
-                <RunLocationSelect
-                  value={runLocation}
-                  agents={agents}
-                  onChange={onRunLocationChange ?? (() => {})}
-                  aria-label={`Run ${config.name} on`}
-                  data-testid={`server-runloc-${config.id}`}
-                />
-              </span>
-              {showActivity && (
-                <EmbeddedServerActivityPanel
-                  serverId={config.id}
-                  live={status === "running"}
-                  hostAgent={hostAgentFor(runLocation, agents)}
-                />
-              )}
-            </>
+            errorText || showActivity ? (
+              <>
+                {errorText && <span className="sidebar-list-item__error">{errorText}</span>}
+                {showActivity && (
+                  <EmbeddedServerActivityPanel
+                    serverId={config.id}
+                    live={status === "running"}
+                    hostAgent={hostAgent}
+                  />
+                )}
+              </>
+            ) : undefined
           }
         />
       </ContextMenuTrigger>
