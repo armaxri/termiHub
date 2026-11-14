@@ -86,7 +86,7 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
   it("renders the dropped wording with a non-zero exit code from the region", async () => {
     const overlay = await renderWithExit({ reason: "dropped", code: 137 });
     expect(overlay?.textContent).toContain("Session disconnected");
-    expect(overlay?.textContent).toContain("exit code 137");
+    expect(overlay?.textContent).toContain("The process exited with code 137");
   });
 
   it("renders the codeless dropped wording when the region carries no exit code", async () => {

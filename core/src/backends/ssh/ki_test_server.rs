@@ -11,6 +11,10 @@
 //! in the relayed-OTP end-to-end suite (#3436). Once authenticated, a session
 //! channel gets a PTY and a shell that prints [`SHELL_BANNER`] and then echoes
 //! its input, so a real SSH backend can finish its connect and round-trip data.
+//! A few typed lines end the shell the ways a real host does (#5801):
+//! `exit N` exits with status `N` (EOF, then `exit-status`, then close, in
+//! OpenSSH's order), [`SHELL_HANGUP`] is a shell killed by `SIGHUP`, and
+//! [`SHELL_DROP_LINK`] drops the whole connection without a word.
 //!
 //! Compiled for this crate's tests and, behind the `ssh-test-support` feature,
 //! for other crates' tests. Never part of a shipping build.
@@ -35,6 +39,13 @@ use super::keyboard_interactive::{
 /// What a shell opened on the test server prints first, so a client can tell
 /// its session reached the shell.
 pub const SHELL_BANNER: &str = "ki-test-server shell ready\r\n";
+
+/// Typed into the shell: the shell dies of `SIGHUP` (an `exit-signal`).
+pub const SHELL_HANGUP: &str = "hangup";
+
+/// Typed into the shell: the server drops the connection without closing the
+/// channel or reporting an exit, the shape of a lost link or a crashed host.
+pub const SHELL_DROP_LINK: &str = "drop-link";
 
 /// One info-request round: what the server asks and what it accepts.
 #[derive(Clone)]
@@ -236,14 +247,31 @@ impl russh::server::Handler for KiServer {
         Ok(())
     }
 
-    /// The "shell" echoes its input, so a client can round-trip data.
+    /// The "shell" echoes its input, so a client can round-trip data, and
+    /// ends the way a typed line asks (see the module docs).
     async fn data(
         &mut self,
         channel: ChannelId,
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        let line = String::from_utf8_lossy(data);
+        let line = line.trim();
+        if line == SHELL_DROP_LINK {
+            // An error ends the server's session: the socket closes with no
+            // channel close, no exit status and no disconnect message.
+            return Err(russh::Error::Disconnect);
+        }
         session.data(channel, data.to_vec())?;
+        if line == SHELL_HANGUP {
+            session.eof(channel)?;
+            session.exit_signal_request(channel, russh::Sig::HUP, false, "", "")?;
+            session.close(channel)?;
+        } else if let Some(status) = line.strip_prefix("exit ").and_then(|n| n.parse().ok()) {
+            session.eof(channel)?;
+            session.exit_status_request(channel, status)?;
+            session.close(channel)?;
+        }
         Ok(())
     }
 }

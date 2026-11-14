@@ -2312,8 +2312,9 @@ pub struct ConnectionExitNotification {
     /// The real exit status of the session's process when it exited on its
     /// own (0.39.0+, #5742): a shell on the agent where the user typed `exit`
     /// sends `0`; a Docker session reports its exec's or stopped container's
-    /// code (0.40.0+, #5783). Omitted when the backend has no process status
-    /// (a network session), after a deliberate close, and by an
+    /// code (0.40.0+, #5783), an SSH session its remote shell's status
+    /// (#5801). Omitted when the backend has no process status (another
+    /// network session, a lost SSH link), after a deliberate close, and by an
     /// agent older than 0.39.0 — whose `exit_code` is always `0` and so never
     /// says how a process ended. `exit_code` carries the same value when this
     /// is present.

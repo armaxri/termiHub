@@ -2088,20 +2088,6 @@ mod tests {
         shell.disconnect().await.ok();
     }
 
-    /// Regression for #2704. On Windows the PTY (ConPTY) output pipe does not
-    /// reach EOF when the shell process exits on its own — and, as #2709's first
-    /// attempt discovered, not even when the pty master is later closed — so the
-    /// output reader thread stays blocked forever. Before the child-exit
-    /// watcher drove the exit directly, the session was never reported as ended:
-    /// typing `exit` left the tab "alive" forever.
-    ///
-    /// The mock reproduces this faithfully: the child exits (`wait_for_exit`
-    /// returns) while the reader is still blocked, and `close_pty()` is a no-op
-    /// on the reader (it NEVER EOFs). The session must therefore end purely from
-    /// the watcher's direct signal — dropping the output sender and flipping
-    /// `is_connected()` to false, the signal the session manager forwards as
-    /// "Session ended". A reader-EOF-dependent fix (like the first #2709
-    /// attempt) fails this test, mirroring the real-Windows failure.
     /// #5742: a shell that exits on its own reports its real status by the
     /// time its output ends, and a deliberate disconnect drops it.
     #[tokio::test]
@@ -2131,6 +2117,20 @@ mod tests {
         assert_eq!(shell.exit_code(), None, "a disconnect drops the status");
     }
 
+    /// Regression for #2704. On Windows the PTY (ConPTY) output pipe does not
+    /// reach EOF when the shell process exits on its own — and, as #2709's first
+    /// attempt discovered, not even when the pty master is later closed — so the
+    /// output reader thread stays blocked forever. Before the child-exit
+    /// watcher drove the exit directly, the session was never reported as ended:
+    /// typing `exit` left the tab "alive" forever.
+    ///
+    /// The mock reproduces this faithfully: the child exits (`wait_for_exit`
+    /// returns) while the reader is still blocked, and `close_pty()` is a no-op
+    /// on the reader (it NEVER EOFs). The session must therefore end purely from
+    /// the watcher's direct signal — dropping the output sender and flipping
+    /// `is_connected()` to false, the signal the session manager forwards as
+    /// "Session ended". A reader-EOF-dependent fix (like the first #2709
+    /// attempt) fails this test, mirroring the real-Windows failure.
     #[tokio::test]
     async fn child_exit_ends_session_even_without_reader_eof() {
         let mock = MockLocalShellSpawner::new();
@@ -3090,3 +3090,7 @@ mod git_bash_tests;
 #[cfg(all(test, unix))]
 #[path = "local_shell_startup_prompt_tests.rs"]
 mod startup_prompt_tests;
+
+#[cfg(test)]
+#[path = "local_shell_exit_status_tests.rs"]
+mod exit_status_tests;

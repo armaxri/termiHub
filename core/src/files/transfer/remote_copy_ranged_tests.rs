@@ -36,6 +36,11 @@ struct MemRanged {
     fs_id: Option<crate::files::shared_fs::FilesystemId>,
     /// The weaker hint this end reports (#5430).
     fs_hint: Option<crate::files::shared_fs::FilesystemHint>,
+    /// Whether this end can shorten a file (#5737); `false` is the
+    /// `RangedTransferTarget::truncate` default.
+    truncatable: bool,
+    /// Length of every trim requested, in order.
+    trims: Mutex<Vec<u64>>,
 }
 
 impl MemRanged {
@@ -176,6 +181,19 @@ impl RangedTransferTarget for MemRanged {
 
     async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         self.files.lock().expect("files").remove(path);
+        Ok(())
+    }
+
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+        if !self.truncatable {
+            return Err(FileError::NotSupported);
+        }
+        self.trims.lock().expect("trims").push(len);
+        let mut files = self.files.lock().expect("files");
+        let file = files
+            .get_mut(path)
+            .ok_or_else(|| FileError::NotFound(path.into()))?;
+        file.data.truncate(len as usize);
         Ok(())
     }
 
@@ -494,6 +512,67 @@ async fn a_relaunched_copy_resumes_into_an_agent_partial() {
     assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
     assert_eq!(src.opens(), [Open::Read(MIB as u64)]);
     assert_contiguous(&dst.writes(), MIB as u64);
+}
+
+/// A relaunch into an agent partial that runs past the checkpoint trims it
+/// back there and resumes (#5737).
+#[tokio::test]
+async fn a_relaunch_trims_an_agent_partial_past_the_checkpoint_and_resumes() {
+    let src = MockEndpoint::server();
+    let dst = Arc::new(MemRanged {
+        truncatable: true,
+        ..MemRanged::default()
+    });
+    let data = content(2 * MIB, 16);
+    src.put(SRC, data.clone(), 42);
+    let mut partial = data[..MIB].to_vec();
+    partial.extend(content(300, 200));
+    dst.put(DST, partial, 1);
+
+    let run = Run::start_ends(
+        src.clone(),
+        dst.endpoint(),
+        MIB as u64,
+        Some((data.len() as u64, 42)),
+    );
+    let events = run.finish().await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(events.first().map(|p| p.transferred), Some(MIB as u64));
+    assert_eq!(*dst.trims.lock().expect("trims"), [MIB as u64]);
+    assert_eq!(src.opens(), [Open::Read(MIB as u64)]);
+    assert_contiguous(&dst.writes(), MIB as u64);
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
+}
+
+/// An agent whose session cannot shorten a file restarts the relaunch from
+/// zero, and the row says why.
+#[tokio::test]
+async fn a_relaunch_into_an_untrimmable_agent_partial_restarts_and_says_why() {
+    let src = MockEndpoint::container();
+    let dst = MemRanged::new();
+    let data = content(2 * MIB, 17);
+    src.put(SRC, data.clone(), 42);
+    let mut partial = data[..MIB].to_vec();
+    partial.extend(content(300, 200));
+    dst.put(DST, partial, 1);
+
+    let run = Run::start_ends(
+        src.clone(),
+        dst.endpoint(),
+        MIB as u64,
+        Some((data.len() as u64, 42)),
+    );
+    let events = run.finish().await;
+
+    assert_eq!(terminal(&events), TransferPhase::Done);
+    assert_eq!(src.opens(), [Open::Read(0)]);
+    assert_eq!(dst.writes().first().map(|w| w.0), Some(0));
+    assert_eq!(dst.get(DST).as_deref(), Some(data.as_slice()));
+    assert!(events
+        .iter()
+        .filter_map(|p| p.message.as_deref())
+        .any(|m| m == crate::files::transfer::attempt::UNTRIMMABLE_PARTIAL_NOTE));
 }
 
 /// An agent source whose mtime changed while the app was closed restarts

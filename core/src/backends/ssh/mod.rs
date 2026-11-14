@@ -31,6 +31,7 @@ pub use crate::backends::proxy_dial as proxy;
 pub mod remote_cwd;
 pub mod remote_shell;
 pub mod session_pool;
+pub mod shell_exit;
 // In-process SFTP-only SSH server for files-only tests (#5160), exposed like
 // `ki_test_server` behind `ssh-test-support`.
 pub mod sftp;
@@ -152,6 +153,8 @@ struct ConnectedState {
     x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
     /// Why the shell channel ended on its own (#5696).
     end_cause: crate::connection::EndCauseSlot,
+    /// The remote shell's exit status, when the server reported one (#5801).
+    exit_status: shell_exit::ShellExitSlot,
 }
 
 impl Drop for ConnectedState {
@@ -990,6 +993,7 @@ impl ConnectionType for Ssh {
             x11_forwarding: handle.x11_forwarding,
             x11_forwarding_reason: handle.x11_forwarding_reason,
             end_cause: handle.end_cause,
+            exit_status: handle.exit_status,
         });
 
         Ok(())
@@ -1029,6 +1033,13 @@ impl ConnectionType for Ssh {
 
     fn end_cause(&self) -> Option<SessionEndCause> {
         self.state.as_ref().and_then(|s| s.end_cause.get())
+    }
+
+    /// The remote shell's exit status once it exited on its own (#5801): what
+    /// the server's `exit-status` (or `exit-signal`) said. `None` while it
+    /// runs, after a deliberate disconnect and after a transport loss.
+    fn exit_code(&self) -> Option<i32> {
+        self.state.as_ref().and_then(|s| s.exit_status.get())
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -1195,6 +1206,8 @@ mod tests {
         x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
         /// Pre-recorded in [`SshShellHandle::end_cause`] (#5696).
         end_cause: Option<SessionEndCause>,
+        /// Pre-recorded in [`SshShellHandle::exit_status`] (#5801).
+        exit_status: Option<i32>,
     }
 
     impl MockSshConnector {
@@ -1213,6 +1226,7 @@ mod tests {
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
                 end_cause: None,
+                exit_status: None,
             }
         }
 
@@ -1231,6 +1245,7 @@ mod tests {
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
                 end_cause: None,
+                exit_status: None,
             }
         }
 
@@ -1250,6 +1265,7 @@ mod tests {
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
                 end_cause: None,
+                exit_status: None,
             }
         }
 
@@ -1355,6 +1371,13 @@ mod tests {
                     let slot = crate::connection::EndCauseSlot::new();
                     if let Some(cause) = self.end_cause {
                         slot.record(cause);
+                    }
+                    slot
+                },
+                exit_status: {
+                    let slot = shell_exit::ShellExitSlot::new();
+                    if let Some(status) = self.exit_status {
+                        slot.record(status);
                     }
                     slot
                 },
@@ -2910,6 +2933,31 @@ mod tests {
         assert_eq!(ssh.end_cause(), None, "a disconnect drops the cause");
     }
 
+    /// The remote shell's exit status is reported while the state is held,
+    /// and a deliberate disconnect drops it (#5801).
+    #[tokio::test]
+    async fn exit_code_is_reported_until_disconnect() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector {
+            end_cause: Some(SessionEndCause::RemoteClosed),
+            exit_status: Some(5),
+            ..MockSshConnector::new()
+        }));
+        assert_eq!(ssh.exit_code(), None, "no status before connect");
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(ssh.exit_code(), Some(5));
+        ssh.disconnect().await.unwrap();
+        assert_eq!(ssh.exit_code(), None, "a disconnect drops the status");
+    }
+
+    /// A live shell reports no exit status.
+    #[tokio::test]
+    async fn a_live_shell_has_no_exit_code() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(ssh.exit_code(), None);
+        ssh.disconnect().await.unwrap();
+    }
+
     /// A live shell with no recorded cause reports none.
     #[tokio::test]
     async fn a_live_shell_has_no_end_cause() {
@@ -2943,6 +2991,7 @@ mod tests {
             x11_forwarding: None,
             x11_forwarding_reason: None,
             end_cause: crate::connection::EndCauseSlot::new(),
+            exit_status: shell_exit::ShellExitSlot::new(),
         }
     }
 

@@ -18,6 +18,7 @@ use super::wsl_cwd::{probe_args, WslShellTracker};
 use super::wsl_exec::{
     distro_sh_args, parse_readlink_targets, readlink_targets_args, CREATE_NO_WINDOW, READLINK_BATCH,
 };
+use super::wsl_exit::{run_exit_watcher, status_code, WslExit};
 use super::wsl_init_script::{
     choose_delivery, distro_create_args, init_script_contents, source_line, InitDelivery,
 };
@@ -77,7 +78,11 @@ struct ConnectedState {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     alive: Arc<AtomicBool>,
-    child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
+    /// Kills `wsl.exe`; split off the child (`clone_killer`), which the
+    /// child-exit watcher owns while it blocks in `wait` (#5796).
+    killer: Arc<Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+    /// The shell's exit status once it ended on its own (#5796).
+    exit: Arc<WslExit>,
     /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
     /// The graceful path and the guard must never both kill the child.
@@ -105,8 +110,9 @@ impl Drop for ConnectedState {
             return;
         }
         self.alive.store(false, Ordering::SeqCst);
-        if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
+        self.exit.mark_deliberate();
+        if let Ok(mut killer) = self.killer.lock() {
+            let _ = killer.kill();
         }
     }
 }
@@ -1245,6 +1251,8 @@ impl ConnectionType for Wsl {
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         let alive = Arc::new(AtomicBool::new(true));
+        let killer = Arc::new(Mutex::new(child.clone_killer()));
+        let exit = Arc::new(WslExit::default());
 
         // Set up output channel.  Preserve an existing sender if a subscriber
         // already called subscribe_output() before connect(). Otherwise keep the
@@ -1294,13 +1302,20 @@ impl ConnectionType for Wsl {
 
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
+        let reader_exit = exit.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            // Whether the PTY itself ended (EOF / read error), as opposed to the
+            // session dropping its output sender.
+            let mut pty_ended = false;
             // Own the tap sender; dropped when setup task closes its receiver.
             let mut tap: Option<tokio::sync::mpsc::Sender<Vec<u8>>> = Some(tap_tx);
             loop {
                 match reader.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        pty_ended = true;
+                        break;
+                    }
                     Ok(n) => {
                         let data = buf[..n].to_vec();
                         // Forward to setup tap while it is still active.
@@ -1332,8 +1347,16 @@ impl ConnectionType for Wsl {
                             let _ = sender.blocking_send(d);
                         });
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        pty_ended = true;
+                        break;
+                    }
                 }
+            }
+            // The PTY can close as `wsl.exe` exits: give the watcher a moment to
+            // reap it, so the exit status is known before the output ends.
+            if pty_ended {
+                reader_exit.output_ended();
             }
             // Close the channel so subscribers see `None` and don't block
             // forever waiting for output from a process that has already exited.
@@ -1344,11 +1367,34 @@ impl ConnectionType for Wsl {
             cwd_follow.stop();
         });
 
+        // Child-exit watcher (#5796): `wsl.exe` exits with the Linux shell's
+        // status. Record it, then end the session directly — ConPTY does not
+        // reliably EOF the reader when the child exits (#2704). Idempotent with
+        // the reader's own cleanup; also returns after a deliberate kill.
+        let watcher_exit = exit.clone();
+        let watcher_alive = alive.clone();
+        let watcher_output_tx = self.output_tx.clone();
+        std::thread::spawn(move || {
+            let mut child = child;
+            run_exit_watcher(
+                move || {
+                    child
+                        .wait()
+                        .ok()
+                        .map(|status| status_code(status.exit_code()))
+                },
+                &watcher_exit,
+                &watcher_alive,
+                &watcher_output_tx,
+            );
+        });
+
         self.state = Some(ConnectedState {
             master: Arc::new(Mutex::new(pty_pair.master)),
             writer: writer_arc,
             alive,
-            child: Arc::new(Mutex::new(child)),
+            killer,
+            exit,
             disconnected: false,
         });
 
@@ -1404,8 +1450,9 @@ impl ConnectionType for Wsl {
             // the child a second time (CORE-020 double-teardown guard).
             state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
-            if let Ok(mut child) = state.child.lock() {
-                let _ = child.kill();
+            state.exit.mark_deliberate();
+            if let Ok(mut killer) = state.killer.lock() {
+                let _ = killer.kill();
             }
             // Clear the sender to signal the reader thread to stop.
             if let Ok(mut guard) = self.output_tx.lock() {
@@ -1441,10 +1488,18 @@ impl ConnectionType for Wsl {
     fn interrupt_io(&self) {
         if let Some(state) = self.state.as_ref() {
             state.alive.store(false, Ordering::SeqCst);
-            if let Ok(mut child) = state.child.lock() {
-                let _ = child.kill();
+            state.exit.mark_deliberate();
+            if let Ok(mut killer) = state.killer.lock() {
+                let _ = killer.kill();
             }
         }
+    }
+
+    /// The shell's exit status once it ended on its own (#5796): `wsl.exe`
+    /// exits with the Linux shell's status. `None` while running and after a
+    /// deliberate disconnect.
+    fn exit_code(&self) -> Option<i32> {
+        self.state.as_ref().and_then(|s| s.exit.code())
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -1857,46 +1912,8 @@ mod tests {
         }
     }
 
-    /// Kill-counting mock `Child` so a test can observe whether the Drop guard
-    /// killed the child without spawning a real `wsl.exe` process.
-    #[derive(Debug)]
-    struct MockChild {
-        kills: Arc<AtomicUsize>,
-    }
-
-    impl portable_pty::ChildKiller for MockChild {
-        fn kill(&mut self) -> std::io::Result<()> {
-            self.kills.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-
-        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
-            Box::new(MockKiller {
-                kills: self.kills.clone(),
-            })
-        }
-    }
-
-    impl portable_pty::Child for MockChild {
-        fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
-            Ok(None)
-        }
-
-        fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
-            Ok(portable_pty::ExitStatus::with_exit_code(0))
-        }
-
-        fn process_id(&self) -> Option<u32> {
-            None
-        }
-
-        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
-            None
-        }
-    }
-
     /// Build a `ConnectedState` backed by a real (process-less) ConPTY master and
-    /// a kill-counting mock child. Only `child` and `alive` are load-bearing for
+    /// a kill-counting mock killer. Only `killer` and `alive` are load-bearing for
     /// the Drop guard; the master is a genuine pseudoterminal so the struct is
     /// constructed exactly as `connect()` builds it.
     fn drop_test_state(
@@ -1913,7 +1930,8 @@ mod tests {
                 Box::new(std::io::sink()) as Box<dyn Write + Send>
             )),
             alive,
-            child: Arc::new(Mutex::new(Box::new(MockChild { kills }))),
+            killer: Arc::new(Mutex::new(Box::new(MockKiller { kills }))),
+            exit: Arc::new(WslExit::default()),
             disconnected,
         }
     }
@@ -1992,6 +2010,39 @@ mod tests {
     #[tokio::test]
     async fn interrupt_io_when_not_connected_is_noop() {
         Wsl::new().interrupt_io();
+    }
+
+    /// #5796: a shell that exited on its own reports its status while the
+    /// state is held; a deliberate disconnect leaves none.
+    #[tokio::test]
+    async fn exit_code_reports_the_recorded_status_until_disconnect() {
+        let mut wsl = Wsl::new();
+        assert_eq!(wsl.exit_code(), None, "not connected");
+        let state = drop_test_state(false, Arc::new(AtomicBool::new(true)), Default::default());
+        let exit = state.exit.clone();
+        wsl.state = Some(state);
+        assert_eq!(wsl.exit_code(), None, "still running");
+
+        exit.child_exited(Some(3));
+        assert_eq!(wsl.exit_code(), Some(3));
+
+        wsl.disconnect().await.expect("disconnect");
+        assert_eq!(wsl.exit_code(), None, "after a deliberate disconnect");
+    }
+
+    /// #5796: the status of a child termiHub killed (tab close) is not the
+    /// shell's own.
+    #[tokio::test]
+    async fn exit_code_is_none_after_interrupt_io_kills_the_child() {
+        let mut wsl = Wsl::new();
+        let state = drop_test_state(false, Arc::new(AtomicBool::new(true)), Default::default());
+        let exit = state.exit.clone();
+        wsl.state = Some(state);
+
+        wsl.interrupt_io();
+        // The watcher then reaps the killed child.
+        exit.child_exited(Some(1));
+        assert_eq!(wsl.exit_code(), None);
     }
 
     // -----------------------------------------------------------------------

@@ -15,6 +15,8 @@
 //! - **No hook by default (#5013)** — a default session shows the shell's own
 //!   startup output, no setup text, leaves history / environment / functions /
 //!   `PROMPT_COMMAND` / `PS1` untouched, and still follows `cd`.
+//! - **Exit status (#5796)** — `exit 3` in a session ends it, and the backend
+//!   reports `3` (what `wsl.exe` returns for the Linux shell) as its exit code.
 //! - **Queued folder copy (#3567, PARITY-004)** — a folder with a file above the
 //!   direct-copy threshold round-trips Windows → WSL → Windows through the
 //!   local transfer queue, using the `//wsl$/<distro>/…` paths the frontend
@@ -558,6 +560,43 @@ fn report_probe_cost(distro: &str) {
         std::fs::read_link(&unc),
         started.elapsed().as_millis()
     );
+}
+
+/// #5796: `exit 3` in a WSL session ends the session — the output channel
+/// closes — and the backend reports the Linux shell's status, `3`, as the exit
+/// code `wsl.exe` returned.
+#[tokio::test]
+async fn live_wsl_exit_reports_the_shell_exit_code() {
+    let Some(distro) = live_distro() else {
+        return;
+    };
+    let _alive = KeepAlive::start(&distro);
+
+    let mut wsl = Wsl::new();
+    let mut rx = wsl.subscribe_output();
+    wsl.connect(serde_json::json!({ "distribution": distro }))
+        .await
+        .expect("connect");
+    let mut out = Transcript::new(&mut rx, &distro);
+
+    // The shell is up once termiHub reports its directory.
+    out.wait_for(b"\x1b]7;file:///", 0).await;
+    wsl.write(b"exit 3\n").expect("write");
+
+    // The output ends on its own …
+    let deadline = tokio::time::Instant::now() + SESSION_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, out.rx.recv()).await {
+            Ok(Some(_)) => continue,
+            Ok(None) => break,
+            Err(_) => panic!("the session never ended after `exit 3`:\n{:?}", out.text()),
+        }
+    }
+    // … and the status is known by then.
+    assert_eq!(wsl.exit_code(), Some(3), "transcript:\n{:?}", out.text());
+    assert!(!wsl.is_connected());
+    wsl.disconnect().await.expect("disconnect");
 }
 
 /// #5013: a default WSL session types nothing and changes nothing in the

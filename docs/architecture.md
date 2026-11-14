@@ -2789,6 +2789,11 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   either, so such an upload restarts from zero and the row says why ("remote
   partial is past the last checkpoint and cannot be trimmed"); a failed trim
   restarts the same way with the error.
+  A remote-to-remote copy does the same for its destination end (#5737): the
+  per-attempt probe trims the destination partial through that end's truncate
+  (SFTP `setstat`, the container's `truncate`/`dd`,
+  `RangedTransferTarget::truncate`), then resumes reading the source from the
+  checkpoint only while its size + mtime fingerprint is unchanged.
   A **remote-to-remote** copy
   streams between two sessions with no local staging file
   (`core/src/files/transfer/remote_copy.rs`); either end may be SFTP (a

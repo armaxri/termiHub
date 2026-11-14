@@ -573,9 +573,9 @@ pub(crate) enum DropFold {
 /// tab's lost link, `session.dropped` for any other drop, and **nothing** for a
 /// clean exit. This reproduces that: `Some(0)` → `None` (clean folds neither);
 /// another code → `Dropped`, never a reconnect — the process exited, as an
-/// agent-hosted shell reports it (#5742), so reconnecting would restart a shell
-/// the user ended; an unknown `None` (a lost link — what every direct session
-/// emits) → a drop, resilient-gated. The *killed* case never reaches here — a
+/// agent-hosted or direct local shell reports it (#5742, #5784), so reconnecting
+/// would restart a shell the user ended; an unknown `None` (a lost link, or a
+/// backend without a process) → a drop, resilient-gated. The *killed* case never reaches here — a
 /// deliberate close clears the tab binding before the exit fires (see
 /// `close_session`), so this is only called for genuine drops.
 pub(super) fn drop_fold_for(exit_code: Option<i32>, resilient: bool) -> Option<DropFold> {
@@ -2672,14 +2672,14 @@ impl SessionManager {
             .write(data);
     }
 
-    /// The exit code a session's `terminal-exit` carries (#5742): an
-    /// agent-hosted session's real process exit status, as its agent reported
-    /// it. A direct session reports none, as before.
+    /// The exit code a session's `terminal-exit` carries: the real exit
+    /// status of a process that ended on its own — an agent-hosted session's
+    /// as its agent reported it (#5742), a direct local shell's as its child
+    /// watcher recorded it (#5784), a direct SSH shell's as its server sent it
+    /// (#5801). A lost link, a deliberate close and every backend without a
+    /// process (serial, telnet, …) report none.
     fn reported_exit_code(entry: &SessionEntry) -> Option<i32> {
-        entry
-            .remote_session_id
-            .as_ref()
-            .and_then(|_| entry.connection.exit_code())
+        entry.connection.exit_code()
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.

@@ -37,7 +37,7 @@ use termihub_core::backends::ssh::remote_shell::{detect_remote_shell, RemoteShel
 use termihub_core::backends::ssh::{
     probe_exec_capability, ssh_exec_with_stdin, SftpAdvancedOps, SftpFileBrowser, Ssh,
 };
-use termihub_core::connection::ConnectionType;
+use termihub_core::connection::{ConnectionType, SessionEndCause};
 use termihub_core::session::prompt_ready::{wait_for_prompt, PromptSignal};
 use termihub_core::tunnel::config::LocalForwardConfig;
 use termihub_core::tunnel::local_forward::LocalForwarder;
@@ -1437,6 +1437,41 @@ async fn native_05f_prompt_probe_recognises_the_login_shells_prompt() {
     reader.abort();
 }
 
+/// #5801: a shell the user exits with a status reports it from `exit_code`,
+/// once the session's output ended — OpenSSH sends it after the EOF.
+#[tokio::test]
+async fn native_05m_exit_reports_the_remote_shell_status() {
+    let sshd = require_native_sshd!();
+
+    let mut ssh = Ssh::new();
+    let mut settings = sshd.key_settings();
+    settings["shellIntegration"] = serde_json::Value::Bool(false);
+    ssh.connect(settings).await.expect("shell session connects");
+    let mut rx = ssh.subscribe_output();
+    assert_eq!(ssh.exit_code(), None, "no status while the shell runs");
+
+    let line = if cfg!(windows) {
+        "exit 5\r"
+    } else {
+        "exit 5\n"
+    };
+    ssh.write(line.as_bytes()).expect("write to the shell");
+    let ended = tokio::time::timeout(Duration::from_secs(30), async {
+        while rx.recv().await.is_some() {}
+    })
+    .await;
+    assert!(ended.is_ok(), "the session never ended after `exit 5`");
+
+    assert_eq!(ssh.exit_code(), Some(5), "the remote shell's status");
+    assert_eq!(
+        ssh.end_cause(),
+        Some(SessionEndCause::RemoteClosed),
+        "the server closed the shell channel"
+    );
+    ssh.disconnect().await.expect("disconnect cleanly");
+    assert_eq!(ssh.exit_code(), None, "a disconnect drops the status");
+}
+
 #[tokio::test]
 async fn native_06_sftp_file_journey_is_byte_exact() {
     let sshd = require_native_sshd!();
@@ -1599,6 +1634,127 @@ async fn native_06b_sftp_upload_relaunch_trims_the_remote_partial() {
     assert!(
         landed[..checkpoint].iter().all(|&b| b == 0xEE),
         "resumed from the checkpoint: the prefix was not re-sent"
+    );
+    assert!(
+        landed[checkpoint..] == data[checkpoint..],
+        "the tail is exact"
+    );
+    assert!(
+        messages.lock().expect("lock").is_empty(),
+        "no restart: {:?}",
+        messages.lock().expect("lock")
+    );
+}
+
+/// #5737: an SFTP→SFTP remote-to-remote copy relaunched after a crash finds
+/// the destination partial past its last checkpoint. The copy trims it back
+/// (`setstat` size) and resumes reading the source from the checkpoint
+/// instead of restarting from zero.
+///
+/// As in `native_06b`, the destination prefix is seeded with marker bytes the
+/// source does not hold: a resume keeps the marker and copies only the tail;
+/// a restart would overwrite it with the source.
+#[tokio::test]
+async fn native_06c_sftp_to_sftp_copy_relaunch_trims_the_destination_partial() {
+    use termihub_core::files::transfer::remote_copy::{
+        run_remote_copy, RemoteCopyEndpoint, DEFAULT_RESUME_MODE,
+    };
+    use termihub_core::files::transfer::{
+        ProgressSink, TransferDirection, TransferProgress, TransferRegistry, TransferStateTag,
+    };
+    use termihub_core::files::FileBrowser;
+
+    let sshd = require_native_sshd!();
+    let src_browser = Arc::new(SftpFileBrowser::new(sshd.key_config()));
+    src_browser.connect().await.expect("connect source SFTP");
+    let dst_browser = Arc::new(SftpFileBrowser::new(sshd.key_config()));
+    dst_browser
+        .connect()
+        .await
+        .expect("connect destination SFTP");
+    let home = src_browser
+        .realpath(".")
+        .await
+        .expect("realpath of the home dir");
+    let root = sshd.scratch_home.clone().unwrap_or(home);
+    let path = |what: &str| {
+        format!(
+            "{}/termihub-native-r2r-{what}-{}.bin",
+            root.trim_end_matches('/'),
+            std::process::id()
+        )
+    };
+    let (src_path, dst_path) = (path("src"), path("dst"));
+
+    let data: Vec<u8> = (0..600_000u32).map(|i| (i % 251) as u8).collect();
+    let checkpoint = 200_000usize;
+    let crashed_at = 350_000usize;
+    let mut partial = vec![0xEE_u8; checkpoint];
+    partial.extend_from_slice(&data[checkpoint..crashed_at]);
+    src_browser
+        .write_file(&src_path, &data)
+        .await
+        .expect("seed the source");
+    dst_browser
+        .write_file(&dst_path, &partial)
+        .await
+        .expect("seed the destination partial");
+    let mtime = src_browser
+        .open_dedicated_channel()
+        .await
+        .expect("open a channel")
+        .remote_fingerprint(&src_path)
+        .await
+        .and_then(|fp| fp.mtime);
+
+    let reg = TransferRegistry::new();
+    let handle = reg.enqueue(
+        "native-r2r-relaunch",
+        "native-sftp",
+        TransferDirection::Upload,
+        "dst.bin",
+        &dst_path,
+        data.len() as u64,
+    );
+    handle.set_source_mtime(mtime);
+    let messages = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let rec = messages.clone();
+    let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+        if let Some(m) = &p.message {
+            rec.lock().expect("lock").push(m.clone());
+        }
+    });
+
+    run_remote_copy(
+        RemoteCopyEndpoint::Sftp(src_browser.clone()),
+        RemoteCopyEndpoint::Sftp(dst_browser.clone()),
+        src_path.clone(),
+        dst_path.clone(),
+        handle.clone(),
+        reg,
+        sink,
+        DEFAULT_RESUME_MODE,
+        checkpoint as u64,
+    )
+    .await;
+
+    let landed = dst_browser
+        .read_file(&dst_path)
+        .await
+        .expect("read the copy");
+    dst_browser
+        .delete(&dst_path)
+        .await
+        .expect("delete the copy");
+    src_browser
+        .delete(&src_path)
+        .await
+        .expect("delete the source");
+    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
+    assert_eq!(landed.len(), data.len(), "trimmed, then completed");
+    assert!(
+        landed[..checkpoint].iter().all(|&b| b == 0xEE),
+        "resumed from the checkpoint: the prefix was not re-copied"
     );
     assert!(
         landed[checkpoint..] == data[checkpoint..],

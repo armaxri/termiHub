@@ -190,7 +190,7 @@ fn signal_number(name: &str) -> i32 {
 /// shell convention of `128 + signum` (e.g. `SIGKILL` → `137`). Always non-zero,
 /// so a signal-killed command reads as a failure to callers that key success off
 /// `exit_status == 0`.
-fn signal_exit_status(signal_name: &str) -> i32 {
+pub(super) fn signal_exit_status(signal_name: &str) -> i32 {
     128 + signal_number(signal_name)
 }
 
@@ -201,13 +201,13 @@ fn signal_exit_status(signal_name: &str) -> i32 {
 /// status saturates to [`i32::MAX`] — staying a clearly non-zero failure rather
 /// than wrapping to a negative or near-zero value that could masquerade as
 /// success to callers keying off `exit_status == 0`.
-fn exit_status_to_i32(exit_status: u32) -> i32 {
+pub(super) fn exit_status_to_i32(exit_status: u32) -> i32 {
     i32::try_from(exit_status).unwrap_or(i32::MAX)
 }
 
 /// Human-readable name for a russh signal (the RFC 4254 name without the `SIG`
 /// prefix, e.g. `"KILL"`). Custom signals pass their raw name through.
-fn russh_signal_name(sig: &russh::Sig) -> String {
+pub(super) fn russh_signal_name(sig: &russh::Sig) -> String {
     use russh::Sig;
     match sig {
         Sig::ABRT => "ABRT",
