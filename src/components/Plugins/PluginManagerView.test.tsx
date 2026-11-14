@@ -108,7 +108,7 @@ describe("PluginManagerView (#1997)", () => {
     container.remove();
   });
 
-  it("renders each installed plugin with its state dot and version", () => {
+  it("renders each installed plugin with its state dot, description and markers", () => {
     useAppStore.setState({
       plugins: [
         plugin("k8s", "Kubernetes Exec", "1.2.0", "active"),
@@ -130,9 +130,17 @@ describe("PluginManagerView (#1997)", () => {
     expect(container.querySelector('[data-testid="plugin-state-dot-aws"]')?.className).toContain(
       "status-dot--disconnected"
     );
-    expect(container.querySelector('[data-testid="plugin-row-k8s"]')?.textContent).toContain(
-      "v1.2.0"
+    // The row shows the name, the plugin's own description and a marker when
+    // the state needs attention; version, author and id are in the tooltip
+    // (#5789, docs/copy-style.md -> "List rows").
+    const k8s = container.querySelector('[data-testid="plugin-row-k8s"]')!;
+    expect(k8s.textContent).toBe("Kubernetes Execdesc");
+    expect(k8s.getAttribute("aria-description")).toBe("Version 1.2.0. By author. ID k8s");
+    expect(container.querySelector('[data-testid="plugin-marker-k8s"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-marker-logcol"]')?.textContent).toBe(
+      "Disabled"
     );
+    expect(container.querySelector('[data-testid="plugin-marker-aws"]')?.textContent).toBe("Error");
     // Installed count header reflects total.
     expect(container.querySelector(".plugin-manager__sep")?.textContent).toBe("Installed (3)");
   });
@@ -167,6 +175,27 @@ describe("PluginManagerView (#1997)", () => {
     expect(container.querySelector('[data-testid="plugin-row-k8s"]')).toBeNull();
     // Header still shows the full installed count, not the filtered count.
     expect(container.querySelector(".plugin-manager__sep")?.textContent).toBe("Installed (2)");
+  });
+
+  it("finds a plugin by its description (#5789)", () => {
+    const pods = plugin("k8s", "Kubernetes Exec", "1.2.0", "active");
+    pods.manifest.description = "Shells into pods";
+    useAppStore.setState({ plugins: [pods, plugin("logcol", "Log Colorizer", "0.3.0", "active")] });
+    render();
+    const search = container.querySelector<HTMLInputElement>('[data-testid="plugin-search"]')!;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(search, "pods");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="plugin-row-k8s"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="plugin-row-logcol"]')).toBeNull();
+    expect(container.querySelector('[data-testid="plugin-description-k8s"]')?.textContent).toBe(
+      "Shells into pods"
+    );
   });
 
   it("clears the query and restores the full list via the SearchInput clear button", () => {

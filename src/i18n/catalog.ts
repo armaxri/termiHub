@@ -345,8 +345,6 @@ const en = {
   "plugin.tooltip.version": "Version {version}",
   "plugin.tooltip.author": "By {author}",
   "plugin.tooltip.id": "ID {id}",
-  "plugin.marker.disabled": "Disabled",
-  "plugin.marker.error": "Error",
 
   // ── Terminal toolbar (#5756) ────────────────────────────────────────────
   // Layout icons stay visible; session and macro actions live in the "…"

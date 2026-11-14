@@ -251,6 +251,13 @@
   gap: var(--spacing-xs);
 }
 
+/* Version, author and id, moved off the row into the name's tooltip (#5789). */
+.native-plugin-row__tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
 .native-plugin-row__actions {
   display: flex;
   flex-shrink: 0;
