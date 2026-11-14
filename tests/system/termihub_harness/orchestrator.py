@@ -339,13 +339,18 @@ class AppInstance:
         unset_env: Sequence[str] = (),
         extra_env: Optional[Mapping[str, str]] = None,
         hermetic: bool = True,
+        file_manager_offer: bool = False,
     ) -> None:
         """Create an unstarted instance.
 
         ``hermetic`` (default) seeds the harness's network-quiet settings before
         every launch: no automatic update or plugin update check (#5388, see
-        :mod:`termihub_harness.profile_defaults`). Only missing keys are added,
-        so a test that seeds its own value keeps it.
+        :mod:`termihub_harness.profile_defaults`), and the one-time file-manager
+        offer toast already counted as shown (#5753). Only missing keys are
+        added, so a test that seeds its own value keeps it.
+
+        ``file_manager_offer`` leaves that offer pending, for a suite that
+        grades it.
 
         ``unset_env`` names variables the app (and :meth:`run_cli`) must not
         inherit from the harness, e.g. ``SSH_AUTH_SOCK`` for a suite that needs
@@ -374,6 +379,7 @@ class AppInstance:
         self._unset_env = tuple(unset_env)
         self._extra_env = dict(extra_env or {})
         self._hermetic = hermetic
+        self._file_manager_offer = file_manager_offer
         self._portable = portable
         self._portable_root: Optional[Path] = None
         self._profile_home: Optional[Path] = None
@@ -636,8 +642,9 @@ class AppInstance:
         if self._first_started_at is None:
             self._first_started_at = self._started_at
         if self._hermetic:
-            # No update / plugin-index egress unless the test asks (#5388).
-            profile_defaults.seed(self._config_dir)
+            # No update / plugin-index egress unless the test asks (#5388), and
+            # no file-manager offer toast in the way (#5753).
+            profile_defaults.seed(self._config_dir, file_manager_offer=self._file_manager_offer)
         env = self.launch_env()
         env["TERMIHUB_TEST_BRIDGE_PORT"] = str(bridge_port)
         # A private spawn rendezvous per instance (#4010), see `spawn_endpoint`.

@@ -2,7 +2,8 @@
 
 Every app the harness launches gets ``updates.autoCheck=false`` and
 ``pluginUpdateCheckEnabled=false`` unless the test seeded its own value, so a
-normal system-test run makes no update or plugin-index request.
+normal system-test run makes no update or plugin-index request. The one-time
+file-manager offer counts as shown unless a suite opts out (#5753).
 """
 
 from __future__ import annotations
@@ -27,6 +28,27 @@ def test_seed_creates_settings_with_the_network_checks_off(tmp_path):
     assert data["updates"]["autoCheck"] is False
     assert data["pluginUpdateCheckEnabled"] is False
     assert data["version"] == pd.SEED_VERSION
+
+
+def test_seed_counts_the_file_manager_offer_as_shown(tmp_path):
+    """The one-time offer is a persistent toast; it stays out of fresh profiles (#5753)."""
+    pd.seed(tmp_path)
+    assert _read(tmp_path / "settings.json")["shellIntegration"] == {
+        "firstLaunchBannerDismissed": True
+    }
+
+
+def test_seed_leaves_the_offer_pending_for_a_suite_that_grades_it(tmp_path):
+    pd.seed(tmp_path, file_manager_offer=True)
+    assert "shellIntegration" not in _read(tmp_path / "settings.json")
+
+
+def test_seed_keeps_a_seeded_pending_offer(tmp_path):
+    path = tmp_path / "settings.json"
+    seeded = {"shellIntegration": {"firstLaunchBannerDismissed": False, "entries": []}}
+    path.write_text(json.dumps(seeded), encoding="utf-8")
+    pd.seed(tmp_path)
+    assert _read(path)["shellIntegration"] == seeded["shellIntegration"]
 
 
 def test_seed_keeps_what_a_test_seeded_and_adds_only_missing_keys(tmp_path):
@@ -103,6 +125,14 @@ def test_app_instance_seeds_the_hermetic_profile_before_launch(tmp_path, monkeyp
     data = _read(instance.config_dir / "settings.json")
     assert data["updates"]["autoCheck"] is False
     assert data["pluginUpdateCheckEnabled"] is False
+
+
+def test_app_instance_file_manager_offer_leaves_the_offer_pending(tmp_path, monkeypatch):
+    instance = _instance(tmp_path, monkeypatch, file_manager_offer=True)
+    _start_until_launch(instance, monkeypatch)
+    data = _read(instance.config_dir / "settings.json")
+    assert "shellIntegration" not in data
+    assert data["updates"]["autoCheck"] is False
 
 
 def test_app_instance_hermetic_false_seeds_nothing(tmp_path, monkeypatch):

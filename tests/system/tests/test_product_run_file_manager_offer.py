@@ -17,6 +17,9 @@ The grade:
 
 Nothing is installed: the grade never presses *Install*, so the user's real
 file-manager registration is never touched.
+
+Every other suite's fresh profile counts the offer as already shown (the
+harness's hermetic defaults); this one opts out with ``file_manager_offer``.
 """
 
 from __future__ import annotations
@@ -43,6 +46,8 @@ QUIET_SECONDS = 6.0
 
 class TestProductRunFileManagerOffer(ProductRunUi, CrashReportUi, SettingsUi, SystemTest):
     phase = "File-manager offer"
+    #: Keep the offer pending in the fresh profile (the harness default hides it).
+    file_manager_offer = True
 
     def _offer_shown_flag(self) -> object:
         """``shellIntegration.firstLaunchBannerDismissed`` in ``settings.json``."""

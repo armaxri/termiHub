@@ -140,6 +140,12 @@ class SystemTest:
     #: registration (#3691, SI-5/6/7), set it so a local run stays sandboxed.
     sandbox_profile: ClassVar[bool] = False
 
+    #: Leave the one-time "Open in termiHub" file-manager offer pending in the
+    #: suite's fresh profile (#5753). Off by default: the harness counts the
+    #: offer as already shown, so its persistent toast stays out of every
+    #: screenshot and toast grade. Only a suite that grades the offer sets it.
+    file_manager_offer: ClassVar[bool] = False
+
     #: Environment variables the suite's app must not inherit from the harness
     #: (see ``AppInstance``'s ``unset_env``), e.g. ``SSH_AUTH_SOCK`` for a suite
     #: that needs the app to find no SSH agent.
@@ -227,6 +233,7 @@ class SystemTest:
                 sandbox_profile=request.cls.sandbox_profile,
                 unset_env=request.cls.unset_app_env,
                 extra_env=extra_env,
+                file_manager_offer=request.cls.file_manager_offer,
             )
         except FileNotFoundError as exc:
             pytest.skip(str(exc))

@@ -186,6 +186,12 @@ class TestProductRunChecklist(
             "termiHub product run: SEEDED crash report (not a real crash).\n"
             "It exists only so the 'closed unexpectedly' banner appears for the copy check.\n",
         )
+        # The harness counts the file-manager offer as shown in a fresh profile
+        # (#5753). Make it pending again, so checklist.banner.no-offer proves the
+        # crash session keeps it away rather than finding it already answered.
+        si = self.persisted_settings().get("shellIntegration")
+        si = si if isinstance(si, dict) else {}
+        self.write_settings_file(shellIntegration={**si, "firstLaunchBannerDismissed": False})
 
     def test_00_fresh_profile(self):
         with self.step(
