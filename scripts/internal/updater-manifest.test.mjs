@@ -6,12 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assetNames,
   buildManifest,
   configuredPubkey,
   loadPlatforms,
   main,
   manifestProblems,
   parsePublicKey,
+  signatureProblems,
   verifySignature,
 } from "./updater-manifest.mjs";
 
@@ -187,6 +189,29 @@ describe("buildManifest + manifestProblems", () => {
   });
 });
 
+describe("signatureProblems (sign-updater's self-check, #5761)", () => {
+  const check = (opts = {}) =>
+    signatureProblems({ version: VERSION, dir, pubkey: signer.pubkey, platforms, ...opts });
+
+  it("accepts every bundle signed for the version with the configured key", () => {
+    stage();
+    expect(check()).toEqual([]);
+  });
+
+  it("reports a missing .sig, a foreign key and another signed version", () => {
+    stage({ signedVersion: "0.1.0" });
+    expect(check()).toHaveLength(platforms.platforms.length);
+    expect(check()[0]).toMatch(/signed for version "0.1.0", expected "0.2.0"/);
+    expect(check({ signedVersion: "0.1.0", pubkey: makeSigner().pubkey })[0]).toMatch(
+      /different key/
+    );
+    rmSync(path.join(dir, `termiHub-${VERSION}-windows-x64.msi.sig`));
+    expect(check({ signedVersion: "0.1.0" })).toEqual([
+      `windows-x86_64-msi: termiHub-${VERSION}-windows-x64.msi or its .sig is not in ${dir}`,
+    ]);
+  });
+});
+
 describe("CLI", () => {
   const quiet = () => {
     const lines = [];
@@ -228,6 +253,26 @@ describe("CLI", () => {
     );
     expect(main(["check", "--dir", dir], quiet())).toBe(2);
     expect(main(["sign"], quiet())).toBe(2);
+  });
+
+  it("lists the updater bundles of a version, as sign-updater signs them", () => {
+    const out = quiet();
+    expect(main(["assets", "--version", VERSION], out)).toBe(0);
+    expect(out.lines).toEqual(assetNames(platforms, VERSION));
+    expect(out.lines).toContain(`termiHub-${VERSION}-macos-arm64.app.tar.gz`);
+    expect(main(["assets"], quiet())).toBe(2);
+  });
+
+  it("verifies the staged .sig files without a latest.json", () => {
+    stage();
+    const config = configWith(signer.pubkey);
+    expect(main(["verify", "--version", VERSION, "--dir", dir, "--config", config], quiet())).toBe(
+      0
+    );
+    writeFileSync(path.join(dir, `termiHub-${VERSION}-macos-x64.app.tar.gz`), "evil");
+    const out = quiet();
+    expect(main(["verify", "--version", VERSION, "--dir", dir, "--config", config], out)).toBe(1);
+    expect(out.lines.join("\n")).toMatch(/darwin-x86_64-app: signature does not match/);
   });
 
   it("prints the configured key (empty until the maintainer sets it up)", () => {
