@@ -213,6 +213,8 @@ sign_app() {
     echo "$target" | grep -Eq "$TARGET_RE" || die "--target must be a macOS target"
 
     work="$(mktemp -d)"
+    WORK_DIR="$work"
+    trap 'rm -rf "$WORK_DIR"' EXIT
     app="$(extract_app "$dmg" "$work")"
     exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
     m="$app/Contents/MacOS"
