@@ -167,3 +167,42 @@ async fn a_lost_agent_shell_still_reconnects_a_resilient_tab() {
         vec![("tab-1".to_string(), DropFold::Reconnect)]
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_serial_reopen_that_gave_up_on_the_agent_ends_without_a_reconnect() {
+    // #5783: the agent's in-place serial reopen gave up. The tab ends with
+    // "device disconnected" and the desktop never redrives it.
+    let agent = Arc::new(FakeAgent::session_host());
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), agent.clone());
+    let emitter = MockEventEmitter::new();
+    let session_id = open_tab(&manager, &emitter, "serial", true).await;
+
+    end_on_agent(&agent, Some(SessionEndCause::DeviceGone));
+
+    let exit = wait_for_exit(&emitter, &session_id).await;
+    assert_eq!(exit.end_cause, Some(SessionEndCause::DeviceGone));
+    assert_eq!(exit.exit_code, None);
+    assert_eq!(
+        folds_after_exit(&manager, &emitter, &session_id).await,
+        vec![("tab-1".to_string(), DropFold::Dropped)]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_container_on_the_agent_ends_with_its_status() {
+    // #5783: a Docker session on the agent whose container stopped reports
+    // the container's exit status — a process exit, never reconnected.
+    let agent = Arc::new(FakeAgent::session_host());
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), agent.clone());
+    let emitter = MockEventEmitter::new();
+    let session_id = open_tab(&manager, &emitter, "docker", true).await;
+
+    end_on_agent_with(&agent, None, Some(137));
+
+    let exit = wait_for_exit(&emitter, &session_id).await;
+    assert_eq!(exit.exit_code, Some(137));
+    assert_eq!(
+        folds_after_exit(&manager, &emitter, &session_id).await,
+        vec![("tab-1".to_string(), DropFold::Dropped)]
+    );
+}
