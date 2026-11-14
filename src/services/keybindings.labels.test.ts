@@ -44,6 +44,23 @@ describe("withActionAccelerator", () => {
     );
   });
 
+  it("names the Close panel default on every platform (#5779)", () => {
+    setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    expect(withActionAccelerator("Close panel", "close-panel")).toBe("Close panel (Cmd+Alt+W)");
+    setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    expect(withActionAccelerator("Close panel", "close-panel")).toBe("Close panel (Shift+Alt+W)");
+    setUserAgent("Mozilla/5.0 (X11; Linux x86_64)");
+    expect(withActionAccelerator("Close panel", "close-panel")).toBe("Close panel (Shift+Alt+W)");
+  });
+
+  it("shows no hint for logging or play until the user binds one (#5779)", () => {
+    expect(withActionAccelerator("Log session output", "toggle-session-logging")).toBe(
+      "Log session output"
+    );
+    setOverride("play-macro", { key: "F5", ctrl: true });
+    expect(withActionAccelerator("Play macro…", "play-macro")).toBe("Play macro… (Ctrl+F5)");
+  });
+
   it("reflects a user override", () => {
     setOverride("toggle-sidebar", { key: "F9" });
     expect(withActionAccelerator("Toggle Sidebar", "toggle-sidebar")).toBe("Toggle Sidebar (F9)");

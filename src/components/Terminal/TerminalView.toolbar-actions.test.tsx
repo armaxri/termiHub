@@ -17,6 +17,11 @@ import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
 import { closePanelGuarded } from "@/utils/tabGroupCloseGuard";
 import { clearOverrides, setOverride } from "@/services/keybindings";
+import { sessionLoggingStart } from "@/services/api";
+import {
+  OPEN_MACRO_PLAYBACK_EVENT,
+  TOGGLE_SESSION_LOGGING_EVENT,
+} from "@/services/contextCommands";
 import { getAllLeaves } from "@/utils/panelTree";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
@@ -219,6 +224,43 @@ describe("TerminalView — split and close panel (#5172)", () => {
 
     expect(closePanelGuarded).toHaveBeenCalledTimes(1);
     expect(closePanelGuarded).toHaveBeenCalledWith("b");
+  });
+
+  it("names the close-panel shortcut in its tooltip label (#5779)", async () => {
+    setOverride("close-panel", { key: "F10", alt: true });
+    const tree: PanelNode = {
+      type: "split",
+      id: "s",
+      direction: "horizontal",
+      children: [leaf("a", [tab("t1", "a")]), leaf("b", [tab("t2", "b")])],
+    };
+    seed(tree, "b");
+    await renderView();
+    expect(button("terminal-view-close-panel")!.getAttribute("aria-label")).toBe(
+      "Close panel (Alt+F10)"
+    );
+  });
+});
+
+describe("TerminalView — logging and play shortcuts (#5779)", () => {
+  it("toggles the active session's logging on the shortcut event", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(TOGGLE_SESSION_LOGGING_EVENT));
+      await Promise.resolve();
+    });
+    expect(sessionLoggingStart).toHaveBeenCalledWith("sess-t1", undefined, true);
+  });
+
+  it("opens the macro picker on the play shortcut event", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    expect(probes.playback?.open).toBe(false);
+    act(() => {
+      window.dispatchEvent(new CustomEvent(OPEN_MACRO_PLAYBACK_EVENT));
+    });
+    expect(probes.playback?.open).toBe(true);
   });
 });
 

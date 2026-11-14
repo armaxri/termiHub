@@ -36,13 +36,16 @@ single-modifier readline / tmux range.
 | Close tab group    | `Ctrl+Shift+F4`      | `Ctrl+Shift+Q` — quits many Linux apps; `Ctrl+Shift+W` is Close tab              |
 | Split right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
 | Split down         | `Alt+Shift+-`        | (paired with Split right)                                                        |
+| Close panel        | `Alt+Shift+W`        | `Ctrl+W` / `Alt+W` — readline word keys; `Ctrl+Shift+W` is Close tab             |
 | Focus panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
 | Keyboard shortcuts | `Ctrl+F1`            | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
 | Jump to prompt ↑↓  | `Ctrl+Shift+<Up/Dn>` | `Ctrl+<Up/Down>` — word/paragraph movement in shells and editors                 |
 
 macOS keeps the more conventional single-modifier forms (`Cmd+B`, `Cmd+W`,
 `Cmd+\`, `Cmd+K Cmd+S`, `Cmd+Alt+<Arrow>`) because `Cmd` does not appear in the
-shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
+shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts. Close panel
+is `Cmd+Alt+W` there, next to Close tab (`Cmd+W`) and Close tab group
+(`Cmd+Shift+W`).
 
 ### Chords termiHub keeps clear of
 
@@ -58,6 +61,31 @@ shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
   notification list no longer grabs focus on `Alt+T`; jump into it with
   `Cmd+Option+T` (macOS) or `Ctrl+Shift+F8` (Windows/Linux), or `Tab` to a
   toast's close button.
+
+## Terminal toolbar actions
+
+Every terminal toolbar control and "…" menu row runs a keybinding action, so
+its tooltip or menu row names the shortcut — the platform default or your own
+binding:
+
+| Toolbar control          | macOS                   | Windows / Linux               |
+| ------------------------ | ----------------------- | ----------------------------- |
+| New terminal             | `` Cmd+Shift+` ``       | `` Ctrl+Shift+` ``            |
+| Split right / Split down | `Cmd+\` / `Cmd+Shift+\` | `Alt+Shift+\` / `Alt+Shift+-` |
+| Close panel              | `Cmd+Alt+W`             | `Alt+Shift+W`                 |
+| Toggle sidebar           | `Cmd+B`                 | `Ctrl+Shift+B`                |
+| Broadcast input…         | `Cmd+Shift+B`           | `Alt+Shift+B`                 |
+| Log session output       | unbound                 | unbound                       |
+| Record macro             | unbound                 | unbound                       |
+| Play macro…              | unbound                 | unbound                       |
+
+Session logging and macro record / play ship **unbound**: no free combo reads
+naturally for them without taking a key that shells, tmux or vim use, and they
+are occasional actions. Bind them in **Settings → Keyboard shortcuts** (they
+are listed as "Toggle session logging", "Record macro (start/stop)" and
+"Play macro…"); the "…" menu row and the running-action chip then show the
+binding. All three also run from the command palette. "Play macro…" opens the
+macro picker, or stops a playback that is already running.
 
 ## Function keys belong to the terminal program
 

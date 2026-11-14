@@ -1140,6 +1140,24 @@ describe("default bindings never collide (#5316)", () => {
     }
   });
 
+  it("binds Close panel beside Close tab / Close tab group, off the shell keys (#5779)", () => {
+    const panel = DEFAULT_BINDINGS.find((b) => b.action === "close-panel")!;
+    expect(panel.macDefault).toEqual({ key: "w", meta: true, alt: true });
+    // Alt+Shift+W, like Split right / down: Ctrl+W and Alt+W stay with the shell.
+    expect(panel.winLinuxDefault).toEqual({ key: "W", alt: true, shift: true });
+    expect(panel.configurable).toBe(true);
+  });
+
+  it("ships toggle-session-logging and play-macro unbound but bindable (#5779)", () => {
+    for (const action of ["toggle-session-logging", "play-macro"]) {
+      const binding = DEFAULT_BINDINGS.find((b) => b.action === action);
+      expect(binding, action).toBeDefined();
+      expect(binding!.macDefault).toBeNull();
+      expect(binding!.winLinuxDefault).toBeNull();
+      expect(binding!.configurable).toBe(true);
+    }
+  });
+
   it("moves Close Tab Group to Ctrl+Shift+F4 and keeps Cmd+Shift+W on macOS", () => {
     const group = DEFAULT_BINDINGS.find((b) => b.action === "close-tab-group")!;
     expect(group.winLinuxDefault).toEqual({ key: "F4", ctrl: true, shift: true });

@@ -7,7 +7,11 @@
  * applies). The same registry backs both the keyboard handler and the palette.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { CONTEXT_COMMANDS } from "./contextCommands";
+import {
+  CONTEXT_COMMANDS,
+  OPEN_MACRO_PLAYBACK_EVENT,
+  TOGGLE_SESSION_LOGGING_EVENT,
+} from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getActiveTabGroupId } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -57,6 +61,7 @@ describe("CONTEXT_COMMANDS registry", () => {
       [
         "clear-terminal",
         "close-tab",
+        "close-panel",
         "close-tab-group",
         "copy",
         "find-in-terminal",
@@ -68,9 +73,11 @@ describe("CONTEXT_COMMANDS registry", () => {
         "next-tab",
         "next-tab-group",
         "paste",
+        "play-macro",
         "prev-tab",
         "prev-tab-group",
         "select-all",
+        "toggle-session-logging",
         "jump-prev-prompt",
         "jump-next-prompt",
         "select-last-command-output",
@@ -357,6 +364,84 @@ describe("focus-panel", () => {
 
     CONTEXT_COMMANDS["focus-left"].run();
     expect(layoutState().activePanelId).not.toBe(rightPanelId);
+  });
+});
+
+/** Collect the window events named `name` dispatched while `fn` runs. */
+function captureEvents(name: string, fn: () => void): Event[] {
+  const events: Event[] = [];
+  const listener = (e: Event) => events.push(e);
+  window.addEventListener(name, listener);
+  try {
+    fn();
+  } finally {
+    window.removeEventListener(name, listener);
+  }
+  return events;
+}
+
+describe("close-panel (#5779)", () => {
+  const cmd = CONTEXT_COMMANDS["close-panel"];
+
+  it("is unavailable with a single panel and run() leaves it in place", () => {
+    addActiveTab();
+    expect(cmd.isAvailable()).toBe(false);
+    const panelId = layoutState().activePanelId;
+    cmd.run();
+    expect(getAllLeaves(layoutState().rootPanel).map((p) => p.id)).toEqual([panelId]);
+  });
+
+  it("closes the active split panel", () => {
+    addActiveTab("editor");
+    useAppStore.getState().splitPanel("horizontal");
+    const rightPanelId = layoutState().activePanelId;
+    expect(getAllLeaves(layoutState().rootPanel)).toHaveLength(2);
+    expect(cmd.isAvailable()).toBe(true);
+
+    cmd.run();
+    const leaves = getAllLeaves(layoutState().rootPanel);
+    expect(leaves).toHaveLength(1);
+    expect(leaves[0].id).not.toBe(rightPanelId);
+  });
+});
+
+describe("toggle-session-logging (#5779)", () => {
+  const cmd = CONTEXT_COMMANDS["toggle-session-logging"];
+
+  it("is available only for a terminal tab with a session", () => {
+    expect(cmd.isAvailable()).toBe(false);
+    addActiveTab("editor");
+    expect(cmd.isAvailable()).toBe(false);
+    const tabId = addActiveTab("terminal");
+    expect(cmd.isAvailable()).toBe(false);
+    useAppStore.getState().setTabSessionId(tabId, "session-1");
+    expect(cmd.isAvailable()).toBe(true);
+  });
+
+  it("asks the terminal view to toggle logging, and is inert without a session", () => {
+    const tabId = addActiveTab("terminal");
+    expect(captureEvents(TOGGLE_SESSION_LOGGING_EVENT, cmd.run)).toHaveLength(0);
+    useAppStore.getState().setTabSessionId(tabId, "session-1");
+    expect(captureEvents(TOGGLE_SESSION_LOGGING_EVENT, cmd.run)).toHaveLength(1);
+  });
+});
+
+describe("play-macro (#5779)", () => {
+  const cmd = CONTEXT_COMMANDS["play-macro"];
+
+  it("opens the macro picker when nothing is playing", () => {
+    expect(cmd.isAvailable()).toBe(true);
+    expect(captureEvents(OPEN_MACRO_PLAYBACK_EVENT, cmd.run)).toHaveLength(1);
+  });
+
+  it("stops a running playback instead, like the menu row", () => {
+    const cancel = vi.fn();
+    useAppStore.setState({
+      macroPlayback: {} as ReturnType<typeof useAppStore.getState>["macroPlayback"],
+      cancelMacroPlayback: cancel,
+    });
+    expect(captureEvents(OPEN_MACRO_PLAYBACK_EVENT, cmd.run)).toHaveLength(0);
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
 

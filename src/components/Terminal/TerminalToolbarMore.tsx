@@ -105,10 +105,13 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
                 played: macroPlayback.played,
                 total: macroPlayback.total,
               })}
-              tooltip={tf("terminalToolbar.play.stop", {
-                played: macroPlayback.played,
-                total: macroPlayback.total,
-              })}
+              tooltip={withActionAccelerator(
+                tf("terminalToolbar.play.stop", {
+                  played: macroPlayback.played,
+                  total: macroPlayback.total,
+                }),
+                "play-macro"
+              )}
               icon={<Square size={12} fill="currentColor" />}
               tone="recording"
               onClick={onStopPlayback}
@@ -118,7 +121,10 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
           {loggingActive && (
             <ActiveChip
               label={t("terminalToolbar.chip.logging")}
-              tooltip={t("terminalToolbar.logging.stop")}
+              tooltip={withActionAccelerator(
+                t("terminalToolbar.logging.stop"),
+                "toggle-session-logging"
+              )}
               icon={<ScrollText size={14} />}
               tone="active"
               onClick={onToggleLogging}
@@ -185,6 +191,7 @@ function MoreMenuItems({
       </MenuItem>
       <MenuItem
         icon={<ScrollText size={14} />}
+        shortcut={getActionAccelerator("toggle-session-logging")}
         onSelect={onToggleLogging}
         data-active={loggingActive}
         data-testid="terminal-view-toggle-logging"
@@ -203,6 +210,7 @@ function MoreMenuItems({
       </MenuItem>
       <MenuItem
         icon={macroPlayback ? <Square size={12} fill="currentColor" /> : <Play size={14} />}
+        shortcut={getActionAccelerator("play-macro")}
         onSelect={macroPlayback ? onStopPlayback : onPlayMacro}
         data-active={macroPlayback !== null}
         data-testid="terminal-view-play-macro"
