@@ -114,6 +114,7 @@ open the connection or start the tool:
 - **Terminal connections:** SSH (including jump hosts, port forwarding, X11 forwarding, SFTP and
   remote monitoring), telnet, FTP/FTPS, RDP and VNC go to the host and port you entered. Serial
   ports, local shells, Docker and WSL stay on your computer.
+  Signing in to RDP with a domain account (NLA) can also contact that domain's Kerberos server.
 - **Remote agent:** termiHub reaches the agent through the SSH connection you set up. Agent
   self-update is off by default and not offered in the connection editor. Only an agent started
   with it (the `allowSelfUpdate` connection setting or the agent's `--allow-self-update` flag)
