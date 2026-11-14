@@ -104,6 +104,19 @@ class LayoutUi(HarnessMixin):
 
         return self.wait(settled, what="the active tab group id to settle")
 
+    #: The terminal toolbar's "…" trigger (#5756): broadcast, session logging,
+    #: macro record and macro play are entries of its menu, not inline icons.
+    TERMINAL_MORE_ACTIONS = "terminal-view-more-actions"
+    TERMINAL_MORE_MENU = "terminal-view-more-menu"
+
+    def invoke_terminal_toolbar_action(self, action: str) -> None:
+        """Click a terminal-toolbar action, opening the "…" menu when it lives there.
+
+        ``action`` is the action's ``data-testid`` (``terminal-view-broadcast``,
+        ``terminal-view-record-macro``, …); the layout icons are clicked inline.
+        """
+        self.invoke_toolbar_action(action, overflow=self.TERMINAL_MORE_ACTIONS)
+
     def set_sidebar_visible(self, visible: bool) -> None:
         """Bring the sidebar to the wanted visibility via the toolbar toggle.
 

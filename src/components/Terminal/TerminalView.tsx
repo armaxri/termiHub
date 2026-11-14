@@ -1,16 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import {
-  Plus,
-  Columns2,
-  Rows2,
-  X,
-  PanelLeft,
-  CircleDot,
-  Square,
-  Play,
-  Radio,
-  ScrollText,
-} from "lucide-react";
+import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
 import { useTauriListener } from "@/hooks/useTauriListener";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
@@ -29,6 +18,7 @@ import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
 import { handleAgentStateChange, type AgentStateChangePayload } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
+import { TerminalToolbarMore } from "./TerminalToolbarMore";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
 import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
@@ -39,6 +29,7 @@ import { sessionLoggingStart, sessionLoggingStop, sessionLoggingStatus } from "@
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendWarn } from "@/utils/frontendLog";
 import { withActionAccelerator } from "@/services/keybindings";
+import { t } from "@/i18n/catalog";
 import "./TerminalView.css";
 
 /**
@@ -115,7 +106,13 @@ export function TerminalView() {
   });
   // From the keybinding service so the hint shows the platform default and any
   // user override (#4374) — never a hand-built, platform-sniffed string.
-  const sidebarToggleTitle = withActionAccelerator("Toggle Sidebar", "toggle-sidebar");
+  const sidebarToggleTitle = withActionAccelerator(
+    t("terminalToolbar.toggleSidebar"),
+    "toggle-sidebar"
+  );
+  const newTerminalTitle = withActionAccelerator(t("terminalToolbar.newTerminal"), "new-terminal");
+  const splitRightTitle = withActionAccelerator(t("terminalToolbar.splitRight"), "split-right");
+  const splitDownTitle = withActionAccelerator(t("terminalToolbar.splitDown"), "split-down");
 
   const allLeaves = getAllLeaves(rootPanel);
 
@@ -227,165 +224,61 @@ export function TerminalView() {
       <main className="terminal-view">
         <div className="terminal-view__toolbar">
           <TabGroupChips />
-          {/* #5559: three groups, separated: what runs in the session, macros,
-              then how the window is laid out. */}
-          <div className="terminal-view__toolbar-actions">
-            <div
-              className="terminal-view__toolbar-group"
-              role="group"
-              aria-label="Session"
-              data-testid="terminal-view-toolbar-session"
-            >
-              <Tooltip content="New terminal" side="bottom">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  icon={<Plus size={16} />}
-                  onClick={handleNewTerminal}
-                  aria-label="New terminal"
-                  data-testid="terminal-view-new-terminal"
-                />
-              </Tooltip>
-              <Tooltip
-                content={broadcastActive ? "Stop broadcast" : "Broadcast input"}
-                side="bottom"
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className={
-                    broadcastActive ? "terminal-view__toolbar-action--broadcast" : undefined
-                  }
-                  icon={<Radio size={16} />}
-                  onClick={handleToggleBroadcast}
-                  aria-label={broadcastActive ? "Stop broadcast" : "Broadcast input"}
-                  aria-pressed={broadcastActive}
-                  data-testid="terminal-view-broadcast"
-                />
-              </Tooltip>
-              <Tooltip
-                content={isActiveSessionLogging ? "Stop logging output" : "Log session output"}
-                side="bottom"
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className={
-                    isActiveSessionLogging ? "terminal-view__toolbar-action--active" : undefined
-                  }
-                  icon={<ScrollText size={16} />}
-                  onClick={() => void handleToggleLogging()}
-                  aria-label={isActiveSessionLogging ? "Stop logging output" : "Log session output"}
-                  aria-pressed={isActiveSessionLogging}
-                  data-testid="terminal-view-toggle-logging"
-                />
-              </Tooltip>
-            </div>
-            <span
-              className="terminal-view__toolbar-separator"
-              role="separator"
-              aria-orientation="vertical"
-            />
-            <div
-              className="terminal-view__toolbar-group"
-              role="group"
-              aria-label="Macros"
-              data-testid="terminal-view-toolbar-macros"
-            >
-              <Tooltip
-                content={macroRecording ? "Stop recording macro" : "Record macro"}
-                side="bottom"
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className={
-                    macroRecording ? "terminal-view__toolbar-action--recording" : undefined
-                  }
-                  icon={
-                    macroRecording ? (
-                      <Square size={14} fill="currentColor" />
-                    ) : (
-                      <CircleDot size={16} />
-                    )
-                  }
-                  onClick={toggleMacroRecording}
-                  aria-label={macroRecording ? "Stop recording macro" : "Record macro"}
-                  aria-pressed={macroRecording}
-                  data-testid="terminal-view-record-macro"
-                />
-              </Tooltip>
-              <Tooltip
-                content={
-                  macroPlayback
-                    ? `Stop playback (${macroPlayback.played}/${macroPlayback.total})`
-                    : "Play macro"
-                }
-                side="bottom"
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className={macroPlayback ? "terminal-view__toolbar-action--recording" : undefined}
-                  icon={
-                    macroPlayback ? <Square size={14} fill="currentColor" /> : <Play size={15} />
-                  }
-                  onClick={() =>
-                    macroPlayback ? cancelMacroPlayback() : setMacroPlaybackDialogOpen(true)
-                  }
-                  aria-label={macroPlayback ? "Stop macro playback" : "Play macro"}
-                  aria-pressed={macroPlayback !== null}
-                  data-testid="terminal-view-play-macro"
-                />
-              </Tooltip>
-            </div>
-            <span
-              className="terminal-view__toolbar-separator"
-              role="separator"
-              aria-orientation="vertical"
-            />
+          {/* #5559 / #5756: the layout icons stay visible, each tooltip naming its
+              shortcut; session and macro actions live in the "…" menu, and a
+              running one shows as a chip beside the icons. */}
+          <div
+            className="terminal-view__toolbar-actions"
+            data-testid="terminal-view-toolbar-actions"
+          >
             <div
               className="terminal-view__toolbar-group"
               role="group"
               aria-label="Layout"
               data-testid="terminal-view-toolbar-layout"
             >
-              <Tooltip content="Split terminal right" side="bottom">
+              <Tooltip content={newTerminalTitle} side="bottom">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<Plus size={16} />}
+                  onClick={handleNewTerminal}
+                  aria-label={newTerminalTitle}
+                  data-testid="terminal-view-new-terminal"
+                />
+              </Tooltip>
+              <Tooltip content={splitRightTitle} side="bottom">
                 <Button
                   variant="ghost"
                   size="sm"
                   iconOnly
                   icon={<Columns2 size={16} />}
                   onClick={handleSplitHorizontal}
-                  aria-label="Split terminal right"
+                  aria-label={splitRightTitle}
                   data-testid="terminal-view-split-horizontal"
                 />
               </Tooltip>
-              <Tooltip content="Split terminal down" side="bottom">
+              <Tooltip content={splitDownTitle} side="bottom">
                 <Button
                   variant="ghost"
                   size="sm"
                   iconOnly
                   icon={<Rows2 size={16} />}
                   onClick={handleSplitVertical}
-                  aria-label="Split terminal down"
+                  aria-label={splitDownTitle}
                   data-testid="terminal-view-split-vertical"
                 />
               </Tooltip>
               {allLeaves.length > 1 && (
-                <Tooltip content="Close panel" side="bottom">
+                <Tooltip content={t("terminalToolbar.closePanel")} side="bottom">
                   <Button
                     variant="ghost"
                     size="sm"
                     iconOnly
                     icon={<X size={16} />}
                     onClick={handleClosePanel}
-                    aria-label="Close panel"
+                    aria-label={t("terminalToolbar.closePanel")}
                     data-testid="terminal-view-close-panel"
                   />
                 </Tooltip>
@@ -405,6 +298,22 @@ export function TerminalView() {
                 />
               </Tooltip>
             </div>
+            <span
+              className="terminal-view__toolbar-separator"
+              role="separator"
+              aria-orientation="vertical"
+            />
+            <TerminalToolbarMore
+              broadcastActive={broadcastActive}
+              onToggleBroadcast={handleToggleBroadcast}
+              loggingActive={isActiveSessionLogging}
+              onToggleLogging={() => void handleToggleLogging()}
+              macroRecording={macroRecording}
+              onToggleRecording={toggleMacroRecording}
+              macroPlayback={macroPlayback}
+              onPlayMacro={() => setMacroPlaybackDialogOpen(true)}
+              onStopPlayback={cancelMacroPlayback}
+            />
           </div>
         </div>
         <div className="terminal-view__content" role="region" aria-label="Terminal">

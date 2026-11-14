@@ -36,32 +36,9 @@ vi.mock("./TerminalRegistry", () => ({
 vi.mock("./TerminalCommandBridge", () => ({ TerminalCommandBridge: () => null }));
 vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
-vi.mock("@/components/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  Button: ({
-    icon,
-    children,
-    className,
-    variant: _variant,
-    size: _size,
-    iconOnly: _iconOnly,
-    fullWidth: _fullWidth,
-    pendingLabel: _pendingLabel,
-    errorToast: _errorToast,
-    ...rest
-  }: {
-    icon?: React.ReactNode;
-    children?: React.ReactNode;
-    className?: string;
-    [key: string]: unknown;
-  }) => (
-    <button className={["ui-btn", className].filter(Boolean).join(" ")} {...rest}>
-      {icon}
-      {children}
-    </button>
-  ),
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
+vi.mock("@/components/ui", async () =>
+  (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
+);
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
 vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
