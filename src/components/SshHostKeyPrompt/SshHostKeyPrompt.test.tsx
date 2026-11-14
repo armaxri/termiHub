@@ -231,6 +231,32 @@ describe("SshHostKeyPrompt", () => {
     expect(body).not.toContain("remembers it so you are not asked again");
   });
 
+  it("danger-styles both accepts and defaults to Reject on a changed key (#5751)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(changedWithPriorPrompt);
+    const byId = (id: string) => document.querySelector(`[data-testid="${id}"]`);
+    expect(byId("ssh-hostkey-accept-once")?.classList.contains("ui-btn--danger")).toBe(true);
+    expect(byId("ssh-hostkey-accept-remember")?.classList.contains("ui-btn--danger")).toBe(true);
+    expect(byId("ssh-hostkey-reject")?.classList.contains("ui-btn--primary")).toBe(true);
+    expect(document.activeElement).toBe(byId("ssh-hostkey-reject"));
+    act(() => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+      );
+    });
+    expect(decisionMock).toHaveBeenCalledTimes(1);
+    expect(decisionMock).toHaveBeenCalledWith(changedWithPriorPrompt.prompt_id, false, false);
+  });
+
+  it("keeps the first-contact emphasis: Accept for host is primary", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    const byId = (id: string) => document.querySelector(`[data-testid="${id}"]`);
+    expect(byId("ssh-hostkey-accept-remember")?.classList.contains("ui-btn--primary")).toBe(true);
+    expect(byId("ssh-hostkey-accept-once")?.classList.contains("ui-btn--secondary")).toBe(true);
+    expect(byId("ssh-hostkey-reject")?.classList.contains("ui-btn--ghost")).toBe(true);
+  });
+
   it("keeps Accept for host on first contact", async () => {
     render(<SshHostKeyPrompt />);
     await fire(unknownPrompt);

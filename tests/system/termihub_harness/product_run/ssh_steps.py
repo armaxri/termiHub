@@ -16,6 +16,7 @@ import pytest
 
 from ..bridge import BridgeError
 from ..ui.base import HarnessMixin
+from .hostkey_emphasis import changed_emphasis_problems, first_contact_emphasis_problems
 from .hostkey_layout import fingerprint_layout_problems, rejected_screen_problems
 from .hosts import RunHosts, run_hosts
 from .ui import run_recorder
@@ -33,6 +34,7 @@ HOSTKEY_PREV_TYPE = "ssh-hostkey-prev-fingerprint-type"
 HOSTKEY_MITM = "ssh-hostkey-mitm-warning"
 HOSTKEY_ACCEPT_REMEMBER = "ssh-hostkey-accept-remember"
 HOSTKEY_REJECT = "ssh-hostkey-reject"
+HOSTKEY_ACCEPT_ONCE = "ssh-hostkey-accept-once"
 
 
 class SshPhaseUi(HarnessMixin):
@@ -150,6 +152,19 @@ class SshPhaseUi(HarnessMixin):
             buttons = self.driver.measure_element(test_id, "buttons").get("items", [])
             problems += [f"{test_id}: {p}" for p in fingerprint_layout_problems(text, buttons)]
         return problems
+
+    def hostkey_emphasis_problems(self, *, changed: bool) -> list[str]:
+        """The open prompt's button-emphasis problems (#5751), or ``[]``."""
+        classes = {
+            verdict: (self.driver.get_attribute(test_id, "class") if self.driver.exists(test_id) else None)
+            for verdict, test_id in (
+                ("reject", HOSTKEY_REJECT),
+                ("accept_once", HOSTKEY_ACCEPT_ONCE),
+                ("accept_for_host", HOSTKEY_ACCEPT_REMEMBER),
+            )
+        }
+        grade = changed_emphasis_problems if changed else first_contact_emphasis_problems
+        return grade(classes)
 
     def rejected_screen_problems(self) -> list[str]:
         """Whether the rejected-key screen says it once (#5662), or ``[]``."""
