@@ -9,12 +9,12 @@
 //!
 //! OpenSSH sends the shell's EOF **before** its `exit-status`, and the channel
 //! close after it. So once the channel reports EOF, the task keeps reading for
-//! up to [`EXIT_STATUS_GRACE`] until the close (or the status) arrives.
+//! up to `EXIT_STATUS_GRACE` until the close (or the status) arrives.
 //!
 //! A transport loss carries no status: the channel just goes away. The slot
 //! stays empty, the end cause reads `IoError`, and a resilient tab still
 //! reconnects. A signal that a host shutting down or hanging up delivers
-//! ([`signal_reports_no_status`]) reports no status either, for the same
+//! (`HUP`, `TERM`) reports no status either, for the same
 //! reason: the user did not end that shell.
 
 use std::sync::{Arc, Mutex, PoisonError};

@@ -1450,7 +1450,11 @@ async fn native_05m_exit_reports_the_remote_shell_status() {
     let mut rx = ssh.subscribe_output();
     assert_eq!(ssh.exit_code(), None, "no status while the shell runs");
 
-    let line = if cfg!(windows) { "exit 5\r" } else { "exit 5\n" };
+    let line = if cfg!(windows) {
+        "exit 5\r"
+    } else {
+        "exit 5\n"
+    };
     ssh.write(line.as_bytes()).expect("write to the shell");
     let ended = tokio::time::timeout(Duration::from_secs(30), async {
         while rx.recv().await.is_some() {}
