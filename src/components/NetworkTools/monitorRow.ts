@@ -3,7 +3,7 @@ import type { HttpMonitorState } from "@/types/network";
 import { formatCheckedAgo, isMonitorStale } from "./monitorStaleness";
 
 /** The URL as a row shows it when the monitor has no name: without its scheme. */
-export function shortMonitorUrl(url: string): string {
+function shortMonitorUrl(url: string): string {
   return url.replace(/^https?:\/\//, "");
 }
 

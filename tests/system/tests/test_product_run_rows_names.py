@@ -18,6 +18,12 @@ connection and host), a service (its protocol, address and folder), a
 workspace (its tab count) and a remote agent (its address), each with a
 description. None of them is started or connected; the rows are graded at
 rest.
+
+#5789 adds the Network Tools monitor row (its name and description; the URL,
+method and interval in the tooltip; the Stopped marker once stopped) and the
+Plugins sidebar row of a seeded fixture plugin (its name and the plugin's own
+description; version, author and id in the tooltip). The plugin is seeded
+last: it restarts the app.
 """
 
 from __future__ import annotations
@@ -30,7 +36,9 @@ from termihub_harness import (
     AgentUi,
     ConnectionsUi,
     EmbeddedServicesUi,
+    NetworkToolsUi,
     PasswordPromptUi,
+    PluginsUi,
     SettingsUi,
     SidebarUi,
     SystemTest,
@@ -62,6 +70,8 @@ class TestProductRunRowsNames(
     SshPhaseUi,
     AutomationPhaseUi,
     EmbeddedServicesUi,
+    NetworkToolsUi,
+    PluginsUi,
     AgentUi,
     WorkflowUi,
     SettingsUi,
@@ -369,3 +379,73 @@ class TestProductRunRowsNames(
             desc = self.driver.get_text(f"agent-description-{agent['id']}").strip()
             assert desc == "Lab bench", f"the agent description reads {desc!r}"
             self.shot(label="agent")
+
+    def test_90_monitor_row(self):
+        t = self.tag
+        with self.step(
+            "rows-names.monitor",
+            "A monitor row shows its name, description and Stopped marker; the URL, method "
+            "and interval are in the tooltip",
+            expect="the Network Tools sidebar: 'Rows monitor …' with a grey dot, 'Shop health' "
+            "muted under it and 'Stopped'; no '127.0.0.1:…' URL, no status code, latency or "
+            "'checked … ago' on the row (#5789)",
+        ):
+            self.require("rows-names.items")
+            name = f"Rows monitor {t}"
+            url = f"http://127.0.0.1:{self.free_port()}/health"
+            self.start_http_monitor(
+                url, allow_private_network=True, name=name, description="Shop health"
+            )
+            self.wait(lambda: self.driver.exists("http-monitor-stop"), what="the monitor to start")
+            self.stop_http_monitor()
+            self.open_network_tools_sidebar()
+            monitor = self.wait(
+                lambda: next(
+                    (
+                        m
+                        for m in self.driver.get_state("httpMonitors") or []
+                        if (m.get("config") or {}).get("name") == name and not m.get("running")
+                    ),
+                    None,
+                ),
+                what="the stopped monitor in the store",
+            )
+            mid = monitor["config"]["id"]
+            row = f"monitor-row-{mid}"
+            self.wait(
+                lambda: self.driver.exists(f"monitor-marker-{mid}"), what="the Stopped marker"
+            )
+            marker = self.driver.get_text(f"monitor-marker-{mid}").strip()
+            assert marker == "Stopped", f"the marker reads {marker!r}"
+            self._grade_row(
+                row, [name, "Shop health", marker], [url, "GET every 30s · expects 200"]
+            )
+            desc = self.driver.get_text(f"monitor-description-{mid}").strip()
+            assert desc == "Shop health", f"the monitor description reads {desc!r}"
+            self.shot(label="monitor")
+
+    def test_95_plugin_row(self):
+        with self.step(
+            "rows-names.plugin",
+            "A plugin row shows its name and the plugin's own description; its version, "
+            "author and id are in the tooltip",
+            expect="the Plugins sidebar: 'Sandbox Probe' with its 'Fixture plugin: …' "
+            "description muted under it; no 'v1.0.0' on the row (#5789)",
+        ):
+            self.require("rows-names.items")
+            self.seed_sandbox_plugin()
+            self.wait(
+                lambda: self.sandbox_plugin_state() is not None, what="the seeded plugin"
+            )
+            self._ensure_sidebar("plugins", "activity-bar-plugins")
+            pid = self.SANDBOX_PLUGIN_ID
+            row = f"plugin-row-{pid}"
+            self.wait(lambda: self.driver.exists(row), what="the plugin row")
+            allowed = ["Sandbox Probe", self.driver.get_text(f"plugin-description-{pid}").strip()]
+            if self.driver.exists(f"plugin-marker-{pid}"):
+                allowed.append(self.driver.get_text(f"plugin-marker-{pid}").strip())
+            self._grade_row(
+                row, allowed, ["Version 1.0.0", "By termiHub system tests", f"ID {pid}"]
+            )
+            assert allowed[1].startswith("Fixture plugin"), f"the description reads {allowed[1]!r}"
+            self.shot(label="plugin")
