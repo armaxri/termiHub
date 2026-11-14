@@ -122,6 +122,17 @@ describe("settingsRegistry", () => {
   describe("information architecture (UX-029)", () => {
     const categoryOf = (id: string) => SETTINGS_REGISTRY.find((s) => s.id === id)?.category;
 
+    it("files the host-monitoring settings under Monitoring (#5775)", () => {
+      for (const id of ["powerMonitoring", "monitorLocalShells", "statusBarMetrics"]) {
+        expect(categoryOf(id)).toBe("monitoring");
+        // The pre-#5775 home was External files ▸ Advanced; its words still find them.
+        for (const query of ["monitoring", "advanced", "external"]) {
+          expect(filterSettings(query).some((s) => s.id === id)).toBe(true);
+        }
+      }
+      expect(categoryOf("fileBrowser")).toBe("external-files");
+    });
+
     it("routes every setting to a category that exists in the nav", () => {
       const navIds = new Set(CATEGORIES.map((c) => c.id));
       for (const setting of SETTINGS_REGISTRY) {
