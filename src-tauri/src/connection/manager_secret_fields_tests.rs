@@ -25,6 +25,7 @@ fn conn(name: &str, type_id: &str, settings: serde_json::Value) -> SavedConnecti
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         id: name.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {

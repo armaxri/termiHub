@@ -95,6 +95,7 @@ fn input() -> ScheduleInput {
     ScheduleInput {
         id: String::new(),
         name: "Health check".to_string(),
+        description: None,
         action: ScheduleAction::Workflow {
             workflow_id: "wf-1".to_string(),
         },

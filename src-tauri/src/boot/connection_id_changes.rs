@@ -189,6 +189,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             id: id.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -377,6 +378,7 @@ mod tests {
                 ScheduleInput {
                     id: "s".to_string(),
                     name: "s".to_string(),
+                    description: None,
                     action: ScheduleAction::Workflow {
                         workflow_id: "wf".to_string(),
                     },

@@ -124,6 +124,10 @@ pub struct ScheduleInput {
     pub id: String,
     /// Name.
     pub name: String,
+    /// Optional short description (#5757); blank → none.
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// What to run.
     pub action: ScheduleAction,
     /// Where to run it.
@@ -148,6 +152,15 @@ pub struct TickResult {
     pub changed: bool,
 }
 
+/// Longest schedule description, in characters (#5757; the editors' limit).
+pub(crate) const MAX_DESCRIPTION_CHARS: usize = 80;
+
+/// One line, trimmed; blank → `None` (#5757). Line breaks become spaces.
+pub(crate) fn normalize_description(value: Option<String>) -> Option<String> {
+    let text = value?.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
+}
+
 pub(crate) fn err(msg: impl Into<String>) -> TerminalError {
     TerminalError::WorkflowError(msg.into())
 }
@@ -161,6 +174,13 @@ pub(crate) fn validate_input(input: &ScheduleInput) -> Result<(), TerminalError>
         return Err(err(format!(
             "Schedule names are at most {MAX_NAME_CHARS} characters"
         )));
+    }
+    if let Some(description) = normalize_description(input.description.clone()) {
+        if description.chars().count() > MAX_DESCRIPTION_CHARS {
+            return Err(err(format!(
+                "Schedule descriptions are at most {MAX_DESCRIPTION_CHARS} characters"
+            )));
+        }
     }
     match &input.action {
         ScheduleAction::Workflow { workflow_id } if workflow_id.trim().is_empty() => {

@@ -2076,6 +2076,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 id: "Target".to_string(),
                 name: "Target".to_string(),
                 config: ConnectionConfig {

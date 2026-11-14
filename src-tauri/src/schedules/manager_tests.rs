@@ -34,6 +34,7 @@ pub(super) fn input(id: &str, rule: ScheduleRule) -> ScheduleInput {
     ScheduleInput {
         id: id.to_string(),
         name: "Health check".to_string(),
+        description: None,
         action: ScheduleAction::Workflow {
             workflow_id: "wf-1".to_string(),
         },

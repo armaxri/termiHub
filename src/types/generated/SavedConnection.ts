@@ -32,6 +32,12 @@ iconColor?: string,
  */
 iconEmoji?: string, 
 /**
+ * Optional short description the user wrote (#5757): one line, shown
+ * muted under the name in the sidebar and matched by its search. Absent
+ * (not `null`) when unset, so older files round-trip unchanged.
+ */
+description?: string, 
+/**
  * Runtime-only: which external file this connection was loaded from.
  * `None` = main connections.json, `Some(path)` = external file.
  *

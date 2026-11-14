@@ -18,6 +18,7 @@ fn saved(id: &str, type_id: &str, settings: Value) -> SavedConnection {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         id: id.to_string(),
         name: id.rsplit('/').next().unwrap_or(id).to_string(),
         config: ConnectionConfig {

@@ -71,6 +71,7 @@ impl Machine {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 source_file: None,
             })
             .unwrap();
@@ -230,6 +231,7 @@ fn round_trip_through_a_folder() {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
         })
         .unwrap();

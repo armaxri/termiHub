@@ -26,6 +26,7 @@ fn conn(id: &str, name: &str, settings: Value) -> SavedConnection {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: None,
     }
 }
