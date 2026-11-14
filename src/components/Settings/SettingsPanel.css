@@ -516,3 +516,8 @@
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
+
+/* The biometric-unlock protection note sits just under its toggle row (#5752). */
+.settings-panel__field .biometric-unlock__note {
+  margin-top: var(--spacing-xs);
+}

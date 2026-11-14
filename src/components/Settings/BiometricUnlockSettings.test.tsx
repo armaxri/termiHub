@@ -12,6 +12,13 @@ import {
   OS_AUTH_BIOMETRIC_ENABLED,
   OS_AUTH_UNAVAILABLE,
 } from "@/test/osAuthFixtures";
+import { contrastRatio } from "@/themes/contrast";
+import { darkTheme } from "@/themes/dark";
+import { lightTheme } from "@/themes/light";
+import { solarizedDarkTheme } from "@/themes/solarized-dark";
+import { solarizedLightTheme } from "@/themes/solarized-light";
+
+const BUILT_IN_THEMES = [darkTheme, lightTheme, solarizedDarkTheme, solarizedLightTheme];
 
 vi.mock("@/services/api", async () => {
   const actual = await vi.importActual<typeof import("@/services/api")>("@/services/api");
@@ -136,7 +143,9 @@ describe("BiometricUnlockSettings", () => {
   it("turns off by deleting the stored key", async () => {
     mockedInfo.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
     await renderLoaded();
-    expect(query("biometric-unlock-protection")?.textContent).toMatch(/^OS-enforced: no/);
+    expect(query("biometric-unlock-protection")?.textContent).toBe(
+      "Less secure: other apps running as you could read the unlock key."
+    );
     mockedDisable.mockResolvedValue(OS_AUTH_AVAILABLE.biometricUnlock);
     mockedInfo.mockResolvedValue(OS_AUTH_AVAILABLE);
     await click("biometric-unlock-toggle");
@@ -161,10 +170,55 @@ describe("BiometricUnlockSettings", () => {
     );
   });
 
-  it("reports whether the key is OS-enforced", () => {
+  it("hides the protection note while unlock is off", async () => {
+    await renderLoaded();
+    expect(query("biometric-unlock-toggle")?.getAttribute("aria-checked")).toBe("false");
+    expect(query("biometric-unlock-protection")).toBeNull();
+    // Still hidden while the enable form is open: the unlock is not on yet.
+    await click("biometric-unlock-toggle");
+    expect(query("biometric-unlock-enable-form")).not.toBeNull();
+    expect(query("biometric-unlock-protection")).toBeNull();
+  });
+
+  it("shows the plain warning with the warning-hint icon while unlock is on", async () => {
+    mockedInfo.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
+    await renderLoaded();
+    const note = query("biometric-unlock-protection")!;
+    expect(note.textContent).toBe(
+      "Less secure: other apps running as you could read the unlock key."
+    );
+    expect(note.dataset.tone).toBe("warning");
+    expect(note.classList.contains("settings-form__hint--warning")).toBe(true);
+    const icon = note.querySelector("svg.ui-field__hint-icon");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(note.textContent).not.toMatch(/OS-enforced/);
+  });
+
+  it("shows a short positive note, without the warning icon, for an OS-enforced key", async () => {
+    mockedInfo.mockResolvedValue({
+      ...OS_AUTH_BIOMETRIC_ENABLED,
+      biometricUnlock: {
+        ...OS_AUTH_BIOMETRIC_ENABLED.biometricUnlock,
+        protection: "osEnforced",
+        osEnforcedAvailable: true,
+      },
+    });
+    await renderLoaded();
+    const note = query("biometric-unlock-protection")!;
+    expect(note.textContent).toBe(
+      "Protected by the operating system: the unlock key needs Touch ID every time."
+    );
+    expect(note.dataset.tone).toBe("info");
+    expect(note.classList.contains("settings-form__hint--warning")).toBe(false);
+    expect(note.querySelector("svg")).toBeNull();
+  });
+
+  it("picks the note from the key's protection", () => {
     const base = OS_AUTH_AVAILABLE.biometricUnlock;
-    expect(protectionNote(base)).toMatch(/^OS-enforced: no/);
-    expect(protectionNote({ ...base, osEnforcedAvailable: true })).toMatch(/^OS-enforced: yes/);
+    // Off: no note, even where OS-enforced protection would be available.
+    expect(protectionNote(base)).toBeNull();
+    expect(protectionNote({ ...base, osEnforcedAvailable: true })).toBeNull();
     expect(
       protectionNote({
         ...base,
@@ -172,15 +226,36 @@ describe("BiometricUnlockSettings", () => {
         protection: "osEnforced",
         osEnforcedAvailable: true,
       })
-    ).toMatch(/^OS-enforced: yes/);
+    ).toEqual({
+      tone: "info",
+      text: "Protected by the operating system: the unlock key needs Touch ID every time.",
+    });
+    expect(protectionNote({ ...base, enabled: true, protection: "app" })).toEqual({
+      tone: "warning",
+      text: "Less secure: other apps running as you could read the unlock key.",
+    });
+    // A legacy app-protected key on a build that can OS-enforce is upgraded on next unlock.
     const legacy = protectionNote({
       ...base,
       enabled: true,
       protection: "app",
       osEnforcedAvailable: true,
     });
-    expect(legacy).toMatch(/^OS-enforced: no/);
-    expect(legacy).toContain("upgraded");
-    expect(protectionNote({ ...base, enabled: true, protection: "app" })).not.toContain("upgraded");
+    expect(legacy?.tone).toBe("warning");
+    expect(legacy?.text).toMatch(
+      /^Less secure: other apps running as you could read the unlock key\. /
+    );
+    expect(legacy?.text).toContain("next time you unlock with Touch ID");
   });
+
+  // #5740: the warning note paints --color-warning as text on the plain
+  // settings surface (no tint); the icon is a graphic (1.4.11).
+  it.each(BUILT_IN_THEMES.map((theme) => [theme.id, theme] as const))(
+    "%s: the warning note text reaches AA and its icon 3:1 on the settings surface",
+    (_id, theme) => {
+      for (const surface of [theme.colors.bgPrimary, theme.colors.bgSecondary]) {
+        expect(contrastRatio(theme.colors.colorWarning, surface)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  );
 });
