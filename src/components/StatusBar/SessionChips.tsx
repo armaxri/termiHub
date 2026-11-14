@@ -1,6 +1,7 @@
-import { Cable, Route } from "lucide-react";
+import { Cable, Route, TerminalSquare } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { serialStatusChip, sshStatusChip } from "@/utils/sessionStatusChips";
+import { serialStatusChip, sshStatusChip, telnetStatusChip } from "@/utils/sessionStatusChips";
+import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { useTabSshHostKeyTrust } from "@/store/sshHostKeyTrustBridge";
 
 /**
@@ -34,6 +35,28 @@ export function SerialStatus() {
     <span className="status-bar__item" data-testid="status-bar-serial" title={chip.tooltip}>
       <Cable size={13} />
       {chip.label}
+    </span>
+  );
+}
+
+/**
+ * The telnet chip for the active tab (#5749): `Telnet: host:port` with the
+ * "Unencrypted" badge, since telnet sends everything in clear text. Hidden for
+ * non-telnet tabs.
+ */
+export function TelnetStatus() {
+  const config = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
+  const chip = telnetStatusChip(config);
+  if (!chip) return null;
+  return (
+    <span
+      className="status-bar__item status-bar__item--with-icon"
+      data-testid="status-bar-telnet"
+      title={chip.tooltip}
+    >
+      <TerminalSquare size={13} aria-hidden />
+      {chip.label}
+      <UnencryptedBadge data-testid="status-bar-telnet-unencrypted" />
     </span>
   );
 }

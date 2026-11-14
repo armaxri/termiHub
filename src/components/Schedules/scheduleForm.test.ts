@@ -215,3 +215,29 @@ describe("connect if not connected (#3527)", () => {
     expect(formToScheduleInput("s1", form).connectIfNeeded).toBe(true);
   });
 });
+
+describe("description (#5757)", () => {
+  it("starts empty and round-trips a set description", () => {
+    expect(blankScheduleForm().description).toBe("");
+    const input: ScheduleInput = {
+      id: "s1",
+      name: "A",
+      description: "Checks the web hosts",
+      action: { kind: "workflow", workflowId: "wf" },
+      targets: { kind: "connections", connectionIds: ["c1"] },
+      rule: { kind: "interval", everyMinutes: 5 },
+      missedRuns: "skip",
+    };
+    expect(formToScheduleInput("s1", scheduleToForm(input))).toEqual(input);
+  });
+
+  it("sends one trimmed line, and none when blank", () => {
+    expect(formToScheduleInput("s", valid({ description: "  a\n b " })).description).toBe("a b");
+    expect(formToScheduleInput("s", valid({ description: "  " })).description).toBeUndefined();
+  });
+
+  it("refuses a description over 80 characters", () => {
+    expect(issues(valid({ description: "x".repeat(80) }))).toEqual([]);
+    expect(issues(valid({ description: "x".repeat(81) }))).toContain("description");
+  });
+});

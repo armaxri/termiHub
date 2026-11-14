@@ -186,12 +186,16 @@ class AutomationPhaseUi(HarnessMixin):
         self.wait(lambda: not self.driver.exists(RUN_TARGETS), what="the Run on… dialog to close")
 
     # ── schedules ────────────────────────────────────────────────────────────
-    def schedule_macro(self, macro_id: str, name: str, connection_id: str) -> str:
+    def schedule_macro(
+        self, macro_id: str, name: str, connection_id: str, description: Optional[str] = None
+    ) -> str:
         """Macro row "Schedule": every minute on one connection; return the id."""
         self.show_macros()
         self.driver.click(f"macro-schedule-{macro_id}")
         self.wait(lambda: self.driver.exists(SCHEDULE_EDITOR), what="the schedule editor")
         self.driver.type("schedule-editor-name", name)
+        if description is not None:
+            self.driver.type("schedule-editor-description", description)
         box = f"schedule-editor-connection-{connection_id}"
         self.wait(lambda: self.driver.exists(box), what="the target connection checkbox")
         self.driver.click(box)

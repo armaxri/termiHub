@@ -8,7 +8,7 @@ import type { ScheduleTargets } from "./ScheduleTargets";
 /**
  * A stored schedule.
  *
- * The user-editable part is `name`, `action`, `targets`, `rule`,
+ * The user-editable part is `name`, `description`, `action`, `targets`, `rule`,
  * `missed_runs` and `connect_if_needed`. Everything else is owned by the
  * backend: a schedule is created **disabled**, is enabled only through
  * `set_schedule_enabled` (the first enable must carry the user's confirmation
@@ -24,6 +24,11 @@ id: string,
  * User-facing name.
  */
 name: string, 
+/**
+ * Optional short description the user wrote (#5757), shown muted under
+ * the name. Absent when unset, so older files round-trip unchanged.
+ */
+description?: string, 
 /**
  * What to run.
  */

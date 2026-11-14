@@ -257,6 +257,10 @@ pub enum ConnectionTreeNode {
         /// Opaque to the backend.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon_emoji: Option<String>,
+        /// Optional short description the user wrote (#5757), shown muted
+        /// under the name in the sidebar. Absent on disk = no description.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
         /// Unknown per-node fields, kept verbatim (#3947).
         #[serde(flatten)]
         extra: NodeExtra,
@@ -594,6 +598,12 @@ pub struct SavedConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub icon_emoji: Option<String>,
+    /// Optional short description the user wrote (#5757): one line, shown
+    /// muted under the name in the sidebar and matched by its search. Absent
+    /// (not `null`) when unset, so older files round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// Runtime-only: which external file this connection was loaded from.
     /// `None` = main connections.json, `Some(path)` = external file.
     ///
@@ -689,6 +699,7 @@ mod tests {
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
                 name: "My SSH".to_string(),
                 config: make_ssh_config(),
                 terminal_options: None,
@@ -722,6 +733,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             name: "Local Shell".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -739,6 +751,7 @@ mod tests {
                 icon,
                 icon_color,
                 icon_emoji,
+                description: _,
                 extra,
             } => {
                 assert!(extra.is_empty(), "{extra:?}");
@@ -769,6 +782,7 @@ mod tests {
                         icon: None,
                         icon_color: None,
                         icon_emoji: None,
+                        description: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
                         terminal_options: None,
@@ -779,6 +793,7 @@ mod tests {
                     icon: None,
                     icon_color: None,
                     icon_emoji: None,
+                    description: None,
                     name: "Local".to_string(),
                     config: make_local_config(),
                     terminal_options: None,
@@ -983,6 +998,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             name: "Test".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -1221,6 +1237,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
         };
         let json = serde_json::to_value(&conn).unwrap();
@@ -1242,6 +1259,7 @@ mod tests {
             icon: Some("server".to_string()),
             icon_color: None,
             icon_emoji: None,
+            description: None,
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json.get("icon").unwrap(), "server");
@@ -1273,6 +1291,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
             extra: extra.clone(),
         };

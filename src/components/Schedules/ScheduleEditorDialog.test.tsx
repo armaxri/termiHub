@@ -117,6 +117,18 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     });
   });
 
+  it("saves a short one-line description (#5757)", async () => {
+    const onSave = vi.fn();
+    render({ onSave });
+    const input = query("schedule-editor-description") as HTMLInputElement;
+    expect(input.maxLength).toBe(80);
+    setInput("schedule-editor-name", "Ping");
+    setInput("schedule-editor-description", "  Checks the web hosts ");
+    act(() => query("schedule-editor-connection-c1")!.click());
+    await act(async () => query("schedule-editor-save")!.click());
+    expect(onSave.mock.calls[0][0].description).toBe("Checks the web hosts");
+  });
+
   it("offers 'Connect if not connected', off by default, with its help text (#3527)", async () => {
     const onSave = vi.fn();
     render({ onSave });

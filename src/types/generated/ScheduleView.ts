@@ -26,6 +26,11 @@ id: string,
  */
 name: string, 
 /**
+ * Optional short description the user wrote (#5757), shown muted under
+ * the name. Absent when unset, so older files round-trip unchanged.
+ */
+description?: string, 
+/**
  * What to run.
  */
 action: ScheduleAction, 

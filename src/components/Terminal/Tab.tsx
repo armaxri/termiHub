@@ -53,6 +53,8 @@ import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
 import { macroReceivingLabel, type MacroReceivingInfo } from "@/utils/macroTabMarker";
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
+import { isUnencryptedSession } from "@/utils/unencryptedSession";
+import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
@@ -457,6 +459,14 @@ export function Tab({
         >
           Spawned
         </span>
+      )}
+      {/* Unencrypted marker (#5749): a telnet session sends everything,
+          passwords included, in clear text. */}
+      {isTerminalTab && isUnencryptedSession(tab.config) && (
+        <UnencryptedBadge
+          className="tab__unencrypted-badge"
+          data-testid={`tab-unencrypted-badge-${tab.id}`}
+        />
       )}
       {/* Pointer-only close glyph (A11Y2-011). A focusable button nested in
           `role="tab"` is invalid and folded its label into the tab's name, so

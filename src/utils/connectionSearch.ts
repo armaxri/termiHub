@@ -25,7 +25,8 @@ function connectionHost(connection: SavedConnection): string {
 }
 
 /**
- * Whether a connection matches the (already normalized) query by name or host.
+ * Whether a connection matches the (already normalized) query by name, its
+ * description (#5757) or host.
  * An empty query matches everything.
  *
  * Matching goes through {@link textFieldsMatchQuery} (match-sorter), so it is
@@ -35,7 +36,10 @@ export function connectionMatchesQuery(
   connection: SavedConnection,
   normalizedQuery: string
 ): boolean {
-  return textFieldsMatchQuery([connection.name, connectionHost(connection)], normalizedQuery);
+  return textFieldsMatchQuery(
+    [connection.name, connection.description ?? "", connectionHost(connection)],
+    normalizedQuery
+  );
 }
 
 /**

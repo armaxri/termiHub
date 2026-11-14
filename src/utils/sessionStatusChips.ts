@@ -1,6 +1,7 @@
 /**
  * Labels for the status-bar session chips (#5628): the SSH chip shown on every
- * SSH tab and the serial chip with the port and line settings.
+ * SSH tab, the serial chip with the port and line settings, and the telnet
+ * chip (#5749) that carries the "Unencrypted" badge.
  *
  * Pure so the exact wording is unit-tested; the components only render them.
  */
@@ -12,6 +13,8 @@ import { isSshConnectionConfig } from "@/utils/typedConnectionConfig";
 import { connectionConfigFields } from "@/utils/connectionConfigFields";
 import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
 import type { SshHostKeyTrust } from "@/types/generated/SshHostKeyTrust";
+import { isUnencryptedSession } from "@/utils/unencryptedSession";
+import { t, tf } from "@/i18n/catalog";
 
 /** A status-bar chip: its visible label and its tooltip. */
 export interface SessionChip {
@@ -21,6 +24,9 @@ export interface SessionChip {
 
 /** The SSH port when a config leaves it out (mirrors the backend default). */
 const DEFAULT_SSH_PORT = 22;
+
+/** The telnet port when a config leaves it out (mirrors the backend default). */
+const DEFAULT_TELNET_PORT = 23;
 
 /** Serial defaults when a config leaves them out (mirrors `SerialConfig`). */
 const SERIAL_DEFAULTS = { baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none" };
@@ -115,4 +121,22 @@ export function serialStatusChip(config: ConnectionConfig | undefined | null): S
   const parityLetter = (parity.charAt(0) || "n").toUpperCase();
   const label = `${port} · ${baud} ${dataBits}${parityLetter}${stopBits}`;
   return { label, tooltip: `Serial: ${label}` };
+}
+
+/**
+ * The telnet chip (#5749): `Telnet: host:port` on every telnet tab (direct or
+ * on an agent), so the status bar can carry the "Unencrypted" badge. An agent
+ * telnet session without a readable host reads just `Telnet`. Returns `null`
+ * for non-telnet configs.
+ */
+export function telnetStatusChip(config: ConnectionConfig | undefined | null): SessionChip | null {
+  if (!isUnencryptedSession(config)) return null;
+  const fields = connectionConfigFields(config);
+  const host = typeof fields.host === "string" ? fields.host.trim() : "";
+  const label = host
+    ? tf("statusBar.telnet.label", {
+        endpoint: `${host}:${numberOr(fields.port, DEFAULT_TELNET_PORT)}`,
+      })
+    : t("statusBar.telnet.labelNoHost");
+  return { label, tooltip: `${label}\n${t("session.unencrypted.tooltip")}` };
 }

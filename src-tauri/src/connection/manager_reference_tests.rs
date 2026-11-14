@@ -27,6 +27,7 @@ fn ssh(id: &str, name: &str, folder_id: Option<&str>, hops: &[&str]) -> SavedCon
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         id: id.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {

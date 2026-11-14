@@ -18,6 +18,10 @@ id: string,
  */
 name: string, 
 /**
+ * Optional short description (#5757); blank → none.
+ */
+description?: string, 
+/**
  * What to run.
  */
 action: ScheduleAction, 

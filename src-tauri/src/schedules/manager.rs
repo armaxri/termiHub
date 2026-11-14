@@ -37,7 +37,7 @@ use super::config::{Schedule, ScheduleStore, ScheduleTargets};
 use super::storage::ScheduleStorage;
 use super::tick::{self, TickContext};
 use super::timing::next_run_after;
-use super::wire::{aggregate, err, validate_input};
+use super::wire::{aggregate, err, normalize_description, validate_input};
 pub use super::wire::{
     RunCoverage, ScheduleFire, ScheduleInput, ScheduleView, SchedulerState, TickResult,
     WindowRunReport,
@@ -239,6 +239,7 @@ impl ScheduleManager {
     ) -> Result<ScheduleView, TerminalError> {
         validate_input(&input)?;
         input.name = input.name.trim().to_string();
+        input.description = normalize_description(input.description.take());
         if let ScheduleTargets::Connections { connection_ids } = &mut input.targets {
             let mut seen = BTreeSet::new();
             connection_ids.retain(|c| !c.trim().is_empty() && seen.insert(c.clone()));
@@ -269,6 +270,7 @@ impl ScheduleManager {
                     s.enabled_at = Some(stamp.clone());
                 }
                 s.name = input.name;
+                s.description = input.description;
                 s.action = input.action;
                 s.targets = input.targets;
                 s.rule = input.rule;
@@ -281,6 +283,7 @@ impl ScheduleManager {
                 inner.store.schedules.push(Schedule {
                     id: input.id.clone(),
                     name: input.name,
+                    description: input.description,
                     action: input.action,
                     targets: input.targets,
                     rule: input.rule,
@@ -588,3 +591,7 @@ mod history_tests;
 #[cfg(test)]
 #[path = "manager_connect_tests.rs"]
 mod connect_tests;
+
+#[cfg(test)]
+#[path = "manager_description_tests.rs"]
+mod description_tests;

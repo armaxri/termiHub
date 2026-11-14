@@ -190,7 +190,7 @@ pub struct ScheduleRunResult {
 
 /// A stored schedule.
 ///
-/// The user-editable part is `name`, `action`, `targets`, `rule`,
+/// The user-editable part is `name`, `description`, `action`, `targets`, `rule`,
 /// `missed_runs` and `connect_if_needed`. Everything else is owned by the
 /// backend: a schedule is created **disabled**, is enabled only through
 /// `set_schedule_enabled` (the first enable must carry the user's confirmation
@@ -205,6 +205,11 @@ pub struct Schedule {
     pub id: String,
     /// User-facing name.
     pub name: String,
+    /// Optional short description the user wrote (#5757), shown muted under
+    /// the name. Absent when unset, so older files round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// What to run.
     pub action: ScheduleAction,
     /// Where to run it.

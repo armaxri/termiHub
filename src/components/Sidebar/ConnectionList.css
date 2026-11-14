@@ -233,6 +233,33 @@
   text-overflow: ellipsis;
 }
 
+/* A connection with a description (#5757): the name, then the user's short
+   description muted on a second line; the row grows to fit both. */
+.connection-tree__item--described {
+  height: auto;
+  min-height: 22px;
+  padding-top: var(--spacing-xxs);
+  padding-bottom: var(--spacing-xxs);
+}
+
+.connection-tree__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.connection-tree__text .connection-tree__label {
+  flex: none;
+}
+
+.connection-tree__description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
 /* The hover-only type tag is out of the layout until hover (#4709): an
    invisible-but-present tag used to reserve its width on every row and cut the
    connection name short in a narrow sidebar. */

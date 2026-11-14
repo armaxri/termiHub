@@ -596,6 +596,55 @@ describe("PasswordPrompt", () => {
     });
   });
 
+  describe("unencrypted telnet password (#5749)", () => {
+    const line = () => query("password-prompt-unencrypted");
+
+    it("says a telnet password travels unencrypted", async () => {
+      await act(async () => {
+        void useAppStore
+          .getState()
+          .requestPassword("10.0.0.7", "pi", "", "password", { transport: "Telnet" });
+      });
+      render();
+
+      expect(line()?.textContent).toBe("Telnet sends this password unencrypted.");
+      // #5740: primary text on the warning tint, never warning text on it.
+      expect(line()?.classList.contains("password-prompt__unencrypted")).toBe(true);
+    });
+
+    it("shows no unencrypted line for an SSH password", async () => {
+      await act(async () => {
+        void useAppStore
+          .getState()
+          .requestPassword("example.com", "alice", "", "password", { transport: "SSH" });
+      });
+      render();
+
+      expect(line()).toBeNull();
+    });
+
+    it("shows no unencrypted line when no transport is given", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("example.com", "alice");
+      });
+      render();
+
+      expect(line()).toBeNull();
+    });
+
+    it("does not flag a schema field secret on a telnet connection", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("10.0.0.7", "pi", "", "password", {
+          transport: "Telnet",
+          secretLabel: "Proxy password",
+        });
+      });
+      render();
+
+      expect(line()).toBeNull();
+    });
+  });
+
   describe("concurrent prompts (#4312)", () => {
     function typePassword(value: string) {
       const input = query("password-prompt-input") as HTMLInputElement;
