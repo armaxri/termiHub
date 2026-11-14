@@ -253,6 +253,38 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     expect(kinds).not.toContain("session.reconnect");
   });
 
+  it("does NOT reconnect a serial device an agent gave up on (#5783)", async () => {
+    // The agent's in-place reopen gave up: `device_gone` ends the tab.
+    const agentTab = useAppStore
+      .getState()
+      .addTab(
+        "ttyUSB0",
+        "serial",
+        { type: "serial", config: { port: "/dev/ttyUSB0", agentId: "agent-1" } },
+        { contentType: "terminal", sessionId: "sess-1" }
+      );
+    useAppStore
+      .getState()
+      .setTerminalExited(agentTab, { code: null, reason: "dropped" }, "device_gone");
+    // A direct serial tab's lost device still reconnects (the desktop reopens it).
+    const directTab = useAppStore
+      .getState()
+      .addTab(
+        "ttyUSB1",
+        "serial",
+        { type: "serial", config: { port: "/dev/ttyUSB1" } },
+        { contentType: "terminal", sessionId: "sess-2" }
+      );
+    useAppStore
+      .getState()
+      .setTerminalExited(directTab, { code: null, reason: "dropped" }, "device_gone");
+    await flush();
+
+    expect(reconnectKinds(fake, agentTab)).toContain("session.dropped");
+    expect(reconnectKinds(fake, agentTab)).not.toContain("session.reconnect");
+    expect(reconnectKinds(fake, directTab)).toContain("session.reconnect");
+  });
+
   it("re-drives the tab when the backend timer projects Waiting→Connecting", async () => {
     const tabId = makeSshTab(true);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });

@@ -7,6 +7,7 @@
  */
 
 import type { TerminalTab } from "@/types/terminal";
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import { isAutoReconnectEnabled, TERMINAL_AUTO_RECONNECT_TYPES } from "@/utils/autoReconnect";
 import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { frontendLog } from "@/utils/frontendLog";
@@ -59,6 +60,23 @@ export function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
   }
   if (!TERMINAL_AUTO_RECONNECT_TYPES.includes(tab.connectionType)) return false;
   return isAutoReconnectEnabled(cfg, tab.connectionType);
+}
+
+/**
+ * Whether a lost link (no exit code) on `tab` arms the resilient reconnect:
+ * a resilient tab, unless its agent said the session's device is gone for good
+ * (`device_gone`, #5783). An agent reopens its own serial port in place
+ * (#5396), so `device_gone` from an agent means that reopen gave up; a direct
+ * serial tab's `device_gone` still reconnects through the desktop's redrive.
+ * Mirrors the backend's `drop_may_reconnect`.
+ */
+export function dropMayReconnect(
+  tab: TerminalTab | undefined,
+  endCause: SessionEndCause | null | undefined
+): boolean {
+  if (!isResilientReconnectTab(tab)) return false;
+  const cfg = tab?.config?.config as { agentId?: unknown } | undefined;
+  return !(endCause === "device_gone" && !!cfg?.agentId);
 }
 
 /**

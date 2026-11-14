@@ -315,8 +315,10 @@ async fn the_loop_gives_up_at_the_policy_limit_and_ends_the_session() {
     // ten attempts, no more.
     assert_eq!(gave_up.seq, 1 + 2 * RECONNECT_POLICY.max_attempts as u64);
     assert_eq!(h.open_count(), 1);
-    // The session output closes, so the daemon ends the session.
+    // The session output closes, so the daemon ends the session — and says
+    // the device is gone, so the desktop ends the tab (#5783).
     assert_eq!(h.output.recv().await, None);
+    assert_eq!(h.reopen.end_cause(), Some(SessionEndCause::DeviceGone));
 
     // A port that returns after the give-up is not reopened.
     h.probe.set(PORT, Some(identity("S1")));
@@ -331,11 +333,13 @@ async fn stop_cancels_the_loop() {
     h.drop_port(0);
     h.wait_for(|s| matches!(s, SessionReconnectStatus::Waiting { attempt: 1, .. }))
         .await;
+    assert_eq!(h.reopen.end_cause(), None, "no cause while reopening");
 
     // The desktop's Stop closes the session, which disconnects the backend.
     h.reopen.disconnect().await.expect("disconnect");
     let last = h.status.borrow().clone();
     assert_eq!(h.output.recv().await, None, "the session output ends");
+    assert_eq!(h.reopen.end_cause(), None, "a stop is not a lost device");
 
     // The device comes back later: nothing is opened and no step follows.
     h.probe.set(PORT, Some(identity("S1")));
@@ -350,6 +354,7 @@ async fn disconnect_while_connected_ends_without_a_reopen() {
     h.reopen.disconnect().await.expect("disconnect");
     assert_eq!(h.output.recv().await, None);
     assert!(h.status.borrow().is_none(), "a plain close is not a drop");
+    assert_eq!(h.reopen.end_cause(), None);
     assert_eq!(h.open_count(), 1);
 }
 

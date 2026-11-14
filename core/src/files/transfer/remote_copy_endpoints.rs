@@ -7,6 +7,7 @@ use std::io;
 use async_trait::async_trait;
 
 use super::{CopyEndpoint, CopyReader, CopyWriter, EndpointLink, OpenError};
+use crate::errors::FileError;
 use crate::files::transfer::SourceFingerprint;
 
 #[cfg(feature = "ssh")]
@@ -95,6 +96,11 @@ mod sftp {
 
         fn can_resume_write(&self) -> bool {
             true
+        }
+
+        /// `setstat` the size, confirmed by a fresh `stat`.
+        async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+            self.channel.truncate_file(path, len).await
         }
 
         async fn open_read(
@@ -246,6 +252,11 @@ mod docker {
             self.caps.size
         }
 
+        /// `truncate` (or `dd`) in the container, confirmed by `wc -c`.
+        async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+            self.target.truncate_file(path, len).await
+        }
+
         async fn open_read(
             &self,
             path: &str,
@@ -309,7 +320,6 @@ mod ranged {
     use tracing::debug;
 
     use super::*;
-    use crate::errors::FileError;
     use crate::files::transfer::ranged::{remote_fingerprint, RangedTransferTarget};
     use crate::files::MAX_RANGE_BYTES;
 
@@ -399,6 +409,12 @@ mod ranged {
         /// expects, so a chunk can never land in the wrong place.
         fn can_resume_write(&self) -> bool {
             true
+        }
+
+        /// The target's own truncate; [`FileError::NotSupported`] when the
+        /// session cannot shorten a file.
+        async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError> {
+            self.target.truncate(path, len).await
         }
 
         async fn open_read(

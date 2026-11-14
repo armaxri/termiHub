@@ -4,6 +4,7 @@
 //! browsing via `docker exec`. Uses the [`bollard`] crate for async
 //! Docker API access instead of shelling out to the Docker CLI.
 
+mod exit;
 mod file_browser;
 mod list;
 mod monitoring;
@@ -107,6 +108,9 @@ struct ConnectedState {
     remove_on_exit: bool,
     /// Shared alive flag — set to `false` to signal the reader task to stop.
     alive: Arc<AtomicBool>,
+    /// The session's exit status once it ended on its own (#5783): the shell
+    /// the user exited, or the container that stopped under it.
+    exit_status: exit::ExitStatusSlot,
     /// Sender for writing to the exec stdin.
     stdin_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
     /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
@@ -1252,6 +1256,7 @@ impl ConnectionType for Docker {
             }
 
             let alive = Arc::new(AtomicBool::new(true));
+            let exit_status = exit::ExitStatusSlot::default();
 
             // Set up stdin channel.
             let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
@@ -1261,6 +1266,12 @@ impl ConnectionType for Docker {
                     // Spawn reader task: forwards exec output to the output channel.
                     let alive_clone = alive.clone();
                     let output_tx_clone = self.output_tx.clone();
+                    let exit_slot = exit_status.clone();
+                    let inspector = exit::EngineInspector {
+                        client: client.clone(),
+                        exec_id: exec_id.clone(),
+                        container_id: container_id.clone(),
+                    };
                     tokio::spawn(async move {
                         while alive_clone.load(Ordering::SeqCst) {
                             match output.next().await {
@@ -1286,6 +1297,15 @@ impl ConnectionType for Docker {
                                 None => break,
                             }
                         }
+                        // Ended on its own (#5783): record how, then close the
+                        // output so the session owner sees the session end.
+                        exit::finish_session(
+                            &inspector,
+                            &alive_clone,
+                            &exit_slot,
+                            &output_tx_clone,
+                        )
+                        .await;
                         alive_clone.store(false, Ordering::SeqCst);
                     });
 
@@ -1324,6 +1344,7 @@ impl ConnectionType for Docker {
                 // container is never removed regardless of this flag.
                 remove_on_exit: manage_container && config.remove_on_exit,
                 alive,
+                exit_status,
                 stdin_tx,
                 disconnected: false,
             })
@@ -1405,6 +1426,15 @@ impl ConnectionType for Docker {
         self.state
             .as_ref()
             .is_some_and(|s| s.alive.load(Ordering::SeqCst))
+    }
+
+    /// The session's exit status once it ended on its own (#5783): the exec's
+    /// code when the user exited the shell, the container's when it stopped.
+    /// `None` while running and after a deliberate disconnect.
+    fn exit_code(&self) -> Option<i32> {
+        self.state
+            .as_ref()
+            .and_then(|s| exit::recorded(&s.exit_status))
     }
 
     fn write(&self, data: &[u8]) -> Result<(), SessionError> {
@@ -2258,6 +2288,7 @@ mod tests {
             manage_container,
             remove_on_exit: true,
             alive: Arc::new(AtomicBool::new(true)),
+            exit_status: exit::ExitStatusSlot::default(),
             stdin_tx,
             disconnected,
         })

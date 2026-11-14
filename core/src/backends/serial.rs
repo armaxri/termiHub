@@ -12,8 +12,8 @@ use tracing::{debug, info, warn};
 
 use crate::config::SerialConfig;
 use crate::connection::{
-    Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
-    SettingsField, SettingsGroup, SettingsSchema,
+    Capabilities, ConnectionType, EndCauseSlot, FieldType, OutputReceiver, OutputSender,
+    SelectOption, SessionEndCause, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -56,6 +56,9 @@ struct ConnectedState {
     writer_task: tokio::task::JoinHandle<()>,
     /// `true` while the reader task is running (i.e. port is alive).
     alive: Arc<AtomicBool>,
+    /// Why the port ended on its own (#5783): the reader or writer records
+    /// [`SessionEndCause::DeviceGone`] when the port is lost.
+    end_cause: EndCauseSlot,
     /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
     /// The graceful path and the guard must never both abort the tasks.
@@ -206,11 +209,15 @@ async fn run_serial_reader<R: SerialByteReader>(
     port_reader: Arc<R>,
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     alive: Arc<AtomicBool>,
+    end_cause: EndCauseSlot,
 ) {
     let mut buf = [0u8; 1024];
     loop {
         match port_reader.read_bytes(&mut buf).await {
-            Ok(0) => break,
+            Ok(0) => {
+                end_cause.record(SessionEndCause::DeviceGone);
+                break;
+            }
             Ok(n) => {
                 let data = buf[..n].to_vec();
                 // Clone the sender out before any await — MutexGuard is not Send.
@@ -235,7 +242,11 @@ async fn run_serial_reader<R: SerialByteReader>(
             {
                 continue
             }
-            Err(_) => break,
+            Err(_) => {
+                // The port is gone (#5783): say so before the output ends.
+                end_cause.record(SessionEndCause::DeviceGone);
+                break;
+            }
         }
     }
 
@@ -290,10 +301,12 @@ async fn run_serial_writer<W: SerialByteWriter>(
     mut write_rx: mpsc::Receiver<Vec<u8>>,
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     alive: Arc<AtomicBool>,
+    end_cause: EndCauseSlot,
 ) {
     while let Some(data) = write_rx.recv().await {
         if let Err(e) = port_writer.write_all_bytes(&data).await {
             warn!(error = %e, "serial write failed; marking session disconnected");
+            end_cause.record(SessionEndCause::DeviceGone);
             break;
         }
     }
@@ -505,6 +518,7 @@ impl ConnectionType for Serial {
         let port = Arc::new(port_handle);
 
         let alive = Arc::new(AtomicBool::new(true));
+        let end_cause = EndCauseSlot::new();
 
         // Set up the output channel. Its receiver is kept for the first subscriber, so output produced
         // before anyone subscribes waits there instead of being dropped (#4719).
@@ -517,6 +531,7 @@ impl ConnectionType for Serial {
             port.clone(),
             self.output_tx.clone(),
             alive.clone(),
+            end_cause.clone(),
         ));
 
         // Writer task: drains the write channel and sends to the serial port. On
@@ -530,6 +545,7 @@ impl ConnectionType for Serial {
             write_rx,
             self.output_tx.clone(),
             alive.clone(),
+            end_cause.clone(),
         ));
 
         self.state = Some(ConnectedState {
@@ -537,6 +553,7 @@ impl ConnectionType for Serial {
             reader_task,
             writer_task,
             alive,
+            end_cause,
             disconnected: false,
         });
 
@@ -596,6 +613,12 @@ impl ConnectionType for Serial {
 
     fn subscribe_output(&self) -> OutputReceiver {
         self.early_output.subscribe(&self.output_tx)
+    }
+
+    /// [`SessionEndCause::DeviceGone`] once the port was lost (#5783); `None`
+    /// while it is open and after a deliberate disconnect.
+    fn end_cause(&self) -> Option<SessionEndCause> {
+        self.state.as_ref().and_then(|s| s.end_cause.get())
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
@@ -987,6 +1010,7 @@ mod tests {
             reader_task,
             writer_task,
             alive: alive.clone(),
+            end_cause: EndCauseSlot::new(),
             disconnected: false,
         };
 
@@ -1027,6 +1051,7 @@ mod tests {
             reader_task,
             writer_task,
             alive: alive.clone(),
+            end_cause: EndCauseSlot::new(),
             disconnected: true,
         };
 
@@ -1107,7 +1132,13 @@ mod tests {
             Err(io::Error::from(io::ErrorKind::BrokenPipe)),
         ]));
 
-        run_serial_reader(reader, output_tx.clone(), alive.clone()).await;
+        run_serial_reader(
+            reader,
+            output_tx.clone(),
+            alive.clone(),
+            EndCauseSlot::new(),
+        )
+        .await;
 
         assert_eq!(rx.recv().await, Some(b"hello".to_vec()));
         // The channel must close so the session manager surfaces the disconnect.
@@ -1141,13 +1172,53 @@ mod tests {
             Ok(Vec::new()), // Ok(0) → clean EOF
         ]));
 
-        run_serial_reader(reader, output_tx.clone(), alive.clone()).await;
+        run_serial_reader(
+            reader,
+            output_tx.clone(),
+            alive.clone(),
+            EndCauseSlot::new(),
+        )
+        .await;
 
         assert_eq!(rx.recv().await, Some(b"data".to_vec()));
         let closed = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
         assert_eq!(closed, Ok(None), "channel must close on EOF");
         assert!(!alive.load(Ordering::SeqCst));
         assert!(output_tx.lock().expect("lock").is_none());
+    }
+
+    /// #5783: a lost port says why it ended, so an agent-hosted serial tab
+    /// ends with "device disconnected" instead of staying open.
+    #[tokio::test]
+    async fn reader_records_device_gone_on_fatal_error_and_eof() {
+        for last in [
+            Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+            Ok(Vec::new()),
+        ] {
+            let (output_tx, _rx) = make_output_channel();
+            let alive = Arc::new(AtomicBool::new(true));
+            let cause = EndCauseSlot::new();
+            let reader = Arc::new(MockSerialReader::new(vec![last]));
+            run_serial_reader(reader, output_tx, alive, cause.clone()).await;
+            assert_eq!(cause.get(), Some(SessionEndCause::DeviceGone));
+        }
+    }
+
+    /// A reader that stops because its session was closed (the stored sender
+    /// was cleared) records no cause: nothing went away.
+    #[tokio::test]
+    async fn reader_records_no_cause_when_its_session_was_closed() {
+        let output_tx: Arc<Mutex<Option<OutputSender>>> = Arc::new(Mutex::new(None));
+        let alive = Arc::new(AtomicBool::new(true));
+        let cause = EndCauseSlot::new();
+        let reader = Arc::new(MockSerialReader::new(vec![Ok(b"x".to_vec())]));
+        run_serial_reader(reader, output_tx, alive, cause.clone()).await;
+        assert_eq!(cause.get(), None);
+    }
+
+    #[test]
+    fn end_cause_is_none_while_disconnected() {
+        assert_eq!(Serial::new().end_cause(), None);
     }
 
     // --- run_serial_writer / swallowed-write-error disconnect (CORE-018) ----
@@ -1210,7 +1281,14 @@ mod tests {
         write_tx.send(b"boom".to_vec()).await.expect("send second");
         drop(write_tx);
 
-        run_serial_writer(writer.clone(), write_rx, output_tx.clone(), alive.clone()).await;
+        run_serial_writer(
+            writer.clone(),
+            write_rx,
+            output_tx.clone(),
+            alive.clone(),
+            EndCauseSlot::new(),
+        )
+        .await;
 
         // The first chunk wrote through; the second failed and stopped the loop.
         assert_eq!(writer.recorded(), vec![b"ok".to_vec()]);
@@ -1222,6 +1300,28 @@ mod tests {
             output_tx.lock().expect("lock").is_none(),
             "a failed write must drop the output sender so the disconnect surfaces"
         );
+    }
+
+    /// #5783: a failed write means the port is gone; a closed write channel
+    /// (session teardown) is not.
+    #[tokio::test]
+    async fn writer_records_device_gone_only_on_a_failed_write() {
+        for (writer, expected) in [
+            (
+                MockSerialWriter::failing_after(0),
+                Some(SessionEndCause::DeviceGone),
+            ),
+            (MockSerialWriter::ok(), None),
+        ] {
+            let (output_tx, _rx) = make_output_channel();
+            let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(8);
+            write_tx.send(b"x".to_vec()).await.expect("send");
+            drop(write_tx);
+            let cause = EndCauseSlot::new();
+            let alive = Arc::new(AtomicBool::new(true));
+            run_serial_writer(Arc::new(writer), write_rx, output_tx, alive, cause.clone()).await;
+            assert_eq!(cause.get(), expected);
+        }
     }
 
     /// The happy path: every chunk is written in order, and when the write
@@ -1237,7 +1337,14 @@ mod tests {
         write_tx.send(b"b".to_vec()).await.expect("send b");
         drop(write_tx); // channel closes → writer loop ends normally
 
-        run_serial_writer(writer.clone(), write_rx, output_tx.clone(), alive.clone()).await;
+        run_serial_writer(
+            writer.clone(),
+            write_rx,
+            output_tx.clone(),
+            alive.clone(),
+            EndCauseSlot::new(),
+        )
+        .await;
 
         assert_eq!(writer.recorded(), vec![b"a".to_vec(), b"b".to_vec()]);
         assert!(!alive.load(Ordering::SeqCst));

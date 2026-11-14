@@ -383,10 +383,10 @@ pub(super) fn rebase_cursor(
 /// may have changed while the transfer was paused or backing off. Any doubt
 /// restarts from byte zero, which is always correct. `backend` labels the logs.
 #[cfg_attr(
-    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    not(feature = "local-transfer"),
     allow(
         dead_code,
-        reason = "the FTP executor gates through apply_partial_gate"
+        reason = "only the local-disk executor gates through apply_resume_gate"
     )
 )]
 pub(super) fn apply_resume_gate(
@@ -480,8 +480,9 @@ impl PartialProbe {
     }
 }
 
-/// Row message for an upload whose remote partial runs past the checkpoint on
-/// a protocol that cannot shorten a remote file (FTP, an agent-hosted session).
+/// Row message for an upload (or a remote-to-remote copy, #5737) whose remote
+/// partial runs past the checkpoint on a protocol that cannot shorten a remote
+/// file (FTP, an agent-hosted session).
 pub(super) const UNTRIMMABLE_PARTIAL_NOTE: &str =
     "remote partial is past the last checkpoint and cannot be trimmed; restarting from start";
 

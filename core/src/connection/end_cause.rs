@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 /// Why a session's link ended on its own.
 ///
-/// Serialised `snake_case` (`"remote_closed"`, `"io_error"`, `"timeout"`) for
-/// the `terminal-exit` event.
+/// Serialised `snake_case` (`"remote_closed"`, `"io_error"`, `"timeout"`,
+/// `"device_gone"`) for the `terminal-exit` event.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -29,6 +29,9 @@ pub enum SessionEndCause {
     IoError,
     /// The link timed out, e.g. the peer failed the TCP keepalive probes.
     Timeout,
+    /// The device behind the session went away (#5783): an unplugged serial
+    /// port, or a serial port whose in-place reopen on a remote agent gave up.
+    DeviceGone,
 }
 
 /// A per-connection slot for the [`SessionEndCause`], shared between the
@@ -90,5 +93,6 @@ mod tests {
         assert_eq!(json(SessionEndCause::RemoteClosed), "\"remote_closed\"");
         assert_eq!(json(SessionEndCause::IoError), "\"io_error\"");
         assert_eq!(json(SessionEndCause::Timeout), "\"timeout\"");
+        assert_eq!(json(SessionEndCause::DeviceGone), "\"device_gone\"");
     }
 }

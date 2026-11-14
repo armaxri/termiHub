@@ -29,9 +29,10 @@
 //!
 //! # Ending
 //!
-//! At the policy's attempt limit the loop publishes `gaveUp` and closes the
-//! session output, so the daemon ends the session exactly as a drop did before
-//! #5396. A kill (the desktop's Stop, or a tab close) runs
+//! At the policy's attempt limit the loop publishes `gaveUp`, records the
+//! [`SessionEndCause::DeviceGone`] end cause (#5783) and closes the session
+//! output, so the daemon ends the session and the desktop ends its tab with
+//! "device disconnected" instead of leaving it open. A kill (the desktop's Stop, or a tab close) runs
 //! [`ConnectionType::disconnect`], which cancels the loop.
 //!
 //! Only a serial session whose Auto-Reconnect setting is on is wrapped
@@ -49,8 +50,8 @@ use tracing::{info, warn};
 
 use termihub_core::config::SerialConfig;
 use termihub_core::connection::{
-    auto_reconnect_enabled_for, Capabilities, ConnectionType, OutputReceiver, OutputSender,
-    SettingsSchema,
+    auto_reconnect_enabled_for, Capabilities, ConnectionType, EndCauseSlot, OutputReceiver,
+    OutputSender, SessionEndCause, SettingsSchema,
 };
 use termihub_core::errors::SessionError;
 use termihub_core::files::FileBrowser;
@@ -143,6 +144,8 @@ pub(crate) struct SerialReopen {
     output_tx: Option<OutputSender>,
     output_rx: Mutex<Option<OutputReceiver>>,
     status_tx: Arc<watch::Sender<Option<ReopenStatus>>>,
+    /// Why the session ended on its own: the device is gone (#5783).
+    end_cause: EndCauseSlot,
     cancel: CancellationToken,
     task: Option<JoinHandle<()>>,
 }
@@ -179,6 +182,7 @@ impl SerialReopen {
             output_tx: Some(output_tx),
             output_rx: Mutex::new(Some(output_rx)),
             status_tx: Arc::new(status_tx),
+            end_cause: EndCauseSlot::new(),
             cancel: CancellationToken::new(),
             task: None,
         }
@@ -247,6 +251,7 @@ impl ConnectionType for SerialReopen {
             inner: Arc::clone(&self.inner),
             output_tx,
             status_tx: Arc::clone(&self.status_tx),
+            end_cause: self.end_cause.clone(),
             cancel: self.cancel.clone(),
             settings,
             configured,
@@ -316,6 +321,16 @@ impl ConnectionType for SerialReopen {
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
         None
     }
+
+    /// [`SessionEndCause::DeviceGone`] once the port dropped for good (#5783):
+    /// the reopen gave up, or there was no port to reopen. `None` while the
+    /// session runs or reopens, and after a deliberate stop.
+    fn end_cause(&self) -> Option<SessionEndCause> {
+        if self.cancel.is_cancelled() {
+            return None;
+        }
+        self.end_cause.get()
+    }
 }
 
 /// The task that forwards the open port's output and runs the reopen loop
@@ -328,6 +343,7 @@ struct Supervisor {
     inner: Arc<Mutex<Option<Box<dyn ConnectionType>>>>,
     output_tx: OutputSender,
     status_tx: Arc<watch::Sender<Option<ReopenStatus>>>,
+    end_cause: EndCauseSlot,
     cancel: CancellationToken,
     settings: Value,
     configured: Option<String>,
@@ -347,7 +363,8 @@ impl Supervisor {
                 let _ = dead.disconnect().await;
             }
             let Some(configured) = self.configured.clone() else {
-                // Nothing to reopen: end the session as before.
+                // Nothing to reopen: the device is gone for good.
+                self.end_cause.record(SessionEndCause::DeviceGone);
                 return;
             };
             match self.reopen(&configured).await {
@@ -356,7 +373,13 @@ impl Supervisor {
                     rx = next_rx;
                 }
                 // Gave up or stopped: dropping `output_tx` ends the session.
-                None => return,
+                // A give-up says why before the output closes (#5783).
+                None => {
+                    if !self.cancel.is_cancelled() {
+                        self.end_cause.record(SessionEndCause::DeviceGone);
+                    }
+                    return;
+                }
             }
         }
     }

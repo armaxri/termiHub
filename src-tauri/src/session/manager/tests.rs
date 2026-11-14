@@ -1788,6 +1788,31 @@ fn drop_fold_classifies_a_genuine_exit_like_the_client() {
 }
 
 #[test]
+fn an_agent_device_gone_never_reconnects() {
+    use termihub_core::connection::SessionEndCause;
+    // #5783: an agent's serial reopen gave up — the tab ends, no redrive.
+    assert!(!drop_may_reconnect(
+        true,
+        true,
+        Some(SessionEndCause::DeviceGone)
+    ));
+    // A direct serial port reconnects through the desktop's own redrive.
+    assert!(drop_may_reconnect(
+        true,
+        false,
+        Some(SessionEndCause::DeviceGone)
+    ));
+    // Any other agent cause keeps the resilient behaviour.
+    assert!(drop_may_reconnect(
+        true,
+        true,
+        Some(SessionEndCause::RemoteClosed)
+    ));
+    assert!(drop_may_reconnect(true, true, None));
+    assert!(!drop_may_reconnect(false, false, None));
+}
+
+#[test]
 fn initial_connect_failed_tab_id_folds_only_the_initial_attempt() {
     // Initial attempt (retry 0) of a tab-bearing connect → fold that tab.
     assert_eq!(

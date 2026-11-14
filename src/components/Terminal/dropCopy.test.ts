@@ -126,6 +126,18 @@ describe("scrollback separators", () => {
     }
   });
 
+  it("writes device disconnected for a serial device gone on an agent (#5783)", () => {
+    expect(
+      sessionEndSeparator({
+        transport: "agent",
+        exitCode: null,
+        reason: "dropped",
+        at: AT,
+        endCause: "device_gone",
+      })
+    ).toBe("— device disconnected 09:05:07 —");
+  });
+
   it("does not let a remote close reword a serial unplug (#5696)", () => {
     const at = AT;
     expect(

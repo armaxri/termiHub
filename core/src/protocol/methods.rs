@@ -2268,7 +2268,8 @@ pub struct ConnectionExitNotification {
     /// Process exit code; serialized as `null` when the backend reports none.
     pub exit_code: Option<i32>,
     /// Why the session's link ended on its own (0.38.0+, #5732): the server
-    /// closed it, an I/O error, or a timeout — the backend's
+    /// closed it, an I/O error, a timeout, or (0.40.0+, #5783) its device is
+    /// gone for good — the backend's
     /// [`end_cause`](crate::connection::ConnectionType::end_cause). Omitted
     /// when the backend cannot tell, after a deliberate close, and by an agent
     /// older than 0.38.0. A value this build does not know reads as absent,
@@ -2281,8 +2282,9 @@ pub struct ConnectionExitNotification {
     pub end_cause: Option<SessionEndCause>,
     /// The real exit status of the session's process when it exited on its
     /// own (0.39.0+, #5742): a shell on the agent where the user typed `exit`
-    /// sends `0`. Omitted when the backend has no process status (a network
-    /// session, a stopped container), after a deliberate close, and by an
+    /// sends `0`; a Docker session reports its exec's or stopped container's
+    /// code (0.40.0+, #5783). Omitted when the backend has no process status
+    /// (a network session), after a deliberate close, and by an
     /// agent older than 0.39.0 — whose `exit_code` is always `0` and so never
     /// says how a process ended. `exit_code` carries the same value when this
     /// is present.
@@ -5260,6 +5262,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(n.exit_status, None);
+    }
+
+    #[test]
+    fn exit_notification_carries_device_gone() {
+        // 0.40.0+ (#5783): a serial port that is gone for good.
+        let exit = ConnectionExitNotification {
+            session_id: "s-1".to_owned(),
+            exit_code: Some(0),
+            end_cause: Some(SessionEndCause::DeviceGone),
+            exit_status: None,
+        };
+        let wire = serde_json::to_value(&exit).unwrap();
+        assert_eq!(
+            wire,
+            json!({ "session_id": "s-1", "exit_code": 0, "end_cause": "device_gone" })
+        );
+        let back: ConnectionExitNotification = serde_json::from_value(wire).unwrap();
+        assert_eq!(back, exit);
     }
 
     #[test]
