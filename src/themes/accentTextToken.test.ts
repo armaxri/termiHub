@@ -94,7 +94,8 @@ const MIGRATED: [string, string, string][] = [
   [
     "components/TunnelEditor/TunnelEditor.css",
     ".tunnel-editor__reachability-action",
-    "--text-link",
+    // #5744: the action sits on the warning tint, where plain --text-link misses AA.
+    "--text-link-on-tint",
   ],
   ["components/TunnelSidebar/TunnelSidebar.css", ".tunnel-item__inline-action", "--text-link"],
   ["components/Settings/PluginSettingsSection.css", ".plugin-settings__saved", "--text-accent"],

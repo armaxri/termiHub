@@ -139,7 +139,8 @@
   background: none;
   border: none;
   padding: 0;
-  color: var(--text-link);
+  /* #5744: plain --text-link misses AA on the warning tint in all four themes. */
+  color: var(--text-link-on-tint);
   font: inherit;
   cursor: pointer;
   text-decoration: underline;
