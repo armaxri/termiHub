@@ -708,6 +708,28 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(type = "\"address\" | \"response\"", optional))]
     pub network_host_order: Option<String>,
+    /// Collect host metrics (CPU, memory, disk, network) for local shell tabs
+    /// (#5754). `None`/`Some(false)` keeps them off, the frontend default: the
+    /// machine termiHub runs on has its own system monitor. Remote sessions
+    /// keep monitoring on through `power_monitoring_enabled`. A local
+    /// connection's own `enableMonitoring` still wins. Owned by the frontend
+    /// `AppSettings.monitorLocalShells`; the backend only persists it.
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub monitor_local_shells: Option<bool>,
+    /// The host-metric chips shown in the status bar (#5754). `None` → the
+    /// frontend default set (CPU, memory, disk, network); swap is selectable
+    /// but not in the default set. An explicit list is kept verbatim. Owned by
+    /// the frontend `AppSettings.statusBarMetrics`; the backend only persists it.
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        test,
+        ts(
+            optional,
+            type = "Array<\"cpu\" | \"memory\" | \"disk\" | \"swap\" | \"network\">"
+        )
+    )]
+    pub status_bar_metrics: Option<Vec<String>>,
     /// Forward-compatibility catch-all (#2311).
     ///
     /// Preserves any field the frontend `AppSettings` interface
@@ -818,6 +840,8 @@ impl Default for AppSettings {
             terminal_inline_images: None,
             combine_emoji: None,
             network_host_order: None,
+            monitor_local_shells: None,
+            status_bar_metrics: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -2486,6 +2510,40 @@ mod tests {
 
         let reloaded = storage.load_with_recovery().unwrap().data;
         assert_eq!(reloaded.network_host_order.as_deref(), Some("response"));
+    }
+
+    #[test]
+    fn monitoring_chip_settings_default_unset_and_survive_save_load() {
+        // #5754: unset means the frontend defaults (local shells off, the
+        // CPU/memory/disk/network chip set), so existing files pick them up;
+        // an explicit choice round-trips verbatim.
+        let defaults = AppSettings::default();
+        assert!(defaults.monitor_local_shells.is_none());
+        assert!(defaults.status_bar_metrics.is_none());
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let incoming = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "monitorLocalShells": true,
+            "statusBarMetrics": ["cpu", "swap"]
+        }"#;
+        let settings: AppSettings = serde_json::from_str(incoming).unwrap();
+        assert!(settings.extra.is_empty(), "{:?}", settings.extra);
+        storage.save(&settings).unwrap();
+
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert_eq!(reloaded.monitor_local_shells, Some(true));
+        assert_eq!(
+            reloaded.status_bar_metrics,
+            Some(vec!["cpu".to_string(), "swap".to_string()])
+        );
+
+        // A malformed value falls back to the default instead of failing the load.
+        let bad = r#"{"version":"1","externalConnectionFiles":[],"statusBarMetrics":"cpu"}"#;
+        let lenient: AppSettings = serde_json::from_str(bad).unwrap();
+        assert!(lenient.status_bar_metrics.is_none());
     }
 
     #[test]
