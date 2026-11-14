@@ -2672,14 +2672,13 @@ impl SessionManager {
             .write(data);
     }
 
-    /// The exit code a session's `terminal-exit` carries (#5742): an
-    /// agent-hosted session's real process exit status, as its agent reported
-    /// it. A direct session reports none, as before.
+    /// The exit code a session's `terminal-exit` carries: an agent-hosted
+    /// session's real process exit status, as its agent reported it (#5742),
+    /// and a direct SSH session's remote shell status (#5801). Other direct
+    /// sessions report none, as before.
     fn reported_exit_code(entry: &SessionEntry) -> Option<i32> {
-        entry
-            .remote_session_id
-            .as_ref()
-            .and_then(|_| entry.connection.exit_code())
+        let reports = entry.remote_session_id.is_some() || entry.info.connection_type == "ssh";
+        reports.then(|| entry.connection.exit_code()).flatten()
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.
