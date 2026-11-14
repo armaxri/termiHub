@@ -13,9 +13,15 @@
 //! chunk; the file is never loaded whole.
 //!
 //! **Resume.** Before **every** attempt the resume point is re-verified over
-//! that attempt's own access to each end (`apply_resume_gate`): the source must
+//! that attempt's own access to each end (`apply_partial_gate`): the source must
 //! still match the size + mtime fingerprint captured when its bytes were read,
-//! and the destination must hold a prefix we wrote. An end that cannot verify
+//! and the destination must hold a prefix we wrote. A destination partial that
+//! runs past the checkpoint (a crash kept writing after the last persisted
+//! one) is first trimmed back to it through the destination end's truncate
+//! (SFTP `setstat` size, a container's `truncate`/`dd`, a ranged end's
+//! `RangedTransferTarget::truncate`), so a relaunched copy resumes from the
+//! checkpoint (#5737); an end that cannot trim restarts from zero and the row
+//! says why. An end that cannot verify
 //! or continue a partial (a container without `tail`/`stat` or `wc`, a server
 //! refusing the seek/append open) restarts the copy from byte zero and says
 //! why. A copy **relaunched** after an app restart keeps its checkpoint only
@@ -39,10 +45,10 @@ use crate::files::paste_guard::{check_across, AcrossEnd, PathResolver};
 use crate::files::shared_fs::{sharing, FilesystemHint, FilesystemId, Sharing};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
+    apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
     map_copy_outcome, probe_timed_out, rehydrate_start_offset, settle_attempt, stop_reason,
-    AttemptOutcome, AttemptsResult, Probed, ProgressReporter, ResumeCursor, StopReason,
-    STALL_TIMEOUT,
+    trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe, Probed, ProgressReporter,
+    ResumeCursor, StopReason, STALL_TIMEOUT,
 };
 #[cfg(feature = "local-transfer")]
 use super::ranged::RangedTransferTarget;
@@ -323,6 +329,10 @@ pub(crate) trait EndpointLink: Send + Sync {
     fn can_resume_read(&self) -> bool;
     /// Whether this end can measure a partial destination to append to it.
     fn can_resume_write(&self) -> bool;
+    /// Shorten `path` to `len` bytes and confirm it — how a resumed copy drops
+    /// the bytes a crash left past its last checkpoint (#5737).
+    /// [`FileError::NotSupported`] when this end cannot shorten a file.
+    async fn truncate(&self, path: &str, len: u64) -> Result<(), FileError>;
     /// Stream `path` from byte `offset`.
     async fn open_read(&self, path: &str, offset: u64) -> Result<Box<dyn CopyReader>, OpenError>;
     /// Write `path` from byte `offset` (a truncating create at `0`).
@@ -573,18 +583,25 @@ async fn run_attempts(
         } else {
             // Re-verify the resume point on this attempt's access (PARITY-004).
             let resuming = cursor.offset > 0;
+            // A destination partial past the checkpoint (a crash kept writing
+            // after the last persisted one) is trimmed back to it first, so
+            // the gate resumes there instead of restarting (#5737).
+            let offset = cursor.offset;
             let probe = async {
                 let current = src.fingerprint(ends.src_path).await;
-                let present = if resuming {
-                    dst.file_size(ends.dst_path).await
+                let partial = if resuming {
+                    trim_remote_partial(dst.file_size(ends.dst_path).await, offset, |len| {
+                        dst.truncate(ends.dst_path, len)
+                    })
+                    .await
                 } else {
-                    None
+                    PartialProbe::default()
                 };
-                (current, present)
+                (current, partial)
             };
             match guard_probe(probe, handle, STALL_TIMEOUT).await {
-                Probed::Done((current, present)) => {
-                    apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
+                Probed::Done((current, partial)) => {
+                    apply_partial_gate(cursor, handle, sink, current, partial, BACKEND);
                     run_one(ends, src.as_ref(), dst.as_ref(), cursor, handle, sink).await
                 }
                 Probed::Cancelled => {
