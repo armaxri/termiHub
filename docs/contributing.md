@@ -1730,6 +1730,10 @@ names, sizes and SHA-256 digests in the job summary). It creates no tag or relea
 `create-release` runs only on a tag push and every job that holds a write token needs
 it, so none of them starts. The integration-lane gate and the coverage summary are
 skipped, and the Windows MSI version is mapped from the in-repo version.
+The macOS bundles go through the same four signing phases as a tag build
+([macOS Signing Identity](#macos-signing-identity)), so `sign-macos-helpers` and `sign-macos-app`
+run in the `macos-signing` environment: a deployment-branch rule there must allow the dispatched
+branch.
 `workflow-token-hygiene.test.mjs` pins this.
 
 There is no `latest` git tag. The desktop update check and the agent self-updater
@@ -2404,9 +2408,10 @@ flowchart LR
 release workflow merges, so `main`/`develop` builds never offer an in-place update. The fragment
 has no `createUpdaterArtifacts`: the bundler does not sign, so `tauri build` never needs the
 private key ([#5761](https://github.com/armaxri/termiHub/issues/5761)). `build-app` stages each
-updater bundle **unsigned** next to the installer (macOS rebuilds the `.app.tar.gz` from the
-re-signed app in the DMG and checks its designated requirement there) and hands its SHA-256 on
-as a `release-updater-digest-<platform>` artifact. The `sign-updater` job then signs them (see
+updater bundle **unsigned** next to the installer (macOS: `sign-macos-app` builds the
+`.app.tar.gz` from the signed app in the DMG and checks its designated requirement there, see
+[macOS Signing Identity](#macos-signing-identity)) and hands its SHA-256 on as a
+`release-updater-digest-<platform>` artifact. The `sign-updater` job then signs them (see
 [Updater Signing Key](#updater-signing-key)); the read-only
 `updater-manifest` job writes `latest.json` with
 [`updater-manifest.mjs`](../scripts/internal/updater-manifest.mjs) and checks every published
@@ -2497,17 +2502,45 @@ same certificate as the leaf.)
 | Windows  | Unsigned (no Authenticode certificate)                                                            | SmartScreen on the first browser download | Kept (Credential Manager is per user)        |
 | Linux    | Unsigned (packages and AppImage; the in-app updater checks its own minisign signature everywhere) | None                                      | Kept (Secret Service is per user)            |
 
-**How release.yml uses it:** `Import macOS signing identity`
-([`macos-signing-keychain.sh`](../scripts/internal/macos-signing-keychain.sh) `ci-import`) puts
-the `.p12` into a temporary keychain on the runner (never the search list or the default
-keychain) and exports the identity to the later steps. The RDP helper and plugin runner are
-signed with it by their build scripts, before the app embeds their SHA-256;
-[`macos-codesign.sh`](../scripts/internal/macos-codesign.sh) `resign-app` then signs the rest
-inside-out, keeps the two helpers' signatures (a certificate signature carries its signing time,
-so a re-sign would change their bytes), verifies the bundle with `codesign --verify --deep
---strict` and checks with [`macos-signing.mjs`](../scripts/internal/macos-signing.mjs) that the
-app's and both helpers' DRs name the pinned certificate. The updater's `.app.tar.gz` is rebuilt
-from that app and checked again. The SHA-1 is pinned in
+**How release.yml uses it** ([#5781](https://github.com/armaxri/termiHub/issues/5781)): the
+identity never shares a runner with dependency or build code. The RDP helper and plugin runner
+must be signed **before** the app is compiled (`core/build.rs` embeds their SHA-256, and a
+certificate signature carries its signing time, so signing them later would change their
+bytes), so the macOS build runs in four phases:
+
+```mermaid
+flowchart LR
+    A["build-macos-helpers<br/>(compiles, no identity)"] -->|unsigned helpers + .dSYMs| B["sign-macos-helpers<br/>(identity, compiles nothing)"]
+    B -->|signed helpers; SHA-256s as job output| C["build-app macOS<br/>(compiles, no identity)"]
+    C -->|unsigned DMG + debug symbols| D["sign-macos-app<br/>(identity, compiles nothing)"]
+    D -->|signed DMG + .app.tar.gz + digest| E["sign-updater / upload-app"]
+```
+
+1. `build-macos-helpers` builds both helpers (ad-hoc signed under their installed names by their
+   build scripts) and stages their `.dSYM`s.
+2. `sign-macos-helpers` signs them with the identity
+   ([`macos-release-signing.sh`](../scripts/internal/macos-release-signing.sh) `sign-helpers`)
+   and publishes their SHA-256s as a **job output**.
+3. `build-app`'s macOS legs stage exactly those bytes (`stage-helpers` checks them against the
+   job output, not against an artifact any job of the run could replace), so the app embeds the
+   digests of the signed helpers, and hand the unsigned DMG on.
+4. `sign-macos-app` (`sign-app`) checks that the DMG's helpers are the signed ones, re-signs the
+   app inside-out with [`macos-codesign.sh`](../scripts/internal/macos-codesign.sh) `resign-app`
+   (the helpers' signatures are kept, only verified), proves `codesign --verify --deep
+--strict`, that [`macos-signing.mjs`](../scripts/internal/macos-signing.mjs) finds the pinned
+   certificate in the app's and both helpers' DRs, that the helpers still match the digests the
+   app embeds (`verify-*-bundle.sh --no-run`) and the debug symbols, swaps the app into Tauri's
+   DMG and builds the updater's `.app.tar.gz` from it (checked again) for `sign-updater`.
+
+Only the two `sign-macos-*` jobs receive the secrets, in their
+[`macos-signing-keychain.sh`](../scripts/internal/macos-signing-keychain.sh) `ci-import` step,
+which puts the `.p12` into a temporary keychain (never the search list or the default keychain)
+that is deleted at the end of the job. They check out only first-party, dependency-free scripts,
+use only pinned `actions/*` actions, install nothing, compile nothing and execute nothing that
+was built (`workflow-token-hygiene.test.mjs` pins all of this). What they sign is still what the
+build jobs produced: the isolation keeps the private key away from build code (it cannot be
+exported or used to sign anything else), it does not vouch for the build itself. The SHA-1 is
+pinned in
 [`macos-signing-identity.json`](../scripts/internal/macos-signing-identity.json):
 
 - nothing pinned: ad-hoc signing, with a `::notice::` (today's behaviour);
@@ -2515,12 +2548,21 @@ from that app and checked again. The SHA-1 is pinned in
   holding another certificate: the build fails, because an ad-hoc or differently signed release
   would cost every user their keychain access.
 
-**Exposure:** unlike the [updater key](#updater-signing-key), the identity is still imported in
-`build-app`'s macOS legs, before the helpers and the app are compiled: the helpers must be
-signed before `core/build.rs` embeds their SHA-256, and a certificate signature carries its
-signing time, so signing them later would change their bytes. Moving it into jobs that run no
-third-party build code needs a multi-phase macOS build; that is tracked in
-[#5781](https://github.com/armaxri/termiHub/issues/5781).
+**Environment (recommended, maintainer):** both `sign-macos-*` jobs run in the
+`macos-signing` GitHub environment (GitHub creates it on the first run if it does not exist), the
+same way `sign-updater` uses `updater-signing`. Repository secrets reach it too, so nothing breaks
+before this step. To harden it: in **Settings ▸ Environments ▸ macos-signing**, add
+`MACOS_SIGNING_P12_BASE64` and `MACOS_SIGNING_P12_PASSWORD` as environment secrets, delete the
+repository-level copies, and limit **Deployment branches and tags** to the tag pattern `v*` plus
+the branches you dispatch release dry runs from (`develop`, `main`). A required reviewer would
+pause every dry run twice, so leave that off unless you want to approve each run.
+
+**Dry run:** locally, on a Mac, `./scripts/internal/test-macos-release-signing.sh` walks all four
+phases with the real scripts on a fake app, with a throwaway identity in a temporary keychain,
+once with the identity and once ad hoc, and checks the refusals (a helper swapped after signing,
+wrong digests); your login keychain, default keychain and search list are never touched
+(`check-script-headless.sh` runs it on macOS). In CI, `gh workflow run release.yml --ref
+<branch> -f dry_run=true` runs the four phases for real (see [Release dry run](#release-dry-run)).
 
 Hardened runtime (`--options runtime`) is not enabled: it is only needed for notarization, it
 does not change the DR, and its library validation would stop the plugin runner from loading
