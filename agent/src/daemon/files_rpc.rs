@@ -170,6 +170,13 @@ pub enum FileOp {
     Realpath {
         path: String,
     },
+    /// Shorten the regular file `path` to `length` bytes, never extending it
+    /// (#5736). Sent only to a daemon that advertised
+    /// [`CAP2_FILE_TRUNCATE`](super::protocol::CAP2_FILE_TRUNCATE).
+    Truncate {
+        path: String,
+        length: u64,
+    },
 }
 
 impl FileOp {
@@ -223,6 +230,10 @@ pub enum FileOutcome {
     /// A path's real spelling (#5333).
     Resolved {
         path: String,
+    },
+    /// A file was shortened; `size` is what it holds afterwards (#5736).
+    Truncated {
+        size: u64,
     },
     /// A write / delete / rename / mkdir / chmod / chown / symlink / copy
     /// finished.
@@ -469,6 +480,12 @@ pub async fn serve(
         FileOp::Realpath { path } => run!(real_path(browser, &path), |path| {
             FileOutcome::Resolved { path }
         }),
+        FileOp::Truncate { path, length } => match browser.ranged() {
+            Some(ranged) => run!(ranged.shorten(&path, length), |size| {
+                FileOutcome::Truncated { size }
+            }),
+            None => (failed(FileError::NotSupported), None),
+        },
         FileOp::WriteRange { path, offset, .. } => match browser.ranged() {
             Some(ranged) => run!(ranged.write_range(&path, offset, &data), done),
             None => (failed(FileError::NotSupported), None),
@@ -625,6 +642,8 @@ pub struct FileChannel {
     ranges: AtomicBool,
     /// Whether the connected daemon also resolves real paths (#5333).
     realpath: AtomicBool,
+    /// Whether the connected daemon also shortens files (#5736).
+    truncate: AtomicBool,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, Pending>>,
 }
@@ -667,6 +686,16 @@ impl FileChannel {
     /// Record the connected daemon's advertised real-path support.
     pub fn set_realpath_supported(&self, supported: bool) {
         self.realpath.store(supported, Ordering::SeqCst);
+    }
+
+    /// Whether the connected daemon shortens files (#5736).
+    pub fn truncate_supported(&self) -> bool {
+        self.truncate.load(Ordering::SeqCst)
+    }
+
+    /// Record the connected daemon's advertised truncate support.
+    pub fn set_truncate_supported(&self, supported: bool) {
+        self.truncate.store(supported, Ordering::SeqCst);
     }
 
     /// Reserve a request id and the receiver its reply is delivered to.
@@ -1007,6 +1036,25 @@ impl RangedFileAccess for DaemonFileBrowser {
         };
         match self.call(op, data).await {
             Ok((FileOutcome::Done, _)) => Ok(()),
+            Ok((other, _)) => Err(unexpected(other)),
+            Err(message) => Err(FileError::OperationFailed(message)),
+        }
+    }
+
+    /// Shorten a file through the session daemon's backend (#5736). A daemon
+    /// that did not advertise it (one started by an older agent survives the
+    /// upgrade) is never asked — it would drop the unknown request — and the
+    /// upload restarts from zero instead.
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        if !self.channel.truncate_supported() {
+            return Err(FileError::NotSupported);
+        }
+        let op = FileOp::Truncate {
+            path: path.into(),
+            length: len,
+        };
+        match self.call(op, &[]).await {
+            Ok((FileOutcome::Truncated { size }, _)) => Ok(size),
             Ok((other, _)) => Err(unexpected(other)),
             Err(message) => Err(FileError::OperationFailed(message)),
         }

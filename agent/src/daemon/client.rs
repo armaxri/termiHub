@@ -258,6 +258,7 @@ impl FeatureChannels {
         self.files.set_supported(false);
         self.files.set_ranges_supported(false);
         self.files.set_realpath_supported(false);
+        self.files.set_truncate_supported(false);
         self.files.fail_all();
         self.output_flow.store(false, Ordering::SeqCst);
         self.output_credit.store(false, Ordering::SeqCst);
@@ -267,8 +268,9 @@ impl FeatureChannels {
         self.output_budget.resume();
     }
 
-    /// Apply the daemon's [`MSG_CAPABILITIES`] flags.
-    fn apply_capabilities(&self, flags: u8) {
+    /// Apply the daemon's [`MSG_CAPABILITIES`] flags: the first byte, and
+    /// the second one (#5736) a daemon from before it does not send (`0`).
+    fn apply_capabilities(&self, flags: u8, flags2: u8) {
         self.processes.set_supported(flags & CAP_PROCESSES != 0);
         self.monitoring.set_supported(flags & CAP_MONITORING != 0);
         self.files.set_supported(flags & CAP_FILES != 0);
@@ -276,6 +278,11 @@ impl FeatureChannels {
             .set_ranges_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_RANGES != 0);
         self.files
             .set_realpath_supported(flags & CAP_FILES != 0 && flags & CAP_FILE_REALPATH != 0);
+        self.files.set_truncate_supported(
+            flags & CAP_FILES != 0
+                && flags & CAP_FILE_RANGES != 0
+                && flags2 & CAP2_FILE_TRUNCATE != 0,
+        );
         self.output_flow
             .store(flags & CAP_OUTPUT_FLOW != 0, Ordering::SeqCst);
         self.output_credit
@@ -1152,7 +1159,8 @@ async fn connect_and_start_reader(
                 // before Ready.
                 MSG_CAPABILITIES => {
                     daemon_flags = frame.payload.first().copied().unwrap_or(0);
-                    features.apply_capabilities(daemon_flags);
+                    let daemon_flags2 = frame.payload.get(1).copied().unwrap_or(0);
+                    features.apply_capabilities(daemon_flags, daemon_flags2);
                 }
                 MSG_EXITED => {
                     let code = protocol::decode_exit_code(&frame.payload).unwrap_or(-1);
