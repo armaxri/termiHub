@@ -19,6 +19,12 @@ workspace (its tab count) and a remote agent (its address), each with a
 description. None of them is started or connected; the rows are graded at
 rest.
 
+#5769 adds a connection saved on a remote agent: the run's locally built agent
+is deployed to the native sshd and connected, and a shell definition with a
+description is saved on it; its row in the Remote Agents tree must show its
+name and the description muted under it, and the search must find it by the
+description.
+
 #5789 adds the Network Tools monitor row (its name and description; the URL,
 method and interval in the tooltip; the Stopped marker once stopped) and the
 Plugins sidebar row of a seeded fixture plugin (its name and the plugin's own
@@ -48,6 +54,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.agent_deploy import AgentDeployUi, reap_agents_under
 from termihub_harness.product_run.automation_steps import MACRO_EDITOR, AutomationPhaseUi
 from termihub_harness.product_run.grades import row_leftover_text
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
@@ -67,6 +74,7 @@ WORKSPACE_SAVE_DIALOG = "save-workspace-dialog"
 
 class TestProductRunRowsNames(
     ProductRunUi,
+    AgentDeployUi,
     SshPhaseUi,
     AutomationPhaseUi,
     EmbeddedServicesUi,
@@ -379,6 +387,54 @@ class TestProductRunRowsNames(
             desc = self.driver.get_text(f"agent-description-{agent['id']}").strip()
             assert desc == "Lab bench", f"the agent description reads {desc!r}"
             self.shot(label="agent")
+
+    @pytest.fixture
+    def _reap_agent(self, request):
+        native = self.hosts.native
+        if native is not None and native.session_home:
+            request.config.add_cleanup(
+                lambda: reap_agents_under(native.session_home / "rows-names-agent")
+            )
+        yield
+
+    def test_85_agent_definition_row(self, _reap_agent):
+        t = self.tag
+        with self.step(
+            "rows-names.agent-definition",
+            "A connection saved on a remote agent shows its name and description; the "
+            "search finds it by the description",
+            expect="the Connections sidebar, Remote Agents: under the connected 'Rows live "
+            "agent …', the 'Bench shell …' row with 'Lab bench console' muted under it, "
+            "nothing else (#5769)",
+        ):
+            self.require("rows-names.items")
+            agent = self.deploy_and_connect_agent(
+                f"Rows live agent {t}", install_dir="rows-names-agent"
+            )
+            caps = agent.get("capabilities") or {}
+            assert caps.get("connectionDescription"), (
+                f"the deployed agent does not advertise connectionDescription: {caps}"
+            )
+            name = f"Bench shell {t}"
+            definition = self.create_agent_definition(
+                agent["name"], name, description="Lab bench console"
+            )
+            self.evidence(f"definition {definition['id']}: {definition.get('description')!r}")
+            assert definition.get("description") == "Lab bench console", (
+                f"the agent stored {definition.get('description')!r}"
+            )
+            row = f"agent-definition-{definition['id']}"
+            self.wait(lambda: self.driver.exists(row), what="the agent definition row")
+            text = self.row_text(row)
+            self.evidence(f"agent definition row {text!r}")
+            left = row_leftover_text(text, [name, "Lab bench console"])
+            assert left == "", f"the agent definition row shows more: {left!r}"
+            desc = self.driver.get_text(f"agent-definition-description-{definition['id']}")
+            assert desc.strip() == "Lab bench console", f"the description reads {desc!r}"
+            self.driver.type("connection-filter-input", "bench console")
+            self.wait(lambda: self.driver.exists(row), what="the row found by its description")
+            self.shot(label="agent-definition")
+            self.driver.type("connection-filter-input", "")
 
     def test_90_monitor_row(self):
         t = self.tag

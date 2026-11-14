@@ -36,6 +36,8 @@ export interface AgentConnectionDraft {
   iconColor?: string | null;
   /** Single-emoji icon; `undefined`/`null` = none (#5021). */
   iconEmoji?: string | null;
+  /** One-line description shown under the name; `undefined`/`null` = none (#5769). */
+  description?: string | null;
 }
 
 /** `connections.create` params for a new definition placed in `folderId` (`null` = root). */
@@ -53,14 +55,16 @@ export function buildAgentConnectionCreate(
     icon: draft.icon ?? null,
     icon_color: draft.iconColor ?? null,
     icon_emoji: draft.iconEmoji ?? null,
+    description: draft.description ?? null,
   };
 }
 
 /**
  * `connections.update` params replacing every editable field of definition `id`
  * (the folder is left unchanged; terminal options / icon / icon colour / emoji
- * are cleared when absent). An agent older than protocol 0.33.0 ignores the
- * icon colour / emoji keys (#5021).
+ * / description are cleared when absent). An agent older than protocol 0.33.0
+ * ignores the icon colour / emoji keys (#5021), and one older than 0.42.0 the
+ * description (#5769).
  */
 export function buildAgentConnectionUpdate(
   id: string,
@@ -76,6 +80,7 @@ export function buildAgentConnectionUpdate(
     icon: draft.icon ?? null,
     icon_color: draft.iconColor ?? null,
     icon_emoji: draft.iconEmoji ?? null,
+    description: draft.description ?? null,
   };
 }
 

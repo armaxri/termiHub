@@ -335,6 +335,7 @@ fn capabilities_round_trip_serialization() {
         host_file_attribute_ops: None,
         file_create_new: false,
         definition_icon_style: false,
+        connection_description: false,
         serial_port_rescan: false,
         file_truncate: false,
         agent_version: String::new(),
@@ -474,6 +475,7 @@ fn definition_info_source_file_omitted_when_none() {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: None,
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -494,6 +496,7 @@ fn definition_info_source_file_camel_case() {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: Some("/home/pi/team.json".to_string()),
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -541,6 +544,7 @@ fn definition_info_serializes_camel_case() {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: None,
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -583,6 +587,7 @@ fn connections_data_serialization() {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
         }],
         folders: vec![AgentFolderInfo {
@@ -951,6 +956,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             host_file_attribute_ops: None,
             file_create_new: false,
             definition_icon_style: false,
+            connection_description: false,
             serial_port_rescan: false,
             file_truncate: false,
             agent_version: String::new(),
@@ -1159,6 +1165,7 @@ pub(super) fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::J
             host_file_attribute_ops: None,
             file_create_new: false,
             definition_icon_style: false,
+            connection_description: false,
             serial_port_rescan: false,
             file_truncate: false,
             agent_version: String::new(),

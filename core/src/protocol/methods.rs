@@ -405,6 +405,13 @@ pub struct Capabilities {
     /// agents, which ignore the unknown keys: the desktop hides the controls
     /// for them instead of letting a choice silently vanish.
     pub definition_icon_style: bool,
+    /// Whether the agent stores an optional one-line description on its saved
+    /// connection definitions — `description` on `connections.create` /
+    /// `connections.update` and in the definitions it reports (protocol
+    /// 0.42.0, #5769). Absent (read as `false`) on older agents, which ignore
+    /// the unknown key and would not store it: the desktop hides the
+    /// Description field for their definitions.
+    pub connection_description: bool,
     /// Whether the agent serves [`SERIAL_LIST_PORTS`]: a fresh enumeration of
     /// its host's serial ports, which the desktop polls while an agent-hosted
     /// serial connection's Port field is visible (protocol 0.34.0, #5069).
@@ -1132,6 +1139,11 @@ pub struct ConnectionCreateParams {
     /// ignored by an agent older than protocol 0.33.0.
     #[serde(default)]
     pub icon_emoji: Option<String>,
+    /// Optional one-line description shown under the name (#5769). Stored
+    /// opaquely (the desktop normalizes it); ignored by an agent older than
+    /// protocol 0.42.0.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 // ── connections.update ─────────────────────────────────────────────
@@ -1204,6 +1216,15 @@ pub struct ConnectionUpdateParams {
     )]
     #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
     pub icon_emoji: Option<serde_json::Value>,
+    /// One-line description (#5769). Use JSON `null` to clear, omit to leave
+    /// unchanged. Ignored by an agent older than protocol 0.42.0.
+    #[serde(
+        default,
+        with = "optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
+    pub description: Option<serde_json::Value>,
 }
 
 // ── connections.delete ─────────────────────────────────────────────
@@ -1306,6 +1327,10 @@ pub struct ConnectionDefinition {
     /// and from agents older than protocol 0.33.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_emoji: Option<String>,
+    /// Optional one-line description shown under the name (#5769). Absent
+    /// when unset and from agents older than protocol 0.42.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
@@ -2469,6 +2494,7 @@ mod tests {
             icon: None,
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: None,
         };
         // `serde_json` (no `preserve_order`) emits struct fields in declaration
@@ -2495,6 +2521,7 @@ mod tests {
             icon: Some("Terminal".to_string()),
             icon_color: None,
             icon_emoji: None,
+            description: None,
             source_file: Some("/home/pi/team.json".to_string()),
         };
         assert_eq!(
@@ -2519,6 +2546,7 @@ mod tests {
             icon: Some("Server".to_string()),
             icon_color: Some("red".to_string()),
             icon_emoji: Some("\u{1F680}".to_string()),
+            description: None,
             source_file: None,
         };
         assert_eq!(
@@ -2992,6 +3020,7 @@ mod tests {
                 },
                 file_create_new: true,
                 definition_icon_style: true,
+                connection_description: true,
                 serial_port_rescan: true,
                 file_truncate: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
@@ -3031,6 +3060,8 @@ mod tests {
         assert_eq!(v["capabilities"]["fileCreateNew"], true);
         // #5021: icon colour / emoji on saved definitions.
         assert_eq!(v["capabilities"]["definitionIconStyle"], true);
+        // #5769: descriptions on saved definitions.
+        assert_eq!(v["capabilities"]["connectionDescription"], true);
         // #5069: the agent serves `serial.list_ports`.
         assert_eq!(v["capabilities"]["serialPortRescan"], true);
         // #5736: the agent serves `connection.files.truncate`.
@@ -3583,7 +3614,8 @@ mod tests {
             "terminal_options": {"scrollbackLines": 5000},
             "icon": "server",
             "icon_color": null,
-            "icon_emoji": null
+            "icon_emoji": null,
+            "description": null
         }));
         assert_wire_round_trip::<ConnectionCreateParams>(json!({
             "name": "Temp",
@@ -3594,7 +3626,8 @@ mod tests {
             "terminal_options": null,
             "icon": null,
             "icon_color": null,
-            "icon_emoji": null
+            "icon_emoji": null,
+            "description": null
         }));
     }
 
@@ -3635,7 +3668,8 @@ mod tests {
             "terminal_options": null,
             "icon": null,
             "icon_color": "red",
-            "icon_emoji": "\u{1F680}"
+            "icon_emoji": "\u{1F680}",
+            "description": null
         }));
         let older: ConnectionCreateParams = serde_json::from_value(json!({
             "name": "Prod",
@@ -3669,6 +3703,94 @@ mod tests {
         let cleared: ConnectionUpdateParams =
             serde_json::from_value(json!({"id": "conn-1", "icon_color": null})).unwrap();
         assert_eq!(cleared.icon_color, Some(Value::Null));
+    }
+
+    /// #5769: `description` rides `connections.create` as one more
+    /// always-serialized key; a payload from an older desktop without it still
+    /// decodes, unset. A newer desktop's payload decodes on an agent of any
+    /// age, which ignores the unknown key.
+    #[test]
+    fn connection_create_params_carry_description() {
+        let newer = json!({
+            "name": "Bench",
+            "type": "serial",
+            "config": {"port": "/dev/ttyUSB0"},
+            "persistent": false,
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null,
+            "icon_color": null,
+            "icon_emoji": null,
+            "description": "Lab bench console"
+        });
+        assert_wire_round_trip::<ConnectionCreateParams>(newer.clone());
+        let decoded: ConnectionCreateParams = serde_json::from_value(newer).unwrap();
+        assert_eq!(decoded.description.as_deref(), Some("Lab bench console"));
+        let older: ConnectionCreateParams = serde_json::from_value(json!({
+            "name": "Bench",
+            "type": "serial",
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null
+        }))
+        .unwrap();
+        assert_eq!(older.description, None);
+    }
+
+    /// #5769: `description` is a tri-state patch field — omitted leaves it
+    /// unchanged, an explicit `null` clears it.
+    #[test]
+    fn connection_update_params_description_is_tri_state() {
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({
+            "id": "conn-1",
+            "description": "Rack 3"
+        }));
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({
+            "id": "conn-1",
+            "description": null
+        }));
+        let omitted: ConnectionUpdateParams =
+            serde_json::from_value(json!({"id": "conn-1"})).unwrap();
+        assert!(omitted.description.is_none());
+        let cleared: ConnectionUpdateParams =
+            serde_json::from_value(json!({"id": "conn-1", "description": null})).unwrap();
+        assert_eq!(cleared.description, Some(Value::Null));
+    }
+
+    /// #5769: a definition's description is on the wire only when set (after
+    /// the icon style, before `source_file`), so an undescribed definition
+    /// keeps the exact pre-#5769 bytes; an older agent's reply without it
+    /// parses unset.
+    #[test]
+    fn connection_definition_description_is_skipped_when_unset() {
+        let def = ConnectionDefinition {
+            id: "c".to_string(),
+            name: "Bench".to_string(),
+            session_type: "serial".to_string(),
+            config: Value::Null,
+            persistent: false,
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            icon_color: Some("teal".to_string()),
+            icon_emoji: None,
+            description: Some("Lab bench console".to_string()),
+            source_file: Some("/etc/termihub/shared.json".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_string(&def).unwrap(),
+            "{\"id\":\"c\",\"name\":\"Bench\",\"session_type\":\"serial\",\"config\":null,\
+             \"persistent\":false,\"folder_id\":null,\"icon_color\":\"teal\",\
+             \"description\":\"Lab bench console\",\
+             \"source_file\":\"/etc/termihub/shared.json\"}"
+        );
+        let parsed: ConnectionDefinition =
+            serde_json::from_str(&serde_json::to_string(&def).unwrap()).unwrap();
+        assert_eq!(parsed.description.as_deref(), Some("Lab bench console"));
+        let older: ConnectionDefinition =
+            serde_json::from_value(json!({"id": "c", "name": "Bench", "session_type": "serial"}))
+                .unwrap();
+        assert_eq!(older.description, None);
     }
 
     #[test]

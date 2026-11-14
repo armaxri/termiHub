@@ -28,7 +28,6 @@ import os
 import sys
 from pathlib import Path
 
-import psutil
 import pytest
 
 from termihub_harness import (
@@ -45,8 +44,12 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.colors import contrast
-from termihub_harness.orchestrator import REPO_ROOT
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.agent_deploy import (
+    DEPLOY_TIMEOUT,
+    agent_binary,
+    reap_agents_under,
+)
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.ui.theme import ThemeUi
 
@@ -56,16 +59,7 @@ pytestmark = [
     pytest.mark.skipif(sys.platform.startswith("win"), reason="the run's sshd is POSIX-only"),
 ]
 
-#: Deploy uploads a debug agent (~100 MB) over SFTP and runs the install script.
-DEPLOY_TIMEOUT = 300.0
 MARKER = "pr-agent-marker.txt"
-
-
-def agent_binary() -> Path | None:
-    """The locally built agent for this machine, newest of debug/release."""
-    found = [REPO_ROOT / "target" / kind / "termihub-agent" for kind in ("debug", "release")]
-    found = [p for p in found if p.is_file()]
-    return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
 def _sha256(path: Path) -> str:
@@ -74,22 +68,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def reap_agents_under(root: Path) -> list[int]:
-    """Stop processes whose executable lives under ``root`` (this run's deploy only)."""
-    stopped = []
-    root_s = str(root.resolve())
-    for proc in psutil.process_iter(["pid", "exe"]):
-        exe = proc.info.get("exe") or ""
-        if exe and os.path.realpath(exe).startswith(root_s + os.sep):
-            try:
-                proc.terminate()
-                stopped.append(proc.pid)
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-    psutil.wait_procs([psutil.Process(p) for p in stopped if psutil.pid_exists(p)], timeout=5)
-    return stopped
 
 
 class TestProductRunAgent(

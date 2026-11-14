@@ -115,6 +115,7 @@ fn to_store_definition(info: &AgentDefinitionInfo) -> StoreAgentDefinition {
         icon: info.icon.clone(),
         icon_color: info.icon_color.clone(),
         icon_emoji: info.icon_emoji.clone(),
+        description: info.description.clone(),
         source_file: info.source_file.clone(),
     }
 }
@@ -1344,7 +1345,8 @@ mod tests {
             "terminal_options": null,
             "icon": null,
             "icon_color": null,
-            "icon_emoji": null
+            "icon_emoji": null,
+            "description": null
         });
         let params: ConnectionCreateParams =
             decode_agent_params(CONNECTIONS_CREATE, payload.clone()).expect("decodes");

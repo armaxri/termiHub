@@ -426,6 +426,7 @@ fn definition(id: &str, folder: Option<&str>) -> AgentDefinition {
         icon: None,
         icon_color: None,
         icon_emoji: None,
+        description: None,
         source_file: None,
     }
 }

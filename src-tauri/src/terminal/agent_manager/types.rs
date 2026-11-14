@@ -127,6 +127,13 @@ pub struct AgentCapabilities {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub definition_icon_style: bool,
+    /// Whether the agent stores an optional one-line description on its saved
+    /// connection definitions (protocol 0.42.0, #5769). `false` for older
+    /// agents: they would ignore the key, so the connection editor hides the
+    /// Description field for their definitions.
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub connection_description: bool,
     /// Whether the agent serves `serial.list_ports` — a fresh enumeration of
     /// its host's serial ports (protocol 0.34.0, #5069), which the connection
     /// editor polls while an agent-hosted serial Port field is visible. `false`
@@ -228,6 +235,10 @@ pub struct AgentDefinitionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub icon_emoji: Option<String>,
+    /// Optional one-line description shown muted under the name (#5769).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -275,6 +286,7 @@ impl From<ConnectionDefinition> for AgentDefinitionInfo {
             icon: d.icon,
             icon_color: d.icon_color,
             icon_emoji: d.icon_emoji,
+            description: d.description,
             source_file: d.source_file,
         }
     }

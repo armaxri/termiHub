@@ -532,6 +532,7 @@ impl AgentRpcClient for FakeAgent {
             host_file_attribute_ops: None,
             file_create_new: false,
             definition_icon_style: false,
+            connection_description: false,
             serial_port_rescan: false,
             file_truncate: false,
             agent_version: "0.8.1".to_string(),

@@ -300,6 +300,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   /** Agent definition mode: editing/creating a session definition on a connected agent. */
   const isAgentDefinitionMode = !!meta.agentDefinitionId && !!existingAgent;
+  /**
+   * Whether the agent this definition is saved on stores a description
+   * (`connectionDescription`, protocol 0.42.0, #5769). An older agent would
+   * ignore the key and the text would silently vanish, so the field is hidden.
+   */
+  const agentStoresDescription =
+    isAgentDefinitionMode && !!existingAgent?.capabilities?.connectionDescription;
 
   // In definition mode, use the agent's own type registry
   // plus this computer's VNC/RDP types, which run here and tunnel through the
@@ -385,6 +392,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         existingConnection?.name ??
         (isAgentDefinitionMode ? "" : (existingAgent?.name ?? "")),
       description:
+        existingAgentDef?.description ??
         existingConnection?.description ??
         (isAgentDefinitionMode ? "" : (existingAgent?.description ?? "")),
       sourceFile: existingConnection?.sourceFile ?? null,
@@ -1048,6 +1056,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       icon,
       iconColor,
       iconEmoji,
+      // Only an agent that stores descriptions gets one (#5769); an older
+      // agent would ignore the key, so its definitions never carry it.
+      description: agentStoresDescription ? normalizeItemDescription(description) : undefined,
     };
     if (existingAgentDef) {
       await updateAgentDef(
@@ -1070,6 +1081,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     icon,
     iconColor,
     iconEmoji,
+    agentStoresDescription,
+    description,
     existingAgent,
     existingAgentDef,
     meta.agentFolderId,
@@ -1838,9 +1851,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           )}
         />
         {/* A saved agent connection (definition) lives on the agent, whose
-            store cannot hold a description yet (#5769); the agent itself is
-            saved here and can (#5770). */}
-        {!isAgentDefinitionMode && (
+            store holds a description only when it advertises
+            `connectionDescription` (#5769); the agent itself is saved here
+            and always can (#5770). */}
+        {(!isAgentDefinitionMode || agentStoresDescription) && (
           <Controller
             name="description"
             control={topLevelControl}

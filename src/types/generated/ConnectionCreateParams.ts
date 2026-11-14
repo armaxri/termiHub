@@ -21,4 +21,10 @@ icon_color: string | null,
  * Single-emoji icon shown instead of the glyph (#5021). Stored opaquely;
  * ignored by an agent older than protocol 0.33.0.
  */
-icon_emoji: string | null, };
+icon_emoji: string | null, 
+/**
+ * Optional one-line description shown under the name (#5769). Stored
+ * opaquely (the desktop normalizes it); ignored by an agent older than
+ * protocol 0.42.0.
+ */
+description: string | null, };

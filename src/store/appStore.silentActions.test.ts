@@ -322,6 +322,7 @@ describe("#1472 — agent mutating actions surface errors", () => {
       icon: null,
       icon_color: null,
       icon_emoji: null,
+      description: null,
     });
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("denied"));

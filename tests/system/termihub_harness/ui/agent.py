@@ -326,6 +326,7 @@ class AgentUi(HarnessMixin):
         persistent: bool = False,
         session_type: Optional[str] = None,
         fields: Optional[dict[str, str]] = None,
+        description: Optional[str] = None,
     ) -> dict[str, Any]:
         """Create a saved connection definition under a connected agent.
 
@@ -337,7 +338,9 @@ class AgentUi(HarnessMixin):
         inputs (e.g. ``{"port": "/dev/ttyUSB0"}``; the serial port field is an
         editable combobox, so any device path can be typed). It optionally
         toggles the persistent switch, saves, and returns the saved definition
-        once it lands in ``agentDefinitions``.
+        once it lands in ``agentDefinitions``. ``description`` fills the
+        optional one-line description, shown only for an agent that stores it
+        (``connectionDescription``, #5769).
         """
         agent = self.require_agent(agent_name)
         self.agent_menu_action(agent_name, self.CTX_NEW_CONNECTION)
@@ -345,6 +348,8 @@ class AgentUi(HarnessMixin):
             lambda: self.driver.exists(self.DEF_EDITOR_NAME), what="the agent-definition editor"
         )
         self.driver.type(self.DEF_EDITOR_NAME, def_name)
+        if description is not None:
+            self.driver.type("connection-editor-description-input", description)
         if session_type is not None:
 
             def selected() -> bool:

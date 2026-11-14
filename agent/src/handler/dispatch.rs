@@ -240,7 +240,12 @@ use termihub_core::monitoring::{
 /// its `capabilities.fileTruncate` flag (#5736): a resumed agent-hosted upload
 /// trims its crashed partial back to the last checkpoint instead of
 /// restarting from zero. An older agent is never asked; its uploads restart.
-const AGENT_PROTOCOL_VERSION: &str = "0.41.0";
+/// Bumped to 0.42.0 for the additive, optional `description` on `connections.create` /
+/// `connections.update` and the definitions the agent reports, with the
+/// matching `capabilities.connectionDescription` flag (#5769). An older agent
+/// ignores the unknown key, so the desktop shows the Description field only to
+/// an agent that advertises the flag; an older desktop never sends it.
+const AGENT_PROTOCOL_VERSION: &str = "0.42.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -1120,6 +1125,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 host_file_attribute_ops: host_file_attribute_ops(),
                 file_create_new: true,
                 definition_icon_style: true,
+                connection_description: true,
                 serial_port_rescan: true,
                 file_truncate: true,
             },
@@ -1640,6 +1646,7 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             icon: p.icon,
             icon_color: p.icon_color,
             icon_emoji: p.icon_emoji,
+            description: p.description,
             extra: serde_json::Map::new(),
         };
 
@@ -1679,6 +1686,7 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
         let icon = p.icon.map(nullable_string);
         let icon_color = p.icon_color.map(nullable_string);
         let icon_emoji = p.icon_emoji.map(nullable_string);
+        let description = p.description.map(nullable_string);
 
         match connection_store
             .update(
@@ -1692,6 +1700,7 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
                 icon,
                 icon_color,
                 icon_emoji,
+                description,
             )
             .await
             .map_err(|e| definitions_store_newer_err(&e))?
@@ -4060,10 +4069,12 @@ mod tests {
     /// `end_cause` of `connection.exit` (#5732), and 0.39.0 its optional
     /// `exit_status` (#5742), and 0.40.0 its `device_gone` cause (#5783),
     /// and 0.41.0 `connection.files.truncate` with its `fileTruncate`
-    /// capability (#5736).
+    /// capability (#5736),
+    /// and 0.42.0 the definition `description` with its
+    /// `connectionDescription` capability (#5769).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.41.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.42.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -4286,6 +4297,17 @@ mod tests {
         let result = dispatch(&handler, "initialize", init_params(), 1).await;
         assert_eq!(
             result["result"]["capabilities"]["definitionIconStyle"],
+            true
+        );
+    }
+
+    /// #5769: the agent advertises that it stores definition descriptions.
+    #[tokio::test]
+    async fn initialize_advertises_connection_description() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
+        assert_eq!(
+            result["result"]["capabilities"]["connectionDescription"],
             true
         );
     }
@@ -4942,6 +4964,86 @@ mod tests {
         .await;
         assert_eq!(result["result"]["icon_color"], "#336699");
         assert!(result["result"].get("icon_emoji").is_none(), "{result}");
+    }
+
+    /// #5769: a definition's description is stored on create, reported by
+    /// `connections.list`, left alone by an update that omits it, replaced by a
+    /// new string and cleared by an explicit `null`.
+    #[tokio::test]
+    async fn connections_description_create_update_and_clear() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "connections.create",
+            json!({"name": "Bench", "type": "shell", "folder_id": null,
+                   "terminal_options": null, "icon": null,
+                   "description": "Lab bench console"}),
+            2,
+        )
+        .await;
+        assert_eq!(result["result"]["description"], "Lab bench console");
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        let result = dispatch(&handler, "connections.list", json!({}), 3).await;
+        assert_eq!(
+            result["result"]["connections"][0]["description"],
+            "Lab bench console"
+        );
+
+        let result = dispatch(
+            &handler,
+            "connections.update",
+            json!({"id": conn_id, "name": "Bench 2"}),
+            4,
+        )
+        .await;
+        assert_eq!(result["result"]["description"], "Lab bench console");
+
+        let result = dispatch(
+            &handler,
+            "connections.update",
+            json!({"id": conn_id, "description": "Rack 3"}),
+            5,
+        )
+        .await;
+        assert_eq!(result["result"]["description"], "Rack 3");
+
+        let result = dispatch(
+            &handler,
+            "connections.update",
+            json!({"id": conn_id, "description": null}),
+            6,
+        )
+        .await;
+        assert!(result["result"].get("description").is_none(), "{result}");
+    }
+
+    /// #5769: an older desktop's create and update (no `description` key)
+    /// still work, and the reported definition carries no description.
+    #[tokio::test]
+    async fn connections_without_description_report_none() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        let result = dispatch(
+            &handler,
+            "connections.create",
+            json!({"name": "Old", "type": "shell"}),
+            2,
+        )
+        .await;
+        assert!(result["result"].get("description").is_none(), "{result}");
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+        let result = dispatch(
+            &handler,
+            "connections.update",
+            json!({"id": conn_id, "name": "Old 2"}),
+            3,
+        )
+        .await;
+        assert_eq!(result["result"]["name"], "Old 2");
+        assert!(result["result"].get("description").is_none(), "{result}");
     }
 
     /// #5021: an older desktop's create (no icon style keys) still works and
@@ -6732,6 +6834,7 @@ mod tests {
                 icon: conn.icon,
                 icon_color: conn.icon_color,
                 icon_emoji: conn.icon_emoji,
+                description: conn.description,
                 source_file: None,
             };
             self.connections.lock().await.push(snap.clone());
@@ -6750,6 +6853,7 @@ mod tests {
             _icon: Option<Option<String>>,
             _icon_color: Option<Option<String>>,
             _icon_emoji: Option<Option<String>>,
+            _description: Option<Option<String>>,
         ) -> Result<Option<ConnectionSnapshot>, NewerVersionError> {
             let mut conns = self.connections.lock().await;
             let Some(conn) = conns.iter_mut().find(|c| c.id == id) else {

@@ -261,6 +261,7 @@ where
                 icon: None,
                 icon_color: None,
                 icon_emoji: None,
+                description: None,
             };
             match update(params) {
                 Ok(mut rewritten) => {

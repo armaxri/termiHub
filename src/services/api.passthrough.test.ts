@@ -1038,6 +1038,7 @@ describe("api pass-through wrappers (#2975)", () => {
         icon: null,
         icon_color: null,
         icon_emoji: null,
+        description: null,
       };
 
       const result = await saveAgentDefinition("agent-1", definition);

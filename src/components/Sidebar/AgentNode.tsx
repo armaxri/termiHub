@@ -363,6 +363,7 @@ function AgentConnectionItem({
           dragging={isDragging}
           selected={isSelected}
           persistent={definition.persistent}
+          described={!!definition.description}
           testId={`agent-definition-${definition.id}`}
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
           dragAttributes={attributes}
@@ -417,7 +418,21 @@ function AgentConnectionItem({
               dotTestId={`persistent-state-dot-${definition.id}`}
             />
           )}
-          <span className="connection-tree__label">{definition.name}</span>
+          {/* The user's description (#5769), muted under the name — the same
+              two-line row a local saved connection uses (#5757). */}
+          {definition.description ? (
+            <span className="connection-tree__text">
+              <span className="connection-tree__label">{definition.name}</span>
+              <span
+                className="connection-tree__description"
+                data-testid={`agent-definition-description-${definition.id}`}
+              >
+                {definition.description}
+              </span>
+            </span>
+          ) : (
+            <span className="connection-tree__label">{definition.name}</span>
+          )}
           {/* Agent-backed persistence (#2086): the ∞ is reserved for sessions
               that live on the remote agent and survive closing termiHub AND
               powering off / restarting this machine. The tooltip states exactly
