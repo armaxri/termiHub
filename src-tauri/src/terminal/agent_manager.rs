@@ -667,8 +667,10 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// the agent's `FILE_NOT_FOUND` answer comes back as
     /// [`FileError::NotFound`](termihub_core::errors::FileError::NotFound) and
     /// every other failure as an operation failure (#4299). Defaults to the
-    /// plain request with every failure untyped — never "not found" — so mock
-    /// clients need not implement it.
+    /// plain request with every failure untyped — never "not found" — except
+    /// an agent that lacks the method ([`TerminalError::AgentUnsupported`]),
+    /// which is [`FileError::NotSupported`](termihub_core::errors::FileError::NotSupported)
+    /// as in the real client, so mock clients need not implement it.
     fn send_file_request(
         &self,
         agent_id: &str,
@@ -676,7 +678,12 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         params: Value,
     ) -> Result<Value, termihub_core::errors::FileError> {
         self.send_request(agent_id, method, params)
-            .map_err(|e| termihub_core::errors::FileError::OperationFailed(e.to_string()))
+            .map_err(|e| match e {
+                TerminalError::AgentUnsupported(_) => {
+                    termihub_core::errors::FileError::NotSupported
+                }
+                other => termihub_core::errors::FileError::OperationFailed(other.to_string()),
+            })
     }
 
     /// Route a streaming tool run's notifications (`tool.event` / `tool.done`,

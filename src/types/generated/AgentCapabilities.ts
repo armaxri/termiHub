@@ -102,6 +102,13 @@ definitionIconStyle?: boolean,
  */
 serialPortRescan?: boolean, 
 /**
+ * Whether the agent shortens files (`connection.files.truncate`,
+ * protocol 0.41.0, #5736), which a crashed agent-hosted upload trims its
+ * remote partial back to the last checkpoint with. `false` for older
+ * agents, whose uploads restart from zero instead.
+ */
+fileTruncate?: boolean, 
+/**
  * Agent binary version string, e.g. "1.4.2".
  */
 agentVersion?: string, };

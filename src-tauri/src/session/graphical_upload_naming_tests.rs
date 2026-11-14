@@ -250,6 +250,8 @@ struct StatAgent {
     appears: Vec<String>,
     create_error: Option<fn(String) -> FileError>,
     writes: Mutex<Vec<Value>>,
+    /// Advertises `fileTruncate` (#5736); a truncate answers the length.
+    file_truncate: bool,
 }
 
 impl AgentRequests for StatAgent {
@@ -268,6 +270,10 @@ impl AgentRequests for StatAgent {
                 }
             }
             return Ok(serde_json::json!({}));
+        }
+        if method == termihub_core::protocol::methods::CONNECTION_FILES_TRUNCATE {
+            self.writes.lock().unwrap().push(params.clone());
+            return Ok(serde_json::json!({ "size": params["length"] }));
         }
         if method != CONNECTION_FILES_STAT {
             return Ok(serde_json::json!({}));
@@ -288,6 +294,10 @@ impl AgentRequests for StatAgent {
 
     fn supports_file_create_new(&self, _agent_id: &str) -> bool {
         self.file_create_new
+    }
+
+    fn supports_file_truncate(&self, _agent_id: &str) -> bool {
+        self.file_truncate
     }
 }
 
@@ -438,5 +448,32 @@ async fn an_agent_claim_failure_that_is_not_a_clash_skips_the_item() {
         placement.skipped[0].reason.contains("Permission denied"),
         "{}",
         placement.skipped[0].reason
+    );
+}
+
+/// The agent host's own files trim a crashed upload's partial through
+/// `connection.files.truncate` without a `connection_id` (#5736) — but only
+/// on an agent that advertises `fileTruncate`; an older one is never asked.
+#[tokio::test]
+async fn agent_host_files_truncate_only_on_an_agent_that_advertises_it() {
+    use termihub_core::files::transfer::ranged::RangedTransferTarget;
+
+    let (agent, files) = agent_files(StatAgent::default());
+    assert!(matches!(
+        RangedTransferTarget::truncate(&files, "/d/a.bin", 4).await,
+        Err(FileError::NotSupported)
+    ));
+    assert!(agent.methods.lock().unwrap().is_empty(), "never asked");
+
+    let (agent, files) = agent_files(StatAgent {
+        file_truncate: true,
+        ..StatAgent::default()
+    });
+    RangedTransferTarget::truncate(&files, "/d/a.bin", 4)
+        .await
+        .unwrap();
+    assert_eq!(
+        agent.writes.lock().unwrap().clone(),
+        vec![serde_json::json!({ "connection_id": null, "path": "/d/a.bin", "length": 4 })]
     );
 }
