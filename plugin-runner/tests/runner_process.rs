@@ -35,6 +35,10 @@ fn spawn(args: &[&str]) -> (Child, HostEnd) {
     use termihub_plugin_runner::ipc::IPC_FD;
 
     let (host, runner) = UnixStream::pair().unwrap();
+    // Set the timeout before the runner exists: a runner that refuses its
+    // arguments exits at once, and macOS rejects `setsockopt` on a socket
+    // whose peer has already closed with EINVAL (#5807).
+    host.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     let fd = runner.as_raw_fd();
     let mut cmd = Command::new(RUNNER);
     cmd.args(args)
@@ -54,7 +58,6 @@ fn spawn(args: &[&str]) -> (Child, HostEnd) {
     }
     let child = cmd.spawn().unwrap();
     drop(runner);
-    host.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
     (child, host)
 }
 

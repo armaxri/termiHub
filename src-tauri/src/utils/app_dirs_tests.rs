@@ -117,7 +117,10 @@ fn installed_mode_cache_dir_is_the_platform_default() {
 
 #[test]
 fn drag_out_and_plugin_downloads_land_under_the_portable_cache() {
-    let data_dir = PathBuf::from("/usb/termiHub/data");
+    // A real absolute path: `/usb/...` is root-relative on Windows, which
+    // Tauri rejects as a directory override (#5807).
+    let root = TempDir::new().unwrap();
+    let data_dir = root.path().join("data");
     let app = mock_app_for(&portable(&data_dir));
     let cache = app.path().app_cache_dir().expect("cache dir resolves");
     for sub in [
