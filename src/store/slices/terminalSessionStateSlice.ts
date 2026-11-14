@@ -3,12 +3,13 @@ import { StateCreator } from "zustand";
 import type { AppState } from "../appStore";
 import { collectLiveTabs, omitKey } from "../layoutHelpers";
 import {
-  isResilientReconnectTab,
+  dropMayReconnect,
   isResilientReconnectTabId,
   ABORTED_CONNECT_MESSAGE,
 } from "../reconnectHelpers";
 import { monitorKeyForTab } from "../tabQueries";
 import type { TerminalExitInfo } from "@/types/terminal";
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import {
   cancelConnecting as apiCancelConnecting,
   closeTerminal as apiCloseTerminal,
@@ -208,8 +209,14 @@ export interface TerminalSessionStateSlice {
    * Mark a tab's session as exited. Pass `info` to record the exit code and
    * cause so the overlay can branch its wording; a `killed` reason additionally
    * drops the tab straight into view mode so no disconnect overlay appears (#1121).
+   * `endCause` is the backend's verdict on why the link ended; an agent's
+   * `device_gone` (#5783) ends the tab without a reconnect.
    */
-  setTerminalExited: (tabId: string, info?: TerminalExitInfo) => void;
+  setTerminalExited: (
+    tabId: string,
+    info?: TerminalExitInfo,
+    endCause?: SessionEndCause | null
+  ) => void;
   /**
    * Tabs that ended because the user disconnected or shut down their agent
    * (#4309). Runtime-only presentation state: the view-mode banner reads it to
@@ -523,7 +530,7 @@ export const createTerminalSessionStateSlice: StateCreator<
   terminalViewMode: {},
   terminalReattaching: {},
   terminalReconnectPrompt: {},
-  setTerminalExited: (tabId, info) => {
+  setTerminalExited: (tabId, info, endCause) => {
     // A user-initiated kill goes straight to view mode: the session is dead
     // and scrollback is preserved, but no "unexpected disconnect" overlay is
     // shown for something the user asked for (#1121).
@@ -559,13 +566,13 @@ export const createTerminalSessionStateSlice: StateCreator<
     //    backend drives the backoff loop and re-establishes the transport). Only
     //    a lost link qualifies — a clean exit, a user kill or a process that
     //    exited with a code (an agent-hosted shell the user ended, #5742) never
-    //    reconnects;
+    //    reconnects, nor does a serial device an agent gave up on (#5783);
     //  - any other unexpected drop is a terminal `session.dropped`.
     if (info?.reason === "killed") {
       mirrorSessionIntent("session.disconnect", tabId);
     } else if (info?.reason === "dropped") {
       const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
-      if (info.code === null && isResilientReconnectTab(tab)) {
+      if (info.code === null && dropMayReconnect(tab, endCause)) {
         mirrorSessionIntent("session.reconnect", tabId);
       } else {
         mirrorSessionIntent("session.dropped", tabId);

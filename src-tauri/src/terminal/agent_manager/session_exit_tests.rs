@@ -195,3 +195,46 @@ fn a_removed_or_unretained_route_records_nothing() {
     assert!(routes.routes.is_empty());
     assert_eq!(slot.end_cause(), None);
 }
+
+#[test]
+fn a_serial_reopen_that_gave_up_ends_the_output_stream() {
+    // 0.40.0+ (#5783): the agent's serial reopen gave up — device gone.
+    let (mut routes, mut outputs, slot, rx) = registered("s1");
+
+    let handled = route(
+        &mut routes,
+        &mut outputs,
+        CONNECTION_EXIT,
+        json!({ "session_id": "s1", "exit_code": 0, "end_cause": "device_gone" }),
+    );
+
+    assert!(handled);
+    assert_eq!(slot.end_cause(), Some(SessionEndCause::DeviceGone));
+    assert_eq!(slot.exit_status(), None);
+    assert!(!outputs.contains_key("s1"), "the output route is dropped");
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    ));
+}
+
+#[test]
+fn a_stopped_container_ends_the_output_stream_with_its_status() {
+    // 0.40.0+ (#5783): a Docker session on the agent whose container stopped.
+    let (mut routes, mut outputs, slot, rx) = registered("s1");
+
+    let handled = route(
+        &mut routes,
+        &mut outputs,
+        CONNECTION_EXIT,
+        json!({ "session_id": "s1", "exit_code": 137, "exit_status": 137 }),
+    );
+
+    assert!(handled);
+    assert_eq!(slot.exit_status(), Some(137));
+    assert!(!outputs.contains_key("s1"));
+    assert!(matches!(
+        rx.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    ));
+}

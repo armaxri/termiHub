@@ -339,6 +339,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.40.0        | Yes (the desktop requests 0.24.0; a serial port gone for good or a stopped container on the agent ends its tab via `connection.exit`) |
 | 0.24.0          | 0.39.0        | Yes (the desktop requests 0.24.0; a shell the user exited on the agent ends its tab via `connection.exit`'s `exit_status`)            |
 | 0.24.0          | 0.38.0        | Yes (the desktop requests 0.24.0; a server-closed session on the agent reads "closed by server" via `connection.exit`'s `end_cause`)  |
 | 0.24.0          | 0.37.0        | Yes (the desktop requests 0.24.0; a serial session reopens its port in place and reports it with `connection.reconnect`)              |
@@ -422,6 +423,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.40.0 (additive, minor)** — adds the `device_gone` value of [`connection.exit`](#connectionexit)'s `end_cause` (#5783): the device behind a serial session is gone for good — its in-place reopen gave up, or the port was lost with Auto-Reconnect off. The desktop ends the tab with "— device disconnected —" and does not reconnect it. A Docker session also reports its real `exit_status` now: the shell's code when the user exited it, the container's when it stopped. An older desktop reads the unknown cause as absent, so its tab behaves as before.
 
 **0.39.0 (additive, minor)** — adds the optional `exit_status` of [`connection.exit`](#connectionexit) (#5742): the real exit status of an agent-hosted session's process when it exited on its own. A shell on the agent where the user types `exit` now ends the tab with "[Process exited with code 0]" and is not reconnected, like a direct shell. An older agent never sends the field (its `exit_code` is `0` for every end, so the desktop does not read it), and its sessions behave as before; an older desktop ignores it.
 
@@ -4127,32 +4130,37 @@ A session's process has exited.
 | ------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `session_id`  | `string`   | Exited session UUID                                                                                                           |
 | `exit_code`   | `integer?` | Legacy exit code: the process's real status when `exit_status` is present, otherwise `0` (or `null`) — never meaningful alone |
-| `end_cause`   | `string?`  | Why the session's link ended on its own (0.38.0+): `remote_closed`, `io_error` or `timeout`. Omitted when unknown or closed   |
+| `end_cause`   | `string?`  | Why the session's link ended on its own (0.38.0+): `remote_closed`, `io_error`, `timeout`, `device_gone` (0.40.0+)            |
 | `exit_status` | `integer?` | The process's real exit status when it exited on its own (0.39.0+). Omitted when the backend has no process status or closed  |
 
 `end_cause` (0.38.0+, #5732) is the backend's own verdict, the same one a direct session reports
 on the desktop: `remote_closed` when the server ended the connection cleanly (TCP end-of-stream on
 Telnet, the SSH server closing the shell channel), `io_error` when a read or write on the link
-failed, `timeout` when the link timed out. The agent omits it when the backend cannot tell, after
+failed, `timeout` when the link timed out, and (0.40.0+, #5783) `device_gone` when a serial
+session's device is gone for good — its in-place reopen gave up, or the port was lost with
+Auto-Reconnect off. The agent omits it when the backend cannot tell, after
 a [`connection.close`](#connectionclose), and an agent older than 0.38.0 never sends it. A
 desktop reads a value it does not know as absent.
 
-`exit_status` (0.39.0+, #5742) is the real status of the session's own process — today a local
-shell on the agent, which reads `1` when a signal killed it. It is omitted for sessions without a
-process status (a network session, a stopped container), after a
+`exit_status` (0.39.0+, #5742) is the real status of the session's own process — a local shell
+on the agent, which reads `1` when a signal killed it, and (0.40.0+, #5783) a Docker session: the
+exec's code when the user exited the shell, the container's when it stopped underneath. It is
+omitted for sessions without a process status (a network session), after a
 [`connection.close`](#connectionclose), and by an agent older than 0.39.0, whose `exit_code` is
 `0` for every end and so never tells how a process ended. When present, `exit_code` carries the
 same value.
 
 When `end_cause` or `exit_status` is present, the desktop ends the hosted session at once. A
-cause is shown as such ("connection closed by server" for `remote_closed`); a status reads
+cause is shown as such ("connection closed by server" for `remote_closed`, "device disconnected"
+for `device_gone`, which is never auto-reconnected either); a status reads
 "[Process exited with code N]" and is a process exit, never auto-reconnected — exactly like a
 direct shell the user exited. With neither, the desktop keeps its earlier behaviour, and losing
 the agent link still reads "connection lost" (and reconnects a resilient tab).
 
 For a daemon-hosted session (SSH and the other persistent types) the session daemon passes the
 cause to the agent worker as an optional fifth byte of its `MSG_EXITED` frame (after the 4-byte
-exit code: `0` = none, `1` = `remote_closed`, `2` = `io_error`, `3` = `timeout`), followed by an
+exit code: `0` = none, `1` = `remote_closed`, `2` = `io_error`, `3` = `timeout`, `4` =
+`device_gone`), followed by an
 optional sixth byte `1` when the exit code is the process's real status (#5742). A worker that
 predates the bytes reads only the exit code (and no known cause from `0`), and a frame without
 the sixth byte means no status: its code is the `0` every older daemon sent.

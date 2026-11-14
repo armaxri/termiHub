@@ -587,6 +587,20 @@ pub(super) fn drop_fold_for(exit_code: Option<i32>, resilient: bool) -> Option<D
     }
 }
 
+/// Whether a genuine drop may arm the reconnect loop: on a resilient tab,
+/// unless an agent said the session's device is gone for good (#5783). An
+/// agent-hosted serial port is reopened by the agent itself (#5396); its
+/// `device_gone` means that reopen gave up (or was off), and a desktop
+/// re-attach could only find the ended session. A direct serial session's
+/// `device_gone` still reconnects: the desktop reopens that port itself.
+pub(super) fn drop_may_reconnect(
+    resilient: bool,
+    agent_hosted: bool,
+    end_cause: Option<SessionEndCause>,
+) -> bool {
+    resilient && !(agent_hosted && end_cause == Some(SessionEndCause::DeviceGone))
+}
+
 /// Status of a session's output logging, returned to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -2705,14 +2719,17 @@ impl SessionManager {
             None
         };
 
-        let (end_cause, exit_code) = {
+        let (end_cause, exit_code, agent_hosted) = {
             let sessions = sessions.lock().await;
-            sessions.get(session_id).map_or((None, None), |entry| {
-                (
-                    entry.connection.end_cause(),
-                    Self::reported_exit_code(entry),
-                )
-            })
+            sessions
+                .get(session_id)
+                .map_or((None, None, false), |entry| {
+                    (
+                        entry.connection.end_cause(),
+                        Self::reported_exit_code(entry),
+                        entry.remote_session_id.is_some(),
+                    )
+                })
         };
         let exit_event = TerminalExitEvent {
             session_id: session_id.to_string(),
@@ -2735,7 +2752,9 @@ impl SessionManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id);
         if let Some(binding) = &drop_binding {
-            if let Some(fold) = drop_fold_for(exit_event.exit_code, binding.resilient) {
+            let may_reconnect =
+                drop_may_reconnect(binding.resilient, agent_hosted, exit_event.end_cause);
+            if let Some(fold) = drop_fold_for(exit_event.exit_code, may_reconnect) {
                 emitter.fold_session_drop(&binding.tab_id, fold);
             }
             if let Some(exit) = plugin_exit {

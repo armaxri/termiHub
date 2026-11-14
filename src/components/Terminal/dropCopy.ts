@@ -88,7 +88,9 @@ export function formatClock(at: Date): string {
  * SSH / Telnet server that closed the connection cleanly reads as
  * "— connection closed by server hh:mm:ss —" (#5696) — also when that
  * server served a session on a remote agent, which the agent reports with the
- * session's end cause (#5732; a lost agent link never carries one); any real
+ * session's end cause (#5732; a lost agent link never carries one); a serial
+ * device on an agent that is gone for good (`device_gone`, #5783) reads as
+ * "device disconnected" like a direct serial tab; any real
  * process exit keeps "[Process exited…]".
  */
 export function sessionEndSeparator(input: {
@@ -102,7 +104,10 @@ export function sessionEndSeparator(input: {
   const { transport, exitCode, reason, at, endCause } = input;
   if (reason === "dropped" && exitCode === null && transport !== "other") {
     const time = formatClock(at);
-    if (transport === "serial") return tf("drop.separator.serial", { time });
+    // A serial device on a remote agent that is gone for good (#5783).
+    if (transport === "serial" || (transport === "agent" && endCause === "device_gone")) {
+      return tf("drop.separator.serial", { time });
+    }
     if (endCause === "remote_closed" && SERVER_TRANSPORTS.has(transport)) {
       return tf("drop.separator.remoteClosed", { time });
     }
