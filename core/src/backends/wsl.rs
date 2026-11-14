@@ -460,6 +460,12 @@ impl crate::files::RangedFileAccess for WslFileBrowser {
         )
         .await
     }
+
+    /// Shorten a regular file through the UNC share (#5736).
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        let unc_path = self.to_unc_path(path);
+        crate::files::ranged::fs_shorten(unc_path.into(), path.to_string(), len).await
+    }
 }
 
 /// Convert a Windows absolute path to its WSL `/mnt/` equivalent.

@@ -40,6 +40,11 @@ pub const MAX_RANGE_BYTES: u32 = 256 * 1024;
 ///   offset 0 (#4433): it creates `path` only if nothing holds the name yet,
 ///   then writes `data`. An existing file, directory or symlink — dangling or
 ///   not — fails with [`FileError::AlreadyExists`] and is left untouched.
+/// - [`shorten`](Self::shorten) cuts a regular file back to `len` bytes
+///   (#5736) and answers its size afterwards. It never extends a file (a
+///   `len` past the current size fails without changing it) and never
+///   follows a symlink in `path`'s place or touches a directory, device or
+///   pipe.
 #[async_trait::async_trait]
 pub trait RangedFileAccess: Send + Sync {
     /// Read at most `len` bytes of `path` from `offset`.
@@ -70,6 +75,30 @@ pub trait RangedFileAccess: Send + Sync {
     async fn probe(&self) -> Result<(), FileError> {
         Ok(())
     }
+
+    /// Shorten the regular file `path` to `len` bytes and answer the size it
+    /// holds afterwards (#5736): how a resumed upload drops the bytes a crash
+    /// left past its last checkpoint. See the trait docs for the rules. The
+    /// default answers [`FileError::NotSupported`]: such an upload restarts
+    /// from zero.
+    async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
+        let _ = (path, len);
+        Err(FileError::NotSupported)
+    }
+}
+
+/// The error a [`RangedFileAccess::shorten`] reports for a `len` past the
+/// file's current size: it never extends a file.
+pub fn shorten_would_extend(path: &str, present: u64, len: u64) -> FileError {
+    FileError::OperationFailed(format!(
+        "{path}: file holds {present} bytes, cannot shorten it to {len}; refusing to extend"
+    ))
+}
+
+/// The error a [`RangedFileAccess::shorten`] reports for a `path` that is not
+/// a regular file — a symlink, directory, device or pipe.
+pub fn shorten_not_regular(path: &str) -> FileError {
+    FileError::OperationFailed(format!("{path}: not a regular file; refusing to shorten"))
 }
 
 /// The error a [`RangedFileAccess::write_range`] reports when the file does not
@@ -169,6 +198,51 @@ pub async fn fs_create_new(path: PathBuf, label: String, data: Vec<u8>) -> Resul
             .map_err(|e| create_new_error(e, &path, &label))?;
         file.write_all(&data).map_err(|e| io_error(e, &label))?;
         file.flush().map_err(|e| io_error(e, &label))
+    })
+    .await
+    .map_err(|e| FileError::OperationFailed(e.to_string()))?
+}
+
+/// [`RangedFileAccess::shorten`] for a filesystem path (local disk, a WSL
+/// UNC share). `label` names the file in errors.
+///
+/// The file is opened without following a symlink in `path`'s place
+/// (`O_NOFOLLOW`, or `FILE_FLAG_OPEN_REPARSE_POINT` on Windows) and without
+/// blocking on a FIFO (`O_NONBLOCK`), and the **opened** handle is checked to
+/// be a regular file, so a symlink swapped in after the first check is still
+/// refused. Its size is then compared with `len` and measured again after
+/// the cut.
+pub async fn fs_shorten(path: PathBuf, label: String, len: u64) -> Result<u64, FileError> {
+    tokio::task::spawn_blocking(move || {
+        let meta = std::fs::symlink_metadata(&path).map_err(|e| io_error(e, &label))?;
+        if !meta.file_type().is_file() {
+            return Err(shorten_not_regular(&label));
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_FLAG_OPEN_REPARSE_POINT: open a symlink itself, never its
+            // target; the type check below then refuses it.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(&path).map_err(|e| io_error(e, &label))?;
+        let opened = file.metadata().map_err(|e| io_error(e, &label))?;
+        if !opened.file_type().is_file() {
+            return Err(shorten_not_regular(&label));
+        }
+        if len > opened.len() {
+            return Err(shorten_would_extend(&label, opened.len(), len));
+        }
+        file.set_len(len).map_err(|e| io_error(e, &label))?;
+        file.sync_all().map_err(|e| io_error(e, &label))?;
+        Ok(file.metadata().map_err(|e| io_error(e, &label))?.len())
     })
     .await
     .map_err(|e| FileError::OperationFailed(e.to_string()))?
@@ -386,5 +460,78 @@ mod tests {
             Plain.create_new("/f", b"").await,
             Err(FileError::NotSupported)
         ));
+    }
+
+    #[tokio::test]
+    async fn shorten_cuts_a_regular_file_and_answers_its_size() {
+        let (_dir, path) = temp("f");
+        std::fs::write(&path, b"0123456789").unwrap();
+        let l = label(&path);
+        assert_eq!(fs_shorten(path.clone(), l.clone(), 4).await.unwrap(), 4);
+        assert_eq!(std::fs::read(&path).unwrap(), b"0123");
+        // Its own size is a no-op, and zero empties it.
+        assert_eq!(fs_shorten(path.clone(), l.clone(), 4).await.unwrap(), 4);
+        assert_eq!(fs_shorten(path.clone(), l, 0).await.unwrap(), 0);
+        assert!(std::fs::read(&path).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shorten_never_extends_a_file() {
+        let (_dir, path) = temp("f");
+        std::fs::write(&path, b"abc").unwrap();
+        let err = fs_shorten(path.clone(), label(&path), 9).await.unwrap_err();
+        assert!(err.to_string().contains("refusing to extend"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+    }
+
+    #[tokio::test]
+    async fn shorten_of_a_missing_file_is_not_found_and_creates_nothing() {
+        let (_dir, path) = temp("missing");
+        assert!(matches!(
+            fs_shorten(path.clone(), label(&path), 0).await,
+            Err(FileError::NotFound(_))
+        ));
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn shorten_refuses_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = fs_shorten(dir.path().to_path_buf(), "d".into(), 0)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+    }
+
+    /// A symlink in the path's place is never followed: its target keeps
+    /// every byte.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shorten_refuses_a_symlink_and_leaves_its_target_alone() {
+        let (dir, target) = temp("target");
+        std::fs::write(&target, b"keep me").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let err = fs_shorten(link.clone(), label(&link), 0).await.unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep me");
+    }
+
+    /// A FIFO is refused without blocking on an open that waits for a reader.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shorten_refuses_a_fifo_without_blocking() {
+        let (_dir, fifo) = temp("fifo");
+        let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            fs_shorten(fifo.clone(), label(&fifo), 0),
+        )
+        .await
+        .expect("never blocks")
+        .unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
     }
 }
