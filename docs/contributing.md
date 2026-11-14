@@ -2390,20 +2390,24 @@ so an isolated instance there keeps the downloads page.
 
 ```mermaid
 flowchart LR
-    T[tag push] --> B[build-app]
-    B -->|bundle + .sig per platform| M[updater-manifest: write + check latest.json]
+    T[tag push] --> B[build-app: no key]
+    B -->|unsigned bundle + SHA-256 per platform| S[sign-updater: only job with the key]
+    S -->|.sig per bundle| M[updater-manifest: write + check latest.json]
     M --> U[upload-app: attest + upload]
     U --> R[(release vX.Y.Z)]
     R -->|releases/latest/download/latest.json| A[installed termiHub]
     A -->|verify minisign signature with the compiled-in key| I[install + restart]
 ```
 
-**Release mechanics** (`release.yml`): the public key and `createUpdaterArtifacts` live only in
+**Release mechanics** (`release.yml`): the public key lives only in
 [`src-tauri/tauri.updater.conf.json`](../src-tauri/tauri.updater.conf.json), which only the
-release workflow merges, so `main`/`develop` builds never try to sign and never offer an
-in-place update. `build-app` stages each bundle's `.sig` next to it (macOS rebuilds the
-`.app.tar.gz` from the re-signed app in the DMG, checks its designated requirement and signs it
-there); the read-only
+release workflow merges, so `main`/`develop` builds never offer an in-place update. The fragment
+has no `createUpdaterArtifacts`: the bundler does not sign, so `tauri build` never needs the
+private key ([#5761](https://github.com/armaxri/termiHub/issues/5761)). `build-app` stages each
+updater bundle **unsigned** next to the installer (macOS rebuilds the `.app.tar.gz` from the
+re-signed app in the DMG and checks its designated requirement there) and hands its SHA-256 on
+as a `release-updater-digest-<platform>` artifact. The `sign-updater` job then signs them (see
+[Updater Signing Key](#updater-signing-key)); the read-only
 `updater-manifest` job writes `latest.json` with
 [`updater-manifest.mjs`](../scripts/internal/updater-manifest.mjs) and checks every published
 target, every URL and every signature against the configured key and the app version before
@@ -2440,8 +2444,31 @@ password exist as the GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and
 - **Compromise:** re-run with `--force`, commit the new public key and ship a release. Copies
   built with the old key then fail the signature check on **Download and install** (nothing is
   installed; "Open downloads page" still works); announce a manual reinstall.
-- **Exposure:** the bundler signs during `tauri build`, so the secret is passed to that one
-  build step (and to the macOS staging step), not to the whole job.
+- **Exposure** ([#5761](https://github.com/armaxri/termiHub/issues/5761)): only the
+  `sign-updater` job of `release.yml` receives the two secrets, and only in its signing step.
+  That job runs no third-party build code: it sparse-checks-out `scripts/internal` and
+  `src-tauri` (first-party, dependency-free helpers and configs), installs no project
+  dependencies and compiles nothing. The signer is the standalone Tauri CLI release binary
+  pinned by version and SHA-256 in
+  [`updater-signer.json`](../scripts/internal/updater-signer.json) and installed by
+  [`updater-signing.sh`](../scripts/internal/updater-signing.sh) `install-signer`, which refuses
+  any other bytes. `updater-signing.sh sign` signs only bundles matching the digests `build-app`
+  staged, binds each signature to the app version (`--app-version`, what `requireSignedVersion`
+  checks) and verifies every `.sig` against the configured public key. The job is read-only
+  (`contents: read`) and runs in a dry run too, so a dispatched dry run proves the whole chain
+  up to a `latest.json` that passes the checker. `workflow-token-hygiene.test.mjs` pins that no
+  other job, and no job that installs dependencies or compiles, references the key. To bump the
+  signer, change `version` and every `sha256` in `updater-signer.json` together (the file says
+  how to read the digests).
+- **Environment (recommended, maintainer):** `sign-updater` runs in the `updater-signing`
+  GitHub environment (GitHub creates it on the first run if it does not exist). Repository
+  secrets reach it too, so nothing breaks before this step. To harden it: in **Settings ▸
+  Environments ▸ updater-signing**, add `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as environment secrets, delete the repository-level
+  copies, and limit **Deployment branches and tags** to the tag pattern `v*` plus the branches
+  you dispatch release dry runs from (`develop`, `main`). Then no other job and no other ref can
+  read the key at all. A required reviewer would also pause every dry run, so leave that off
+  unless you want to approve each run.
 
 ### macOS Signing Identity
 
@@ -2487,6 +2514,13 @@ from that app and checked again. The SHA-1 is pinned in
 - pinned, but the `MACOS_SIGNING_P12_BASE64` / `MACOS_SIGNING_P12_PASSWORD` secrets missing, or
   holding another certificate: the build fails, because an ad-hoc or differently signed release
   would cost every user their keychain access.
+
+**Exposure:** unlike the [updater key](#updater-signing-key), the identity is still imported in
+`build-app`'s macOS legs, before the helpers and the app are compiled: the helpers must be
+signed before `core/build.rs` embeds their SHA-256, and a certificate signature carries its
+signing time, so signing them later would change their bytes. Moving it into jobs that run no
+third-party build code needs a multi-phase macOS build; that is tracked in
+[#5781](https://github.com/armaxri/termiHub/issues/5781).
 
 Hardened runtime (`--options runtime`) is not enabled: it is only needed for notarization, it
 does not change the DR, and its library validation would stop the plugin runner from loading
