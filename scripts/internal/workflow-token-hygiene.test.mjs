@@ -387,6 +387,8 @@ describe("release.yml dry run never reaches a write token (#4746)", () => {
         "agent-binaries-windows",
         "third-party-notices",
         "sbom-generate",
+        "sign-updater",
+        "updater-manifest",
         "check-release-assets",
       ])
     );
