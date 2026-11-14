@@ -32,29 +32,9 @@ vi.mock("./TerminalRegistry", () => ({
 vi.mock("./TerminalCommandBridge", () => ({ TerminalCommandBridge: () => null }));
 vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
-vi.mock("@/components/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  Button: ({
-    icon,
-    children,
-    className,
-    variant: _variant,
-    size: _size,
-    iconOnly: _iconOnly,
-    ...rest
-  }: {
-    icon?: React.ReactNode;
-    children?: React.ReactNode;
-    className?: string;
-    [key: string]: unknown;
-  }) => (
-    <button className={className} {...rest}>
-      {icon}
-      {children}
-    </button>
-  ),
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
+vi.mock("@/components/ui", async () =>
+  (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
+);
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
 vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
@@ -115,7 +95,7 @@ function loggingButton(): HTMLButtonElement {
 }
 
 function pressed(): string | null {
-  return loggingButton().getAttribute("aria-pressed");
+  return loggingButton().getAttribute("data-active");
 }
 
 /** Flush the microtasks a resolved/rejected API promise schedules. */
@@ -176,7 +156,9 @@ describe("TerminalView — session logging status sync (#5172)", () => {
 
     expect(sessionLoggingStatus).toHaveBeenCalledWith("sess-t1");
     expect(pressed()).toBe("true");
-    expect(loggingButton().getAttribute("aria-label")).toBe("Stop logging output");
+    expect(loggingButton().textContent).toBe("Stop logging output");
+    // #5756: logging stays visible as a chip while the "…" menu is closed.
+    expect(container.querySelector('[data-testid="terminal-view-active-logging"]')).not.toBeNull();
   });
 
   it("clears the pressed state when a re-sync reports logging has ended", async () => {

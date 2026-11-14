@@ -1,5 +1,5 @@
 /**
- * The terminal toolbar exposes a record/stop button wired to the macro
+ * The terminal toolbar's "…" menu exposes a record/stop entry (#5756) wired to the macro
  * recording store slice (#1674): it toggles recording and reflects the active
  * state so the user always sees whether input is being captured.
  */
@@ -18,32 +18,9 @@ vi.mock("./TerminalRegistry", () => ({
 vi.mock("./TerminalCommandBridge", () => ({ TerminalCommandBridge: () => null }));
 vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
-vi.mock("@/components/ui", () => ({
-  Tooltip: ({ children }: { children: React.ReactNode }) => children,
-  Button: ({
-    icon,
-    children,
-    className,
-    variant: _variant,
-    size: _size,
-    iconOnly: _iconOnly,
-    fullWidth: _fullWidth,
-    pendingLabel: _pendingLabel,
-    errorToast: _errorToast,
-    ...rest
-  }: {
-    icon?: React.ReactNode;
-    children?: React.ReactNode;
-    className?: string;
-    [key: string]: unknown;
-  }) => (
-    <button className={["ui-btn", className].filter(Boolean).join(" ")} {...rest}>
-      {icon}
-      {children}
-    </button>
-  ),
-  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
-}));
+vi.mock("@/components/ui", async () =>
+  (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
+);
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
 vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
@@ -85,8 +62,9 @@ describe("TerminalView — macro record button (#1674)", () => {
   it("renders the record button in an idle state", () => {
     const btn = recordButton();
     expect(btn).toBeTruthy();
-    expect(btn.getAttribute("aria-pressed")).toBe("false");
-    expect(btn.className).not.toContain("terminal-view__toolbar-action--recording");
+    expect(btn.getAttribute("data-active")).toBe("false");
+    expect(btn.textContent).toBe("Record macro");
+    expect(document.querySelector('[data-testid="terminal-view-active-recording"]')).toBeNull();
   });
 
   it("clicking starts recording and reflects the active state", () => {
@@ -94,8 +72,12 @@ describe("TerminalView — macro record button (#1674)", () => {
 
     expect(useAppStore.getState().macroRecording).toBe(true);
     const btn = recordButton();
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.className).toContain("terminal-view__toolbar-action--recording");
+    expect(btn.getAttribute("data-active")).toBe("true");
+    expect(btn.textContent).toBe("Stop recording macro");
+    // #5756: the recording stays visible as a chip while the menu is closed.
+    expect(
+      document.querySelector('[data-testid="terminal-view-active-recording"]')?.textContent
+    ).toBe("Recording");
   });
 
   it("clicking again stops recording (opening the save dialog after capture)", () => {
