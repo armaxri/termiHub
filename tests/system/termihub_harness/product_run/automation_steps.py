@@ -60,6 +60,16 @@ class AutomationPhaseUi(HarnessMixin):
     def schedule(self, schedule_id: str) -> Optional[dict[str, Any]]:
         return next((s for s in self._state_list("schedules") if s.get("id") == schedule_id), None)
 
+    # ── list rows (#5757) ────────────────────────────────────────────────────
+    def row_tooltip(self, row_testid: str) -> str:
+        """A list row's tooltip text: its accessible description (SidebarListItem)."""
+        return self.driver.get_attribute(row_testid, "aria-description") or ""
+
+    def row_text(self, row_testid: str) -> str:
+        """The text a list row shows at rest (its tooltip is not in the DOM)."""
+        self.driver.force_hover(None)
+        return self.driver.get_text(row_testid)
+
     # ── macros ───────────────────────────────────────────────────────────────
     def show_macros(self) -> None:
         """Show the Macros sidebar (clicking its active icon would close it)."""
