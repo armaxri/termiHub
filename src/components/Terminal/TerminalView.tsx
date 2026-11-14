@@ -227,7 +227,10 @@ export function TerminalView() {
           {/* #5559 / #5756: the layout icons stay visible, each tooltip naming its
               shortcut; session and macro actions live in the "…" menu, and a
               running one shows as a chip beside the icons. */}
-          <div className="terminal-view__toolbar-actions">
+          <div
+            className="terminal-view__toolbar-actions"
+            data-testid="terminal-view-toolbar-actions"
+          >
             <div
               className="terminal-view__toolbar-group"
               role="group"
