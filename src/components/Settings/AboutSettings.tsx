@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Github, ExternalLink, ScrollText } from "lucide-react";
+import { Github, ExternalLink, ScrollText, Shield } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
@@ -11,6 +11,8 @@ import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
 const LICENSE_URL = "https://github.com/armaxri/termiHub/blob/main/LICENSE";
+/** The full privacy notice (`docs/privacy.md`); `PRIVACY.md` at the repo root links to it. */
+const PRIVACY_URL = "https://github.com/armaxri/termiHub/blob/main/docs/privacy.md";
 
 /** Settings page section showing app version, project links, and license info. */
 export function AboutSettings() {
@@ -31,6 +33,15 @@ export function AboutSettings() {
       await openUrl(LICENSE_URL);
     } catch (err) {
       frontendLog("about", `Failed to open license URL: ${errorMessage(err)}`);
+      throw err;
+    }
+  };
+
+  const handlePrivacy = async () => {
+    try {
+      await openUrl(PRIVACY_URL);
+    } catch (err) {
+      frontendLog("about", `Failed to open privacy URL: ${errorMessage(err)}`);
       throw err;
     }
   };
@@ -102,6 +113,15 @@ export function AboutSettings() {
             data-testid="about-third-party-licenses-link"
           >
             Third-party licenses
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Shield size={13} />}
+            onClick={handlePrivacy}
+            data-testid="about-privacy-link"
+          >
+            Privacy
           </Button>
         </div>
       </div>
