@@ -228,7 +228,11 @@ use termihub_core::monitoring::{
 /// `connection.exit` (#5732): why an agent-hosted session's link ended on its
 /// own, so a server-closed telnet/SSH session reads "closed by server". An
 /// older desktop ignores the field.
-const AGENT_PROTOCOL_VERSION: &str = "0.38.0";
+/// Bumped to 0.39.0 for the additive, optional `exit_status` of
+/// `connection.exit` (#5742): the real exit status of a session's process, so
+/// a shell the user exited on the agent ends its tab instead of reconnecting.
+/// An older desktop ignores the field.
+const AGENT_PROTOCOL_VERSION: &str = "0.39.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -4044,10 +4048,11 @@ mod tests {
     /// `unreachable` / `dns` connect-failure kinds (#5183), and 0.36.0
     /// `connection.files.realpath` (#5333), and 0.37.0 the
     /// `connection.reconnect` notification (#5396), and 0.38.0 the optional
-    /// `end_cause` of `connection.exit` (#5732).
+    /// `end_cause` of `connection.exit` (#5732), and 0.39.0 its optional
+    /// `exit_status` (#5742).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.38.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.39.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
