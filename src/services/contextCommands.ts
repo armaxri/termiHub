@@ -7,7 +7,7 @@ import {
 } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
-import { requestTabGroupCloseConfirm } from "@/utils/tabGroupCloseGuard";
+import { closePanelGuarded, requestTabGroupCloseConfirm } from "@/utils/tabGroupCloseGuard";
 import { requestTabClose } from "@/utils/tabCloseFlow";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { getCommandMarkTracker } from "@/services/commandMarks";
@@ -159,6 +159,45 @@ function moveActiveTabToNewWindow(): void {
   void useAppStore.getState().moveTabToWindow(tab.id, panel.id, { kind: "new" });
 }
 
+/** Whether the active panel is one of several, so closing it leaves a layout. */
+function canCloseActivePanel(): boolean {
+  const panel = activeLeaf();
+  return !!panel && getAllLeaves(getLayoutRenderTree()).length > 1;
+}
+
+/**
+ * Close the active split panel (#5779) through the guard the toolbar's Close
+ * panel button uses: live sessions or unsaved editors are confirmed first.
+ */
+function closeActivePanel(): void {
+  const panel = activeLeaf();
+  if (!panel || !canCloseActivePanel()) return;
+  closePanelGuarded(panel.id);
+}
+
+/**
+ * Window event the terminal view listens for to toggle session output logging
+ * of the active terminal (#5779). The logging state lives in the terminal view,
+ * so the shortcut and the palette reach it through this event.
+ */
+export const TOGGLE_SESSION_LOGGING_EVENT = "termihub:toggle-session-logging";
+
+/** Window event the terminal view listens for to open the macro picker (#5779). */
+export const OPEN_MACRO_PLAYBACK_EVENT = "termihub:open-macro-playback";
+
+/**
+ * Play macro…, as the "…" menu row does it: stop a running playback, otherwise
+ * open the macro picker.
+ */
+function playOrStopMacro(): void {
+  const state = useAppStore.getState();
+  if (state.macroPlayback) {
+    state.cancelMacroPlayback();
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(OPEN_MACRO_PLAYBACK_EVENT));
+}
+
 /**
  * Whether more than one tab group exists, so a tab-group nav/close action has an
  * applicable target (a lone group cannot be cycled past or closed).
@@ -258,6 +297,15 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
     isAvailable: () => activeTerminalTab() !== null,
     run: moveActiveTabToNewWindow,
   },
+  "close-panel": { isAvailable: canCloseActivePanel, run: closeActivePanel },
+  "toggle-session-logging": {
+    isAvailable: () => !!activeTerminalTab()?.sessionId,
+    run: () => {
+      if (!activeTerminalTab()?.sessionId) return;
+      window.dispatchEvent(new CustomEvent(TOGGLE_SESSION_LOGGING_EVENT));
+    },
+  },
+  "play-macro": { isAvailable: () => true, run: playOrStopMacro },
   "close-tab-group": { isAvailable: hasMultipleTabGroups, run: closeActiveTabGroup },
   "next-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(1) },
   "prev-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(-1) },

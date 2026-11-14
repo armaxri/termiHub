@@ -112,8 +112,31 @@ describe("TerminalToolbarMore (#5756)", () => {
     const shortcut = (id: string) => q(id)!.querySelector(".ui-menu__shortcut")?.textContent;
     expect(shortcut("terminal-view-broadcast")).toBe("F6");
     expect(shortcut("terminal-view-record-macro")).toBe("Ctrl+F4");
-    // No binding exists for logging or playback, so nothing is invented.
+    // Logging and playback ship unbound (#5779), so nothing is invented.
     expect(shortcut("terminal-view-toggle-logging")).toBeUndefined();
+    expect(shortcut("terminal-view-play-macro")).toBeUndefined();
+  });
+
+  it("names the logging and play shortcuts once the user binds them (#5779)", async () => {
+    setOverride("toggle-session-logging", { key: "L", alt: true, shift: true });
+    setOverride("play-macro", { key: "F5", ctrl: true });
+    render(props());
+    await openMenu();
+    const shortcut = (id: string) => q(id)!.querySelector(".ui-menu__shortcut")?.textContent;
+    expect(shortcut("terminal-view-toggle-logging")).toBe("Shift+Alt+L");
+    expect(shortcut("terminal-view-play-macro")).toBe("Ctrl+F5");
+  });
+
+  it("names the bound shortcut on the logging and playback chips (#5779)", () => {
+    setOverride("toggle-session-logging", { key: "L", alt: true, shift: true });
+    setOverride("play-macro", { key: "F5", ctrl: true });
+    render(props({ loggingActive: true, macroPlayback: { played: 1, total: 3 } }));
+    expect(q("terminal-view-active-logging")!.getAttribute("aria-label")).toBe(
+      "Stop logging output (Shift+Alt+L)"
+    );
+    expect(q("terminal-view-active-playback")!.getAttribute("aria-label")).toBe(
+      "Stop macro playback (1/3) (Ctrl+F5)"
+    );
   });
 
   it("fires the row's action on select", async () => {

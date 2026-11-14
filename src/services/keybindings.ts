@@ -218,6 +218,27 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "toggle-session-logging",
+    label: "Toggle session logging",
+    category: "terminal",
+    // Ships unbound (#5779): every free Ctrl+Shift / Alt+Shift letter that reads
+    // as "log" is either taken or a key terminal programs expect, and logging is
+    // an occasional action. Bind it in Settings; the "…" menu row then names it.
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
+  {
+    action: "play-macro",
+    label: "Play macro…",
+    category: "terminal",
+    // Ships unbound like Record macro (#5779). Opens the macro picker, or stops
+    // a running playback, exactly like the "…" menu row.
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
+  {
     action: "toggle-broadcast",
     label: "Toggle broadcast input",
     category: "terminal",
@@ -277,6 +298,19 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "\\", meta: true, shift: true },
     // Sibling to split-right; "-" reads as a horizontal divider for a downward split.
     winLinuxDefault: { key: "-", alt: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "close-panel",
+    label: "Close panel",
+    category: "navigation",
+    // Closes the active split panel (#5779), confirming first when it holds
+    // live sessions or unsaved editors. Sits beside Close tab (Cmd+W) and Close
+    // tab group (Cmd+Shift+W) on macOS. Win/Linux follows the Alt+Shift pattern
+    // of Split right / Split down: Ctrl+Shift+W is Close tab, bare Ctrl+W and
+    // Alt+W belong to readline / vim, and Ctrl+Alt is AltGr on many layouts.
+    macDefault: { key: "w", meta: true, alt: true },
+    winLinuxDefault: { key: "W", alt: true, shift: true },
     configurable: true,
   },
   {

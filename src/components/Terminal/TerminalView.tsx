@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
 import { useTauriListener } from "@/hooks/useTauriListener";
 import { useAppStore, getActiveTab } from "@/store/appStore";
@@ -29,6 +29,10 @@ import { sessionLoggingStart, sessionLoggingStop, sessionLoggingStatus } from "@
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendWarn } from "@/utils/frontendLog";
 import { withActionAccelerator } from "@/services/keybindings";
+import {
+  OPEN_MACRO_PLAYBACK_EVENT,
+  TOGGLE_SESSION_LOGGING_EVENT,
+} from "@/services/contextCommands";
 import { t } from "@/i18n/catalog";
 import "./TerminalView.css";
 
@@ -113,6 +117,7 @@ export function TerminalView() {
   const newTerminalTitle = withActionAccelerator(t("terminalToolbar.newTerminal"), "new-terminal");
   const splitRightTitle = withActionAccelerator(t("terminalToolbar.splitRight"), "split-right");
   const splitDownTitle = withActionAccelerator(t("terminalToolbar.splitDown"), "split-down");
+  const closePanelTitle = withActionAccelerator(t("terminalToolbar.closePanel"), "close-panel");
 
   const allLeaves = getAllLeaves(rootPanel);
 
@@ -180,6 +185,22 @@ export function TerminalView() {
       toast.error(`Failed to start logging: ${errorMessage(e)}`);
     }
   };
+
+  // The toggle-session-logging and play-macro shortcuts / palette entries
+  // (#5779) reach this view's state through window events. The ref keeps the
+  // listener on the latest handler, which closes over the logging set.
+  const toggleLoggingRef = useRef(handleToggleLogging);
+  toggleLoggingRef.current = handleToggleLogging;
+  useEffect(() => {
+    const onToggleLogging = () => void toggleLoggingRef.current();
+    const onOpenPlayback = () => setMacroPlaybackDialogOpen(true);
+    window.addEventListener(TOGGLE_SESSION_LOGGING_EVENT, onToggleLogging);
+    window.addEventListener(OPEN_MACRO_PLAYBACK_EVENT, onOpenPlayback);
+    return () => {
+      window.removeEventListener(TOGGLE_SESSION_LOGGING_EVENT, onToggleLogging);
+      window.removeEventListener(OPEN_MACRO_PLAYBACK_EVENT, onOpenPlayback);
+    };
+  }, []);
 
   // Broadcast toggle (#1956): clicking opens the scope-selection dialog (All /
   // Current panel / Custom) rather than starting broadcast directly; a second
@@ -271,14 +292,14 @@ export function TerminalView() {
                 />
               </Tooltip>
               {allLeaves.length > 1 && (
-                <Tooltip content={t("terminalToolbar.closePanel")} side="bottom">
+                <Tooltip content={closePanelTitle} side="bottom">
                   <Button
                     variant="ghost"
                     size="sm"
                     iconOnly
                     icon={<X size={16} />}
                     onClick={handleClosePanel}
-                    aria-label={t("terminalToolbar.closePanel")}
+                    aria-label={closePanelTitle}
                     data-testid="terminal-view-close-panel"
                   />
                 </Tooltip>
