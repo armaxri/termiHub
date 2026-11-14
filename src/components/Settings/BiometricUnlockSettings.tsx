@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Fingerprint } from "lucide-react";
+import { Fingerprint, TriangleAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import {
@@ -11,6 +11,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
+import { t, tf } from "@/i18n/catalog";
 import type { BiometricUnlockStatus } from "@/types/credential";
 
 /** User-facing message for a failed enable attempt. */
@@ -26,24 +27,30 @@ export function enableErrorMessage(err: unknown, methodLabel: string): string {
   }
 }
 
+/** The protection note under the toggle: its tone and text. */
+export interface ProtectionNote {
+  /** `"warning"` renders with the warning-hint icon and colour (#5634). */
+  tone: "warning" | "info";
+  text: string;
+}
+
 /**
- * How the biometric-unlock key is (or would be) protected (#3534): by the OS
- * itself (Secure Enclave access control / Windows Hello key credential) or by
- * termiHub's own check of a key kept in the login keychain.
+ * How the biometric-unlock key is protected (#3534, #5752), shown only while
+ * the unlock is on. An OS-enforced key (Secure Enclave access control / Windows
+ * Hello key credential) gets a short positive note; a key kept in the login
+ * keychain, which termiHub itself guards, gets the plain warning.
  */
-export function protectionNote(biometric: BiometricUnlockStatus): string {
-  const label = biometric.methodLabel;
-  const osEnforced = biometric.enabled
-    ? biometric.protection === "osEnforced"
-    : biometric.osEnforcedAvailable;
-  if (osEnforced) {
-    return `OS-enforced: yes — the operating system itself requires ${label} before the unlock key can be used.`;
+export function protectionNote(biometric: BiometricUnlockStatus): ProtectionNote | null {
+  if (!biometric.enabled) return null;
+  const method = biometric.methodLabel;
+  if (biometric.protection === "osEnforced") {
+    return { tone: "info", text: tf("biometricUnlock.note.osEnforced", { method }) };
   }
-  const base = `OS-enforced: no — the unlock key is kept in your login keychain and termiHub asks for ${label} before using it; programs running as you could read it without a prompt.`;
-  if (biometric.enabled && biometric.osEnforcedAvailable) {
-    return `${base} It is upgraded to OS-enforced protection the next time you unlock with ${label}.`;
-  }
-  return base;
+  const base = t("biometricUnlock.note.appProtected");
+  const text = biometric.osEnforcedAvailable
+    ? `${base} ${tf("biometricUnlock.note.upgradePending", { method })}`
+    : base;
+  return { tone: "warning", text };
 }
 
 /**
@@ -110,6 +117,7 @@ export function BiometricUnlockSettings() {
   }, [password, label, refresh]);
 
   if (!biometric?.supported) return null;
+  const note = protectionNote(biometric);
 
   return (
     <div className="settings-panel__field" data-testid="biometric-unlock-settings">
@@ -124,9 +132,24 @@ export function BiometricUnlockSettings() {
           data-testid="biometric-unlock-toggle"
         />
       </SettingsField>
-      <p className="settings-panel__description" data-testid="biometric-unlock-protection">
-        {protectionNote(biometric)}
-      </p>
+      {note && (
+        <p
+          className={[
+            "settings-form__hint",
+            "biometric-unlock__note",
+            note.tone === "warning" ? "settings-form__hint--warning" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          data-testid="biometric-unlock-protection"
+          data-tone={note.tone}
+        >
+          {note.tone === "warning" ? (
+            <TriangleAlert className="ui-field__hint-icon" aria-hidden="true" />
+          ) : null}
+          <span>{note.text}</span>
+        </p>
+      )}
       {enabling && !biometric.enabled && (
         <form className="settings-panel__inline-dialog" data-testid="biometric-unlock-enable-form">
           <h4 className="settings-panel__inline-dialog-title">Turn on unlock with {label}</h4>

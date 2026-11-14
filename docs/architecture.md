@@ -1985,9 +1985,11 @@ access control; `errSecMissingEntitlement` (every build without a Developer ID p
 profile: ad hoc, and the self-signed releases of #5545, including the v0.1.0 beta) selects
 app-enforced. The entitlement is deliberately **not** added to unsigned builds —
 `keychain-access-groups` is restricted and needs a provisioning profile, without which macOS refuses
-to launch the app. On Windows, `KeyCredentialManager::IsSupportedAsync` decides. Settings shows
-"OS-enforced: yes / no" under the toggle (`BiometricUnlockStatus.protection` /
-`osEnforcedAvailable`).
+to launch the app. On Windows, `KeyCredentialManager::IsSupportedAsync` decides. While the unlock is
+on, Settings shows a note under the toggle (`BiometricUnlockStatus.protection` /
+`osEnforcedAvailable`, #5752): app-enforced reads "Less secure: other apps running as you could read
+the unlock key." with a warning icon; OS-enforced reads a short "Protected by the operating system"
+note. Nothing shows while the unlock is off.
 
 Prompts: an OS-enforced unlock shows **only** the OS's own prompt (the keychain's Touch ID sheet /
 the Hello dialog) — termiHub's separate verification is skipped. On enable, macOS verifies with
@@ -2024,11 +2026,11 @@ as a password unlock.
 | Master password changed or vault replaced                                | Salt fingerprint mismatch → enrollment deleted before any prompt                                                                                                                                                                                                                                                                                                      |
 | Metadata file tampered to re-bind the enrollment or downgrade protection | Bindings and the protection kind are AEAD associated data, and version-1 files are only accepted as app-enforced; any edit fails authentication → enrollment deleted                                                                                                                                                                                                  |
 | Offline theft of the config directory                                    | Without biometric unlock: Argon2id(master password) as before. With it, OS-enforced: the wrapping key never leaves the Secure Enclave-guarded keychain item / the Hello private key (TPM-backed where present). App-enforced: bounded by the user's login (Keychain / DPAPI), not by the master password — the accepted trade-off of opting in, stated in the setting |
-| Malware running as the logged-in user                                    | **OS-enforced:** cannot obtain the wrapping key without the OS showing its own Touch ID / Hello prompt; it can still read termiHub's memory while the store is unlocked, or keylog the master password. **App-enforced (unsigned builds, fallback):** not in scope — it can read the keychain item without a prompt; Settings says "OS-enforced: no"                  |
+| Malware running as the logged-in user                                    | **OS-enforced:** cannot obtain the wrapping key without the OS showing its own Touch ID / Hello prompt; it can still read termiHub's memory while the store is unlocked, or keylog the master password. **App-enforced (unsigned builds, fallback):** not in scope — it can read the keychain item without a prompt; Settings says "Less secure: …"                   |
 | Unit tests popping real prompts or silently succeeding                   | Under `cfg(test)` the platform verifier and the OS-enforced protector are always the unavailable ones and the wrapping-key slot is in-memory; tests inject a scripted `MockVerifier` / `MockHwKey`                                                                                                                                                                    |
 
 **Known limitations.** The v0.1.0 beta has **no Developer ID** (self-signed, #5545), so on macOS every build uses the
-app-enforced path ("OS-enforced: no") until Developer ID signing with the `keychain-access-groups`
+app-enforced path (Settings: "Less secure: …") until Developer ID signing with the `keychain-access-groups`
 entitlement lands (pre-v1.0); signed builds then upgrade existing enrollments on their next unlock.
 Windows uses the OS-enforced Hello key wherever Hello key credentials are set up. Windows cannot
 detect a newly enrolled finger. Linux has no biometric unlock (polkit export only,

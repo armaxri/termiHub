@@ -170,6 +170,16 @@ const en = {
   "unlockDialog.waiting.many.other":
     "Unlock to connect to {target} and {count} more connections with their saved credentials.",
 
+  // ── Biometric unlock protection note (Settings ▸ Security, #5752) ──────
+  // Shown only while unlock with Touch ID / Windows Hello is on. {method} is
+  // the OS method label ("Touch ID").
+  "biometricUnlock.note.appProtected":
+    "Less secure: other apps running as you could read the unlock key.",
+  "biometricUnlock.note.upgradePending":
+    "It gets stronger protection the next time you unlock with {method}.",
+  "biometricUnlock.note.osEnforced":
+    "Protected by the operating system: the unlock key needs {method} every time.",
+
   // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
   "tunnel.missingConnection.status": "SSH connection deleted",
   "tunnel.missingConnection.detail": "SSH connection deleted — choose another",
