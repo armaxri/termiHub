@@ -28,6 +28,7 @@ use crate::errors::SessionError;
 
 use super::remote_cwd;
 use super::remote_shell::{self, RemoteShell, SetupGate};
+use super::shell_exit::{self, ShellExit, ShellExitSlot};
 use crate::output::setup_echo::SetupEchoFilter;
 use crate::session::cwd_follow::CwdFollower;
 
@@ -90,6 +91,9 @@ pub struct SshShellHandle {
     /// Why the shell channel ended on its own (#5696): the server closed it,
     /// or the transport failed. Recorded before the reader sees EOF.
     pub end_cause: EndCauseSlot,
+    /// The remote shell's exit status, when the server reported one (#5801).
+    /// Recorded before the reader sees EOF; empty after a transport loss.
+    pub exit_status: ShellExitSlot,
 }
 
 /// Why an incoming channel message ends the session (#5696): `Eof` / `Close`
@@ -303,6 +307,38 @@ async fn read_shell_banner(
         BannerVerdict::Unrecognised | BannerVerdict::Undecided => None,
     };
     Ok((shell, msgs))
+}
+
+/// Record the shell's exit status if `msg` carries one (#5801); `true` when
+/// `msg` said how the shell exited, with or without a status.
+fn note_shell_exit(msg: &russh::ChannelMsg, slot: &ShellExitSlot) -> bool {
+    match shell_exit::shell_exit_of(msg) {
+        ShellExit::Unrelated => false,
+        ShellExit::Status(status) => {
+            slot.record(status);
+            true
+        }
+        ShellExit::NoStatus => true,
+    }
+}
+
+/// After the shell channel's EOF, read on for up to
+/// [`shell_exit::EXIT_STATUS_GRACE`] until the channel closes, goes away or
+/// reports the shell's exit, recording a status it reports (#5801).
+async fn await_shell_exit(
+    early: &mut std::collections::VecDeque<russh::ChannelMsg>,
+    channel: &mut russh::Channel<russh::client::Msg>,
+    slot: &ShellExitSlot,
+) {
+    let deadline = tokio::time::Instant::now() + shell_exit::EXIT_STATUS_GRACE;
+    while let Ok(msg) = tokio::time::timeout_at(deadline, next_channel_msg(early, channel)).await {
+        if let Some(ref m) = msg {
+            note_shell_exit(m, slot);
+        }
+        if shell_exit::ends_the_exit_wait(msg.as_ref()) {
+            return;
+        }
+    }
 }
 
 /// The next message for the channel task: one read early (#5134) first, then
@@ -832,9 +868,15 @@ impl SshConnector for RusshSshConnector {
         let refused_task = shell_refused.clone();
         let end_cause = EndCauseSlot::new();
         let end_cause_task = end_cause.clone();
+        let exit_status = ShellExitSlot::new();
+        let exit_status_task = exit_status.clone();
         tokio::spawn(async move {
             // Why the channel ended on its own; `None` for a local close.
             let mut ended_by: Option<SessionEndCause> = None;
+            // Whether the server said how the shell exited (#5801), and
+            // whether the channel ended with its EOF (the status may follow).
+            let mut exit_reported = false;
+            let mut ended_by_eof = false;
             // Early output + the shell-request reply, for refusal detection.
             let mut early_output: Vec<u8> = Vec::new();
             let mut request_failed = false;
@@ -964,9 +1006,12 @@ impl SshConnector for RusshSshConnector {
                             }
                             Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
                                 ended_by = channel_end_cause(msg.as_ref());
+                                ended_by_eof = matches!(msg, Some(ChannelMsg::Eof));
                                 break;
                             }
-                            _ => {}
+                            Some(ref other) => {
+                                exit_reported |= note_shell_exit(other, &exit_status_task);
+                            }
                         }
                     }
                     // The gate's settle / retype / cap deadline (#4148, #4604).
@@ -982,6 +1027,10 @@ impl SshConnector for RusshSshConnector {
                     _ = tokio::time::sleep_until(tokio::time::Instant::from_std(gate_check)),
                         if gate.is_holding() || echo_filter.is_active() || cwd_due.is_some() => {}
                 }
+            }
+            // OpenSSH sends the exit status after the EOF (#5801).
+            if ended_by_eof && !exit_reported {
+                await_shell_exit(&mut early_msgs, &mut channel, &exit_status_task).await;
             }
             // Flag a refusal *before* signalling EOF or clearing `alive`, so the
             // reader thread (which exits on either signal) always sees the verdict.
@@ -1010,6 +1059,7 @@ impl SshConnector for RusshSshConnector {
 
         Ok(SshShellHandle {
             end_cause,
+            exit_status,
             reader: Box::new(RusshShellReader::new(data_rx, alive.clone())),
             write: Arc::new(move |data: &[u8]| {
                 if !alive_write.load(Ordering::SeqCst) {

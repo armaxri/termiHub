@@ -2675,8 +2675,9 @@ impl SessionManager {
     /// The exit code a session's `terminal-exit` carries: the real exit
     /// status of a process that ended on its own — an agent-hosted session's
     /// as its agent reported it (#5742), a direct local shell's as its child
-    /// watcher recorded it (#5784). A lost link, a deliberate close and every
-    /// backend without a process (SSH, serial, telnet, …) report none.
+    /// watcher recorded it (#5784), a direct SSH shell's as its server sent it
+    /// (#5801). A lost link, a deliberate close and every backend without a
+    /// process (serial, telnet, …) report none.
     fn reported_exit_code(entry: &SessionEntry) -> Option<i32> {
         entry.connection.exit_code()
     }
