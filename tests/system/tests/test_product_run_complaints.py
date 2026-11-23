@@ -783,6 +783,11 @@ class TestProductRunComplaints(
                     lambda n=needle, s=seen: self.driver.read_terminal().count(n) >= s + 2,
                     what=f"run output {needle}",
                 )
+                # Which toasts each run left, for a failure's evidence (#5815).
+                shown = [i["text"] for i in self._toast_items() if i["text"]] if self.driver.exists(
+                    TOAST_REGION
+                ) else []
+                self.evidence(f"after run {marker}: toasts {shown}")
             self.wait(lambda: self._toast_titles("Ran workflow") or None, what="a run toast")
             time.sleep(0.5)  # let a stale toast's exit animation finish
             titles = [t["text"] for t in self._toast_titles("Ran workflow")]
