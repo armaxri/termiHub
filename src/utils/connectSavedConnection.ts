@@ -298,7 +298,8 @@ export async function connectSavedConnection(
 
   // Open a tab for this saved connection, always stamping its `connectionId`
   // so the on-connect workflow trigger (#1855) can match the freshly opened
-  // session back to the connection it came from.
+  // session back to the connection it came from. A second session of the same
+  // connection opens beside its sibling (#5827).
   const openTab = (
     tabConfig: ConnectionConfig,
     opts: AddTabOptions = {}
@@ -306,6 +307,7 @@ export async function connectSavedConnection(
     dismissConnecting();
     const tabId = addTab(connection.name, connection.config.type, tabConfig, {
       connectionId: connection.id,
+      besideSibling: true,
       ...opts,
     });
     // A tab opened on a session that already connected (the saved-credential
