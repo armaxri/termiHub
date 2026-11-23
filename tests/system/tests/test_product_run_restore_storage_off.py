@@ -68,8 +68,8 @@ class TestProductRunRestoreStorageOff(
             expect="#5631: the restore preview with Credentials unticked, its line 'Credential "
             "storage is off, so credentials won't be restored. Set up OS Keychain or Master "
             "password …', a 'Set up storage…' button, 'Credentials will not be restored.' left "
-            "of Cancel, and a filled red 'Restore and restart' (Settings is replaced); no "
-            "focus ring around the dialog; the warning reads 'your current settings'",
+            "of Cancel, and a filled 'Restore and restart' (Settings is left out by default, "
+            "#5824); no focus ring around the dialog",
         ):
             self.setup_master_password_store(MASTER_PASSWORD)
             self.back_up(target, BACKUP_PASSPHRASE, credentials=True,
