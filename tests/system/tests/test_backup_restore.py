@@ -109,11 +109,18 @@ class TestBackupRestore(ConnectionsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
             lambda: self.driver.exists("backup-restore-preview-panel"),
             what="the restore preview",
         )
-        for section in ("connections", "settings"):
-            included = self.driver.get_attribute(
-                f"backup-restore-include-{section}", "aria-checked"
-            )
-            assert included == "true", f"the {section} section is not restored: {included!r}"
+        included = self.driver.get_attribute("backup-restore-include-connections", "aria-checked")
+        assert included == "true", f"the connections section is not restored: {included!r}"
+        # Settings can only be replaced, so it starts unticked (#5824): tick it
+        # on purpose to bring the theme back.
+        settings = self.driver.get_attribute("backup-restore-include-settings", "aria-checked")
+        assert settings == "false", f"settings is restored by default: {settings!r}"
+        self.driver.click("backup-restore-include-settings")
+        self.wait(
+            lambda: self.driver.get_attribute("backup-restore-include-settings", "aria-checked")
+            == "true",
+            what="settings to be ticked",
+        )
         self.driver.click("backup-restore-submit")
 
     # ── MT-APP-01 ────────────────────────────────────────────────────────────
