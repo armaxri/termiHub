@@ -50,6 +50,13 @@
 .backup-restore__controls {
   display: flex;
   gap: var(--spacing-xs);
+  margin-left: auto;
+}
+
+/* One width and one right edge for every Merge/Replace and conflict select,
+   whatever its current label (#5824). */
+.backup-restore__controls .ui-select__trigger {
+  width: 8.5rem;
 }
 
 .backup-restore__toggle-row {

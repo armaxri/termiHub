@@ -17,13 +17,27 @@ interface BackupSectionRowProps {
   onChange: (patch: Partial<SectionChoice>) => void;
 }
 
-/** One-line summary of a previewed section's items against the current store. */
-export function sectionSummary(section: BackupSectionPreview): string {
-  if (section.id === "settings") return "Replaces your current settings";
+/**
+ * One-line summary of a previewed section's items against the current store.
+ * Settings has no items to count: say what restoring it does (#5824).
+ */
+export function sectionSummary(section: BackupSectionPreview, included = true): string {
+  if (section.id === "settings") {
+    return included ? "Replaces your current settings" : "Not included · replace only, no merge";
+  }
   const parts = [`${section.itemCount} in backup`, `${section.newCount} new`];
   if (section.conflictCount > 0) parts.push(`${section.conflictCount} differ`);
   if (section.unchangedCount > 0) parts.push(`${section.unchangedCount} unchanged`);
   return parts.join(" · ");
+}
+
+/**
+ * Under a replace-only section left out of the restore (the default, #5824):
+ * what happens now, and what ticking it would do.
+ */
+export function keepCurrentText(section: BackupSectionPreview): string {
+  const name = section.label.charAt(0).toLowerCase() + section.label.slice(1);
+  return `Your current ${name} stay as they are. Tick to replace them with the backup's.`;
 }
 
 /** One section in the restore preview: include, merge/replace, conflicts. */
@@ -49,11 +63,16 @@ export function BackupSectionRow({ section, choice, restorable, onChange }: Back
         <label htmlFor={id} className="backup-restore__label">
           <span className="backup-restore__name">{section.label}</span>
           <span className="backup-restore__detail">
-            {restorable ? sectionSummary(section) : section.message}
+            {restorable ? sectionSummary(section, included) : section.message}
             {section.status === "migrated" &&
               ` · upgraded from format v${section.schemaVersion} to v${section.supportedVersion}`}
           </span>
         </label>
+        {restorable && !section.supportsMerge && !included && (
+          <p className="backup-restore__detail" data-testid={`backup-restore-keep-${section.id}`}>
+            {keepCurrentText(section)}
+          </p>
+        )}
         {restorable &&
           section.notes.map((note) => (
             <p

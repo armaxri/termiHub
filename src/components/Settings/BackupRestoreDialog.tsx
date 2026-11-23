@@ -45,17 +45,27 @@ export function replacedSectionsText(labels: string[]): string {
   return labels.map((l) => l.charAt(0).toLowerCase() + l.slice(1)).join(", ");
 }
 
-/** The initial choice for each previewed section. */
+/**
+ * The initial choice for each previewed section. Safe by default (#5824):
+ * sections that can merge start ticked on Merge; a section that can only be
+ * replaced (Settings) starts unticked, so Replace is always a deliberate pick.
+ */
 export function defaultChoices(preview: BackupRestorePreview): Record<string, SectionChoice> {
   const choices: Record<string, SectionChoice> = {};
   for (const s of preview.sections) {
     choices[s.id] = {
-      include: isRestorable(s),
+      include: isRestorable(s) && s.supportsMerge,
       mode: s.supportsMerge ? "merge" : "replace",
       conflicts: "skip",
     };
   }
   return choices;
+}
+
+/** "Created 23 Nov 2026 23:05 · termiHub 0.1.0": where the backup came from (#5824). */
+export function backupOriginText(createdAt: string, appVersion: string): string {
+  const created = `Created ${formatAbsoluteTime(createdAt) || createdAt}`;
+  return appVersion ? `${created} · termiHub ${appVersion}` : created;
 }
 
 /** Build the restore request from the dialog's choices. */
@@ -286,6 +296,10 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
         </form>
       ) : (
         <div className="credential-vault__form" data-testid="backup-restore-preview-panel">
+          <p className="credential-vault__note" data-testid="backup-restore-preview-origin">
+            {backupOriginText(preview.createdAt, preview.appVersion)}
+            {fileName ? ` · ${fileName}` : ""}
+          </p>
           <ul className="backup-restore__list">
             {preview.sections.map((s) => (
               <BackupSectionRow

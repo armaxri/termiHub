@@ -3,6 +3,7 @@ import type { VaultConflictStrategy } from "@/types/credential";
 import { Button, Checkbox, Select } from "@/components/ui";
 import {
   credentialRestoreStorageOffText,
+  RESTORED_CREDENTIALS_LOCKED_TEXT,
   SET_UP_CREDENTIAL_STORAGE_LABEL,
 } from "@/utils/credentialStorageCopy";
 
@@ -59,6 +60,11 @@ export function BackupCredentialsRow({
             {detail}
           </span>
         </label>
+        {included && preview?.targetMode === "master_password" && (
+          <p className="backup-restore__detail" data-testid="backup-restore-credentials-locked">
+            {RESTORED_CREDENTIALS_LOCKED_TEXT}
+          </p>
+        )}
         {storageOff && (
           <div className="backup-restore__controls">
             <Button

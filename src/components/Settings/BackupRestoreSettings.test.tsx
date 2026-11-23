@@ -239,18 +239,33 @@ describe("backup restore helpers", () => {
   it("defaults to merging restorable sections and skips unrestorable ones", () => {
     const choices = defaultChoices(PREVIEW);
     expect(choices.macros).toEqual({ include: true, mode: "merge", conflicts: "skip" });
-    expect(choices.settings.mode).toBe("replace");
     expect(choices.workflows.include).toBe(false);
 
     const request = buildRestoreRequest(PREVIEW, choices, "overwrite");
     expect(request).toEqual({
       sections: [
         { id: "macros", mode: "merge", conflicts: "skip" },
-        { id: "settings", mode: "replace", conflicts: "skip" },
         { id: "sshKnownHosts", mode: "merge", conflicts: "skip" },
       ],
       credentials: "overwrite",
     });
+  });
+
+  it("never defaults to Replace: a section that cannot merge is not included (#5824)", () => {
+    const choices = defaultChoices(PREVIEW);
+    expect(choices.settings).toEqual({ include: false, mode: "replace", conflicts: "skip" });
+    for (const s of PREVIEW.sections) {
+      const c = choices[s.id];
+      expect(c.include && c.mode === "replace").toBe(false);
+      if (s.supportsMerge) expect(c.mode).toBe("merge");
+    }
+  });
+
+  it("requests Replace only once the user ticks the section (#5824)", () => {
+    const choices = defaultChoices(PREVIEW);
+    choices.settings.include = true;
+    const ids = buildRestoreRequest(PREVIEW, choices, null).sections;
+    expect(ids).toContainEqual({ id: "settings", mode: "replace", conflicts: "skip" });
   });
 
   it("never requests an unrestorable section even if marked included", () => {
@@ -263,6 +278,9 @@ describe("backup restore helpers", () => {
   it("summarizes a section's items", () => {
     expect(sectionSummary(sectionPreview({}))).toBe("2 in backup · 1 new · 1 differ");
     expect(sectionSummary(sectionPreview({ id: "settings" }))).toMatch(/Replaces/);
+    expect(sectionSummary(sectionPreview({ id: "settings" }), false)).toBe(
+      "Not included · replace only, no merge"
+    );
   });
 });
 
@@ -436,10 +454,22 @@ describe("BackupRestoreSettings", () => {
     await click("backup-restore-preview");
     expect(previewBackupRestore).toHaveBeenCalledWith(BACKUP_JSON, PASSPHRASE);
 
-    // The newer section cannot be chosen; replacing settings is warned about.
+    // The newer section cannot be chosen; settings is left out until ticked,
+    // and replacing it is warned about once it is (#5824).
     expect((query("backup-restore-include-workflows") as HTMLButtonElement).disabled).toBe(true);
+    expect(isChecked("backup-restore-include-settings")).toBe(false);
+    expect(query("backup-restore-keep-settings")?.textContent).toMatch(/stay as they are/);
+    expect(query("backup-restore-replace-warning")).toBeNull();
+    await click("backup-restore-include-settings");
+    expect(query("backup-restore-keep-settings")).toBeNull();
     expect(query("backup-restore-replace-warning")?.textContent).toMatch(/current settings:/);
     expect(isChecked("backup-restore-include-credentials")).toBe(true);
+    // The user can confirm the file (#5824), and learns the restored passwords
+    // land in a locked master-password vault.
+    expect(query("backup-restore-preview-origin")?.textContent).toMatch(
+      /^Created .+ · termiHub 0\.1\.0 · backup\.json$/
+    );
+    expect(query("backup-restore-credentials-locked")?.textContent).toMatch(/master password/);
 
     // Trust-store conflicts always keep the current keys: no strategy to pick,
     // and the kept hosts are listed.
