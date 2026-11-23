@@ -254,7 +254,24 @@ describe("SshHostKeyPrompt", () => {
     const byId = (id: string) => document.querySelector(`[data-testid="${id}"]`);
     expect(byId("ssh-hostkey-accept-remember")?.classList.contains("ui-btn--primary")).toBe(true);
     expect(byId("ssh-hostkey-accept-once")?.classList.contains("ui-btn--secondary")).toBe(true);
-    expect(byId("ssh-hostkey-reject")?.classList.contains("ui-btn--ghost")).toBe(true);
+    // Reject is a normal secondary button and takes focus (#5826).
+    expect(byId("ssh-hostkey-reject")?.classList.contains("ui-btn--secondary")).toBe(true);
+    expect(document.activeElement).toBe(byId("ssh-hostkey-reject"));
+  });
+
+  it("puts Reject right of both accepts on a changed key (#5826)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(changedWithPriorPrompt);
+    const order = Array.from(
+      document.querySelectorAll<HTMLElement>('[data-testid^="ssh-hostkey-"][class*="ui-btn--"]')
+    )
+      .map((b) => b.dataset.testid)
+      .filter((id) => !id?.endsWith("-copy"));
+    expect(order).toEqual([
+      "ssh-hostkey-accept-once",
+      "ssh-hostkey-accept-remember",
+      "ssh-hostkey-reject",
+    ]);
   });
 
   it("keeps Accept for host on first contact", async () => {

@@ -1,4 +1,4 @@
-import { Fragment, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { ShieldCheck, ShieldAlert, Copy } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Modal } from "./Modal";
@@ -109,15 +109,21 @@ export interface TrustPromptProps {
  * identical across protocols.
  *
  * Three verdicts. For a new identity:
- * - **Reject** (ghost) — abort the connection; ESC / scrim / close do the same.
+ * - **Reject** (secondary) — abort the connection; ESC / scrim / close do the same.
  * - **Accept once** (secondary) — trust for this session only.
  * - **Accept for host** (primary) — trust and remember.
  *
- * For a *changed* identity the safe choice leads (#5185, #5751): **Reject** is the
- * primary action and takes focus when the dialog opens, so Enter and Escape both
- * reject. Both accepting verdicts — **Accept once** (set apart at the far left)
- * and **Accept for host** (e.g. "Replace trusted key") — use the `danger` style,
- * so neither reads as a harmless "continue" while the MITM warning is up.
+ * For a *changed* identity the safe choice leads (#5185, #5751, #5826): **Reject**
+ * is the primary action at the right end of the footer. Both accepting verdicts
+ * are grouped at the left, away from it, and use the `danger` style so neither
+ * reads as a harmless "continue" while the MITM warning is up: **Accept once** as
+ * a quiet link-style action, **Accept for host** (e.g. "Replace trusted key") as a
+ * danger button described by the hint that says what it replaces.
+ *
+ * In both dialogs Reject takes focus when the dialog opens (#5826), so a stray
+ * Enter (typed into a terminal as the dialog appeared) never trusts a key: Enter
+ * on Reject, or on any spot in the dialog that is not itself a control, rejects,
+ * and so does Escape.
  *
  * Composed from the shared {@link Modal} + {@link Button} primitives; all values
  * come from design tokens. Facts marked `copyable` grow a copy button that
@@ -143,9 +149,10 @@ export function TrustPrompt({
   acceptForHostTestId,
   warningTestId,
 }: TrustPromptProps) {
-  // On a changed identity, Reject is the default action (#5751): it takes focus
-  // on open, so Enter on it rejects, and an Enter that reaches the dialog from
-  // anywhere that is not itself a control rejects too.
+  // Reject is the default action (#5751, #5826): it takes focus on open, so
+  // Enter on it rejects, and an Enter that reaches the dialog from anywhere that
+  // is not itself a control rejects too.
+  const hintId = useId();
   const rejectRef = useRef<HTMLButtonElement>(null);
   const rejectOnEnter = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "Enter" || e.defaultPrevented) return;
@@ -190,35 +197,54 @@ export function TrustPrompt({
         </span>
       }
       data-testid={modalTestId}
-      initialFocusRef={changed ? rejectRef : undefined}
-      onKeyDown={changed ? rejectOnEnter : undefined}
+      initialFocusRef={rejectRef}
+      onKeyDown={rejectOnEnter}
       footer={
         changed ? (
           <div className="ui-trust-prompt__actions ui-trust-prompt__actions--changed">
-            <Button
-              variant="danger"
-              className="ui-trust-prompt__apart"
-              onClick={onAcceptOnce}
-              data-testid={acceptOnceTestId}
-            >
-              Accept once
-            </Button>
+            {/* The accepting verdicts sit together at the left, away from the
+                safe Reject at the right end (#5826). */}
+            <div className="ui-trust-prompt__accepts">
+              <Button
+                variant="danger"
+                className="ui-trust-prompt__link"
+                onClick={onAcceptOnce}
+                data-testid={acceptOnceTestId}
+              >
+                Accept once
+              </Button>
+              <Button
+                variant="danger"
+                onClick={onAcceptForHost}
+                aria-describedby={hintId}
+                data-testid={acceptForHostTestId}
+              >
+                {changedAcceptForHostLabel}
+              </Button>
+            </div>
             <Button ref={rejectRef} variant="primary" onClick={onReject} data-testid={rejectTestId}>
               Reject
-            </Button>
-            <Button variant="danger" onClick={onAcceptForHost} data-testid={acceptForHostTestId}>
-              {changedAcceptForHostLabel}
             </Button>
           </div>
         ) : (
           <div className="ui-trust-prompt__actions">
-            <Button variant="ghost" onClick={onReject} data-testid={rejectTestId}>
+            <Button
+              ref={rejectRef}
+              variant="secondary"
+              onClick={onReject}
+              data-testid={rejectTestId}
+            >
               Reject
             </Button>
             <Button variant="secondary" onClick={onAcceptOnce} data-testid={acceptOnceTestId}>
               Accept once
             </Button>
-            <Button variant="primary" onClick={onAcceptForHost} data-testid={acceptForHostTestId}>
+            <Button
+              variant="primary"
+              onClick={onAcceptForHost}
+              aria-describedby={hintId}
+              data-testid={acceptForHostTestId}
+            >
               Accept for host
             </Button>
           </div>
@@ -282,7 +308,7 @@ export function TrustPrompt({
             </Fragment>
           ))}
         </dl>
-        <p className="ui-trust-prompt__hint">
+        <p className="ui-trust-prompt__hint" id={hintId}>
           {changed && changedHint ? (
             changedHint
           ) : (
