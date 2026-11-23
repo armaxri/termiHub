@@ -82,7 +82,8 @@ class TestProductRunUpdater(ProductRunUi, SettingsUi, SystemTest):
     def extra_app_env(cls, request: pytest.FixtureRequest) -> dict[str, str]:
         cls.feed = _Feed()
         request.addfinalizer(cls.feed.close)
-        return {"TERMIHUB_TEST_HTTP_BASE": cls.feed.base}
+        # ProductRunUi's env sets up the recorder and the run's isolated profile.
+        return {**super().extra_app_env(request), "TERMIHUB_TEST_HTTP_BASE": cls.feed.base}
 
     def _latest(self) -> str:
         if not self.driver.exists("update-latest-version"):

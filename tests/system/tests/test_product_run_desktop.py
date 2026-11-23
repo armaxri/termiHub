@@ -422,7 +422,8 @@ class TestProductRunMonitoring(
                 bar = self.driver.measure_element("status-bar")["rect"]
                 self.evidence(f"menu height {menu['height']:.0f}px, status bar {bar['height']:.0f}px")
                 assert menu["height"] <= 600 - bar["height"], f"menu {menu} does not fit 800x600"
-                assert menu["top"] >= 0, f"menu clipped at the top: {menu}"
+                # measure_element's rect is {x, y, width, height} (no "top").
+                assert menu["y"] >= 0, f"menu clipped at the top: {menu}"
                 stop = self.driver.get_text("monitoring-stop").strip()
                 self.evidence(f"menu item {stop!r}")
                 assert stop == "Stop monitoring", stop
@@ -624,8 +625,10 @@ class TestProductRunSettingsThemes(
             self.open_settings_category("backup")
             self.wait(lambda: self.driver.exists("backup-export-btn"), what="the Back up button")
             self.driver.click("backup-export-btn")
+            # A fresh profile has no connections, so their row collapses into the
+            # "Nothing saved yet" line (#5613): wait for the list itself.
             self.wait(
-                lambda: self.driver.exists("backup-export-section-connections"),
+                lambda: self.driver.exists("backup-export-credentials"),
                 what="the backup sections to load",
             )
             problems = []
