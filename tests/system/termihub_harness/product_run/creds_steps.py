@@ -211,11 +211,14 @@ class CredsPhaseUi(HarnessMixin):
         self.open_settings_category("backup")
         self.wait(lambda: self.driver.exists("backup-export-btn"), what="the Back up button")
         self.driver.click("backup-export-btn")
+        # Sections with nothing saved collapse into one "Nothing saved yet" line
+        # (#5613), so a profile without connections has no Connections row.
         self.wait(
-            lambda: self.driver.exists("backup-export-section-connections"),
+            lambda: self.driver.exists("backup-export-credentials"),
             what="the backup sections to load",
         )
-        self._toggle("backup-export-section-connections", True)
+        if self.driver.exists("backup-export-section-connections"):
+            self._toggle("backup-export-section-connections", True)
         self._toggle("backup-export-section-settings", True)
         self._toggle("backup-export-credentials", credentials)
         detail = ""

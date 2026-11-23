@@ -104,6 +104,8 @@ FILE_LIST = "file-browser-list"
 HOST_LABEL = "file-browser-host"
 #: Column headers that must sit above a column of values (#5623).
 DATA_COLUMNS = ("file-browser-sort-modified", "file-browser-sort-size")
+#: The permissions overlay text ("rwxr-xr-x"), shown only on hover or selection.
+PERMISSIONS = re.compile(r"[-rwxsStT]{9}")
 #: A file name far wider than the sidebar, so the list must ellipsize it.
 LONG_FILE = "a-rather-long-file-name-that-never-fits-the-sidebar-width-check.txt"
 TOAST_REGION = "toast-region"
@@ -574,6 +576,8 @@ class TestProductRunComplaints(
                 i["text"] for i in items
                 if i["text"] and i["rect"]["x"] < right and i["rect"]["x"] + i["rect"]["width"] > left
                 and i["text"] not in long_names
+                # The hover-only permissions overlay is no column value.
+                and not PERMISSIONS.fullmatch(i["text"])
             ]
             if not under:
                 problems.append(f"header {header} shows without a column of values")
@@ -593,9 +597,14 @@ class TestProductRunComplaints(
             "values, and the header says 'user@host (SFTP)'; also at the minimum width",
             screenshot=False,
         ):
-            deep = self._open_remote()
-            root = deep.parents[len(LONG_SEGMENTS) - 1]
+            # Written before the browser lists the folder: _open_remote already
+            # lands on it, so navigating there again would not re-read it.
+            native = self.need_native()
+            root = (native.session_home or Path(native.target.state_dir)) / "pr-complaints"
+            root.mkdir(parents=True, exist_ok=True)
             (root / LONG_FILE).write_text("long name\n", encoding="utf-8")
+            deep = self._open_remote()
+            assert deep.parents[len(LONG_SEGMENTS) - 1] == root, (deep, root)
             self._go_to(str(root))
             self.wait(lambda: self.driver.exists(f"file-row-{LONG_FILE}"), what="the long file row")
             user = self.need_native().target.username
@@ -774,6 +783,11 @@ class TestProductRunComplaints(
                     lambda n=needle, s=seen: self.driver.read_terminal().count(n) >= s + 2,
                     what=f"run output {needle}",
                 )
+                # Which toasts each run left, for a failure's evidence (#5815).
+                shown = [i["text"] for i in self._toast_items() if i["text"]] if self.driver.exists(
+                    TOAST_REGION
+                ) else []
+                self.evidence(f"after run {marker}: toasts {shown}")
             self.wait(lambda: self._toast_titles("Ran workflow") or None, what="a run toast")
             time.sleep(0.5)  # let a stale toast's exit animation finish
             titles = [t["text"] for t in self._toast_titles("Ran workflow")]

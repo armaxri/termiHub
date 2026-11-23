@@ -53,6 +53,16 @@ class AgentDeployUi:
     ``KEY_PATH_INPUT``).
     """
 
+    def _connected_or_error(self, name: str) -> dict[str, Any] | str | None:
+        """The agent once connected, ``"error"`` once the connect failed, else ``None``."""
+        if self.driver.exists(self.HOSTKEY_PROMPT):
+            self.driver.click(self.HOSTKEY_ACCEPT_REMEMBER)
+            return None
+        if self.driver.exists(self.ERROR_TITLE):
+            return "error"
+        agent = self.find_agent(name)
+        return agent if agent and agent.get("connectionState") == "connected" else None
+
     def deploy_and_connect_agent(self, name: str, *, install_dir: str) -> dict[str, Any]:
         """Define agent ``name`` (key auth), install the local build, connect it.
 
@@ -79,7 +89,16 @@ class AgentDeployUi:
         self.require_agent(name)
 
         self.connect_agent(name)
-        self.wait_connection_error_title()
+        # An agent an earlier phase left running on this host (same session home,
+        # same build) answers the connect at once: no "not installed" error then.
+        outcome = self.wait(
+            lambda: self._connected_or_error(name), timeout=60.0,
+            what="the agent to connect or report that none is installed",
+        )
+        if isinstance(outcome, dict):
+            if hasattr(self, "evidence"):
+                self.evidence(f"agent {name!r} connected to an agent already on the host")
+            return outcome
         self.wait(
             lambda: self.driver.exists(self.ERROR_SETUP_AGENT), what="'Set up agent' in the error"
         )
