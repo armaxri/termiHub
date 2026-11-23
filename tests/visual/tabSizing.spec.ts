@@ -118,3 +118,42 @@ test("a full strip compresses its tabs to no less than 120px", async ({ page }) 
   // Long titles at 1280px cannot all fit at 240px, so the strip shrank them.
   expect(tabs.some((t) => t.width < 239)).toBe(true);
 });
+
+test("a full strip truncates titles in the middle, keeping their ends (#5827)", async ({
+  page,
+}) => {
+  await boot(page, { terminal: true });
+  // Names that share a long prefix and differ only at the end, like the
+  // product run's `sys-pr-telnet-<hex>` connections.
+  const titles = Array.from(
+    { length: 14 },
+    (_, i) => `sys-pr-telnet-${(0x1a2b3c00 + i).toString(16)}`
+  );
+  const ids = await addTabs(page, titles);
+  const tails = await page.evaluate(
+    (all) =>
+      all.map((id) => {
+        const tab = document.querySelector<HTMLElement>(`[data-testid="tab-${id}"]`)!;
+        const head = tab.querySelector<HTMLElement>(".tab__title-head")!;
+        const tail = tab.querySelector<HTMLElement>(".tab__title-tail")!;
+        const t = tail.getBoundingClientRect();
+        const r = tab.getBoundingClientRect();
+        return {
+          headClipped: head.scrollWidth > head.clientWidth + 1,
+          tailWhole: tail.scrollWidth <= tail.clientWidth + 1,
+          tailInside: t.width > 0 && t.left >= r.left - 1 && t.right <= r.right + 1,
+          tail: tail.textContent,
+        };
+      }),
+    ids
+  );
+  // The strip is full, so the heads are ellipsized …
+  expect(tails.some((t) => t.headClipped)).toBe(true);
+  // … but every tab keeps its distinguishing end whole and on screen.
+  for (const [i, t] of tails.entries()) {
+    expect(t.tail).toBe(titles[i].slice(-8));
+    expect(t.tailWhole, `"${titles[i]}" tail is clipped`).toBe(true);
+    expect(t.tailInside, `"${titles[i]}" tail escapes its tab`).toBe(true);
+  }
+  expect(new Set(tails.map((t) => t.tail)).size).toBe(titles.length);
+});
