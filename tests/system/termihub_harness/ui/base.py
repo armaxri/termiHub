@@ -166,8 +166,16 @@ class HarnessMixin:
         ``data-testid`` (the inline button and the overflow-menu item share it);
         ``overflow`` is the toolbar's overflow-trigger testid (``overflowTestId``).
         """
-        self.reveal_toolbar_action(action, overflow=overflow)
-        self.driver.click(action)
+        # The overflow menu can close between the item mounting and the click (a
+        # toolbar re-layout while the sidebar settles); open it once more then.
+        for attempt in range(3):
+            self.reveal_toolbar_action(action, overflow=overflow)
+            try:
+                self.driver.click(action)
+                return
+            except BridgeError as exc:
+                if "no element" not in str(exc) or attempt == 2:
+                    raise
 
     def projection_region_cache(self, region: str) -> dict[str, Any]:
         """The current projected **view document** of a ``region``.
