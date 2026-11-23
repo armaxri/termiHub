@@ -56,7 +56,8 @@ from termihub_harness import (
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.agent_deploy import AgentDeployUi, reap_agents_under
 from termihub_harness.product_run.automation_steps import MACRO_EDITOR, AutomationPhaseUi
-from termihub_harness.product_run.grades import row_leftover_text
+from termihub_harness.product_run.editor_layout import TUNNEL_ACTIONS, measure_editor_footer
+from termihub_harness.product_run.grades import row_leftover_text, tunnel_editor_primary_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 
 pytestmark = [
@@ -276,6 +277,11 @@ class TestProductRunRowsNames(
             self.driver.type("tunnel-editor-local-port", "18577")
             self.driver.type("tunnel-editor-remote-host", "db.internal")
             self.driver.type("tunnel-editor-remote-port", "5432")
+            # #5810: a new tunnel's primary is Save and start, right-most.
+            footer = measure_editor_footer(self.driver, TUNNEL_ACTIONS)
+            self.evidence(f"tunnel footer {[(b['testId'], b['primary']) for b in footer]}")
+            problems = tunnel_editor_primary_problems(footer, editing=False)
+            assert not problems, problems
             self.driver.click("tunnel-editor-save")
             tunnel = self.wait(
                 lambda: next(

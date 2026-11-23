@@ -44,12 +44,18 @@ def measure_editor_layout(driver: Any) -> dict[str, dict]:
 ACTIONS = "connection-editor-actions"
 
 
-def measure_editor_footer(driver: Any) -> list[dict]:
+#: The tunnel editor's footer (Cancel / Save / Save and start, #5810).
+TUNNEL_ACTIONS = "tunnel-editor-actions"
+
+
+def measure_editor_footer(driver: Any, actions: str = ACTIONS) -> list[dict]:
     """The open editor's visible footer buttons, each ``{testId, rect, primary}``.
 
     ``primary`` is whether the button carries the primary skin (``ui-btn--primary``).
+    ``actions`` is the footer's testid: the connection editor's by default, or
+    :data:`TUNNEL_ACTIONS` for the tunnel editor.
     """
-    items = driver.measure_element(ACTIONS, descendants="buttons").get("items", [])
+    items = driver.measure_element(actions, descendants="buttons").get("items", [])
     buttons = []
     for item in items:
         test_id = item.get("testId")
