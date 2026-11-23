@@ -104,6 +104,8 @@ FILE_LIST = "file-browser-list"
 HOST_LABEL = "file-browser-host"
 #: Column headers that must sit above a column of values (#5623).
 DATA_COLUMNS = ("file-browser-sort-modified", "file-browser-sort-size")
+#: The permissions overlay text ("rwxr-xr-x"), shown only on hover or selection.
+PERMISSIONS = re.compile(r"[-rwxsStT]{9}")
 #: A file name far wider than the sidebar, so the list must ellipsize it.
 LONG_FILE = "a-rather-long-file-name-that-never-fits-the-sidebar-width-check.txt"
 TOAST_REGION = "toast-region"
@@ -574,6 +576,8 @@ class TestProductRunComplaints(
                 i["text"] for i in items
                 if i["text"] and i["rect"]["x"] < right and i["rect"]["x"] + i["rect"]["width"] > left
                 and i["text"] not in long_names
+                # The hover-only permissions overlay is no column value.
+                and not PERMISSIONS.fullmatch(i["text"])
             ]
             if not under:
                 problems.append(f"header {header} shows without a column of values")
@@ -593,9 +597,14 @@ class TestProductRunComplaints(
             "values, and the header says 'user@host (SFTP)'; also at the minimum width",
             screenshot=False,
         ):
-            deep = self._open_remote()
-            root = deep.parents[len(LONG_SEGMENTS) - 1]
+            # Written before the browser lists the folder: _open_remote already
+            # lands on it, so navigating there again would not re-read it.
+            native = self.need_native()
+            root = (native.session_home or Path(native.target.state_dir)) / "pr-complaints"
+            root.mkdir(parents=True, exist_ok=True)
             (root / LONG_FILE).write_text("long name\n", encoding="utf-8")
+            deep = self._open_remote()
+            assert deep.parents[len(LONG_SEGMENTS) - 1] == root, (deep, root)
             self._go_to(str(root))
             self.wait(lambda: self.driver.exists(f"file-row-{LONG_FILE}"), what="the long file row")
             user = self.need_native().target.username
