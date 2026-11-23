@@ -179,7 +179,26 @@ def editor_primary_problems(buttons: "list[dict]", *, editing: bool) -> list[str
     one primary, and it is the right-most button (copy style guide).
     """
     expected = EDITOR_SAVE if editing else EDITOR_SAVE_CONNECT
-    mode = "editing" if editing else "a new connection"
+    return _footer_primary_problems(buttons, expected, "editing" if editing else "a new connection")
+
+
+#: The tunnel editor's two save actions (#5810).
+TUNNEL_EDITOR_SAVE = "tunnel-editor-save"
+TUNNEL_EDITOR_SAVE_START = "tunnel-editor-save-start"
+
+
+def tunnel_editor_primary_problems(buttons: "list[dict]", *, editing: bool) -> list[str]:
+    """What is wrong with the tunnel editor footer's primary action; empty when right (#5810).
+
+    Same shape as :func:`editor_primary_problems`: a new tunnel's primary is
+    Save and start; an edited one's is Save. Exactly one primary, right-most.
+    """
+    expected = TUNNEL_EDITOR_SAVE if editing else TUNNEL_EDITOR_SAVE_START
+    return _footer_primary_problems(buttons, expected, "editing" if editing else "a new tunnel")
+
+
+def _footer_primary_problems(buttons: "list[dict]", expected: str, mode: str) -> list[str]:
+    """One primary in an editor footer, ``expected``, and it is the right-most button."""
     primaries = [b["testId"] for b in buttons if b.get("primary")]
     problems: list[str] = []
     if primaries != [expected]:
