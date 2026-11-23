@@ -131,6 +131,8 @@ describe("TrustPrompt", () => {
     expect(document.querySelector('[data-testid="tp-host"] .ui-trust-prompt__copy')).toBeNull();
   });
 
+  const byTestId = (testid: string) => document.querySelector(`[data-testid="${testid}"]`);
+
   /** The button with `testid`'s variant class, e.g. `ui-btn--ghost`. */
   const variantOf = (testid: string) =>
     Array.from(document.querySelector(`[data-testid="${testid}"]`)?.classList ?? []).find((c) =>
@@ -139,7 +141,8 @@ describe("TrustPrompt", () => {
 
   it("keeps the usual verdict weights for a new identity", () => {
     renderPrompt({ changed: false });
-    expect(variantOf("tp-reject")).toBe("ui-btn--ghost");
+    // Reject is a normal secondary button, not a faint ghost one (#5826).
+    expect(variantOf("tp-reject")).toBe("ui-btn--secondary");
     expect(variantOf("tp-accept-once")).toBe("ui-btn--secondary");
     expect(variantOf("tp-accept-remember")).toBe("ui-btn--primary");
   });
@@ -149,13 +152,52 @@ describe("TrustPrompt", () => {
     expect(variantOf("tp-reject")).toBe("ui-btn--primary");
     expect(variantOf("tp-accept-once")).toBe("ui-btn--danger");
     expect(variantOf("tp-accept-remember")).toBe("ui-btn--danger");
-    const once = document.querySelector('[data-testid="tp-accept-once"]');
-    expect(once?.classList.contains("ui-trust-prompt__apart")).toBe(true);
-    // Set apart first in the footer, away from the safe action (#5185).
-    expect(once?.parentElement?.firstElementChild).toBe(once);
     // The MITM warning stays the first thing in the body.
     const warning = document.querySelector('[data-testid="tp-mitm-warning"]');
     expect(warning?.parentElement?.firstElementChild).toBe(warning);
+  });
+
+  /** The footer's verdict buttons, in document (= visual) order. */
+  const verdictOrder = () =>
+    Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="tp-reject"], [data-testid="tp-accept-once"], [data-testid="tp-accept-remember"]'
+      )
+    ).map((b) => b.dataset.testid);
+
+  it("puts Reject at the right end, after both accepts, on a changed identity (#5826)", () => {
+    renderPrompt({ changed: true });
+    expect(verdictOrder()).toEqual(["tp-accept-once", "tp-accept-remember", "tp-reject"]);
+    const once = byTestId("tp-accept-once")!;
+    const replace = byTestId("tp-accept-remember")!;
+    const reject = byTestId("tp-reject")!;
+    // Both accepts share one group at the left; Reject stands on its own.
+    expect(once.parentElement).toBe(replace.parentElement);
+    expect(once.parentElement?.classList.contains("ui-trust-prompt__accepts")).toBe(true);
+    expect(reject.parentElement).not.toBe(once.parentElement);
+    expect(reject.parentElement?.lastElementChild).toBe(reject);
+  });
+
+  it("renders Accept once as a link-style action on a changed identity (#5826)", () => {
+    renderPrompt({ changed: true });
+    expect(byTestId("tp-accept-once")?.classList.contains("ui-trust-prompt__link")).toBe(true);
+    expect(byTestId("tp-accept-remember")?.classList.contains("ui-trust-prompt__link")).toBe(false);
+  });
+
+  it("describes the remembering accept by the hint that says its consequence (#5826)", () => {
+    renderPrompt({
+      changed: true,
+      changedAcceptForHostLabel: "Replace trusted key",
+      changedHint: "Replace trusted key replaces the old key for server.example:2222.",
+    });
+    const id = byTestId("tp-accept-remember")?.getAttribute("aria-describedby");
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id!)?.textContent).toContain("replaces the old key");
+  });
+
+  it("keeps Reject at the left of a first-contact footer", () => {
+    renderPrompt({ changed: false });
+    expect(verdictOrder()).toEqual(["tp-reject", "tp-accept-once", "tp-accept-remember"]);
   });
 
   /** Dispatch a real `keydown` for `key` on `target`, as a keyboard would. */
@@ -164,18 +206,16 @@ describe("TrustPrompt", () => {
       target?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
     });
   };
-  const byTestId = (testid: string) => document.querySelector(`[data-testid="${testid}"]`);
 
   it("focuses Reject when a changed identity opens (#5751)", () => {
     renderPrompt({ changed: true });
     expect(document.activeElement).toBe(byTestId("tp-reject"));
   });
 
-  it("does not move first-contact focus to Reject", () => {
+  it("focuses Reject, not the copy button, when a first-contact identity opens (#5826)", () => {
     renderPrompt({ changed: false });
-    expect(document.activeElement).not.toBe(byTestId("tp-reject"));
-    // First contact keeps the modal's default: the first control in the body.
-    expect(document.activeElement).toBe(byTestId("tp-fingerprint-copy"));
+    expect(document.activeElement).toBe(byTestId("tp-reject"));
+    expect(document.activeElement).not.toBe(byTestId("tp-fingerprint-copy"));
   });
 
   it("rejects on Enter on a changed identity, once (#5751)", () => {
@@ -200,10 +240,13 @@ describe("TrustPrompt", () => {
     expect(onReject).not.toHaveBeenCalled();
   });
 
-  it("does not reject on Enter for a first-contact identity", () => {
-    const { onReject } = renderPrompt({ changed: false });
+  it("rejects on Enter for a first-contact identity, never accepts (#5826)", () => {
+    const { onReject, onAcceptOnce, onAcceptForHost } = renderPrompt({ changed: false });
+    press(document.activeElement, "Enter");
     press(byTestId("tp-host"), "Enter");
-    expect(onReject).not.toHaveBeenCalled();
+    expect(onReject).toHaveBeenCalledTimes(2);
+    expect(onAcceptOnce).not.toHaveBeenCalled();
+    expect(onAcceptForHost).not.toHaveBeenCalled();
   });
 
   it.each([true, false])("rejects on Escape (changed=%s)", (changed) => {

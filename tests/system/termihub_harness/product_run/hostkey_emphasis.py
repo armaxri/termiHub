@@ -9,7 +9,8 @@ product run's SSH phase.
   verdicts ("Accept once", "Replace trusted key") are danger-styled and
   "Reject" is the primary action.
 - :func:`first_contact_emphasis_problems` — first contact keeps its weights:
-  "Accept for host" primary, "Accept once" secondary, "Reject" ghost.
+  "Accept for host" primary, "Accept once" secondary, "Reject" secondary
+  (a normal button, no longer a faint ghost one since #5826).
 - :func:`enter_default_problems` — Enter on the changed-key prompt rejected it.
 """
 
@@ -26,8 +27,9 @@ VERDICTS = ("reject", "accept_once", "accept_for_host")
 #: The button style each verdict wants on a *changed* identity.
 CHANGED_WANT = {"reject": "primary", "accept_once": "danger", "accept_for_host": "danger"}
 
-#: The button style each verdict wants on first contact (unchanged by #5751).
-FIRST_CONTACT_WANT = {"reject": "ghost", "accept_once": "secondary", "accept_for_host": "primary"}
+#: The button style each verdict wants on first contact (unchanged by #5751;
+#: Reject is a normal secondary button since #5826).
+FIRST_CONTACT_WANT = {"reject": "secondary", "accept_once": "secondary", "accept_for_host": "primary"}
 
 
 def button_variant(class_attr: Optional[str]) -> Optional[str]:

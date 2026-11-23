@@ -139,6 +139,19 @@ class TestProductRunSsh(
         type(self)._hostkey_emphasis[screen] = problems
         self.evidence(f"{screen} emphasis: {problems or 'ok'}")
 
+    #: Unsafe verdict layout per host-key screen, graded by
+    #: ``test_10d_hostkey_changed_safe`` (#5826).
+    _hostkey_safe: ClassVar[dict[str, list[str]]] = {}
+
+    def _measure_hostkey_safe(self, screen: str, measure: Callable[[], list[str]]) -> None:
+        """Record ``screen``'s verdict-layout problems; a slip never fails the step itself."""
+        try:
+            problems = measure()
+        except Exception as exc:  # noqa: BLE001 - graded later, never fails this step
+            problems = [f"could not measure: {exc}"]
+        type(self)._hostkey_safe[screen] = problems
+        self.evidence(f"{screen} safe layout: {problems or 'ok'}")
+
     def _trusted(self, port: int) -> list[str]:
         """Fingerprints termiHub remembered for ``127.0.0.1:<port>`` (Accept for host)."""
         path = self.config_dir / "ssh_known_hosts.json"
@@ -260,6 +273,9 @@ class TestProductRunSsh(
                 assert shown["remember"] == "Replace trusted key", shown["remember"]
                 self._measure_hostkey_emphasis(
                     "changed-key prompt", lambda: self.hostkey_emphasis_problems(changed=True)
+                )
+                self._measure_hostkey_safe(
+                    "changed-key prompt", self.hostkey_changed_safe_problems
                 )
                 # Reject is the default (#5751): Enter on the focused element
                 # answers the prompt as Reject. Fall back to clicking Reject so
@@ -623,7 +639,8 @@ class TestProductRunSsh(
         with self.step(
             "ssh.hostkey.emphasis",
             "Changed host key: both accepts are danger-styled and Reject is the default"
-            " (Enter rejects); first contact keeps Accept for host primary (#5751)",
+            " (Enter rejects); first contact keeps Accept for host primary and Reject a"
+            " normal secondary button (#5751, #5826)",
             expect="no new screen: graded on the ssh.hostkey.prompt / changed captures",
             screenshot=False,
         ):
@@ -636,6 +653,21 @@ class TestProductRunSsh(
             assert not missing, f"not measured: {missing}"
             problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
             assert not problems, problems
+
+    def test_10d_hostkey_changed_safe(self):
+        with self.step(
+            "ssh.hostkey.changed-safe",
+            "Changed host key: Reject is the right-most primary, both accepts grouped at the"
+            " left, Accept once link-style (#5826)",
+            expect="no new screen: graded on the ssh.hostkey.changed capture",
+            screenshot=False,
+        ):
+            self.require("ssh.hostkey.changed")
+            measured = type(self)._hostkey_safe
+            screen = "changed-key prompt"
+            self.evidence(f"{screen}: {measured.get(screen, 'not measured')}")
+            assert screen in measured, f"not measured: {screen}"
+            assert not measured[screen], measured[screen]
 
     # ── editor layout ────────────────────────────────────────────────────────
     def test_11_editor_layout(self):

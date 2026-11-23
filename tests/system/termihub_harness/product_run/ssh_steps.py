@@ -16,6 +16,7 @@ import pytest
 
 from ..bridge import BridgeError
 from ..ui.base import HarnessMixin
+from .hostkey_changed_safe import changed_safe_problems
 from .hostkey_emphasis import changed_emphasis_problems, first_contact_emphasis_problems
 from .hostkey_layout import fingerprint_layout_problems, rejected_screen_problems
 from .hosts import RunHosts, run_hosts
@@ -165,6 +166,23 @@ class SshPhaseUi(HarnessMixin):
         }
         grade = changed_emphasis_problems if changed else first_contact_emphasis_problems
         return grade(classes)
+
+    def hostkey_changed_safe_problems(self) -> list[str]:
+        """The open changed-key prompt's unsafe verdict layout (#5826), or ``[]``."""
+        rects: dict[str, Optional[dict[str, Any]]] = {}
+        classes: dict[str, Optional[str]] = {}
+        for verdict, test_id in (
+            ("reject", HOSTKEY_REJECT),
+            ("accept_once", HOSTKEY_ACCEPT_ONCE),
+            ("accept_for_host", HOSTKEY_ACCEPT_REMEMBER),
+        ):
+            if not self.driver.exists(test_id):
+                rects[verdict] = classes[verdict] = None
+                continue
+            rect = self.driver.measure_element(test_id).get("rect")
+            rects[verdict] = rect if rect and rect.get("width", 0) > 0 else None
+            classes[verdict] = self.driver.get_attribute(test_id, "class")
+        return changed_safe_problems(rects, classes)
 
     def rejected_screen_problems(self) -> list[str]:
         """Whether the rejected-key screen says it once (#5662), or ``[]``."""
