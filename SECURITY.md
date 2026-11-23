@@ -31,6 +31,10 @@ Instead, report them privately through GitHub Security Advisories:
 This keeps the report private between you and the maintainer until a fix is
 available, and lets us coordinate disclosure responsibly.
 
+Privacy questions use the same private channel: open a report the same way and
+start its title with "Privacy:". The [privacy notice](PRIVACY.md) describes what
+termiHub does with your data.
+
 ### What to include
 
 A good report helps us confirm and fix the issue quickly. Where possible,
