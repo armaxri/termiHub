@@ -235,6 +235,35 @@ export interface LayoutSlice {
   renameTab: (tabId: string, newTitle: string) => void;
 }
 
+/**
+ * Move a freshly added tab next to the last other tab of the same saved
+ * connection in its panel (#5827), so duplicate sessions sit side by side.
+ * A no-op when the panel holds no sibling or the tab already follows it. Goes
+ * through `reorderTabs`, so the region receives the granular intent.
+ */
+function moveBesideSibling(
+  state: AppState,
+  panelId: string,
+  tabId: string,
+  connectionId: string
+): void {
+  const leaf = findLeaf(getComposedLayout(state).rootPanel, panelId);
+  if (!leaf) return;
+  const from = leaf.tabs.findIndex((t) => t.id === tabId);
+  if (from < 0) return;
+  const added = leaf.tabs[from];
+  let sibling = -1;
+  leaf.tabs.forEach((t, i) => {
+    if (i !== from && t.connectionId === connectionId && t.contentType === added.contentType) {
+      sibling = i;
+    }
+  });
+  if (sibling < 0) return;
+  // Removing `from` shifts every later index down by one.
+  const to = sibling < from ? sibling + 1 : sibling;
+  if (to !== from) state.reorderTabs(panelId, from, to);
+}
+
 export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (set, get) => {
   const { setLayoutLocal, layoutCoupledRollback, curLayout, setAndReseed } = createLayoutCommit(
     set,
@@ -472,6 +501,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         connectionId,
         spawned,
         initialCommand,
+        besideSibling,
       } = options ?? {};
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
@@ -552,6 +582,9 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
           postLayoutSnapshot(prev, next),
           layoutCoupledRollback(prev, next)
         );
+      }
+      if (besideSibling && connectionId && createdTabId && addedPanelId) {
+        moveBesideSibling(get(), addedPanelId, createdTabId, connectionId);
       }
       // Record real terminal connections in the session history (#1883). Only
       // genuine connections carry a config; settings/editor/etc. tabs (which

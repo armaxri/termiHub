@@ -1204,7 +1204,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
       ) : (
         <TabConnectionIcon tab={tab} size={14} className="tab__icon" />
       )}
-      <span className="tab__title">{tab.title}</span>
+      <span className="tab__title">
+        <span className="tab__title-head">{tab.title}</span>
+      </span>
     </div>
   );
 }

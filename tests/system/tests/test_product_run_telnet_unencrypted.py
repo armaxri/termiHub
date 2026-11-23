@@ -2,9 +2,10 @@
 
 Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 ``--product-run``). Telnet sends everything, the login password included, in
-clear text. A telnet tab carries an "Unencrypted" badge, so does the
-status-bar telnet chip, and the telnet password prompt says "Telnet sends this
-password unencrypted." An SSH tab carries none of them.
+clear text. A telnet tab carries an icon-only "Unencrypted" marker (#5827),
+the status-bar telnet chip carries the text badge, and the telnet password
+prompt says "Telnet sends this password unencrypted." An SSH tab carries none
+of them.
 
 The telnet side uses the run's own unprivileged telnet server on loopback
 (:mod:`termihub_harness.product_run.telnet_server`) with auto-login and no
@@ -117,17 +118,24 @@ class TestProductRunTelnetUnencrypted(
             self.tabs["telnet"] = self.tab_of(name)
         with self.step(
             "telnet.unencrypted.tab",
-            "The telnet tab carries an 'Unencrypted' badge",
-            expect="the telnet tab with an 'Unencrypted' badge after its title",
+            "The telnet tab carries an icon-only 'Unencrypted' marker (#5827)",
+            expect="the telnet tab with an open-lock marker after its title, named "
+            "'Unencrypted' for assistive tech and in its tooltip",
         ):
             self.require("telnet.unencrypted.prompt")
             tab = self.tabs["telnet"]
             self.switch_to_tab(tab)
             self.wait(lambda: self.driver.exists(tab_badge(tab)), timeout=10.0,
-                      what="the tab's Unencrypted badge")
-            badge = self.text_of(tab_badge(tab))
-            self.evidence(f"tab badge: {badge!r}")
-            assert badge == BADGE_TEXT, f"the tab badge reads {badge!r}"
+                      what="the tab's Unencrypted marker")
+            # #5827: the text badge took the room the name needs, so the tab
+            # carries the icon alone; its accessible name and tooltip say it.
+            text = self.text_of(tab_badge(tab))
+            label = self.driver.get_attribute(tab_badge(tab), "aria-label") or ""
+            tooltip = self.driver.get_attribute(tab_badge(tab), "title") or ""
+            self.evidence(f"tab marker: text {text!r}, aria-label {label!r}, tooltip {tooltip!r}")
+            assert text == "", f"the tab marker shows text {text!r}"
+            assert label == BADGE_TEXT, f"the tab marker is named {label!r}"
+            assert tooltip.startswith(BADGE_TEXT), f"the tab marker's tooltip reads {tooltip!r}"
         with self.step(
             "telnet.unencrypted.chip",
             "The status-bar telnet chip names host:port and carries the 'Unencrypted' badge",

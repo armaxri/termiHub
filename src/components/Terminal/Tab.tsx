@@ -55,6 +55,7 @@ import { macroReceivingLabel, type MacroReceivingInfo } from "@/utils/macroTabMa
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
 import { isUnencryptedSession } from "@/utils/unencryptedSession";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
+import { splitTabTitle, tabTooltipTitle } from "@/utils/tabTitleTruncation";
 
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
@@ -233,9 +234,13 @@ export function Tab({
   );
   const shownTitle = displayTitle ?? tab.title;
   // The tab's tooltip always carries the full title (#5557) — the title is
-  // ellipsized only when the strip is full — and spells out what the grey
-  // dirty dot means, which a dot alone cannot.
-  const tabTooltip = isDirty ? `${shownTitle} (unsaved changes)` : shownTitle;
+  // truncated only when the strip is full — plus a serial tab's port (#5827),
+  // and spells out what the grey dirty dot means, which a dot alone cannot.
+  const fullTitle = tabTooltipTitle(shownTitle, tab.config);
+  const tabTooltip = isDirty ? `${fullTitle} (unsaved changes)` : fullTitle;
+  // Middle truncation (#5827): only the head is ellipsized; the tail (the end
+  // of the name and any "(2)" counter) is what tells two tabs apart.
+  const titleParts = splitTabTitle(shownTitle);
   // Under reduced motion the connecting glyph is static (#4039), so a steady
   // text label beside it carries the "still connecting" signal instead.
   const reducedMotion = usePrefersReducedMotion();
@@ -385,7 +390,14 @@ export function Tab({
             />
           </Tooltip>
         )}
-        {shownTitle}
+        <span className="tab__title-head" data-testid={`tab-title-head-${tab.id}`}>
+          {titleParts.head}
+        </span>
+        {titleParts.tail && (
+          <span className="tab__title-tail" data-testid={`tab-title-tail-${tab.id}`}>
+            {titleParts.tail}
+          </span>
+        )}
       </span>
       {isBroadcast && (
         <span
@@ -461,9 +473,12 @@ export function Tab({
         </span>
       )}
       {/* Unencrypted marker (#5749): a telnet session sends everything,
-          passwords included, in clear text. */}
+          passwords included, in clear text. Icon-only in the tab (#5827) so
+          it never takes the room the name needs; the status bar keeps the
+          text badge. */}
       {isTerminalTab && isUnencryptedSession(tab.config) && (
         <UnencryptedBadge
+          compact
           className="tab__unencrypted-badge"
           data-testid={`tab-unencrypted-badge-${tab.id}`}
         />
