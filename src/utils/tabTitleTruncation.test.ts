@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { splitTabTitle, TAB_TITLE_TAIL_CHARS } from "./tabTitleTruncation";
+import {
+  splitTabTitle,
+  tabSerialPort,
+  tabTooltipTitle,
+  TAB_TITLE_TAIL_CHARS,
+} from "./tabTitleTruncation";
 
 describe("splitTabTitle (#5827)", () => {
   it("keeps the unique end of an id-like name in the tail", () => {
@@ -44,5 +49,32 @@ describe("splitTabTitle (#5827)", () => {
       const { head, tail } = splitTabTitle(title);
       expect(head + tail).toBe(title);
     }
+  });
+});
+
+describe("tabSerialPort / tabTooltipTitle (#5827)", () => {
+  it("reads the port of a direct and an agent serial session", () => {
+    expect(tabSerialPort({ type: "serial", config: { port: "/dev/ttyUSB0" } })).toBe(
+      "/dev/ttyUSB0"
+    );
+    expect(
+      tabSerialPort({
+        type: "remote-session",
+        config: { sessionType: "serial", port: "COM3", agentId: "a1" },
+      })
+    ).toBe("COM3");
+  });
+
+  it("has no port for other sessions or a blank port", () => {
+    expect(tabSerialPort({ type: "ssh", config: { host: "h", port: 22 } })).toBeUndefined();
+    expect(tabSerialPort({ type: "serial", config: { port: "  " } })).toBeUndefined();
+    expect(tabSerialPort(undefined)).toBeUndefined();
+  });
+
+  it("appends the port to the tooltip unless the title names it", () => {
+    const serial = { type: "serial", config: { port: "/dev/ttyS1" } } as const;
+    expect(tabTooltipTitle("bench", serial)).toBe("bench · /dev/ttyS1");
+    expect(tabTooltipTitle("ttyS1 at /dev/ttyS1", serial)).toBe("ttyS1 at /dev/ttyS1");
+    expect(tabTooltipTitle("web", null)).toBe("web");
   });
 });

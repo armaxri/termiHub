@@ -77,6 +77,24 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Middle truncation (#5827): the head shrinks and ellipsizes, the tail (end
+     of the name + "(2)" counter) always stays whole. */
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.tab__title-head {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.tab__title-tail {
+  flex: 0 0 auto;
+  white-space: pre;
 }
 
 .tab__close {
@@ -153,7 +171,7 @@
 }
 
 .tab__unencrypted-badge {
-  margin-left: var(--spacing-xs);
+  flex-shrink: 0;
 }
 
 .tab__dirty-dot {

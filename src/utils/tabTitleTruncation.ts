@@ -7,6 +7,9 @@
  * `sys-pr-tel…0d8db725 (2)` instead of `sys-pr-telnet-0d…`.
  */
 
+import type { ConnectionConfig } from "@/types/terminal";
+import { readConfigString } from "@/utils/connectionConfigFields";
+
 /** How many characters of the base name stay visible at the end of a narrow tab. */
 export const TAB_TITLE_TAIL_CHARS = 8;
 
@@ -40,4 +43,30 @@ export function splitTabTitle(title: string): TabTitleParts {
     head: chars.slice(0, cut).join(""),
     tail: chars.slice(cut).join("") + counter,
   };
+}
+
+/**
+ * The serial port a tab is attached to (#5827), shown in the tab tooltip so a
+ * truncated serial tab still names its port: a direct serial connection, or a
+ * serial session on a remote agent. `undefined` for every other tab.
+ */
+export function tabSerialPort(config: ConnectionConfig | undefined | null): string | undefined {
+  if (!config) return undefined;
+  const serial =
+    config.type === "serial" ||
+    (config.type === "remote-session" && readConfigString(config, "sessionType") === "serial");
+  if (!serial) return undefined;
+  return readConfigString(config, "port")?.trim() || undefined;
+}
+
+/**
+ * The tab's tooltip text: the full title, plus the serial port when the title
+ * does not already name it (#5827).
+ */
+export function tabTooltipTitle(
+  title: string,
+  config: ConnectionConfig | undefined | null
+): string {
+  const port = tabSerialPort(config);
+  return port && !title.includes(port) ? `${title} · ${port}` : title;
 }
