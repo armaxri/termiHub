@@ -50,6 +50,8 @@ One primary button per footer. Cancel is on the left; the primary action is on t
 - The primary is the action the user most likely wants, and Enter runs it. A new
   connection is saved to be used, so its editor reads Cancel · Test · Save ·
   **Save and connect**; editing an existing connection keeps **Save** primary (#5755).
+  Tunnels follow the same rule: a new tunnel reads Cancel · Save · **Save and start**,
+  and editing an existing tunnel keeps **Save** primary (#5810).
 - Label a button with a verb that says what happens: "Delete connection", "Save", "Reconnect".
   Avoid "Yes" and "No".
 
