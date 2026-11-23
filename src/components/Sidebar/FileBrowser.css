@@ -293,14 +293,16 @@
 /* Below ~240px there is no room for a column beside the name: both columns hide
    with their headers, so a header never shows without its column (#5623). */
 @container file-browser (max-width: 239px) {
-  .file-browser__col--modified,
-  .file-browser__col--size,
+  /* Scoped to the header row so it outranks the later .file-browser__col
+     display rule: a hidden column's header must hide too. */
+  .file-browser__columns .file-browser__col--modified,
+  .file-browser__columns .file-browser__col--size,
   .file-browser__cell {
     display: none;
   }
 
   /* The active sort's column is hidden: the Name header says so (#5671). */
-  .file-browser__col-sorted-by--size {
+  .file-browser__col-sorted-by.file-browser__col-sorted-by--size {
     display: inline-flex;
   }
 
@@ -313,12 +315,12 @@
 /* Below ~320px only Size fits beside a readable name; Modified hides with its
    header (its full timestamp stays in the cell tooltip at wider widths). */
 @container file-browser (max-width: 319px) {
-  .file-browser__col--modified,
+  .file-browser__columns .file-browser__col--modified,
   .file-browser__modified {
     display: none;
   }
 
-  .file-browser__col-sorted-by--modified {
+  .file-browser__col-sorted-by.file-browser__col-sorted-by--modified {
     display: inline-flex;
   }
 
