@@ -167,6 +167,14 @@ export function credentialRestoreStorageOffText(): string {
   );
 }
 
+/**
+ * Restore preview, credentials going into a master-password vault (#5824):
+ * after the restart the vault is locked, so the first connect asks for it.
+ */
+export const RESTORED_CREDENTIALS_LOCKED_TEXT =
+  "Restored passwords stay locked with your master password: after the restart, enter it on " +
+  "the first connect.";
+
 /** Restore dialog notice beside the primary action when credentials are left out (#5631). */
 export const CREDENTIALS_NOT_RESTORED_TEXT = "Credentials will not be restored.";
 

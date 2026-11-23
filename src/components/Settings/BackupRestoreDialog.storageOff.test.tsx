@@ -218,17 +218,19 @@ describe("BackupRestoreDialog with credential storage off (#5631)", () => {
   it("shows Restore filled (destructive while replacing), never the Preview success state", async () => {
     await openPreview();
     let submit = query("backup-restore-submit")!;
-    // Settings is replaced by default: the action cannot be undone.
-    expect(submit.className).toMatch(/ui-btn--danger/);
+    // Nothing is replaced by default (#5824): the plain filled primary.
+    expect(submit.className).toMatch(/ui-btn--primary/);
     expect(submit.className).not.toMatch(/ui-btn--success/);
+    // Ticking Settings replaces it: the action cannot be undone.
     await click("backup-restore-include-settings");
     submit = query("backup-restore-submit")!;
-    expect(submit.className).toMatch(/ui-btn--primary/);
+    expect(submit.className).toMatch(/ui-btn--danger/);
     expect(submit.className).not.toMatch(/ui-btn--success/);
   });
 
   it("words the replace warning in sentence case", async () => {
     await openPreview();
+    await click("backup-restore-include-settings");
     expect(query("backup-restore-replace-warning")?.textContent).toMatch(
       /^Replace overwrites your current settings:/
     );
