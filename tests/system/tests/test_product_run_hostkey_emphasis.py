@@ -14,12 +14,12 @@ from termihub_harness.product_run.hostkey_emphasis import (
 
 CHANGED_OK = {
     "reject": "ui-btn ui-btn--primary ui-btn--md",
-    "accept_once": "ui-btn ui-btn--danger ui-btn--md ui-trust-prompt__apart",
+    "accept_once": "ui-btn ui-btn--danger ui-btn--md ui-trust-prompt__link",
     "accept_for_host": "ui-btn ui-btn--danger ui-btn--md",
 }
 
 FIRST_CONTACT_OK = {
-    "reject": "ui-btn ui-btn--ghost ui-btn--md",
+    "reject": "ui-btn ui-btn--secondary ui-btn--md",
     "accept_once": "ui-btn ui-btn--secondary ui-btn--md",
     "accept_for_host": "ui-btn ui-btn--primary ui-btn--md",
 }
@@ -55,9 +55,12 @@ def test_a_missing_button_is_named():
 
 def test_first_contact_keeps_its_weights():
     assert first_contact_emphasis_problems(FIRST_CONTACT_OK) == []
+    # Before #5826: a faint ghost Reject on first contact.
+    faint = {**FIRST_CONTACT_OK, "reject": "ui-btn ui-btn--ghost ui-btn--md"}
+    assert first_contact_emphasis_problems(faint) == ["reject is ghost, want secondary"]
     # The changed-key emphasis leaking into first contact is a slip.
     assert first_contact_emphasis_problems(CHANGED_OK) == [
-        "reject is primary, want ghost",
+        "reject is primary, want secondary",
         "accept once is danger, want secondary",
         "accept for host is danger, want primary",
     ]

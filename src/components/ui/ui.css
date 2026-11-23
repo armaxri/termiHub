@@ -1527,14 +1527,31 @@
   justify-content: flex-end;
 }
 
-/* A changed identity (#5185): "Accept once" is set apart at the far left so the
-   safe Reject and the MITM warning lead. */
+/* A changed identity (#5185, #5826): the accepting verdicts are grouped at the
+   left, the safe Reject is the primary at the right end. */
 .ui-trust-prompt__actions--changed {
   align-items: center;
+  justify-content: space-between;
 }
 
-.ui-trust-prompt__apart {
-  margin-right: auto;
+.ui-trust-prompt__accepts {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* "Accept once" on a changed identity: a quiet link-style action that still
+   reads as dangerous (error color), not a button that looks like the others. */
+.ui-btn--danger.ui-trust-prompt__link {
+  padding-left: var(--spacing-xs);
+  padding-right: var(--spacing-xs);
+  background: transparent;
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ui-btn--danger.ui-trust-prompt__link:hover:not([aria-disabled="true"]) {
+  background: var(--bg-hover);
 }
 
 /* ── ContentOverlay ─────────────────────────────────────────────────────
