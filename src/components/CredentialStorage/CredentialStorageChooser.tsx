@@ -2,12 +2,13 @@ import { useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { useAppStore } from "@/store/appStore";
 import type { CredentialStorageMode } from "@/types/credential";
 import { markCredentialStorageChosen, switchCredentialStore } from "@/services/api";
-import { Button, Modal, RadioGroup, toast } from "@/components/ui";
+import { Button, Modal, RadioGroup } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import {
   CREDENTIAL_STORAGE_CHANGE_LATER_TEXT,
   CREDENTIAL_STORAGE_CHOOSER_TITLE,
+  CREDENTIAL_STORAGE_DISMISS_SAVE_LABEL,
 } from "@/utils/credentialStorageCopy";
 import { MasterPasswordSetupFields } from "./MasterPasswordSetupFields";
 import { credentialStorageRadioOptions } from "./credentialStorageOptions";
@@ -18,13 +19,6 @@ const DEFAULT_CHOICE: CredentialStorageMode = "os_keychain";
 
 type Step = "choose" | "master_password";
 
-/** One confirmation per settled choice (#5630), naming where passwords go. */
-const CHOICE_CONFIRMATION: Record<CredentialStorageMode, string> = {
-  os_keychain: "Passwords will be stored in the OS Keychain.",
-  master_password: "Passwords will be stored in your master-password vault.",
-  none: "termiHub will not save passwords.",
-};
-
 /**
  * The one-time "Where should termiHub keep passwords?" chooser (#5187), shown
  * the first time a secret is about to be saved while no storage choice exists.
@@ -34,11 +28,16 @@ const CHOICE_CONFIRMATION: Record<CredentialStorageMode, string> = {
  *   fields Settings ▸ Security uses); the vault is created on confirm.
  * - "Don't save passwords" records the choice and keeps storage off.
  * - Cancel / Escape / × settle `"canceled"`: nothing is chosen, nothing is
- *   saved, and the next save asks again.
+ *   saved, and the next save asks again. Opened by ticking a save control
+ *   (purpose `"save"`), the dismiss action says so — "Don't save this
+ *   password" — and the control's tick stays off (#5825).
  * - Focus opens on the selected option, never the × (#5550); Enter on an
  *   option or a password field presses the primary action.
  * - Create vault stays disabled until the master password is valid and
- *   confirmed; a settled choice is confirmed with one toast (#5630).
+ *   confirmed; a live checklist under the fields says what is missing
+ *   (#5825). Back sits at the footer's left edge as a ghost button.
+ * - A settled choice shows no toast (#5825, toast policy #5859): the save
+ *   control that asked names the chosen store in place.
  *
  * Nothing is written to any store here — the chooser only sets the store up.
  * The waiting save flow writes the secret afterwards through its usual path,
@@ -49,6 +48,7 @@ export function CredentialStorageChooser() {
   const resolveStorageChoice = useAppStore((s) => s.resolveStorageChoice);
   const loadCredentialStoreStatus = useAppStore((s) => s.loadCredentialStoreStatus);
   const setCredentialStoreStatus = useAppStore((s) => s.setCredentialStoreStatus);
+  const purpose = useAppStore((s) => s.storageChooserPurpose);
 
   const [choice, setChoice] = useState<CredentialStorageMode>(DEFAULT_CHOICE);
   const [step, setStep] = useState<Step>("choose");
@@ -102,7 +102,6 @@ export function CredentialStorageChooser() {
         await loadCredentialStoreStatus();
       }
       resolveStorageChoice(choice);
-      toast.success(CHOICE_CONFIRMATION[choice]);
     } catch (err) {
       setError(errorMessage(err));
       // Keep the async Button in its error path; the inline error is the feedback.
@@ -147,16 +146,10 @@ export function CredentialStorageChooser() {
       onKeyDown={handleKeyDown}
       footer={
         <>
-          <Button
-            variant="secondary"
-            onClick={cancel}
-            data-testid="credential-storage-chooser-cancel"
-          >
-            Cancel
-          </Button>
           {settingUpVault && (
             <Button
-              variant="secondary"
+              variant="ghost"
+              className="credential-storage-chooser__back"
               onClick={() => {
                 setError("");
                 setStep("choose");
@@ -166,19 +159,28 @@ export function CredentialStorageChooser() {
               Back
             </Button>
           )}
-          <Button
-            // A fresh Button per step, so no async state carries across (#5551).
-            key={step}
-            ref={primaryRef}
-            variant="primary"
-            onClick={advancesToVaultStep ? goToVaultStep : handleContinue}
-            disabled={vaultInvalid}
-            errorToast={false}
-            pendingLabel="Setting up…"
-            data-testid="credential-storage-chooser-continue"
-          >
-            {settingUpVault ? "Create vault" : "Continue"}
-          </Button>
+          <div className="credential-storage-chooser__actions">
+            <Button
+              variant="secondary"
+              onClick={cancel}
+              data-testid="credential-storage-chooser-cancel"
+            >
+              {purpose === "save" ? CREDENTIAL_STORAGE_DISMISS_SAVE_LABEL : "Cancel"}
+            </Button>
+            <Button
+              // A fresh Button per step, so no async state carries across (#5551).
+              key={step}
+              ref={primaryRef}
+              variant="primary"
+              onClick={advancesToVaultStep ? goToVaultStep : handleContinue}
+              disabled={vaultInvalid}
+              errorToast={false}
+              pendingLabel="Setting up…"
+              data-testid="credential-storage-chooser-continue"
+            >
+              {settingUpVault ? "Create vault" : "Continue"}
+            </Button>
+          </div>
         </>
       }
     >
@@ -202,6 +204,7 @@ export function CredentialStorageChooser() {
                 inputClassName="ui-input credential-storage-chooser__input"
                 errorClassName="credential-storage-chooser__error"
                 testIdPrefix="credential-storage-chooser-master-password"
+                checklist
               />
             </div>
           </>

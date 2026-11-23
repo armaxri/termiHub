@@ -195,16 +195,12 @@ describe("CredentialStorageChooser (#5187)", () => {
         "wrong horse"
       );
     });
-    // The mismatch shows inline under the confirmation while typing (#5552)…
-    expect(query("credential-storage-chooser-master-password-mismatch")?.textContent).toBe(
-      "Passwords do not match."
-    );
+    // The checklist names the unmet match (#5825); Create vault stays disabled.
+    expect(
+      query("credential-storage-chooser-master-password-checklist-match")!.hasAttribute("data-met")
+    ).toBe(false);
     await click("credential-storage-chooser-continue");
 
-    // …and Create vault keeps it there instead of repeating it below.
-    expect(query("credential-storage-chooser-master-password-mismatch")?.textContent).toBe(
-      "Passwords do not match."
-    );
     expect(query("credential-storage-chooser-master-password-error")).toBeNull();
     expect(calls("switch_credential_store")).toHaveLength(0);
     expect(outcome()).toBeUndefined();
@@ -220,24 +216,30 @@ describe("CredentialStorageChooser (#5187)", () => {
     expect(query("credential-storage-chooser-options")).not.toBeNull();
   });
 
-  it("orders the master password setup footer Cancel, Back, Create vault (#5391)", async () => {
+  it("puts Back alone at the left edge as a ghost, Cancel beside Create vault (#5825)", async () => {
     const { outcome } = await openChooser();
     await click("credential-storage-chooser-option-master_password");
     await click("credential-storage-chooser-continue");
 
-    const footerIds = [
-      "credential-storage-chooser-cancel",
+    const [backBtn, cancelBtn, createBtn] = [
       "credential-storage-chooser-back",
+      "credential-storage-chooser-cancel",
       "credential-storage-chooser-continue",
-    ].map((id) => query(id));
-    expect(footerIds.every((el) => el !== null)).toBe(true);
-    const [cancelBtn, backBtn, createBtn] = footerIds as HTMLElement[];
-    expect(cancelBtn.compareDocumentPosition(backBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    ].map((id) => query(id)!);
+    expect(backBtn.compareDocumentPosition(cancelBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );
-    expect(backBtn.compareDocumentPosition(createBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(cancelBtn.compareDocumentPosition(createBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     );
+    expect(backBtn.classList.contains("ui-btn--ghost")).toBe(true);
+    expect(backBtn.classList.contains("credential-storage-chooser__back")).toBe(true);
+    // Cancel and Create vault share the right-hand group; Back is outside it.
+    expect(cancelBtn.parentElement).toBe(createBtn.parentElement);
+    expect(cancelBtn.parentElement!.classList.contains("credential-storage-chooser__actions")).toBe(
+      true
+    );
+    expect(backBtn.parentElement).not.toBe(cancelBtn.parentElement);
     expect(createBtn.textContent).toBe("Create vault");
 
     await click("credential-storage-chooser-cancel");
@@ -255,6 +257,35 @@ describe("CredentialStorageChooser (#5187)", () => {
     expect(calls("mark_credential_storage_chosen")).toHaveLength(1);
     expect(outcome()).toBe("none");
     expect(useAppStore.getState().credentialStoreStatus).toEqual(status("none", true));
+  });
+
+  it("labels the dismiss action by why the chooser opened (#5825)", async () => {
+    await act(async () => {
+      void useAppStore.getState().requestStorageChoice("save");
+    });
+    expect(query("credential-storage-chooser-cancel")!.textContent).toBe(
+      "Don't save this password"
+    );
+    await click("credential-storage-chooser-cancel");
+
+    await openChooser();
+    expect(query("credential-storage-chooser-cancel")!.textContent).toBe("Cancel");
+  });
+
+  it("the × dismisses like the dismiss action: canceled, no toast (#5825)", async () => {
+    let outcome: StorageChoiceOutcome | undefined;
+    await act(async () => {
+      void useAppStore
+        .getState()
+        .requestStorageChoice("save")
+        .then((o) => {
+          outcome = o;
+        });
+    });
+    await click("modal-close");
+    expect(outcome).toBe("canceled");
+    expect(calls("switch_credential_store")).toHaveLength(0);
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("cancel chooses nothing and saves nothing", async () => {
@@ -396,32 +427,44 @@ describe("CredentialStorageChooser (#5187)", () => {
       }
     });
 
-    it("shows a live requirements hint linked to the password field", async () => {
+    it("shows one live checklist under the second field, linked to both (#5825)", async () => {
       await openVaultStep();
-      const hint = query("credential-storage-chooser-master-password-hint")!;
-      expect(hint.textContent).toContain("at least 8 characters");
-      expect(input("input").getAttribute("aria-describedby")).toContain(hint.id);
-
-      await act(async () => setInputValue(input("input"), "abc"));
-      expect(hint.textContent).toBe("5 more characters needed (at least 8).");
+      const list = query("credential-storage-chooser-master-password-checklist")!;
+      const length = query("credential-storage-chooser-master-password-checklist-length")!;
+      const match = query("credential-storage-chooser-master-password-checklist-match")!;
+      expect(length.textContent).toContain("At least 8 characters");
+      expect(match.textContent).toContain("Passwords match");
+      expect(input("input").getAttribute("aria-describedby")).toBe(list.id);
+      expect(input("confirm-input").getAttribute("aria-describedby")).toBe(list.id);
+      // It sits under the confirmation, not under the first field.
+      expect(
+        query("credential-storage-chooser-master-password-confirm-field")!.compareDocumentPosition(
+          list
+        ) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(query("credential-storage-chooser-master-password-hint")).toBeNull();
+      expect(length.hasAttribute("data-met")).toBe(false);
+      expect(match.hasAttribute("data-met")).toBe(false);
 
       await act(async () => setInputValue(input("input"), "correct horse"));
-      expect(hint.textContent).toContain("Meets the 8-character minimum");
+      expect(length.hasAttribute("data-met")).toBe(true);
+      expect(match.hasAttribute("data-met")).toBe(false);
+
+      await act(async () => setInputValue(input("confirm-input"), "correct horse"));
+      expect(match.hasAttribute("data-met")).toBe(true);
+      expect(match.textContent).toContain("(done)");
     });
 
-    it("flags a mismatched confirmation inline, not while it is still a prefix", async () => {
+    it("says a mismatch through the checklist, not a second error line", async () => {
       await openVaultStep();
       await act(async () => {
         setInputValue(input("input"), "correct horse");
-        setInputValue(input("confirm-input"), "correct");
+        setInputValue(input("confirm-input"), "correct cow");
       });
       expect(query("credential-storage-chooser-master-password-mismatch")).toBeNull();
-
-      await act(async () => setInputValue(input("confirm-input"), "correct cow"));
-      expect(query("credential-storage-chooser-master-password-mismatch")?.textContent).toBe(
-        "Passwords do not match."
-      );
-      expect(input("confirm-input").getAttribute("aria-invalid")).toBe("true");
+      expect(
+        query("credential-storage-chooser-master-password-checklist-match")!.textContent
+      ).toContain("(not yet)");
     });
   });
 
@@ -568,11 +611,11 @@ describe("CredentialStorageChooser (#5187)", () => {
       expect(setup.classList.contains("credential-storage-chooser__setup")).toBe(true);
     });
 
-    it("confirms the chosen store with one success toast", async () => {
-      await openChooser();
+    it("confirms no choice with a toast: the save control names it in place (#5825)", async () => {
+      const { outcome } = await openChooser();
       await click("credential-storage-chooser-continue");
-      expect(toast.success).toHaveBeenCalledTimes(1);
-      expect(toast.success).toHaveBeenCalledWith("Passwords will be stored in the OS Keychain.");
+      expect(outcome()).toBe("os_keychain");
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it("does not toast when the store could not be set up", async () => {

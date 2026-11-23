@@ -15,8 +15,11 @@ import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 import { SavedConnectionField, type SavedConnectionContext } from "./SavedConnectionField";
 import { SerialPortField } from "./SerialPortField";
 import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
-import { CREDENTIAL_STORAGE_OFF_TEXT } from "@/utils/credentialStorageCopy";
-import { ensureCredentialStorageForSave } from "@/utils/credentialStorageChoice";
+import {
+  CREDENTIAL_STORAGE_OFF_TEXT,
+  credentialStorageChosenText,
+} from "@/utils/credentialStorageCopy";
+import { chooseCredentialStorageForSave } from "@/utils/credentialStorageChoice";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import { textFieldsMatchQuery } from "@/utils/searchMatching";
@@ -131,6 +134,9 @@ export function DynamicField({
   testId,
 }: DynamicFieldProps) {
   const reactId = useId();
+  // The line naming the store the chooser just set up from this toggle
+  // (#5825), shown under it in place of a toast.
+  const [storageChosenNote, setStorageChosenNote] = useState<string | null>(null);
 
   // Base data-testid token for this field. Defaults to `field-<key>`; callers
   // that render the same field many times (per jump-host hop) pass a unique
@@ -176,17 +182,32 @@ export function DynamicField({
         // scroll it back into view once the dialog has gone.
         const toggle = document.getElementById(controlId);
         toggle?.focus({ preventScroll: true });
-        void ensureCredentialStorageForSave().then((active) => {
+        void chooseCredentialStorageForSave().then(({ active, chosen }) => {
           if (active) onChange(true);
+          // Dismissed: the toggle stays off, which it already shows.
+          setStorageChosenNote(chosen ? credentialStorageChosenText(chosen) : null);
+          // Scroll the whole row — toggle and the new line under it — into
+          // view, clear of the editor footer (#5825).
           requestAnimationFrame(() => {
-            if (toggle?.isConnected) toggle.scrollIntoView?.({ block: "nearest" });
+            const row = toggle?.closest<HTMLElement>(`[data-testid="dynamic-${testIdBase}"]`);
+            const target = row ?? toggle;
+            if (target?.isConnected) target.scrollIntoView?.({ block: "nearest" });
           });
         });
       }
-    : onChange;
+    : storageChosenNote
+      ? (next: unknown) => {
+          // Turned off again: the line about where it goes no longer applies.
+          if (next !== true) setStorageChosenNote(null);
+          onChange(next);
+        }
+      : onChange;
   const hasError = Boolean(error);
+  // Only while the toggle is on (turning it off also clears it).
+  const chosenNote = storageChosenNote && value === true ? storageChosenNote : null;
+  const chosenNoteId = chosenNote ? `${controlId}-storage-chosen` : undefined;
   const describedBy =
-    [hasError ? errorId : null, descriptionId, platformNoteId, storageOffId]
+    [hasError ? errorId : null, descriptionId, platformNoteId, storageOffId, chosenNoteId]
       .filter(Boolean)
       .join(" ") || undefined;
   const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
@@ -209,7 +230,7 @@ export function DynamicField({
       hintId={descriptionId}
       hintTestId={`${testIdBase}-hint`}
       details={
-        platformNote || credentialStorageOff || credentialSaved || storedSecret ? (
+        platformNote || credentialStorageOff || credentialSaved || storedSecret || chosenNote ? (
           <FieldStatusNotes
             testIdBase={testIdBase}
             platformNote={platformNote}
@@ -217,6 +238,8 @@ export function DynamicField({
             storageOffId={credentialStorageOff ? storageOffId : undefined}
             credentialSaved={credentialSaved}
             storedSecret={storedSecret}
+            storageChosen={chosenNote}
+            storageChosenId={chosenNoteId}
           />
         ) : undefined
       }
@@ -254,11 +277,15 @@ interface FieldStatusNotesProps {
   storageOffId?: string;
   credentialSaved?: boolean;
   storedSecret?: StoredSecretState;
+  /** Where the chooser just set storage up from this toggle (#5825), or null. */
+  storageChosen?: string | null;
+  storageChosenId?: string;
 }
 
 /**
  * The status notes a field owns below its hint: platform limitation, storage
- * off (with its enable action), "password saved" and the stored-secret state.
+ * off (with its enable action), the store just chosen, "password saved" and
+ * the stored-secret state.
  */
 function FieldStatusNotes({
   testIdBase,
@@ -267,6 +294,8 @@ function FieldStatusNotes({
   storageOffId,
   credentialSaved,
   storedSecret,
+  storageChosen,
+  storageChosenId,
 }: FieldStatusNotesProps) {
   return (
     <>
@@ -286,6 +315,16 @@ function FieldStatusNotes({
           </p>
           <EnableCredentialStorageButton data-testid={`${testIdBase}-enable-storage`} />
         </div>
+      )}
+      {storageChosen && (
+        <p
+          id={storageChosenId}
+          className="settings-form__hint"
+          role="status"
+          data-testid={`${testIdBase}-storage-chosen`}
+        >
+          {storageChosen}
+        </p>
       )}
       {credentialSaved && (
         <p

@@ -10,7 +10,7 @@
  */
 
 import { useAppStore } from "@/store/appStore";
-import type { CredentialStoreStatusInfo } from "@/types/credential";
+import type { CredentialStorageMode, CredentialStoreStatusInfo } from "@/types/credential";
 
 /**
  * Whether the next secret-saving attempt must ask where to store it: the mode
@@ -35,12 +35,27 @@ export function credentialStoreActive(status: CredentialStoreStatusInfo | null |
  * next time), chose "Don't save", or storage is off by an earlier choice.
  */
 export async function ensureCredentialStorageForSave(): Promise<boolean> {
+  return (await chooseCredentialStorageForSave()).active;
+}
+
+/**
+ * Like {@link ensureCredentialStorageForSave}, but also says which store the
+ * chooser just set up (#5825), so the save control can name it in place
+ * instead of a toast. `chosen` is `null` when no chooser was shown (a store
+ * was already active, or storage is off by an earlier choice) or it was
+ * dismissed.
+ */
+export async function chooseCredentialStorageForSave(): Promise<{
+  active: boolean;
+  chosen: CredentialStorageMode | null;
+}> {
   const { credentialStoreStatus, requestStorageChoice } = useAppStore.getState();
   if (!credentialStorageNeedsChoice(credentialStoreStatus)) {
-    return credentialStoreActive(credentialStoreStatus);
+    return { active: credentialStoreActive(credentialStoreStatus), chosen: null };
   }
-  const outcome = await requestStorageChoice();
-  return outcome !== "canceled" && outcome !== "none";
+  const outcome = await requestStorageChoice("save");
+  const active = outcome !== "canceled" && outcome !== "none";
+  return { active, chosen: active ? outcome : null };
 }
 
 /**

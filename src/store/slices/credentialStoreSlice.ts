@@ -66,6 +66,13 @@ export interface UnlockRequestOptions {
  */
 export type StorageChoiceOutcome = CredentialStorageMode | "canceled";
 
+/**
+ * Why the chooser was opened (#5825): `"save"` when ticking a save control
+ * asked where to keep the secret — dismissing it then means "don't save this
+ * password" and says so — or `"setup"` for a plain "set up storage" action.
+ */
+export type StorageChoicePurpose = "save" | "setup";
+
 export interface CredentialStoreSlice {
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -121,11 +128,17 @@ export interface CredentialStoreSlice {
    */
   storageChooserResolvers: ((outcome: StorageChoiceOutcome) => void)[];
   /**
+   * Why the open chooser was asked for (#5825). `"save"` wins while any
+   * waiting request is a save, so its dismiss action names the dropped save.
+   */
+  storageChooserPurpose: StorageChoicePurpose;
+  /**
    * Open the first-use credential-storage chooser (#5187) and resolve to how
    * it settled. The chooser itself switches the store (or records "Don't
    * save") before settling, so a caller that gets a store mode back can save.
+   * `purpose` (default `"setup"`) words the chooser's dismiss action (#5825).
    */
-  requestStorageChoice: () => Promise<StorageChoiceOutcome>;
+  requestStorageChoice: (purpose?: StorageChoicePurpose) => Promise<StorageChoiceOutcome>;
   /** Settle (and clear) every pending chooser request and close it. Idempotent. */
   resolveStorageChoice: (outcome: StorageChoiceOutcome) => void;
 }
@@ -205,17 +218,22 @@ export const createCredentialStoreSlice: StateCreator<AppState, [], [], Credenti
   },
   storageChooserOpen: false,
   storageChooserResolvers: [],
-  requestStorageChoice: () =>
+  storageChooserPurpose: "setup",
+  requestStorageChoice: (purpose = "setup") =>
     new Promise<StorageChoiceOutcome>((resolve) => {
       set((state) => ({
         storageChooserOpen: true,
         storageChooserResolvers: [...state.storageChooserResolvers, resolve],
+        storageChooserPurpose:
+          state.storageChooserOpen && state.storageChooserPurpose === "save" ? "save" : purpose,
       }));
     }),
   resolveStorageChoice: (outcome) => {
     const { storageChooserResolvers } = get();
     // Clear first so a re-entrant call (a choice and the close both firing)
     // is a no-op — every promise settles once.
+    // The purpose stays as it was, so the closing dialog keeps its wording;
+    // the next request sets it afresh.
     set({ storageChooserOpen: false, storageChooserResolvers: [] });
     for (const resolve of storageChooserResolvers) {
       resolve(outcome);
