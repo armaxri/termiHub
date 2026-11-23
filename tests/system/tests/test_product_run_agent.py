@@ -50,6 +50,7 @@ from termihub_harness.product_run.agent_deploy import (
     agent_binary,
     reap_agents_under,
 )
+from termihub_harness.product_run.grades import setup_output_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.ui.theme import ThemeUi
 
@@ -184,6 +185,24 @@ class TestProductRunAgent(
                 what=f"setup tab {tab_id} in the session lifecycle",
             )
             self.evidence(f"setup tab {tab_id}: lifecycle status {status!r}")
+            self._grade_setup_output(tab_id)
+
+    def _grade_setup_output(self, tab_id: str) -> None:
+        """The setup tab reads plainly and ends in one summary line (#5822)."""
+        last: list[str] = []
+
+        def plain() -> bool:
+            nonlocal last
+            last = setup_output_problems(
+                self.driver.read_terminal(tab_id, join_full_width_rows=True)
+            )
+            return not last
+
+        try:
+            self.wait(plain, timeout=30.0, interval=1.0, what="the setup summary line")
+        except AssertionError as exc:
+            raise AssertionError(f"setup tab {tab_id}: {'; '.join(last)}") from exc
+        self.evidence(f"setup tab {tab_id}: plain output ending in the installed line")
 
     # ── live connection ──────────────────────────────────────────────────────
     def test_10_connect_and_shell(self):

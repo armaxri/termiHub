@@ -120,6 +120,44 @@ def reconnect_wording_problems(text: str, *, serial: bool = False) -> list[str]:
     return problems
 
 
+#: A raw ``\\NNN`` octal escape: an ``echo`` that did not expand it (#5822).
+OCTAL_ESCAPE = re.compile(r"\\[0-7]{3}")
+#: The setup script's one summary line after a successful install (#5822).
+SETUP_INSTALLED_LINE = re.compile(
+    r"^Agent installed \(v[^)\s]+\) at \S.*\. You can close this tab\.$"
+)
+#: Shell cleanup commands that must not be the visible setup output (#5822).
+_SETUP_NOISE = re.compile(r"(^|[;&|]\s*)(rm -f|rmdir)\s")
+
+
+def setup_output_problems(buffer: str, *, expect_success: bool = True) -> list[str]:
+    """What is wrong with the agent setup terminal's output (#5822).
+
+    The output must carry no raw octal escapes (``\\360\\237…``, R-002), no
+    ``rm -f``/``rmdir`` cleanup commands as content (R-057), and end in one
+    plain summary line: ``Agent installed (v<x>) at <path>. You can close
+    this tab.`` on success, ``Agent setup failed: <reason>`` on failure.
+    Empty when it is right.
+    """
+    problems: list[str] = []
+    escape = OCTAL_ESCAPE.search(buffer)
+    if escape:
+        problems.append(f"raw octal escape {escape.group(0)!r} in the setup output")
+    lines = [line.strip() for line in buffer.replace("\r", "").split("\n")]
+    noise = [line for line in lines if _SETUP_NOISE.search(line)]
+    if noise:
+        problems.append(f"shell cleanup commands in the setup output: {noise[0]!r}")
+    installed = [line for line in lines if SETUP_INSTALLED_LINE.match(line)]
+    failed = [line for line in lines if line.startswith("Agent setup failed: ")]
+    if expect_success:
+        if not installed:
+            problems.append("no 'Agent installed (v<x>) at <path>.' summary line")
+        if failed:
+            problems.append(f"the setup reports a failure: {failed[0]!r}")
+    elif not failed:
+        problems.append("no 'Agent setup failed: <reason>' summary line")
+    return problems
+
 #: ``--form-max-width`` in ``src/styles/variables.css`` (#5641).
 FORM_MAX_WIDTH = 560.0
 #: ``--form-input-narrow-width``: ports and other short numbers (#5641).
