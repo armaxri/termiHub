@@ -1,6 +1,7 @@
 /**
  * Keyboard-interaction tests for the TunnelEditor (#1341): Enter from a
- * single-line field runs the primary Save, Escape cancels.
+ * single-line field runs the primary action (Save and start for a new tunnel,
+ * #5810), Escape cancels.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -97,14 +98,14 @@ describe("TunnelEditor — keyboard interaction (#1341)", () => {
     vi.clearAllMocks();
   });
 
-  it("saves the tunnel on Enter from the name field", async () => {
+  it("saves and starts a new tunnel on Enter from the name field (#5810)", async () => {
     render();
     await flush();
     setValue(nameInput(), "Dev DB");
     key(nameInput(), "Enter");
     await flush();
     expect(useAppStore.getState().saveTunnel).toHaveBeenCalledTimes(1);
-    expect(useAppStore.getState().startTunnel).not.toHaveBeenCalled();
+    expect(useAppStore.getState().startTunnel).toHaveBeenCalledTimes(1);
   });
 
   it("does not save on Enter while the name is blank (UX-022)", async () => {

@@ -550,13 +550,46 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
   const nameRef = useAutofocusSelect<HTMLInputElement>();
 
-  // Enter (from a single-line field) saves; Escape cancels. While invalid,
-  // Enter goes through the same guard as Save and focuses the first invalid
-  // field instead of saving.
+  // Which footer action is primary (#5810): a new tunnel is saved to be used,
+  // so "Save and start" is primary; editing an existing one keeps "Save".
+  const saveAndStartIsPrimary = !existingTunnel;
+  // The primary footer Button. Enter clicks it, so the keyboard runs the same
+  // action — with the same pending state, error handling and invalid-form
+  // guard — as the button the user sees highlighted.
+  const primaryButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Enter (from a single-line field) runs the primary action; Escape cancels.
+  // While invalid, Enter goes through the same guard as the button and focuses
+  // the first invalid field instead of saving.
   const handleKeyDown = useEditorKeyboard({
-    onSubmit: () => void handleSave(false),
+    onSubmit: () => primaryButtonRef.current?.click(),
     onCancel: handleCancel,
   });
+
+  const saveAndStartButton = (
+    <Button
+      ref={saveAndStartIsPrimary ? primaryButtonRef : undefined}
+      variant={saveAndStartIsPrimary ? "primary" : "secondary"}
+      onClick={() => handleSave(true)}
+      aria-disabled={!canSave}
+      data-invalid={!canSave || undefined}
+      data-testid="tunnel-editor-save-start"
+    >
+      Save and start
+    </Button>
+  );
+  const saveButton = (
+    <Button
+      ref={saveAndStartIsPrimary ? undefined : primaryButtonRef}
+      variant={saveAndStartIsPrimary ? "secondary" : "primary"}
+      onClick={() => handleSave(false)}
+      aria-disabled={!canSave}
+      data-invalid={!canSave || undefined}
+      data-testid="tunnel-editor-save"
+    >
+      Save
+    </Button>
+  );
 
   return (
     <div
@@ -956,28 +989,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           </label>
         </div>
 
-        <div className="tunnel-editor__actions" {...TOAST_AVOID_PROPS}>
+        <div
+          className="tunnel-editor__actions"
+          data-testid="tunnel-editor-actions"
+          {...TOAST_AVOID_PROPS}
+        >
           <Button variant="secondary" onClick={handleCancel} data-testid="tunnel-editor-cancel">
             Cancel
           </Button>
-          <Button
-            variant="secondary"
-            onClick={() => handleSave(true)}
-            aria-disabled={!canSave}
-            data-invalid={!canSave || undefined}
-            data-testid="tunnel-editor-save-start"
-          >
-            Save and start
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => handleSave(false)}
-            aria-disabled={!canSave}
-            data-invalid={!canSave || undefined}
-            data-testid="tunnel-editor-save"
-          >
-            Save
-          </Button>
+          {/* One primary per footer, on the right (copy style guide). */}
+          {!saveAndStartIsPrimary && saveAndStartButton}
+          {saveButton}
+          {saveAndStartIsPrimary && saveAndStartButton}
         </div>
       </div>
 

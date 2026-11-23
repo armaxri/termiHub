@@ -11,8 +11,10 @@ EU General Data Protection Regulation (GDPR) and similar laws.
 
 > **Who is responsible:** termiHub is a free, open-source project maintained at
 > [github.com/armaxri/termiHub](https://github.com/armaxri/termiHub). Questions about this notice
-> or your data: `<maintainer: add a privacy contact>`. Please don't send privacy requests as
-> GitHub issues: issues are public.
+> or your data: open a private report at
+> [github.com/armaxri/termiHub/security/advisories/new](https://github.com/armaxri/termiHub/security/advisories/new), give it a title
+> starting with "Privacy:" and describe your question. Only you and the maintainer can see it.
+> Please don't send privacy requests as GitHub issues: issues are public.
 
 ## In short
 
@@ -211,8 +213,9 @@ GitHub's own terms.
 termiHub collects no personal data, so the app gives us nothing about you to copy, correct or
 delete. You control everything termiHub keeps on your computer, and the steps above remove it.
 For data held by GitHub, a plugin's server or the servers you connect to, contact that
-provider: they decide how it is processed. For any question about this notice, write to
-`<maintainer: add a privacy contact>`. You can also complain to the data protection authority
+provider: they decide how it is processed. For any question about this notice, open a private
+report at [github.com/armaxri/termiHub/security/advisories/new](https://github.com/armaxri/termiHub/security/advisories/new) with a title
+starting with "Privacy:". You can also complain to the data protection authority
 where you live.
 
 ## Changes to this notice
