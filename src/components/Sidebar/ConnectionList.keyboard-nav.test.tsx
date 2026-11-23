@@ -156,6 +156,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
 
     expect(addTab).toHaveBeenCalledWith("Connection conn-1", "local", expect.anything(), {
       connectionId: "conn-1",
+      besideSibling: true,
       terminalOptions: undefined,
     });
   });
