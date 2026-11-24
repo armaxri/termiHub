@@ -8,9 +8,6 @@
 //! by `windows_ssh_host_tests/setup_outcome.rs`.
 
 use super::*;
-use crate::terminal::agent_setup_outcome::{
-    parse_check, sha256_hex, windows_check_command, HostCheck,
-};
 
 const CMD: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::Cmd);
 const POWERSHELL: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::PowerShell);
@@ -32,7 +29,7 @@ fn every_shell_types_one_line_that_runs_the_script_and_ends_the_shell() {
         ),
         (ENCODED, format!("{}; exit $?", run("$USERPROFILE"))),
     ] {
-        assert_eq!(windows_setup_lines(shell), [want.clone()]);
+        assert_eq!(windows_setup_lines(shell), std::slice::from_ref(&want));
         // CR is Enter: LF leaves the line unfinished in PSReadLine (#5992).
         assert_eq!(windows_setup_input(shell), [format!("{want}\r")]);
     }
@@ -99,6 +96,9 @@ fn a_message_typed_into_a_windows_tab_cannot_run_anything() {
 #[cfg(unix)]
 mod executed {
     use super::*;
+    use crate::terminal::agent_setup_outcome::{
+        parse_check, sha256_hex, windows_check_command, HostCheck,
+    };
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
