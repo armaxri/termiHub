@@ -228,6 +228,34 @@ describe("AgentNode — row state during and after an agent setup (#5906)", () =
     expect(setupButton()).not.toBeNull();
   });
 
+  it.each([
+    [NOT_INSTALLED, setupButton],
+    ["boom", reconnectButton],
+    [undefined, connectButton],
+  ])(
+    "claims neither installed nor failed when the outcome is unknown (%s, #5992)",
+    (error, btn) => {
+      renderAgent(makeAgent({ lastError: error }));
+      setPhase("installing");
+      act(() => useAgentSetupStatus.getState().applyProgress(AGENT_ID, "unknown"));
+      expect(installingMarker()).toBeNull();
+      const cls = stateDot()?.className ?? "";
+      expect(cls).toContain("status-dot--disabled");
+      expect(stateDot()?.getAttribute("aria-label")).toBe("Setup outcome unknown");
+      expect(btn()).not.toBeNull();
+    }
+  );
+
+  it("a Windows setup found failed on the host does not clear the row's failure", () => {
+    renderAgent(makeAgent({ lastError: "boom" }));
+    setPhase("installing");
+    act(() => useAgentSetupStatus.getState().applyProgress(AGENT_ID, "sent"));
+    expectInstalling();
+    act(() => useAgentSetupStatus.getState().applyProgress(AGENT_ID, "failed"));
+    expect(reconnectButton()).not.toBeNull();
+    expect(stateDot()?.className).toContain("status-dot--disconnected");
+  });
+
   it("forgets the finished setup when a new connect starts", async () => {
     useAppStore.setState({ connectRemoteAgent: vi.fn(() => Promise.resolve()) as never });
     renderAgent(makeAgent({ lastError: NOT_INSTALLED }));

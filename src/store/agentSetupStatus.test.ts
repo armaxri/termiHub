@@ -8,7 +8,11 @@ describe("agentSetupStatus (#5906)", () => {
     ["connect", "installing"],
     ["upload", "installing"],
     ["install", "installing"],
+    ["sent", "installing"],
     ["done", "installed"],
+    ["installed", "installed"],
+    ["unknown", "unknown"],
+    ["failed", null],
     ["error", null],
     ["cancelled", null],
   ])("step %s leaves the agent %s", (step, phase) => {
@@ -69,10 +73,43 @@ describe("agentSetupStatus setup tabs (#5865)", () => {
     expect(progress("t1")).toEqual({ kind: "running" });
   });
 
-  it("a run that cannot report its exit is 'sent' on 'done'", () => {
+  it.each([
+    ["installed", { kind: "installed" }, { a: "installed" }],
+    ["failed", { kind: "failed", message: "why" }, {}],
+    ["unknown", { kind: "unknown", message: "why" }, { a: "unknown" }],
+  ])("a Windows run's '%s' is its tab's and the agent's outcome (#5992)", (step, want, phases) => {
     register("t1", "a", false);
-    useAgentSetupStatus.getState().applyProgress("a", "done", "Setup commands sent to terminal");
-    expect(progress("t1")).toEqual({ kind: "sent" });
+    const s = useAgentSetupStatus.getState();
+    s.applyProgress("a", "sent", "Install commands sent");
+    expect(progress("t1")).toEqual({ kind: "running" });
+    expect(useAgentSetupStatus.getState().phases).toEqual({ a: "installing" });
+    s.applyProgress("a", step, "why");
+    expect(progress("t1")).toEqual(want);
+    expect(useAgentSetupStatus.getState().phases).toEqual(phases);
+  });
+
+  it("an earlier run's late outcome reaches neither a newer run's tab nor the row", () => {
+    const s = useAgentSetupStatus.getState();
+    s.registerSetupTab("t1", {
+      agentId: "a",
+      agentName: "a",
+      sessionId: "s1",
+      reportsExit: false,
+    });
+    s.registerSetupTab("t2", {
+      agentId: "a",
+      agentName: "a",
+      sessionId: "s2",
+      reportsExit: false,
+    });
+    s.markInstalling("a");
+    s.applyProgress("a", "installed", "Agent installed", "s1");
+    expect(progress("t1")).toEqual({ kind: "installed" });
+    expect(progress("t2")).toEqual({ kind: "running" });
+    expect(useAgentSetupStatus.getState().phases).toEqual({ a: "installing" });
+    s.applyProgress("a", "failed", "no", "s2");
+    expect(progress("t2")).toEqual({ kind: "failed", message: "no" });
+    expect(useAgentSetupStatus.getState().phases).toEqual({});
   });
 
   it("an error or a cancel ends the run, and a repeated or late event changes nothing", () => {
