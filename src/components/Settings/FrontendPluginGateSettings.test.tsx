@@ -69,6 +69,13 @@ describe("FrontendPluginGateSettings", () => {
     expect(container.textContent).toContain("untrusted JavaScript");
   });
 
+  it("keeps the warning hint to one short line with the details behind the help tip (#5900)", () => {
+    render();
+    const hint = query("settings-frontend-plugins-enabled-hint")!.textContent ?? "";
+    expect(hint).toBe("Experimental. Runs JavaScript that plugins provide.");
+    expect(query("settings-frontend-plugins-enabled-help")).not.toBeNull();
+  });
+
   it("defaults the toggle off when the setting is unset", () => {
     render();
     expect(query("settings-frontend-plugins-enabled")!.getAttribute("aria-checked")).toBe("false");

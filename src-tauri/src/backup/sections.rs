@@ -15,6 +15,7 @@ use serde::Serialize;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
+use crate::automations::store::AutomationStore;
 use crate::connection::config::{ConnectionStore, SavedRemoteAgent};
 use crate::connection::settings::AppSettings;
 use crate::connection::tree::{build_tree, flatten_tree};
@@ -355,6 +356,17 @@ fn embedded_server_secrets(doc: &Value) -> Vec<LegacySecret> {
     secrets
 }
 
+/// `automations.json`: the migration's `migratedFrom` block describes this
+/// machine's legacy files, so it never travels in a backup. A restored store
+/// without it adopts the legacy files as they are instead of merging them.
+fn normalize_automations(data: Value) -> Result<Value, NormalizeError> {
+    let mut doc = normalize_versioned::<AutomationStore>(data)?;
+    if let Some(obj) = doc.as_object_mut() {
+        obj.remove("migratedFrom");
+    }
+    Ok(doc)
+}
+
 /// Every section a backup can carry, in display order.
 pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
@@ -413,6 +425,21 @@ pub static SECTIONS: &[SectionSpec] = &[
         normalize: normalize_versioned::<WorkspaceStore>,
         legacy_secrets: None,
         default_doc: || to_doc(&WorkspaceStore::default()),
+    },
+    SectionSpec {
+        id: "automations",
+        label: "Automations",
+        description: "Macros and workflows in one list.",
+        file_name: AutomationStore::FILE_NAME,
+        current_version: AutomationStore::CURRENT_VERSION,
+        shape: Shape::List {
+            field: "automations",
+        },
+        contains_secrets: false,
+        integrity_sensitive: false,
+        normalize: normalize_automations,
+        legacy_secrets: None,
+        default_doc: || to_doc(&AutomationStore::default()),
     },
     SectionSpec {
         id: "macros",

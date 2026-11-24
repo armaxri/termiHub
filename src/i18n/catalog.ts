@@ -360,6 +360,8 @@ const en = {
   "drop.detail.other": "Scrollback is kept. A new session starts; running programs are lost.",
   "drop.separator.serial": "— device disconnected {time} —",
   "drop.separator.network": "— connection lost {time} —",
+  // The user ended the link: a tab or agent Disconnect (#5959).
+  "drop.separator.user": "— disconnected by you {time} —",
   "drop.separator.remoteClosed": "— connection closed by server {time} —",
   "drop.separator.reconnected": "— reconnected {time} —",
   // After a reconnect the marker says what the new session lost (#5831, R-101).

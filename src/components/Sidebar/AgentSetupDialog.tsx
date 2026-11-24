@@ -313,13 +313,14 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         },
         { contentType: "terminal", sessionId: result.sessionId }
       );
-      // The tab says when the setup is over (#5865). A POSIX setup ends the
-      // tab's shell with the script's exit code; a Windows one cannot report.
+      // The tab says when the setup is over (#5865). Every setup ends the
+      // tab's shell with its exit status: the POSIX script runs with `exec`,
+      // the Windows commands end with `exit` (#5946).
       if (setupTabId) {
         useAgentSetupStatus.getState().registerSetupTab(setupTabId, {
           agentId: agent.id,
           agentName: agent.name,
-          reportsExit: !isWindowsSuffix(selectedArch),
+          reportsExit: true,
         });
       }
 

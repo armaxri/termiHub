@@ -20,6 +20,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
 import { backendRedriveSuppliesScrollback, repaintIfResumed } from "./agentReconnectScrollback";
+import { sessionEndedByUser } from "./userEnd";
 import { applyCombineEmoji } from "./unicodeWidth";
 import { waitForUsableDimensions } from "./waitForUsableDimensions";
 import { createHscrollProbe, syncHscrollBar, horizontalScrollElementWidth } from "./hscrollBar";
@@ -1207,7 +1208,9 @@ export function Terminal({
           // clean exit and anything else (or an unknown code) is a dropped/failed
           // session.
           const store = useAppStore.getState();
-          const wasKilled = store.consumeSessionKilled(sessionId);
+          // A user agent Disconnect ended the tab at the backend first (#5959).
+          const wasKilled =
+            store.consumeSessionKilled(sessionId) || sessionEndedByUser(tabId, agentId);
           const reason = classifyExitReason({ wasKilled, exitCode });
           frontendLog(
             "disconnect",

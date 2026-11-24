@@ -1,0 +1,252 @@
+{
+  "automations": [
+    {
+      "createdAt": "",
+      "id": "automation-shared-2",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Macro with a workflow's id",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "a",
+              "delayMs": 1
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "dup",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "First dup macro",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "b",
+              "delayMs": 2
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "automation-dup",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Second dup macro",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "c",
+              "delayMs": 3
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "automation-shared",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Owns the obvious new id",
+      "steps": [],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "plain",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "No collision",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "d",
+              "delayMs": 0
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "shared",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Workflow keeps its id",
+      "steps": [
+        {
+          "automationId": "automation-shared-2",
+          "kind": "run-automation"
+        },
+        {
+          "automationId": "dup",
+          "kind": "run-automation"
+        },
+        {
+          "body": [
+            {
+              "automationId": "automation-shared-2",
+              "kind": "run-automation",
+              "retry": {
+                "count": 2
+              }
+            }
+          ],
+          "kind": "loop",
+          "loop": {
+            "count": 2,
+            "kind": "count"
+          }
+        },
+        {
+          "automationId": "plain",
+          "kind": "run-automation"
+        }
+      ],
+      "tags": [],
+      "triggers": [
+        {
+          "connectionIds": [
+            "c1"
+          ],
+          "kind": "on-connect"
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "wf-twice",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "First dup workflow",
+      "steps": [
+        {
+          "automationId": "missing-macro-wf-other",
+          "kind": "run-automation"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "automation-wf-twice",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Second dup workflow",
+      "steps": [
+        {
+          "condition": {
+            "left": "a",
+            "op": "ne",
+            "right": "b"
+          },
+          "else": [
+            {
+              "automationId": "gone",
+              "kind": "run-automation"
+            }
+          ],
+          "kind": "conditional",
+          "then": [
+            {
+              "automationId": "missing-macro-wf-twice",
+              "kind": "run-automation"
+            }
+          ]
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    },
+    {
+      "createdAt": "",
+      "id": "wf-other",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Target of a dangling run-macro",
+      "steps": [],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": ""
+    }
+  ],
+  "remapped": [
+    {
+      "newId": "automation-wf-twice",
+      "oldId": "wf-twice",
+      "source": "workflow"
+    },
+    {
+      "newId": "automation-shared-2",
+      "oldId": "shared",
+      "source": "macro"
+    },
+    {
+      "newId": "automation-dup",
+      "oldId": "dup",
+      "source": "macro"
+    }
+  ],
+  "unresolvedMacroRefs": [
+    "wf-other",
+    "wf-twice"
+  ]
+}

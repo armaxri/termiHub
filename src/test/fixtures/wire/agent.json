@@ -94,6 +94,7 @@
         "iconColor": "teal",
         "iconEmoji": "🚀",
         "id": "def-1",
+        "lastUsedAt": 1767225600000,
         "name": "Serial console",
         "persistent": true,
         "sessionType": "serial",

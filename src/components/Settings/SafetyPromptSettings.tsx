@@ -84,7 +84,10 @@ export function SafetyPromptSettings({
           {show("confirmCloseAttachedTab") && (
             <SettingsField
               label="Show a one-time notice when closing a persistent-session tab"
-              hint="Show a one-time notice that a persistent session keeps running in the background when its tab is closed (any way, including the keyboard shortcut)."
+              hint="Say once that a persistent session keeps running after its tab is closed."
+              help="The notice shows however the tab is closed, including the keyboard shortcut. The session keeps running in the background."
+              hintTestId="settings-confirm-close-attached-tab-hint"
+              helpTestId="settings-confirm-close-attached-tab-help"
             >
               <Toggle
                 checked={settings.confirmCloseAttachedTab ?? true}
@@ -103,7 +106,10 @@ export function SafetyPromptSettings({
           <SettingsSectionHeading>Delete confirmations</SettingsSectionHeading>
           <SettingsField
             label="Confirm before deletes that can be undone"
-            hint="Ask for confirmation before deleting a connection folder, a custom theme, or an idle tunnel. The Undo toast appears either way."
+            hint="Ask before deleting a connection folder, a custom theme or an idle tunnel."
+            help="The Undo toast appears either way, so the delete can still be undone."
+            hintTestId="settings-confirm-undoable-delete-hint"
+            helpTestId="settings-confirm-undoable-delete-help"
           >
             <Toggle
               checked={settings.confirmUndoableDelete ?? true}
@@ -123,7 +129,10 @@ export function SafetyPromptSettings({
           {show("warnLargePortScan") && (
             <SettingsField
               label="Warn before a large port scan"
-              hint="Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations."
+              hint="Warn before a Port Scanner scan that probes very many hosts and ports."
+              help="The warning shows before the scan starts, when it would probe a very large number of host and port combinations."
+              hintTestId="settings-warn-large-port-scan-hint"
+              helpTestId="settings-warn-large-port-scan-help"
             >
               <Toggle
                 checked={settings.warnLargePortScan ?? true}
@@ -138,7 +147,10 @@ export function SafetyPromptSettings({
           {show("warnLargePingSweep") && (
             <SettingsField
               label="Warn before a large ping sweep"
-              hint="Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)."
+              hint="Warn before a Ping Sweep across a very large number of hosts."
+              help="For example a sweep across a wide CIDR block. The warning shows before the sweep starts."
+              hintTestId="settings-warn-large-ping-sweep-hint"
+              helpTestId="settings-warn-large-ping-sweep-help"
             >
               <Toggle
                 checked={settings.warnLargePingSweep ?? true}

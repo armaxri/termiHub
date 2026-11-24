@@ -69,7 +69,7 @@ describe("agentSetupStatus setup tabs (#5865)", () => {
     expect(progress("t1")).toEqual({ kind: "running" });
   });
 
-  it("a Windows run is 'sent' on 'done'", () => {
+  it("a run that cannot report its exit is 'sent' on 'done'", () => {
     register("t1", "a", false);
     useAgentSetupStatus.getState().applyProgress("a", "done", "Setup commands sent to terminal");
     expect(progress("t1")).toEqual({ kind: "sent" });

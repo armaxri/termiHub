@@ -239,6 +239,11 @@ pub struct AgentDefinitionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
+    /// When a session was last created from this definition (#5940), Unix
+    /// milliseconds; absent when never used or from an agent older than 0.43.0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub last_used_at: Option<u64>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
@@ -287,6 +292,7 @@ impl From<ConnectionDefinition> for AgentDefinitionInfo {
             icon_color: d.icon_color,
             icon_emoji: d.icon_emoji,
             description: d.description,
+            last_used_at: d.last_used_at,
             source_file: d.source_file,
         }
     }

@@ -16,6 +16,10 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import {
+  clearAgentDisconnectIntent,
+  markAgentDisconnectIntent,
+} from "@/store/agentDisconnectIntent";
 import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
 import {
   FakeSessionTransport,
@@ -89,13 +93,21 @@ const mockSubscribeOutput = vi.fn((sid: string, cb: (data: Uint8Array) => void) 
   outputCallbacks[sid] = cb;
   return vi.fn();
 });
-const mockSubscribeExit = vi.fn(() => vi.fn());
+// The exit callback per session, so a test can end a session (#5959).
+const exitCallbacks: Record<string, (code: number | null, cause?: unknown) => void> = {};
+const mockSubscribeExit = vi.fn(
+  (sid: string, cb: (code: number | null, cause?: unknown) => void) => {
+    exitCallbacks[sid] = cb;
+    return vi.fn();
+  }
+);
 const mockClearPendingOutput = vi.fn();
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
     subscribeOutput: (...a: unknown[]) => mockSubscribeOutput(...(a as [string, () => void])),
-    subscribeExit: (...a: unknown[]) => mockSubscribeExit(...(a as [])),
+    subscribeExit: (...a: unknown[]) =>
+      mockSubscribeExit(...(a as [string, (code: number | null) => void])),
     clearPendingExit: vi.fn(),
     clearPendingOutput: (...a: unknown[]) => mockClearPendingOutput(...(a as [])),
   },
@@ -199,8 +211,25 @@ async function mountConnected(): Promise<string> {
   return tabId;
 }
 
+const decoder = new TextDecoder();
+
+/**
+ * The lines termiHub wrote itself, in order: `writeln` markers plus the exit
+ * line, which is staged behind pending output and arrives through `write`
+ * (#5955).
+ */
 function written(instance: (typeof xtermInstances)[number]): string[] {
-  return instance.writeln.mock.calls.map((call) => String(call[0]));
+  const calls = [
+    ...instance.write.mock.calls.map((call, i) => ({
+      order: instance.write.mock.invocationCallOrder[i],
+      text: typeof call[0] === "string" ? call[0] : decoder.decode(call[0] as Uint8Array),
+    })),
+    ...instance.writeln.mock.calls.map((call, i) => ({
+      order: instance.writeln.mock.invocationCallOrder[i],
+      text: String(call[0]),
+    })),
+  ];
+  return calls.sort((a, b) => a.order - b.order).map((c) => c.text);
 }
 
 describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () => {
@@ -234,5 +263,40 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
     expect(lines.some((line) => line.includes("new remote shell"))).toBe(false);
     // The daemon's live re-forward of the same buffer is dropped.
     expect(mockClearPendingOutput).toHaveBeenCalledWith("fresh-session");
+  });
+});
+
+/** The exit line is staged behind pending output (#5955): let the flush run. */
+async function flushStagedOutput(): Promise<void> {
+  await act(async () => {
+    await wait(50);
+  });
+}
+
+describe("Terminal — the line a user agent Disconnect leaves (#5959)", () => {
+  it("writes 'disconnected by you', not 'connection lost'", async () => {
+    await mountConnected();
+    markAgentDisconnectIntent("agent-1");
+    try {
+      act(() => {
+        exitCallbacks["S1"]?.(null, null);
+      });
+    } finally {
+      clearAgentDisconnectIntent("agent-1");
+    }
+    await flushStagedOutput();
+    const lines = written(xtermInstances[xtermInstances.length - 1]);
+    expect(lines.some((line) => line.includes("disconnected by you"))).toBe(true);
+    expect(lines.some((line) => line.includes("connection lost"))).toBe(false);
+  });
+
+  it("still says 'connection lost' for a real drop", async () => {
+    await mountConnected();
+    act(() => {
+      exitCallbacks["S1"]?.(null, null);
+    });
+    await flushStagedOutput();
+    const lines = written(xtermInstances[xtermInstances.length - 1]);
+    expect(lines.some((line) => line.includes("connection lost"))).toBe(true);
   });
 });

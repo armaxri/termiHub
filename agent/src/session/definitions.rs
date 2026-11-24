@@ -55,6 +55,12 @@ pub struct Connection {
     /// in its `extra` map (#3931), so a downgrade-then-upgrade keeps it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// When a session was last created from this definition (#5940), Unix
+    /// milliseconds. Stamped by [`ConnectionStore::record_used`] on each
+    /// successful `connection.create` naming it; omitted from disk when never
+    /// used. An older agent keeps the key in its `extra` map (#3931).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
     /// Fields this agent does not know (e.g. written by a newer agent at the
     /// same schema version). Kept on disk verbatim across load and save, never
     /// sent on the wire (#3931).
@@ -88,6 +94,8 @@ struct RawConnection {
     icon_emoji: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    last_used_at: Option<u64>,
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -106,6 +114,7 @@ impl From<RawConnection> for Connection {
             icon_color: raw.icon_color,
             icon_emoji: raw.icon_emoji,
             description: raw.description,
+            last_used_at: raw.last_used_at,
             extra: raw.extra,
         };
         conn.normalize_settings();
@@ -149,6 +158,7 @@ impl Connection {
             icon_color: self.icon_color.clone(),
             icon_emoji: self.icon_emoji.clone(),
             description: self.description.clone(),
+            last_used_at: self.last_used_at,
             source_file: None,
         }
     }
@@ -219,6 +229,13 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
 
     /// List all connections and folders.
     async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>);
+
+    /// Stamp `at_ms` as the last time a session was created from the
+    /// definition `id` (#5940). Returns whether the stamp moved forward; an
+    /// unknown id (or an external, read-only definition) is `Ok(false)`.
+    async fn record_used(&self, _id: &str, _at_ms: u64) -> Result<bool, NewerVersionError> {
+        Ok(false)
+    }
 
     /// Delete a connection by ID. Returns `true` if found and removed.
     async fn delete(&self, id: &str) -> Result<bool, NewerVersionError>;
@@ -561,6 +578,24 @@ impl ConnectionStore {
         .await
     }
 
+    /// Stamp `at_ms` as the last time a session was created from the
+    /// definition `id` (#5940), persisting only when it moves forward. An id
+    /// the primary store does not hold — an external file's definition, which
+    /// is read-only, or one deleted since — is a no-op.
+    pub async fn record_used(&self, id: &str, at_ms: u64) -> Result<bool, NewerVersionError> {
+        self.mutate(|defs| {
+            let Some(conn) = defs.connections.get_mut(id) else {
+                return (false, false);
+            };
+            if conn.last_used_at.is_some_and(|prev| prev >= at_ms) {
+                return (false, false);
+            }
+            conn.last_used_at = Some(at_ms);
+            (true, true)
+        })
+        .await
+    }
+
     /// List all connections and folders, including read-only external file connections.
     pub async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
         let mut defs = self.definitions.lock().await;
@@ -602,6 +637,7 @@ impl ConnectionStore {
                                 icon_color: conn.icon_color,
                                 icon_emoji: conn.icon_emoji,
                                 description: conn.description,
+                                last_used_at: conn.last_used_at,
                                 source_file: Some(path.clone()),
                             });
                         }
@@ -714,6 +750,7 @@ impl ConnectionStore {
                     icon_color: None,
                     icon_emoji: None,
                     description: None,
+                    last_used_at: None,
                     extra: serde_json::Map::new(),
                 };
 
@@ -808,6 +845,7 @@ impl ConnectionStore {
                                 icon_color: None,
                                 icon_emoji: None,
                                 description: None,
+                                last_used_at: None,
                                 extra: serde_json::Map::new(),
                             };
                             conn.normalize_settings();
@@ -1270,6 +1308,10 @@ impl ConnectionStoreApi for ConnectionStore {
         ConnectionStore::list(self).await
     }
 
+    async fn record_used(&self, id: &str, at_ms: u64) -> Result<bool, NewerVersionError> {
+        ConnectionStore::record_used(self, id, at_ms).await
+    }
+
     async fn delete(&self, id: &str) -> Result<bool, NewerVersionError> {
         ConnectionStore::delete(self, id).await
     }
@@ -1491,6 +1533,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             extra: Default::default(),
         }
     }
@@ -1642,6 +1685,7 @@ mod tests {
                 icon_color: None,
                 icon_emoji: None,
                 description: None,
+                last_used_at: None,
                 extra: Default::default(),
             })
             .await
@@ -1743,6 +1787,73 @@ mod tests {
         assert_eq!(conns.len(), 1);
         assert_eq!(conns[0].id, "conn-1");
         assert!(folders.is_empty());
+    }
+
+    /// #5940: a definition's last use is stamped forward only, persisted, and
+    /// left alone by an update; an unknown id is a no-op.
+    #[tokio::test]
+    async fn record_used_stamps_forward_and_survives_restart_and_update() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path.clone());
+        store
+            .create(make_connection("conn-1", "Bench", false))
+            .await
+            .unwrap();
+        assert!(store.get("conn-1").await.unwrap().last_used_at.is_none());
+
+        assert!(store.record_used("conn-1", 2_000).await.unwrap());
+        assert!(!store.record_used("conn-1", 1_000).await.unwrap());
+        assert!(!store.record_used("missing", 3_000).await.unwrap());
+        assert_eq!(store.get("conn-1").await.unwrap().last_used_at, Some(2_000));
+
+        let disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(disk.to_string().contains("\"last_used_at\":2000"), "{disk}");
+
+        // A rename through `connections.update` keeps the stamp.
+        let renamed = store
+            .update(
+                "conn-1",
+                Some("Bench 2".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.last_used_at, Some(2_000));
+
+        // A restarted agent reads it back.
+        let reloaded = ConnectionStore::new_temp(path);
+        assert_eq!(
+            reloaded.get("conn-1").await.unwrap().last_used_at,
+            Some(2_000)
+        );
+    }
+
+    /// #5940: a never-used definition writes no `last_used_at` key, so a
+    /// pre-#5940 file loads as never used and writes back without it.
+    #[tokio::test]
+    async fn a_never_used_definition_writes_no_last_used_key() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path.clone());
+        store
+            .create(make_connection("conn-1", "Bench", false))
+            .await
+            .unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("last_used_at"), "{raw}");
+        let reloaded = ConnectionStore::new_temp(path);
+        assert!(reloaded.get("conn-1").await.unwrap().last_used_at.is_none());
     }
 
     #[tokio::test]
@@ -2865,6 +2976,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             extra: Default::default(),
         };
         let json = serde_json::to_string(&conn).unwrap();
@@ -2931,6 +3043,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             extra: Default::default(),
         };
         assert_eq!(
