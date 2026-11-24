@@ -22,6 +22,7 @@ import {
 import { t } from "@/i18n/catalog";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { useTabSshHostKeyTrust } from "@/store/sshHostKeyTrustBridge";
+import { useSshAlgorithms } from "@/hooks/useSshAlgorithms";
 
 /** The chip icon per trust level: a check once the key is remembered. */
 const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
@@ -35,18 +36,21 @@ const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
  * tab, with ` via hop:port` when it jumps. A shield shows the host key's trust
  * and that the session is encrypted (#5839); clicking opens a popover with the
  * host, encryption, sign-in method and host key, plus a link to manage
- * trusted keys. The tooltip (#5669) stays for hover. Hidden for non-SSH tabs.
+ * trusted keys. Opening it asks for the negotiated cipher, MAC, key exchange
+ * and host-key algorithm (#5896), which only the popover names. The tooltip (#5669) stays for hover. Hidden for non-SSH tabs.
  */
 export function SshStatus() {
   const config = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const tabId = useAppStore((s) => getActiveTab(s)?.id);
+  const sessionId = useAppStore((s) => getActiveTab(s)?.sessionId);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const hostKeys = useTabSshHostKeyTrust(tabId);
-  const chip = sshSecurityChip(config, hostKeys);
+  const { algorithms, request: requestAlgorithms } = useSshAlgorithms(sessionId);
+  const chip = sshSecurityChip(config, hostKeys, algorithms);
   if (!chip) return null;
   const TrustIcon = TRUST_ICON[chip.trust];
   return (
-    <DropdownMenuRoot>
+    <DropdownMenuRoot onOpenChange={(open) => open && requestAlgorithms()}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

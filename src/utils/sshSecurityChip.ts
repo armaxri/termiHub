@@ -11,6 +11,7 @@
 import type { ConnectionConfig } from "@/types/terminal";
 import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
 import type { SshHostKeyTrust } from "@/types/generated/SshHostKeyTrust";
+import type { SshNegotiatedAlgorithms } from "@/types/generated/SshNegotiatedAlgorithms";
 import { isSshConnectionConfig } from "@/utils/typedConnectionConfig";
 import { authDescription, sshStatusChip, TRUST_WORDING } from "@/utils/sessionStatusChips";
 import { t, tf } from "@/i18n/catalog";
@@ -35,7 +36,14 @@ const TRUST_LEVEL: Record<SshHostKeyTrust, SshTrustLevel> = {
 /** One labelled row of the SSH details popover. */
 export interface SshDetailRow {
   /** Stable key, also the row's test id suffix. */
-  id: "endpoint" | "encryption" | "auth" | "hostKey";
+  id:
+    | "endpoint"
+    | "encryption"
+    | "integrity"
+    | "keyExchange"
+    | "auth"
+    | "hostKey"
+    | "hostKeyAlgorithm";
   label: string;
   value: string;
   /** Hover text with the full detail when `value` is shortened (the key's full path). */
@@ -50,6 +58,40 @@ export interface SshDetailRow {
 export function keyFileName(keyPath: string): string {
   const trimmed = keyPath.trim().replace(/[\\/]+$/u, "");
   return trimmed.split(/[\\/]/u).pop() || trimmed;
+}
+
+/**
+ * An SSH algorithm's name in plain words (#5896): the wire name without its
+ * vendor suffix, so `chacha20-poly1305@openssh.com` reads `chacha20-poly1305`.
+ */
+export function plainAlgorithmName(name: string): string {
+  const trimmed = name.trim();
+  return trimmed.replace(/@[a-z0-9.-]+$/iu, "") || trimmed;
+}
+
+/** A row naming one negotiated algorithm, the full wire name on hover when shortened. */
+function algorithmRow(id: SshDetailRow["id"], label: string, name: string): SshDetailRow {
+  const value = plainAlgorithmName(name);
+  return value === name.trim() ? { id, label, value } : { id, label, value, title: name.trim() };
+}
+
+/**
+ * The encryption rows of the popover: the negotiated cipher, the integrity
+ * MAC (only when the cipher is not AEAD) and the key exchange (#5896); just
+ * "Encrypted (SSH)" while the algorithms are unknown (still connecting, or an
+ * agent too old to report them).
+ */
+function encryptionRows(algorithms: SshNegotiatedAlgorithms | null | undefined): SshDetailRow[] {
+  const label = t("statusBar.ssh.row.encryption");
+  if (!algorithms) {
+    return [{ id: "encryption", label, value: t("statusBar.ssh.encrypted") }];
+  }
+  const rows = [algorithmRow("encryption", label, algorithms.cipher)];
+  if (algorithms.mac) {
+    rows.push(algorithmRow("integrity", t("statusBar.ssh.row.integrity"), algorithms.mac));
+  }
+  rows.push(algorithmRow("keyExchange", t("statusBar.ssh.row.keyExchange"), algorithms.kex));
+  return rows;
 }
 
 /** The "Signed in with" row: a key shows its file name, the full path on hover. */
@@ -82,13 +124,16 @@ export function sshTrustLevel(event: SshHostKeyTrustedEvent | undefined): SshTru
 }
 
 /**
- * The SSH chip with its security facts for an SSH config and the host keys the
- * tab's connect accepted. Returns `null` for non-SSH configs or one without a
- * host (as {@link sshStatusChip}).
+ * The SSH chip with its security facts for an SSH config, the host keys the
+ * tab's connect accepted and, once known, the algorithms the session
+ * negotiated (#5896). Returns `null` for non-SSH configs or one without a
+ * host (as {@link sshStatusChip}). The algorithms only add popover rows; the
+ * chip itself never names them.
  */
 export function sshSecurityChip(
   config: ConnectionConfig | undefined | null,
-  hostKeys: readonly SshHostKeyTrustedEvent[] = []
+  hostKeys: readonly SshHostKeyTrustedEvent[] = [],
+  algorithms?: SshNegotiatedAlgorithms | null
 ): SshSecurityChip | null {
   const chip = sshStatusChip(config, hostKeys);
   if (!chip || !isSshConnectionConfig(config)) return null;
@@ -106,14 +151,15 @@ export function sshSecurityChip(
     : t("statusBar.ssh.hostKey.pending");
   const rows: SshDetailRow[] = [
     { id: "endpoint", label: t("statusBar.ssh.row.endpoint"), value: chip.label },
-    {
-      id: "encryption",
-      label: t("statusBar.ssh.row.encryption"),
-      value: t("statusBar.ssh.encrypted"),
-    },
+    ...encryptionRows(algorithms),
     authRow(fields.authMethod, fields.keyPath),
     { id: "hostKey", label: t("statusBar.ssh.row.hostKey"), value: hostKeyValue },
   ];
+  if (algorithms) {
+    rows.push(
+      algorithmRow("hostKeyAlgorithm", t("statusBar.ssh.row.hostKeyAlgorithm"), algorithms.hostKey)
+    );
+  }
   return {
     label: chip.label,
     tooltip: chip.tooltip,
