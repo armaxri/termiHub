@@ -5,6 +5,17 @@ import { SettingsField } from "./SettingsField";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 import { MonitoringSettingsFields } from "./MonitoringSettingsFields";
 
+/** One line: what the toggle does, for which connections (#5930: not only the agent). */
+export const POWER_MONITORING_HINT = "Monitor CPU, memory and power events for SSH connections.";
+
+/**
+ * What turning it off really does (#5930, `updateSettings` in settingsSlice): the
+ * host monitor of open sessions that use the default stops; the SSH session and
+ * its terminal stay connected, so no confirmation is needed.
+ */
+export const POWER_MONITORING_HELP =
+  "Turning it off stops the CPU and memory monitor of open sessions that use this default. The sessions stay connected.";
+
 /**
  * The Monitoring settings category (#5775): host metrics for SSH agent sessions
  * (Power monitoring), for this computer's local shells, and the status-bar
@@ -21,13 +32,18 @@ export function MonitoringSettings() {
         <div className="settings-panel__section-header">
           <SettingsSectionHeading>Remote sessions</SettingsSectionHeading>
         </div>
-        <p className="settings-panel__description">
-          Default for new SSH connections. Individual connections can override it in their SSH
-          settings. Turning it off disconnects active sessions that use the default.
+        <p
+          className="settings-panel__description"
+          data-testid="settings-monitoring-remote-description"
+        >
+          Default for new SSH connections. Each connection can override it in its SSH settings.
         </p>
         <SettingsField
           label="Power monitoring"
-          hint="Monitor CPU, memory, and power events via SSH agent connections."
+          hint={POWER_MONITORING_HINT}
+          help={POWER_MONITORING_HELP}
+          hintTestId="settings-power-monitoring-hint"
+          helpTestId="settings-power-monitoring-help"
         >
           <Toggle
             checked={settings.powerMonitoringEnabled}
