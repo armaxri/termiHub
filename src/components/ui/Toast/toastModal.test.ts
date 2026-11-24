@@ -17,9 +17,13 @@ vi.mock("sonner", () => ({
 import { dismissModalStaleToasts, toast } from "./toast";
 import { useDismissOnModalOpen } from "./toastModal";
 
-/** Ids sonner was asked to dismiss (each dismiss by id is issued twice, #4812). */
+/**
+ * Toast ids sonner was asked to dismiss (each dismiss by id is issued twice,
+ * #4812). A dismissed id is re-shown under `id~<n>` (#5904); that suffix is
+ * dropped here.
+ */
 function dismissedIds(): unknown[] {
-  return [...new Set(dismiss.mock.calls.map(([id]) => id))];
+  return [...new Set(dismiss.mock.calls.map(([id]) => String(id).replace(/~\d+$/, "")))];
 }
 
 describe("dismissOnModal toasts (#5665)", () => {

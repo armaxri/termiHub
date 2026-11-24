@@ -2,7 +2,7 @@ import { useCallback, useId } from "react";
 import { WifiOff, RefreshCw, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
 import { connectionIdentityForTabId, isAutoReconnectOffTabId, useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, ContentOverlay, TOAST_AVOID_PROPS } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import { t } from "@/i18n/catalog";
@@ -276,7 +276,6 @@ export function TerminalDisconnectOverlay({
         data-testid="terminal-disconnect-overlay"
         data-variant="failed"
         data-cause={cause}
-        {...TOAST_AVOID_PROPS}
       >
         <DisconnectOverlayCard onDismiss={handleDismiss}>
           <ContentOverlay
@@ -350,7 +349,6 @@ export function TerminalDisconnectOverlay({
       data-testid="terminal-disconnect-overlay"
       data-variant="disconnected"
       data-cause={cause ?? "lost"}
-      {...TOAST_AVOID_PROPS}
     >
       <DisconnectOverlayCard
         onDismiss={handleDismiss}

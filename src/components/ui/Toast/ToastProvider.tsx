@@ -32,7 +32,8 @@ import "./toast.css";
  * it in a narrower column when it is too tall to clear. When not even a 240px
  * column fits beside it (#5715), the stack docks at the top edge: one compact,
  * single-line toast at a time over the dialog head, never its body, and
- * success/info toasts wait until the dialog closes — errors stay visible.
+ * success/info toasts wait until the dialog closes — errors and undo offers
+ * (a toast with a button, #5904) stay visible.
  *
  * The status bar is a keep-clear zone too (#5830), so the stack always starts
  * above it and never hides its lock indicator. While an editor's form fields
