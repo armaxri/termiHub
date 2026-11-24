@@ -80,3 +80,41 @@
     transition: none;
   }
 }
+
+/* Language picker (#5841): a select-skinned trigger in the add form that
+   opens a searchable list, like the status bar's language selector. */
+.ui-select__trigger.file-type-settings__language-trigger {
+  width: auto;
+  height: var(--control-height-md);
+  font-size: var(--font-size-sm);
+}
+
+.file-type-settings__language-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-type-settings__language-search {
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.file-type-settings__language-list {
+  max-height: var(--menu-list-max-height);
+  overflow-y: auto;
+}
+
+.file-type-settings__language-id {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-left: auto;
+  padding-left: var(--spacing-sm);
+}
+
+/* Built-in mappings behind their disclosure (#5841). */
+.file-type-settings__builtins {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
