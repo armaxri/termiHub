@@ -202,6 +202,7 @@ describe("AppearanceSettings — custom themes", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     toastSuccess.mockClear();
+    toastInfo.mockClear();
   });
 
   afterEach(() => {
@@ -251,7 +252,7 @@ describe("AppearanceSettings — custom themes", () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ theme: "dark", customThemes: [] })
     );
-    expect(toastSuccess).toHaveBeenCalled();
+    expect(toastInfo).toHaveBeenCalled();
   });
 
   it("creates and selects a new custom theme end to end", () => {
