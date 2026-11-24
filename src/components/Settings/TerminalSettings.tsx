@@ -60,7 +60,10 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("scrollbackBuffer") && (
           <SettingsField
             label="Scrollback buffer"
-            hint="Number of lines kept in the terminal scrollback (100–1000000). Larger values consume more memory — roughly 1–2 MB per 10000 lines of typical output."
+            hint="Lines kept in the terminal scrollback (100–1000000)."
+            help="Larger values use more memory: roughly 1–2 MB per 10000 lines of typical output."
+            helpTestId="settings-scrollback-buffer-help"
+            hintTestId="settings-scrollback-buffer-hint"
             labelAccessory={
               <SettingDefaultMarker
                 isDefault={isAtDefault(settings.scrollbackBuffer, DEFAULT_SCROLLBACK)}
@@ -74,6 +77,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             <DefaultNumberInput
               min={100}
               max={1000000}
+              unit="lines"
               value={settings.scrollbackBuffer}
               defaultValue={DEFAULT_SCROLLBACK}
               onChange={(v) => onChange({ ...settings, scrollbackBuffer: v })}

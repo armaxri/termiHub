@@ -128,3 +128,53 @@ test("the keyboard table shows no reset on default rows (#5561)", async ({ page 
   await expect(page.locator(`${SETTINGS_PANEL} [data-testid^=keybinding-reset-]`)).toHaveCount(0);
   await page.screenshot({ path: join(SCREENS, "settings-polish", "keyboard.png") });
 });
+
+test.describe("shared settings layout (#5843)", () => {
+  test.use({ viewport: { width: 1600, height: 900 } });
+
+  test("compact numbers, a plain Default marker and one centred page", async ({ page }) => {
+    await boot(page);
+    await openSettings(page, "appearance");
+    const fontSize = page.locator("[data-testid=settings-font-size-input]");
+    await fontSize.waitFor();
+    const width = await fontSize.evaluate((el) => el.getBoundingClientRect().width);
+    expect(width, "the font size input is compact").toBeLessThanOrEqual(140);
+    await expect(page.locator("[data-testid=settings-font-size-unit]")).toHaveText("px");
+
+    const tag = page.locator("[data-testid=settings-font-size-default]");
+    const tagStyle = await tag.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { border: s.borderTopWidth, background: s.backgroundColor };
+    });
+    expect(tagStyle.border, "the Default marker has no border").toBe("0px");
+    expect(tagStyle.background, "the Default marker has no fill").toBe("rgba(0, 0, 0, 0)");
+
+    const frame = await page.evaluate((selector) => {
+      const panel = document.querySelector(selector)!;
+      const box = (el: Element | null) => el!.getBoundingClientRect();
+      return {
+        panel: box(panel),
+        search: box(panel.querySelector(".settings-search")),
+        body: box(panel.querySelector(".settings-panel__body")),
+      };
+    }, SETTINGS_PANEL);
+    for (const name of ["search", "body"] as const) {
+      const r = frame[name];
+      const left = r.left - frame.panel.left;
+      const right = frame.panel.right - r.right;
+      expect(Math.abs(left - right), `${name} is centred`).toBeLessThanOrEqual(2);
+      expect(r.width, `${name} is capped`).toBeLessThanOrEqual(822);
+    }
+    await page.screenshot({ path: join(SCREENS, "settings-polish", "layout-appearance.png") });
+
+    await openSettings(page, "sessions");
+    const clear = page.locator("[data-testid=settings-clear-network-tool-history]");
+    await expect(clear).toHaveClass(/ui-btn--secondary/);
+    const hint = page.locator("[data-testid=settings-network-tool-history-hint]");
+    const lines = await hint.evaluate(
+      (el) => el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight)
+    );
+    expect(lines, "the network tool history hint is one line").toBeLessThanOrEqual(1.5);
+    await page.screenshot({ path: join(SCREENS, "settings-polish", "layout-sessions.png") });
+  });
+});

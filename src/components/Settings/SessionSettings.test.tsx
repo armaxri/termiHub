@@ -217,4 +217,35 @@ describe("SessionSettings", () => {
       expect(query("settings-network-tool-history-enabled")).toBeNull();
     });
   });
+
+  describe("compact layout (#5843)", () => {
+    it("shows the history limit as a compact number with a unit", () => {
+      renderWith(defaultSettings);
+      const input = query("settings-session-history-limit") as HTMLInputElement;
+      expect(input.classList.contains("settings-number__input")).toBe(true);
+      expect(query("settings-session-history-limit-unit")?.textContent).toBe("sessions");
+      const frame = input.closest<HTMLElement>(".settings-number");
+      expect(frame?.style.getPropertyValue("--settings-number-chars")).toBe("4");
+    });
+
+    it("keeps the clear-history buttons secondary, not danger", () => {
+      mockHistoryLength = 3;
+      renderWith(defaultSettings);
+      for (const id of ["settings-clear-session-history", "settings-clear-network-tool-history"]) {
+        const btn = query(id);
+        expect(btn?.classList.contains("ui-btn--danger"), id).toBe(false);
+        expect(btn?.classList.contains("ui-btn--secondary"), id).toBe(true);
+      }
+    });
+
+    it("keeps every hint to one short sentence and moves details behind a help tip", () => {
+      renderWith(defaultSettings);
+      const hints = Array.from(container.querySelectorAll(".settings-form__hint"));
+      for (const hint of hints) {
+        expect(hint.textContent?.length ?? 0, hint.textContent ?? "").toBeLessThanOrEqual(90);
+      }
+      expect(query("settings-network-tool-history-help")).not.toBeNull();
+      expect(query("settings-session-history-limit-help")).not.toBeNull();
+    });
+  });
 });

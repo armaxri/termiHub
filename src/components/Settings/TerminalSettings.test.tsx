@@ -327,14 +327,14 @@ describe("TerminalSettings", () => {
     );
   });
 
-  it("hint text mentions memory", () => {
+  it("explains the memory cost behind the scrollback help tip (#5843)", () => {
     renderWith(defaultSettings);
-    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
-    const field = labels
-      .find((el) => el.textContent === "Scrollback buffer")
-      ?.closest(".settings-form__field");
-    const hint = field?.querySelector(".settings-form__hint");
-    expect(hint?.textContent?.toLowerCase()).toContain("memory");
+    const help = container.querySelector<HTMLElement>(
+      '[data-testid="settings-scrollback-buffer-help"]'
+    );
+    expect(help).not.toBeNull();
+    act(() => help?.focus());
+    expect(document.body.textContent?.toLowerCase()).toContain("memory");
   });
 
   it("hides scrollback buffer when visibleFields excludes it", () => {
