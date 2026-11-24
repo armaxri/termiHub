@@ -95,4 +95,32 @@ describe("deriveTabStatus", () => {
     const maps = makeMaps({ terminalConnecting: { other: true } });
     expect(deriveTabStatus(maps, "a")).toBe("connected");
   });
+
+  describe("waiting for the shell's first prompt (#5891)", () => {
+    const awaiting = { terminalAwaitingFirstPrompt: { a: true } };
+
+    it("is 'starting' while a live shell has not sent its first prompt mark", () => {
+      expect(deriveTabStatus(makeMaps(awaiting), "a")).toBe("starting");
+    });
+
+    it("is 'connected' once the wait ends or when the map is absent", () => {
+      expect(deriveTabStatus(makeMaps({ terminalAwaitingFirstPrompt: {} }), "a")).toBe("connected");
+      expect(deriveTabStatus(makeMaps(), "a")).toBe("connected");
+    });
+
+    it("loses to every lifecycle flag", () => {
+      expect(deriveTabStatus(makeMaps({ ...awaiting, terminalConnecting: { a: true } }), "a")).toBe(
+        "connecting"
+      );
+      expect(deriveTabStatus(makeMaps({ ...awaiting, terminalSpawnErrors: { a: "x" } }), "a")).toBe(
+        "failed"
+      );
+      expect(deriveTabStatus(makeMaps({ ...awaiting, terminalExitedTabs: { a: true } }), "a")).toBe(
+        "disconnected"
+      );
+      expect(deriveTabStatus(makeMaps({ ...awaiting, terminalEvicted: { a: true } }), "a")).toBe(
+        "evicted"
+      );
+    });
+  });
 });

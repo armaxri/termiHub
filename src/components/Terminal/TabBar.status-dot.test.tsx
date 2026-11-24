@@ -5,6 +5,11 @@ import { createRoot, Root } from "react-dom/client";
 import { TabBar } from "./TabBar";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import {
+  clearAwaitingFirstPrompt,
+  markAwaitingFirstPrompt,
+  useShellPromptStore,
+} from "@/store/shellPromptStore";
 import { TerminalTab } from "@/types/terminal";
 import {
   connecting,
@@ -94,6 +99,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   resetStore();
+  useShellPromptStore.setState({ awaitingFirstPrompt: {} });
 });
 
 afterEach(() => {
@@ -178,5 +184,21 @@ describe("TabBar — per-tab connection status dot", () => {
     expect(dotFor("t2")?.className).toContain("tab__state-dot--disconnected");
     // The focused tab is unaffected.
     expect(dotFor("t1")?.className).toContain("tab__state-dot--connected");
+  });
+
+  it("stays neutral until the shell's first prompt mark, then turns connected (#5891)", async () => {
+    await render([makeTerminalTab("t1", true), makeTerminalTab("t2", false)]);
+    act(() => markAwaitingFirstPrompt("t1"));
+    const dot = dotFor("t1");
+    expect(dot?.className).toContain("tab__state-dot--starting");
+    expect(dot?.className).not.toContain("tab__state-dot--connected");
+    expect(dot?.getAttribute("aria-label")).toBe("Waiting for the shell's first prompt");
+    expect(dot?.getAttribute("title")).toBe("Waiting for the shell's first prompt");
+    // A tab without shell integration is never marked and stays connected.
+    expect(dotFor("t2")?.className).toContain("tab__state-dot--connected");
+
+    act(() => clearAwaitingFirstPrompt("t1"));
+    expect(dotFor("t1")?.className).toContain("tab__state-dot--connected");
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Connected");
   });
 });

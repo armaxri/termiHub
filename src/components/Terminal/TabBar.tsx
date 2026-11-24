@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
+import { useAwaitingFirstPromptTabs } from "@/store/shellPromptStore";
 import { TerminalTab } from "@/types/terminal";
 import type { WindowInfo } from "@/types/window";
 import { listWindows, focusWindow } from "@/services/api";
@@ -47,6 +48,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
+  // Shells with integration on stay "starting" until their first prompt (#5891).
+  const terminalAwaitingFirstPrompt = useAwaitingFirstPromptTabs();
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
   // Render cut (#2205 PR-A / #2625): the session-lifecycle maps (connecting /
   // reconnecting / disconnect errors / exited) are sourced purely from the projected
@@ -282,6 +285,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
                         terminalExitedTabs,
                         terminalSessionLost,
                         terminalEvicted,
+                        terminalAwaitingFirstPrompt,
                       },
                       tab.id
                     )
