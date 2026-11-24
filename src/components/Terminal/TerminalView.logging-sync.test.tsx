@@ -156,7 +156,9 @@ describe("TerminalView — session logging status sync (#5172)", () => {
 
     expect(sessionLoggingStatus).toHaveBeenCalledWith("sess-t1");
     expect(pressed()).toBe("true");
-    expect(loggingButton().textContent).toBe("Stop logging output");
+    // #5849: a checkbox row — the label stays, the tick and aria-checked flip.
+    expect(loggingButton().textContent).toBe("Log session output");
+    expect(loggingButton().getAttribute("aria-checked")).toBe("true");
     // #5756: logging stays visible as a chip while the "…" menu is closed.
     expect(container.querySelector('[data-testid="terminal-view-active-logging"]')).not.toBeNull();
   });

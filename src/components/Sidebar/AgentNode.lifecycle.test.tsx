@@ -16,6 +16,7 @@ import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { currentAgentsView } from "@/store/agentsBridge";
+import { openAgentMoreMenu } from "@/test/agentMoreMenu";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -158,7 +159,8 @@ describe("AgentNode — disconnect (detach) vs shutdown (stop remote) (#1237, G9
   it("exposes a Disconnect (detach) control that routes to disconnect_agent only", async () => {
     render();
 
-    const btn = container.querySelector(
+    await openAgentMoreMenu(AGENT_ID);
+    const btn = document.querySelector(
       `[data-testid="agent-disconnect-${AGENT_ID}"]`
     ) as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
@@ -178,7 +180,8 @@ describe("AgentNode — disconnect (detach) vs shutdown (stop remote) (#1237, G9
     disconnectAgentMock.mockRejectedValueOnce(new Error("agent hung"));
     render();
 
-    const btn = container.querySelector(
+    await openAgentMoreMenu(AGENT_ID);
+    const btn = document.querySelector(
       `[data-testid="agent-disconnect-${AGENT_ID}"]`
     ) as HTMLButtonElement | null;
     act(() => {
@@ -200,7 +203,8 @@ describe("AgentNode — disconnect (detach) vs shutdown (stop remote) (#1237, G9
   it("exposes a Shutdown (stop remote) control that routes to shutdown_agent and toasts the detached count", async () => {
     render();
 
-    const btn = container.querySelector(
+    await openAgentMoreMenu(AGENT_ID);
+    const btn = document.querySelector(
       `[data-testid="agent-shutdown-${AGENT_ID}"]`
     ) as HTMLButtonElement | null;
     expect(btn).not.toBeNull();

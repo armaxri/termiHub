@@ -364,7 +364,8 @@ class TestProductRunAgent(
 
             connect_id = f"agent-connect-{agent_id}"
             assert self.driver.exists(connect_id), "no 'Connect' action on the fresh agent"
-            label = self.driver.get_text(connect_id).strip()
+            # An icon button since #5851: its name is the accessible label.
+            label = (self.driver.get_attribute(connect_id, "aria-label") or "").strip()
             self.evidence(f"action {label!r}")
             assert label == "Connect", f"the action reads {label!r}"
             assert not self.driver.exists(f"agent-reconnect-{agent_id}"), "fresh agent offers Reconnect"

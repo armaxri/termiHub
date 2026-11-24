@@ -57,18 +57,18 @@ describe("TabGroupChips — New Tab Group shortcut label (#4374)", () => {
   it("shows Cmd on macOS", async () => {
     setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     await render();
-    expect(addButton()?.getAttribute("aria-label")).toBe("New Tab Group (Cmd+Shift+T)");
+    expect(addButton()?.getAttribute("aria-label")).toBe("New tab group (Cmd+Shift+T)");
   });
 
   it("shows the user's customised binding", async () => {
     setOverride("new-tab-group", { key: "F8", ctrl: true });
     await render();
-    expect(addButton()?.getAttribute("aria-label")).toBe("New Tab Group (Ctrl+F8)");
+    expect(addButton()?.getAttribute("aria-label")).toBe("New tab group (Ctrl+F8)");
   });
 
   it("drops the hint when the action is unbound", async () => {
     unbindAction("new-tab-group");
     await render();
-    expect(addButton()?.getAttribute("aria-label")).toBe("New Tab Group");
+    expect(addButton()?.getAttribute("aria-label")).toBe("New tab group");
   });
 });

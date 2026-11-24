@@ -262,8 +262,8 @@ describe("AgentNode — row action keys (#5181)", () => {
 
     it("Delete on a header action button does not delete the agent", async () => {
       await render();
-      const newFolder = header().querySelector('[aria-label="New Folder"]') as HTMLElement;
-      await openWith(newFolder, "Delete");
+      const action = header().querySelector('[aria-label="New connection"]') as HTMLElement;
+      await openWith(action, "Delete");
       expect(q("confirm-delete-dialog")).toBeNull();
     });
 
