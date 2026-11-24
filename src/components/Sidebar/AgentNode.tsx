@@ -35,7 +35,6 @@ import {
   ArrowDown,
   Folder,
   FolderInput,
-  MoreHorizontal,
 } from "lucide-react";
 import {
   folderMoveTargets,
@@ -58,9 +57,6 @@ import {
   ContextMenuContent,
   ContextMenuRoot,
   ContextMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuRoot,
-  DropdownMenuTrigger,
   MenuItem,
   MenuSeparator,
   MenuSub,
@@ -108,6 +104,7 @@ import { UpdateAgentDialog } from "./UpdateAgentDialog";
 import { AgentRunningSessionsDialog } from "./AgentRunningSessionsDialog";
 import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessionBoundDefinition";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
+import { AgentMoreMenu } from "./AgentMoreMenu";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { ConfirmStopSessionDialog } from "./ConfirmStopSessionDialog";
 import {
@@ -1998,73 +1995,21 @@ export function AgentNode({
                       data-testid={`agent-new-connection-${agent.id}`}
                     />
                   </Tooltip>
-                  <DropdownMenuRoot>
-                    <Tooltip content="More actions" side="top">
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          iconOnly
-                          icon={<MoreHorizontal size={16} />}
-                          aria-label={`More actions for ${agent.name}`}
-                          data-testid={`agent-more-${agent.id}`}
-                        />
-                      </DropdownMenuTrigger>
-                    </Tooltip>
-                    <DropdownMenuContent
-                      align="end"
-                      onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}
-                      data-testid={`agent-more-menu-${agent.id}`}
-                    >
-                      <MenuItem
-                        onSelect={() => {
-                          newFolderMenu.request();
-                          if (!agent.isExpanded) toggleRemoteAgent(agent.id);
-                        }}
-                        data-testid={`agent-new-folder-${agent.id}`}
-                      >
-                        <FolderPlus size={14} />
-                        New folder
-                      </MenuItem>
-                      <MenuItem onSelect={handleRefresh} data-testid={`agent-refresh-${agent.id}`}>
-                        <RefreshCw size={14} />
-                        Refresh sessions
-                      </MenuItem>
-                      <MenuItem
-                        onSelect={() => setRunningSessionsOpen(true)}
-                        data-testid={`agent-running-sessions-${agent.id}`}
-                      >
-                        <Terminal size={14} />
-                        Running sessions…
-                      </MenuItem>
-                      {canUpdateAgent && (
-                        <MenuItem
-                          onSelect={() => void handleOpenUpdate()}
-                          data-testid={`agent-update-${agent.id}`}
-                        >
-                          <ArrowUpCircle size={14} />
-                          Update agent…
-                        </MenuItem>
-                      )}
-                      <MenuSeparator />
-                      {/* Two distinct teardown intents (G9, #1237). Detach keeps
-                          the remote sessions running; Shutdown stops them. */}
-                      <MenuItem
-                        onSelect={handleDisconnectFromMenu}
-                        data-testid={`agent-disconnect-${agent.id}`}
-                      >
-                        <Unplug size={14} />
-                        Disconnect (detach)
-                      </MenuItem>
-                      <MenuItem
-                        onSelect={handleShutdownFromMenu}
-                        data-testid={`agent-shutdown-${agent.id}`}
-                      >
-                        <Power size={14} />
-                        Shutdown (stop remote)
-                      </MenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenuRoot>
+                  <AgentMoreMenu
+                    agentId={agent.id}
+                    agentName={agent.name}
+                    canUpdate={canUpdateAgent}
+                    onNewFolder={() => {
+                      newFolderMenu.request();
+                      if (!agent.isExpanded) toggleRemoteAgent(agent.id);
+                    }}
+                    onRefresh={handleRefresh}
+                    onRunningSessions={() => setRunningSessionsOpen(true)}
+                    onUpdate={() => void handleOpenUpdate()}
+                    onDisconnect={handleDisconnectFromMenu}
+                    onShutdown={handleShutdownFromMenu}
+                    onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}
+                  />
                 </div>
               )}
             </div>
