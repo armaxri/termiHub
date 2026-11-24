@@ -82,7 +82,8 @@ class TestGuidedAppOs(
         self.driver.click("shell-integration-entry-save")
         self.driver.click("shell-integration-reinstall")
         self.wait(
-            lambda: self.driver.get_text("shell-integration-status-text") == "Registered",
+            lambda: self.driver.get_attribute("shell-integration-status-text", "data-registered")
+            == "true",
             what="Registered after Install",
         )
         try:
