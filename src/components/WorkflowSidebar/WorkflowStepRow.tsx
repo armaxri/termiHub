@@ -18,8 +18,9 @@ import {
 } from "@/components/ui";
 import type { WorkflowCondition, WorkflowStep, WorkflowStepKind } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import {
-  WORKFLOW_STEP_KINDS,
+  offeredStepKinds,
   WORKFLOW_CONDITION_OPS,
   conditionOpLabel,
   newWorkflowStep,
@@ -409,9 +410,9 @@ function LocalProcessArgsEditor({
  * Sub-branches are kept flat: the container kinds (`conditional`, `loop`) are not
  * offered here (the model and runner support nesting; the authoring UI is bounded
  * to one level). `wait-for-output` is a genuine leaf and is offered. */
-const LEAF_STEP_KINDS: readonly WorkflowStepKind[] = WORKFLOW_STEP_KINDS.filter(
-  (k) => k !== "conditional" && k !== "loop"
-);
+function leafStepKinds(experimental: boolean): WorkflowStepKind[] {
+  return offeredStepKinds(experimental).filter((k) => k !== "conditional" && k !== "loop");
+}
 
 interface ConditionFieldsProps {
   fieldId: string;
@@ -611,6 +612,7 @@ interface AddSubStepMenuProps {
  */
 function AddSubStepMenu({ base, onAdd }: AddSubStepMenuProps) {
   const portalContainer = useModalPortalContainer();
+  const experimental = useExperimentalFeatures();
   return (
     <DropdownMenuRoot>
       <DropdownMenuTrigger asChild>
@@ -624,7 +626,7 @@ function AddSubStepMenu({ base, onAdd }: AddSubStepMenuProps) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent container={portalContainer} align="start" sideOffset={4}>
-        {LEAF_STEP_KINDS.map((kind) => {
+        {leafStepKinds(experimental).map((kind) => {
           const Icon = stepKindIcon(kind);
           return (
             <MenuItem

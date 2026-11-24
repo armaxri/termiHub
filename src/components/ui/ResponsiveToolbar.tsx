@@ -77,6 +77,12 @@ export interface ToolbarAction {
    * calling `onClick`. In the overflow menu it becomes a sub-menu.
    */
   menu?: ToolbarMenuEntry[];
+  /**
+   * The `menu` is itself a "…" menu of lesser actions (#5818): when the toolbar
+   * collapses, its entries join the overflow menu directly, instead of a
+   * sub-menu named "More" inside another "…".
+   */
+  joinOverflow?: boolean;
 }
 
 /**
@@ -348,7 +354,9 @@ export function ResponsiveToolbar({
           </Tooltip>
           <DropdownMenuContent align="end" sideOffset={4}>
             {overflow.map((action) =>
-              action.menu ? (
+              action.menu && action.joinOverflow ? (
+                <React.Fragment key={action.id}>{renderEntries(action.menu)}</React.Fragment>
+              ) : action.menu ? (
                 <MenuSub key={action.id}>
                   <MenuSubTrigger
                     icon={action.icon}

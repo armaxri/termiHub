@@ -3,10 +3,9 @@ import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Schedules (#4623): an always-available place to view, pause and
- * resume, delete and create (#5633) scheduled automation runs. The
- * Workflows sidebar, where schedules are also edited, is experimental and hidden
- * when experimental features are off, but scheduled runs still type into
- * remote hosts unattended, so they must stay manageable from here.
+ * resume, delete and create (#5633) scheduled automation runs, also for a user
+ * who hid the Automations sidebar, where they are listed and edited too:
+ * scheduled runs type into remote hosts unattended.
  */
 export function SchedulesSettings() {
   return (

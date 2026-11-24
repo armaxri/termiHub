@@ -32,6 +32,18 @@ export const WORKFLOW_STEP_KINDS: readonly WorkflowStepKind[] = [
 ] as const;
 
 /**
+ * The step kinds the "Add step…" menus offer. "Run local process" stays behind
+ * the experimental switch (#5818, maintainer decision): it is offered only while
+ * that is on. A step that is already there still shows and can be edited or
+ * removed; running it is refused elsewhere (#5988).
+ */
+export function offeredStepKinds(experimental: boolean): readonly WorkflowStepKind[] {
+  return experimental
+    ? WORKFLOW_STEP_KINDS
+    : WORKFLOW_STEP_KINDS.filter((kind) => kind !== "run-local-process");
+}
+
+/**
  * The comparison operators of a workflow condition (PROD-0044), in the order
  * they appear in the operator picker.
  */

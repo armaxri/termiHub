@@ -37,14 +37,11 @@ vi.mock("@/components/TunnelSidebar", () => ({
 vi.mock("@/components/WorkspaceSidebar", () => ({
   WorkspaceSidebar: () => <div data-testid="panel-workspaces" />,
 }));
-vi.mock("@/components/MacroSidebar", () => ({
-  MacroSidebar: () => <div data-testid="panel-macros" />,
+vi.mock("@/components/AutomationSidebar", () => ({
+  AutomationSidebar: () => <div data-testid="panel-automations" />,
 }));
 vi.mock("@/components/RecentSessionsSidebar", () => ({
   RecentSessionsSidebar: () => <div data-testid="panel-recent-sessions" />,
-}));
-vi.mock("@/components/WorkflowSidebar", () => ({
-  WorkflowSidebar: () => <div data-testid="panel-workflows" />,
 }));
 vi.mock("@/components/NetworkTools/NetworkToolsSidebar", () => ({
   NetworkToolsSidebar: () => <div data-testid="panel-network-tools" />,
@@ -63,8 +60,7 @@ const VIEWS: ReadonlyArray<{ view: SidebarView; panelTestid: string; title: stri
   { view: "tunnels", panelTestid: "panel-tunnels", title: "SSH tunnels" },
   { view: "services", panelTestid: "panel-services", title: "Services" },
   { view: "workspaces", panelTestid: "panel-workspaces", title: "Workspaces" },
-  { view: "macros", panelTestid: "panel-macros", title: "Macros" },
-  { view: "workflows", panelTestid: "panel-workflows", title: "Workflows" },
+  { view: "automations", panelTestid: "panel-automations", title: "Automations" },
   { view: "network-tools", panelTestid: "panel-network-tools", title: "Network tools" },
   { view: "recent-sessions", panelTestid: "panel-recent-sessions", title: "Recent sessions" },
   { view: "plugins", panelTestid: "panel-plugins", title: "Plugins" },
@@ -149,12 +145,12 @@ describe("Sidebar container (#2953)", () => {
     expect(container.querySelector('[data-testid="panel-connections"]')).not.toBeNull();
 
     act(() => {
-      useAppStore.setState({ sidebarView: "macros" });
+      useAppStore.setState({ sidebarView: "automations" });
     });
 
     expect(container.querySelector('[data-testid="panel-connections"]')).toBeNull();
-    expect(container.querySelector('[data-testid="panel-macros"]')).not.toBeNull();
-    expect(container.querySelector(".sidebar__title")?.textContent).toBe("Macros");
+    expect(container.querySelector('[data-testid="panel-automations"]')).not.toBeNull();
+    expect(container.querySelector(".sidebar__title")?.textContent).toBe("Automations");
   });
 
   it("collapses live when sidebarCollapsed flips to true", () => {
@@ -196,8 +192,8 @@ describe("Sidebar landmark (A11Y2-012, #4351)", () => {
     expect(aside).toBe(container.querySelector('[data-testid="sidebar"]'));
 
     act(() => {
-      useAppStore.setState({ sidebarView: "macros" });
+      useAppStore.setState({ sidebarView: "automations" });
     });
-    expect(getByRole("complementary", "Macros", container)).toBe(aside);
+    expect(getByRole("complementary", "Automations", container)).toBe(aside);
   });
 });
