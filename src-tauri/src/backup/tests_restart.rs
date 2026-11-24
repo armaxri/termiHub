@@ -80,6 +80,7 @@ fn ssh_with_saved_password(name: &str) -> SavedConnection {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         source_file: None,
     }
 }

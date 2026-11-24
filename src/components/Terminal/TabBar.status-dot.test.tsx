@@ -15,6 +15,7 @@ import {
   connecting,
   disconnected,
   flushSessionRegion,
+  withExit,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { flushAsync } from "@/test/flushAsync";
@@ -163,6 +164,24 @@ describe("TabBar — per-tab connection status dot", () => {
 
   it("renders a 'disconnected' dot when the terminal session has exited", async () => {
     harness.transport.setSession("t1", disconnected());
+    await render([makeTerminalTab("t1", true)]);
+    await flushSessionRegion();
+    expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");
+  });
+
+  it("renders a neutral 'exited' marker when the session's process exited (#5955)", async () => {
+    harness.transport.setSession("t1", withExit(disconnected(), { code: 3, reason: "dropped" }));
+    await render([makeTerminalTab("t1", true)]);
+    await flushSessionRegion();
+    expect(dotFor("t1")?.className).toContain("tab__state-dot--exited");
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Process exited");
+  });
+
+  it("keeps the 'disconnected' plug for a dropped link (#5955)", async () => {
+    harness.transport.setSession(
+      "t1",
+      withExit(disconnected("unexpected"), { code: null, reason: "dropped" })
+    );
     await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
     expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");

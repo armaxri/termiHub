@@ -185,6 +185,30 @@ describe("routeTerminalKeyEvent", () => {
     expect(event.defaultPrevented).toBe(c.preventDefault ?? false);
   });
 
+  it("Enter in an ended terminal runs the session-end strip's action (#5955)", () => {
+    const run = vi.fn();
+    const ctx = makeContext({ hasSession: false, isViewMode: false });
+    ctx.isSessionEndStripUp = () => true;
+    ctx.runSessionEndAction = run;
+    const enter = new KeyboardEvent("keydown", { key: "Enter" });
+    expect(routeTerminalKeyEvent(enter, ctx)).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(ctx.showReconnectPrompt).not.toHaveBeenCalled();
+  });
+
+  it("Enter runs no end action while the strip is not up or a session runs (#5955)", () => {
+    const run = vi.fn();
+    const down = makeContext({ hasSession: false, isViewMode: false });
+    down.isSessionEndStripUp = () => false;
+    down.runSessionEndAction = run;
+    expect(routeTerminalKeyEvent(new KeyboardEvent("keydown", { key: "Enter" }), down)).toBe(true);
+    const live = makeContext({ hasSession: true });
+    live.isSessionEndStripUp = () => true;
+    live.runSessionEndAction = run;
+    expect(routeTerminalKeyEvent(new KeyboardEvent("keydown", { key: "Enter" }), live)).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not consult the keymap for keyup events", () => {
     routeTerminalKeyEvent(new KeyboardEvent("keyup", { key: "v" }), makeContext());
     expect(keybindings.processKeyEvent).not.toHaveBeenCalled();

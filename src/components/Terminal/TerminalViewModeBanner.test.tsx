@@ -58,6 +58,25 @@ describe("TerminalViewModeBanner", () => {
     expect(query("terminal-view-mode-reconnect-btn")).not.toBeNull();
   });
 
+  it("names the end as the strip did (#5955)", () => {
+    act(() => {
+      root.render(
+        <TerminalViewModeBanner
+          tabId="tab-9"
+          notice={{
+            kind: "link",
+            heading: "Session disconnected",
+            causeLine: "The network connection was lost.",
+            action: "reconnect",
+          }}
+        />
+      );
+    });
+    expect(container.textContent).toContain("Session disconnected.");
+    expect(container.textContent).toContain("Press Enter to reconnect.");
+    expect(container.textContent).not.toContain("Session ended");
+  });
+
   it("reconnects the owning tab when the reconnect button is clicked", () => {
     render("tab-42");
     act(() => query("terminal-view-mode-reconnect-btn")?.click());

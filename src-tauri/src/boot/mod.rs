@@ -665,8 +665,17 @@ fn wire_session_managers(
     // A newly opened session — from the connect command, the backend
     // reconnect redrive or a persistent session — resumes the transfers
     // waiting for its saved connection or agent (#3883, #4114, #4301).
+    // Opening a session for a saved connection also stamps its last-used
+    // time (#5940), off the async runtime since it writes connections.json.
     let opened_app = app.handle().clone();
     session_manager.set_session_opened_hook(std::sync::Arc::new(move |trigger| {
+        if let crate::files::transfer::relaunch_auto::WaitTrigger::ConnectionOpened(id) = &trigger {
+            let app = opened_app.clone();
+            let id = id.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::commands::connection::record_connection_used(&app, &id);
+            });
+        }
         crate::files::transfer::relaunch_auto::spawn_resume_waiting(&opened_app, trigger);
     }));
     // The graphical sessions own their File Browser side channels (#4384):

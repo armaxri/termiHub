@@ -33,6 +33,7 @@ fn definition(id: &str, folder: Option<&str>) -> AgentDefinition {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         source_file: None,
     }
 }

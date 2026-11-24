@@ -18,6 +18,11 @@ iconEmoji?: string,
  */
 description?: string, 
 /**
+ * When a session was last created from this definition (#5940), Unix
+ * milliseconds; absent when never used or from an agent older than 0.43.0.
+ */
+lastUsedAt?: number, 
+/**
  * Source file path on the remote host, or `None` for the primary store.
  */
 sourceFile?: string, };

@@ -115,6 +115,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: source.map(str::to_string),
         }
     }

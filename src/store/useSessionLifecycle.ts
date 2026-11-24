@@ -248,6 +248,30 @@ export interface ProjectedSessionLifecycleMaps {
    * derived purely from the region ({@link effectiveExitedMap}, #2625). Drives the
    * tab-strip status dot and the close-confirmation live count. */
   terminalExitedTabs: Record<string, boolean>;
+  /**
+   * How each ended tab's session ended (#5955): its exit and its link's end
+   * cause, for the tab strip to tell a process exit from a dropped link.
+   */
+  terminalEnds: Record<string, TerminalEnd>;
+}
+
+/** How one tab's session ended: its exit and its link's end cause (#5955). */
+export interface TerminalEnd {
+  exit: TerminalExitInfo | undefined;
+  endCause: SessionEndCause | undefined;
+}
+
+/** Build the `tabId → end` map for every tab that has exited (#5955). */
+function terminalEndsMap(
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, TerminalEnd> {
+  const map: Record<string, TerminalEnd> = {};
+  for (const [tabId, life] of Object.entries(view)) {
+    if (life.exit !== undefined || life.endCause !== undefined) {
+      map[tabId] = { exit: effectiveExitInfo(life), endCause: life.endCause };
+    }
+  }
+  return map;
 }
 
 /** Build the `tabId → true` session-lost map from the projected region view. */
@@ -305,6 +329,7 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
       terminalSessionLost: sessionLostMap(view),
       terminalEvicted: effectiveEvictedMap(view),
       terminalExitedTabs: effectiveExitedMap(view),
+      terminalEnds: terminalEndsMap(view),
     }),
     [view]
   );

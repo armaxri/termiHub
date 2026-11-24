@@ -8,7 +8,8 @@ disconnected" with a no-wifi icon and "Reconnect" (R-004, R-021).
 :func:`strip_layout_problems` grades the measured strip against its pane and the
 terminal under it: a full-width strip at the pane top, with the terminal
 starting below it so no output line is covered. :func:`end_copy_problems` grades
-its wording: a process exit says so and offers Restart; only a dropped link says
+its wording: a process exit says so and offers Restart (a local exit reads
+"Process exited (code N)" for every code, #5955); only a dropped link says
 "Session disconnected".
 """
 
@@ -92,6 +93,11 @@ def end_copy_problems(
     flat = " ".join(text.split())
     kind = end_kind(cause)
     heading = HEADINGS[kind]
+    # #5955: a local process that ended on its own reads "Process exited (code
+    # N)" for every code, 0 included.
+    if local and kind == "ended":
+        kind = "exited"
+        heading = HEADINGS["exited"]
     if kind == "exited" and code is not None:
         heading = f"Process exited (code {code})"
     if heading not in flat:

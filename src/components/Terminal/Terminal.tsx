@@ -100,8 +100,10 @@ import {
   currentSessionView,
   isTabEvicted,
   onSessionView,
+  sessionEndStripUp,
   waitForBackendAgentReconnectOutcome,
 } from "@/store/sessionBridge";
+import { markTerminalRefocusPending } from "./terminalRefocus";
 import {
   resolveEstablishmentPlan,
   resolveBackendRedriveOutcome,
@@ -111,6 +113,9 @@ import {
 } from "./terminalConnectionPlan";
 import { errorMessage } from "@/utils/errorMessage";
 import { DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, DEFAULT_SCROLLBACK } from "./terminalDefaults";
+
+/** Encodes the scrollback lines termiHub writes itself (the exit line, #5955). */
+const textEncoder = new TextEncoder();
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -1220,7 +1225,10 @@ export function Terminal({
             at: new Date(),
             endCause,
           });
-          xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
+          // Staged behind the output still waiting for its flush, so the exit
+          // line is always written after the session's last output (#5955).
+          outputFlow.push(textEncoder.encode(`\r\n\x1b[90m${exitLabel}\x1b[0m\r\n`));
+          flushOutput();
           // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).
           sandboxNotifySessionEnd(sessionId);
           sessionIdRef.current = null;
@@ -1786,6 +1794,11 @@ export function Terminal({
         passthroughEnabled: currentSettingsView().terminalKeyPassthrough !== false,
         hasCommandMarks: () => commandMarks.hasMarks(),
         showReconnectPrompt: () => useAppStore.getState().showTerminalReconnectPrompt(tabId),
+        isSessionEndStripUp: () => sessionEndStripUp(currentSessionView()[tabId]),
+        runSessionEndAction: () => {
+          markTerminalRefocusPending(tabId);
+          useAppStore.getState().reconnectTerminal(tabId);
+        },
         copySelection: () => copySelectionToClipboard(tabId),
         paste: () => pasteToTerminal(tabId),
         selectAll: () => xterm.selectAll(),

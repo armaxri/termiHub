@@ -28,7 +28,9 @@ use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 use super::cwd_follow_thread::CwdFollowThread;
 pub use super::local_shell_env::set_shell_env_override;
-use super::local_shell_exit::{ExitStatusSlot, SETTLE_TIMEOUT};
+#[cfg(unix)]
+use super::local_shell_exit::DRAIN_TIMEOUT;
+use super::local_shell_exit::{ExitStatusSlot, ReaderDone, SETTLE_TIMEOUT};
 use super::local_shell_ready::{ready_signal, ProbeGate, ReadySignal};
 use super::local_shell_setup::{GatedHandle, TypedSetup};
 
@@ -770,6 +772,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         let reader_exit = self.exit_status.clone();
+        // Lets the child-exit watcher wait for the last output (#5955).
+        let reader_done = Arc::new(ReaderDone::default());
+        let watcher_drain = reader_done.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             // Whether the PTY itself ended (EOF / read error), as opposed to the
@@ -833,6 +838,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             if let Some(cwd) = reader_cwd {
                 cwd.stop();
             }
+            reader_done.finish();
         });
 
         // Spawn a child-exit watcher: block until the shell process exits on
@@ -863,6 +869,15 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             // Before the output ends, so the session owner reads it (#5742).
             watcher_exit.record(code);
             alive_for_watcher.store(false, Ordering::SeqCst);
+            // On Unix the reader reaches EOF right after the child exits, but
+            // the PTY may still hold the shell's last lines: let it forward
+            // them before the output ends, so they arrive before the exit line
+            // and are never dropped (#5955). ConPTY never EOFs the reader, so
+            // Windows ends the output at once (#2704).
+            #[cfg(unix)]
+            watcher_drain.wait(DRAIN_TIMEOUT);
+            #[cfg(not(unix))]
+            drop(watcher_drain);
             if let Ok(mut guard) = output_tx_for_watcher.lock() {
                 *guard = None;
             }
@@ -2115,6 +2130,49 @@ mod tests {
 
         shell.disconnect().await.ok();
         assert_eq!(shell.exit_code(), None, "a disconnect drops the status");
+    }
+
+    /// #5955: the PTY can still hold the shell's last lines when the child is
+    /// reaped. The output must carry them before it ends, so the exit line
+    /// that follows the end of output comes after them and none are dropped.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn child_exit_keeps_the_last_output_before_the_end() {
+        let mock = MockLocalShellSpawner::new();
+        let child_exit = mock.child_exit.clone();
+        let reader_tx = mock.reader_tx.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        let mut rx = shell.subscribe_output();
+
+        if let Some(tx) = child_exit.lock().unwrap().as_ref() {
+            tx.send(3).expect("watcher listening");
+        }
+        // The child is gone; its last line is still in the PTY, then EOF.
+        let tail = reader_tx.lock().unwrap().clone().expect("reader feed");
+        tail.send(b"none found.\r\n".to_vec())
+            .expect("reader reading");
+        drop(tail);
+        *reader_tx.lock().unwrap() = None;
+
+        let mut out = Vec::new();
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while let Some(chunk) = rx.recv().await {
+                out.extend_from_slice(&chunk);
+            }
+        })
+        .await;
+        assert!(
+            ended.is_ok(),
+            "the session should end after the child exits"
+        );
+        assert!(
+            String::from_utf8_lossy(&out).contains("none found."),
+            "the last line must arrive before the output ends: {out:?}"
+        );
+        assert_eq!(shell.exit_code(), Some(3));
+        shell.disconnect().await.ok();
     }
 
     /// Regression for #2704. On Windows the PTY (ConPTY) output pipe does not
