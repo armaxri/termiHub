@@ -57,6 +57,11 @@ from termihub_harness.native_ssh import fixture_argv
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.editor_layout import measure_connection_editor, measure_editor_layout
 from termihub_harness.product_run.grades import connection_editor_layout_problems, editor_layout_problems
+from termihub_harness.product_run.settings_layout import (
+    measure_settings_page,
+    merge_measurements,
+    settings_layout_problems,
+)
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.product_run.vnc_server import QUADRANTS, ScriptedVncServer
 from termihub_harness.rdp_test_server import find_rdp_test_server
@@ -1026,3 +1031,36 @@ class TestProductRunSettingsThemes(
             finally:
                 if self.driver.exists(f"file-type-remove-{pattern}"):
                     self.driver.click(f"file-type-remove-{pattern}")
+
+    def test_12_shared_settings_layout(self):
+        """Settings share one compact layout (#5843).
+
+        At 1600x900: the numeric settings are short inputs with their unit, the
+        "Default" marker is plain text (not a pill), hints stay on one line, the
+        clear-history buttons are secondary, and the search bar, nav and content
+        sit in one centred column instead of the content floating left.
+        """
+        with self.step(
+            "settings.shared-layout",
+            "Settings ▸ Appearance, Terminal and Sessions use compact number inputs with "
+            "units, a plain Default marker, one-line hints and one centred page width (#5843)",
+            expect="A centred settings page with short number boxes (px / lines / sessions), "
+            "plain grey 'Default' text, one-line hints with a '?' and secondary clear buttons",
+        ):
+            self.driver.resize_window(1600, 900)
+            try:
+                pages = []
+                for category in ("appearance", "terminal", "sessions"):
+                    self.open_settings_category(category)
+                    time.sleep(0.4)
+                    self.shot(label=f"layout-{category}", expect="settings-panel-content")
+                    pages.append(measure_settings_page(self.driver, category))
+                merged = merge_measurements(pages)
+                self.evidence(
+                    f"numbers {merged['numbers']}; markers {merged['markers']}; "
+                    f"hints {merged['hints']}; frame {merged['pages'][-1]}"
+                )
+                problems = settings_layout_problems(merged)
+                assert not problems, "; ".join(problems)
+            finally:
+                self.driver.resize_window(1280, 800)
