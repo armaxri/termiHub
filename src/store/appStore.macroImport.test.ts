@@ -35,14 +35,17 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn((macro) => Promise.resolve(macro)),
-  deleteMacro: vi.fn(() => Promise.resolve()),
+vi.mock("@/services/automationApi", () => ({
+  listAutomations: vi.fn(() => Promise.resolve([])),
+  saveAutomation: vi.fn((automation: unknown) => Promise.resolve(automation)),
 }));
 
 import { useAppStore } from "./appStore";
-import { listMacros as apiListMacros, saveMacro as apiSaveMacro } from "@/services/macroApi";
+import {
+  listAutomations as apiListMacros,
+  saveAutomation as apiSaveMacro,
+} from "@/services/automationApi";
+import type { Automation } from "@/types/generated/Automation";
 import type { Macro } from "@/types/macro";
 import { MACRO_EXPORT_VERSION } from "@/services/macroIo";
 
@@ -82,7 +85,7 @@ describe("appStore — importMacros (#1677)", () => {
     expect(count).toBe(2);
     expect(apiSaveMacro).toHaveBeenCalledTimes(2);
     // Fresh ids: the saved macros must not reuse the file's ids.
-    const savedIds = vi.mocked(apiSaveMacro).mock.calls.map((c) => (c[0] as Macro).id);
+    const savedIds = vi.mocked(apiSaveMacro).mock.calls.map((c) => (c[0] as Automation).id);
     expect(savedIds).not.toContain("macro-1");
     expect(savedIds).not.toContain("macro-2");
     // Refreshed once after all saves.
@@ -95,7 +98,7 @@ describe("appStore — importMacros (#1677)", () => {
 
     await useAppStore.getState().importMacros(envelope([makeMacro("macro-1", "Deploy")]));
 
-    const saved = vi.mocked(apiSaveMacro).mock.calls[0][0] as Macro;
+    const saved = vi.mocked(apiSaveMacro).mock.calls[0][0] as Automation;
     expect(saved.name).toBe("Deploy (imported)");
   });
 

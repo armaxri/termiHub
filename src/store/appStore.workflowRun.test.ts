@@ -57,39 +57,68 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
+// The automation store's IPC (#5818, slice 4), emulated over the workflow and
+// macro views so the assertions below read in the legacy shapes: a saved
+// workflow lands in `savedWorkflows`, a recorded run in `recordedRuns` or
+// `recordedMacroRuns`, and `apiRecordWorkflowRun` sees each workflow run.
 const savedWorkflows: Workflow[] = [];
 const recordedRuns: import("@/types/workflow").WorkflowRun[] = [];
-vi.mock("@/services/workflowApi", () => ({
-  listWorkflows: vi.fn(() => Promise.resolve([...savedWorkflows])),
-  saveWorkflow: vi.fn((w: Workflow) => {
-    savedWorkflows.push(w);
-    return Promise.resolve(w);
-  }),
-  deleteWorkflow: vi.fn(() => Promise.resolve()),
-  listWorkflowRuns: vi.fn(() => Promise.resolve([...recordedRuns])),
-  recordWorkflowRun: vi.fn((run: import("@/types/workflow").WorkflowRun) => {
-    recordedRuns.unshift(run);
-    return Promise.resolve([...recordedRuns]);
-  }),
-  clearWorkflowRunHistory: vi.fn(() => {
-    recordedRuns.length = 0;
-    return Promise.resolve([]);
-  }),
-}));
-
-// Macro run-history recording (#3543): capture what the playback paths record.
 const recordedMacroRuns: import("@/types/macro").MacroRun[] = [];
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn((m: Macro) => Promise.resolve(m)),
-  deleteMacro: vi.fn(() => Promise.resolve()),
-  listMacroRuns: vi.fn(() => Promise.resolve([...recordedMacroRuns])),
-  recordMacroRun: vi.fn((run: import("@/types/macro").MacroRun) => {
-    recordedMacroRuns.unshift(run);
-    return Promise.resolve([...recordedMacroRuns]);
-  }),
-  clearMacroRunHistory: vi.fn(() => Promise.resolve([])),
+const apis = vi.hoisted(() => ({
+  apiListWorkflows: vi.fn(),
+  apiDeleteWorkflow: vi.fn((_id: string) => Promise.resolve()),
+  apiRecordWorkflowRun: vi.fn(),
+  apiListWorkflowRuns: vi.fn(),
+  apiClearWorkflowRunHistory: vi.fn((_ids?: string[]) => Promise.resolve([] as unknown)),
 }));
+vi.mock("@/services/automationApi", async () => {
+  const views = await vi.importActual<typeof import("./slices/automationViews")>(
+    "./slices/automationViews"
+  );
+  const allRuns = () => [
+    ...recordedRuns.map(views.workflowRunToAutomationRun),
+    ...recordedMacroRuns.map(views.macroRunToAutomationRun),
+  ];
+  apis.apiListWorkflows.mockImplementation(() => Promise.resolve([...savedWorkflows]));
+  apis.apiRecordWorkflowRun.mockImplementation((run: import("@/types/workflow").WorkflowRun) => {
+    recordedRuns.unshift(run);
+    return Promise.resolve(allRuns());
+  });
+  apis.apiListWorkflowRuns.mockImplementation(() => Promise.resolve(allRuns()));
+  apis.apiClearWorkflowRunHistory.mockImplementation((ids?: string[]) => {
+    const keep = recordedRuns.filter((r) => ids !== undefined && !ids.includes(r.id));
+    recordedRuns.length = 0;
+    recordedRuns.push(...keep);
+    return Promise.resolve(allRuns());
+  });
+  return {
+    listAutomations: vi.fn(async () => {
+      const list = await apis.apiListWorkflows();
+      return Array.isArray(list) ? list.map((w: Workflow) => views.workflowToAutomation(w)) : list;
+    }),
+    getAutomation: vi.fn(() => Promise.reject(new Error("not found"))),
+    saveAutomation: vi.fn((a: import("@/types/generated/Automation").Automation) => {
+      savedWorkflows.push(views.automationToWorkflow(a));
+      return Promise.resolve(a);
+    }),
+    deleteAutomation: (id: string) => apis.apiDeleteWorkflow(id),
+    listAutomationRuns: () => apis.apiListWorkflowRuns(),
+    recordAutomationRun: (run: import("@/types/generated/AutomationRun").AutomationRun) => {
+      if (!views.isMacroRun(run))
+        return apis.apiRecordWorkflowRun(views.automationRunToWorkflowRun(run));
+      recordedMacroRuns.unshift(views.automationRunToMacroRun(run));
+      return Promise.resolve(allRuns());
+    },
+    clearAutomationRunHistory: (ids?: string[]) => apis.apiClearWorkflowRunHistory(ids),
+  };
+});
+const {
+  apiListWorkflows,
+  apiDeleteWorkflow,
+  apiRecordWorkflowRun,
+  apiListWorkflowRuns,
+  apiClearWorkflowRunHistory,
+} = apis;
 
 // The guarded local-process backend (#1857) is mocked so no Tauri command runs;
 // `invokeRunLocalProcess` records what it was asked to spawn.
@@ -123,13 +152,8 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import {
-  listWorkflows as apiListWorkflows,
-  deleteWorkflow as apiDeleteWorkflow,
-  recordWorkflowRun as apiRecordWorkflowRun,
-  listWorkflowRuns as apiListWorkflowRuns,
-  clearWorkflowRunHistory as apiClearWorkflowRunHistory,
-} from "@/services/workflowApi";
+import { automationLibraryState } from "./slices/automationStoreState";
+import { workflowToAutomation } from "./slices/automationViews";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
 import {
@@ -524,9 +548,12 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("records a run-macro step's playback in the macro run history (#3543)", async () => {
+  it("records a run-macro step as part of the workflow's own run only (#5818)", async () => {
+    // The called macro runs inline through the automation runner; one run, one
+    // history record (before slice 4 a workflow that ran a macro wrote both).
     seedConnectedTerminal();
     recordedMacroRuns.length = 0;
+    recordedRuns.length = 0;
     const macro: Macro = {
       id: "m1",
       name: "tail log",
@@ -542,17 +569,10 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     await useAppStore.getState().runWorkflow("w1");
 
-    await vi.waitFor(() => expect(recordedMacroRuns).toHaveLength(1));
-    expect(recordedMacroRuns[0]).toMatchObject({
-      macroId: "m1",
-      macroName: "tail log",
-      status: "completed",
-      origin: "workflow-step",
-      stepsPlayed: 1,
-      totalSteps: 1,
-      targetCount: 1,
-    });
-    expect(JSON.stringify(recordedMacroRuns[0])).not.toContain("tail -f");
+    await vi.waitFor(() => expect(recordedRuns).toHaveLength(1));
+    expect(recordedRuns[0]).toMatchObject({ workflowId: "w1", status: "completed" });
+    expect(recordedMacroRuns).toEqual([]);
+    expect(JSON.stringify(recordedRuns[0])).not.toContain("tail -f");
   });
 
   describe("run-local-process guardrails (#1857)", () => {
@@ -988,9 +1008,8 @@ describe("appStore — workflow run slice (#1852)", () => {
     });
 
     it("loadWorkflowRuns swallows a rejection and leaves history untouched", async () => {
-      const { listWorkflowRuns } = await import("@/services/workflowApi");
       useAppStore.setState({ workflowRuns: [] });
-      vi.mocked(listWorkflowRuns).mockRejectedValueOnce(new Error("backend down"));
+      apiListWorkflowRuns.mockRejectedValueOnce(new Error("backend down"));
 
       await expect(useAppStore.getState().loadWorkflowRuns()).resolves.toBeUndefined();
       expect(useAppStore.getState().workflowRuns).toEqual([]);
@@ -1031,9 +1050,13 @@ describe("appStore — workflow run slice (#1852)", () => {
     });
 
     it("deleteWorkflowFromBackend removes the workflow after the backend delete resolves", async () => {
-      useAppStore.setState({
-        workflows: [workflow("w1", [cmd("a")]), workflow("w2", [cmd("b")])],
-      });
+      useAppStore.setState(
+        automationLibraryState(
+          [workflow("w1", [cmd("a")]), workflow("w2", [cmd("b")])].map((w) =>
+            workflowToAutomation(w)
+          )
+        )
+      );
 
       await useAppStore.getState().deleteWorkflowFromBackend("w1");
 

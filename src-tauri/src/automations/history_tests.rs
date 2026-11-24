@@ -171,6 +171,31 @@ fn manager_records_newest_first_and_caps() {
 }
 
 #[test]
+fn manager_clears_only_the_given_runs() {
+    let dir = TempDir::new().unwrap();
+    let manager = AutomationRunHistoryManager::with_storage(StoreFile::in_dir(dir.path())).unwrap();
+    for (i, id) in ["m1", "w1", "m2"].iter().enumerate() {
+        manager
+            .record_at(run(id, &at(0, -(10 - i as i64))), now())
+            .unwrap();
+    }
+    let ids =
+        |runs: Vec<AutomationRun>| -> Vec<String> { runs.into_iter().map(|r| r.id).collect() };
+    let left = manager
+        .clear_runs(Some(&[
+            "m1".to_string(),
+            "m2".to_string(),
+            "gone".to_string(),
+        ]))
+        .unwrap();
+    assert_eq!(ids(left), ["w1"]);
+    let reloaded =
+        AutomationRunHistoryManager::with_storage(StoreFile::in_dir(dir.path())).unwrap();
+    assert_eq!(ids(reloaded.list().unwrap()), ["w1"]);
+    assert!(manager.clear_runs(None).unwrap().is_empty());
+}
+
+#[test]
 fn manager_bounds_free_text() {
     let dir = TempDir::new().unwrap();
     let manager = AutomationRunHistoryManager::with_storage(StoreFile::in_dir(dir.path())).unwrap();

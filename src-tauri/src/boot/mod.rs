@@ -1680,8 +1680,10 @@ pub(crate) fn finalize<R: tauri::Runtime>(
 }
 
 /// Run the automation boot migration and manage the automation store and run
-/// history (#5818). Every failure leaves the app running: the legacy macro
-/// and workflow stores still serve the UI until the frontend switches over.
+/// history (#5818). Every failure leaves the app running. The UI reads and
+/// writes only the automation store since slice 4; the legacy macro and
+/// workflow files are frozen, so a change merged back from them was made by
+/// an older termiHub and is reported once in the recovery warnings (#5971).
 fn init_automations<R: tauri::Runtime>(
     app: &tauri::App<R>,
     recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
@@ -1694,13 +1696,14 @@ fn init_automations<R: tauri::Runtime>(
         .and_then(|dir| migrate::run_boot_migration(&dir, chrono::Utc::now()))
     {
         Ok(report) => {
-            // The legacy files are still the live stores until slice 4, so
-            // merged-back edits are this build's own: log them only.
-            if let Some(merged) = migrate::merge_warning(&report.library) {
-                tracing::info!("{}", merged.message);
+            if report.library.followed_deletions > 0 {
+                tracing::info!(
+                    "Automations: removed {} macro(s)/workflow(s) deleted in the old view",
+                    report.library.followed_deletions
+                );
             }
             tracing::debug!("Automation boot migration: {report:?}");
-            None
+            migrate::merge_warning(&report.library)
         }
         Err(e) => {
             tracing::error!("Automation boot migration failed: {e:#}");

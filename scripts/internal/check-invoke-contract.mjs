@@ -63,9 +63,10 @@ export const INJECTED_TYPES = new Set([
   "GlobalScope",
 ]);
 
-/** Why the merged automation commands have no caller yet (#5818). */
-const AUTOMATIONS_SLICE_4 =
-  "slice 4 of #5818 switches the frontend to the merged automation store; remove then";
+/** Why the legacy macro and workflow commands have no caller (#5818). */
+const AUTOMATIONS_LEGACY =
+  "frozen legacy store since slice 4 of #5818 (the UI uses the automation commands); " +
+  "slice 12 removes it";
 
 /**
  * Registered commands with no production caller in src/ that are kept on
@@ -76,14 +77,19 @@ const AUTOMATIONS_SLICE_4 =
  */
 export const ORPHAN_ALLOWLIST = new Map(
   [
-    "list_automations",
-    "get_automation",
-    "save_automation",
-    "delete_automation",
-    "list_automation_runs",
-    "record_automation_run",
-    "clear_automation_run_history",
-  ].map((command) => [command, AUTOMATIONS_SLICE_4])
+    "list_macros",
+    "save_macro",
+    "delete_macro",
+    "list_macro_runs",
+    "record_macro_run",
+    "clear_macro_run_history",
+    "list_workflows",
+    "save_workflow",
+    "delete_workflow",
+    "list_workflow_runs",
+    "record_workflow_run",
+    "clear_workflow_run_history",
+  ].map((command) => [command, AUTOMATIONS_LEGACY])
 );
 
 /**

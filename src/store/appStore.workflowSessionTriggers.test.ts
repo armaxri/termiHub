@@ -30,21 +30,39 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
+// The automation store's IPC (#5818, slice 4), emulated over the workflow
+// view: `savedWorkflows` is the library, `apiSaveWorkflow` sees each saved
+// workflow view and `apiRecordWorkflowRun` each recorded workflow run.
 const savedWorkflows: Workflow[] = [];
-vi.mock("@/services/workflowApi", () => ({
-  listWorkflows: vi.fn(() => Promise.resolve([...savedWorkflows])),
-  saveWorkflow: vi.fn((w: Workflow) => Promise.resolve(w)),
-  deleteWorkflow: vi.fn(() => Promise.resolve()),
-  listWorkflowRuns: vi.fn(() => Promise.resolve([])),
-  recordWorkflowRun: vi.fn(() => Promise.resolve([])),
-  clearWorkflowRunHistory: vi.fn(() => Promise.resolve([])),
+const apis = vi.hoisted(() => ({
+  apiSaveWorkflow: vi.fn(),
+  apiRecordWorkflowRun: vi.fn((_run: import("@/types/workflow").WorkflowRun) =>
+    Promise.resolve([] as unknown[])
+  ),
 }));
+vi.mock("@/services/automationApi", async () => {
+  const views = await vi.importActual<typeof import("./slices/automationViews")>(
+    "./slices/automationViews"
+  );
+  apis.apiSaveWorkflow.mockImplementation((w: Workflow) => Promise.resolve(w));
+  return {
+    listAutomations: vi.fn(() =>
+      Promise.resolve(savedWorkflows.map((w) => views.workflowToAutomation(w)))
+    ),
+    saveAutomation: vi.fn(async (a: import("@/types/generated/Automation").Automation) =>
+      views.workflowToAutomation(await apis.apiSaveWorkflow(views.automationToWorkflow(a)))
+    ),
+    deleteAutomation: vi.fn(() => Promise.resolve()),
+    listAutomationRuns: vi.fn(() => Promise.resolve([])),
+    recordAutomationRun: vi.fn((run: import("@/types/generated/AutomationRun").AutomationRun) =>
+      apis.apiRecordWorkflowRun(views.automationRunToWorkflowRun(run))
+    ),
+    clearAutomationRunHistory: vi.fn(() => Promise.resolve([])),
+  };
+});
+const { apiSaveWorkflow, apiRecordWorkflowRun } = apis;
 
 import { useAppStore } from "./appStore";
-import {
-  recordWorkflowRun as apiRecordWorkflowRun,
-  saveWorkflow as apiSaveWorkflow,
-} from "@/services/workflowApi";
 import { seedLayoutState } from "@/test/layoutState";
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
@@ -292,7 +310,8 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
 
       const saved = useAppStore.getState().workflows[0];
       expect(saved.triggersEnabled).toBe(false);
-      expect(saved.triggers).toEqual([outputMatch]);
+      // The view always carries the manual trigger (#5818, slice 4).
+      expect(saved.triggers).toEqual([{ kind: "manual" }, outputMatch]);
       // With only a disarmed trigger left, the output tap is removed entirely.
       expect(lastTap(setTap)).toBeNull();
       await new Promise((r) => setTimeout(r, OUTPUT_TRIGGER_LIMITS.batchMs * 3));

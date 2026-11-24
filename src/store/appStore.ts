@@ -4,6 +4,7 @@ import { TabContentType, TerminalOptions } from "@/types/terminal";
 import { reclaimSession as apiReclaimSession } from "@/services/api";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
+import { createAutomationsSlice, AutomationsSlice } from "./slices/automationsSlice";
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
 import { createPluginsSlice, PluginsSlice } from "./slices/pluginsSlice";
 import { createSessionHistorySlice, SessionHistorySlice } from "./slices/sessionHistorySlice";
@@ -192,6 +193,7 @@ export interface AppState
   extends
     TunnelSlice,
     EmbeddedServersSlice,
+    AutomationsSlice,
     MacrosSlice,
     PluginsSlice,
     SessionHistorySlice,
@@ -251,6 +253,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
   return {
     ...createTunnelSlice(set, get, store),
     ...createEmbeddedServersSlice(set, get, store),
+    ...createAutomationsSlice(set, get, store),
     ...createMacrosSlice(set, get, store),
     ...createPluginsSlice(set, get, store),
     ...createSessionHistorySlice(set, get, store),

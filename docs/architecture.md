@@ -2061,7 +2061,41 @@ step:
 `src/services/automationRunner.ts` adds two things. `runAutomation` checks for cycles before any
 step runs, so a cyclic automation types nothing. `runAutomationOnTargets` runs one automation on
 several terminals as independent runs, at most 8 at once or one after another. This replaces the
-lock-step macro fan-out. The UI switches to these entry points in a later slice.
+lock-step macro fan-out. Since slice 4 the Macros and Workflows views run through them (see
+below).
+
+#### Automation store
+
+Since slice 4 of #5818 the frontend keeps one library and one run history
+(`src/store/slices/automationsSlice.ts`), backed by the `*_automation*` commands
+(`src/services/automationApi.ts`, `src-tauri/src/commands/automations.rs`). It is the only writer
+of `automations.json` and `automation-runs.json`. The Macros and Workflows sidebars, editors,
+palette entries and history panels are unchanged. They read `macros`, `workflows`, `macroRuns` and
+`workflowRuns`, which are derived from the store by the pure adapters in
+`src/store/slices/automationViews.ts`, and they write back through them:
+
+- An automation with only `type-keys` steps, no triggers and no parameters shows as a macro, and
+  every other automation shows as a workflow. An empty automation follows its `legacy` provenance.
+- The workflow view reads `run-automation` as `run-macro` and always shows the `manual` trigger.
+  Saving maps both back.
+- A run shows in the Macros history when it carries `targetCount` (macro playbacks record it) and
+  in the Workflows history otherwise. Each panel's Clear removes only the runs it shows.
+
+Macro playback runs the stored automation with `runAutomation`
+(`src/store/slices/macroKeysPlayback.ts`). Its `type-keys` step uses its saved typing speed, and
+the Play dialog's timing is a one-run override. Multi-terminal playback stays lock-step until
+slice 5. A workflow run executes the stored automation, so a `run-automation` step runs the
+called automation inline and is recorded once, in the caller's history.
+
+The legacy `macros.json`, `workflows.json`, `macro-runs.json` and `runs.json` are frozen. The UI
+never writes them, their commands stay registered for slice 12 to remove, and connection-id
+changes re-point the automations' trigger ids instead (`AutomationManager::
+follow_connection_id_changes`). The first boot of such a build sets `legacyFrozenAt` in
+`automations.json` and follows, once, the deletions the old UI made in the legacy files during the
+transition (slices 2 and 3), so they do not reappear. It does this only for a source file that
+reads cleanly and only for a store that has provenance. After that, a legacy-side change comes
+from an older build. The reconcile pass merges it and reports it in the recovery warnings
+(`migrate::merge_warning`), but never follows a deletion (#5971).
 
 #### Scheduled workflows and macros
 

@@ -39,14 +39,14 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn((m) => Promise.resolve(m)),
-  deleteMacro: vi.fn(() => Promise.resolve()),
+vi.mock("@/services/automationApi", () => ({
+  listAutomations: vi.fn(() => Promise.resolve([])),
+  saveAutomation: vi.fn((a: unknown) => Promise.resolve(a)),
+  deleteAutomation: vi.fn(() => Promise.resolve()),
 }));
 
 import { useAppStore } from "./appStore";
-import { saveMacro as apiSaveMacro } from "@/services/macroApi";
+import { saveAutomation as apiSaveMacro } from "@/services/automationApi";
 import { toast } from "@/components/ui";
 
 describe("appStore — macro recording slice (#1674)", () => {
@@ -176,9 +176,18 @@ describe("appStore — macro recording slice (#1674)", () => {
     expect(payload.description).toBe("says hi");
     expect(payload.tags).toEqual(["demo"]);
     expect(payload.id).toBeTruthy();
+    // Saved as one recorded type-keys step (#5818, slice 4).
+    expect(payload.triggers).toEqual([]);
     expect(payload.steps).toEqual([
-      { data: "echo hi", delayMs: 0 },
-      { data: "\r", delayMs: 300 },
+      {
+        kind: "type-keys",
+        chunks: [
+          { data: "echo hi", delayMs: 0 },
+          { data: "\r", delayMs: 300 },
+        ],
+        timing: "recorded",
+        recorded: true,
+      },
     ]);
 
     // After a successful save the recording state is fully reset.

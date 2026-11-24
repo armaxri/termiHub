@@ -20,8 +20,7 @@ const mocks = vi.hoisted(() => ({
   onTerminalOutput: vi.fn(),
   injector: vi.fn((_tabId: string, _data: string) => true),
   getTerminalInputInjector: vi.fn(),
-  recordWorkflowRun: vi.fn(),
-  recordMacroRun: vi.fn(),
+  recordAutomationRun: vi.fn(),
   ensureWorkflowSubscribed: vi.fn(),
   settings: {
     workflowLocalProcessEnabled: true,
@@ -45,12 +44,8 @@ vi.mock("@/services/macroPlayback", async (importOriginal) => ({
   getTerminalInputInjector: () => mocks.getTerminalInputInjector(),
 }));
 
-vi.mock("@/services/workflowApi", () => ({
-  recordWorkflowRun: (run: unknown) => mocks.recordWorkflowRun(run),
-}));
-
-vi.mock("@/services/macroApi", () => ({
-  recordMacroRun: (run: unknown) => mocks.recordMacroRun(run),
+vi.mock("@/services/automationApi", () => ({
+  recordAutomationRun: (run: unknown) => mocks.recordAutomationRun(run),
 }));
 
 vi.mock("@/utils/frontendLog", async (importOriginal) => ({
@@ -95,7 +90,7 @@ async function listenerAttached(): Promise<void> {
 }
 
 function workflow(steps: WorkflowStep[], name = "wf"): Workflow {
-  return { id: `wf-${name}`, name, steps } as Workflow;
+  return { id: `wf-${name}`, name, steps, tags: [], triggers: [] } as unknown as Workflow;
 }
 
 let state: Partial<AppState>;
@@ -132,8 +127,7 @@ beforeEach(() => {
   });
   mocks.injector.mockReset().mockReturnValue(true);
   mocks.getTerminalInputInjector.mockReset().mockReturnValue(mocks.injector);
-  mocks.recordWorkflowRun.mockReset().mockResolvedValue([]);
-  mocks.recordMacroRun.mockReset().mockResolvedValue([]);
+  mocks.recordAutomationRun.mockReset().mockResolvedValue([]);
   mocks.ensureWorkflowSubscribed.mockReset().mockResolvedValue(undefined);
   mocks.settings.workflowLocalProcessEnabled = true;
   mocks.settings.workflowLocalProcessAllowlist = undefined;
@@ -280,7 +274,7 @@ describe("runWorkflowOnTarget — sessionless runs (#3791)", () => {
 
   it("fails a run-macro step instead of touching the dead tab", async () => {
     state.macros = [
-      { id: "m1", name: "M", steps: [{ data: "x", delayMs: 0 }] } as unknown as Macro,
+      { id: "m1", name: "M", tags: [], steps: [{ data: "x", delayMs: 0 }] } as unknown as Macro,
     ];
     const result = await run(workflow([{ kind: "run-macro", macroId: "m1" }]), {
       sessionless: true,
@@ -304,25 +298,25 @@ describe("runWorkflowOnTarget — sessionless runs (#3791)", () => {
   });
 });
 
-describe("runWorkflowOnTarget — run-macro labels and history", () => {
-  it("labels an unknown tab 'Terminal' and tolerates a non-array history reply", async () => {
+describe("runWorkflowOnTarget — run-macro and history", () => {
+  it("types a run-macro step inline and records only the workflow's run (#5818)", async () => {
     state.macros = [
-      { id: "m1", name: "M", steps: [{ data: "x", delayMs: 0 }] } as unknown as Macro,
+      { id: "m1", name: "M", tags: [], steps: [{ data: "x", delayMs: 0 }] } as unknown as Macro,
     ];
-    mocks.recordMacroRun.mockResolvedValueOnce(null);
 
     const result = await run(workflow([{ kind: "run-macro", macroId: "m1" }]));
 
     expect(result.status).toBe("completed");
-    expect(mocks.recordMacroRun).toHaveBeenCalledWith(
-      expect.objectContaining({ targetLabels: ["Terminal"], origin: "workflow-step" })
+    expect(mocks.injector).toHaveBeenCalledWith("tab-1", "x");
+    expect(mocks.recordAutomationRun).toHaveBeenCalledTimes(1);
+    expect(mocks.recordAutomationRun).toHaveBeenCalledWith(
+      expect.objectContaining({ automationId: "wf-wf", origin: "manual", tabId: "tab-1" })
     );
-    await vi.waitFor(() => expect(state.macroRuns).toEqual([]));
   });
 
   it("stores an empty history when the workflow record reply is not an array", async () => {
     state.workflowRuns = [{ id: "stale" }] as AppState["workflowRuns"];
-    mocks.recordWorkflowRun.mockResolvedValueOnce(undefined);
+    mocks.recordAutomationRun.mockResolvedValueOnce(undefined);
 
     await run(workflow([{ kind: "wait", delayMs: 0 }]));
 
@@ -330,17 +324,14 @@ describe("runWorkflowOnTarget — run-macro labels and history", () => {
   });
 
   it("never lets a synchronously-throwing history write fail the run", async () => {
-    mocks.recordWorkflowRun.mockImplementationOnce(() => {
+    mocks.recordAutomationRun.mockImplementationOnce(() => {
       throw new Error("no tauri");
     });
 
     const result = await run(workflow([{ kind: "wait", delayMs: 0 }]));
 
     expect(result.status).toBe("completed");
-    expect(mocks.frontendLog).toHaveBeenCalledWith(
-      "workflow",
-      "Failed to record workflow run: no tauri"
-    );
+    expect(mocks.frontendLog).toHaveBeenCalledWith("workflow", "Failed to record run: no tauri");
   });
 
   it("still runs when warming the region subscription throws synchronously", async () => {

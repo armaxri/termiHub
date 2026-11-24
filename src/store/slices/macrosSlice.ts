@@ -1,20 +1,12 @@
 import { StateCreator } from "zustand";
 
 import { toast } from "@/components/ui";
-import {
-  listMacros as apiListMacros,
-  saveMacro as apiSaveMacro,
-  deleteMacro as apiDeleteMacro,
-  listMacroRuns as apiListMacroRuns,
-  clearMacroRunHistory as apiClearMacroRunHistory,
-} from "@/services/macroApi";
+import { saveAutomation as apiSaveAutomation } from "@/services/automationApi";
 import { parseMacroEnvelope, resolveImportCollisions } from "@/services/macroIo";
 import {
-  runMacroPlayback,
   getTerminalInputInjector,
   type MacroTimingMode,
   type MacroInjector,
-  type MacroPlaybackHandle,
   type MacroPlaybackStatus,
 } from "@/services/macroPlayback";
 import { Macro, MacroRun, MacroRunOrigin, MacroStep } from "@/types/macro";
@@ -26,7 +18,13 @@ import { currentSessionView, regionExited } from "../sessionBridge";
 import type { AppState } from "../appStore";
 import { collectLiveTabs, getActiveTab } from "../layoutHelpers";
 import { filterConnectedTerminalTabIds } from "../tabQueries";
+import { automationToMacro, isMacroShaped, macroToAutomation } from "./automationViews";
 import { createMacroFanoutInjector, describeMacroFanoutOutcome } from "./macroFanout";
+import {
+  effectiveTimingMode,
+  playAutomationKeys,
+  type MacroKeysPlayback,
+} from "./macroKeysPlayback";
 import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -64,7 +62,7 @@ export interface PlayMacroOptions {
    * precedence over {@link targetTabId}.
    */
   targetTabIds?: string[];
-  /** Timing mode; defaults to `"real-time"`. */
+  /** Timing override; defaults to the macro's saved typing speed (#5818). */
   timingMode?: MacroTimingMode;
   /** Per-step delay (ms) for the `"fixed"` timing mode. */
   fixedDelayMs?: number;
@@ -82,7 +80,7 @@ export interface PlayMacroOptions {
  * {@link AppState.cancelMacroPlayback} can stop it without threading the handle
  * through store state (it is not serializable). `null` when nothing is playing.
  */
-let activeMacroPlayback: MacroPlaybackHandle | null = null;
+let activeMacroPlayback: MacroKeysPlayback | null = null;
 
 /** Generate a unique macro id. */
 function generateMacroId(): string {
@@ -178,6 +176,12 @@ export interface MacrosSlice {
 }
 
 export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => {
+  /** A macro the local library does not hold yet (made in another window). */
+  const fetchMacro = async (macroId: string): Promise<Macro | undefined> => {
+    const automation = await get().fetchAutomationForRun(macroId);
+    return automation && isMacroShaped(automation) ? automationToMacro(automation) : undefined;
+  };
+
   /**
    * Multi-target playback (PROD-042, #3443): replay `macro` into every connected
    * terminal in `requested`, in lock-step, through the shared `send_input` seam.
@@ -206,7 +210,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       activeMacroPlayback = null;
     }
 
-    const timingMode = opts?.timingMode ?? "real-time";
+    const timingMode = effectiveTimingMode(get(), macro, opts ?? {});
     const fanout = createMacroFanoutInjector(targets, getTerminalInputInjector(), (ids) =>
       filterConnectedTerminalTabIds(get(), ids)
     );
@@ -230,10 +234,11 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     });
     frontendLog("macro_playback", `fan-out macro=${macro.id} targets=${targets.length}`);
 
-    const handle = runMacroPlayback(
-      macro.steps,
+    const handle = playAutomationKeys(
+      get(),
+      macro,
       fanout.inject,
-      { timingMode, fixedDelayMs: opts?.fixedDelayMs },
+      { timingMode: opts?.timingMode, fixedDelayMs: opts?.fixedDelayMs },
       {
         onProgress: (played, stepTotal) => {
           // Narrow the receiving set to the targets still live (#3446) so a tab
@@ -296,28 +301,20 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     // Macros
     macros: [],
 
-    loadMacros: async () => {
-      try {
-        const macros = await apiListMacros();
-        set({ macros });
-      } catch (err) {
-        frontendLog("app_store", `Failed to load macros: ${errorMessage(err)}`);
-      }
-    },
+    // The library lives in the automation store (#5818, slice 4); these are
+    // thin adapters that read and write it through the macro view.
+    loadMacros: () => get().loadAutomations(),
 
     saveMacroToBackend: async (macro) => {
-      const saved = await apiSaveMacro(macro);
-      await get().loadMacros();
-      return saved;
+      const existing = get().automations.find((a) => a.id === macro.id);
+      const saved = await get().saveAutomationToBackend(macroToAutomation(macro, existing));
+      return automationToMacro(saved);
     },
 
     deleteMacroFromBackend: async (macroId) => {
       // Only mutate local state after the backend delete resolves, and rethrow
       // on failure so the caller can surface the error (mirrors workspaces).
-      await apiDeleteMacro(macroId);
-      set((state) => ({
-        macros: state.macros.filter((m) => m.id !== macroId),
-      }));
+      await get().deleteAutomationFromBackend(macroId);
     },
 
     importMacros: async (json) => {
@@ -326,10 +323,10 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       const parsed = parseMacroEnvelope(json);
       const prepared = resolveImportCollisions(parsed, get().macros, generateMacroId);
       for (const macro of prepared) {
-        await apiSaveMacro(macro);
+        await apiSaveAutomation(macroToAutomation(macro));
       }
       // Refresh once, after all saves, rather than per-macro.
-      await get().loadMacros();
+      await get().loadAutomations();
       return prepared.length;
     },
 
@@ -437,30 +434,21 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     // Macro run history (#3543)
     macroRuns: [],
 
-    loadMacroRuns: async () => {
-      try {
-        const runs = await apiListMacroRuns();
-        set({ macroRuns: Array.isArray(runs) ? runs : [] });
-      } catch (err) {
-        frontendLog("app_store", `Failed to load macro run history: ${errorMessage(err)}`);
-      }
-    },
+    loadMacroRuns: () => get().loadAutomationRuns(),
 
-    clearMacroRunHistory: async () => {
-      const runs = await apiClearMacroRunHistory();
-      set({ macroRuns: Array.isArray(runs) ? runs : [] });
-    },
+    // Clears only the runs this history shows; workflow runs stay.
+    clearMacroRunHistory: () => get().clearAutomationRuns(get().macroRuns.map((r) => r.id)),
 
     // Macro playback (#1675)
     macroPlayback: null,
 
     playMacro: async (macroId, opts) => {
-      const state = get();
-      const macro = state.macros.find((m) => m.id === macroId);
+      const macro = get().macros.find((m) => m.id === macroId) ?? (await fetchMacro(macroId));
       if (!macro) {
         toast.error("Macro not found");
         return null;
       }
+      const state = get();
 
       const requested = opts?.targetTabIds?.length ? [...new Set(opts.targetTabIds)] : null;
       if (requested && requested.length > 1) {
@@ -499,7 +487,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         activeMacroPlayback = null;
       }
 
-      const timingMode = opts?.timingMode ?? "real-time";
+      const timingMode = effectiveTimingMode(get(), macro, opts ?? {});
       const injector = getTerminalInputInjector();
       const inject: MacroInjector = (data) => {
         if (!injector) return false;
@@ -525,10 +513,11 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         },
       });
 
-      const handle = runMacroPlayback(
-        macro.steps,
+      const handle = playAutomationKeys(
+        get(),
+        macro,
         inject,
-        { timingMode, fixedDelayMs: opts?.fixedDelayMs },
+        { timingMode: opts?.timingMode, fixedDelayMs: opts?.fixedDelayMs },
         {
           onProgress: (played, stepTotal) => {
             set((s) =>

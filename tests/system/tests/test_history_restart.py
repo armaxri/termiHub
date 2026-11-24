@@ -49,7 +49,8 @@ from termihub_harness import (
 pytestmark = pytest.mark.integration
 
 NETWORK_HISTORY_FILE = "network-tool-history.json"
-MACRO_RUNS_FILE = "macro-runs.json"
+#: Macro playbacks are recorded in the merged automation history (#5818).
+MACRO_RUNS_FILE = "automation-runs.json"
 HTTP_MONITORS_FILE = "http-monitors.json"
 HTTP_MONITOR_HISTORY_FILE = "http-monitor-history.json"
 
@@ -117,7 +118,8 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
 
     def _stored_macro_runs(self) -> list[dict[str, Any]]:
         runs = self._read_store(MACRO_RUNS_FILE).get("runs") or []
-        return [r for r in runs if isinstance(r, dict)]
+        # A macro playback is the record that carries ``targetCount``.
+        return [r for r in runs if isinstance(r, dict) and r.get("targetCount") is not None]
 
     def _stored_monitor_id(self, url: str) -> Optional[str]:
         monitors = self._read_store(HTTP_MONITORS_FILE).get("monitors") or []

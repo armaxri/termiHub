@@ -223,7 +223,7 @@ describe("open tabs follow a saved connection's id change (#3579)", () => {
 });
 
 describe("saved records follow a connection's id change (#3596)", () => {
-  it("re-reads the workflow list, whose on-connect triggers the backend re-pointed", async () => {
+  it("re-reads the automation list, whose on-connect triggers the backend re-pointed", async () => {
     const renamed = [
       {
         id: "wf",
@@ -231,18 +231,26 @@ describe("saved records follow a connection's id change (#3596)", () => {
         tags: [],
         steps: [],
         triggers: [{ kind: "on-connect", connectionIds: ["Job/x"] }],
-        parameters: [],
         createdAt: "",
         updatedAt: "",
       },
     ];
     vi.mocked(invoke).mockImplementation(async (cmd) =>
-      cmd === "list_workflows" ? renamed : undefined
+      cmd === "list_automations" ? renamed : undefined
     );
 
     emitBackendEvent("connection-ids-changed", [{ oldId: "Work/x", newId: "Job/x" }]);
 
-    await vi.waitFor(() => expect(useAppStore.getState().workflows).toEqual(renamed));
+    // The workflow view of the re-pointed automation (#5818, slice 4).
+    await vi.waitFor(() =>
+      expect(useAppStore.getState().workflows).toEqual([
+        {
+          ...renamed[0],
+          triggers: [{ kind: "manual" }, ...renamed[0].triggers],
+          parameters: [],
+        },
+      ])
+    );
   });
 
   it("does not re-read workflows for an empty batch", () => {
@@ -250,7 +258,7 @@ describe("saved records follow a connection's id change (#3596)", () => {
 
     useAppStore.getState().followConnectionIdChanges([]);
 
-    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "list_workflows")).toBe(false);
+    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "list_automations")).toBe(false);
   });
 });
 

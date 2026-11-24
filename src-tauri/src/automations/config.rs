@@ -290,6 +290,19 @@ pub enum AutomationTrigger {
     },
 }
 
+impl AutomationTrigger {
+    /// The connection ids a connection-bound trigger names, for re-pointing
+    /// them when a connection's id changes; `None` for a hotkey trigger.
+    pub fn connection_ids_mut(&mut self) -> Option<&mut Vec<String>> {
+        match self {
+            AutomationTrigger::OnConnect { connection_ids }
+            | AutomationTrigger::OnDisconnect { connection_ids, .. }
+            | AutomationTrigger::OnOutputMatch { connection_ids, .. } => Some(connection_ids),
+            AutomationTrigger::Hotkey { .. } => None,
+        }
+    }
+}
+
 /// A named, stored automation: an ordered list of typed steps, optionally
 /// launched by automatic triggers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
