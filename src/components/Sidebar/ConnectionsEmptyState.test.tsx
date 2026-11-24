@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { ConnectionsEmptyState } from "./ConnectionsEmptyState";
+import {
+  ConnectionsEmptyState,
+  EXPERIMENTAL_HINT_ACTION,
+  EXPERIMENTAL_HINT_TEXT,
+} from "./ConnectionsEmptyState";
 
 const openSettingsTab = vi.fn();
 const useExperimentalFeatures = vi.fn<() => boolean>();
@@ -60,20 +64,43 @@ describe("ConnectionsEmptyState", () => {
   it("shows the experimental-features signpost when experimental features are off", () => {
     useExperimentalFeatures.mockReturnValue(false);
     render();
-    const link = query("connections-empty-experimental-link");
-    expect(link).not.toBeNull();
-    // Names the toggle exactly as its Settings label reads (#5363).
-    expect(link?.textContent).toBe("Settings ▸ General ▸ Allow experimental features");
+    const hint = query("connections-empty-experimental-hint")!;
     // SSH tunnels, services and network tools graduated (#5858): only the
     // features still behind the switch are named.
-    const hint = query("connections-empty-experimental-hint")!;
     expect(hint.textContent).toContain("Workflows");
     expect(hint.textContent).not.toMatch(/tunnels|services|network tools/i);
-    act(() => link?.click());
+    const action = query("connections-empty-experimental-action")!;
+    act(() => action.click());
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
   });
 
-  it("has no stray punctuation-only text after the settings link (#5621)", () => {
+  // R-098 (#5873): a short sentence plus ONE button, not a long inline link
+  // whose path wraps into several underlined fragments in a narrow sidebar.
+  it("is one short sentence and one button, with no inline link", () => {
+    useExperimentalFeatures.mockReturnValue(false);
+    render();
+    const hint = query("connections-empty-experimental-hint")!;
+    const sentence = hint.querySelector("p")!;
+    expect(sentence.textContent).toBe(EXPERIMENTAL_HINT_TEXT);
+    expect(sentence.querySelector("button, a")).toBeNull();
+    const buttons = hint.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toBe(EXPERIMENTAL_HINT_ACTION);
+    expect(buttons[0].className).toContain("ui-btn");
+    expect(buttons[0].className).toContain("connections-empty__hint-action");
+    // The full path lives in the tooltip, not in the wrapping text.
+    expect(hint.textContent).not.toContain("▸");
+    expect(buttons[0].getAttribute("title")).toBe(
+      "Opens Settings ▸ General ▸ Allow experimental features"
+    );
+  });
+
+  it("keeps the action label short enough to fit the minimum sidebar width", () => {
+    expect(EXPERIMENTAL_HINT_ACTION.length).toBeLessThanOrEqual(24);
+    expect(EXPERIMENTAL_HINT_TEXT.length).toBeLessThanOrEqual(40);
+  });
+
+  it("has no stray punctuation-only text node (#5621)", () => {
     useExperimentalFeatures.mockReturnValue(false);
     render();
     const walker = document.createTreeWalker(
@@ -86,16 +113,13 @@ describe("ConnectionsEmptyState", () => {
       if (text !== "" && /^[.,;:]+$/.test(text)) orphans.push(text);
     }
     expect(orphans).toEqual([]);
-    // Nothing follows the link inside its paragraph that could wrap onto its own line.
-    const link = query("connections-empty-experimental-link")!;
-    expect(link.nextSibling?.textContent?.trim() ?? "").not.toMatch(/^[.,;:]/);
   });
 
   it("hides the experimental-features signpost when experimental features are on", () => {
     useExperimentalFeatures.mockReturnValue(true);
     render();
-    expect(query("connections-empty-experimental-link")).toBeNull();
-    expect(container.textContent).not.toContain("Allow experimental features");
+    expect(query("connections-empty-experimental-hint")).toBeNull();
+    expect(container.textContent).not.toContain(EXPERIMENTAL_HINT_ACTION);
     // The base call-to-action still renders.
     expect(query("connections-empty-new-connection")).not.toBeNull();
   });
