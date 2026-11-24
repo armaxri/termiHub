@@ -1,22 +1,4 @@
-import { t } from "@/i18n/catalog";
-import type { MacroRun, MacroRunOrigin } from "@/types/macro";
-
-/**
- * Sentence-case label for what launched a playback (R-081, #5680), matching
- * the workflow history's trigger labels ("Manual", "Scheduled").
- */
-export function macroRunOriginLabel(origin: MacroRunOrigin): string {
-  switch (origin) {
-    case "manual":
-      return t("macro.run.origin.manual");
-    case "palette":
-      return t("macro.run.origin.palette");
-    case "workflow-step":
-      return t("macro.run.origin.workflowStep");
-    case "scheduled":
-      return t("macro.run.origin.scheduled");
-  }
-}
+import type { MacroRun } from "@/types/macro";
 
 /** Where a playback went: the single target's label, or "N terminals". */
 export function macroRunTargetsText(run: MacroRun): string {

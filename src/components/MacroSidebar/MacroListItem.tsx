@@ -23,7 +23,7 @@ interface MacroListItemProps {
   onEdit: (macroId: string) => void;
   /** Open the schedule editor for this macro (PROD-043). */
   onSchedule?: (macroId: string) => void;
-  /** Narrow the run-history panel to this macro's playbacks (#3543). */
+  /** Narrow the one Automation history to this macro's runs (#3543, #5818). */
   onShowHistory?: (macroId: string) => void;
   onDuplicate: (macroId: string) => void;
   onExport: (macroId: string) => void;
