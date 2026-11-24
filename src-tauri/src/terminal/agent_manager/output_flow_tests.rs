@@ -150,7 +150,7 @@ async fn an_output_flood_is_delivered_complete_and_in_order() {
     let (_server, _app, manager) = connected(InitBehavior::Answer).await;
     let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
     manager
-        .register_session_output(AGENT, "remote-flood", tx)
+        .register_session_output(AGENT, "remote-flood", tx.into())
         .expect("route registered");
 
     // The answer is written after the last notification, so once it arrives

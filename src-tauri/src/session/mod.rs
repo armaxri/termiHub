@@ -14,6 +14,7 @@ pub mod graphical_upload;
 pub mod line_ending;
 pub mod manager;
 mod monitoring_controller;
+pub mod output_capture;
 mod output_sink;
 mod persistent_controller;
 pub mod process_ops;

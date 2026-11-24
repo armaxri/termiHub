@@ -99,6 +99,7 @@ impl OutputSink for JsonRpcOutputSink {
                     ConnectionOutputNotification {
                         session_id: session_id.to_owned(),
                         data: b64.encode(chunk),
+                        replay_id: None,
                     }
                     .into_params(),
                 ),

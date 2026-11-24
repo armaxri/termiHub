@@ -269,8 +269,11 @@ impl SessionManagerApi for FilesSessionManager {
     async fn resize(&self, _session_id: &str, _cols: u16, _rows: u16) -> Result<(), String> {
         Ok(())
     }
-    async fn get_buffer(&self, _session_id: &str) -> Result<Vec<u8>, String> {
-        Ok(Vec::new())
+    async fn get_buffer(
+        &self,
+        _session_id: &str,
+    ) -> Result<crate::daemon::client::SessionBuffer, String> {
+        Ok(Default::default())
     }
     async fn set_persistent_buffer_size_bytes(&self, _bytes: usize) {}
     async fn agent_forward_write(&self, _stream_id: &str, _data: Vec<u8>) {}

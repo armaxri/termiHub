@@ -25,7 +25,7 @@ fn registered(
     routes.register(session_id.to_string(), slot.clone());
     let (tx, rx) = mpsc::channel();
     let mut outputs = HashMap::new();
-    outputs.insert(session_id.to_string(), tx);
+    outputs.insert(session_id.to_string(), tx.into());
     (routes, outputs, slot, rx)
 }
 

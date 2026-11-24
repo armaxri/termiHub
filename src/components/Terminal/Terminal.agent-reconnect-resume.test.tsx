@@ -54,7 +54,9 @@ vi.mock("@/themes", () => ({
 }));
 
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
-const mockGetAgentSessionBuffer = vi.fn().mockResolvedValue(new Uint8Array());
+const mockGetAgentSessionBuffer = vi
+  .fn()
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
 vi.mock("@/services/api", () => ({
   createTerminal: (...a: unknown[]) => mockCreateTerminal(...a),
   sendInput: vi.fn().mockResolvedValue(undefined),
@@ -73,7 +75,7 @@ vi.mock("@/services/events", () => ({
     subscribeOutput: (...a: unknown[]) => mockSubscribeOutput(...(a as [])),
     subscribeExit: (...a: unknown[]) => mockSubscribeExit(...(a as [])),
     clearPendingExit: vi.fn(),
-    clearPendingOutput: vi.fn(),
+    holdOutput: () => ({ drain: () => [], release: vi.fn() }),
   },
 }));
 vi.mock("@/services/keybindings", () => ({

@@ -17,9 +17,9 @@ use tokio_util::sync::CancellationToken;
 
 use serde::Serialize;
 use tauri::Emitter;
-use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{
-    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry, SessionEndCause,
+    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry, OutputReplay,
+    SessionEndCause,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
 use termihub_core::session::prompt_ready::wait_for_prompt;
@@ -39,6 +39,7 @@ use crate::utils::errors::TerminalError;
 use termihub_core::files::FileEntry;
 
 use super::line_ending::{normalize_line_endings, LineEnding};
+use super::output_capture::{OutputCapture, ScrollbackReplay, StreamPosition};
 use super::output_sink::TerminalOutputSink;
 use super::persistent_controller::PersistentController;
 use super::remote_proxy::{ReattachOutcome, RemoteProxy, CORRELATION_ID_KEY};
@@ -87,6 +88,16 @@ pub struct TerminalOutputEvent {
     #[serde(serialize_with = "serialize_bytes_base64")]
     #[cfg_attr(test, ts(type = "string"))]
     pub data: Vec<u8>,
+    /// Where `data` starts in the session's output stream (#5990): how many
+    /// bytes this desktop received from the session before it. A tab that
+    /// repainted a [`ScrollbackReplay`](super::output_capture::ScrollbackReplay)
+    /// skips the part the replay already holds.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub offset: u64,
+    /// Which output stream of the session `offset` is in: a session created
+    /// again under the same id starts a new one at 0, with a larger epoch.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub epoch: u64,
 }
 
 /// Serialize a byte slice as a base64 (standard alphabet, padded) string.
@@ -94,13 +105,11 @@ pub struct TerminalOutputEvent {
 /// Paired with the base64 decode in `src/services/events.ts`; the two are exact
 /// inverses, including high bytes (0x80–0xFF), UTF-8 multi-byte sequences, and
 /// empty input (which encodes to the empty string). See [`TerminalOutputEvent`].
-fn serialize_bytes_base64<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+pub(super) fn serialize_bytes_base64<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    use base64::Engine;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    serializer.serialize_str(&encoded)
+    serializer.serialize_str(&crate::utils::ipc_bytes::encode_bytes_base64(bytes))
 }
 
 /// Exit event emitted when a terminal process exits.
@@ -483,9 +492,9 @@ impl SessionMap for HashMap<String, SessionEntry> {
 /// Per-session scrollback capture buffers, keyed by `session_id` (#1900).
 ///
 /// The outer lock guards the map (held only at create/replay/cleanup); each
-/// inner lock guards one session's [`RingBuffer`], written on the hot output
+/// inner lock guards one session's [`OutputCapture`], written on the hot output
 /// path and read on replay.
-type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>;
+type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<OutputCapture>>>>>;
 
 /// Per-session output-to-file loggers, keyed by `session_id` (#1960).
 ///
@@ -659,7 +668,7 @@ pub struct SessionManager {
     pending_creates: Arc<StdMutex<Reservations>>,
     /// Per-session 1 MiB scrollback capture (#1900), keyed by `session_id`.
     ///
-    /// Every session's emitted output is mirrored into a [`RingBuffer`] so that a
+    /// Every session's emitted output is mirrored into an [`OutputCapture`] so that a
     /// re-parented view in another window can repaint history via
     /// [`SessionManager::replay_scrollback`]. Plain local shells have no backend
     /// replay buffer of their own (unlike serial/agent sessions), so this is the
@@ -946,41 +955,68 @@ impl SessionManager {
         }
     }
 
-    /// Get-or-create the scrollback capture buffer for `session_id` (#1900).
+    /// Start the scrollback capture of a new output stream of `session_id`
+    /// (#1900), replacing that of a stream before it.
     ///
     /// Returns a handle the output reader writes through and
     /// [`Self::replay_scrollback`] reads from.
-    pub(super) fn ensure_output_buffer(&self, session_id: &str) -> Arc<StdMutex<RingBuffer>> {
+    pub(super) fn start_output_buffer(&self, session_id: &str) -> Arc<StdMutex<OutputCapture>> {
         let mut map = self
             .output_buffers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        map.entry(session_id.to_string())
-            .or_insert_with(|| Arc::new(StdMutex::new(RingBuffer::new(DEFAULT_BUFFER_CAPACITY))))
-            .clone()
+        let capture = Arc::new(StdMutex::new(OutputCapture::default()));
+        map.insert(session_id.to_string(), capture.clone());
+        capture
     }
 
     /// Replay a session's captured scrollback (#1900).
     ///
-    /// Returns the ring-buffered bytes so a freshly-created xterm in a
-    /// destination window can repaint history after a re-parent. Empty when the
-    /// session is unknown or nothing has been captured yet. The backend session
-    /// is never touched — this is a pure read of the capture buffer.
-    pub async fn replay_scrollback(&self, session_id: &str) -> Vec<u8> {
-        let buffer = {
-            let map = self
-                .output_buffers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            map.get(session_id).cloned()
-        };
-        match buffer {
-            Some(buffer) => buffer
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .read_all(),
-            None => Vec::new(),
+    /// Returns the ring-buffered bytes, and where they end in the session's
+    /// output stream, so a freshly-created xterm in a destination window can
+    /// repaint history after a re-parent. Empty when the session is unknown or
+    /// nothing has been captured yet. The backend session is never touched —
+    /// this is a pure read of the capture buffer.
+    pub async fn replay_scrollback(&self, session_id: &str) -> ScrollbackReplay {
+        self.read_capture(session_id, |capture, _| capture.snapshot())
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Read `session_id`'s capture, brought up to the last replay its source
+    /// sent (#5990), and that replay. `None` when it has no capture.
+    pub(super) async fn read_capture<T>(
+        &self,
+        session_id: &str,
+        read: impl FnOnce(&OutputCapture, Option<OutputReplay>) -> T,
+    ) -> Option<T> {
+        // The capture first: a stream's connection is registered before its
+        // capture starts, so the connection read after it is never an older one,
+        // whose positions would mean nothing in this capture.
+        let capture = self.output_capture(session_id)?;
+        let connection = self
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|entry| entry.connection.clone());
+        let mut capture = capture
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let replay = connection.and_then(|c| c.output_replay());
+        if let Some(replay) = replay {
+            capture.history_starts_at(replay.start);
         }
+        Some(read(&capture, replay))
+    }
+
+    /// The capture of `session_id`, if it has one.
+    fn output_capture(&self, session_id: &str) -> Option<Arc<StdMutex<OutputCapture>>> {
+        self.output_buffers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session_id)
+            .cloned()
     }
 
     /// Cancel an in-flight (still connecting) local session by its `connect_id`.
@@ -1525,7 +1561,7 @@ impl SessionManager {
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
-        let capture = self.ensure_output_buffer(&session_id);
+        let capture = self.start_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
@@ -1891,20 +1927,21 @@ impl SessionManager {
         hosted
     }
 
+    /// The desktop session bound to a frontend tab, if any (#2431).
+    fn session_of_tab(&self, tab_id: &str) -> Option<String> {
+        self.session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(_, binding)| binding.tab_id == tab_id)
+            .map(|(sid, _)| sid.clone())
+    }
+
     /// The agent-hosted session bound to a frontend tab, if any (SM-003): its
     /// agent id and remote (agent) session id, resolved through the tab-id
     /// identity bridge (#2431).
     pub async fn agent_session_for_tab(&self, tab_id: &str) -> Option<(String, String)> {
-        let session_id = {
-            let tab_ids = self
-                .session_tab_ids
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            tab_ids
-                .iter()
-                .find(|(_, binding)| binding.tab_id == tab_id)
-                .map(|(sid, _)| sid.clone())?
-        };
+        let session_id = self.session_of_tab(tab_id)?;
         let sessions = self.sessions.lock().await;
         let entry = sessions.get(&session_id)?;
         Some((
@@ -2431,7 +2468,7 @@ impl SessionManager {
         // Stream output for the re-attached session (buffer replay is already
         // in-flight from `attach_session`).
         let sessions_clone = self.sessions.clone();
-        let capture = self.ensure_output_buffer(&session_id);
+        let capture = self.start_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
@@ -2521,7 +2558,7 @@ impl SessionManager {
     pub async fn get_remote_session_buffer(
         &self,
         session_id: &str,
-    ) -> Result<Vec<u8>, TerminalError> {
+    ) -> Result<ScrollbackReplay, TerminalError> {
         self.persistent()
             .get_remote_session_buffer(session_id)
             .await
@@ -2675,7 +2712,7 @@ impl SessionManager {
         emitter: E,
         sessions: Arc<Mutex<M>>,
         prompt_ready: Option<Arc<tokio::sync::Notify>>,
-        capture: Arc<StdMutex<RingBuffer>>,
+        capture: Arc<StdMutex<OutputCapture>>,
         output_buffers: OutputBuffers,
         session_loggers: SessionLoggers,
         session_tab_ids: SessionTabIds,
@@ -2690,9 +2727,10 @@ impl SessionManager {
         let sink = TerminalOutputSink::new(
             session_id.clone(),
             emitter.clone(),
-            capture,
+            capture.clone(),
             session_loggers.clone(),
         );
+        let own_capture = capture;
         let opts = PumpOptions {
             coalesce: true,
             max_coalesce_bytes: MAX_COALESCE_BYTES,
@@ -2710,6 +2748,7 @@ impl SessionManager {
             Vec::new(),
             &emitter,
             &sessions,
+            &own_capture,
             &output_buffers,
             &session_loggers,
             &session_tab_ids,
@@ -2719,14 +2758,15 @@ impl SessionManager {
 
     /// Mirror emitted output into a session's scrollback capture buffer (#1900).
     ///
-    /// The write is bounded by the [`RingBuffer`]'s 1 MiB capacity, so long
+    /// The write is bounded by the capture's 1 MiB capacity, so long
     /// histories are truncated to the most recent bytes — matching the concept's
     /// stated scrollback-fidelity limit.
-    pub(super) fn capture_bytes(capture: &StdMutex<RingBuffer>, data: &[u8]) {
+    /// Returns where `data` starts in the session's stream (#5990).
+    pub(super) fn capture_bytes(capture: &StdMutex<OutputCapture>, data: &[u8]) -> StreamPosition {
         capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .write(data);
+            .write(data)
     }
 
     /// The exit code a session's `terminal-exit` carries: the real exit
@@ -2751,14 +2791,18 @@ impl SessionManager {
         data: Vec<u8>,
         emitter: &E,
         sessions: &Arc<Mutex<M>>,
+        capture: &Arc<StdMutex<OutputCapture>>,
         output_buffers: &OutputBuffers,
         session_loggers: &SessionLoggers,
         session_tab_ids: &SessionTabIds,
     ) {
         if !data.is_empty() {
+            let StreamPosition { epoch, offset } = Self::capture_bytes(capture, &data);
             let event = TerminalOutputEvent {
                 session_id: session_id.to_string(),
                 data,
+                offset,
+                epoch,
             };
             emitter.emit_output(&event);
         }
@@ -2826,10 +2870,18 @@ impl SessionManager {
 
         // Drop the session's scrollback capture buffer (#1900) so a dead
         // session's 1 MiB ring does not linger.
-        output_buffers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id);
+        // Only its own: a new stream of the same session may have started.
+        {
+            let mut buffers = output_buffers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if buffers
+                .get(session_id)
+                .is_some_and(|current| Arc::ptr_eq(current, capture))
+            {
+                buffers.remove(session_id);
+            }
+        }
 
         // (The identity bridge entry for this session was already captured and
         // removed above, where its presence gated the genuine-drop fold — #2439.)

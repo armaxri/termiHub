@@ -308,11 +308,34 @@ export type TerminalExitCallback = (
   endCause: SessionEndCause | null
 ) => void;
 
+/** Where a chunk of output starts (#5990): in which stream of the session, and at which byte. */
+export type OutputPosition = Pick<TerminalOutputEvent, "offset" | "epoch">;
+
+/** A `terminal-output` subscriber: the bytes and where they start. */
+export type TerminalOutputCallback = (data: Uint8Array, position: OutputPosition) => void;
+
+/** One output event, kept for a later subscriber. */
+export interface OutputChunk {
+  data: Uint8Array;
+  /** Where `data` starts. */
+  position: OutputPosition;
+}
+
+/** A session's output, collected for one tab ({@link TerminalOutputDispatcher.holdOutput}). */
+export interface OutputHold {
+  /** End the hold and take what it collected, in order. */
+  drain: () => OutputChunk[];
+  /** End the hold without showing it (the tab went away). */
+  release: () => void;
+}
+
 export class TerminalOutputDispatcher {
-  private outputCallbacks = new Map<string, Set<(data: Uint8Array) => void>>();
+  private outputCallbacks = new Map<string, Set<TerminalOutputCallback>>();
   private exitCallbacks = new Map<string, Set<TerminalExitCallback>>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
-  private pendingOutput = new Map<string, Uint8Array[]>();
+  private pendingOutput = new Map<string, OutputChunk[]>();
+  /** The output collected for each tab that holds a session (#5990). */
+  private heldOutput = new Map<string, Set<OutputChunk[]>>();
   /**
    * Per-session cap on pre-subscribe buffered output (bytes). A session that
    * emits a lot of output before (or without) a subscriber registering would
@@ -359,13 +382,16 @@ export class TerminalOutputDispatcher {
     const unlistenOutput = await listen<TerminalOutputEvent>(
       TAURI_EVENT.terminalOutput,
       (event) => {
-        const { session_id, data } = event.payload;
+        const { session_id, data, offset, epoch } = event.payload;
         this.outputTap?.(session_id, data);
         const cbs = this.outputCallbacks.get(session_id);
         const chunk = base64ToBytes(data);
+        const holds = this.heldOutput.get(session_id);
+        const position = { offset, epoch };
+        for (const hold of holds ?? []) hold.push({ data: chunk, position });
         if (cbs && cbs.size > 0) {
-          for (const cb of cbs) cb(chunk);
-        } else {
+          for (const cb of cbs) cb(chunk, position);
+        } else if (!holds) {
           // Buffer output for sessions whose subscriber hasn't registered yet
           // (e.g. pre-existing sessions created by agent setup).
           let buf = this.pendingOutput.get(session_id);
@@ -373,7 +399,7 @@ export class TerminalOutputDispatcher {
             buf = [];
             this.pendingOutput.set(session_id, buf);
           }
-          buf.push(chunk);
+          buf.push({ data: chunk, position });
           this.trimPendingOutput(buf);
         }
       }
@@ -426,7 +452,7 @@ export class TerminalOutputDispatcher {
   }
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
-  subscribeOutput(sessionId: string, callback: (data: Uint8Array) => void): () => void {
+  subscribeOutput(sessionId: string, callback: TerminalOutputCallback): () => void {
     let cbs = this.outputCallbacks.get(sessionId);
     if (!cbs) {
       cbs = new Set();
@@ -437,8 +463,8 @@ export class TerminalOutputDispatcher {
     const buffered = this.pendingOutput.get(sessionId);
     if (buffered) {
       this.pendingOutput.delete(sessionId);
-      for (const chunk of buffered) {
-        callback(chunk);
+      for (const { data, position } of buffered) {
+        callback(data, position);
       }
     }
     return () => {
@@ -478,9 +504,39 @@ export class TerminalOutputDispatcher {
     this.pendingExit.delete(sessionId);
   }
 
-  /** Discard any buffered output for a session (call before writing cached buffer to avoid duplication). */
-  clearPendingOutput(sessionId: string): void {
+  /**
+   * Collect every byte a session outputs from now on, without the pre-subscribe
+   * cap and also while other tabs show it, until the hold is drained (#5990).
+   *
+   * A tab that repaints a session holds it from before it reads the scrollback
+   * until it subscribes. Output of that window is newer than the scrollback and
+   * reaches the tab no other way. Output still waiting for a subscriber moves
+   * into the hold.
+   */
+  holdOutput(sessionId: string): OutputHold {
+    const hold: OutputChunk[] = this.pendingOutput.get(sessionId) ?? [];
     this.pendingOutput.delete(sessionId);
+    const holds = this.heldOutput.get(sessionId) ?? new Set();
+    this.heldOutput.set(sessionId, holds);
+    holds.add(hold);
+    const end = () => {
+      holds.delete(hold);
+      if (holds.size === 0 && this.heldOutput.get(sessionId) === holds) {
+        this.heldOutput.delete(sessionId);
+      }
+      return hold.splice(0);
+    };
+    return {
+      drain: end,
+      release: () => {
+        const chunks = end();
+        // Nobody else has it: keep it for the next subscriber, within the cap.
+        if (chunks.length === 0 || holds.size > 0 || this.outputCallbacks.has(sessionId)) return;
+        const waiting = [...chunks, ...(this.pendingOutput.get(sessionId) ?? [])];
+        this.trimPendingOutput(waiting);
+        this.pendingOutput.set(sessionId, waiting);
+      },
+    };
   }
 
   /**
@@ -489,11 +545,11 @@ export class TerminalOutputDispatcher {
    * oldest chunks once the ceiling is exceeded. Always keeps at least the most
    * recent chunk, so a single oversized chunk is never discarded outright.
    */
-  private trimPendingOutput(buf: Uint8Array[]): void {
+  private trimPendingOutput(buf: OutputChunk[]): void {
     let total = 0;
-    for (const chunk of buf) total += chunk.length;
+    for (const chunk of buf) total += chunk.data.length;
     while (total > TerminalOutputDispatcher.MAX_PENDING_OUTPUT_BYTES && buf.length > 1) {
-      total -= buf.shift()!.length;
+      total -= buf.shift()!.data.length;
     }
   }
 
@@ -511,6 +567,7 @@ export class TerminalOutputDispatcher {
     this.outputCallbacks.clear();
     this.exitCallbacks.clear();
     this.pendingOutput.clear();
+    this.heldOutput.clear();
     this.pendingExit.clear();
     this.initPromise = null;
   }

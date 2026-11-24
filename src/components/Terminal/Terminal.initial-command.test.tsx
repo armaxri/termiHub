@@ -78,7 +78,9 @@ vi.mock("@/services/api", () => ({
   resizeTerminal: vi.fn().mockResolvedValue(undefined),
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   detachPersistentTab: vi.fn().mockResolvedValue(0),
-  getAgentSessionBuffer: vi.fn().mockResolvedValue(new Uint8Array()),
+  getAgentSessionBuffer: vi
+    .fn()
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false }),
 }));
 
 vi.mock("@/services/events", () => ({
@@ -90,7 +92,7 @@ vi.mock("@/services/events", () => ({
     }),
     subscribeExit: vi.fn(() => vi.fn()),
     clearPendingExit: vi.fn(),
-    clearPendingOutput: vi.fn(),
+    holdOutput: () => ({ drain: () => [], release: vi.fn() }),
   },
 }));
 
