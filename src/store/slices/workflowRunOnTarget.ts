@@ -2,7 +2,9 @@
  * Run one workflow against one terminal target — the per-target half of
  * `AppState.runWorkflow` (#1852, extracted for PROD-047 so a manual run can fan
  * out across several sessions). Builds the step seams bound to the target tab
- * (send / run-macro / local-process / wait-for-output), drives the
+ * (send / local-process / wait-for-output), runs it through the automation
+ * runner (#5818: the stored automation behind the workflow view, so a
+ * `run-automation` step runs the called automation inline), drives the
  * `workflow-run` projection region, records the run in history (PROD-0046),
  * and surfaces progress, retries (PROD-045), and the outcome as a toast.
  */
@@ -19,15 +21,13 @@ import {
   cancelLocalProcess,
   subscribeLocalProcessOutput,
 } from "@/services/localProcessApi";
-import { runMacroPlayback, getTerminalInputInjector } from "@/services/macroPlayback";
+import { runAutomation } from "@/services/automationRunner";
+import { getTerminalInputInjector } from "@/services/macroPlayback";
 import { onTerminalOutput } from "@/services/events";
 import { newId } from "@/services/transport/ids";
-import { recordWorkflowRun as apiRecordWorkflowRun } from "@/services/workflowApi";
 import {
-  runWorkflow as runWorkflowSteps,
   matchesOutput,
   type WorkflowSendSeam,
-  type WorkflowRunMacroSeam,
   type WorkflowRunHandle,
   type WorkflowRunResult,
   type WorkflowAuthorizeLocalProcessSeam,
@@ -54,7 +54,8 @@ import {
   openWorkflowOutputContent,
   setWorkflowOutputProcessResult,
 } from "../workflowRunBridge";
-import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
+import { automationForRun, recordAutomationRun } from "./automationStoreState";
+import { workflowRunToAutomationRun, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 
 /**
@@ -155,7 +156,7 @@ export interface WorkflowTargetRun {
   /**
    * The run has no live session (an on-disconnect trigger, #3791): it runs in
    * the connection's context after the session ended. Send-based steps,
-   * `run-macro` and `wait-for-output` fail at once instead of touching the
+   * typing steps and `wait-for-output` fail at once instead of touching the
    * dead tab; `wait` and `run-local-process` work as usual.
    */
   sessionless?: boolean;
@@ -234,33 +235,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   const send: WorkflowSendSeam = (data) => {
     if (!injector || sessionless) return false;
     return injector(targetTabId, data);
-  };
-
-  // A `run-macro` step replays a stored macro by id through the macro-playback
-  // service, into the same target tab, reusing the macro's recorded timing.
-  const runMacro: WorkflowRunMacroSeam = async (macroId) => {
-    if (!injector || sessionless) return false;
-    const macro = get().macros.find((m) => m.id === macroId);
-    if (!macro || macro.steps.length === 0) return false;
-    const startedAt = new Date();
-    const macroHandle = runMacroPlayback(macro.steps, (data) => injector(targetTabId, data), {
-      timingMode: "real-time",
-    });
-    const macroResult = await macroHandle.done;
-    recordMacroRun(
-      set,
-      buildMacroRun({
-        macro,
-        startedAt,
-        endedAt: new Date(),
-        status: macroResult.status,
-        stepsPlayed: macroResult.stepsPlayed,
-        targetLabels: [targetLabel ?? macroTargetLabel(get(), targetTabId)],
-        origin: "workflow-step",
-        error: macroResult.status === "error" ? "The terminal stopped accepting input" : undefined,
-      })
-    );
-    return macroResult.status === "completed";
   };
 
   // The authorization gate for a `run-local-process` step (#1857). Fails
@@ -507,11 +481,12 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     preserveOutput: fanout !== undefined,
   });
 
-  const handle = runWorkflowSteps(
-    workflow.steps,
+  const automation = automationForRun(get(), workflowId) ?? workflowToAutomation(workflow);
+  const handle = runAutomation(
+    automation,
     {
       send,
-      runMacro,
+      resolveAutomation: (id) => automationForRun(get(), id),
       readScriptFile: localReadFile,
       // #4310 (FEC2-001): a run-script sourcePath is read only when the user
       // picked or confirmed it on this machine. The allowlist lives in the
@@ -594,17 +569,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     targetLabel: targetLabel || undefined,
     triggeredBy,
   };
-  try {
-    void apiRecordWorkflowRun(runRecord)
-      .then((runs) => set({ workflowRuns: Array.isArray(runs) ? runs : [] }))
-      .catch((err) => {
-        frontendLog("workflow", `Failed to record workflow run: ${errorMessage(err)}`);
-      });
-  } catch (err) {
-    // Guard even a synchronous throw (e.g. no Tauri bridge): recording must
-    // never fail or block the run.
-    frontendLog("workflow", `Failed to record workflow run: ${errorMessage(err)}`);
-  }
+  recordAutomationRun(set, workflowRunToAutomationRun(runRecord), "workflow");
 
   // Settle this run's keyed region entry (#3418). Keyed by run id, a run a newer
   // runWorkflow superseded settles only itself and cannot stamp the newer run's

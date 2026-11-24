@@ -194,10 +194,8 @@ export const createStartupSlice: StateCreator<AppState, [], [], StartupSlice> = 
     get().loadEmbeddedServers();
     // Load workspaces
     get().loadWorkspaces();
-    // Load macros
-    get().loadMacros();
-    // Load workflows
-    get().loadWorkflows();
+    // Load the automation library: the macro and workflow views (#5818)
+    get().loadAutomations();
     // Load scheduled runs (PROD-043)
     get().loadSchedules();
     // Load installed plugins (#1997)
