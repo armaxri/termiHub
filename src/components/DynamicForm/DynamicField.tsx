@@ -241,6 +241,7 @@ export function DynamicField({
       hint={field.description || undefined}
       hintId={descriptionId}
       hintTestId={`${testIdBase}-hint`}
+      labelTestId={`${testIdBase}-label`}
       details={
         platformNote || credentialStorageOff || credentialSaved || storedSecret || chosenNote ? (
           <FieldStatusNotes

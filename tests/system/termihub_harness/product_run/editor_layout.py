@@ -1,5 +1,6 @@
 """Measure the connection editor for :func:`~.grades.editor_layout_problems` (#5641)
-and :func:`~.grades.editor_primary_problems` (#5755)."""
+and :func:`~.grades.editor_primary_problems` (#5755), and the whole editor for
+:func:`~.grades.connection_editor_layout_problems` (#5835)."""
 
 from __future__ import annotations
 
@@ -64,3 +65,46 @@ def measure_editor_footer(driver: Any, actions: str = ACTIONS) -> list[dict]:
         classes = (driver.get_attribute(test_id, "class") or "").split()
         buttons.append({"testId": test_id, "rect": item["rect"], "primary": "ui-btn--primary" in classes})
     return buttons
+
+
+#: The fields whose hints the #5835 grade reads, when shown.
+HINTED_FIELDS = ("host", "port", "username", "authMethod", "keyPath", "password")
+#: A remote-desktop editor's fields whose order the #5835 grade reads.
+REMOTE_DESKTOP_FIELDS = ("port", "useSshTunnel", "username", "password", "savePassword")
+
+
+def measure_connection_editor(driver: Any, *, remote_desktop: bool = False) -> dict:
+    """What :func:`~.grades.connection_editor_layout_problems` reads (#5835).
+
+    The open editor's Type / Name boxes, the shown hints of
+    :data:`HINTED_FIELDS` with their labels, the "Fill from ~/.ssh/config"
+    link and Host label (SSH only), the footer buttons and whether a Terminal
+    page is offered. ``remote_desktop`` adds the VNC / RDP field boxes of
+    :data:`REMOTE_DESKTOP_FIELDS` that are shown.
+    """
+    m: dict = {
+        "type": driver.measure_element("connection-editor-type-select")["rect"],
+        "name": driver.measure_element("connection-editor-name-input")["rect"],
+        "footer": measure_editor_footer(driver),
+        "terminal_page": driver.exists("settings-nav-terminal"),
+        "hints": [
+            {
+                "key": key,
+                "label": driver.get_text(f"field-{key}-label"),
+                "hint": driver.get_text(f"field-{key}-hint"),
+            }
+            for key in HINTED_FIELDS
+            if driver.exists(f"field-{key}-hint")
+        ],
+    }
+    if driver.exists("ssh-config-import-connection-open"):
+        m["ssh_import"] = driver.measure_element("ssh-config-import-connection-open")["rect"]
+        m["host_label"] = driver.measure_element("field-host-label")["rect"]
+    if remote_desktop:
+        m["terminal"] = False
+        m["fields"] = {
+            key: driver.measure_element(f"dynamic-field-{key}")["rect"]
+            for key in REMOTE_DESKTOP_FIELDS
+            if driver.exists(f"dynamic-field-{key}")
+        }
+    return m
