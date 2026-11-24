@@ -1,8 +1,8 @@
 //! Automations: the single user-facing type that merges macros and workflows
 //! (#5818, concept `docs/concepts/partial/automations.html`).
 //!
-//! Slice 1 holds only the persisted model ([`config`]) and the pure
-//! converters from the legacy macro and workflow shapes ([`convert`]). Storage,
+//! Slice 1 holds only the persisted model (`config`) and the pure
+//! converters from the legacy macro and workflow shapes (`convert`). Storage,
 //! IPC, the boot migration and the runner arrive in later slices; nothing here
 //! is wired into the running app yet.
 
