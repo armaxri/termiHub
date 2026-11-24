@@ -55,6 +55,27 @@
   flex-shrink: 0;
 }
 
+/* Divider between the pinned navigation (Up, Refresh) and the create / upload
+   icons, so Upload never reads as a second Up (#5832). */
+.file-browser__actions-divider {
+  flex-shrink: 0;
+  align-self: stretch;
+  width: 1px;
+  margin: var(--spacing-xs) var(--spacing-xxs);
+  background-color: var(--border-primary);
+}
+
+/* "New ▾" (#5832): icon plus caret, tighter than a labelled button. */
+.file-browser__actions-menu-button {
+  flex-shrink: 0;
+  gap: var(--spacing-xxs);
+  padding: 0 var(--spacing-xxs);
+}
+
+.file-browser__actions-caret {
+  color: var(--text-secondary);
+}
+
 .file-browser__menu-reveal {
   opacity: 0;
   transition: opacity var(--transition-fast);
@@ -525,13 +546,48 @@
   display: inline-flex;
 }
 
-/* Tick slot of the "Sort by" sub-menu rows: keeps its room when unchecked so
-   the labels align (#5671). */
-.file-sort-menu__tick {
+/* Tick slot of the menus' toggle and radio rows ("Show hidden files", the
+   "Sort by" choices): it sits in the icon column and keeps its room when
+   unchecked, so the labels align (#5671, #5832). */
+.file-browser__menu-tick {
   display: inline-flex;
   flex-shrink: 0;
-  width: var(--spacing-lg);
+  /* The menu's icon size, so ticked and iconned labels start on one line. */
+  width: 14px;
   color: var(--text-accent);
+}
+
+/* The current sort on the "Sort by" trigger ("Size ↓", #5832). */
+.file-sort-menu__current {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+}
+
+/* First, muted line of the "…" menu: the folder its actions act on (#5832).
+   `contain: inline-size` keeps a long name from widening the menu; it ends
+   in an ellipsis instead, with the full path as the tooltip. */
+.ui-menu__label.file-browser__menu-folder {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  contain: inline-size;
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-weight: var(--font-weight-normal);
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-secondary);
+}
+
+.file-browser__menu-folder > svg {
+  flex-shrink: 0;
+}
+
+.file-browser__menu-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Bottom status bar: the N-selected indicator */

@@ -18,6 +18,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -85,7 +86,8 @@ async function renderLocal() {
 }
 
 async function click(testId: string) {
-  const el = container.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
+  // "New ▸ File / Folder" entries live in the "New ▾" menu (#5832).
+  const el = (await findFileBrowserAction(testId)) as HTMLElement;
   await act(async () => {
     el.click();
   });
@@ -129,6 +131,21 @@ describe("FileBrowser — inline editors use the shared Input primitive (#1390)"
     expect(input.classList.contains("ui-input")).toBe(true);
     expect(input.classList.contains("ui-input--sm")).toBe(true);
     expect(input.classList.contains("file-browser__new-dir-input")).toBe(false);
+  });
+
+  it("focuses the name field opened from 'New ▸ File / Folder' (#5832)", async () => {
+    await renderLocal();
+    for (const kind of ["file", "folder"]) {
+      await click(`file-browser-new-${kind}`);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      const input = container.querySelector(`[data-testid="file-browser-new-${kind}-input"]`);
+      expect(document.activeElement, kind).toBe(input);
+      await act(async () => {
+        input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+    }
   });
 
   it("renders the New Folder editor via the shared Input primitive", async () => {

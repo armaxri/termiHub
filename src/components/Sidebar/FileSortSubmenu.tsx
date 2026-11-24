@@ -1,6 +1,5 @@
-import { ArrowDownUp, Check } from "lucide-react";
+import { ArrowDownUp, ChevronDown, ChevronUp } from "lucide-react";
 import {
-  MenuItemIndicator,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator,
@@ -9,6 +8,7 @@ import {
   MenuSubTrigger,
 } from "@/components/ui";
 import type { FileSortKey, SortDirection } from "@/utils/fileBrowserNav";
+import { MenuTick } from "./FileBrowserActionMenu";
 
 /** The file list's sort: column and direction. */
 export interface FileSort {
@@ -39,11 +39,7 @@ export interface FileSortSubmenuProps {
 function SortRadio({ value, testId, label }: { value: string; testId: string; label: string }) {
   return (
     <MenuRadioItem value={value} data-testid={testId}>
-      <span className="file-sort-menu__tick">
-        <MenuItemIndicator>
-          <Check size={14} />
-        </MenuItemIndicator>
-      </span>
+      <MenuTick />
       {label}
     </MenuRadioItem>
   );
@@ -53,12 +49,30 @@ function SortRadio({ value, testId, label }: { value: string; testId: string; la
  * "Sort by ▸" in the file browser's "…" menu (#5671). The Modified / Size
  * column headers hide at narrow sidebar widths, and they were the only sort
  * controls; this sub-menu offers every column and both directions at any width,
- * with the active choice ticked. Picking a new column starts ascending.
+ * with the active choice ticked. Picking a new column starts ascending. The
+ * trigger names the current sort ("Sort by   Size ↓", #5832); the menu offers
+ * it only while a column header is hidden, so it never doubles the headers.
  */
 export function FileSortSubmenu({ sort, onSort }: FileSortSubmenuProps) {
+  const current = SORT_KEY_LABELS[sort.key];
+  const direction = sort.dir === "asc" ? "ascending" : "descending";
   return (
     <MenuSub>
-      <MenuSubTrigger icon={<ArrowDownUp size={14} />} data-testid="file-browser-sort-menu">
+      <MenuSubTrigger
+        icon={<ArrowDownUp size={14} />}
+        hint={
+          <span className="file-sort-menu__current" data-testid="file-browser-sort-current">
+            {current}
+            {sort.dir === "asc" ? (
+              <ChevronUp size={10} aria-hidden="true" />
+            ) : (
+              <ChevronDown size={10} aria-hidden="true" />
+            )}
+          </span>
+        }
+        aria-label={`Sort by: ${current}, ${direction}`}
+        data-testid="file-browser-sort-menu"
+      >
         Sort by
       </MenuSubTrigger>
       <MenuSubContent sideOffset={4} data-testid="file-browser-sort-submenu">

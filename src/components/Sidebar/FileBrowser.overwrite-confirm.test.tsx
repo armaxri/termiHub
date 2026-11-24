@@ -16,6 +16,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
 type DragDropHandler = (event: {
   payload: { type: string; paths?: string[]; position?: { x: number; y: number } };
@@ -118,7 +119,7 @@ async function renameReportTo(newName: string) {
 }
 
 async function createFile(name: string) {
-  await click(byTestId("file-browser-new-file"));
+  await click((await findFileBrowserAction("file-browser-new-file"))!);
   await submit(byTestId("file-browser-new-file-input") as HTMLInputElement, name);
 }
 

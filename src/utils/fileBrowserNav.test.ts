@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
   collapseCrumbs,
@@ -7,6 +8,8 @@ import {
   filterHiddenEntries,
   findTypeAheadIndex,
   resolveSymlinkTarget,
+  sortNeedsMenu,
+  SORT_COLUMN_MIN_WIDTH,
 } from "./fileBrowserNav";
 import type { FileEntry } from "@/types/connection";
 
@@ -293,5 +296,45 @@ describe("collapseCrumbs", () => {
       hiddenStart: 0,
       hiddenEnd: 0,
     });
+  });
+});
+
+describe("sortNeedsMenu (#5832)", () => {
+  const both = { modified: true, size: true };
+
+  it("leaves sorting to the headers while every data column shows", () => {
+    expect(sortNeedsMenu({ width: 400, columns: both, sortKey: "name" })).toBe(false);
+    expect(sortNeedsMenu({ width: 320, columns: both, sortKey: "size" })).toBe(false);
+    // No layout yet: every header is assumed visible.
+    expect(sortNeedsMenu({ width: null, columns: both, sortKey: "modified" })).toBe(false);
+  });
+
+  it("offers the menu once a data column hides at this width", () => {
+    expect(sortNeedsMenu({ width: 319, columns: both, sortKey: "name" })).toBe(true);
+    expect(
+      sortNeedsMenu({ width: 239, columns: { modified: false, size: true }, sortKey: "name" })
+    ).toBe(true);
+  });
+
+  it("ignores a column the listing has no data for", () => {
+    expect(
+      sortNeedsMenu({ width: 300, columns: { modified: false, size: true }, sortKey: "name" })
+    ).toBe(false);
+  });
+
+  it("offers the menu when the active sort's column is not shown at all", () => {
+    expect(
+      sortNeedsMenu({ width: 500, columns: { modified: false, size: true }, sortKey: "modified" })
+    ).toBe(true);
+  });
+
+  it("mirrors the CSS container queries that hide the columns", () => {
+    const css = readFileSync("src/components/Sidebar/FileBrowser.css", "utf8");
+    for (const [col, min] of Object.entries(SORT_COLUMN_MIN_WIDTH)) {
+      const query = new RegExp(
+        `@container file-browser \\(max-width: ${min - 1}px\\) \\{[^@]*file-browser__col--${col}`
+      );
+      expect(css, col).toMatch(query);
+    }
   });
 });
