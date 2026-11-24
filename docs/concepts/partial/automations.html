@@ -1720,12 +1720,15 @@ flowchart LR
                   If this step fails, Move up/down, Duplicate and Delete; the handle drags and takes
                   the arrow keys; a deleted step comes back with Undo. Each trigger shows its
                   settings under itself (R-158), several of one kind are allowed. Waits, timeouts
-                  and retry waits are in seconds (R-167). Saving an unchanged automation writes
-                  nothing. Differs from 3.4: Description has no 0/80 counter (its field stops at
-                  80), a step that cannot run without experimental features says so in its row, "On
-                  a schedule…" of a new automation opens the schedule editor right after Save, and
-                  Enter runs the primary action only from Name, Description and Tags, never from a
-                  step. "Record steps" comes with slice 8
+                  and retry waits are in seconds (R-167); the runner still cuts a wait above 5 s (<a
+                    href="https://github.com/armaxri/termiHub/issues/6008"
+                    >#6008</a
+                  >), which the editor says. Saving an unchanged automation writes nothing. Differs
+                  from 3.4: Description has no 0/80 counter (its field stops at 80), a step that
+                  cannot run without experimental features says so in its row, "On a schedule…" of a
+                  new automation opens the schedule editor right after Save, and Enter runs the
+                  primary action only from Name, Description and Tags, never from a step. "Record
+                  steps" comes with slice 8
                 </td>
                 <td>
                   <code>src/components/AutomationEditor/</code> (<code>automationDraft.ts</code>,

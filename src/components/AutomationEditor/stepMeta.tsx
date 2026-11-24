@@ -311,7 +311,7 @@ export const TYPING_SPEEDS: readonly TypingSpeed[] = ["recorded", "fixed", "inst
 export function typingSpeedLabel(speed: TypingSpeed, recorded: boolean): string {
   switch (speed) {
     case "recorded":
-      return recorded ? "As recorded" : "With the delays above";
+      return recorded ? "As recorded" : "Delay per row";
     case "fixed":
       return "Same delay before every key";
     case "instant":

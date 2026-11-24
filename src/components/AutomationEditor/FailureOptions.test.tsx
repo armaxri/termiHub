@@ -61,7 +61,7 @@ describe("the options", () => {
     expect(valueOf("automation-editor-step-retry-delay-0")).toBe("1");
     typeText("automation-editor-step-retry-count-0", "5");
     typeText("automation-editor-step-retry-delay-0", "0.25");
-    await pick("automation-editor-step-retry-backoff-0", "Double the wait each time");
+    await pick("automation-editor-step-retry-backoff-0", "Double each time");
     expect(await saved()).toEqual({
       ...command,
       retry: { count: 5, delayMs: 250, backoff: "exponential" },

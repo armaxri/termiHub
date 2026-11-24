@@ -202,7 +202,7 @@ describe("typing speed (#5820)", () => {
 
   it("does not speak of a recording for hand-written keys", async () => {
     await open({ kind: "type-keys", chunks: [{ data: "a", delayMs: 0 }], timing: "recorded" });
-    expect(query("automation-editor-step-speed-0")?.textContent).toContain("With the delays above");
+    expect(query("automation-editor-step-speed-0")?.textContent).toContain("Delay per row");
   });
 });
 

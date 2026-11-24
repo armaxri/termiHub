@@ -90,7 +90,7 @@ describe("labels and icons", () => {
 
   it("names the recorded speed only for a recording", () => {
     expect(typingSpeedLabel("recorded", true)).toBe("As recorded");
-    expect(typingSpeedLabel("recorded", false)).toBe("With the delays above");
+    expect(typingSpeedLabel("recorded", false)).toBe("Delay per row");
   });
 });
 

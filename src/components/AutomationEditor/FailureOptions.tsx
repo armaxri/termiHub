@@ -21,8 +21,8 @@ const ON_FAILURE_OPTIONS = [
 ];
 
 const BACKOFF_OPTIONS: { value: WorkflowRetryBackoff; label: string }[] = [
-  { value: "fixed", label: "Same wait each time" },
-  { value: "exponential", label: "Double the wait each time" },
+  { value: "fixed", label: "Same wait" },
+  { value: "exponential", label: "Double each time" },
 ];
 
 /**
