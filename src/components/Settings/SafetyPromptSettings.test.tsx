@@ -56,14 +56,13 @@ describe("SafetyPromptSettings", () => {
     container.remove();
   });
 
-  it("renders the sub-headers and all six guard toggles by default", () => {
+  it("renders the sub-headers, the close choice and the five guard toggles by default", () => {
     renderWith(defaultSettings);
     expect(container.textContent).toContain("Close confirmations");
     expect(container.textContent).toContain("Delete confirmations");
     expect(container.textContent).toContain("Network operation warnings");
     for (const id of [
-      "settings-confirm-close-tab-on-shortcut",
-      "settings-confirm-close-live-session",
+      "settings-close-live-session-confirm",
       "settings-confirm-close-attached-tab",
       "settings-confirm-undoable-delete",
       "settings-warn-large-port-scan",
@@ -75,24 +74,67 @@ describe("SafetyPromptSettings", () => {
 
   it("defaults each toggle to on when the setting is unset", () => {
     renderWith(defaultSettings);
-    expect(query("settings-confirm-close-live-session")!.getAttribute("aria-checked")).toBe("true");
+    expect(query("settings-confirm-close-attached-tab")!.getAttribute("aria-checked")).toBe("true");
     expect(query("settings-warn-large-port-scan")!.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("reflects an explicitly-disabled setting", () => {
-    renderWith({ ...defaultSettings, confirmCloseLiveSession: false });
-    expect(query("settings-confirm-close-live-session")!.getAttribute("aria-checked")).toBe(
-      "false"
-    );
-  });
+  describe("one live-session close choice (#5844)", () => {
+    const trigger = () => query("settings-close-live-session-confirm")!;
 
-  it("emits the flipped value through the function updater when toggled off", () => {
-    const onChange = renderWith(defaultSettings);
-    act(() => query("settings-confirm-close-live-session")!.click());
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(applied(onChange, defaultSettings)).toEqual(
-      expect.objectContaining({ confirmCloseLiveSession: false })
-    );
+    it("replaces the two overlapping close toggles", () => {
+      renderWith(defaultSettings);
+      expect(query("settings-confirm-close-tab-on-shortcut")).toBeNull();
+      expect(query("settings-confirm-close-live-session")).toBeNull();
+      expect(container.textContent).toContain("Ask before closing a live session");
+    });
+
+    it("shows Always and the plain Default tag when unset", () => {
+      renderWith(defaultSettings);
+      expect(trigger().textContent).toContain("Always");
+      expect(query("settings-close-live-session-confirm-default")).not.toBeNull();
+      expect(query("settings-close-live-session-confirm-reset")).toBeNull();
+    });
+
+    it.each([
+      ["shortcut", "Only for keyboard shortcuts"],
+      ["pointer", "Only for mouse closes"],
+      ["never", "Never"],
+    ] as const)("reflects a stored %s choice", (value, label) => {
+      renderWith({ ...defaultSettings, closeLiveSessionConfirm: value });
+      expect(trigger().textContent).toContain(label);
+    });
+
+    it("lists every choice when opened", () => {
+      renderWith(defaultSettings);
+      act(() => {
+        trigger().focus();
+        trigger().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+      const labels = Array.from(document.querySelectorAll('[role="option"]')).map(
+        (o) => o.textContent
+      );
+      expect(labels).toEqual([
+        "Always",
+        "Only for keyboard shortcuts",
+        "Only for mouse closes",
+        "Never",
+      ]);
+    });
+
+    it("resets an overridden choice to the default", () => {
+      const start = { ...defaultSettings, closeLiveSessionConfirm: "never" as const };
+      const onChange = renderWith(start);
+      act(() => query("settings-close-live-session-confirm-reset")!.click());
+      expect(applied(onChange, start).closeLiveSessionConfirm).toBeUndefined();
+    });
+
+    it("falls back to Always for an unknown stored value", () => {
+      renderWith({
+        ...defaultSettings,
+        closeLiveSessionConfirm: "sometimes" as unknown as "always",
+      });
+      expect(trigger().textContent).toContain("Always");
+    });
   });
 
   it("turns the undoable-delete confirmation back on (#5158)", () => {
@@ -115,7 +157,7 @@ describe("SafetyPromptSettings", () => {
   it("hides the Close-confirmations group when visibleFields excludes all its fields", () => {
     renderWith(defaultSettings, new Set(["warnLargePortScan"]));
     expect(container.textContent).not.toContain("Close confirmations");
-    expect(query("settings-confirm-close-tab-on-shortcut")).toBeNull();
+    expect(query("settings-close-live-session-confirm")).toBeNull();
     // The network-warnings group survives because one of its fields is visible.
     expect(container.textContent).toContain("Network operation warnings");
     expect(query("settings-warn-large-port-scan")).not.toBeNull();

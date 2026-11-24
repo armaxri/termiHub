@@ -1,8 +1,23 @@
 import { AppSettings } from "@/types/connection";
-import { Toggle } from "@/components/ui";
+import { Select, Toggle } from "@/components/ui";
+import {
+  CLOSE_LIVE_SESSION_CONFIRM_CHOICES,
+  DEFAULT_CLOSE_LIVE_SESSION_CONFIRM,
+  resolveCloseConfirm,
+  type CloseLiveSessionConfirm,
+} from "@/utils/closeConfirm";
+import { SettingDefaultMarker } from "./SettingDefaultMarker";
 import { SettingsField } from "./SettingsField";
 import type { SettingsUpdate } from "./GeneralSettings";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
+
+/** Visible label of each close-confirm choice, in sentence case. */
+export const CLOSE_CONFIRM_LABELS: Record<CloseLiveSessionConfirm, string> = {
+  always: "Always",
+  shortcut: "Only for keyboard shortcuts",
+  pointer: "Only for mouse closes",
+  never: "Never",
+};
 
 interface SafetyPromptSettingsProps {
   settings: AppSettings;
@@ -13,9 +28,9 @@ interface SafetyPromptSettingsProps {
 /**
  * Settings panel section for the confirmation and warning prompts that guard
  * destructive or expensive actions. Split out of the former overloaded "General"
- * category (UX-029); the three near-identical close toggles are grouped under a
- * "Close confirmations" sub-header so their differing triggers read clearly
- * (UX-030).
+ * category (UX-029). The two overlapping close toggles (shortcut vs. pointer)
+ * became one "Ask before closing a live session" choice, so which one wins on
+ * Cmd/Ctrl+W is no longer a question (#5844).
  */
 export function SafetyPromptSettings({
   settings,
@@ -26,38 +41,42 @@ export function SafetyPromptSettings({
 
   return (
     <>
-      {(show("confirmCloseTabOnShortcut") ||
-        show("confirmCloseLiveSession") ||
-        show("confirmCloseAttachedTab")) && (
+      {(show("closeLiveSessionConfirm") || show("confirmCloseAttachedTab")) && (
         <div className="settings-panel__category">
           <SettingsSectionHeading>Close confirmations</SettingsSectionHeading>
 
-          {show("confirmCloseTabOnShortcut") && (
+          {show("closeLiveSessionConfirm") && (
             <SettingsField
-              label="Confirm before closing a tab via keyboard shortcut"
-              hint="Ask before a keyboard shortcut ends a live session or closes a tab group. Tabs with nothing running close at once, with Reopen."
+              label="Ask before closing a live session"
+              hint="When closing a tab, panel or group that holds a running session asks first."
+              hintTestId="settings-close-live-session-confirm-hint"
+              help="Keyboard shortcuts are the close-tab and close-group shortcuts (e.g. Cmd/Ctrl+W). Mouse closes are the tab X, middle-click, the Close menu item and the panel close button. Tabs with nothing running close at once, with Reopen. Unsaved editors always ask."
+              helpTestId="settings-close-live-session-confirm-help"
+              labelAccessory={
+                <SettingDefaultMarker
+                  isDefault={settings.closeLiveSessionConfirm === undefined}
+                  onReset={() =>
+                    onChange((prev) => ({ ...prev, closeLiveSessionConfirm: undefined }))
+                  }
+                  name="Ask before closing a live session"
+                  defaultText={CLOSE_CONFIRM_LABELS[DEFAULT_CLOSE_LIVE_SESSION_CONFIRM]}
+                  data-testid="settings-close-live-session-confirm"
+                />
+              }
             >
-              <Toggle
-                checked={settings.confirmCloseTabOnShortcut ?? true}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, confirmCloseTabOnShortcut: checked }))
+              <Select
+                value={resolveCloseConfirm(settings)}
+                onChange={(value) =>
+                  onChange((prev) => ({
+                    ...prev,
+                    closeLiveSessionConfirm: value as CloseLiveSessionConfirm,
+                  }))
                 }
-                data-testid="settings-confirm-close-tab-on-shortcut"
-              />
-            </SettingsField>
-          )}
-
-          {show("confirmCloseLiveSession") && (
-            <SettingsField
-              label="Confirm before closing a tab with a live session"
-              hint="Ask for confirmation before closing a tab (X, middle-click or context menu) or split panel that holds a live SSH, serial, or shell session."
-            >
-              <Toggle
-                checked={settings.confirmCloseLiveSession ?? true}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, confirmCloseLiveSession: checked }))
-                }
-                data-testid="settings-confirm-close-live-session"
+                options={CLOSE_LIVE_SESSION_CONFIRM_CHOICES.map((value) => ({
+                  value,
+                  label: CLOSE_CONFIRM_LABELS[value],
+                }))}
+                data-testid="settings-close-live-session-confirm"
               />
             </SettingsField>
           )}

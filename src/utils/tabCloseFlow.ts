@@ -9,11 +9,11 @@
  * 1. Unsaved edits — {@link routeDirtyTabClose} (#4410). Always prompts.
  * 2. Persistent (background) session — closing only detaches, so the
  *    reassuring "keeps running in the background" notice, never "work will be
- *    lost". Gated by `confirmCloseAttachedTab`.
+ *    lost". Gated by `confirmCloseAttachedTab` alone, whatever the trigger.
  * 3. Live session — "will end its live session", with "Don't ask again" and a
- *    Reopen toast. Gated by `confirmCloseLiveSession` for pointer closes and by
- *    `confirmCloseTabOnShortcut` for shortcut closes, and the opt-out writes the
- *    setting that gated it — so nobody loses a confirm they had switched on.
+ *    Reopen toast. Gated by the one `closeLiveSessionConfirm` choice for the
+ *    trigger (#5844); the opt-out stops asking for that trigger only — so
+ *    nobody loses the confirm they kept for the other kind of close.
  * 4. Anything else (exited / failed terminal, settings, clean editor, …) closes
  *    immediately, with a Reopen toast when the tab has a reconnectable config.
  */
@@ -23,18 +23,10 @@ import { currentSessionView, effectiveExitedMap } from "@/store/sessionBridge";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
 import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
+import { settingsAskBeforeClose, type TabCloseTrigger } from "@/utils/closeConfirm";
 import type { TerminalTab } from "@/types/terminal";
 
-/** What started a close: a pointer gesture (X, middle-click, menu) or the shortcut. */
-export type TabCloseTrigger = "pointer" | "shortcut";
-
-/** The settings a live-session close confirm can be opted out of from its dialog. */
-export type LiveCloseOptOutSetting = "confirmCloseLiveSession" | "confirmCloseTabOnShortcut";
-
-/** The setting that gates (and is cleared by "Don't ask again" for) a live-session close. */
-export function liveCloseSettingFor(trigger: TabCloseTrigger): LiveCloseOptOutSetting {
-  return trigger === "shortcut" ? "confirmCloseTabOnShortcut" : "confirmCloseLiveSession";
-}
+export type { TabCloseTrigger };
 
 type ClosableTab = Pick<
   TerminalTab,
@@ -71,11 +63,9 @@ export function continueTabClose(
 ): void {
   const state = useAppStore.getState();
   const settings = currentSettingsView();
-  // The shortcut's own switch still turns every shortcut prompt off.
-  const triggerAllows = trigger === "pointer" || settings.confirmCloseTabOnShortcut !== false;
 
   if (tab.persistentConnectionId) {
-    if (triggerAllows && settings.confirmCloseAttachedTab !== false) {
+    if (settings.confirmCloseAttachedTab !== false) {
       state.setPendingAttachedTabCloseConfirm({ tabId: tab.id, panelId, label: tab.title });
       return;
     }
@@ -88,15 +78,14 @@ export function continueTabClose(
     terminalExitedTabs: effectiveExitedMap(currentSessionView()),
     terminalSpawnErrors: state.terminalSpawnErrors,
   });
-  const optOutSetting = liveCloseSettingFor(trigger);
-  if (isLive && settings[optOutSetting] !== false) {
+  if (isLive && settingsAskBeforeClose(settings, trigger)) {
     state.setPendingSessionCloseConfirm({
       kind: "tab",
       tabId: tab.id,
       panelId,
       label: tab.title,
       reopen: reopenPayloadForTab(tab),
-      optOutSetting,
+      trigger,
     });
     return;
   }

@@ -149,8 +149,8 @@ export interface LayoutSlice {
    * A `tab` request is the generic unsaved-changes prompt for a dirty tab
    * without a prompt of its own (#4410; `unsaved` is always true) — a clean
    * tab goes through the shared close decision instead (#5189). A `tab-group`
-   * request is the plain group confirm while
-   * `settings.confirmCloseTabOnShortcut` is enabled. Null when no dialog is open.
+   * request is the plain group confirm while the `settings.closeLiveSessionConfirm`
+   * choice asks for shortcut closes (#5844). Null when no dialog is open.
    */
   pendingShortcutCloseConfirm:
     | { kind: "tab"; tabId: string; panelId: string; label: string; unsaved?: boolean }
@@ -166,8 +166,8 @@ export interface LayoutSlice {
 
   /**
    * Confirmation request shown before tearing down a live session by closing a
-   * tab (X / middle-click) or a split panel, while
-   * `settings.confirmCloseLiveSession` is enabled. Null when no dialog is open.
+   * tab, a split panel or a tab group, while the `settings.closeLiveSessionConfirm`
+   * choice asks for that kind of close (#5844). Null when no dialog is open.
    * The `tab` variant carries an optional `reopen` payload so the follow-up
    * toast can offer an Undo/Reopen affordance when the connection is known.
    */

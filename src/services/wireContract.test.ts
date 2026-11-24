@@ -330,7 +330,7 @@ describe("wire contract: settings", () => {
     // `default_true` flags are always emitted; an explicit false survives.
     expect(settings.powerMonitoringEnabled).toBe(false);
     expect(settings.warnLargePortScan).toBe(true);
-    expect(settings.confirmCloseTabOnShortcut).toBe(true);
+    expect(settings.confirmCloseAttachedTab).toBe(true);
     expect(settings.externalConnectionFiles).toEqual([
       { path: "/home/me/team.json", enabled: false },
     ]);

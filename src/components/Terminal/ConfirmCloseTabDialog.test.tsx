@@ -129,7 +129,7 @@ describe("ConfirmCloseTabDialog", () => {
     expect(useAppStore.getState().pendingSessionCloseConfirm).toMatchObject({
       kind: "tab",
       tabId,
-      optOutSetting: "confirmCloseTabOnShortcut",
+      trigger: "shortcut",
     });
   });
 

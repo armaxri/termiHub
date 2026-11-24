@@ -437,9 +437,10 @@ export interface ReopenTabPayload {
  * A pending confirmation before tearing down a live session by closing a tab
  * (X / middle-click), a split panel, or a whole tab group (which may also discard
  * unsaved editors). The `tab` variant carries the optional
- * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen, and
- * the setting its "Don't ask again" clears — the one that gated the prompt for
- * the trigger that raised it (#5189); defaults to `confirmCloseLiveSession`.
+ * {@link ReopenTabPayload} so the follow-up toast can offer Undo/Reopen. A tab
+ * or group request records the `trigger` that raised it, so its "Don't ask
+ * again" stops asking for that kind of close only (#5189, #5844); it defaults
+ * to `"pointer"`.
  */
 export type SessionCloseConfirmRequest =
   | {
@@ -448,7 +449,7 @@ export type SessionCloseConfirmRequest =
       panelId: string;
       label: string;
       reopen: ReopenTabPayload | null;
-      optOutSetting?: "confirmCloseLiveSession" | "confirmCloseTabOnShortcut";
+      trigger?: "pointer" | "shortcut";
     }
   | {
       kind: "panel";
@@ -466,6 +467,7 @@ export type SessionCloseConfirmRequest =
       liveCount: number;
       /** Editor tabs in the group with unsaved changes that would be discarded. */
       dirtyCount: number;
+      trigger?: "pointer" | "shortcut";
     };
 
 /*

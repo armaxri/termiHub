@@ -127,9 +127,9 @@ describe("close-tab", () => {
     expect(cmd.isAvailable()).toBe(true);
   });
 
-  it("closes the active tab immediately when the confirm setting is disabled", () => {
+  it("closes the active tab immediately when the choice skips shortcut closes", () => {
     addActiveTab();
-    seedSettings({ confirmCloseTabOnShortcut: false });
+    seedSettings({ closeLiveSessionConfirm: "pointer" });
     cmd.run();
     expect(activeLeaf()!.tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
@@ -144,7 +144,7 @@ describe("close-tab", () => {
     expect(confirm).toMatchObject({
       kind: "tab",
       tabId,
-      optOutSetting: "confirmCloseTabOnShortcut",
+      trigger: "shortcut",
     });
   });
 
@@ -163,7 +163,7 @@ describe("close-tab", () => {
 });
 
 // #4410: the close-tab shortcut (and its palette entry) must honour the
-// unsaved-editor guard the tab X does, whatever confirmCloseTabOnShortcut is.
+// unsaved-editor guard the tab X does, whatever the close-confirm choice is.
 describe("close-tab — unsaved-editor guard (#4410)", () => {
   const cmd = CONTEXT_COMMANDS["close-tab"];
   const SELF_PROMPTING = [
@@ -179,7 +179,7 @@ describe("close-tab — unsaved-editor guard (#4410)", () => {
       it(`routes a dirty ${contentType} tab to its own prompt (setting ${confirm ? "on" : "off"})`, () => {
         const tabId = addActiveTab(contentType);
         const panelId = activeLeaf()!.id;
-        seedSettings({ confirmCloseTabOnShortcut: confirm });
+        seedSettings({ closeLiveSessionConfirm: confirm ? "always" : "pointer" });
         useAppStore.getState().setEditorDirty(tabId, true);
         const closeSpy = vi.spyOn(useAppStore.getState(), "closeTab");
 
@@ -199,7 +199,7 @@ describe("close-tab — unsaved-editor guard (#4410)", () => {
     it(`raises the generic unsaved prompt for another dirty tab type (setting ${confirm ? "on" : "off"})`, () => {
       const tabId = addActiveTab("network-diagnostic");
       const panelId = activeLeaf()!.id;
-      seedSettings({ confirmCloseTabOnShortcut: confirm });
+      seedSettings({ closeLiveSessionConfirm: confirm ? "always" : "pointer" });
       useAppStore.getState().setEditorDirty(tabId, true);
       const closeSpy = vi.spyOn(useAppStore.getState(), "closeTab");
 
@@ -219,7 +219,7 @@ describe("close-tab — unsaved-editor guard (#4410)", () => {
 
   it("closes a clean editor tab immediately when the setting is off", () => {
     addActiveTab("editor");
-    seedSettings({ confirmCloseTabOnShortcut: false });
+    seedSettings({ closeLiveSessionConfirm: "pointer" });
     cmd.run();
     expect(activeLeaf()!.tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingCloseRequest).toBeNull();
@@ -228,7 +228,7 @@ describe("close-tab — unsaved-editor guard (#4410)", () => {
 
   it("closes a clean editor tab immediately even when the setting is on (#5189)", () => {
     addActiveTab("editor");
-    seedSettings({ confirmCloseTabOnShortcut: true });
+    seedSettings({ closeLiveSessionConfirm: "always" });
     cmd.run();
     expect(activeLeaf()!.tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingCloseRequest).toBeNull();
@@ -284,7 +284,7 @@ describe("close-tab-group", () => {
 
   it("closes the active tab group immediately when the confirm setting is disabled", () => {
     useAppStore.getState().addTabGroup();
-    seedSettings({ confirmCloseTabOnShortcut: false });
+    seedSettings({ closeLiveSessionConfirm: "pointer" });
     const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
     cmd.run();
     expect(spy).toHaveBeenCalledOnce();
@@ -301,7 +301,7 @@ describe("close-tab-group", () => {
   it("raises the count-aware group confirm when the group holds a live session (UX2-001)", () => {
     const groupId = useAppStore.getState().addTabGroup();
     addActiveTab("terminal");
-    seedSettings({ confirmCloseTabOnShortcut: false });
+    seedSettings({ closeLiveSessionConfirm: "shortcut" });
     const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
     cmd.run();
     expect(spy).not.toHaveBeenCalled();
@@ -310,7 +310,18 @@ describe("close-tab-group", () => {
       kind: "group",
       tabGroupId: groupId,
       liveCount: 1,
+      trigger: "shortcut",
     });
+  });
+
+  it("closes a live group at once when the choice asks only for mouse closes (#5844)", () => {
+    useAppStore.getState().addTabGroup();
+    addActiveTab("terminal");
+    seedSettings({ closeLiveSessionConfirm: "pointer" });
+    const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
+    cmd.run();
+    expect(spy).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
   });
 
   it("run() is inert with a single tab group", () => {
