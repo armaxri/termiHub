@@ -91,7 +91,7 @@ fn the_setup_script_uses_plain_markers_and_one_summary_line() {
     for marker in ["[..] ", "[ok] ", "[error] "] {
         assert!(script.contains(marker), "missing marker {marker:?}");
     }
-    assert!(script.contains("Agent installed (v$VERSION) at $INSTALL_PATH."));
+    assert!(script.contains("Agent $VERSION_LABEL installed at $SHOWN_PATH."));
     assert!(script.contains("Agent setup failed: $1"));
     // A `set -e` abort still ends in a failure line.
     assert!(script.contains("Agent setup failed: a setup step exited with status $status"));
@@ -177,9 +177,40 @@ mod executed {
     }
 
     fn fake_agent(dir: &Path) -> PathBuf {
+        fake_agent_reporting(dir, "termihub-agent 1.2.3")
+    }
+
+    fn fake_agent_reporting(dir: &Path, version_line: &str) -> PathBuf {
         let bin = dir.join("termihub-agent");
-        write_exec(&bin, "#!/bin/sh\nprintf '%s\\n' 'termihub-agent 1.2.3'\n");
+        write_exec(
+            &bin,
+            &format!("#!/bin/sh\nprintf '%s\\n' '{version_line}'\n"),
+        );
         bin
+    }
+
+    #[test]
+    fn a_branch_build_reads_version_and_branch_without_nested_parentheses() {
+        for shell in shells() {
+            let scratch = tempfile::tempdir().unwrap();
+            let upload = scratch.path().join("upload.Ab12Cd");
+            std::fs::create_dir_all(&upload).unwrap();
+            let binary = fake_agent_reporting(&upload, "termihub-agent 0.1.0 (branch: develop)");
+            // Outside $HOME: the path is shown as it is.
+            let install = scratch.path().join("opt/termihub-agent");
+            let script =
+                generate_setup_script(install.to_str().unwrap(), false, binary.to_str().unwrap());
+            let run = run(shell, scratch.path(), &upload, &script);
+            assert_eq!(run.status, 0, "{shell}: setup failed:\n{}", run.stdout);
+            assert_eq!(
+                last_line(&run.stdout),
+                format!(
+                    "Agent v0.1.0 (develop) installed at {}. You can close this tab.",
+                    install.display()
+                ),
+                "{shell}"
+            );
+        }
     }
 
     #[test]
@@ -197,12 +228,10 @@ mod executed {
             assert_plain(shell, &run.stdout);
             assert!(run.stdout.contains("=== termiHub Agent Setup ==="));
             assert!(run.stdout.contains("[ok] termihub-agent 1.2.3"));
+            // A path under $HOME is shown home-relative (#5956).
             assert_eq!(
                 last_line(&run.stdout),
-                format!(
-                    "Agent installed (v1.2.3) at {}. You can close this tab.",
-                    install.display()
-                ),
+                "Agent v1.2.3 installed at ~/.local/bin/termihub-agent. You can close this tab.",
                 "{shell}"
             );
             assert!(install.exists(), "{shell}: agent installed");

@@ -12,11 +12,11 @@ import {
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { currentSettingsView } from "@/store/settingsBridge";
 
-const toastSuccess = vi.hoisted(() => vi.fn());
+const toastInfo = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
-  return { ...actual, toast: { ...actual.toast, success: toastSuccess } };
+  return { ...actual, toast: { ...actual.toast, info: toastInfo } };
 });
 
 vi.mock("@/utils/cheatSheetPdf", () => ({
@@ -73,7 +73,7 @@ describe("KeyboardSettings editing (#5842)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     clearOverrides();
-    toastSuccess.mockClear();
+    toastInfo.mockClear();
     seedSettings({ editorShortcutDelegation: undefined, keybindingOverrides: undefined });
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -161,7 +161,7 @@ describe("KeyboardSettings editing (#5842)", () => {
     expect(byTestId("keybinding-reset-new-terminal")).not.toBeNull();
     expect(byTestId("keybinding-reset-next-tab")).not.toBeNull();
 
-    const [message, opts] = toastSuccess.mock.lastCall!;
+    const [message, opts] = toastInfo.mock.lastCall!;
     expect(message).toBe("Ctrl+Tab moved from Next tab to New terminal");
     expect(opts.testId).toBe("keybinding-reassign-toast");
     await act(async () => opts.action.onClick());
@@ -223,7 +223,7 @@ describe("KeyboardSettings editing (#5842)", () => {
     await clickChange("toggle-sidebar");
     press("Backspace");
     expect(isUnboundCombo(getEffectiveCombo("toggle-sidebar"))).toBe(true);
-    const [message, opts] = toastSuccess.mock.lastCall!;
+    const [message, opts] = toastInfo.mock.lastCall!;
     expect(message).toBe("Shortcut for Toggle sidebar cleared");
     await act(async () => opts.action.onClick());
     expect(getEffectiveCombo("toggle-sidebar")).toEqual(before);

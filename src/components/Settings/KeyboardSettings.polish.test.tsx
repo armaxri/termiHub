@@ -12,11 +12,11 @@ import {
 } from "@/services/keybindings";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
-const toastSuccess = vi.hoisted(() => vi.fn());
+const toastInfo = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
-  return { ...actual, toast: { ...actual.toast, success: toastSuccess } };
+  return { ...actual, toast: { ...actual.toast, info: toastInfo } };
 });
 
 vi.mock("@/utils/cheatSheetPdf", () => ({
@@ -48,7 +48,7 @@ setupSettingsRegion();
 describe("KeyboardSettings polish (#5561)", () => {
   beforeEach(() => {
     clearOverrides();
-    toastSuccess.mockClear();
+    toastInfo.mockClear();
     seedSettings({ editorShortcutDelegation: undefined });
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -87,8 +87,8 @@ describe("KeyboardSettings polish (#5561)", () => {
     await act(async () => {
       byTestId("keybinding-unbind-toggle-sidebar")!.click();
     });
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    const [message, opts] = toastSuccess.mock.calls[0];
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    const [message, opts] = toastInfo.mock.calls[0];
     expect(message).toBe("Shortcut for Toggle sidebar cleared");
     expect(opts.testId).toBe("keybinding-unbind-toast");
     expect(opts.action.label).toBe("Undo");

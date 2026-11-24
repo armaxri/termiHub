@@ -76,6 +76,9 @@ def test_grade_expected_tail_matches_the_app_split():
     assert expected_tail("sys-pr-ssh-dup-0d8db725 (2)") == "0d8db725 (2)"
     assert expected_tail("web (3)") == " (3)"
     assert expected_tail("Lab switch") == ""
+    # An agent tab keeps its shell suffix whole (#5956).
+    assert expected_tail("sys-pr-agent-8829f19f · bash") == " · bash"
+    assert expected_tail("pi · zsh (2)") == " · zsh (2)"
 
 
 def test_grade_distinct_tails_pass():

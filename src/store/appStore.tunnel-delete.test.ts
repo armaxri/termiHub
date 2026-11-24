@@ -69,6 +69,7 @@ vi.mock("@/components/ui", async () => {
     toast: {
       loading: vi.fn(() => "toast-id"),
       success: vi.fn(),
+      info: vi.fn(),
       error: vi.fn(),
       dismiss: vi.fn(),
     },
@@ -153,7 +154,7 @@ describe("appStore — undoable tunnel delete (#5158)", () => {
   });
 
   function undoAction(): () => void {
-    const call = vi.mocked(toast.success).mock.calls[0];
+    const call = vi.mocked(toast.info).mock.calls[0];
     const opts = call[1] as { action?: { label: string; onClick: () => void }; duration?: number };
     expect(opts.action?.label).toBe("Undo");
     expect(opts.duration).toBe(10_000);
@@ -170,7 +171,7 @@ describe("appStore — undoable tunnel delete (#5158)", () => {
     expect(created.map((c) => c.kind)).toEqual(["tunnel.create", "tunnel.create"]);
     expect(created.map((c) => c.payload)).toEqual([parent, companion]);
     // The restored rows are the confirmation; only the Undo toast was raised (#5859).
-    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledTimes(1);
   });
 
   it("restores only a directly deleted companion", async () => {
@@ -200,6 +201,7 @@ describe("appStore — undoable tunnel delete (#5158)", () => {
   it("has no Undo without the option", async () => {
     await useAppStore.getState().deleteTunnel("tun-2");
     expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
     expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
   });
 });

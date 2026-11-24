@@ -60,6 +60,7 @@ vi.mock("@/components/ui", async () => {
     toast: {
       loading: vi.fn(() => "toast-id"),
       success: vi.fn(),
+      info: vi.fn(),
       error: vi.fn(),
     },
   };
@@ -132,8 +133,8 @@ describe("ConnectionPortForwardingSection — delete with Undo (#5216)", () => {
       )
     );
 
-    await vi.waitFor(() => expect(toast.success).toHaveBeenCalled());
-    const opts = vi.mocked(toast.success).mock.calls[0][1] as {
+    await vi.waitFor(() => expect(toast.info).toHaveBeenCalled());
+    const opts = vi.mocked(toast.info).mock.calls[0][1] as {
       action?: { label: string; onClick: () => void };
     };
     expect(opts.action?.label).toBe("Undo");
