@@ -83,8 +83,15 @@ import {
   CommandMarkTracker,
   type CommandMarksSnapshot,
   OSC_133,
+  parseOsc133,
   registerCommandMarkTracker,
 } from "@/services/commandMarks";
+import {
+  clearAwaitingFirstPrompt,
+  expectsShellIntegrationMarks,
+  markAwaitingFirstPrompt,
+  useShellPromptStore,
+} from "@/store/shellPromptStore";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import {
@@ -764,6 +771,9 @@ export function Terminal({
               // A fresh attempt starts its stepper from the first stage (#5068)
               // and ignores late reports from an earlier attempt (#5081).
               beginConnectAttempt(tabId, connectId);
+              // A fresh shell with integration on is "starting" until its first
+              // OSC 133 mark: it may be blocked on a startup question (#5891).
+              if (expectsShellIntegrationMarks(config)) markAwaitingFirstPrompt(tabId);
               try {
                 // Pass the tab's resilient-reconnect determination (#2439) so a
                 // genuine drop is folded server-side as `session.reconnect` vs
@@ -1782,7 +1792,13 @@ export function Terminal({
     // OSC 133 semantic-prompt marks (#3415, PROD-059): prompt navigation,
     // command-output selection and the exit-status gutter. Inert when the shell
     // never emits OSC 133.
-    const osc133Disposable = xterm.parser.registerOscHandler(OSC_133, commandMarks.handleOsc);
+    // The first mark also ends the tab's "waiting for the first prompt" dot (#5891).
+    const osc133Disposable = xterm.parser.registerOscHandler(OSC_133, (data: string) => {
+      if (useShellPromptStore.getState().awaitingFirstPrompt[tabId] && parseOsc133(data) !== null) {
+        clearAwaitingFirstPrompt(tabId);
+      }
+      return commandMarks.handleOsc(data);
+    });
     // A shell-issued full reset (RIS, `ESC c` — e.g. the `reset` command) swaps in
     // a fresh buffer without disposing markers: forget the marks with it. Returns
     // false so xterm's own reset still runs.

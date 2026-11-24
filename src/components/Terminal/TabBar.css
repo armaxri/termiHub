@@ -211,6 +211,12 @@
   fill: currentColor;
 }
 
+/* Live, but the shell has not reached its first prompt yet (#5891): a neutral
+   dashed ring, so a startup question never reads as "connected". */
+.tab__state-dot--starting {
+  color: var(--text-secondary);
+}
+
 .tab__state-dot--reconnecting,
 .tab__state-dot--connecting {
   color: var(--state-connecting);
