@@ -57,6 +57,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
             hint="What happens to your previous session's tabs and layout at startup."
             help="Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
             helpTestId="settings-restore-last-session-mode-help"
+            hintTestId="settings-restore-last-session-mode-hint"
           >
             <Select
               value={restoreMode}
@@ -90,6 +91,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
               hint="Record each session you open. Passwords are never stored."
               help="Recorded sessions can be reconnected from the Recent Sessions panel."
               helpTestId="settings-session-history-enabled-help"
+              hintTestId="settings-session-history-enabled-hint"
             >
               <Toggle
                 checked={settings.sessionHistoryEnabled ?? true}
@@ -107,6 +109,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
               hint="Recent sessions to keep (10–500)."
               help="When the limit is reached, the least recently used unpinned entry is removed."
               helpTestId="settings-session-history-limit-help"
+              hintTestId="settings-session-history-limit-hint"
             >
               <SettingsNumberInput
                 unit="sessions"
@@ -177,6 +180,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
               </>
             }
             helpTestId="settings-network-tool-history-help"
+            hintTestId="settings-network-tool-history-hint"
           >
             <Toggle
               checked={settings.networkToolHistoryEnabled ?? true}

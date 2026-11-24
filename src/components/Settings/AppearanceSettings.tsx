@@ -366,6 +366,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
             </>
           }
           helpTestId="settings-font-family-help"
+          hintTestId="settings-font-family-hint"
           labelAccessory={
             <SettingDefaultMarker
               isDefault={!settings.fontFamily}
@@ -388,6 +389,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
         <SettingsField
           label="Font size"
           hint="Terminal font size (8–32)."
+          hintTestId="settings-font-size-hint"
           labelAccessory={
             <SettingDefaultMarker
               isDefault={isAtDefault(settings.fontSize, DEFAULT_FONT_SIZE)}
@@ -415,6 +417,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           hint="Terminal line height (0.8–2.0)."
           help="Use 1.0 for seamless box-drawing characters."
           helpTestId="settings-line-height-help"
+          hintTestId="settings-line-height-hint"
           labelAccessory={
             <SettingDefaultMarker
               isDefault={isAtDefault(settings.lineHeight, DEFAULT_LINE_HEIGHT)}

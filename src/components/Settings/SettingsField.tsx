@@ -44,6 +44,8 @@ export interface SettingsFieldProps {
   htmlFor?: string;
   /** Optional explanatory hint rendered below the control. */
   hint?: ReactNode;
+  /** Test id of the hint text (e.g. for a one-line grade, #5843). */
+  hintTestId?: string;
   /** Hint styling — `"warning"` colors the hint as a caution. Defaults to `"default"`. */
   hintVariant?: SettingsHintVariant;
   /**
@@ -89,6 +91,7 @@ export function SettingsField({
   label,
   htmlFor,
   hint,
+  hintTestId,
   hintVariant = "default",
   error,
   children,
@@ -123,6 +126,7 @@ export function SettingsField({
       label={label}
       htmlFor={htmlFor}
       hint={hint}
+      hintTestId={hintTestId}
       hintVariant={hintVariant}
       error={error}
     >
