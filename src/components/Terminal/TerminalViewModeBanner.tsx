@@ -101,7 +101,7 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
     >
       {/* The banner can appear without the disconnect overlay (the user ended
           the agent, #4309), so announce its state politely (#4331). */}
-      <LiveRegion message={announcement} />
+      <LiveRegion message={announcement} data-testid="terminal-view-mode-announcement" />
       <Icon size={12} className="terminal-view-mode-banner__icon" aria-hidden />
       <span className="terminal-view-mode-banner__text">
         <span className="terminal-view-mode-banner__label">
