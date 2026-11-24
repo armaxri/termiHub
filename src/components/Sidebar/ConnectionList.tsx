@@ -22,7 +22,6 @@ import {
   Copy,
   Activity,
   Server,
-  ArrowLeftRight,
   Route,
   Link,
   Square,
@@ -608,16 +607,23 @@ function ConnectionItem({
                 </Tooltip>
               )}
               {jumpHosts.length > 0 && (
-                <span
-                  className="connection-tree__jump-badge"
-                  title={jumpHostTooltip(jumpHosts, connection.name)}
-                  data-testid={`connection-jump-badge-${connection.id}`}
-                >
-                  <ArrowLeftRight size={12} />
-                  {jumpHosts.length > 1 && (
-                    <span className="connection-tree__jump-count">{jumpHosts.length}</span>
-                  )}
-                </span>
+                // #5850: a route glyph (not a bare '⇆') named in a tooltip and
+                // to assistive tech: "Connects via <bastion>".
+                <Tooltip content={jumpHostTooltip(jumpHosts)} side="top">
+                  <span
+                    className="connection-tree__jump-badge"
+                    role="img"
+                    aria-label={jumpHostTooltip(jumpHosts)}
+                    data-testid={`connection-jump-badge-${connection.id}`}
+                  >
+                    <Route size={12} aria-hidden="true" data-icon="route" />
+                    {jumpHosts.length > 1 && (
+                      <span className="connection-tree__jump-count" aria-hidden="true">
+                        {jumpHosts.length}
+                      </span>
+                    )}
+                  </span>
+                </Tooltip>
               )}
               {/* Persistence surfacing (#2099): normal desktop-local
                   connections (ssh/docker/wsl/serial/local) are multi-instance

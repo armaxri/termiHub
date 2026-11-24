@@ -20,9 +20,9 @@ afterEach(() => {
 
 describe("ConnectTypeIcon", () => {
   it.each([
-    ["ssh", "key-round"],
+    ["ssh", "square-terminal"],
     ["vnc", "screen-share"],
-    ["rdp", "monitor"],
+    ["rdp", "monitor-cog"],
     ["local", "terminal"],
     ["serial", "cable"],
   ])("renders the %s glyph", (type, expected) => {

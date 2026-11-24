@@ -1,8 +1,8 @@
 /**
  * Tests for the SSH jump-host (ProxyJump) hop badge in the connection tree.
  *
- * A connection routed through a bastion shows an accent hop badge with a
- * full-path tooltip; multi-hop chains add a hop-count label. Non-jump and
+ * A connection routed through a bastion shows an accent route badge named
+ * "Connects via <bastion>" (#5850); multi-hop chains add a hop-count label. Non-jump and
  * non-SSH connections show no badge.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -86,7 +86,10 @@ describe("ConnectionList — jump-host hop badge", () => {
 
     const badge = container.querySelector('[data-testid="connection-jump-badge-app-server"]');
     expect(badge).not.toBeNull();
-    expect(badge!.getAttribute("title")).toBe("Via: bastion → app-server");
+    // #5850: the marker is named, as a tooltip and to assistive tech.
+    expect(badge!.getAttribute("role")).toBe("img");
+    expect(badge!.getAttribute("aria-label")).toBe("Connects via bastion");
+    expect(badge!.querySelector("svg")?.getAttribute("data-icon")).toBe("route");
     // No hop-count label for a single hop.
     expect(badge!.querySelector(".connection-tree__jump-count")).toBeNull();
   });
@@ -96,7 +99,7 @@ describe("ConnectionList — jump-host hop badge", () => {
 
     const badge = container.querySelector('[data-testid="connection-jump-badge-db-server"]');
     expect(badge).not.toBeNull();
-    expect(badge!.getAttribute("title")).toBe("Via: edge → bastion → db-server");
+    expect(badge!.getAttribute("aria-label")).toBe("Connects via edge → bastion");
     const count = badge!.querySelector(".connection-tree__jump-count");
     expect(count?.textContent).toBe("2");
   });
