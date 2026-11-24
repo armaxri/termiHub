@@ -1,18 +1,19 @@
 /**
  * Thin adapters between the single automation store and the two legacy views
  * (#5818, slice 4). The store holds `Automation`s and `AutomationRun`s only; the
- * Macros and Workflows sidebars, editors, palette entries and history panels
- * keep reading `Macro` / `Workflow` / `MacroRun` / `WorkflowRun` objects, which
- * these **pure** functions derive from it, and write back through them.
+ * Macros and Workflows sidebars, editors and palette entries keep reading
+ * `Macro` / `Workflow` / `MacroRun` / `WorkflowRun` objects, which these
+ * **pure** functions derive from it, and write back through them. The one
+ * Automation history panel (slice 9) reads `AutomationRun`s directly.
  *
  * Which view an automation shows in: an automation with only `type-keys` steps,
  * no triggers and no parameters is a macro; everything else is a workflow. An
  * automation with no steps follows its `legacy` provenance (a macro only when
  * it came from `macros.json`). Every automation shows in exactly one view.
  *
- * A run belongs to the Macros history when it carries `targetCount` (macro
- * playbacks always record it, migrated macro runs too) and to the Workflows
- * history otherwise.
+ * A run belongs to the `macroRuns` view (the macro rows' "Last run") when it
+ * carries `targetCount` (macro playbacks always record it, migrated macro runs
+ * too) and to the `workflowRuns` view otherwise.
  */
 import { newId } from "@/services/transport/ids";
 import type { WorkflowNestedRunEvent } from "@/services/workflowRunner";
