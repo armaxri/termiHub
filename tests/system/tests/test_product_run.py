@@ -394,10 +394,17 @@ class TestProductRunChecklist(
             field_gap = self._top(f"{CHOOSER_MP}-confirm-field") - self._bottom(
                 f"{CHOOSER_MP}-field"
             )
-            slack = self._bottom(CHOOSER_BODY) - self._bottom(f"{CHOOSER_MP}-confirm-field")
+            # Since #5825 the live checklist follows the fields: the empty band
+            # starts under the last thing shown, not under the confirm field.
+            last = (
+                f"{CHOOSER_MP}-checklist"
+                if self.driver.exists(f"{CHOOSER_MP}-checklist")
+                else f"{CHOOSER_MP}-confirm-field"
+            )
+            slack = self._bottom(CHOOSER_BODY) - self._bottom(last)
             self.evidence(
                 f"warning→field {warning_gap:.0f}px, field→field {field_gap:.0f}px, "
-                f"empty under the fields {slack:.0f}px"
+                f"empty under the {last.rsplit('-', 1)[-1]} {slack:.0f}px"
             )
             assert warning_gap >= MIN_FIELD_GAP, f"warning sits {warning_gap:.0f}px above the field"
             assert field_gap >= MIN_FIELD_GAP, f"the fields sit {field_gap:.0f}px apart"

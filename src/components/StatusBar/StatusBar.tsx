@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   Activity,
   AlertTriangle,
-  Square,
+  CircleStop,
   Server,
   RotateCw,
   Pause,
@@ -87,7 +87,13 @@ import {
   monitorOfflineLabel,
   monitorOfflineReasonText,
 } from "@/utils/monitorStatusReason";
-import { MonitoringStopped, MonitoringUnsupported } from "./MonitoringStateChips";
+import {
+  MonitoringStopped,
+  MonitoringUnavailable,
+  MonitoringUnsupported,
+  MonitoringWaiting,
+} from "./MonitoringStateChips";
+import { statslessMonitorChip } from "./monitoringStatsless";
 import { isMonitoringEnabledForTab, resolveStatusBarMetrics } from "./statusBarMetrics";
 import { sshTunnelVia } from "@/components/RemoteDesktop/graphicalStages";
 import { isFrozenMonitorBadge, monitorStatusBadge } from "@/utils/reconnectStatus";
@@ -880,6 +886,11 @@ function MonitoringStatus() {
   // otherwise the tab title (e.g. "Startup question (zsh)"), which reads as the
   // session rather than the machine. Remote tabs keep their hostname.
   const hostLabel = monitorHostLabel(activeTabConnectionType, monitoringHost);
+  // Connected but no sample yet (#5840): say whether it is loading, failing or
+  // unsupported, instead of a bare host chip.
+  const statslessChip = monitoringStats
+    ? null
+    : statslessMonitorChip(monitoringStatus, monitoringStatusReason, monitoringPaused);
   return (
     // One labelled, divider-separated group (#5563) so "CPU · Mem · Disk" are
     // unmistakably *this host's* numbers, not the session's or the app's.
@@ -937,6 +948,9 @@ function MonitoringStatus() {
           </button>
         </Tooltip>
       )}
+      {statslessChip === "waiting" && <MonitoringWaiting />}
+      {statslessChip === "unavailable" && <MonitoringUnavailable reason={monitoringStatusReason} />}
+      {statslessChip === "unsupported" && <MonitoringUnsupported />}
       {monitoringStats && (
         <>
           {/*
@@ -1088,6 +1102,13 @@ export function monitorHostLabel(
   return host;
 }
 
+/** What "Pause monitoring" does, shown under the item (#5840). */
+export const PAUSE_DESCRIPTION = "Keep the numbers, stop updating them";
+/** What "Resume monitoring" does, shown under the item (#5840). */
+export const RESUME_DESCRIPTION = "Update the numbers again";
+/** What "Stop monitoring" does, shown under the item (#5840). */
+export const STOP_DESCRIPTION = "Remove the numbers until you start it again";
+
 /** Props for {@link MonitoringDetailDropdown}. */
 interface MonitoringDetailDropdownProps {
   host: string | null;
@@ -1186,12 +1207,15 @@ function MonitoringDetailDropdown({
           className="monitoring-menu"
           data-testid="monitoring-menu"
         >
-          {stats && (
-            <>
-              <MonitoringHostInfo stats={stats} />
-              <MenuSeparator />
-            </>
+          {/* Headed by the name the user knows (#5840) — the host as configured,
+              the same text as the chip; the resolved hostname is a muted row. */}
+          {host && (
+            <div className="monitoring-menu__heading" data-testid="monitoring-menu-host">
+              {host}
+            </div>
           )}
+          {stats && <MonitoringHostInfo stats={stats} configuredHost={host} />}
+          {(host || stats) && <MenuSeparator />}
           {/*
             One compact row per metric (#5628): label, inline mini-sparkline and
             the latest value, rendered only once a metric has a real
@@ -1241,15 +1265,32 @@ function MonitoringDetailDropdown({
               <MenuSeparator />
             </>
           )}
-          {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
-          <MenuItem
-            onSelect={() => onSetPaused(!paused)}
-            disabled={!monitorKey}
-            data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
-          >
-            {paused ? <Play size={14} /> : <Pause size={14} />}
-            {paused ? "Resume monitoring" : "Pause monitoring"}
-          </MenuItem>
+          {/*
+            Pause / Resume — keeps the transport open, toggles collection (#1233).
+            Each lifecycle item says what it does (#5840), so Pause and Stop are
+            never two names for the same thing.
+          */}
+          {paused ? (
+            <MenuItem
+              onSelect={() => onSetPaused(false)}
+              disabled={!monitorKey}
+              icon={<Play size={14} />}
+              description={RESUME_DESCRIPTION}
+              data-testid="monitoring-resume-btn"
+            >
+              Resume monitoring
+            </MenuItem>
+          ) : (
+            <MenuItem
+              onSelect={() => onSetPaused(true)}
+              disabled={!monitorKey}
+              icon={<Pause size={14} />}
+              description={PAUSE_DESCRIPTION}
+              data-testid="monitoring-pause-btn"
+            >
+              Pause monitoring
+            </MenuItem>
+          )}
 
           {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
           {isConnecting && (
@@ -1289,8 +1330,12 @@ function MonitoringDetailDropdown({
           <MenuSeparator />
 
           {/* Only the readings stop, never the session (#5750), so not "Disconnect". */}
-          <MenuItem onSelect={onStop} data-testid="monitoring-stop">
-            <Square size={14} />
+          <MenuItem
+            onSelect={onStop}
+            icon={<CircleStop size={14} data-testid="monitoring-stop-icon" />}
+            description={STOP_DESCRIPTION}
+            data-testid="monitoring-stop"
+          >
             Stop monitoring
           </MenuItem>
         </DropdownMenuContent>

@@ -88,3 +88,29 @@ export function buildMetricBlocks(histories: MonitorHistories): MetricBlock[] {
   );
   return blocks.map((b) => ({ ...b, hasData: hasSamples(b.values) }));
 }
+
+/** Most leading samples {@link alignBlockStarts} trims (a priming gap or two). */
+export const MAX_ALIGN_TRIM = 2;
+
+/** Index of the first real sample in `values`, or `values.length` when none. */
+function firstSampleIndex(values: (number | null)[]): number {
+  const i = values.findIndex((v) => v != null);
+  return i === -1 ? values.length : i;
+}
+
+/**
+ * Trim the blocks to one shared start (#5840) so the host menu's compact
+ * sparklines read on one time axis. Rate metrics (CPU, Net) have no value on
+ * the first sample, so their lines began a step later than Memory and Disk;
+ * cutting every series at the latest first sample starts all lines at the left
+ * edge together. Blocks without data are left out of the cut and kept as-is.
+ * The cut is bounded by {@link MAX_ALIGN_TRIM}: it absorbs priming gaps, never
+ * throws away real history because one metric started much later.
+ */
+export function alignBlockStarts(blocks: MetricBlock[]): MetricBlock[] {
+  const starts = blocks.filter((b) => b.hasData).map((b) => firstSampleIndex(b.values));
+  if (starts.length === 0) return blocks;
+  const start = Math.min(MAX_ALIGN_TRIM, Math.max(...starts));
+  if (start === 0) return blocks;
+  return blocks.map((b) => (b.hasData ? { ...b, values: b.values.slice(start) } : b));
+}

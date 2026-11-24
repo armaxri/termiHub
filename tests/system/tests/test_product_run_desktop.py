@@ -52,6 +52,7 @@ from termihub_harness import (
     find_rdp_helper,
     unique_name,
 )
+from termihub_harness.ui.monitoring import STOP_DESCRIPTION, menu_item_label
 from termihub_harness.colors import contrast
 from termihub_harness.native_ssh import fixture_argv
 from termihub_harness.product_run import ProductRunUi
@@ -435,7 +436,7 @@ class TestProductRunMonitoring(
                 assert menu["height"] <= 600 - bar["height"], f"menu {menu} does not fit 800x600"
                 # measure_element's rect is {x, y, width, height} (no "top").
                 assert menu["y"] >= 0, f"menu clipped at the top: {menu}"
-                stop = self.driver.get_text("monitoring-stop").strip()
+                stop = menu_item_label(self.driver.get_text("monitoring-stop"), STOP_DESCRIPTION)
                 self.evidence(f"menu item {stop!r}")
                 assert stop == "Stop monitoring", stop
                 self.driver.click("monitoring-stop")

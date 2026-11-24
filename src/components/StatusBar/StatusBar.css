@@ -575,3 +575,17 @@
   color: var(--text-primary);
   overflow-wrap: anywhere;
 }
+
+/* Host menu heading: the host as the user configured it (#5840). */
+.monitoring-menu__heading {
+  padding: var(--spacing-xs) var(--spacing-md) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The resolved hostname: secondary to the configured name above (#5840). */
+.monitoring-menu__value--muted {
+  color: var(--text-secondary);
+}

@@ -31,6 +31,7 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    SettingsUi,
     SidebarUi,
     SystemTest,
     TabsUi,
@@ -165,7 +166,7 @@ def test_grade_mark_contrast():
 @pytest.mark.integration
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="the run's shell is POSIX-only")
 class TestProductRunCommandMarks(
-    ProductRunUi, ThemeUi, TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SystemTest
+    ProductRunUi, ThemeUi, TerminalUi, TabsUi, SettingsUi, SidebarUi, ConnectionsUi, SystemTest
 ):
     phase = "Command marks"
     request_timeout = 90.0

@@ -157,7 +157,8 @@ describe("StatusBar — stop monitoring, compact menu, unsupported host (#5628)"
     await renderStatusBar();
     openMenu();
     const item = q("monitoring-stop");
-    expect(item!.textContent).toBe("Stop monitoring");
+    // The label line; a description line under it says what it does (#5840).
+    expect(item!.querySelector(".ui-menu__title")!.textContent).toBe("Stop monitoring");
     expect(document.body.textContent).not.toContain("Disconnect");
   });
 
