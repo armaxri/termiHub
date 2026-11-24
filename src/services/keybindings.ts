@@ -78,7 +78,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts",
-    label: "Show keyboard shortcuts",
+    label: "Show keyboard shortcuts (also from terminal)",
     category: "general",
     macDefault: [
       { key: "k", meta: true },
@@ -92,7 +92,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts-outside-terminal",
-    label: "Show keyboard shortcuts outside terminals",
+    label: "Show keyboard shortcuts (not from terminal)",
     category: "general",
     // Bare F1 is the long-standing "help" key, but terminal programs own it
     // (htop, mc, nano, vim, …): a focused terminal keeps it, the same as F6

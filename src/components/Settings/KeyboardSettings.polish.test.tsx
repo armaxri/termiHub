@@ -102,12 +102,14 @@ describe("KeyboardSettings polish (#5561)", () => {
 
   it("names the two shortcut-help rows by what they do", async () => {
     await render();
-    const label = (action: string) =>
-      byTestId(`keybinding-row-${action}`)?.querySelector("td")?.textContent;
-    expect(label("show-shortcuts")).toBe("Show keyboard shortcuts");
+    const label = (action: string) => byTestId(`keybinding-label-${action}`)?.textContent;
+    // R-137 (#5842): the pair says where each one works.
+    expect(label("show-shortcuts")).toBe("Show keyboard shortcuts (also from terminal)");
     expect(label("show-shortcuts-outside-terminal")).toBe(
-      "Show keyboard shortcuts outside terminals"
+      "Show keyboard shortcuts (not from terminal)"
     );
+    expect(byTestId("keybinding-scope-note-show-shortcuts-outside-terminal")).not.toBeNull();
+    expect(byTestId("keybinding-scope-note-show-shortcuts")).toBeNull();
   });
 });
 
