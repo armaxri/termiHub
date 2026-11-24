@@ -1,11 +1,12 @@
 import { useCallback, useId } from "react";
-import { MonitorX, RotateCcw, X } from "lucide-react";
+import { MonitorX, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { getComposedLayout } from "@/store/layoutHelpers";
 import type { PluginSessionExit } from "@/store/sessionBridge";
 import { usePluginSandbox } from "@/store/usePluginSandbox";
 import { findLeafByTab } from "@/utils/panelTree";
-import { Button, ContentOverlay, Tooltip } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
+import { DisconnectStrip } from "./DisconnectStrip";
 import "./TerminalDisconnectOverlay.css";
 
 /** Props for {@link TerminalPluginExitOverlay}. */
@@ -40,7 +41,11 @@ function capitalize(text: string): string {
  * plugin, says termiHub and the other sessions are unaffected, reports the
  * restart count from the `plugin-sandbox` region and shows the exit reason.
  * Plugin types have no auto-reconnect (PLG-004), so the user decides:
- * **Restart session** or **Close tab**. The scrollback stays below.
+ * **Restart session** or **Close tab**.
+ *
+ * It is the session-end strip of #5908 (#5916): a full-width strip at the top
+ * of the slot that pushes the terminal down below it, so the scrollback stays
+ * fully visible; only the strip is a toast keep-clear zone.
  */
 export function TerminalPluginExitOverlay({
   tabId,
@@ -78,26 +83,18 @@ export function TerminalPluginExitOverlay({
   const subheading = `"${exit.pluginName}" ran in its own sandboxed process, so termiHub and your other sessions are not affected.${restartNote}`;
 
   return (
-    <div
-      className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
-      data-testid="terminal-disconnect-overlay"
+    <DisconnectStrip
+      variant="plugin-exit"
+      tone="error"
+      onDismiss={handleDismiss}
+      dismissLabel="Dismiss and view scrollback"
     >
-      <Tooltip content="View scrollback" side="bottom">
-        <button
-          className="terminal-disconnect-overlay__dismiss"
-          onClick={handleDismiss}
-          aria-label="Dismiss and view scrollback"
-          data-testid="terminal-disconnect-dismiss-btn"
-        >
-          <X size={14} />
-        </button>
-      </Tooltip>
       <ContentOverlay
         className="terminal-disconnect-overlay__body"
         data-testid="terminal-plugin-exit"
         icon={
           <MonitorX
-            size={32}
+            size={16}
             className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
           />
         }
@@ -140,6 +137,6 @@ export function TerminalPluginExitOverlay({
           </span>
         </div>
       </ContentOverlay>
-    </div>
+    </DisconnectStrip>
   );
 }
