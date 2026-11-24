@@ -153,3 +153,60 @@ describe("reopen toast when the closed tab's keep-clear notice goes with it (#59
     expect(reopenToasts()).toHaveLength(1);
   });
 });
+
+/**
+ * #5914: a dialog opening hides the reopen toast instead of dismissing it, and
+ * a close made while it is hidden (a live session's confirm dialog) still joins
+ * it. Once the dialog closes, one coalesced toast offers every closed tab.
+ */
+describe("reopen toast across a dialog (#5914)", () => {
+  let dialog: HTMLDivElement | null = null;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    addTab.mockClear();
+    resetReopenToastBatch();
+    act(() => root.render(<ToastProvider />));
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+    dialog?.remove();
+    dialog = null;
+  });
+
+  function openDialog() {
+    dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    document.body.appendChild(dialog);
+  }
+
+  it("is hidden while the dialog is open and back, coalesced, after it closes", async () => {
+    act(() => showReopenToast(payload("a")));
+    await waitFor(() => reopenToasts().length === 1);
+
+    await act(async () => openDialog());
+    await waitFor(() => reopenToasts().length === 0);
+    // A close made while the dialog is up (the confirm of a live session).
+    act(() => showReopenToast(payload("b")));
+    for (let i = 0; i < 5; i++) await tick();
+    expect(reopenToasts()).toHaveLength(0);
+
+    act(() => dialog!.remove());
+    await waitFor(() => (reopenToasts()[0]?.textContent ?? "").includes("Closed 2 tabs"));
+    for (let i = 0; i < 5; i++) await tick();
+    expect(reopenToasts()).toHaveLength(1);
+
+    const label = document.querySelector<HTMLElement>(
+      `[data-testid="${REOPEN_TOAST_ACTION_TEST_ID}"]`
+    );
+    expect(label?.textContent).toBe("Reopen all");
+    act(() => label!.click());
+    expect(addTab.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
+  });
+});
