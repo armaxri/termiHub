@@ -94,6 +94,8 @@ interface DynamicFieldProps {
    * hook — it has no user-visible or behavioural effect.
    */
   testId?: string;
+  /** A compact action beside the field's label (e.g. a "Fill from…" link, #5835). */
+  labelAction?: React.ReactNode;
 }
 
 /**
@@ -132,6 +134,7 @@ export function DynamicField({
   containerContext,
   savedConnectionContext,
   testId,
+  labelAction,
 }: DynamicFieldProps) {
   const reactId = useId();
   // The line naming the store the chooser just set up from this toggle
@@ -219,7 +222,16 @@ export function DynamicField({
       label={field.label}
       htmlFor={LABELLESS_FIELD_TYPES.has(field.fieldType.type) ? undefined : controlId}
       required={field.required}
-      labelAccessory={<FieldHelp field={field} testIdBase={testIdBase} />}
+      labelAccessory={
+        labelAction ? (
+          <>
+            <FieldHelp field={field} testIdBase={testIdBase} />
+            {labelAction}
+          </>
+        ) : (
+          <FieldHelp field={field} testIdBase={testIdBase} />
+        )
+      }
       error={error || undefined}
       errorId={errorId}
       errorTestId={`${testIdBase}-error`}

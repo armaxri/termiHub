@@ -105,6 +105,12 @@ interface ConnectionSettingsFormProps {
    */
   afterField?: { key: string; node: React.ReactNode };
   /**
+   * A compact action rendered beside the label of the field with `key` — e.g.
+   * "Fill from ~/.ssh/config…" next to Host (#5835), so a helper does not push
+   * the first field down.
+   */
+  labelAction?: { key: string; node: React.ReactNode };
+  /**
    * A section-level note rendered as the first shown group's description,
    * inside its header (above the divider) — e.g. the `${VAR}` expansion hint,
    * which applies to the connection fields rather than to the editor's Type
@@ -137,6 +143,7 @@ export function ConnectionSettingsForm({
   onValidityChange,
   hiddenFieldKeys,
   afterField,
+  labelAction,
   leadNote,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
@@ -403,6 +410,9 @@ export function ConnectionSettingsForm({
                             syncDisplayPort(field.key, value);
                           }}
                           onBlur={() => handleFieldBlur(field.key, rhfField.value)}
+                          labelAction={
+                            labelAction?.key === field.key ? labelAction.node : undefined
+                          }
                           error={fieldState.error?.message}
                           credentialSaved={
                             credentialSavedHint &&

@@ -1493,6 +1493,18 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [testOutcome, setTestOutcome] = useState<"success" | "failed" | "canceled" | null>(null);
   // The name the last successful test reached, for the footer's result line.
   const [testReached, setTestReached] = useState("");
+  // The type + settings the last test ran with (#5879). The result line only
+  // ever describes the settings in the form: once they differ, it clears.
+  const testedConfigRef = useRef<string | null>(null);
+  const formConfigKey = useMemo(
+    () => JSON.stringify([selectedType, connSettings]),
+    [selectedType, connSettings]
+  );
+  useEffect(() => {
+    if (testOutcome !== null && formConfigKey !== testedConfigRef.current) {
+      setTestOutcome(null);
+    }
+  }, [testOutcome, formConfigKey]);
 
   const handleTest = useCallback(async () => {
     if (!canSave) {
@@ -1572,6 +1584,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
 
     const connectId = `test:${newId("test")}`;
+    testedConfigRef.current = formConfigKey;
     testCanceledRef.current = false;
     setTestConnectId(connectId);
     // Listen for this test's certificate review before it starts, so a prompt
@@ -1623,6 +1636,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     selectedType,
     connSettings,
     name,
+    formConfigKey,
   ]);
 
   // The user's verdict on the test's certificate review (#4510): close the
@@ -1790,6 +1804,56 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     <>
       <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">General</h3>
+        {/* Type first: it decides every field below (#5835, R-063). */}
+        {!isAgentTransportMode && (
+          <Field variant="settings" label="Type" htmlFor={typeSelectId}>
+            <Select
+              id={typeSelectId}
+              value={selectedType}
+              onChange={handleTypeChange}
+              disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
+              aria-label="Type"
+              data-testid="connection-editor-type-select"
+            >
+              {builtinTypeOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  <span className="connection-editor__type-option">
+                    <ConnectionTypeIcon
+                      type={opt.value}
+                      size={13}
+                      className="connection-editor__type-icon"
+                      aria-hidden
+                    />
+                    {opt.label}
+                  </span>
+                </SelectItem>
+              ))}
+              {pluginTypes.length > 0 && (
+                <SelectGroup data-testid="connection-type-plugins-group">
+                  <SelectSeparator />
+                  <SelectLabel>Plugins</SelectLabel>
+                  {pluginTypes.map((type) => (
+                    <SelectItem
+                      key={type.typeId}
+                      value={type.typeId}
+                      data-testid={`connection-type-plugin-${type.typeId}`}
+                    >
+                      <span className="connection-editor__plugin-type">
+                        <Puzzle
+                          className="connection-editor__plugin-badge"
+                          width={13}
+                          height={13}
+                          aria-hidden="true"
+                        />
+                        {type.displayName}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+            </Select>
+          </Field>
+        )}
         <Controller
           name="name"
           control={topLevelControl}
@@ -1854,55 +1918,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             )}
           />
         )}
-        {!isAgentTransportMode && (
-          <Field variant="settings" label="Type" htmlFor={typeSelectId}>
-            <Select
-              id={typeSelectId}
-              value={selectedType}
-              onChange={handleTypeChange}
-              disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
-              aria-label="Type"
-              data-testid="connection-editor-type-select"
-            >
-              {builtinTypeOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  <span className="connection-editor__type-option">
-                    <ConnectionTypeIcon
-                      type={opt.value}
-                      size={13}
-                      className="connection-editor__type-icon"
-                      aria-hidden
-                    />
-                    {opt.label}
-                  </span>
-                </SelectItem>
-              ))}
-              {pluginTypes.length > 0 && (
-                <SelectGroup data-testid="connection-type-plugins-group">
-                  <SelectSeparator />
-                  <SelectLabel>Plugins</SelectLabel>
-                  {pluginTypes.map((type) => (
-                    <SelectItem
-                      key={type.typeId}
-                      value={type.typeId}
-                      data-testid={`connection-type-plugin-${type.typeId}`}
-                    >
-                      <span className="connection-editor__plugin-type">
-                        <Puzzle
-                          className="connection-editor__plugin-badge"
-                          width={13}
-                          height={13}
-                          aria-hidden="true"
-                        />
-                        {type.displayName}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )}
-            </Select>
-          </Field>
-        )}
         {isAgentTunnelledGraphical && (
           <p className="settings-form__hint" data-testid="connection-editor-agent-tunnel-hint">
             Runs on this computer and connects through the agent&apos;s port forwarding — the host
@@ -1930,32 +1945,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         )}
       </div>
 
-      {/* An editor helper, not an import (#5195): it fills in *this* form from one
-          ~/.ssh/config host and saves nothing on its own. Whole-config bulk imports
-          live under Settings → Import & Migration. */}
-      {showSshConfigImport && (
-        <div className="settings-panel__category" data-testid="ssh-config-import-section">
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<FileDown size={13} aria-hidden />}
-            onClick={() => setImportOpen(true)}
-            data-testid="ssh-config-import-connection-open"
-          >
-            Fill from ~/.ssh/config…
-          </Button>
-          <p className="settings-form__hint">
-            Copies host, user, port, key and jump hosts from one OpenSSH config entry. Review before
-            saving.
-          </p>
-          <SshConnectionImportDialog
-            open={importOpen}
-            onOpenChange={setImportOpen}
-            onImport={handleImportConnection}
-          />
-        </div>
-      )}
-
       {currentSchema && (
         <ConnectionSettingsForm
           schema={currentSchema}
@@ -1963,6 +1952,33 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           onChange={handleSchemaSettingsChange}
           onValidityChange={handleFormValidityChange}
           hiddenFieldKeys={usesSharedCredential ? SHARED_CREDENTIAL_HIDDEN_FIELDS : undefined}
+          labelAction={
+            // An editor helper, not an import (#5195): it fills in *this* form
+            // from one ~/.ssh/config host and saves nothing on its own. Whole-
+            // config imports live under Settings → Import & Migration. A
+            // compact link beside Host, not a block above it (#5835, R-060).
+            showSshConfigImport
+              ? {
+                  key: "host",
+                  node: (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="connection-editor__label-action"
+                      title="Copies host, user, port, key and jump hosts from one OpenSSH config entry. Review before saving."
+                      icon={<FileDown size={12} aria-hidden />}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setImportOpen(true);
+                      }}
+                      data-testid="ssh-config-import-connection-open"
+                    >
+                      Fill from ~/.ssh/config…
+                    </Button>
+                  ),
+                }
+              : undefined
+          }
           afterField={
             sharedCredentialsSupported
               ? {
@@ -2009,6 +2025,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           containerListingAgentId={isAgentDefinitionMode ? existingAgent?.id : undefined}
           savedConnections={connections}
           connectionFolders={folders}
+        />
+      )}
+
+      {showSshConfigImport && (
+        <SshConnectionImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onImport={handleImportConnection}
         />
       )}
 
@@ -2125,7 +2149,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   );
 
   const renderContent = () => {
-    switch (activeCategory) {
+    switch (shownCategory) {
       case "connection":
         return renderConnectionContent();
       case "terminal":
@@ -2194,11 +2218,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     </Button>
   );
 
+  // A type without a terminal (VNC, RDP, FTP) has no Terminal page (#5835).
+  const hasTerminalPage = currentTypeInfo?.capabilities?.terminal !== false;
   const categories = isAgentTransportMode
     ? AGENT_TRANSPORT_CATEGORIES
-    : isAgentDefinitionMode
-      ? AGENT_DEF_CATEGORIES
-      : EDITOR_CATEGORIES;
+    : (isAgentDefinitionMode ? AGENT_DEF_CATEGORIES : EDITOR_CATEGORIES).filter(
+        (c) => hasTerminalPage || c.id !== "terminal"
+      );
+  // Switching to such a type while on the Terminal page shows Connection.
+  const shownCategory: EditorCategory =
+    activeCategory === "terminal" && !hasTerminalPage ? "connection" : activeCategory;
 
   return (
     <div
@@ -2229,65 +2258,67 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <SettingsNav
           categories={categories}
           iconMap={EDITOR_ICONS}
-          activeCategory={activeCategory}
+          activeCategory={shownCategory}
           onCategoryChange={handleCategoryChange}
           isCompact={isCompact}
         />
         <div className="connection-editor__content">{renderContent()}</div>
       </div>
+      {/* One layout in create and edit (#5835): Test, its result and Cancel test
+          on the left; Cancel and the two saves on the right, the primary
+          right-most (#5755). The row never wraps or changes height, so nothing
+          jumps while a test runs or its result appears. */}
       <div
         className="connection-editor__actions"
         data-testid="connection-editor-actions"
         {...TOAST_AVOID_PROPS}
       >
-        {/* The test's result shows beside its button, not in a toast (#5859). */}
-        <InlineStatus
-          kind={testOutcome === "success" ? "success" : "info"}
-          message={
-            testOutcome === "success"
-              ? `Reached ${testReached}`
-              : testOutcome === "canceled"
-                ? "Test canceled"
-                : null
-          }
-          detail={testOutcome === "success" ? "Nothing was saved." : undefined}
-          testId="connection-editor-test-result"
-        />
+        <div className="connection-editor__actions-test">
+          {/* No agent-session test for a tunnelled VNC/RDP connection (#3241). */}
+          {!isAgentTransportMode && !isAgentTunnelledGraphical && (
+            <Button
+              variant="ghost"
+              onClick={handleTest}
+              errorToast={false}
+              aria-disabled={!canSave}
+              data-invalid={!canSave || undefined}
+              pendingLabel="Testing…"
+              data-test-outcome={testOutcome ?? undefined}
+              data-testid="connection-editor-test"
+            >
+              Test
+            </Button>
+          )}
+          {!isAgentTransportMode && testConnectId && (
+            <Button
+              variant="ghost"
+              onClick={handleCancelTest}
+              data-testid="connection-editor-test-cancel"
+            >
+              Cancel test
+            </Button>
+          )}
+          {/* The test's result shows beside its button, not in a toast (#5859). */}
+          <InlineStatus
+            kind={testOutcome === "success" ? "success" : "info"}
+            message={
+              testOutcome === "success"
+                ? `Reached ${testReached}`
+                : testOutcome === "canceled"
+                  ? "Test canceled"
+                  : null
+            }
+            detail={testOutcome === "success" ? "Nothing was saved." : undefined}
+            testId="connection-editor-test-result"
+          />
+        </div>
         <Button variant="secondary" onClick={handleCancel} data-testid="connection-editor-cancel">
           Cancel
         </Button>
-        {!isAgentTransportMode && (
-          <>
-            {/* No agent-session test for a tunnelled VNC/RDP connection (#3241). */}
-            {!isAgentTunnelledGraphical && (
-              <Button
-                variant="secondary"
-                onClick={handleTest}
-                errorToast={false}
-                aria-disabled={!canSave}
-                data-invalid={!canSave || undefined}
-                pendingLabel="Testing…"
-                data-test-outcome={testOutcome ?? undefined}
-                data-testid="connection-editor-test"
-              >
-                Test
-              </Button>
-            )}
-            {testConnectId && (
-              <Button
-                variant="ghost"
-                onClick={handleCancelTest}
-                data-testid="connection-editor-test-cancel"
-              >
-                Cancel test
-              </Button>
-            )}
-            {/* One primary per footer, on the right (copy style guide). */}
-            {!saveAndConnectIsPrimary && saveAndConnectButton}
-          </>
-        )}
+        {/* One primary per footer, on the right (copy style guide). */}
+        {!isAgentTransportMode && !saveAndConnectIsPrimary && saveAndConnectButton}
         {saveButton}
-        {saveAndConnectIsPrimary && saveAndConnectButton}
+        {!isAgentTransportMode && saveAndConnectIsPrimary && saveAndConnectButton}
       </div>
       <UnsavedChangesDialog
         open={pendingCloseRequest?.tabId === tabId}
