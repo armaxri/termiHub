@@ -155,10 +155,17 @@ class TestProductRunAutomationRunPicker(
             self.evidence(str({t: home_line(x, marker) for t, x in texts.items()}))
             problems = typed_on_problems(texts, marker)
             assert not problems, problems
+            # One record per terminal, each naming its own (#5818, slice 9).
             runs = self.wait(
-                lambda: self.macro_runs(self.ids["macro"]), what="the macro's run in the history"
+                lambda: (lambda r: r if len(r) >= 2 else None)(
+                    self.macro_runs(self.ids["macro"])
+                ),
+                what="the macro's run on each terminal in the history",
             )
-            assert runs[0].get("targetCount") == 2, runs
+            assert len(runs) == 2, runs
+            assert all(r.get("targetCount") == 1 for r in runs), runs
+            labels = {tuple(r.get("targetLabels") or []) for r in runs}
+            assert len(labels) == 2, f"both records name the same terminal: {runs}"
 
     def test_20_badges_and_stop_one(self):
         t = self.tag

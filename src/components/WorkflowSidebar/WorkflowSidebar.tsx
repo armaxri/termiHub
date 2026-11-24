@@ -15,7 +15,7 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem, WORKFLOW_JUST_SAVED_MS } from "./WorkflowListItem";
-import { WorkflowHistorySection } from "./WorkflowHistorySection";
+import { HistorySection } from "@/components/AutomationSidebar";
 import { WorkflowsExperimentalNotice } from "./WorkflowsExperimentalNotice";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
@@ -83,6 +83,8 @@ export function WorkflowSidebar() {
 
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
+  // The automation the one history panel is narrowed to (#5818); null = every run.
+  const [historyFilterId, setHistoryFilterId] = useState<string | null>(null);
   // "Run on…" (#5818, slice 5): the run picker for one workflow.
   const [runOnId, setRunOnId] = useState<string | null>(null);
   const runOnItems = useMemo(() => {
@@ -435,7 +437,7 @@ export function WorkflowSidebar() {
         </div>
       )}
       <SchedulesSection />
-      <WorkflowHistorySection />
+      <HistorySection automationId={historyFilterId} onFilterChange={setHistoryFilterId} />
       <WorkflowRunOutput />
       <WorkflowEditorDialog
         open={editing !== null}

@@ -350,23 +350,28 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     } else {
       toast.error(summary.message, { id: toastId, description: summary.description });
     }
-    recordMacroRun(
-      set,
-      buildMacroRun({
-        id: opts?.runId,
-        macro,
-        startedAt,
-        endedAt: new Date(),
-        status: tally.status,
-        stepsPlayed: tally.stepsPlayed,
-        targetLabels,
-        origin: opts?.origin ?? "manual",
-        error:
-          tally.dropped > 0
-            ? `${tally.dropped} of ${targets.length} terminals stopped receiving input`
-            : undefined,
-      })
-    );
+    // One history record per terminal (#5818): each target was its own run, with
+    // its own outcome. A target that never started has no run to record.
+    outcomes
+      .filter((outcome) => outcome.status !== undefined)
+      .forEach((outcome, index) => {
+        const status = outcome.status ?? "cancelled";
+        recordMacroRun(
+          set,
+          buildMacroRun({
+            // The caller's pre-generated id names the first terminal's record.
+            id: index === 0 ? opts?.runId : undefined,
+            macro,
+            startedAt: outcome.startedAt ?? startedAt,
+            endedAt: outcome.endedAt ?? new Date(),
+            status,
+            stepsPlayed: outcome.stepsPlayed,
+            targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
+            origin: opts?.origin ?? "manual",
+            error: status === "error" ? "The terminal stopped accepting input" : undefined,
+          })
+        );
+      });
     return tally.status;
   };
 

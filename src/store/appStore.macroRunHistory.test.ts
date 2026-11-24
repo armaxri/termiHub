@@ -158,23 +158,36 @@ describe("appStore — macro run history (#3543)", () => {
     expect(run.error).toMatch(/stopped accepting input/);
   });
 
-  it("records a multi-target playback with every target label", async () => {
+  it("records a multi-target playback once per terminal (#5818)", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b", "c"] });
+    await useAppStore.getState().playMacro("m1", {
+      timingMode: "instant",
+      targetTabIds: ["a", "b", "c"],
+      origin: "scheduled",
+      runId: "mrun-fixed",
+    });
 
     // c is not connected, so it never became a target.
-    expect(await lastRecorded()).toMatchObject({
-      status: "completed",
-      targetCount: 2,
-      targetLabels: ["title-a", "title-b"],
-      origin: "manual",
-    });
+    await vi.waitFor(() => expect(recorded).toHaveLength(2));
+    const byLabel = Object.fromEntries(recorded.map((r) => [r.targetLabel, r]));
+    expect(Object.keys(byLabel).sort()).toEqual(["title-a", "title-b"]);
+    for (const run of recorded) {
+      expect(run).toMatchObject({
+        automationId: "m1",
+        status: "completed",
+        targetCount: 1,
+        stepsCompleted: 1,
+        total: 1,
+        origin: "scheduled",
+      });
+    }
+    // The caller's pre-generated id names the first terminal's record.
+    expect(byLabel["title-a"].id).toBe("mrun-fixed");
+    expect(byLabel["title-b"].id).not.toBe("mrun-fixed");
   });
 
-  it("notes a multi-target playback whose terminals dropped out", async () => {
+  it("records each terminal's own outcome when one drops out (#5818)", async () => {
     registerTerminalInputInjector(async (tabId) => tabId !== "b");
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
@@ -182,7 +195,15 @@ describe("appStore — macro run history (#3543)", () => {
       .getState()
       .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
 
-    expect((await lastRecorded()).error).toBe("1 of 2 terminals stopped receiving input");
+    await vi.waitFor(() => expect(recorded).toHaveLength(2));
+    const byLabel = Object.fromEntries(recorded.map((r) => [r.targetLabel, r]));
+    expect(byLabel["title-a"]).toMatchObject({ status: "completed", stepsCompleted: 1 });
+    expect(byLabel["title-a"].error).toBeUndefined();
+    expect(byLabel["title-b"]).toMatchObject({
+      status: "failed",
+      stepsCompleted: 0,
+      error: "The terminal stopped accepting input",
+    });
   });
 
   it("records nothing for a playback that never started", async () => {

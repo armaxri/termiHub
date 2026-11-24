@@ -36,6 +36,7 @@ import {
   type WaitForOutputResult,
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
+import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { Workflow, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
@@ -55,7 +56,12 @@ import {
   setWorkflowOutputProcessResult,
 } from "../workflowRunBridge";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
-import { workflowRunToAutomationRun, workflowToAutomation } from "./automationViews";
+import {
+  collectNestedRun,
+  nestedRunRecord,
+  workflowRunToAutomationRun,
+  workflowToAutomation,
+} from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 
 /**
@@ -482,6 +488,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   });
 
   const automation = automationForRun(get(), workflowId) ?? workflowToAutomation(workflow);
+  const nestedRuns = new Map<string, AutomationRun>();
   const handle = runAutomation(
     automation,
     {
@@ -535,6 +542,10 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
           description: retryNote,
         });
       },
+      // A `run-automation` step's callee gets its own history record, labeled
+      // "Run by another automation", on the same terminal (#5818, slice 9).
+      onNestedRunFinished: (event) =>
+        collectNestedRun(nestedRuns, nestedRunRecord(event, targetTabId, targetLabel)),
       onStepContinued: (event) => {
         frontendLog(
           "workflow",
@@ -569,6 +580,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     targetLabel: targetLabel || undefined,
     triggeredBy,
   };
+  for (const nested of nestedRuns.values()) recordAutomationRun(set, nested, "workflow");
   recordAutomationRun(set, workflowRunToAutomationRun(runRecord), "workflow");
 
   // Settle this run's keyed region entry (#3418). Keyed by run id, a run a newer
