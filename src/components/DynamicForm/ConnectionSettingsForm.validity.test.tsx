@@ -157,6 +157,11 @@ describe("ConnectionSettingsForm — validity reporting", () => {
     const hostInput = container.querySelector<HTMLInputElement>('[data-testid="field-host"]')!;
     await act(async () => setInputValue(hostInput, ""));
     await flush();
+    // Hidden while the user is still in the field (#5909); Save is gated anyway.
+    expect(container.querySelector('[data-testid="field-host-error"]')).toBeNull();
+    await act(async () => {
+      hostInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
 
     expect(container.querySelector('[data-testid="field-host-error"]')?.textContent).toBe(
       "Host is required"
