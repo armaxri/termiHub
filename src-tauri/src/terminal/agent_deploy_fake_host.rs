@@ -42,14 +42,14 @@ use tokio_util::sync::CancellationToken;
 use crate::terminal::agent_install::POSIX_PREPARE_UPLOAD_DIR_COMMAND;
 
 /// The SSH user's home directory on the fake host.
-pub(super) const HOME: &str = "/home/deploy";
+pub(in crate::terminal) const HOME: &str = "/home/deploy";
 
 /// Absolute path of the default install target (`.local/bin/termihub-agent`).
-pub(super) const DEFAULT_INSTALLED: &str = "/home/deploy/.local/bin/termihub-agent";
+pub(in crate::terminal) const DEFAULT_INSTALLED: &str = "/home/deploy/.local/bin/termihub-agent";
 
 /// Faults the host injects. All default to "behave like a healthy host".
 #[derive(Default)]
-pub(super) struct Faults {
+pub(in crate::terminal) struct Faults {
     /// Fail the SFTP write that would take the uploaded file past this many
     /// bytes; the bytes before it stay on the host (a half-written binary).
     pub fail_write_after: Option<usize>,
@@ -78,11 +78,13 @@ pub(super) struct Faults {
     /// contains (exit 0), or fails with exit 1 when none matches. `None`: no
     /// `powershell.exe` on the `PATH` (exit 127).
     pub powershell: Option<Vec<(&'static str, String)>>,
+    /// Accept a `powershell.exe` exec and never answer it (a hung command).
+    pub hang_powershell: bool,
 }
 
 /// Everything the host holds, shared across every connection.
 #[derive(Default)]
-pub(super) struct HostState {
+pub(in crate::terminal) struct HostState {
     /// The file system: absolute path → contents.
     pub files: BTreeMap<String, Vec<u8>>,
     /// Absolute paths of the directories `mkdir`/`mktemp` created.
@@ -110,14 +112,14 @@ impl HostState {
 
 /// Contents of a fake agent binary that reports `version`, padded to `size`
 /// bytes so the upload spans several SFTP writes.
-pub(super) fn fake_binary(version: &str, size: usize) -> Vec<u8> {
+pub(in crate::terminal) fn fake_binary(version: &str, size: usize) -> Vec<u8> {
     let mut bytes = format!("termihub-agent {version}\n").into_bytes();
     bytes.resize(size.max(bytes.len()), b'#');
     bytes
 }
 
 /// A binary that crashes on start (its `--version` prints nothing, exits 1).
-pub(super) fn broken_binary(size: usize) -> Vec<u8> {
+pub(in crate::terminal) fn broken_binary(size: usize) -> Vec<u8> {
     let mut bytes = b"\x7fELF not-runnable\n".to_vec();
     bytes.resize(size.max(bytes.len()), 0);
     bytes
@@ -125,7 +127,9 @@ pub(super) fn broken_binary(size: usize) -> Vec<u8> {
 
 /// Start a fake host with `seed` files and return a logged-in client session
 /// plus the shared host state. Must run inside a multi-thread Tokio runtime.
-pub(super) async fn connect(seed: &[(&str, Vec<u8>)]) -> (SshSession, Arc<Mutex<HostState>>) {
+pub(in crate::terminal) async fn connect(
+    seed: &[(&str, Vec<u8>)],
+) -> (SshSession, Arc<Mutex<HostState>>) {
     trust_test_host_keys();
     let state = seeded_state(seed);
     let config = server_config();
@@ -158,7 +162,7 @@ pub(super) async fn connect(seed: &[(&str, Vec<u8>)]) -> (SshSession, Arc<Mutex<
 /// port plus the shared host state, for code that dials the host itself through
 /// `connect_and_authenticate` (#5208). Every connection shares the one state;
 /// the listener lives as long as the test's Tokio runtime.
-pub(super) async fn listen(seed: &[(&str, Vec<u8>)]) -> (u16, Arc<Mutex<HostState>>) {
+pub(in crate::terminal) async fn listen(seed: &[(&str, Vec<u8>)]) -> (u16, Arc<Mutex<HostState>>) {
     trust_test_host_keys();
     let state = seeded_state(seed);
     let config = server_config();
@@ -306,7 +310,7 @@ fn run_exec(st: &mut HostState, command: &str) -> ExecResult {
 }
 
 /// Decode the `-EncodedCommand` script in `args` (base64 of UTF-16LE text).
-pub(super) fn decode_encoded_command(args: &str) -> Option<String> {
+pub(in crate::terminal) fn decode_encoded_command(args: &str) -> Option<String> {
     use base64::Engine;
     let encoded = args.split_once("-EncodedCommand ")?.1.trim();
     let bytes = base64::engine::general_purpose::STANDARD
@@ -449,6 +453,11 @@ impl russh::server::Handler for HostHandler {
     ) -> Result<(), Self::Error> {
         self.pending.remove(&channel);
         let command = String::from_utf8_lossy(data).into_owned();
+        let hang = command.starts_with("powershell.exe ")
+            && self.state.lock().expect("host").faults.hang_powershell;
+        if hang {
+            return session.channel_success(channel);
+        }
         let (stdout, stderr, status) = run_exec(&mut self.state.lock().expect("host"), &command);
         session.channel_success(channel)?;
         if !stdout.is_empty() {

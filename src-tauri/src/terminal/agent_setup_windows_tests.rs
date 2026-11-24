@@ -1,18 +1,18 @@
-//! A Windows agent setup reports its outcome through the tab's exit code (#5946).
+//! The lines a Windows agent setup types into its tab (#5946, #5992).
 //!
-//! A POSIX setup replaces the tab's shell (`exec sh setup.sh`), so the
-//! session's exit code says whether the agent was installed. A Windows setup
-//! types its install, verify and cleanup commands into the live shell, so its
-//! last line must `exit` with the setup's status for the tab to learn the
-//! outcome. These tests pin that statically for every Windows login shell and,
-//! when `pwsh` is installed, execute the PowerShell lines (and the encoded form
-//! through `sh`, as Git Bash runs it) in a scratch dir with a scratch `HOME`,
-//! never the user's profile or history.
+//! They end with `exit`, so the tab's shell ends when the setup does; the host
+//! check of `agent_setup_outcome` then decides how it went (Windows does not
+//! report the shell's own status reliably). These tests pin the lines for every
+//! Windows login shell and, when `pwsh` is installed, execute the PowerShell
+//! lines, their encoded form through `sh` (as Git Bash runs it) and the host
+//! check in a scratch dir with a scratch `HOME`, never the user's profile or
+//! history.
 
 use super::*;
 use crate::terminal::agent_install::{
     powershell_encoded_command, windows_install_plan, WindowsDeployShell, WindowsShell,
 };
+use crate::terminal::agent_setup_outcome::{parse_check, windows_check_command, HostCheck};
 
 const CMD: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::Cmd);
 const POWERSHELL: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::PowerShell);
@@ -47,6 +47,18 @@ fn every_windows_setup_ends_by_exiting_with_its_status() {
     assert_eq!(cmd.last().unwrap(), "exit %TERMIHUB_SETUP_STATUS%");
     let encoded = windows_setup_lines(ENCODED);
     assert!(encoded.last().unwrap().ends_with("; exit $?"));
+}
+
+#[test]
+fn every_line_is_typed_with_the_enter_key_of_a_windows_console() {
+    // LF is Ctrl+Enter for PSReadLine: the line would never run (#5992).
+    for shell in [CMD, POWERSHELL, ENCODED] {
+        let typed = windows_setup_input(shell);
+        assert_eq!(typed.len(), windows_setup_lines(shell).len());
+        for line in typed {
+            assert!(line.ends_with('\r') && !line.contains('\n'), "{line:?}");
+        }
+    }
 }
 
 #[test]
@@ -313,6 +325,56 @@ mod executed {
             let stdout = String::from_utf8_lossy(&out.stdout);
             assert_eq!(out.status.code(), Some(want), "{stdout}");
             assert!(!stdout.contains("not-reached"), "{stdout}");
+        }
+    }
+
+    /// Run the host check as `sh` would run its command line, with
+    /// `powershell.exe` standing for the local `pwsh`.
+    fn run_check(pwsh: &Path, host: &Host, uploaded: &[u8]) -> HostCheck {
+        std::os::unix::fs::symlink(pwsh, host.path("bin/powershell.exe")).unwrap();
+        let out = host
+            .command(Path::new("/bin/sh"))
+            .arg("-c")
+            .arg(windows_check_command())
+            .output()
+            .unwrap();
+        parse_check(&String::from_utf8_lossy(&out.stdout), &sha256_hex(uploaded))
+    }
+
+    fn install(host: &Host, body: &str) {
+        std::fs::create_dir_all(host.installed().parent().unwrap()).unwrap();
+        write_exec(&host.installed(), body);
+    }
+
+    #[test]
+    fn the_host_check_tells_the_uploaded_agent_from_every_other_state() {
+        let Some(pwsh) = pwsh() else {
+            eprintln!("pwsh not installed: skipping");
+            return;
+        };
+        let good = "#!/bin/sh\necho termihub-agent 1.2.3\n";
+        // The same version, other bytes: what a failed update leaves in place.
+        let old = "#!/bin/sh\n# old build\necho termihub-agent 1.2.3\n";
+        let broken = "#!/bin/sh\necho termihub-agent 1.2.3\nexit 3\n";
+        let alien = "#!/bin/sh\necho something else\n";
+        let unstartable = "#!/nonexistent/interpreter\n";
+        for (installed, uploaded, want) in [
+            (Some(good), good, HostCheck::Installed),
+            (Some(old), good, HostCheck::OtherBinary),
+            (None, good, HostCheck::Absent),
+            (Some(broken), broken, HostCheck::DoesNotRun),
+            (Some(alien), alien, HostCheck::DoesNotRun),
+            (Some(unstartable), unstartable, HostCheck::DoesNotRun),
+        ] {
+            let host = Host::new();
+            if let Some(body) = installed {
+                install(&host, body);
+            }
+            assert_eq!(
+                run_check(&pwsh, &host, uploaded.as_bytes()),
+                want,
+                "installed {installed:?}, uploaded {uploaded:?}"
+            );
         }
     }
 }

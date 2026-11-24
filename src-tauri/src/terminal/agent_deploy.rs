@@ -1454,7 +1454,7 @@ mod tests {
 
 #[cfg(test)]
 #[path = "agent_deploy_fake_host.rs"]
-mod fake_host;
+pub(in crate::terminal) mod fake_host;
 
 #[cfg(test)]
 #[path = "agent_deploy_host_tests.rs"]
