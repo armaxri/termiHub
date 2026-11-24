@@ -232,7 +232,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
         return { version: result.version, signer: result.signer };
       }
       await get().loadPlugins();
-      toast.success(`Installed ${result.plugin.manifest.name}`, { id: toastId });
+      toast.dismiss(toastId);
       return null;
     } catch (err) {
       toast.error(`Failed to install plugin: ${errorMessage(err)}`, {
@@ -248,7 +248,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
     try {
       await apiUninstallPlugin(pluginId);
       await get().loadPlugins();
-      toast.success(`Uninstalled ${name}`, { id: toastId });
+      toast.dismiss(toastId);
     } catch (err) {
       toast.error(`Failed to uninstall ${name}: ${errorMessage(err)}`, {
         id: toastId,
@@ -263,7 +263,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
     try {
       await apiEnablePlugin(pluginId);
       await get().loadPlugins();
-      toast.success(`Enabled ${name}`, { id: toastId });
+      toast.dismiss(toastId);
     } catch (err) {
       toast.error(`Failed to enable ${name}: ${errorMessage(err)}`, {
         id: toastId,
@@ -278,7 +278,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
     try {
       await apiDisablePlugin(pluginId);
       await get().loadPlugins();
-      toast.success(`Disabled ${name}`, { id: toastId });
+      toast.dismiss(toastId);
     } catch (err) {
       toast.error(`Failed to disable ${name}: ${errorMessage(err)}`, {
         id: toastId,

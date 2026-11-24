@@ -137,7 +137,7 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     vi.clearAllMocks();
   });
 
-  it("shows a success toast and closes the dialog when save succeeds", async () => {
+  it("closes the dialog without a toast when save succeeds (#5859)", async () => {
     const saveEmbeddedServer = vi.fn(() => Promise.resolve());
     seedStore(saveEmbeddedServer);
     await renderSidebar();
@@ -145,7 +145,7 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     await clickDialogSave();
 
     expect(saveEmbeddedServer).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
     // Dialog closed.
     expect(document.querySelector('[data-testid="server-dialog-save"]')).toBeNull();
@@ -165,7 +165,7 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     expect(document.querySelector('[data-testid="server-dialog-save"]')).not.toBeNull();
   });
 
-  it("shows a success toast when duplication succeeds", async () => {
+  it("raises no toast when duplication succeeds (#5859)", async () => {
     const saveEmbeddedServer = vi.fn(() => Promise.resolve());
     seedStore(saveEmbeddedServer, [makeServer("srv-1", "Original")]);
     await renderSidebar();
@@ -179,7 +179,7 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     await flush();
 
     expect(saveEmbeddedServer).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 

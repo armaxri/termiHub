@@ -125,7 +125,6 @@ export function UnlockDialog({
     setError("");
     try {
       await unlockCredentialStoreBiometric();
-      toast.success("Credential store unlocked");
       onOpenChange(false);
     } catch (err) {
       if (isBiometricUnlockError(err)) {
@@ -163,7 +162,6 @@ export function UnlockDialog({
     setError("");
     try {
       await unlockCredentialStore(password);
-      toast.success("Credential store unlocked");
       onOpenChange(false);
       return true;
     } catch (err) {
@@ -198,6 +196,7 @@ export function UnlockDialog({
     try {
       await resetCredentialStore();
       setConfirmReset(false);
+      // toast-policy: explains-outcome — says what to do next after the reset
       toast.success("Credential store reset — set a new master password to start over");
       onOpenChange(false);
     } catch (err) {

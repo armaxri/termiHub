@@ -572,6 +572,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         // user why the remote did not follow the tab, once per session.
         if (resizeNoticeSessionRef.current === id) return;
         resizeNoticeSessionRef.current = id;
+        // toast-policy: explains-outcome — the remote did not follow the tab size, and this says why
         toast.info("Remote desktop not resized", { id: `rd-resize-${id}`, description: reason });
       });
     },

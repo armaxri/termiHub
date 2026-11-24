@@ -50,7 +50,6 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
           )
           .filter((h) => h.fingerprints.length > 0)
       );
-      toast.success(`Revoked certificate for ${host}`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to revoke certificate: ${message}`);
@@ -62,7 +61,6 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
     try {
       await rdpTrustForget(host);
       setHosts((prev) => prev.filter((h) => h.host !== host));
-      toast.success(`Forgot all remembered certificates for ${host}`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to forget host: ${message}`);

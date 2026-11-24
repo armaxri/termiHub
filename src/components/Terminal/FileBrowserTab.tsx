@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ban, FolderOpen } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
-import { Button, ContentOverlay, toast } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
 import { ConnectProgress } from "@/components/ui/ConnectProgress";
 import {
   buildStages,
@@ -164,7 +164,6 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         setTabSessionId(tabId, sessionId);
         setPhase("connected");
         frontendLog("file_browser_tab", `session ${sessionId} opened for tab ${tabId}`);
-        toast.success("Connected", { description: tab.title });
       } catch (err) {
         if (attemptRef.current === attempt) attemptRef.current = null;
         if (canceled || attempt.abandoned) return;

@@ -62,7 +62,6 @@ export function EmbeddedServerSidebar() {
     const name = servers.find((s) => s.id === id)?.name ?? "";
     try {
       await deleteEmbeddedServer(id);
-      toast.success(`Deleted "${name}"`);
     } catch (err) {
       toast.error(`Failed to delete "${name}"`, {
         description: errorMessage(err),
@@ -101,7 +100,6 @@ export function EmbeddedServerSidebar() {
         : config;
       try {
         await saveEmbeddedServer(cfg);
-        toast.success(isNew ? `Created "${cfg.name}"` : `Saved "${cfg.name}"`);
         if (!sameRunLocation(serverLocations[cfg.id] ?? THIS_COMPUTER, location)) {
           handleRunLocationChange(cfg.id, location);
         }
@@ -128,7 +126,6 @@ export function EmbeddedServerSidebar() {
       };
       try {
         await saveEmbeddedServer(dupe);
-        toast.success(`Duplicated "${original.name}"`);
       } catch (err) {
         toast.error(`Failed to duplicate "${original.name}"`, {
           description: errorMessage(err),

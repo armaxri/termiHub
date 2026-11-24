@@ -76,7 +76,6 @@ export function WorkflowHistorySection() {
     setConfirmClear(false);
     try {
       await clearWorkflowRunHistory();
-      toast.success("Cleared workflow run history");
     } catch (err) {
       toast.error(`Failed to clear history: ${errorMessage(err)}`);
     }

@@ -261,6 +261,7 @@ export function useFileMoveTransfer({
         if (plan.kind === "noop") {
           // Pasting into the folder the items came from would move them onto
           // themselves (or clobber the source on a copy): say so, do nothing.
+          // toast-policy: explains-outcome — nothing moves, and this says why
           toast.info(
             `${describeEntries(entries)} ${entries.length === 1 ? "is" : "are"} already in ${destDir}`
           );

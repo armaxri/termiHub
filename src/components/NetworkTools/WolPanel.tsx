@@ -80,6 +80,7 @@ export function WolPanel() {
     try {
       await networkWolSend(device.mac, device.broadcast, device.port);
       recordWol(startedAt, device.mac, device.broadcast, device.port, "completed");
+      // toast-policy: no-in-place-surface — the packet went to another machine
       toast.success(`Magic packet sent to ${device.name}`);
     } catch (err) {
       setError(errorMessage(err));
@@ -119,7 +120,6 @@ export function WolPanel() {
       });
       await loadDevices();
       setSaveModalOpen(false);
-      toast.success(`Saved device "${name}"`);
     } catch (err) {
       setError(errorMessage(err));
       frontendLog("wol_panel", `WoL device save failed: ${errorMessage(err)}`);

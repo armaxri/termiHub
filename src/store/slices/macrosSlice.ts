@@ -197,6 +197,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       return null;
     }
     if (macro.steps.length === 0) {
+      // toast-policy: explains-outcome — nothing plays, and this says why
       toast.info(`Macro "${macro.name}" has no steps to play`);
       return null;
     }
@@ -345,7 +346,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         macroRecordingLastTime: null,
         macroSaveDialogOpen: false,
       });
-      toast.info("Recording macro — type in the terminal, then stop to save");
     },
 
     recordMacroInput: (data) => {
@@ -370,6 +370,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           macroRecordingLastTime: null,
           macroSaveDialogOpen: false,
         });
+        // toast-policy: explains-outcome — recording stops without a macro, and this says why
         toast.info("No input was recorded");
         return;
       }
@@ -395,7 +396,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         macroRecordingLastTime: null,
         macroSaveDialogOpen: false,
       });
-      toast.info("Recording discarded");
     },
 
     saveRecordedMacro: async ({ name, description, tags }) => {
@@ -417,6 +417,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           macroRecordingLastTime: null,
           macroSaveDialogOpen: false,
         });
+        // toast-policy: off-screen — recorded from a terminal, the macro lands in the Automations list
         toast.success(`Saved macro "${name}"`);
       } catch (err) {
         // Keep the dialog open so the user can retry without losing the capture.
@@ -487,6 +488,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       }
 
       if (macro.steps.length === 0) {
+        // toast-policy: explains-outcome — nothing plays, and this says why
         toast.info(`Macro "${macro.name}" has no steps to play`);
         return null;
       }
@@ -555,8 +557,9 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       }
 
       if (result.status === "completed") {
-        toast.success(`Played macro "${macro.name}"`, { id: toastId });
+        toast.dismiss(toastId);
       } else if (result.status === "cancelled") {
+        // toast-policy: explains-outcome — says how far the canceled playback got
         toast.info(`Playback of "${macro.name}" canceled`, {
           id: toastId,
           description: `Stopped after ${result.stepsPlayed} of ${total} steps`,

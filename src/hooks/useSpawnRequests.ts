@@ -170,6 +170,7 @@ async function handleSpawnRequest(
         picked.runtime
       );
       open.openSpawnedContainer(spawn);
+      // toast-policy: background — an external request (file manager, CLI) opened it
       toast.success(`Spawned container at ${location || "."}`, {
         duration: SPAWN_TOAST_DURATION_MS,
         testId: "spawn-toast-success",
@@ -199,16 +200,19 @@ async function handleSpawnRequest(
       useAppStore.getState().connectionTypes.some((ct) => ct.typeId === "ssh");
     const ready = needsSecretStep ? await resolveSpawnSecret(spawn, req.connection) : spawn;
     if (ready === null) {
+      // toast-policy: explains-outcome — no tab opens, and this says it was canceled
       toast.info("Connect canceled");
       return;
     }
     open.openSpawnedShell(ready);
     if (ready.missing) {
+      // toast-policy: explains-outcome — the shell opened somewhere other than asked
       toast.info(`Path not found — opened a shell in your home directory instead`, {
         duration: SPAWN_TOAST_DURATION_MS,
         testId: "spawn-toast-missing",
       });
     } else {
+      // toast-policy: background — an external request (file manager, CLI) opened it
       toast.success(`Opened a shell at ${req.location || "."}`, {
         duration: SPAWN_TOAST_DURATION_MS,
         testId: "spawn-toast-success",

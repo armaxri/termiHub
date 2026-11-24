@@ -45,7 +45,6 @@ export function TrustedPublishersSettings() {
     try {
       await revokeTrustedPublisher(publisher.keyId);
       setPublishers((prev) => prev.filter((p) => p.keyId !== publisher.keyId));
-      toast.success(`Revoked trust for ${publisher.label}`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to revoke publisher: ${message}`);

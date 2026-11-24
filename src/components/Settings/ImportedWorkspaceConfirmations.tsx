@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
-import { Button, ConfirmDialog, toast } from "@/components/ui";
+import { Button, ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { loadWorkspace } from "@/services/workspaceApi";
@@ -165,11 +165,6 @@ export function ImportedWorkspaceConfirmations() {
       workspaceImportAllowlist: withImportsRevoked(allowlist, keys),
     });
     setPending(null);
-    toast.success(
-      pending.scope === "all"
-        ? "Revoked all imported workspace confirmations"
-        : "Revoked the confirmation"
-    );
   }, [pending, allowlist, settings, updateSettings]);
 
   const count = allowlist.length;

@@ -44,6 +44,7 @@ export async function retryFromNotice(paste: InterruptedFolderPaste): Promise<vo
   const toastId = toast.loading(`Finishing “${name}”…`);
   try {
     await retryInterruptedFolderPaste(paste);
+    // toast-policy: background — an interrupted paste from an earlier run finished
     toast.success(`Finished pasting “${name}”`, { id: toastId });
   } catch (err) {
     toast.dismiss(toastId);

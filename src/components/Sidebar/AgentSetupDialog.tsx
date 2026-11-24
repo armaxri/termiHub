@@ -246,6 +246,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
           if (agentId !== agent.id) return;
 
           if (step === "done") {
+            // toast-policy: background — the deploy runs on after its dialog closed
             toast.success(`Agent deployed to ${agent.name}`, {
               id: progressToastIdRef.current ?? undefined,
             });
@@ -339,6 +340,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const handleCancelRunning = useCallback(async () => {
     try {
       await cancelAgentSetup(agent.id);
+      // toast-policy: background — resolves the background deploy's progress toast
       toast.success(`Canceling agent deploy to ${agent.name}…`, {
         id: progressToastIdRef.current ?? undefined,
       });

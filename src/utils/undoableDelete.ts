@@ -22,6 +22,7 @@ export interface UndoToastOptions {
  */
 export function showUndoToast(message: string, opts: UndoToastOptions): string | number {
   let used = false;
+  // toast-policy: undo — offers Undo for what was just deleted
   return toast.success(message, {
     id: opts.id,
     duration: UNDO_WINDOW_MS,

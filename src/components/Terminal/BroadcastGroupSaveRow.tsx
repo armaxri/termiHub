@@ -41,6 +41,7 @@ export function BroadcastGroupSaveRow({
     if (!canSave) return;
     try {
       const group = await saveBroadcastGroup(name, connectionIds);
+      // toast-policy: dialog-status — shows in the scope dialog's status line with the group's size
       toast.success(`Saved broadcast group "${group.name}"`, {
         description: `${connectionIds.length} saved connection${connectionIds.length === 1 ? "" : "s"}`,
       });

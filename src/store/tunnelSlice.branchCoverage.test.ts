@@ -202,7 +202,8 @@ describe("tunnelSlice — residual branch coverage (TFE-006)", () => {
   it("deleteTunnel falls back to the 'tunnel' label for an unknown id", async () => {
     await useAppStore.getState().deleteTunnel("ghost");
     expect(toastMock.loading).toHaveBeenCalledWith("Deleting tunnel…");
-    expect(toastMock.success).toHaveBeenCalledWith("Deleted tunnel", { id: "toast-id" });
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
   });
 
   it("reconnectTunnel falls back to the 'tunnel' label for an unknown id", async () => {

@@ -123,7 +123,6 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       : [...customThemes, saved];
     onChange({ ...settings, customThemes: nextThemes, theme: customThemeSetting(saved.id) });
     setEditing(null);
-    toast.success(`Theme "${saved.name}" saved`);
   };
 
   /** Delete `deleted`, then offer a 10 s Undo that restores it (#5158). */
@@ -143,7 +142,6 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       testId: "theme-delete-undo-toast",
       onUndo: () => {
         restoreTheme(deleted, index, previousTheme, nextTheme);
-        toast.success(`Theme "${deleted.name}" restored`);
       },
     });
   };
@@ -167,6 +165,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       });
       if (!filePath) return; // dialog cancelled
       await writeTextFile(filePath, serializeTheme(selectedCustom));
+      // toast-policy: no-in-place-surface — the export is a file on disk
       toast.success(`Theme "${selectedCustom.name}" exported`);
     } catch (err) {
       toast.error(`Failed to export theme: ${errorMessage(err)}`);
@@ -211,12 +210,12 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       customThemes: [...customThemes, imported],
       theme: customThemeSetting(imported.id),
     });
+    // The imported theme is applied at once; that is the confirmation (#5859).
     if (result.hadInvalidColors) {
-      toast.success(`Theme "${name}" imported`, {
+      // toast-policy: explains-outcome — some colors fell back, which the theme alone does not say
+      toast.info(`Theme "${name}" imported with fallback colors`, {
         description: "Some colors were invalid and fell back to the base theme's defaults.",
       });
-    } else {
-      toast.success(`Theme "${name}" imported`);
     }
   };
 

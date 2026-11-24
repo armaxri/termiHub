@@ -1,5 +1,5 @@
 import { Download, Terminal } from "lucide-react";
-import { Button, Modal, toast } from "@/components/ui";
+import { Button, Modal } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { GIT_FOR_WINDOWS_WINGET_COMMAND } from "@/utils/gitBashSetup";
 import { guideGitForWindowsInstall, openGitForWindowsDownload } from "./guideGitBashInstall";
@@ -35,7 +35,6 @@ export function GitBashSetupDialog({
     try {
       await guideGitForWindowsInstall();
       frontendLog("git_bash_setup", "opened guided Git for Windows install terminal");
-      toast.success("Opened a terminal to install Git for Windows");
       onInstallGuided?.();
       onOpenChange(false);
     } catch (e) {

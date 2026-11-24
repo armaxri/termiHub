@@ -70,6 +70,7 @@ vi.mock("@/components/ui", async () => {
       loading: vi.fn(() => "toast-id"),
       success: vi.fn(),
       error: vi.fn(),
+      dismiss: vi.fn(),
     },
   };
 });
@@ -106,7 +107,7 @@ describe("appStore — deleteTunnel feedback (GAP 7, #1141)", () => {
     vi.clearAllMocks();
   });
 
-  it("dispatches a tunnel.remove intent with loading then success toast", async () => {
+  it("dispatches a tunnel.remove intent and clears its loading toast (#5859)", async () => {
     await useAppStore.getState().deleteTunnel("tun-1");
 
     expect(dispatchMock).toHaveBeenCalledTimes(1);
@@ -115,10 +116,9 @@ describe("appStore — deleteTunnel feedback (GAP 7, #1141)", () => {
       payload: { id: "tun-1" },
     });
     expect(toast.loading).toHaveBeenCalled();
-    expect(toast.success).toHaveBeenCalledWith(
-      expect.stringContaining("My Tunnel"),
-      expect.objectContaining({ id: "toast-id" })
-    );
+    // The row going away is the confirmation; no success toast (#5859).
+    expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+    expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -169,9 +169,8 @@ describe("appStore — undoable tunnel delete (#5158)", () => {
     const created = dispatchMock.mock.calls.map((c) => c[0] as { kind: string; payload: unknown });
     expect(created.map((c) => c.kind)).toEqual(["tunnel.create", "tunnel.create"]);
     expect(created.map((c) => c.payload)).toEqual([parent, companion]);
-    await vi.waitFor(() =>
-      expect(toast.success).toHaveBeenLastCalledWith(expect.stringContaining("Restored"))
-    );
+    // The restored rows are the confirmation; only the Undo toast was raised (#5859).
+    expect(toast.success).toHaveBeenCalledTimes(1);
   });
 
   it("restores only a directly deleted companion", async () => {
@@ -200,7 +199,7 @@ describe("appStore — undoable tunnel delete (#5158)", () => {
 
   it("has no Undo without the option", async () => {
     await useAppStore.getState().deleteTunnel("tun-2");
-    const opts = vi.mocked(toast.success).mock.calls[0][1] as { action?: unknown };
-    expect(opts.action).toBeUndefined();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
   });
 });

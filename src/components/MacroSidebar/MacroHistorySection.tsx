@@ -86,7 +86,6 @@ export function MacroHistorySection({ macroId, onShowAll }: MacroHistorySectionP
     setConfirmClear(false);
     try {
       await clearMacroRunHistory();
-      toast.success("Cleared macro run history");
     } catch (err) {
       toast.error(`Failed to clear history: ${errorMessage(err)}`);
     }

@@ -154,7 +154,8 @@ function toastConnectCanceled(
   after: "unlock" | "prompt"
 ): void {
   const unlock = after === "unlock";
-  // toast-policy: the canceled dialog is gone; nothing in place says which connect stopped.
+  // toast-policy: explains-outcome — the canceled dialog is gone and no tab opens; this names
+  // the connect that stopped and offers the next step (#5838).
   toast.info(
     unlock ? connectCanceledLockedText(connection.name) : connectCanceledText(connection.name),
     {
@@ -302,6 +303,7 @@ export async function connectSavedConnection(
       label: connection.name,
     });
     if (fieldSecrets.status === "canceled") {
+      // toast-policy: explains-outcome — no tab opens, and this says the secret prompt was canceled
       toast.info(fieldSecrets.reason);
       return { status: "canceled" };
     }

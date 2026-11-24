@@ -1,6 +1,6 @@
 import { ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, ContentOverlay, toast } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
 import { describeImportedConnection } from "@/services/workspaceImportTrust";
 import "./ImportedTabConfirmation.css";
 
@@ -24,7 +24,6 @@ export function ImportedConnectionPrompt({ tabId, isVisible }: ImportedConnectio
 
   const handleConfirm = async () => {
     await confirmConnection(tabId);
-    toast.success("Connection confirmed on this machine");
   };
 
   return (

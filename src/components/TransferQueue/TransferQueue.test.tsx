@@ -387,14 +387,14 @@ describe("TransferQueue panel", () => {
     );
   }
 
-  it("Pause toasts success only when the backend accepts it (returns true)", async () => {
+  it("Pause raises no toast when the backend accepts it (returns true)", async () => {
     vi.mocked(transferPause).mockResolvedValueOnce(true);
     renderPanel([entry({ id: "t1", state: "active" })]);
     await act(async () => {
       query("transfer-pause")?.click();
     });
     expect(transferPause).toHaveBeenCalledWith("t1");
-    expect(toast.success).toHaveBeenCalledWith("Transfer paused");
+    expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });

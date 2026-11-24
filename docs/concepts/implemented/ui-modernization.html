@@ -600,7 +600,10 @@
             A shared, token-driven primitive layer in <code>src/components/ui/</code> that every
             screen composes from.
           </li>
-          <li>Immediate, honest feedback for every mutating/async action.</li>
+          <li>
+            Immediate, honest feedback for every mutating/async action — visible in place; a toast
+            only when it isn't (#5859).
+          </li>
           <li>
             One motion language and one scrollbar; consistency enforced by tokens + a subagent +
             CLAUDE.md.
@@ -727,10 +730,11 @@
         </div>
 
         <div class="mockup-section">
-          <h3>Toast hub — app-wide transient confirmations &amp; errors</h3>
+          <h3>Toast hub — failures, background events &amp; undo offers</h3>
           <div class="mockup-note">
             Four intents from one <code>toast.success/.error/.info/.loading</code> API. Loading
-            toasts resolve into success/error in place (ideal for agent deploy).
+            toasts resolve into success/error in place (ideal for agent deploy). Since #5859 a
+            success toast is only for what the screen does not show where the user is looking.
           </div>
           <div class="toast-stack">
             <div class="toast toast--success">
@@ -738,8 +742,10 @@
                 ><svg class="li"><use href="#i-check-circle" /></svg
               ></span>
               <div class="toast__body">
-                <div class="toast__title">Connection saved</div>
-                <div class="toast__msg">prod-gateway added to <strong>Production</strong>.</div>
+                <div class="toast__title">Downloaded release.tar.gz</div>
+                <div class="toast__msg">
+                  Finished while <strong>build-02</strong> was in another tab.
+                </div>
               </div>
               <button class="toast__close">
                 <svg class="li"><use href="#i-x" /></svg>
@@ -1013,9 +1019,29 @@
                 <td>Full-surface state with cancel + contextual hints</td>
               </tr>
               <tr>
-                <td>Success confirmation (saved, copied, deleted)</td>
-                <td>Success toast (auto-dismiss)</td>
-                <td>Acknowledge without interrupting</td>
+                <td>
+                  Success the screen already shows (saved row, connected tab, flipped toggle,
+                  terminal output)
+                </td>
+                <td>No toast — the changed row, tab or control is the feedback</td>
+                <td>Feedback is visible in place; a toast would only repeat it (#5859)</td>
+              </tr>
+              <tr>
+                <td>Result with no other on-screen state (connection test in an editor)</td>
+                <td>
+                  <code>InlineStatus</code> beside the button; inside a dialog, its status line
+                </td>
+                <td>Anchored to the action, never stacking over the work</td>
+              </tr>
+              <tr>
+                <td>
+                  Failure, background event (transfer, scheduled run, off-screen result) or undo
+                  offer
+                </td>
+                <td>Toast — errors persist, the rest auto-dismiss</td>
+                <td>
+                  The only cases the screen in place cannot show; tagged <code>toast-policy</code>
+                </td>
               </tr>
             </tbody>
           </table>

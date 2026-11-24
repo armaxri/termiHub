@@ -40,7 +40,6 @@ import {
   Toggle,
   Tooltip,
   SearchInput,
-  toast,
 } from "@/components/ui";
 import { showUndoToast } from "@/utils/undoableDelete";
 import { customBindingCount, restoreKeybindings } from "./restoreKeybindings";
@@ -151,7 +150,6 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         onUndo: () => {
           restoreKeybindings(snapshot);
           forceRender((n) => n + 1);
-          toast.success("Keyboard shortcuts restored");
         },
       });
     },

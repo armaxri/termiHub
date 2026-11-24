@@ -78,7 +78,6 @@ export function SharedCredentialsSettings() {
     if (!credential) return;
     try {
       await deleteNamedCredential(credential.id);
-      toast.success(`Shared credential "${credential.name}" deleted.`);
       setPendingDelete(null);
     } catch (err) {
       setPendingDelete(null);

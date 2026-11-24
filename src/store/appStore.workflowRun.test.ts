@@ -443,7 +443,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       "workflow.stepAdvanced",
       "workflow.runCompleted",
     ]);
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("defaults the target to the active terminal tab", async () => {
@@ -521,7 +521,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     // run-script streams each line, then run-macro replays via the same injector.
     expect(injected).toEqual(["line1\n", "line2\n", "tail -f app.log\n"]);
     expect(regionView().run).toBeNull();
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("records a run-macro step's playback in the macro run history (#3543)", async () => {
@@ -600,7 +600,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(call.program).toBe("notify-send");
       // GUARDRAIL: the space-containing arg stays a single, literal argv entry.
       expect(call.args).toEqual(["--urgency", "hello world"]);
-      expect(toast.success).toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it("prompts for a not-yet-trusted program and runs it on 'allow once'", async () => {
@@ -982,7 +982,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await expect(useAppStore.getState().runWorkflow("w1")).resolves.toBeUndefined();
 
       expect(injected).toEqual(["a\n"]);
-      expect(toast.success).toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
       // The failed write left the store's history untouched.
       expect(useAppStore.getState().workflowRuns).toEqual([]);
     });

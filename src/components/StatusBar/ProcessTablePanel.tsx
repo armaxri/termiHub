@@ -153,6 +153,7 @@ export function ProcessTablePanel({
     const { pid, name } = killTarget;
     const signal = killSignal;
     await killProcess(sessionId, pid, signal);
+    // toast-policy: no-in-place-surface — a sent signal has no on-screen state
     toast.success(tf("process.kill.sent", { signal: signalName(signal), name, pid }));
     setKillTarget(null);
     // Reflect the kill promptly rather than waiting for the next tick.

@@ -43,9 +43,9 @@ const _tunnelStopInFlight = new Set<string>();
 // confirms the start was *accepted*, and the real connecting → connected / error
 // transition arrives later as a projected status diff. So the pending
 // `toast.loading("Starting …")` is kept alive across the ack and only resolved in
-// place once the projected status settles — to `success` on the genuine
-// `connected` transition (UX-023: no premature green "Started" a beat before the
-// handshake), or to `error` on a `→ error` transition (#2169: restores the
+// place once the projected status settles — dismissed on the genuine
+// `connected` transition (the tunnel's own status dot shows it, #5859; UX-023:
+// the pending toast never ends a beat before the handshake), or to `error` on a `→ error` transition (#2169: restores the
 // immediate failure feedback the old synchronous red toast gave). This mirrors
 // how the connection overlay distinguishes connecting from connected, without
 // re-serialising the blocking handshake onto the dispatcher.
@@ -55,18 +55,12 @@ const _tunnelStopInFlight = new Set<string>();
 // a mid-session death or another client's start (which this client never
 // dispatched) surfaces only as the Error status badge, never a toast here.
 interface FirstConnectWatch {
-  /** The verb for the resolved message ("start" → "Started" / "reconnect" → "Reconnected"). */
+  /** The verb for the failure message ("Failed to start …" / "Failed to reconnect …"). */
   verb: "start" | "reconnect";
   /** The pending loading-toast id to resolve in place into success/error. */
   toastId: string | number;
 }
 const _awaitingFirstConnect = new Map<string, FirstConnectWatch>();
-
-/** Past-tense success label for a resolved first-connect toast. */
-const FIRST_CONNECT_SUCCESS: Record<FirstConnectWatch["verb"], string> = {
-  start: "Started",
-  reconnect: "Reconnected",
-};
 
 // The projection transport + `tunnels` region client, shared across the slice.
 // Both are created lazily on first use (`loadTunnels` / the first intent) so the
@@ -105,9 +99,8 @@ function throwIfRejected(ack: IntentAck, what: string): void {
  * Driven purely from the projected status diff (never from re-serialising the
  * handshake): we compare the previously cached states against the freshly pushed
  * ones and act only on a genuine transition.
- * - `→ connected`: the handshake succeeded — resolve the still-pending loading
- *   toast to "Started/Reconnected …" (UX-023: the green success now lands with
- *   the actual connection, not a beat early on the intent ack). Then stop
+ * - `→ connected`: the handshake succeeded — dismiss the still-pending loading
+ *   toast; the tunnel's status dot now shows it connected (#5859). Then stop
  *   watching, so a later mid-session drop to `error` is a badge, not a toast.
  * - `→ error`: the handshake failed — resolve the loading toast to a failure
  *   toast (#2169). Gated on `prev !== error` so a repeated/coalesced `error` diff
@@ -127,7 +120,7 @@ function resolveFirstConnectToasts(
       toast.error(`Failed to ${verb} ${name}: ${detail}`, { id: toastId });
       _awaitingFirstConnect.delete(id);
     } else if (nextStatus === "connected") {
-      toast.success(`${FIRST_CONNECT_SUCCESS[verb]} ${name}`, { id: toastId });
+      toast.dismiss(toastId);
       _awaitingFirstConnect.delete(id);
     }
   }
@@ -180,7 +173,6 @@ async function restoreTunnels(
 ): Promise<void> {
   try {
     for (const config of configs) await get().saveTunnel(config);
-    toast.success(`Restored ${name}`);
   } catch (err) {
     toast.error(`Failed to restore ${name}: ${errorMessage(err)}`);
   }
@@ -245,7 +237,7 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
         });
         return;
       }
-      toast.success(`Deleted ${name}`, { id: toastId });
+      toast.dismiss(toastId);
     } catch (err) {
       toast.error(`Failed to delete ${name}: ${errorMessage(err)}`, { id: toastId });
       throw err;
@@ -289,7 +281,7 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     try {
       const ack = await dispatchTunnelIntent("tunnel.stop", { id: tunnelId });
       throwIfRejected(ack, "stop tunnel");
-      toast.success(`Stopped ${name}`, { id: toastId });
+      toast.dismiss(toastId);
     } catch (err) {
       frontendLog("app_store", `Failed to stop tunnel: ${errorMessage(err)}`);
       toast.error(`Failed to stop ${name}: ${errorMessage(err)}`, { id: toastId });

@@ -64,7 +64,6 @@ export function NetworkToolHistory({ tool, onRerun, rerunDisabled }: NetworkTool
   const handleClear = async () => {
     try {
       await clear(tool);
-      toast.success(`Cleared ${TOOL_LABEL[tool]} history`);
     } catch (err) {
       toast.error("Couldn't clear the history", { description: errorMessage(err) });
     } finally {

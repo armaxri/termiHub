@@ -139,13 +139,13 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     expect(saveButton().getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("confirms a plain Save with a success toast and does not start", async () => {
+  it("closes on a plain Save without a toast and does not start (#5859)", async () => {
     await render();
     setValue(nameInput(), "Dev DB");
     click(saveButton());
     await flush();
     expect(useAppStore.getState().saveTunnel).toHaveBeenCalledTimes(1);
-    expect(toastMock.success).toHaveBeenCalledWith('Saved tunnel "Dev DB"');
+    expect(toastMock.success).not.toHaveBeenCalled();
     expect(useAppStore.getState().startTunnel).not.toHaveBeenCalled();
   });
 

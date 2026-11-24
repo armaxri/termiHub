@@ -303,7 +303,6 @@ export function NetworkToolsSidebar() {
       try {
         await networkHttpMonitorStop(id);
         await refreshMonitors();
-        toast.success("Monitor stopped");
       } catch (err) {
         frontendLog("network_sidebar", `Failed to stop monitor: ${errorMessage(err)}`);
         toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
@@ -317,7 +316,6 @@ export function NetworkToolsSidebar() {
       try {
         await networkHttpMonitorPause(id);
         await refreshMonitors();
-        toast.success("Monitor paused");
       } catch (err) {
         frontendLog("network_sidebar", `Failed to pause monitor: ${errorMessage(err)}`);
         toast.error(`Failed to pause monitor: ${errorMessage(err)}`);
@@ -331,7 +329,6 @@ export function NetworkToolsSidebar() {
       try {
         await networkHttpMonitorResume(id);
         await refreshMonitors();
-        toast.success("Monitor resumed");
       } catch (err) {
         frontendLog("network_sidebar", `Failed to resume monitor: ${errorMessage(err)}`);
         toast.error(`Failed to resume monitor: ${errorMessage(err)}`);
@@ -345,7 +342,6 @@ export function NetworkToolsSidebar() {
       try {
         await networkHttpMonitorRemove(id);
         await refreshMonitors();
-        toast.success("Monitor removed");
       } catch (err) {
         frontendLog("network_sidebar", `Failed to remove monitor: ${errorMessage(err)}`);
         toast.error(`Failed to remove monitor: ${errorMessage(err)}`);

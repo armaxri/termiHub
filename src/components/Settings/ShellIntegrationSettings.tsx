@@ -110,6 +110,7 @@ export function ShellIntegrationSettings() {
   /** Run a register/unregister action with toast feedback + store status sync. */
   const runRegistration = useCallback(
     (action: () => Promise<ShellIntegrationStatus>, messages: ToastPromiseMessages<unknown>) =>
+      // toast-policy: no-in-place-surface — the file-manager entry lives outside termiHub
       toast.promise(
         action().then((st) => {
           setStatus(st);
@@ -148,7 +149,6 @@ export function ShellIntegrationSettings() {
       const entries = exists ? updateEntry(si.entries, entry) : addEntry(si.entries, entry);
       setEditorOpen(false);
       void persist({ ...si, entries });
-      toast.success(exists ? "Entry updated" : "Entry added");
     },
     [si, persist]
   );

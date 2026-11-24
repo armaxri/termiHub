@@ -8,6 +8,7 @@ import type { ThemeDefinition } from "@/themes/types";
 import { AppearanceSettings } from "./AppearanceSettings";
 
 const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 const toastError = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
@@ -26,6 +27,7 @@ vi.mock("@/components/ui", async (orig) => ({
   ...(await orig<typeof import("@/components/ui")>()),
   toast: {
     success: (...a: unknown[]) => toastSuccess(...a),
+    info: (...a: unknown[]) => toastInfo(...a),
     error: (...a: unknown[]) => toastError(...a),
     loading: vi.fn(),
   },
@@ -263,7 +265,8 @@ describe("AppearanceSettings — custom themes", () => {
     expect(next.customThemes).toHaveLength(1);
     expect(next.customThemes![0].name).toBe("Sunset");
     expect(next.theme).toBe(`custom:${next.customThemes![0].id}`);
-    expect(toastSuccess).toHaveBeenCalled();
+    // The new theme is applied at once; that is the feedback (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
 
@@ -273,6 +276,7 @@ describe("AppearanceSettings — theme import/export (#1880)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     toastSuccess.mockReset();
+    toastInfo.mockReset();
     toastError.mockReset();
     mockedSave.mockReset();
     mockedOpen.mockReset();
@@ -346,8 +350,25 @@ describe("AppearanceSettings — theme import/export (#1880)", () => {
     expect(imported.name).toBe("Ocean (2)"); // de-duped against the existing "Ocean"
     expect(imported.colors.bgPrimary).toBe("#010203");
     expect(next.theme).toBe(`custom:${imported.id}`);
-    expect(toastSuccess).toHaveBeenCalled();
+    // The imported theme is applied at once; that is the feedback (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("says when an imported theme's invalid colors fell back (#5859)", async () => {
+    mockedOpen.mockResolvedValue("/tmp/import.json");
+    mockedReadTextFile.mockResolvedValue(
+      JSON.stringify({ name: "Ocean", baseTheme: "dark", colors: { bgPrimary: "" } })
+    );
+    renderWith(defaultSettings);
+
+    act(() => (byId("appearance-theme-import") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    expect(toastInfo.mock.calls[0][0]).toBe('Theme "Ocean" imported with fallback colors');
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("surfaces a recoverable error toast for a malformed file", async () => {

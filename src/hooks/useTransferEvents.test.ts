@@ -52,6 +52,10 @@ import {
 } from "./batchTransferToasts";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
+import {
+  resetTransferSummaries,
+  showTransferSummary,
+} from "@/components/TransferQueue/transferSummaryVisibility";
 import type { TransferProgress } from "@/services/api";
 
 // The global `invoke` stub (src/test/setup.ts) resolves `undefined`, but the
@@ -88,6 +92,7 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     emitOwnership = undefined;
     resolveTransferReg = undefined;
     resolveOwnershipReg = undefined;
+    resetTransferSummaries();
     vi.clearAllMocks();
   });
 
@@ -131,6 +136,28 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("Downloaded");
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("file.txt");
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet on success while the session's transfer summary is on screen (#5859)", async () => {
+    await mountHook();
+    const hide = showTransferSummary("sess-a");
+
+    act(() => {
+      emit!(progress({ phase: "done" }));
+      // A transfer on another session still toasts.
+      emit!(progress({ transferId: "t2", sessionId: "sess-b", phase: "done" }));
+    });
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("file.txt");
+
+    // A failure toasts even with the summary showing.
+    act(() => emit!(progress({ transferId: "t3", phase: "error", message: "EIO" })));
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+
+    // Once the summary is gone, the toast is back.
+    hide();
+    act(() => emit!(progress({ transferId: "t4", phase: "done" })));
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(2);
   });
 
   it("tags the terminal toasts with test ids a system test can find (#4128)", async () => {

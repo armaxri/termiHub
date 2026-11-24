@@ -64,10 +64,9 @@ export function MacroSidebar() {
   const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsFields);
   const exportMacrosToFile = useJsonFileExport("macros");
   const importMacrosFromFile = useJsonFileImport("macros");
-  const macroDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+  const macroDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
       await deleteMacroFromBackend(id);
-      toast.success(`Deleted macro "${name}"`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to delete macro: ${message}`);
@@ -116,7 +115,6 @@ export function MacroSidebar() {
       };
       try {
         await saveMacroToBackend(duplicate);
-        toast.success(`Duplicated "${original.name}"`);
       } catch (err) {
         const message = errorMessage(err);
         toast.error(`Failed to duplicate "${original.name}"`, { description: message });
@@ -148,8 +146,8 @@ export function MacroSidebar() {
 
   const handleImport = useCallback(() => {
     void importMacrosFromFile(async (json) => {
-      const count = await importMacros(json);
-      toast.success(`Imported ${count} macro${count === 1 ? "" : "s"}`);
+      // The imported rows show in the list (#5859).
+      await importMacros(json);
     });
   }, [importMacros, importMacrosFromFile]);
 
@@ -177,7 +175,6 @@ export function MacroSidebar() {
       try {
         await saveMacroToBackend(created);
         setCreating(false);
-        toast.success(`Created macro "${result.name}"`);
       } catch (err) {
         // Keep the dialog open so the authored steps are not lost.
         const message = errorMessage(err);
@@ -201,7 +198,6 @@ export function MacroSidebar() {
       try {
         await saveMacroToBackend(updated);
         setEditingId(null);
-        toast.success(`Saved macro "${result.name}"`);
       } catch (err) {
         // Keep the dialog open so the edits are not lost on a failed save.
         const message = errorMessage(err);

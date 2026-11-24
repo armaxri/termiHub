@@ -42,12 +42,11 @@ export function WorkspaceSidebar() {
   // The delete/export/import flows come from the shared sidebar hooks (UISF-020).
   const exportWorkspacesToFile = useJsonFileExport("workspaces");
   const importWorkspacesFromFile = useJsonFileImport("workspaces");
-  const workspaceDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+  const workspaceDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
       // The store only removes the item from local state after the backend
       // resolves, so a failed delete leaves the workspace visible.
       await deleteWorkspace(id);
-      toast.success(`Deleted workspace ${name}`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to delete workspace: ${message}`);
@@ -100,7 +99,6 @@ export function WorkspaceSidebar() {
         await saveCurrentAsWorkspace(name, scope, description, overwriteId);
         setPendingOverwrite(null);
         setShowSaveDialog(false);
-        toast.success(overwriteId ? `Updated workspace ${name}` : `Saved workspace ${name}`);
       } catch (err) {
         // Keep the dialog open so the user does not falsely believe the save
         // succeeded (disk full / permission / lock poisoned would otherwise
@@ -183,10 +181,10 @@ export function WorkspaceSidebar() {
       await loadWorkspaces();
       const summary = `Imported ${importedCount} workspace${importedCount === 1 ? "" : "s"}`;
       const untrusted = formatUntrustedImportNotice(untrustedTabs);
+      // The imported rows show in the list (#5859); only the trust notice needs a toast.
       if (untrusted) {
-        toast.success(summary, { description: untrusted, duration: Infinity });
-      } else {
-        toast.success(summary);
+        // toast-policy: explains-outcome — the rows do not show which tabs need confirming
+        toast.info(summary, { description: untrusted, duration: Infinity });
       }
       for (const warning of warnings) {
         toast.error(warning);

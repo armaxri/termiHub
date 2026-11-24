@@ -1,6 +1,6 @@
 import { Layers } from "lucide-react";
 
-import { Button, toast } from "@/components/ui";
+import { Button } from "@/components/ui";
 import {
   clearWorkspaceOverride,
   isOverriddenByWorkspace,
@@ -13,7 +13,7 @@ import "./WorkspaceOverrideNotice.css";
 interface WorkspaceOverrideNoticeProps {
   /** The global setting the active workspace may override. */
   settingKey: WorkspaceOverridableKey;
-  /** Human label of the setting, used in the reset feedback. */
+  /** Human label of the setting, used in the reset button's accessible name. */
   label: string;
 }
 
@@ -28,9 +28,9 @@ export function WorkspaceOverrideNotice({ settingKey, label }: WorkspaceOverride
   if (!workspace || !isOverriddenByWorkspace(workspace, settingKey)) return null;
 
   const handleReset = async () => {
+    // The notice goes away once the override is cleared (#5859).
     try {
       await clearWorkspaceOverride(workspace.id, settingKey);
-      toast.success(`${label} now follows the global setting`);
     } catch (err) {
       throw new Error(`Could not reset the workspace override: ${errorMessage(err)}`);
     }
@@ -51,6 +51,7 @@ export function WorkspaceOverrideNotice({ settingKey, label }: WorkspaceOverride
         variant="ghost"
         size="xs"
         onClick={handleReset}
+        aria-label={`${label}: reset to global`}
         data-testid={`workspace-override-reset-${settingKey}`}
       >
         Reset to global

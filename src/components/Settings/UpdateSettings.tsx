@@ -108,6 +108,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
       // Tauri clipboard plugin: navigator.clipboard rejects on macOS/WKWebView
       // when the window is not focused (#4327).
       await writeText(text);
+      // toast-policy: no-in-place-surface — the build info is on the clipboard
       toast.success("Build info copied to clipboard");
     } catch (err) {
       const message = errorMessage(err);

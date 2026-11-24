@@ -179,7 +179,7 @@ describe("EmbeddedServerActivityPanel", () => {
     });
 
     expect(clearActivity).toHaveBeenCalledWith("srv-1");
-    expect(toastSuccess).toHaveBeenCalledWith("Access log cleared");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(q("server-activity-empty-srv-1")?.textContent).toBe("No requests yet");
   });
 

@@ -443,10 +443,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       if (state === "connecting") {
         await cancelConnectAgent(agentId);
-        toast.success("Connect canceled");
       } else {
         await disconnectRemoteAgent(agentId);
-        toast.success("Reconnect stopped");
       }
     } catch (err) {
       frontendLog("open_connections", `Failed to cancel agent connect: ${errorMessage(err)}`);
@@ -581,6 +579,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleShutdownAgent = async (agentId: string) => {
     const detached = await shutdownRemoteAgent(agentId);
     clearAgentSessionCache(agentId);
+    // toast-policy: dialog-status — says how many of the agent's sessions stopped
     toast.success(
       detached > 0
         ? `Agent shut down — ${detached} session${detached === 1 ? "" : "s"} stopped`
@@ -617,11 +616,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       const pruned = await pruneDeadAgents();
       await loadData();
-      if (pruned.length === 0) {
-        toast.success("No dead agents to prune");
-      } else {
-        toast.success(`Pruned ${pruned.length} dead agent${pruned.length === 1 ? "" : "s"}`);
-      }
+      // Pruned rows leave the list (#5859); an empty prune says why nothing changed.
+      // toast-policy: explains-outcome — nothing was pruned, and this says why
+      if (pruned.length === 0) toast.info("No dead agents to prune");
     } catch (err) {
       frontendLog("open_connections", `Failed to prune dead agents: ${errorMessage(err)}`);
       toast.error(`Failed to prune dead agents: ${errorMessage(err)}`);
@@ -727,7 +724,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleCancelTransfer = async (transferId: string) => {
     try {
       await cancelTransfer(transferId);
-      toast.success("Transfer canceled");
     } catch (err) {
       frontendLog("open_connections", `Failed to cancel transfer: ${errorMessage(err)}`);
       toast.error(`Failed to cancel transfer: ${errorMessage(err)}`);
@@ -737,7 +733,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleCancelAllTransfers = async () => {
     try {
       await Promise.all(transferList.map((t) => cancelTransfer(t.transferId)));
-      toast.success("All transfers canceled");
     } catch (err) {
       frontendLog("open_connections", `Failed to cancel transfers: ${errorMessage(err)}`);
       toast.error(`Failed to cancel transfers: ${errorMessage(err)}`);
@@ -769,7 +764,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       await networkHttpMonitorStop(monitorId);
       await refreshHttpMonitors();
-      toast.success("Monitor stopped");
     } catch (err) {
       frontendLog("open_connections", `Failed to stop HTTP monitor: ${errorMessage(err)}`);
       toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
@@ -780,7 +774,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       await networkHttpMonitorStopAll();
       await refreshHttpMonitors();
-      toast.success("All monitors stopped");
     } catch (err) {
       frontendLog("open_connections", `Failed to stop all HTTP monitors: ${errorMessage(err)}`);
       toast.error(`Failed to stop monitors: ${errorMessage(err)}`);
@@ -790,10 +783,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // Stop a running embedded server, reusing the store action the Services
   // sidebar drives (single source of truth) and toasting on the outcome to match
   // the other sections' feedback (SM-017).
-  const handleStopEmbeddedServer = async (serverId: string, name: string) => {
+  const handleStopEmbeddedServer = async (serverId: string) => {
     try {
       await stopEmbeddedServer(serverId);
-      toast.success(`Stopped “${name}”`);
     } catch (err) {
       frontendError(
         "open_connections",
@@ -818,8 +810,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         }
       });
       toast.error(`Failed to stop ${failed} server${failed === 1 ? "" : "s"}`);
-    } else {
-      toast.success("All servers stopped");
     }
   };
 
@@ -828,7 +818,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleToggleMonitorPaused = async (key: string, paused: boolean) => {
     try {
       await setMonitoringPaused(key, paused);
-      toast.success(paused ? "Monitoring paused" : "Monitoring resumed");
     } catch (err) {
       frontendLog("open_connections", `Failed to toggle monitoring pause: ${errorMessage(err)}`);
       toast.error(`Failed to ${paused ? "pause" : "resume"} monitoring: ${errorMessage(err)}`);
@@ -838,7 +827,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleSetMonitorInterval = async (key: string, intervalMs: number) => {
     try {
       await setMonitoringInterval(key, intervalMs);
-      toast.success(`Refresh interval set to ${formatMonitorInterval(intervalMs)}`);
     } catch (err) {
       frontendLog("open_connections", `Failed to set monitoring interval: ${errorMessage(err)}`);
       toast.error(`Failed to set interval: ${errorMessage(err)}`);
@@ -851,7 +839,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleKillMonitor = async (key: string) => {
     try {
       await disconnectMonitoring(key, { throwOnFailure: true });
-      toast.success("Monitoring stopped");
     } catch (err) {
       frontendError("open_connections", `Failed to stop monitoring ${key}: ${errorMessage(err)}`);
       toast.error(`Failed to stop monitoring: ${errorMessage(err)}`);
@@ -866,7 +853,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     try {
       await disconnectMonitoring(key);
       await connectMonitoring(key, host);
-      toast.success("Retrying monitor");
     } catch (err) {
       frontendLog("open_connections", `Failed to retry monitoring: ${errorMessage(err)}`);
       toast.error(`Failed to retry monitoring: ${errorMessage(err)}`);
@@ -1344,7 +1330,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   title={s.name}
                   detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port}`}
                   badge={status === "running" ? "up" : "connecting"}
-                  onKill={() => handleStopEmbeddedServer(s.id, s.name)}
+                  onKill={() => handleStopEmbeddedServer(s.id)}
                   killLabel="Stop"
                   data-testid={`open-connections-embedded-server-${s.id}`}
                   killTestId={`open-connections-embedded-server-stop-${s.id}`}

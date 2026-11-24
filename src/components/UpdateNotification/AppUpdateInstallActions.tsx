@@ -25,6 +25,7 @@ export function AppUpdateInstallActions({ testIdPrefix }: AppUpdateInstallAction
   const handleDownload = async () => {
     try {
       await downloadAppUpdate();
+      // toast-policy: background — the download finished in the background
       toast.success("Update downloaded and verified. Restart to finish.");
     } catch (err) {
       toast.error(`Could not download the update: ${errorMessage(err)}`);

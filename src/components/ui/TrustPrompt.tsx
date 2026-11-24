@@ -171,6 +171,7 @@ export function TrustPrompt({
     const noun = fact.label.toLowerCase();
     return writeClipboard(fact.value)
       .then(() => {
+        // toast-policy: no-in-place-surface — the value is on the clipboard
         toast.success(`Copied ${noun} to clipboard`);
       })
       .catch((err: unknown) => {

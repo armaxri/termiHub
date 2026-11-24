@@ -110,14 +110,14 @@ describe("TunnelSidebar — duplicate feedback (#1342)", () => {
     vi.clearAllMocks();
   });
 
-  it("shows a success toast when duplication succeeds", async () => {
+  it("raises no toast when duplication succeeds (#5859)", async () => {
     const saveTunnel = vi.fn(() => Promise.resolve());
     seedStore(saveTunnel);
     await renderSidebar();
     await clickDuplicate();
 
     expect(saveTunnel).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 

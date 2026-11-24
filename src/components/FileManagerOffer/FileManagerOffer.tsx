@@ -75,6 +75,7 @@ export function FileManagerOffer() {
     if (!eligible || !storedSi || offeredThisSession) return;
     if (!status || status.registered || !crashChecked || crashThisSession) return;
     offeredThisSession = true;
+    // toast-policy: background — an offer termiHub makes on its own, with an install action
     toast.info("Add “Open in termiHub” to your file manager?", {
       id: FILE_MANAGER_OFFER_TOAST_ID,
       testId: "file-manager-offer",
@@ -87,6 +88,7 @@ export function FileManagerOffer() {
         onClick: () => {
           // INSTALL_TOAST reports a failure to the user; this only logs it.
           fireAndForget(
+            // toast-policy: no-in-place-surface — the file-manager entry lives outside termiHub
             toast.promise(installShellIntegration(), INSTALL_TOAST).then(syncRegistrationFacts),
             "file-manager offer install"
           );

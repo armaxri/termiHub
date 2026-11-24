@@ -1287,6 +1287,7 @@ export function FileBrowser() {
     onVscodeEditComplete((remotePath, success, err) => {
       const name = getBasename(remotePath);
       if (success) {
+        // toast-policy: background — the file was saved in VS Code, outside termiHub
         toast.success(`Saved "${name}" from VS Code`);
         refresh();
       } else {
@@ -1512,6 +1513,7 @@ export function FileBrowser() {
           break;
         case "copyName":
           writeClipboard(entry.name)
+            // toast-policy: no-in-place-surface — the name is on the clipboard
             .then(() => toast.success("Copied name"))
             .catch((err: unknown) => {
               frontendLog("file_browser", `Copy name failed: ${errorMessage(err)}`);
@@ -1520,6 +1522,7 @@ export function FileBrowser() {
           break;
         case "copyPath":
           writeClipboard(entry.path)
+            // toast-policy: no-in-place-surface — the path is on the clipboard
             .then(() => toast.success("Copied path"))
             .catch((err: unknown) => {
               frontendLog("file_browser", `Copy path failed: ${errorMessage(err)}`);
@@ -1550,11 +1553,10 @@ export function FileBrowser() {
           setDeleteConfirm({
             message: `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`,
             onConfirm: () => {
-              deleteEntry(entry.path, entry.isDirectory)
-                .then(() => toast.success(`Deleted "${entry.name}"`))
-                .catch((err: unknown) =>
-                  toast.error(`Failed to delete "${entry.name}": ${errorMessage(err)}`)
-                );
+              // The row goes away; that is the confirmation (#5859).
+              deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
+                toast.error(`Failed to delete "${entry.name}": ${errorMessage(err)}`)
+              );
             },
           });
           break;
@@ -1598,7 +1600,6 @@ export function FileBrowser() {
         name: newName,
         isDirectory: entry.isDirectory,
         run: (name, overwrite) => renameEntry(entry.path, name, { overwrite }),
-        onDone: (name) => toast.success(`Renamed to "${name}"`),
         onError: (err) => {
           frontendLog("file_browser", `Rename failed: ${errorMessage(err)}`);
           toast.error(`Rename failed: ${errorMessage(err)}`);
@@ -1630,6 +1631,7 @@ export function FileBrowser() {
     async (entry: FileEntry, newMode: number) => {
       try {
         await setPermissions(entry.path, newMode);
+        // toast-policy: no-in-place-surface — the file list shows no permissions
         toast.success(`Permissions updated for "${entry.name}"`);
       } catch (err) {
         frontendLog("file_browser", `chmod failed for ${entry.path}: ${errorMessage(err)}`);
@@ -1645,6 +1647,7 @@ export function FileBrowser() {
     async (entry: FileEntry, uid: number | null, gid: number | null) => {
       try {
         await setOwner(entry.path, uid, gid);
+        // toast-policy: no-in-place-surface — the file list shows no owner
         toast.success(`Owner updated for "${entry.name}"`);
       } catch (err) {
         frontendLog("file_browser", `chown failed for ${entry.path}: ${errorMessage(err)}`);
@@ -1662,7 +1665,6 @@ export function FileBrowser() {
         // The selected entry is the link's target; `linkName` is the new link,
         // created in the current directory.
         await createSymlink(entry.path, linkName);
-        toast.success(`Created symlink "${linkName}"`);
       } catch (err) {
         frontendLog(
           "file_browser",
@@ -1825,9 +1827,8 @@ export function FileBrowser() {
                   const failed = entries.filter((_, i) => results[i].status === "rejected");
                   const deleted = entries.length - failed.length;
                   const noun = (n: number) => (n === 1 ? "item" : "items");
-                  if (failed.length === 0) {
-                    toast.success(`Deleted ${deleted} ${noun(deleted)}`);
-                  } else {
+                  // A clean delete shows as the rows going away (#5859).
+                  if (failed.length > 0) {
                     const names = failed.map((e) => e.name).join(", ");
                     toast.error(
                       `Deleted ${deleted} ${noun(deleted)}, ${failed.length} failed: ${names}`
@@ -1849,12 +1850,11 @@ export function FileBrowser() {
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
       const name = newDirName.trim();
-      createDirectory(name)
-        .then(() => toast.success(`Created folder "${name}"`))
-        .catch((err: unknown) => {
-          frontendLog("file_browser", `Create directory failed: ${errorMessage(err)}`);
-          toast.error(`Failed to create folder "${name}": ${errorMessage(err)}`);
-        });
+      // The new row is the confirmation (#5859).
+      createDirectory(name).catch((err: unknown) => {
+        frontendLog("file_browser", `Create directory failed: ${errorMessage(err)}`);
+        toast.error(`Failed to create folder "${name}": ${errorMessage(err)}`);
+      });
       setNewDirName(null);
     }
   }, [newDirName, createDirectory]);
@@ -1868,7 +1868,6 @@ export function FileBrowser() {
         destDir: currentPath,
         name,
         run: (fileName, overwrite) => createFile(fileName, { overwrite }),
-        onDone: () => toast.success(`Created file "${name}"`),
         onError: (err) => {
           frontendLog("file_browser", `Create file failed: ${errorMessage(err)}`);
           toast.error(`Failed to create file "${name}": ${errorMessage(err)}`);
@@ -1880,6 +1879,7 @@ export function FileBrowser() {
 
   const copyCurrentPath = useCallback(() => {
     writeClipboard(currentPath)
+      // toast-policy: no-in-place-surface — the path is on the clipboard
       .then(() => toast.success("Copied path"))
       .catch((err: unknown) => {
         frontendLog("file_browser", `Copy path failed: ${errorMessage(err)}`);

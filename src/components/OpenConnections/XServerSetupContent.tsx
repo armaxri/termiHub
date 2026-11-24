@@ -33,6 +33,7 @@ const APP_INSTALLER_URL = "https://apps.microsoft.com/detail/9NBLGGH4NNS1";
  */
 async function copyInstallCommand(command: string): Promise<void> {
   await writeClipboard(command);
+  // toast-policy: no-in-place-surface — the command is on the clipboard
   toast.success("Command copied to clipboard");
 }
 

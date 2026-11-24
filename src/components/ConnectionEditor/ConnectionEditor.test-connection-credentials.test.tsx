@@ -290,7 +290,7 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
       credentialType: "password",
     });
     expect(testedSettings().password).toBe("vault-secret");
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
     expectNothingPersisted();
     // The secret must not leak into form state.
@@ -316,7 +316,7 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
       keyPath: "/home/a/.ssh/id_enc",
     });
     expect(testedSettings().password).toBe("key-pass");
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expectNothingPersisted();
   });
 

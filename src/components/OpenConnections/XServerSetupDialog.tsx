@@ -52,6 +52,7 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
       onProgress: setProgress,
       onSuccess: (report) => {
         frontendLog("x_server_setup", `provisioning succeeded (state=${report.state})`);
+        // toast-policy: background — the X server starts outside termiHub as the dialog closes
         toast.success("X server ready");
         onProvisioned?.(report);
         onOpenChange(false);
@@ -76,6 +77,7 @@ export function XServerSetupDialog({ open, onOpenChange, onProvisioned }: XServe
     try {
       await xServerInstallDependency();
       frontendLog("x_server_setup", `installed dependency ${dep}`);
+      // toast-policy: dialog-status — names the dependency installed outside termiHub
       toast.success(`${dep} installed`);
       setPhase("provisioning");
     } catch (e) {

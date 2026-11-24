@@ -254,6 +254,7 @@ export async function uploadToRemoteDesktop(
     watch.stop();
     const opts = { id: toastId, description: skippedNote(started) };
     if (started.folders > 0) {
+      // toast-policy: background — the upload to the remote machine finished
       toast.success(`Created ${countLabel(started.folders, "folder")} in ${where}`, {
         ...opts,
         action: reveal,
@@ -279,6 +280,7 @@ export async function uploadToRemoteDesktop(
         result.failed > 0 ? `${result.failed} failed` : null,
         description ?? null,
       ].filter(Boolean);
+      // toast-policy: background — the upload runs on in the transfers panel
       toast.info(`Upload to ${where} — see Transfers`, {
         id: toastId,
         description: parts.join("; "),
@@ -293,6 +295,7 @@ export async function uploadToRemoteDesktop(
     } else if (result.done === 0) {
       toast.dismiss(toastId);
     } else {
+      // toast-policy: background — the upload to the remote machine finished
       toast.success(`Uploaded ${countLabel(result.done)} to ${where}`, {
         id: toastId,
         description,

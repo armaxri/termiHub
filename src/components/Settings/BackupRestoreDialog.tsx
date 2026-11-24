@@ -190,9 +190,11 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
     try {
       const result = await applyBackupRestore(fileContent, passphrase || null, request);
       if (result.restartRequired) {
+        // toast-policy: explains-outcome — says why termiHub restarts
         toast.success("Backup restored — termiHub is restarting to load it.");
         await restartAfterBackupRestore();
       } else {
+        // toast-policy: off-screen — the restored credentials are not listed here
         toast.success("Credentials restored.");
       }
       onOpenChange(false);

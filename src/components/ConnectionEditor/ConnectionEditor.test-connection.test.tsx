@@ -159,7 +159,7 @@ describe("ConnectionEditor — Test Connection (UX-007)", () => {
     expect(container.querySelector('[data-testid="connection-editor-test"]')).not.toBeNull();
   });
 
-  it("invokes test_connection and shows a success toast without saving the form", async () => {
+  it("invokes test_connection and shows the result beside Test without saving the form", async () => {
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "test_connection") return Promise.resolve(undefined);
       // Every other command (including save_connection) resolves benignly; we
@@ -179,8 +179,14 @@ describe("ConnectionEditor — Test Connection (UX-007)", () => {
     expect(testCalls).toHaveLength(1);
     expect(testCalls[0][1]).toMatchObject({ typeId: "local" });
 
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    // The result shows beside the Test button, not in a toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
+    const result = container.querySelector('[data-testid="connection-editor-test-result"]');
+    expect(result?.getAttribute("role")).toBe("status");
+    expect(result?.getAttribute("data-kind")).toBe("success");
+    expect(result?.textContent).toContain("Reached My Local Shell");
+    expect(result?.textContent).toContain("Nothing was saved.");
 
     // The form must NOT have been persisted by a test.
     expect(mockedInvoke.mock.calls.some((c) => c[0] === "save_connection")).toBe(false);

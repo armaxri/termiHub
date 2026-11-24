@@ -360,16 +360,16 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(frontendErrorMock).toHaveBeenCalledTimes(2);
     });
 
-    it("a single cancel confirms success for a connecting and a reconnecting agent", async () => {
+    it("a single cancel of a connecting or reconnecting agent raises no toast (#5859)", async () => {
       await renderEstablishing();
 
       await clickKill("build-box");
       expect(cancelConnectAgent).toHaveBeenCalledWith("a1");
-      expect(toastSuccess).toHaveBeenCalledWith("Connect canceled");
+      expect(toastSuccess).not.toHaveBeenCalled();
 
       await clickKill("edge");
       expect(disconnectRemoteAgent).toHaveBeenCalledWith("a2");
-      expect(toastSuccess).toHaveBeenCalledWith("Reconnect stopped");
+      expect(toastSuccess).not.toHaveBeenCalled();
       expect(toastError).not.toHaveBeenCalled();
     });
 
@@ -584,14 +584,14 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(document.body.textContent).toContain("50%");
     });
 
-    it("cancels a single transfer via sftp_cancel_transfer and confirms it", async () => {
+    it("cancels a single transfer via sftp_cancel_transfer without a toast", async () => {
       await renderTransfers();
 
       await cancelOne("big.iso");
 
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
       expect(sftpCancelTransfer).toHaveBeenCalledTimes(1);
-      expect(toastSuccess).toHaveBeenCalledWith("Transfer canceled");
+      expect(toastSuccess).not.toHaveBeenCalled();
       expect(toastError).not.toHaveBeenCalled();
     });
 
@@ -606,14 +606,14 @@ describe("OpenConnectionsModal — kill / cancel paths (COV-015)", () => {
       expect(toastSuccess).not.toHaveBeenCalled();
     });
 
-    it("Cancel all cancels every transfer and confirms it", async () => {
+    it("Cancel all cancels every transfer without a toast", async () => {
       await renderTransfers();
 
       await bulkAndConfirm("Cancel all Transfers");
 
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t2");
-      expect(toastSuccess).toHaveBeenCalledWith("All transfers canceled");
+      expect(toastSuccess).not.toHaveBeenCalled();
       expect(toastError).not.toHaveBeenCalled();
     });
 

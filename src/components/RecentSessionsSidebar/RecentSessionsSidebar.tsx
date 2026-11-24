@@ -96,11 +96,10 @@ export function RecentSessionsSidebar() {
 
   const handleRemove = useCallback(
     (entry: SessionHistoryEntry) => {
-      void removeHistoryEntry(entry.dedupKey)
-        .then(() => toast.success(`Removed “${entry.title}” from history`))
-        .catch((err) => {
-          toast.error(`Failed to remove entry: ${errorMessage(err)}`);
-        });
+      // The row goes away; that is the confirmation (#5859).
+      void removeHistoryEntry(entry.dedupKey).catch((err) => {
+        toast.error(`Failed to remove entry: ${errorMessage(err)}`);
+      });
     },
     [removeHistoryEntry]
   );
@@ -108,6 +107,7 @@ export function RecentSessionsSidebar() {
   const handleCopyString = useCallback((entry: SessionHistoryEntry) => {
     const text = connectionString(entry);
     writeClipboard(text)
+      // toast-policy: no-in-place-surface — the string is on the clipboard
       .then(() => toast.success("Copied connection string"))
       .catch(() => toast.error("Failed to copy connection string"));
   }, []);
@@ -124,11 +124,10 @@ export function RecentSessionsSidebar() {
 
   const handleConfirmClear = useCallback(() => {
     setConfirmClear(false);
-    void clearSessionHistory()
-      .then(() => toast.success("Cleared session history"))
-      .catch((err) => {
-        toast.error(`Failed to clear history: ${errorMessage(err)}`);
-      });
+    // The emptied list is the confirmation (#5859).
+    void clearSessionHistory().catch((err) => {
+      toast.error(`Failed to clear history: ${errorMessage(err)}`);
+    });
   }, [clearSessionHistory]);
 
   const handleActivate = useCallback(

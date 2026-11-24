@@ -78,6 +78,7 @@ const NO_APPEARANCE_OPT_IN: GlobalAppearanceOptIn = { theme: false, appearance: 
 /** Surface the outcome of the host-key import (#4852). */
 function reportHostKeys(result: HostKeyImportResult) {
   const n = result.imported;
+  // toast-policy: off-screen — the trusted host keys are not listed here
   if (n > 0) toast.success(`Trusted ${n} SSH host ${n === 1 ? "key" : "keys"} from MobaXterm.`);
   if (result.skipped.length > 0) {
     toast.error(`${result.skipped.length} host keys were not imported.`, {
@@ -229,7 +230,6 @@ export function MobaxtermImportDialog({
   const applyAppearance = async (next: AppSettings) => {
     try {
       await onApplySettings(next);
-      toast.success("Applied MobaXterm's appearance.");
     } catch (err) {
       toast.error("Could not apply MobaXterm's appearance.", {
         description: describeError(err),

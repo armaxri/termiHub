@@ -131,6 +131,9 @@ export type { StatusDotProps, StatusTone, StatusDotSize } from "./StatusDot";
 export { ContentOverlay } from "./ContentOverlay";
 export type { ContentOverlayProps } from "./ContentOverlay";
 
+export { InlineStatus } from "./InlineStatus";
+export type { InlineStatusProps } from "./InlineStatus";
+
 export { LiveRegion } from "./LiveRegion";
 export type { LiveRegionProps, LiveRegionPoliteness } from "./LiveRegion";
 

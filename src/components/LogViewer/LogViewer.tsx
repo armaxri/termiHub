@@ -182,6 +182,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       });
       if (!filePath) return;
       await writeTextFile(filePath, content);
+      // toast-policy: no-in-place-surface — the logs are a file on disk
       toast.success("Logs saved", { description: filePath });
     } catch (err) {
       // A cancelled dialog resolves to null above; reaching here is a real failure.
@@ -195,6 +196,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       // clipboard plugin, not navigator.clipboard, which rejects on
       // macOS/WKWebView when the window is not focused (#4327).
       await writeText(redactLogText(formatEntry(entry)));
+      // toast-policy: no-in-place-surface — the entry is on the clipboard
       toast.success("Log entry copied");
     } catch (err) {
       reportFailure("Could not copy log entry", "copy log entry", err);
@@ -207,6 +209,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       const content = redactLogText(entriesToCopy.map(formatEntry).join("\n"));
       await writeText(content);
       const count = entriesToCopy.length;
+      // toast-policy: no-in-place-surface — the logs are on the clipboard
       toast.success("Logs copied", {
         description: `${count} ${count === 1 ? "entry" : "entries"}`,
       });

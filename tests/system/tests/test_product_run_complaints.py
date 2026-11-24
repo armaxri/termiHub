@@ -32,8 +32,9 @@ fails until its fix lands; the grade is never weakened to pass.
    "Copy path".
 7. **Toast noise** (#5665, #5675, #5686): a toast shown while the workflow
    editor is open covers none of the dialog; three runs of two workflows
-   leave one "Ran workflow" toast; Save and connect raises no "Saved" toast;
-   a "Closed … / Reopen" toast goes away when a dialog opens.
+   leave no "Ran workflow" toast (#5859: the terminal output and the run
+   history show it); Save and connect raises no "Saved" toast; a
+   "Closed … / Reopen" toast goes away when a dialog opens.
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
 pixels).
@@ -759,7 +760,7 @@ class TestProductRunComplaints(
             self.open_workflows_sidebar()
             self.run_workflow(workflow)
             self.wait_for_output(f"PR_TOAST_DLG_{tag}")
-            self.wait(lambda: self._toast_titles("Ran workflow") or None, what="the run's toast")
+            # Since #5859 a run raises no success toast; none may show either way.
             self.open_new_workflow()
             dialog = self.driver.measure_element(WORKFLOW_DIALOG)["rect"]
             toasts = self._toast_items()
@@ -783,9 +784,9 @@ class TestProductRunComplaints(
         tag = unique_name("pr").split("-")[-1]
         with self.step(
             "complaints.toasts.runs",
-            "Running workflows several times in a row shows one 'Ran workflow' toast (#5675)",
-            expect="#5675 complaint: after three runs of two workflows a single 'Ran workflow' "
-            "toast shows (the newest), not a stack of three",
+            "Running workflows several times in a row shows no 'Ran workflow' toast (#5675, #5859)",
+            expect="#5675/#5859 complaint: after three runs of two workflows no 'Ran workflow' "
+            "toast shows: the terminal output and the run history are the feedback",
         ):
             first = self._create_workflow(f"Run once {tag}", [f"echo PR_RUN_A_{tag}"])
             second = self._create_workflow(f"Run twice {tag}", [f"echo PR_RUN_B_{tag}"])
@@ -805,11 +806,10 @@ class TestProductRunComplaints(
                     TOAST_REGION
                 ) else []
                 self.evidence(f"after run {marker}: toasts {shown}")
-            self.wait(lambda: self._toast_titles("Ran workflow") or None, what="a run toast")
-            time.sleep(0.5)  # let a stale toast's exit animation finish
+            time.sleep(0.5)  # a late toast would land by now
             titles = [t["text"] for t in self._toast_titles("Ran workflow")]
             self.evidence(f"'Ran workflow' toasts: {titles}")
-            assert len(titles) == 1, f"{len(titles)} 'Ran workflow' toasts stack: {titles}"
+            assert not titles, f"runs in the visible terminal still toast: {titles}"
         self.close_all_tabs()
 
     def test_62_save_and_connect_no_saved_toast(self):

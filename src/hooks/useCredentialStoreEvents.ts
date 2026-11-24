@@ -51,6 +51,7 @@ export function useCredentialStoreEvents(): void {
     (auto) => {
       loadCredentialStoreStatus();
       if (auto) {
+        // toast-policy: background — the store locked itself while the user was away
         toast.success("Credential store auto-locked after inactivity");
       }
     },

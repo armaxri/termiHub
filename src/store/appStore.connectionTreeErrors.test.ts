@@ -294,7 +294,7 @@ describe("connectionTree — deleteConnection guard + error branches", () => {
     await flush();
 
     expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("ghost", undefined);
-    expect(toastMock.success).toHaveBeenCalledWith("Deleted connection");
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 
   it("stringifies a non-Error rejection with the generic name (String(err) branch)", async () => {
@@ -442,7 +442,7 @@ describe("connectionTree — saveConnectionToFile (#3590)", () => {
     expect(vi.mocked(persistConnection)).not.toHaveBeenCalled();
     expect(vi.mocked(apiMoveConnectionToFile)).not.toHaveBeenCalled();
     expect(saved).toEqual(edited);
-    expect(toastMock.success).toHaveBeenCalledWith("Saved renamed");
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 
   it("toasts, reverts and resolves to null when the command rejects", async () => {

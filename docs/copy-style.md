@@ -67,6 +67,29 @@ One primary button per footer. Cancel is on the left; the primary action is on t
 | Import finished. 12 connections added. · **Close** | Import finished. 12 connections added. · **Done** |
 | Agent update available · **Close**                 | Agent update available · **Dismiss**              |
 
+## Toasts: only what the screen does not show
+
+Feedback is visible in place; a toast only when it isn't (maintainer decision on
+[#5859](https://github.com/armaxri/termiHub/issues/5859)). A saved form that closes and shows its
+row, a tab that opens connected, a toggle that flips, a macro that types into the visible terminal:
+none of these toast. Toasts are for:
+
+- **Failures** — always, and they stay until dismissed.
+- **Background events** — a transfer, a scheduled or automatic run, a reconnect, anything that
+  finishes off-screen or outside termiHub (the clipboard, a file on disk).
+- **Undo offers** — "Closed “web” · Reopen", "Deleted folder “prod” · Undo".
+- **Why nothing happened** — an info toast when an action changed nothing visible ("No dead agents
+  to prune").
+
+Inside an open dialog, success and info messages show in the dialog's own status line instead. A
+result with no other on-screen state shows in an `InlineStatus` line beside its button (the
+connection editor's "Reached web — Nothing was saved.").
+
+Every `toast.success`, `toast.info` and `toast.promise` call carries a `// toast-policy: <reason>`
+comment naming why it is not visible in place (`background`, `off-screen`, `undo`,
+`no-in-place-surface`, `dialog-status`, `explains-outcome`). `src/components/ui/Toast/toastPolicy.test.ts`
+fails on an untagged call, so a new success toast always comes with its justification.
+
 ## Discarding unsaved changes
 
 The button that throws away unsaved edits says **Discard changes**, everywhere.

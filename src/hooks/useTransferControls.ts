@@ -12,9 +12,9 @@ import { errorMessage } from "@/utils/errorMessage";
  *
  * Each handler drives a backend transfer command and gives honest feedback
  * (audit FEC-004 / UX-016): the command resolves `true` only when the transfer
- * really changed state, so a `false` resolution is a silent backend no-op — for
- * example an unknown or already-finished id — and must surface an *info* toast,
- * never a success.
+ * really changed state, which the transfer's row then shows in place; a `false`
+ * resolution is a silent backend no-op — for example an unknown or
+ * already-finished id — and surfaces an *info* toast.
  * A rejection surfaces an error toast rather than failing silently.
  */
 export interface TransferControlHandlers {
@@ -31,22 +31,17 @@ export interface TransferControlHandlers {
 /**
  * Build the shared {@link TransferControlHandlers}. Extracted from the Transfer
  * Queue panel so the file-browser footer drives the identical control contract
- * (same commands, same success/no-op/error toasts) instead of a divergent set
+ * (same commands, same no-op/error toasts) instead of a divergent set
  * (UX-020).
  */
 export function useTransferControls(): TransferControlHandlers {
   const runControl = useCallback(
-    async (
-      action: () => Promise<boolean>,
-      messages: { success: string; noop: string; error: string }
-    ) => {
+    async (action: () => Promise<boolean>, messages: { noop: string; error: string }) => {
       try {
         const changed = await action();
-        if (changed) {
-          toast.success(messages.success);
-        } else {
-          toast.info(messages.noop);
-        }
+        // A change shows in the transfer's own row (#5859); a no-op does not.
+        // toast-policy: explains-outcome — the control did nothing, and this says why
+        if (!changed) toast.info(messages.noop);
       } catch (err) {
         frontendLog("transfer_queue", `${messages.error}: ${errorMessage(err)}`);
         toast.error(messages.error);
@@ -59,25 +54,21 @@ export function useTransferControls(): TransferControlHandlers {
     () => ({
       handlePause: (id: string) =>
         runControl(() => transferPause(id), {
-          success: "Transfer paused",
           noop: "Pause isn't available for this transfer",
           error: "Failed to pause transfer",
         }),
       handleResume: (id: string) =>
         runControl(() => transferResume(id), {
-          success: "Transfer resumed",
           noop: "Resume isn't available for this transfer",
           error: "Failed to resume transfer",
         }),
       handleCancel: (id: string) =>
         runControl(() => transferCancel(id), {
-          success: "Transfer cancelled",
           noop: "Transfer already finished",
           error: "Failed to cancel transfer",
         }),
       handleRetry: (id: string) =>
         runControl(() => transferRetry(id), {
-          success: "Retrying transfer",
           noop: "Retry isn't available for this transfer",
           error: "Failed to retry transfer",
         }),

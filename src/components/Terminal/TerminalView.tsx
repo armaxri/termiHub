@@ -159,6 +159,7 @@ export function TerminalView() {
   const handleToggleLogging = async () => {
     const tab = getActiveTab(useAppStore.getState());
     if (!tab || tab.contentType !== "terminal" || !tab.sessionId) {
+      // toast-policy: explains-outcome — nothing starts, and this says why
       toast.info("Focus a terminal to log its output");
       return;
     }
@@ -171,7 +172,6 @@ export function TerminalView() {
           next.delete(sid);
           return next;
         });
-        toast.success("Stopped session logging");
       } catch (e) {
         toast.error(`Failed to stop logging: ${errorMessage(e)}`);
       }
@@ -180,6 +180,7 @@ export function TerminalView() {
     try {
       const path = await sessionLoggingStart(sid, undefined, true);
       setLoggingSessions((prev) => new Set(prev).add(sid));
+      // toast-policy: no-in-place-surface — names the log file on disk
       toast.success(`Logging session output to ${path}`);
     } catch (e) {
       toast.error(`Failed to start logging: ${errorMessage(e)}`);
@@ -212,6 +213,7 @@ export function TerminalView() {
     }
     const source = getActiveTab(useAppStore.getState());
     if (!source || source.contentType !== "terminal") {
+      // toast-policy: explains-outcome — nothing starts, and this says why
       toast.info("Focus a terminal to start broadcasting input");
       return;
     }
