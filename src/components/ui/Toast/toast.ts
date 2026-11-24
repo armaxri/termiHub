@@ -297,10 +297,20 @@ export function registerInlineStatusSink(sink: InlineStatusSink): () => void {
   };
 }
 
+/**
+ * Whether `spec` offers a button (an undo such as "Closed … · Reopen"). Such a
+ * toast is an offer, not a confirmation of something already on screen: it is
+ * never moved to a dialog's status line nor held back while the stack is
+ * docked (#5904), since the offer is gone once its moment passes.
+ */
+function offersAction(spec: TransientSpec): boolean {
+  return Boolean(spec.opts.action || spec.opts.cancel);
+}
+
 /** Show `spec` in the innermost dialog's status line, if it can go there. */
 function showInline(spec: TransientSpec): boolean {
   const sink = inlineSinks[inlineSinks.length - 1];
-  if (!sink || spec.opts.action || spec.opts.cancel) return false;
+  if (!sink || offersAction(spec)) return false;
   const { id } = spec.opts;
   // Take down whatever shows under this id (a loading toast resolving here).
   dismissById(id);
@@ -327,7 +337,7 @@ function showTransient(spec: TransientSpec): string | number {
   trackTransient(id, true);
   trackModalStale(id, spec.opts.dismissOnModal);
   if (showInline(spec)) return id;
-  if (deferring) {
+  if (deferring && !offersAction(spec)) {
     deferredTransient.delete(id);
     deferredTransient.set(id, spec);
     if (deferredTransient.size > MAX_DEFERRED) {
@@ -370,8 +380,8 @@ function forgetTransientSpec(id: string | number | undefined): void {
 /**
  * Defer success/info toasts while the toast stack is docked over a tall dialog
  * (#5715), and show them once it is not. Turning it on takes the success/info
- * toasts on screen down and queues them with the new ones; errors and loading
- * toasts stay visible throughout. Turning it off shows the queue, oldest
+ * toasts on screen down and queues them with the new ones; errors, loading
+ * toasts and toasts offering a button (an undo, #5904) stay visible throughout. Turning it off shows the queue, oldest
  * first. Called by the toast hub's layout hook.
  */
 export function setTransientDeferred(on: boolean): void {
@@ -379,6 +389,7 @@ export function setTransientDeferred(on: boolean): void {
   deferring = on;
   if (on) {
     for (const [id, spec] of Array.from(shownTransient)) {
+      if (offersAction(spec)) continue;
       deferredTransient.delete(id);
       deferredTransient.set(id, spec);
       dismissById(id);
@@ -411,7 +422,8 @@ export function dismissModalStaleToasts(): void {
  *
  * - `success` / `info` auto-dismiss. While a dialog is open they show in its
  *   inline status line (#5830) unless they carry a button; while the stack is
- *   docked over a tall dialog without one, they wait until it closes (#5715).
+ *   docked over a tall dialog, those without a button wait until it closes
+ *   (#5715) — an undo offer shows at once (#5904).
  *   Those still showing are dismissed when a dialog opens (#5830).
  * - `error` persists until dismissed.
  * - `loading` resolves in place into success/error via `loading().then(...)`
