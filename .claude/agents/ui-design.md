@@ -30,7 +30,8 @@ UI work.
 1. **Clean** — one shared primitive layer + strict token discipline. No component
    invents its own colors, radii, shadows, spacing, or scrollbars.
 2. **Reactive** — every mutating/async action gives immediate feedback: a pending
-   state, then success or a recoverable error. Nothing resolves silently.
+   state, then the result visible in place or a recoverable error. Nothing
+   resolves silently, and nothing toasts what the screen already shows.
 3. **Modern** — one motion language, one focus ring, one scrollbar; polish from
    consistency, not decoration. Respect `prefers-reduced-motion`.
 
@@ -72,9 +73,11 @@ reference a token from `src/styles/variables.css`. **No raw hex, no
 Primary-button text uses `--text-on-accent`, never `#fff` (hardcoded white breaks
 the light theme — this is an existing bug to fix, not copy).
 
-### 4. Every action gives feedback (the reactive rule)
+### 4. Feedback is visible in place; toast only when it isn't (the reactive rule)
 
-No mutating or async user action may resolve silently. Pick the mechanism:
+No mutating or async user action may resolve silently — but the feedback is the
+changed screen itself wherever it can be (#5859, maintainer decision A). Pick the
+mechanism:
 
 - **button-initiated** (Save/Delete/Apply) → async `Button` state
   (`onClick: () => Promise<void>` → idle→pending→success/error) + error toast
@@ -83,7 +86,20 @@ No mutating or async user action may resolve silently. Pick the mechanism:
 - **field-level** (invalid port, bad key path) → inline `Field` error
 - **blocking connect** (SSH/serial) → the connection-overlay pattern
   (`TerminalConnectionOverlay` is the reference — spinner, cancel, contextual hints)
-- **success confirmation** → `toast.success()` (auto-dismiss)
+- **success the screen already shows** (a saved form closes and its row
+  appears, a tab opens connected, a toggle flips, a macro types into the
+  visible terminal) → **no toast**; the changed row/tab/control is the feedback
+- **a result with no other on-screen state next to its button** (a connection
+  test in an editor tab) → `InlineStatus` beside the button
+- **inside an open dialog** → success/info lands in the dialog's inline status
+  line automatically (#5830)
+- **toast only** for failures (always), background events (transfers,
+  scheduled/automatic runs, reconnects, things finishing off-screen, results
+  outside termiHub such as the clipboard or a file on disk) and undo offers.
+  Every `toast.success` / `toast.info` / `toast.promise` call carries a
+  `// toast-policy: <reason>` tag (`background`, `off-screen`, `undo`,
+  `no-in-place-surface`, `dialog-status`, `explains-outcome`), enforced by
+  `src/components/ui/Toast/toastPolicy.test.ts`
 
 ### 5. One scrollbar, one motion language
 
