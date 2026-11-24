@@ -167,6 +167,11 @@ services, HTTP monitors, plugins) shows:
 - **A compact state marker, only when the state needs attention:** running, error or failed,
   armed/off, connected, disabled, paused. A routine state that the dot already says ("on,
   next run at 09:10") is not a marker.
+- **Its run control, when the list exists to run things:** a macro's Play, a tunnel's or
+  service's Start / Stop (Retry after an error). It stays visible at rest on the row's
+  trailing edge (`SidebarListItem`'s `primaryAction`); the other actions show on hover.
+  A status dot names its state in a tooltip and as its accessible name ("Stopped",
+  "Running", "Error").
 
 Everything else is configuration or history and goes in the row's **tooltip**, the editor or a
 detail view, never on the row: host, user and port, the trigger and its target, step or command
