@@ -299,3 +299,56 @@ async fn trust_prompt_without_an_owner_scope_has_no_owner() {
         .expect("connect");
     assert_eq!(*verifier.seen.lock().unwrap(), Some(None));
 }
+
+/// Records the connection name it sees while deciding (#5943).
+struct NameRecordingVerifier {
+    seen: std::sync::Mutex<Option<Option<String>>>,
+}
+
+#[async_trait]
+impl HostKeyVerifier for NameRecordingVerifier {
+    async fn verify(&self, info: &HostKeyInfo) -> bool {
+        self.decide(info).await.is_accepted()
+    }
+
+    async fn decide(&self, _info: &HostKeyInfo) -> HostKeyDecision {
+        *self.seen.lock().unwrap() =
+            Some(crate::backends::ssh::prompt_owner::current_prompt_connection_name());
+        HostKeyDecision::Accepted
+    }
+}
+
+/// The trust prompt runs on russh's session task, yet it sees the connection
+/// name the connecting task scoped (#5943) — so a prompt with no owning tab (a
+/// tunnel, an SFTP browser) still names its connection.
+#[tokio::test]
+async fn trust_prompt_sees_the_connecting_tasks_connection_name() {
+    let (stream, _observed) = serve(script());
+    let verifier = Arc::new(NameRecordingVerifier {
+        seen: std::sync::Mutex::new(None),
+    });
+    crate::backends::ssh::prompt_owner::with_prompt_connection_name(
+        Some("web tunnel"),
+        handshake_and_authenticate_with(&config(), stream, Some(verifier.clone())),
+    )
+    .await
+    .expect("connect");
+    assert_eq!(
+        *verifier.seen.lock().unwrap(),
+        Some(Some("web tunnel".to_string())),
+        "the verifier was asked with the connect's connection name"
+    );
+}
+
+/// Without a name scope the trust prompt carries none.
+#[tokio::test]
+async fn trust_prompt_without_a_name_scope_has_no_connection_name() {
+    let (stream, _observed) = serve(script());
+    let verifier = Arc::new(NameRecordingVerifier {
+        seen: std::sync::Mutex::new(None),
+    });
+    handshake_and_authenticate_with(&config(), stream, Some(verifier.clone()))
+        .await
+        .expect("connect");
+    assert_eq!(*verifier.seen.lock().unwrap(), Some(None));
+}

@@ -76,6 +76,9 @@ pub(crate) trait MonitoringTransport: Send + Sync + 'static {
 /// [`ssh_exec`].
 pub(crate) struct SshTransport {
     config: SshConfig,
+    /// The connection name scoped around the connect that built this
+    /// transport (#5943): its own later login's host-key prompt names it.
+    prompt_connection_name: Option<String>,
 }
 
 /// A connected SSH monitoring session and the resources that must outlive it.
@@ -96,7 +99,13 @@ impl MonitoringTransport for SshTransport {
     async fn connect(&self, cancel: CancellationToken) -> Result<Self::Session, CoreError> {
         // Reach the target directly, or through its pooled jump-host gateway
         // when a ProxyJump chain is configured (#939).
-        let (session, registry, gateway) = connect_target(&self.config, Some(&cancel)).await?;
+        // The login runs on the subscriber's task; its host-key prompt still
+        // names the connection this transport was built for (#5943).
+        let (session, registry, gateway) = super::prompt_owner::with_prompt_connection_name(
+            self.prompt_connection_name.as_deref(),
+            connect_target(&self.config, Some(&cancel)),
+        )
+        .await?;
         Ok(SshConnectedSession {
             session,
             _registry: registry,
@@ -172,7 +181,11 @@ impl<T: MonitoringTransport> SshMonitoringProviderImpl<T> {
 impl SshMonitoringProviderImpl<SshTransport> {
     /// Construct a provider that monitors the host described by `config`.
     pub(crate) fn new(config: SshConfig) -> Self {
-        Self::with_transport(SshTransport { config }, COLLECT_TIMEOUT)
+        let transport = SshTransport {
+            config,
+            prompt_connection_name: super::prompt_owner::current_prompt_connection_name(),
+        };
+        Self::with_transport(transport, COLLECT_TIMEOUT)
     }
 }
 
@@ -473,6 +486,23 @@ mod tests {
     use super::*;
     use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// A provider built inside a connect's connection-name scope keeps it for
+    /// its own later login's host-key prompt (#5943).
+    #[tokio::test]
+    async fn the_transport_remembers_the_connection_name_it_was_built_under() {
+        let named =
+            crate::backends::ssh::prompt_owner::with_prompt_connection_name(Some("prod"), async {
+                SshMonitoringProvider::new(SshConfig::default())
+            })
+            .await;
+        assert_eq!(
+            named.transport.prompt_connection_name.as_deref(),
+            Some("prod")
+        );
+        let unnamed = SshMonitoringProvider::new(SshConfig::default());
+        assert_eq!(unnamed.transport.prompt_connection_name, None);
+    }
 
     /// A valid `MONITORING_COMMAND` output that `parse_stats` accepts, so the
     /// collect loop can produce a real `Live` sample in tests. Matches the

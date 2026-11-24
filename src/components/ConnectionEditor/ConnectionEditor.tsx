@@ -1613,7 +1613,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return null;
     });
     try {
-      await testTerminal(config, connectId, { reviewCert: unlistenCertPrompt !== null });
+      // An SSH host-key prompt of the test names the connection (#5943).
+      await testTerminal(config, connectId, {
+        reviewCert: unlistenCertPrompt !== null,
+        connectionName: name,
+      });
       setTestOutcome("success");
       setTestReached(name.trim() || "the target");
     } catch (err) {

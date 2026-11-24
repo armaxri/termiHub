@@ -1729,8 +1729,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // the loop, so a guaranteed force-stop is the only escape hatch for a
             // wedged task. Kept in the `AgentConnection` and fired only on teardown.
             // Not app-owned (#3105): connection-scoped; ended by Disconnect / teardown abort.
+            // The task's in-task reconnects keep naming the agent on their
+            // host-key prompts, as this connect's do (#5943).
+            let prompt_name = crate::session::prompt_connection_name::current_prompt_connection_name();
             let io_task = tokio::spawn(async move {
-                agent_io_task(
+                crate::session::prompt_connection_name::with_prompt_connection_name(prompt_name.as_deref(), agent_io_task(
                     session,
                     channel,
                     command_rx,
@@ -1749,7 +1752,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     update_auth_token_path,
                     capabilities_task,
                     reconnect_tuning,
-                )
+                ))
                 .await;
             })
             .abort_handle();
