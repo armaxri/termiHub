@@ -227,4 +227,37 @@ describe("CredentialStoreIndicator", () => {
     expect(mockedToast.error).toHaveBeenCalledWith(expect.stringContaining("lock"));
     expect(mockedToast.success).not.toHaveBeenCalled();
   });
+
+  it("is a lock button whose name says the state and the action (#5839)", () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+    act(() => {
+      root.render(<CredentialStoreIndicator />);
+    });
+
+    const indicator = query("credential-store-indicator")!;
+    expect(indicator.tagName).toBe("BUTTON");
+    expect(indicator.getAttribute("type")).toBe("button");
+    expect(indicator.getAttribute("data-state")).toBe("unlocked");
+    expect(indicator.getAttribute("aria-label")).toBe("Unlocked, lock the credential store now");
+    // Normal-contrast outlined control, not the muted status text (R-071, R-121).
+    expect(indicator.className).toContain("credential-indicator--button");
+    expect(indicator.className).toContain("credential-indicator--unlocked");
+  });
+
+  it("names the locked state and the unlock action (#5839)", () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+    });
+    act(() => {
+      root.render(<CredentialStoreIndicator />);
+    });
+
+    const indicator = query("credential-store-indicator")!;
+    expect(indicator.getAttribute("data-state")).toBe("locked");
+    expect(indicator.getAttribute("aria-label")).toBe("Locked, unlock the credential store");
+    expect(indicator.textContent).toBe("Locked");
+    expect(indicator.className).toContain("credential-indicator--locked");
+  });
 });
