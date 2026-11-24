@@ -14,8 +14,8 @@ import { continueTabClose } from "@/utils/tabCloseFlow";
  *   only a live or persistent session, with the same dialogs as the tab X.
  *   Confirming continues that decision, so a dirty live tab is still asked
  *   about its session.
- * - `tab-group` — the plain group confirm, while
- *   `settings.confirmCloseTabOnShortcut` is enabled.
+ * - `tab-group` — the plain group confirm, while the
+ *   `settings.closeLiveSessionConfirm` choice asks for shortcut closes.
  *
  * Reads `pendingShortcutCloseConfirm` from the store; renders nothing when
  * no request is pending. Cancel (Esc, backdrop click, button) clears the

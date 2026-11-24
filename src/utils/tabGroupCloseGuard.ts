@@ -14,16 +14,20 @@ import { currentSettingsView } from "@/store/settingsBridge";
 import { currentSessionView, effectiveExitedMap } from "@/store/sessionBridge";
 import { getAllLeaves } from "@/utils/panelTree";
 import { countLiveSessions, dirtyEditorTabs } from "@/utils/tabLiveSession";
+import { settingsAskBeforeClose, type TabCloseTrigger } from "@/utils/closeConfirm";
 import type { TerminalTab } from "@/types/terminal";
 
 /**
  * What closing `tabs` at once would lose, and whether that warrants a prompt.
  *
- * Live sessions honour the "Don't ask again" opt-out
- * (`settings.confirmCloseLiveSession`); unsaved editors always prompt, matching
+ * Live sessions prompt when the `closeLiveSessionConfirm` choice asks for a
+ * close started by `trigger` (#5844); unsaved editors always prompt, matching
  * the single-tab dirty guard, which has no opt-out.
  */
-function assessBulkClose(tabs: TerminalTab[]): {
+function assessBulkClose(
+  tabs: TerminalTab[],
+  trigger: TabCloseTrigger
+): {
   liveCount: number;
   dirtyCount: number;
   prompt: boolean;
@@ -35,7 +39,7 @@ function assessBulkClose(tabs: TerminalTab[]): {
     terminalSpawnErrors: state.terminalSpawnErrors,
   });
   const dirtyCount = dirtyEditorTabs(tabs, state.editorDirtyTabs).length;
-  const confirmLive = liveCount > 0 && currentSettingsView().confirmCloseLiveSession !== false;
+  const confirmLive = liveCount > 0 && settingsAskBeforeClose(currentSettingsView(), trigger);
   return { liveCount, dirtyCount, prompt: confirmLive || dirtyCount > 0 };
 }
 
@@ -44,15 +48,19 @@ function assessBulkClose(tabs: TerminalTab[]): {
  * sessions or discard unsaved editors. Returns `true` when the confirmation was
  * raised (the caller must not close), `false` when nothing would be lost.
  *
- * Live sessions honour the "Don't ask again" opt-out
- * (`settings.confirmCloseLiveSession`); unsaved editors always prompt, matching
- * the single-tab dirty guard, which has no opt-out.
+ * Live sessions prompt when the `closeLiveSessionConfirm` choice asks for a
+ * close started by `trigger` (the chip X is a pointer close, the close-group
+ * shortcut a shortcut one); unsaved editors always prompt, matching the
+ * single-tab dirty guard, which has no opt-out.
  */
-export function requestTabGroupCloseConfirm(groupId: string): boolean {
+export function requestTabGroupCloseConfirm(
+  groupId: string,
+  trigger: TabCloseTrigger = "pointer"
+): boolean {
   const group = getLayoutTabGroups().find((g) => g.id === groupId);
   if (!group) return false;
   const tabs = getAllLeaves(group.rootPanel).flatMap((leaf) => leaf.tabs);
-  const { liveCount, dirtyCount, prompt } = assessBulkClose(tabs);
+  const { liveCount, dirtyCount, prompt } = assessBulkClose(tabs, trigger);
   if (!prompt) return false;
   useAppStore.getState().setPendingSessionCloseConfirm({
     kind: "group",
@@ -60,6 +68,7 @@ export function requestTabGroupCloseConfirm(groupId: string): boolean {
     label: group.name,
     liveCount,
     dirtyCount,
+    trigger,
   });
   return true;
 }
@@ -81,7 +90,7 @@ export function requestPanelCloseConfirm(panelId: string): boolean {
     .flatMap((g) => getAllLeaves(g.rootPanel))
     .find((leaf) => leaf.id === panelId);
   if (!panel) return false;
-  const { liveCount, dirtyCount, prompt } = assessBulkClose(panel.tabs);
+  const { liveCount, dirtyCount, prompt } = assessBulkClose(panel.tabs, "pointer");
   if (!prompt) return false;
   useAppStore.getState().setPendingSessionCloseConfirm({
     kind: "panel",

@@ -397,6 +397,9 @@ const en = {
   // The /dev prefix scan only runs on Linux; elsewhere the list is folded.
   "serialPrefixes.offLinux.note":
     "Prefix scanning only runs on Linux. This computer lists serial ports from the system.",
+  // Where users looking for serial defaults should go instead (#5844).
+  "serialPrefixes.offLinux.connectionSettings":
+    "Baud rate, data bits, parity and flow control are set on each serial connection.",
   "serialPrefixes.offLinux.show": "Show Linux prefixes ({count})",
   "serialPrefixes.offLinux.hide": "Hide Linux prefixes",
 

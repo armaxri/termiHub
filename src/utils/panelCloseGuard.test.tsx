@@ -77,7 +77,7 @@ describe("closePanelGuarded — unsaved editors (UX2-003)", () => {
   });
 
   it("still prompts for a dirty editor when live-session prompts are off", async () => {
-    seedSettings({ confirmCloseLiveSession: false });
+    seedSettings({ closeLiveSessionConfirm: "shortcut" });
     const { panelId, tabId } = seedSplit("editor");
     useAppStore.getState().setEditorDirty(tabId, true);
     await render();

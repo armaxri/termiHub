@@ -2,7 +2,6 @@
   "getSettings": {
     "askOpenSavedFileInTab": true,
     "confirmCloseAttachedTab": true,
-    "confirmCloseTabOnShortcut": true,
     "credentialAutoLockMinutes": 0,
     "cursorStyle": "underline",
     "defaultLineEnding": "crlf",

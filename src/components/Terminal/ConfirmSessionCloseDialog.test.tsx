@@ -124,7 +124,7 @@ describe("ConfirmSessionCloseDialog", () => {
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
   });
 
-  it("Don't ask again then Confirm persists confirmCloseLiveSession=false", () => {
+  it("Don't ask again on a pointer close keeps asking only for shortcuts (#5844)", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });
     useAppStore.getState().addTab("x", "local");
@@ -148,11 +148,11 @@ describe("ConfirmSessionCloseDialog", () => {
     // Confirming commits the deferred preference.
     act(() => q("confirm-dialog-confirm").click());
     expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ confirmCloseLiveSession: false })
+      expect.objectContaining({ closeLiveSessionConfirm: "shortcut" })
     );
   });
 
-  it("Don't ask again from the shortcut clears confirmCloseTabOnShortcut only (#5189)", () => {
+  it("Don't ask again from the shortcut keeps asking only for mouse closes (#5189, #5844)", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });
     useAppStore.getState().addTab("w", "local");
@@ -166,17 +166,14 @@ describe("ConfirmSessionCloseDialog", () => {
         panelId: panel.id,
         label: "w",
         reopen: null,
-        optOutSetting: "confirmCloseTabOnShortcut",
+        trigger: "shortcut",
       })
     );
 
     act(() => q("confirm-dialog-dont-ask-again").click());
     act(() => q("confirm-dialog-confirm").click());
     expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ confirmCloseTabOnShortcut: false })
-    );
-    expect(updateSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({ confirmCloseLiveSession: false })
+      expect.objectContaining({ closeLiveSessionConfirm: "pointer" })
     );
   });
 

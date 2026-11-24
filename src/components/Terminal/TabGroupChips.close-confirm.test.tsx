@@ -125,7 +125,7 @@ describe("TabGroupChips — closing a group with live sessions (UX2-001)", () =>
   });
 
   it("closes directly when the user opted out of the live-session prompt", async () => {
-    seedSettings({ confirmCloseLiveSession: false });
+    seedSettings({ closeLiveSessionConfirm: "shortcut" });
     const { groupId } = seedTwoGroups();
     await render();
 
@@ -136,7 +136,7 @@ describe("TabGroupChips — closing a group with live sessions (UX2-001)", () =>
   });
 
   it("still prompts for unsaved editors even when live-session prompts are off", async () => {
-    seedSettings({ confirmCloseLiveSession: false });
+    seedSettings({ closeLiveSessionConfirm: "shortcut" });
     const { groupId, tabId } = seedTwoGroups("editor");
     useAppStore.getState().setEditorDirty(tabId, true);
     await render();

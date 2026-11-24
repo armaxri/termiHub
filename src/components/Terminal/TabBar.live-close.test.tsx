@@ -107,7 +107,7 @@ describe("TabBar — closing a live-session tab via the X", () => {
   it("closes immediately with an Undo toast when the user opted out", async () => {
     const closeTab = vi.fn();
     useAppStore.setState({ closeTab });
-    seedSettings({ confirmCloseLiveSession: false });
+    seedSettings({ closeLiveSessionConfirm: "shortcut" });
     await render([liveTerminalTab()]);
 
     act(() => {

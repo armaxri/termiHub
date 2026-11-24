@@ -96,7 +96,7 @@ class TabsUi(HarnessMixin):
         * the live-session confirm a tab holding a live terminal session raises
           (``confirm-session-close-dialog``, whose confirm button is
           ``ConfirmDialog``'s ``confirm-dialog-confirm``). This is on by default
-          — ``settings.confirmCloseLiveSession`` defaults to ``true`` (#1654);
+          — ``settings.closeLiveSessionConfirm`` defaults to ``"always"`` (#1654);
         * the one-time detach notice a tab attached to a persistent agent session
           raises (``confirm-detach-tab-dialog``, confirm button
           ``confirm-detach-tab-confirm``) — on by default via

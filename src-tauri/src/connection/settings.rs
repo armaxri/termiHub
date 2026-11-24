@@ -244,6 +244,20 @@ settings_union! {
 }
 
 settings_union! {
+    /// When closing something that holds a live session asks first (#5844).
+    CloseLiveSessionConfirm {
+        /// Ask for every close (the default).
+        Always = "always",
+        /// Ask only when a keyboard shortcut closes it.
+        Shortcut = "shortcut",
+        /// Ask only for pointer closes (tab X, middle-click, menu, panel close).
+        Pointer = "pointer",
+        /// Never ask.
+        Never = "never",
+    }
+}
+
+settings_union! {
     /// Where credentials are persisted.
     CredentialStorageMode {
         /// Encrypted with a user-provided master password.
@@ -399,20 +413,16 @@ pub struct AppSettings {
     pub power_monitoring_enabled: bool,
     #[serde(default = "default_true")]
     pub file_browser_enabled: bool,
-    /// Show a confirmation dialog when the user presses the close-tab or
-    /// close-tab-group keyboard shortcut. The X-button on a tab is not affected.
-    #[serde(default = "default_true")]
-    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
-    pub confirm_close_tab_on_shortcut: bool,
-    /// Show a confirmation dialog before closing a tab or split panel that holds
-    /// a live session (via the tab X, middle-click, or panel close button). The
-    /// dialog's "Don't ask again" opt-out flips this to `false`. `None` → the
-    /// frontend default (treated as `true`). Owned by the frontend
-    /// `AppSettings.confirmCloseLiveSession`; the backend only persists it so the
-    /// opt-out survives a restart (#1735).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub confirm_close_live_session: Option<bool>,
+    /// When closing a tab, split panel or tab group that holds a live session
+    /// asks for confirmation (#5844): `"always"`, only for the close-tab /
+    /// close-tab-group keyboard `"shortcut"`, only for `"pointer"` closes (tab
+    /// X, middle-click, menu, panel close), or `"never"`. `None` → the frontend
+    /// default `"always"`. Replaces the former overlapping
+    /// `confirmCloseTabOnShortcut` / `confirmCloseLiveSession` flags; the v2 → v3
+    /// schema step derives it from them (see `migrate_close_confirm`).
+    #[serde(default, with = "lenient", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(as = "Option<CloseLiveSessionConfirm>", optional))]
+    pub close_live_session_confirm: Option<CloseLiveSessionConfirm>,
     /// Show a one-time notice when closing a tab attached to a persistent
     /// background session, reassuring the user that the session keeps running.
     /// The notice's "Don't show again" opt-out flips this to `false`. Defaults to
@@ -792,8 +802,7 @@ impl Default for AppSettings {
             screen_reader_mode: None,
             power_monitoring_enabled: true,
             file_browser_enabled: true,
-            confirm_close_tab_on_shortcut: true,
-            confirm_close_live_session: None,
+            close_live_session_confirm: None,
             confirm_close_attached_tab: true,
             confirm_undoable_delete: None,
             ask_open_saved_file_in_tab: true,
@@ -852,9 +861,14 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
     /// v2 (#5042) switches the app-level shell-hook default off once: a v1
     /// file's `defaultShellIntegration: true` was written by the old default,
     /// so it loads as `false`. Saving at v2 records that the reset ran, so an
-    /// opt-in made afterwards is kept. The bump is also downgrade-safe: a v1
-    /// build refuses to overwrite a v2 file (PER-004).
-    const CURRENT_VERSION: u32 = 2;
+    /// opt-in made afterwards is kept.
+    ///
+    /// v3 (#5844) folds the two overlapping close-confirm flags into the single
+    /// `closeLiveSessionConfirm` choice (`migrate_close_confirm`).
+    ///
+    /// Each bump is also downgrade-safe: an older build refuses to overwrite a
+    /// newer file (PER-004).
+    const CURRENT_VERSION: u32 = 3;
 
     fn migrate(
         mut value: serde_json::Value,
@@ -867,6 +881,9 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
                     serde_json::Value::Bool(false),
                 );
             }
+            if from_version < 3 {
+                migrate_close_confirm(obj);
+            }
             obj.insert(
                 "version".to_string(),
                 serde_json::Value::String(Self::CURRENT_VERSION.to_string()),
@@ -874,6 +891,36 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
         }
         Ok(value)
     }
+}
+
+/// The v2 → v3 settings step (#5844): replace `confirmCloseTabOnShortcut`
+/// (gates shortcut closes) and `confirmCloseLiveSession` (gates pointer closes)
+/// with the one `closeLiveSessionConfirm` choice that keeps both answers.
+///
+/// A missing or non-boolean flag counts as its default, `true`. Both on is the
+/// default `"always"`, so nothing is written and the setting keeps following
+/// the default; every other combination maps to the choice that asks for
+/// exactly the same closes, so no opt-out is lost.
+fn migrate_close_confirm(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    let flag = |obj: &serde_json::Map<String, serde_json::Value>, key: &str| {
+        obj.get(key)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+    };
+    let shortcut = flag(obj, "confirmCloseTabOnShortcut");
+    let pointer = flag(obj, "confirmCloseLiveSession");
+    obj.remove("confirmCloseTabOnShortcut");
+    obj.remove("confirmCloseLiveSession");
+    let choice = match (shortcut, pointer) {
+        (true, true) => return,
+        (true, false) => CloseLiveSessionConfirm::Shortcut,
+        (false, true) => CloseLiveSessionConfirm::Pointer,
+        (false, false) => CloseLiveSessionConfirm::Never,
+    };
+    obj.insert(
+        "closeLiveSessionConfirm".to_string(),
+        serde_json::Value::String(choice.as_str().to_string()),
+    );
 }
 
 /// Handles reading/writing the settings JSON file.
@@ -1044,7 +1091,7 @@ mod tests {
 
         let result = storage.load_with_recovery().unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.data.version, "2");
+        assert_eq!(result.data.version, "3");
         assert!(result.data.power_monitoring_enabled);
     }
 
@@ -1075,7 +1122,7 @@ mod tests {
         assert!(result.warnings[0].message.contains("corrupt"));
         assert!(result.warnings[0].details.is_some());
         // Returns defaults
-        assert_eq!(result.data.version, "2");
+        assert_eq!(result.data.version, "3");
         assert!(result.data.power_monitoring_enabled);
 
         // Backup should exist
@@ -1216,7 +1263,7 @@ mod tests {
     /// every schema version, and a stored `false` stays off.
     #[test]
     fn a_stored_x11_forwarding_default_is_kept() {
-        for version in ["1", "2"] {
+        for version in ["1", "2", "3"] {
             for stored in [true, false] {
                 let json = format!(
                     r#"{{"version":"{version}","externalConnectionFiles":[],"defaultX11Forwarding":{stored}}}"#
@@ -1358,7 +1405,7 @@ mod tests {
             r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
         );
         assert!(!settings.default_shell_integration);
-        assert_eq!(settings.version, "2");
+        assert_eq!(settings.version, "3");
     }
 
     /// The reset only touches the shell-hook default, not its sibling toggles.
@@ -1374,7 +1421,7 @@ mod tests {
         assert_eq!(settings.theme.as_deref(), Some("dark"));
     }
 
-    /// An opt-in made after the reset is saved at v2 and is never reset again.
+    /// An opt-in made after the reset is saved at the current version and is never reset again.
     #[test]
     fn shell_hook_opt_in_after_the_reset_survives_reload() {
         let (storage, mut settings, _dir) = load_raw(
@@ -1385,7 +1432,7 @@ mod tests {
 
         let raw = std::fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("2"));
+        assert_eq!(on_disk["version"], serde_json::json!("3"));
 
         let reloaded = storage.load_with_recovery().unwrap().data;
         assert!(reloaded.default_shell_integration);
@@ -1406,7 +1453,7 @@ mod tests {
         storage.save(&settings).unwrap();
 
         let reloaded = storage.load_with_recovery().unwrap().data;
-        assert_eq!(reloaded.version, "2");
+        assert_eq!(reloaded.version, "3");
         assert!(reloaded.default_shell_integration);
     }
 
@@ -1984,41 +2031,120 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_without_line_height_and_confirm_close_live_session() {
-        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+    fn deserialize_without_line_height_and_close_confirm() {
+        let json = r#"{"version":"3","externalConnectionFiles":[]}"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.line_height.is_none());
-        assert!(settings.confirm_close_live_session.is_none());
+        assert!(settings.close_live_session_confirm.is_none());
     }
 
     #[test]
-    fn deserialize_with_line_height_and_confirm_close_live_session() {
-        let json = r#"{
-            "version": "1",
-            "externalConnectionFiles": [],
-            "lineHeight": 1.2,
-            "confirmCloseLiveSession": false
-        }"#;
-        let settings: AppSettings = serde_json::from_str(json).unwrap();
-        assert_eq!(settings.line_height, Some(1.2));
-        assert_eq!(settings.confirm_close_live_session, Some(false));
-    }
-
-    #[test]
-    fn line_height_and_confirm_close_live_session_round_trip() {
-        // Regression for #1735: these two frontend AppSettings fields were
-        // absent from the Rust struct and silently dropped on save→load.
+    fn line_height_and_close_confirm_round_trip() {
+        // Regression for #1735: frontend-owned AppSettings fields must survive
+        // save→load instead of being silently dropped.
         let settings = AppSettings {
             line_height: Some(1.4),
-            confirm_close_live_session: Some(false),
+            close_live_session_confirm: Some(CloseLiveSessionConfirm::Shortcut),
             ..Default::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("lineHeight"));
-        assert!(json.contains("confirmCloseLiveSession"));
+        assert!(json.contains(r#""closeLiveSessionConfirm":"shortcut""#));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.line_height, Some(1.4));
-        assert_eq!(deserialized.confirm_close_live_session, Some(false));
+        assert_eq!(
+            deserialized.close_live_session_confirm,
+            Some(CloseLiveSessionConfirm::Shortcut)
+        );
+    }
+
+    /// Load a settings file through the real storage path (with migration).
+    fn load_migrated(raw: &str) -> AppSettings {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(&storage.file_path, raw).unwrap();
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        loaded.data
+    }
+
+    #[test]
+    fn v2_close_confirm_flags_migrate_to_the_single_choice() {
+        // #5844: every combination of the two old flags maps to the choice that
+        // asks for exactly the same closes; both on stays "follow the default".
+        let cases = [
+            (None, None, None),
+            (Some(true), Some(true), None),
+            (Some(true), None, None),
+            (
+                Some(true),
+                Some(false),
+                Some(CloseLiveSessionConfirm::Shortcut),
+            ),
+            (None, Some(false), Some(CloseLiveSessionConfirm::Shortcut)),
+            (
+                Some(false),
+                Some(true),
+                Some(CloseLiveSessionConfirm::Pointer),
+            ),
+            (Some(false), None, Some(CloseLiveSessionConfirm::Pointer)),
+            (
+                Some(false),
+                Some(false),
+                Some(CloseLiveSessionConfirm::Never),
+            ),
+        ];
+        for (shortcut, pointer, expected) in cases {
+            let mut doc = serde_json::json!({"version": "2", "externalConnectionFiles": []});
+            if let Some(v) = shortcut {
+                doc["confirmCloseTabOnShortcut"] = serde_json::Value::Bool(v);
+            }
+            if let Some(v) = pointer {
+                doc["confirmCloseLiveSession"] = serde_json::Value::Bool(v);
+            }
+            let settings = load_migrated(&doc.to_string());
+            assert_eq!(
+                settings.close_live_session_confirm, expected,
+                "shortcut {shortcut:?}, pointer {pointer:?}"
+            );
+            assert_eq!(settings.version, "3");
+            // The old flags are gone, not parked in the catch-all.
+            assert!(settings.extra.is_empty(), "{:?}", settings.extra);
+        }
+    }
+
+    #[test]
+    fn v1_close_confirm_flags_migrate_through_both_steps() {
+        let settings = load_migrated(
+            r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true,
+                "confirmCloseTabOnShortcut":false,"confirmCloseLiveSession":false}"#,
+        );
+        assert_eq!(
+            settings.close_live_session_confirm,
+            Some(CloseLiveSessionConfirm::Never)
+        );
+        assert!(!settings.default_shell_integration);
+    }
+
+    #[test]
+    fn v3_close_confirm_choice_is_not_migrated_again() {
+        // A v3 file keeps its choice even if a stale writer left an old flag.
+        let settings = load_migrated(
+            r#"{"version":"3","externalConnectionFiles":[],
+                "closeLiveSessionConfirm":"pointer","confirmCloseLiveSession":false}"#,
+        );
+        assert_eq!(
+            settings.close_live_session_confirm,
+            Some(CloseLiveSessionConfirm::Pointer)
+        );
+    }
+
+    #[test]
+    fn unknown_close_confirm_choice_falls_back_to_default() {
+        let settings = load_migrated(
+            r#"{"version":"3","externalConnectionFiles":[],"closeLiveSessionConfirm":"sometimes"}"#,
+        );
+        assert!(settings.close_live_session_confirm.is_none());
     }
 
     #[test]
@@ -2037,11 +2163,12 @@ mod tests {
     }
 
     #[test]
-    fn line_height_and_confirm_close_live_session_none_omitted_from_json() {
+    fn line_height_and_close_confirm_none_omitted_from_json() {
         let settings = AppSettings::default();
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("lineHeight"));
-        assert!(!json.contains("confirmCloseLiveSession"));
+        assert!(!json.contains("closeLiveSessionConfirm"));
+        assert!(!json.contains("confirmCloseTabOnShortcut"));
     }
 
     #[test]
@@ -2164,7 +2291,7 @@ mod tests {
     // unions, broadcast groups and the two terminal toggles in the flattened
     // `extra` map). Loading and re-saving them must reproduce the file byte for
     // byte, so promoting fields / typing unions is invisible on disk — apart
-    // from the v1 → v2 step's own two changes (see `as_v2`, #5042).
+    // from the v1 → v2 step's own two changes (see `as_current`).
     // (`fileLanguageMappings` is a `HashMap`, so the fixture keeps it to one
     // entry: its multi-key order was never deterministic.)
 
@@ -2172,18 +2299,26 @@ mod tests {
     const LEGACY_DEFAULTS: &str = include_str!("testdata/settings_legacy_defaults.json");
     const LEGACY_UNKNOWN_KEYS: &str = include_str!("testdata/settings_legacy_unknown_keys.json");
 
-    /// The bytes a legacy (v1) fixture re-saves as: the same file, stamped v2,
-    /// with the old shell-hook default switched off (#5042) — the only two
-    /// on-disk changes the v1 → v2 step makes.
-    fn as_v2(legacy: &str) -> String {
+    /// The bytes a legacy (v1) fixture re-saves as: the same file, stamped v3,
+    /// with the old shell-hook default switched off (#5042) and the two old
+    /// close-confirm flags folded into `closeLiveSessionConfirm` (#5844) — the
+    /// only on-disk changes the v1 → v3 steps make. Both flags on is the
+    /// default, so that fold just drops the line.
+    fn as_current(legacy: &str) -> String {
         legacy
             .trim_end()
-            .replacen(r#""version": "1""#, r#""version": "2""#, 1)
+            .replacen(r#""version": "1""#, r#""version": "3""#, 1)
             .replacen(
                 r#""defaultShellIntegration": true"#,
                 r#""defaultShellIntegration": false"#,
                 1,
             )
+            .replacen(
+                "\"confirmCloseTabOnShortcut\": false,\n  \"confirmCloseLiveSession\": false,",
+                "\"closeLiveSessionConfirm\": \"never\",",
+                1,
+            )
+            .replacen("  \"confirmCloseTabOnShortcut\": true,\n", "", 1)
     }
 
     /// Load `raw` through the real storage path and return the re-saved file.
@@ -2201,7 +2336,7 @@ mod tests {
     #[test]
     fn legacy_full_settings_round_trip_byte_identical() {
         let (settings, saved) = load_and_resave(LEGACY_FULL);
-        assert_eq!(saved, as_v2(LEGACY_FULL));
+        assert_eq!(saved, as_current(LEGACY_FULL));
 
         // The formerly-untyped values now land in typed fields…
         assert_eq!(settings.cursor_style, Some(CursorStyle::Bar));
@@ -2236,26 +2371,26 @@ mod tests {
     #[test]
     fn legacy_default_settings_round_trip_byte_identical() {
         let (_, saved) = load_and_resave(LEGACY_DEFAULTS);
-        assert_eq!(saved, as_v2(LEGACY_DEFAULTS));
-        // A fresh default serializes to the same bytes, at v2 with the hook
+        assert_eq!(saved, as_current(LEGACY_DEFAULTS));
+        // A fresh default serializes to the same bytes, at the current version with the hook
         // and X11 forwarding off.
         assert_eq!(
             serde_json::to_string_pretty(&AppSettings::default()).unwrap(),
-            as_fresh_v2(LEGACY_DEFAULTS)
+            as_fresh(LEGACY_DEFAULTS)
         );
     }
 
     #[test]
     fn legacy_minimal_settings_save_as_old_backend_did() {
         let (_, saved) = load_and_resave(r#"{"version":"1","externalConnectionFiles":[]}"#);
-        assert_eq!(saved, as_fresh_v2(LEGACY_DEFAULTS));
+        assert_eq!(saved, as_fresh(LEGACY_DEFAULTS));
     }
 
-    /// The bytes a profile with no stored X11 default saves as: [`as_v2`] with
+    /// The bytes a profile with no stored X11 default saves as: [`as_current`] with
     /// X11 forwarding off, the fresh-profile default since #5555. A stored
-    /// `true` is kept ([`as_v2`] leaves it alone).
-    fn as_fresh_v2(legacy: &str) -> String {
-        as_v2(legacy).replacen(
+    /// `true` is kept ([`as_current`] leaves it alone).
+    fn as_fresh(legacy: &str) -> String {
+        as_current(legacy).replacen(
             r#""defaultX11Forwarding": true"#,
             r#""defaultX11Forwarding": false"#,
             1,
@@ -2268,7 +2403,8 @@ mod tests {
         // is key order: an unknown key sorting *before* a promoted key
         // (`aFutureKey` < `broadcastGroups`) is now written after it.
         let (settings, saved) = load_and_resave(LEGACY_UNKNOWN_KEYS);
-        let before: serde_json::Value = serde_json::from_str(&as_v2(LEGACY_UNKNOWN_KEYS)).unwrap();
+        let before: serde_json::Value =
+            serde_json::from_str(&as_current(LEGACY_UNKNOWN_KEYS)).unwrap();
         let after: serde_json::Value = serde_json::from_str(&saved).unwrap();
         assert_eq!(before, after);
         assert_eq!(

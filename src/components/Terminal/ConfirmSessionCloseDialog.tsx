@@ -3,14 +3,15 @@ import { ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { showReopenToast } from "@/utils/reopenTab";
+import { closeConfirmWithout, resolveCloseConfirm } from "@/utils/closeConfirm";
 import type { SessionCloseConfirmRequest } from "@/types/terminal";
 
 /**
  * Confirmation dialog shown before tearing down a live session by closing a tab
  * (via the tab X, middle-click, context menu or the close-tab shortcut — see
- * `tabCloseFlow.ts`), a split panel, or a whole tab group, while
- * `settings.confirmCloseLiveSession` (or, for the shortcut,
- * `confirmCloseTabOnShortcut`) is enabled. A panel or group close also
+ * `tabCloseFlow.ts`), a split panel, or a whole tab group, while the
+ * `settings.closeLiveSessionConfirm` choice asks for that kind of close
+ * (#5844). A panel or group close also
  * prompts when it would discard unsaved editors (UX2-001, UX2-003); the "Don't
  * ask again" opt-out is then hidden, since it only covers live sessions.
  *
@@ -18,8 +19,9 @@ import type { SessionCloseConfirmRequest } from "@/types/terminal";
  * request is pending. Confirming performs the close (and, for a tab with a known
  * connection, fires an Undo/Reopen toast). The dialog's "Don't ask again"
  * checkbox is local state that only takes effect on confirm: confirming with it
- * ticked persists `confirmCloseLiveSession: false` so future closes skip the
- * prompt, while cancelling discards the tick and leaves the setting untouched.
+ * ticked stops asking for closes like this one (the shortcut or the pointer),
+ * keeping the confirm for the other kind, while cancelling discards the tick
+ * and leaves the setting untouched.
  * This honours the checkbox contract from {@link ConfirmDialog} (a checkbox
  * applies on confirm, not the moment it is ticked).
  */
@@ -43,13 +45,11 @@ export function ConfirmSessionCloseDialog() {
 
   const handleConfirm = () => {
     if (dontAsk) {
-      // A tab close clears the setting that gated it (the shortcut's own switch
-      // when raised by Cmd/Ctrl+W, #5189); panel/group closes use the live one.
-      const key =
-        request.kind === "tab"
-          ? (request.optOutSetting ?? "confirmCloseLiveSession")
-          : "confirmCloseLiveSession";
-      void updateSettings({ ...settings, [key]: false });
+      // Stop asking for the trigger that raised this prompt only (#5189,
+      // #5844): Cmd/Ctrl+W keeps the pointer confirm and vice versa.
+      const trigger = request.kind === "panel" ? "pointer" : (request.trigger ?? "pointer");
+      const closeLiveSessionConfirm = closeConfirmWithout(resolveCloseConfirm(settings), trigger);
+      void updateSettings({ ...settings, closeLiveSessionConfirm });
     }
     if (request.kind === "tab") {
       closeTab(request.tabId, request.panelId);

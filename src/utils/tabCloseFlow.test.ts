@@ -15,12 +15,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
-import {
-  continueTabClose,
-  liveCloseSettingFor,
-  requestTabClose,
-  type TabCloseTrigger,
-} from "./tabCloseFlow";
+import { continueTabClose, requestTabClose, type TabCloseTrigger } from "./tabCloseFlow";
 
 const toastSuccess = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -88,8 +83,8 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
     const req = pending().session;
     expect(req).toMatchObject({ kind: "tab", tabId: "live", panelId: PANEL });
     expect(req?.kind === "tab" && req.reopen?.connectionType).toBe("ssh");
-    // "Don't ask again" clears the setting that gated this trigger.
-    expect(req?.kind === "tab" && req.optOutSetting).toBe(liveCloseSettingFor(trigger));
+    // The request records its trigger, so "Don't ask again" narrows only it.
+    expect(req?.kind === "tab" && req.trigger).toBe(trigger);
     expect(pending().shortcut).toBeNull();
   });
 
@@ -163,9 +158,9 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
   });
 });
 
-describe("per-trigger opt-outs", () => {
-  it("the live-session opt-out silences the pointer, not the shortcut", () => {
-    seedSettings({ confirmCloseLiveSession: false });
+describe("per-trigger close choice (#5844)", () => {
+  it("'only for keyboard shortcuts' silences the pointer, not the shortcut", () => {
+    seedSettings({ closeLiveSessionConfirm: "shortcut" });
     continueTabClose(terminal("a"), PANEL, "pointer");
     expect(closeTab).toHaveBeenCalledWith("a", PANEL);
     expect(lastToastAction()).toBe("Reopen");
@@ -174,16 +169,31 @@ describe("per-trigger opt-outs", () => {
     expect(pending().session).toMatchObject({ tabId: "b" });
   });
 
-  it("the shortcut opt-out silences the shortcut (live and persistent), not the pointer", () => {
-    seedSettings({ confirmCloseTabOnShortcut: false });
+  it("'only for mouse closes' silences the shortcut, not the pointer", () => {
+    seedSettings({ closeLiveSessionConfirm: "pointer" });
     continueTabClose(terminal("a"), PANEL, "shortcut");
     expect(closeTab).toHaveBeenCalledWith("a", PANEL);
     expect(lastToastAction()).toBe("Reopen");
-    continueTabClose(terminal("bg", { persistentConnectionId: "pc" }), PANEL, "shortcut");
-    expect(closeTab).toHaveBeenCalledWith("bg", PANEL);
-    expect(pending().detach).toBeNull();
 
     continueTabClose(terminal("c"), PANEL, "pointer");
     expect(pending().session).toMatchObject({ tabId: "c" });
+  });
+
+  it("'never' closes live sessions at once for both triggers", () => {
+    seedSettings({ closeLiveSessionConfirm: "never" });
+    continueTabClose(terminal("a"), PANEL, "shortcut");
+    continueTabClose(terminal("b"), PANEL, "pointer");
+    expect(closeTab).toHaveBeenCalledWith("a", PANEL);
+    expect(closeTab).toHaveBeenCalledWith("b", PANEL);
+    expect(pending().session).toBeNull();
+  });
+
+  it("the persistent-session notice follows only its own setting, whatever the trigger", () => {
+    // The notice says the session keeps running; the live-session choice does
+    // not gate it (its hint says "any way, including the keyboard shortcut").
+    seedSettings({ closeLiveSessionConfirm: "never" });
+    continueTabClose(terminal("bg", { persistentConnectionId: "pc" }), PANEL, "shortcut");
+    expect(closeTab).not.toHaveBeenCalled();
+    expect(pending().detach).toMatchObject({ tabId: "bg" });
   });
 });

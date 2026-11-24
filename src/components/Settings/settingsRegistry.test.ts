@@ -172,8 +172,7 @@ describe("settingsRegistry", () => {
 
     it("groups confirm/warn prompts under a Safety Prompts category", () => {
       for (const id of [
-        "confirmCloseTabOnShortcut",
-        "confirmCloseLiveSession",
+        "closeLiveSessionConfirm",
         "confirmCloseAttachedTab",
         "confirmUndoableDelete",
         "warnLargePortScan",
@@ -257,16 +256,10 @@ describe("settingsRegistry", () => {
   describe("close-confirmation labels are precise and differentiated (UX-030)", () => {
     const labelOf = (id: string) => SETTINGS_REGISTRY.find((s) => s.id === id)?.label;
 
-    it("names the keyboard-shortcut trigger", () => {
-      expect(labelOf("confirmCloseTabOnShortcut")).toBe(
-        "Confirm before closing a tab via keyboard shortcut"
-      );
-    });
-
-    it("names the live-session trigger", () => {
-      expect(labelOf("confirmCloseLiveSession")).toBe(
-        "Confirm before closing a tab with a live session"
-      );
+    it("offers one live-session close choice instead of two overlapping toggles (#5844)", () => {
+      expect(labelOf("closeLiveSessionConfirm")).toBe("Ask before closing a live session");
+      expect(labelOf("confirmCloseTabOnShortcut")).toBeUndefined();
+      expect(labelOf("confirmCloseLiveSession")).toBeUndefined();
     });
 
     it("describes the persistent-session tab as a one-time notice, not a confirm", () => {
@@ -275,13 +268,9 @@ describe("settingsRegistry", () => {
       );
     });
 
-    it("gives the three adjacent toggles distinct labels", () => {
-      const labels = [
-        "confirmCloseTabOnShortcut",
-        "confirmCloseLiveSession",
-        "confirmCloseAttachedTab",
-      ].map(labelOf);
-      expect(new Set(labels).size).toBe(3);
+    it("gives the two adjacent close settings distinct labels", () => {
+      const labels = ["closeLiveSessionConfirm", "confirmCloseAttachedTab"].map(labelOf);
+      expect(new Set(labels).size).toBe(2);
     });
   });
 

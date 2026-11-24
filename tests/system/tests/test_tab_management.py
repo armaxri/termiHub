@@ -48,8 +48,8 @@ class TestTabManagement(TerminalUi, TabsUi, SystemTest):
 
     def test_closing_a_live_session_tab_dismisses_confirm_dialog(self):
         # Regression for #1654: a tab holding a live terminal session raises
-        # ConfirmSessionCloseDialog on close (``confirmCloseLiveSession`` defaults
-        # on). ``close_tab`` must dismiss it, otherwise the tab never closes and
+        # ConfirmSessionCloseDialog on close (``closeLiveSessionConfirm`` defaults
+        # to always). ``close_tab`` must dismiss it, otherwise the tab never closes and
         # ``close_all_tabs`` loops re-clicking the X against a stuck dialog.
         self._reset()
         self.driver.click(NEW)

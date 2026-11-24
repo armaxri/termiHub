@@ -70,6 +70,13 @@ from termihub_harness.product_run.file_manager_settings import (
     file_manager_page_problems,
     measure_file_manager_page,
 )
+from termihub_harness.product_run.settings_dependencies import (
+    PROVIDE,
+    measure_safety_prompts,
+    measure_serial,
+    measure_x_server,
+    settings_dependency_problems,
+)
 from termihub_harness.product_run.settings_layout import (
     measure_settings_page,
     merge_measurements,
@@ -1152,4 +1159,65 @@ class TestProductRunSettingsThemes(
                 f"function key {measured.get('function_key')}; undo {measured.get('undo')}"
             )
             problems = keyboard_shortcut_problems(measured)
+            assert not problems, "; ".join(problems)
+
+    def test_15_settings_dependencies(self):
+        """Settings show dependencies and per-platform pages honestly (#5844).
+
+        X server: only this platform's hint, and "Stop X server when idle"
+        nested under "Provide X server automatically" — disabled and off while
+        the parent is off (measured in both parent states, then restored).
+        Serial: no prefix count off Linux, plus a note on where the serial line
+        settings live. Safety prompts: one "Ask before closing a live session"
+        choice instead of two overlapping toggles.
+        """
+        platform = (
+            "linux" if sys.platform.startswith("linux")
+            else "windows" if sys.platform.startswith("win") else "macos"
+        )
+        with self.step(
+            "settings.dependencies",
+            "Settings ▸ X server nests and disables the idle stop under its parent, "
+            "Serial hides the prefix count off Linux, and Safety prompts has one "
+            "live-session close choice (#5844)",
+            expect="X server: one platform line, a nested idle-stop switch that is greyed "
+            "out and off while 'Provide X server automatically' is off; Serial: no "
+            "'n / m enabled' off Linux; Safety prompts: one 'Ask before closing a live "
+            "session' select",
+        ):
+            measured: dict = {"x_server": []}
+            self.open_settings_category("x-server")
+            self.wait(lambda: self.driver.exists(PROVIDE), what="the X server settings")
+            original = self.driver.get_attribute(PROVIDE, "aria-checked")
+            try:
+                for flip in (False, True):
+                    if flip:
+                        self.driver.click(PROVIDE)
+                        self.wait(
+                            lambda: self.driver.get_attribute(PROVIDE, "aria-checked")
+                            != original,
+                            what="the provide toggle to flip",
+                        )
+                    time.sleep(0.3)
+                    state = measure_x_server(self.driver, platform)
+                    side = "on" if state["provide_on"] else "off"
+                    self.shot(label=f"x-server-provide-{side}", expect="settings-panel-content")
+                    measured["x_server"].append(state)
+            finally:
+                if self.driver.get_attribute(PROVIDE, "aria-checked") != original:
+                    self.driver.click(PROVIDE)
+            self.open_settings_category("serial")
+            self.wait(lambda: self.driver.exists("settings-serial-port-prefixes"),
+                      what="the serial prefix section")
+            measured["serial"] = measure_serial(self.driver, platform)
+            self.open_settings_category("safety-prompts")
+            self.wait(lambda: self.driver.exists("settings-confirm-close-attached-tab"),
+                      what="the safety prompt settings")
+            self.shot(label="safety-close-choice", expect="settings-panel-content")
+            measured["safety"] = measure_safety_prompts(self.driver)
+            self.evidence(
+                f"x server {measured['x_server']}; serial {measured['serial']}; "
+                f"safety {measured['safety']}"
+            )
+            problems = settings_dependency_problems(measured)
             assert not problems, "; ".join(problems)

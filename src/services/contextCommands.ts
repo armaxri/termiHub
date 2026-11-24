@@ -9,6 +9,7 @@ import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import { closePanelGuarded, requestTabGroupCloseConfirm } from "@/utils/tabGroupCloseGuard";
 import { requestTabClose } from "@/utils/tabCloseFlow";
+import { settingsAskBeforeClose } from "@/utils/closeConfirm";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { getCommandMarkTracker } from "@/services/commandMarks";
 
@@ -63,7 +64,7 @@ function activeTerminalHasCommandMarks(): boolean {
  * unsaved tab prompts (#4410), a live session gets the live-session confirm,
  * a persistent session the background notice, and anything else (exited,
  * settings, clean editor) closes at once with a Reopen toast. The shortcut's
- * prompts are gated by `confirmCloseTabOnShortcut`.
+ * live-session prompt follows the `closeLiveSessionConfirm` choice (#5844).
  */
 function closeActiveTab(): void {
   const panel = activeLeaf();
@@ -208,7 +209,8 @@ function hasMultipleTabGroups(): boolean {
 
 /**
  * Close the active tab group, confirming first when it would end live sessions
- * or lose unsaved edits, and otherwise honouring the confirm-on-shortcut setting.
+ * or lose unsaved edits, and otherwise asking for the bare group close when the
+ * `closeLiveSessionConfirm` choice asks for shortcut closes (#5844).
  */
 function closeActiveTabGroup(): void {
   const groups = getLayoutTabGroups();
@@ -216,9 +218,9 @@ function closeActiveTabGroup(): void {
   const activeTabGroupId = getActiveTabGroupId();
   // A group holding live sessions or unsaved editors gets the count-aware group
   // confirm (UX2-001), the same one the chip X raises.
-  if (requestTabGroupCloseConfirm(activeTabGroupId)) return;
+  if (requestTabGroupCloseConfirm(activeTabGroupId, "shortcut")) return;
   const state = useAppStore.getState();
-  const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
+  const confirmEnabled = settingsAskBeforeClose(currentSettingsView(), "shortcut");
   if (confirmEnabled) {
     const activeGroup = groups.find((g) => g.id === activeTabGroupId);
     state.setPendingShortcutCloseConfirm({

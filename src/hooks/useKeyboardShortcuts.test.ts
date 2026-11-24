@@ -402,7 +402,7 @@ describe("useKeyboardShortcuts", () => {
       useAppStore.getState().addTab("Tab A", "local");
       const panelId = getAllLeaves(layoutState().rootPanel)[0].id;
       useAppStore.getState().setActivePanel(panelId);
-      seedSettings({ confirmCloseTabOnShortcut: false });
+      seedSettings({ closeLiveSessionConfirm: "pointer" });
 
       act(() => {
         root.render(createElement(KeyboardHarness));
@@ -443,7 +443,7 @@ describe("useKeyboardShortcuts", () => {
     it("closes the tab group immediately when the confirm setting is disabled", () => {
       useAppStore.getState().addTabGroup();
       const groupsBefore = layoutState().tabGroups.length;
-      seedSettings({ confirmCloseTabOnShortcut: false });
+      seedSettings({ closeLiveSessionConfirm: "pointer" });
 
       act(() => {
         root.render(createElement(KeyboardHarness));

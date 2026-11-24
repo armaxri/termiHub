@@ -24,6 +24,8 @@ interface SerialPortSettingsProps {
  * On Linux the built-ins render as a compact chip grid; on other platforms the
  * whole list folds behind a one-line note and a disclosure (#5712), since the
  * scan never runs there (the settings may still be shared with a Linux host).
+ * Off Linux the "n / m enabled" count is hidden — it described a scan that does
+ * nothing here — and the note says where the serial line settings live (#5844).
  */
 export function SerialPortSettings({
   visibleFields,
@@ -110,9 +112,15 @@ export function SerialPortSettings({
     <div className="settings-panel__section" data-testid="settings-serial-port-prefixes">
       <div className="settings-panel__section-header">
         <SettingsSectionHeading>Serial port scan prefixes</SettingsSectionHeading>
-        <span className="settings-panel__section-badge">
-          {enabledCount} / {prefixes.length} enabled
-        </span>
+        {/* The count only means something where the scan runs (#5844). */}
+        {isLinux && (
+          <span
+            className="settings-panel__section-badge"
+            data-testid="settings-serial-prefixes-count"
+          >
+            {enabledCount} / {prefixes.length} enabled
+          </span>
+        )}
       </div>
       {isLinux ? (
         <p className="settings-panel__description">
@@ -124,6 +132,12 @@ export function SerialPortSettings({
       ) : (
         <div className="settings-panel__prefix-note" data-testid="settings-serial-prefixes-note">
           <p className="settings-panel__description">{t("serialPrefixes.offLinux.note")}</p>
+          <p
+            className="settings-panel__description"
+            data-testid="settings-serial-connection-settings-note"
+          >
+            {t("serialPrefixes.offLinux.connectionSettings")}
+          </p>
           <Button
             variant="ghost"
             size="sm"
