@@ -86,12 +86,19 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
   }, [ensureUnlocked]);
 
   return (
-    <div className="settings-panel__section" data-testid="credential-vault-backup">
+    <div
+      className="settings-panel__section"
+      data-testid="credential-vault-backup"
+      data-collapsed={storageOff ? "true" : undefined}
+    >
       <SettingsSectionHeading>Credential vault backup</SettingsSectionHeading>
-      <p className="settings-panel__description">
-        Export your saved credentials to a passphrase-protected, encrypted file to back them up or
-        move them to another machine, and import such a file into your current store.
-      </p>
+      {/* With passwords not saved the section is its heading and the storage-off line (#5875). */}
+      {!storageOff && (
+        <p className="settings-panel__description" data-testid="credential-vault-description">
+          Export your saved credentials to a passphrase-protected, encrypted file to back them up or
+          move them to another machine, and import such a file into your current store.
+        </p>
+      )}
       {reason && (
         <p className="settings-panel__description" data-testid="credential-vault-unavailable">
           {reason}

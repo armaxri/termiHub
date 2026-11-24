@@ -18,6 +18,8 @@ import type { ThemeDefinition } from "./types";
  * - R-059: the Solarized Light selected row was a beige band at 1.44:1 on the
  *   cream sidebar; only the left bar marked it. An opaque selection now needs a
  *   row boundary (fill or 1px outline) at the WCAG 1.4.11 minimum of 3:1.
+ *   #5888: Dark and Light paint only an accent tint (~1.2:1), so their rows
+ *   now carry the accent left bar by default, at 3:1 on sidebar and row.
  * - R-115: Light's hint and empty-state body text (`--text-secondary`) read
  *   weak on the #f3f3f3 sidebar. It now reaches 5.8:1 there.
  * - R-144: Solarized Light's activity bar was dark teal beside a cream sidebar
@@ -96,38 +98,101 @@ describe("light hint text reads clearly on the sidebar (#5853 R-115)", () => {
       /color:\s*var\(--text-secondary\)/
     );
     expect(
-      ruleBody(css("components/Sidebar/ConnectionList.css"), ".connections-empty__hint")
+      ruleBody(css("components/Sidebar/ConnectionList.css"), ".connections-empty__hint-text")
     ).toMatch(/color:\s*var\(--text-secondary\)/);
   });
 });
 
-describe("opaque selected rows have a 3:1 boundary (#5853 R-059)", () => {
-  for (const theme of BUILT_IN_THEMES) {
-    const sel = theme.selection;
-    if (!sel) continue;
-    const { sidebarBg, bgSecondary } = theme.colors;
-    const rows = [
-      ["sidebar", sidebarBg, sel.bg, sel.bgHover],
-      [
-        "secondary pane",
-        bgSecondary,
-        sel.secondary?.bg ?? sel.bg,
-        sel.secondary?.bgHover ?? sel.bgHover,
-      ],
-    ] as const;
+/** sRGB-composite `fg` at `alpha` over the opaque `bg` (what color-mix + transparent paints). */
+function composite(fg: string, bg: string, alpha: number): string {
+  const ch = (hex: string, i: number) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return `#${[0, 1, 2]
+    .map((i) =>
+      Math.round(ch(fg, i) * alpha + ch(bg, i) * (1 - alpha))
+        .toString(16)
+        .padStart(2, "0")
+    )
+    .join("")}`;
+}
 
-    for (const [where, surface, bg, bgHover] of rows) {
+/** The accent share of an accent-tinted token in `styles/variables.css` (18% -> 0.18). */
+function accentTintAlpha(cssVar: string): number {
+  const m = new RegExp(
+    `${cssVar}:\\s*color-mix\\(in srgb, var\\(--accent-color\\) (\\d+(?:\\.\\d+)?)%, transparent\\)`
+  ).exec(css("styles/variables.css"));
+  if (!m) throw new Error(`${cssVar} is not an accent color-mix in variables.css`);
+  return Number(m[1]) / 100;
+}
+
+/**
+ * What a theme's selected rows paint on the sidebar and on a `bgSecondary`
+ * pane: its opaque `selection` surfaces, or the `variables.css` defaults (the
+ * accent tints composited over the surface, an `accentColor` bar, no outline).
+ */
+function selectedRows(theme: ThemeDefinition) {
+  const sel = theme.selection;
+  const { sidebarBg, bgSecondary, accentColor } = theme.colors;
+  const tinted = (surface: string) => ({
+    bg: composite(accentColor, surface, accentTintAlpha("--bg-selected")),
+    bgHover: composite(accentColor, surface, accentTintAlpha("--bg-selected-hover")),
+  });
+  const indicator = sel?.indicator ?? accentColor;
+  const outline = sel?.outline;
+  return [
+    { where: "sidebar", surface: sidebarBg, ...(sel ?? tinted(sidebarBg)), indicator, outline },
+    {
+      where: "secondary pane",
+      surface: bgSecondary,
+      ...(sel ? (sel.secondary ?? sel) : tinted(bgSecondary)),
+      indicator,
+      outline,
+    },
+  ];
+}
+
+describe("every selected row has a 3:1 cue (#5853 R-059, #5888)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    for (const row of selectedRows(theme)) {
+      const { where, surface, bg, bgHover, indicator, outline } = row;
+
       it(`${theme.id}: the selected row on the ${where} is bounded at 3:1`, () => {
+        // The row's edge against the surface: its fill (resting and hovered)
+        // or a 1px outline. Without either, the bar alone must carry the cue.
         const fill = Math.min(contrastRatio(bg, surface), contrastRatio(bgHover, surface));
-        const outline = sel.outline ? contrastRatio(sel.outline, surface) : 1;
-        expect(Math.max(fill, outline)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+        const edge = outline ? contrastRatio(outline, surface) : 1;
+        const bar = contrastRatio(indicator, surface);
+        expect(Math.max(fill, edge, bar)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+      });
+
+      it(`${theme.id}: the bar (${indicator}) reaches 3:1 on the ${where} and on the row`, () => {
+        expect(contrastRatio(indicator, surface)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+        if (!theme.selection) {
+          // A tint row is a faint band: the bar must also stand out on it.
+          expect(contrastRatio(indicator, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+          expect(contrastRatio(indicator, bgHover)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+        }
       });
     }
-
-    it(`${theme.id}: the indicator bar still reaches 3:1 on the sidebar`, () => {
-      expect(contrastRatio(sel.indicator, sidebarBg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
-    });
   }
+
+  it("the tinted themes really are tint-only (the bar is the cue, not the fill)", () => {
+    for (const theme of BUILT_IN_THEMES.filter((t) => !t.selection)) {
+      const [sidebar] = selectedRows(theme);
+      expect(contrastRatio(sidebar.bg, sidebar.surface)).toBeLessThan(UI_COMPONENT_MIN);
+    }
+  });
+
+  it("the default bar is the accent colour, and themes without a selection keep it", () => {
+    expect(css("styles/variables.css")).toMatch(
+      /--selected-row-indicator:\s*var\(--accent-color\);/
+    );
+    const style = document.documentElement.style;
+    for (const theme of BUILT_IN_THEMES.filter((t) => !t.selection)) {
+      applyTheme(theme.id);
+      expect(style.getPropertyValue("--selected-row-indicator")).toBe("");
+      expect(style.getPropertyValue("--accent-color")).toBe(theme.colors.accentColor);
+    }
+  });
 
   it("the engine writes the outline only for a theme that has one", () => {
     const style = document.documentElement.style;

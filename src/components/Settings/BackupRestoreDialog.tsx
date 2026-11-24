@@ -24,6 +24,7 @@ import { getBasename } from "@/utils/paths";
 import { useAppStore } from "@/store/appStore";
 import { CREDENTIALS_NOT_RESTORED_TEXT } from "@/utils/credentialStorageCopy";
 import { formatAbsoluteTime } from "@/utils/formatters";
+import { midSentence } from "./backupExportForm";
 import "./CredentialVault.css";
 import "./BackupRestore.css";
 
@@ -35,6 +36,33 @@ interface BackupRestoreDialogProps {
 /** Whether a previewed section can be restored at all. */
 function isRestorable(section: BackupSectionPreview): boolean {
   return section.status === "ok" || section.status === "migrated";
+}
+
+/**
+ * A section the backup holds nothing for (#5935): restorable, not Settings
+ * (which has no items to count), no items and nothing to say about it. These
+ * fold into one line under the list and are left out of the restore, so an
+ * empty part never triggers a restart or wipes anything.
+ */
+export function isEmptyInBackup(section: BackupSectionPreview): boolean {
+  return (
+    isRestorable(section) &&
+    section.id !== "settings" &&
+    section.itemCount === 0 &&
+    section.notes.length === 0
+  );
+}
+
+/** "3 other kinds are empty in this backup." — the empty sections as one line (#5935). */
+export function emptyInBackupLine(count: number): string {
+  return count === 1
+    ? "1 other kind is empty in this backup."
+    : `${count} other kinds are empty in this backup.`;
+}
+
+/** The empty-kinds line's tooltip, naming them: "Empty in this backup: tunnels, macros". */
+export function emptyInBackupTooltip(sections: BackupSectionPreview[]): string {
+  return `Empty in this backup: ${sections.map((s) => midSentence(s.label)).join(", ")}`;
 }
 
 /**
@@ -54,7 +82,7 @@ export function defaultChoices(preview: BackupRestorePreview): Record<string, Se
   const choices: Record<string, SectionChoice> = {};
   for (const s of preview.sections) {
     choices[s.id] = {
-      include: isRestorable(s) && s.supportsMerge,
+      include: isRestorable(s) && s.supportsMerge && !isEmptyInBackup(s),
       mode: s.supportsMerge ? "merge" : "replace",
       conflicts: "skip",
     };
@@ -76,7 +104,7 @@ export function buildRestoreRequest(
 ): BackupRestoreRequest {
   return {
     sections: preview.sections
-      .filter((s) => isRestorable(s) && choices[s.id]?.include)
+      .filter((s) => isRestorable(s) && !isEmptyInBackup(s) && choices[s.id]?.include)
       .map((s) => ({ id: s.id, mode: choices[s.id].mode, conflicts: choices[s.id].conflicts })),
     credentials,
   };
@@ -208,6 +236,23 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
     setChoices((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }, []);
 
+  // Connections first, then Credentials (security-relevant, so never below the
+  // fold), then the other sections the backup holds something for; empty ones
+  // fold into one line (#5935, as Back up does since #5847).
+  const listed = preview?.sections.filter((s) => !isEmptyInBackup(s)) ?? [];
+  const firstSections = listed.filter((s) => s.id === "connections");
+  const otherSections = listed.filter((s) => s.id !== "connections");
+  const emptySections = preview?.sections.filter(isEmptyInBackup) ?? [];
+  const renderSection = (s: BackupSectionPreview) => (
+    <BackupSectionRow
+      key={s.id}
+      section={s}
+      choice={choices[s.id]}
+      restorable={isRestorable(s)}
+      onChange={(patch) => setChoice(s.id, patch)}
+    />
+  );
+
   const willRestart = (request?.sections.length ?? 0) > 0;
   // The backup carries credentials this restore leaves behind: say so beside
   // the primary action, so continuing is an informed choice (#5631).
@@ -302,16 +347,8 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
             {backupOriginText(preview.createdAt, preview.appVersion)}
             {fileName ? ` · ${fileName}` : ""}
           </p>
-          <ul className="backup-restore__list">
-            {preview.sections.map((s) => (
-              <BackupSectionRow
-                key={s.id}
-                section={s}
-                choice={choices[s.id]}
-                restorable={isRestorable(s)}
-                onChange={(patch) => setChoice(s.id, patch)}
-              />
-            ))}
+          <ul className="backup-restore__list" data-testid="backup-restore-sections">
+            {firstSections.map(renderSection)}
             {preview.credentials && (
               <BackupCredentialsRow
                 credentials={preview.credentials}
@@ -322,7 +359,17 @@ export function BackupRestoreDialog({ open, onOpenChange }: BackupRestoreDialogP
                 onSetUpStorage={storageOff ? () => void handleSetUpStorage() : undefined}
               />
             )}
+            {otherSections.map(renderSection)}
           </ul>
+          {emptySections.length > 0 && (
+            <p
+              className="backup-restore__detail backup-restore__folded"
+              title={emptyInBackupTooltip(emptySections)}
+              data-testid="backup-restore-empty-sections"
+            >
+              {emptyInBackupLine(emptySections.length)}
+            </p>
+          )}
           {replacing && replacing.length > 0 && (
             <p className="credential-vault__warning" data-testid="backup-restore-replace-warning">
               Replace overwrites your current {replacedSectionsText(replacing.map((s) => s.label))}:

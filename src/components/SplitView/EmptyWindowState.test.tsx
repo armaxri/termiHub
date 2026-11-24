@@ -51,9 +51,19 @@ vi.mock("@/hooks/useWindowInfo", () => ({
   useWindowInfo: () => ({ label: "main", name: "Main Window", count: mockWindowCount }),
 }));
 
-/** A throwaway saved connection — only its presence (list length) matters here. */
-function fakeConnection(): SavedConnection {
-  return { id: "c1", name: "box" } as unknown as SavedConnection;
+const connectSpy = vi.fn((_c: SavedConnection) => Promise.resolve({ status: "connected" }));
+vi.mock("@/utils/connectSavedConnection", () => ({
+  connectSavedConnection: (c: SavedConnection) => connectSpy(c),
+}));
+
+/** A saved SSH connection to `admin@<host>`. */
+function fakeConnection(id = "c1", host = "box"): SavedConnection {
+  return {
+    id,
+    name: id,
+    folderId: null,
+    config: { type: "ssh", config: { host, username: "admin" } },
+  } as unknown as SavedConnection;
 }
 
 /** Click the button carrying the given test id. */
@@ -69,6 +79,7 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
   let root: Root;
 
   beforeEach(() => {
+    connectSpy.mockClear();
     mockConnections = [];
     mockWindowCount = 1;
     useAppStore.setState(useAppStore.getInitialState());
@@ -82,15 +93,18 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
     container.remove();
   });
 
+  const q = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  const buttonLabels = () =>
+    Array.from(container.querySelectorAll("button")).map((b) => b.textContent?.trim());
+
   it("renders the empty-window call-to-action", () => {
     act(() => root.render(<EmptyWindowState />));
-    expect(container.querySelector('[data-testid="empty-window-state"]')).not.toBeNull();
+    expect(q("empty-window-state")).not.toBeNull();
     expect(container.textContent).toContain("This window is empty");
-    expect(container.querySelector('[data-testid="empty-window-new-terminal"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="empty-window-open-connection"]')).not.toBeNull();
+    expect(q("empty-window-new-terminal")).not.toBeNull();
   });
 
-  it("launches a local shell into this window via New Terminal", () => {
+  it("launches a local shell into this window via New terminal", () => {
     const addLocalShellTab = vi.fn();
     useAppStore.setState({ addLocalShellTab });
     act(() => root.render(<EmptyWindowState />));
@@ -100,67 +114,97 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
     expect(addLocalShellTab).toHaveBeenCalledWith();
   });
 
-  it("opens a connection picker (command palette) when saved connections exist", () => {
-    mockConnections = [fakeConnection()];
-    const setCommandPaletteOpen = vi.fn();
-    const openConnectionEditorTab = vi.fn();
-    useAppStore.setState({ setCommandPaletteOpen, openConnectionEditorTab });
-    act(() => root.render(<EmptyWindowState />));
+  describe("fresh profile (no saved connections)", () => {
+    it("offers New terminal, New connection and Restore from backup… (R-085)", () => {
+      act(() => root.render(<EmptyWindowState />));
+      expect(buttonLabels()).toEqual(["New terminal", "New connection", "Restore from backup…"]);
+      expect(container.textContent).toContain("restore your data from a backup");
+      expect(q("empty-window-recent")).toBeNull();
+    });
 
-    clickTestId(container, "empty-window-open-connection");
+    it("routes New connection to the new-connection editor", () => {
+      const openConnectionEditorTab = vi.fn();
+      useAppStore.setState({ openConnectionEditorTab });
+      act(() => root.render(<EmptyWindowState />));
 
-    // With ≥1 saved connection the CTA opens the palette to pick one — it does
-    // not just reveal a sidebar and does not open the new-connection editor.
-    expect(setCommandPaletteOpen).toHaveBeenCalledWith(true);
-    expect(openConnectionEditorTab).not.toHaveBeenCalled();
+      clickTestId(container, "empty-window-new-connection");
+
+      expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
+    });
+
+    it("opens the restore dialog from Restore from backup…", () => {
+      act(() => root.render(<EmptyWindowState />));
+      expect(document.querySelector('[data-testid="backup-restore-title"]')).toBeNull();
+
+      clickTestId(container, "empty-window-restore");
+
+      expect(document.querySelector('[data-testid="backup-restore-title"]')).not.toBeNull();
+    });
   });
 
-  it("routes to the new-connection editor when there are zero connections", () => {
-    mockConnections = [];
-    const setCommandPaletteOpen = vi.fn();
-    const openConnectionEditorTab = vi.fn();
-    useAppStore.setState({ setCommandPaletteOpen, openConnectionEditorTab });
-    act(() => root.render(<EmptyWindowState />));
+  describe("with saved connections (R-087, R-107)", () => {
+    it("shows the connections as one-click buttons, without Open connection… or New connection", () => {
+      mockConnections = [fakeConnection("web"), fakeConnection("db", "db-host")];
+      act(() => root.render(<EmptyWindowState />));
 
-    clickTestId(container, "empty-window-open-connection");
+      expect(buttonLabels()).toEqual(["New terminal", "web", "db"]);
+      expect(container.textContent).not.toContain("Open connection…");
+      expect(q("empty-window-new-connection")).toBeNull();
+      expect(q("empty-window-restore")).toBeNull();
+      expect(container.textContent).toContain("open one of your connections");
+      expect(q("empty-window-recent")!.getAttribute("role")).toBe("group");
+    });
 
-    // First-run user with no connections → straight to the create flow, not a
-    // blank picker or panel.
-    expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
-    expect(setCommandPaletteOpen).not.toHaveBeenCalled();
+    it("connects a connection with one click, through the sidebar's connect flow", () => {
+      const web = fakeConnection("web");
+      mockConnections = [web];
+      act(() => root.render(<EmptyWindowState />));
+
+      clickTestId(container, "empty-window-recent-web");
+
+      expect(connectSpy).toHaveBeenCalledWith(web);
+    });
+
+    it("lists the most recently opened first under 'Recent connections'", () => {
+      mockConnections = [fakeConnection("web"), fakeConnection("db", "db-host")];
+      useAppStore.setState({
+        sessionHistory: [
+          {
+            dedupKey: "ssh:admin@db-host:22",
+            title: "admin@db-host",
+            connectionType: "ssh",
+            config: { type: "ssh", config: {} },
+            firstUsed: 1,
+            lastUsed: 2,
+            useCount: 1,
+            pinned: false,
+            promoted: false,
+          },
+        ] as never,
+      });
+      act(() => root.render(<EmptyWindowState />));
+
+      expect(buttonLabels()).toEqual(["New terminal", "db", "web"]);
+      expect(container.textContent).toContain("Recent connections");
+    });
+
+    it("says 'Your connections' when none was opened yet", () => {
+      mockConnections = [fakeConnection("web")];
+      act(() => root.render(<EmptyWindowState />));
+      expect(container.textContent).toContain("Your connections");
+      expect(container.textContent).not.toContain("Recent connections");
+    });
+
+    it("offers at most five connections", () => {
+      mockConnections = Array.from({ length: 7 }, (_, i) => fakeConnection(`c${i}`, `h${i}`));
+      act(() => root.render(<EmptyWindowState />));
+      expect(q("empty-window-recent")!.querySelectorAll("button")).toHaveLength(5);
+    });
   });
 
-  it("shows first-run copy (not the multi-window hint) for a single empty window", () => {
-    mockConnections = [];
-    mockWindowCount = 1;
+  it("does not show the multi-window hint for a single empty window", () => {
     act(() => root.render(<EmptyWindowState />));
-
-    // First-run guidance, and no power-user multi-window instruction.
-    expect(container.textContent).toContain("create a connection");
     expect(container.textContent).not.toContain("Move to window");
-  });
-
-  // R-087 (#5702): the copy and the second button must name the same action.
-  // With no saved connection the button creates one, so it may not read
-  // "Open connection…"; with saved connections it opens one.
-  const secondButtonLabel = () =>
-    container.querySelector('[data-testid="empty-window-open-connection"]')?.textContent?.trim();
-
-  it("labels the second action 'New connection' when the copy says create one", () => {
-    mockConnections = [];
-    act(() => root.render(<EmptyWindowState />));
-
-    expect(container.textContent).toContain("create a connection");
-    expect(secondButtonLabel()).toBe("New connection");
-  });
-
-  it("labels the second action 'Open connection…' when the copy says open one", () => {
-    mockConnections = [fakeConnection()];
-    act(() => root.render(<EmptyWindowState />));
-
-    expect(container.textContent).toContain("open a saved connection");
-    expect(container.textContent).not.toContain("create a connection");
-    expect(secondButtonLabel()).toBe("Open connection…");
   });
 
   it("surfaces the multi-window hint only when more than one window is open", () => {

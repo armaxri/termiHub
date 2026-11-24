@@ -3,7 +3,8 @@
  *
  * The New Connection type picker must not offer graphical remote-desktop types
  * (those reporting `capabilities.graphical`) unless `experimentalFeaturesEnabled`
- * is on. When it is on, those types appear labelled "— Experimental".
+ * is on. When it is on, those types carry a neutral "Preview" badge, and selecting
+ * one shows a one-line note on what that means and its known limits (#5873).
  */
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -117,13 +118,31 @@ describe("ConnectionEditor — experimental type-picker gating", () => {
     expect(values).not.toContain("mock-remote-desktop");
   });
 
-  it("offers graphical types labelled '— Experimental' when the flag is on", async () => {
+  it("offers graphical types with a Preview badge when the flag is on (#5873)", async () => {
     await renderNew(true);
     const options = openTypeOptions();
     const rd = options.find((o) => o.getAttribute("data-value") === "mock-remote-desktop");
     expect(rd).toBeTruthy();
-    expect(rd?.textContent).toContain("Experimental");
+    const badge = rd!.querySelector('[data-testid="connection-type-preview-badge"]');
+    expect(badge?.textContent).toBe("Preview");
+    // The old suffix said nothing about what was experimental (R-166).
+    expect(rd?.textContent).not.toContain("Experimental");
+    expect(rd?.textContent).toContain("Mock Remote Desktop");
     const local = options.find((o) => o.getAttribute("data-value") === "local");
-    expect(local?.textContent).not.toContain("Experimental");
+    expect(local?.querySelector('[data-testid="connection-type-preview-badge"]')).toBeNull();
+  });
+
+  it("shows the preview note only while a preview type is selected", async () => {
+    await renderNew(true);
+    expect(document.querySelector('[data-testid="connection-editor-preview-note"]')).toBeNull();
+    const options = openTypeOptions();
+    const rd = options.find((o) => o.getAttribute("data-value") === "mock-remote-desktop")!;
+    await act(async () => {
+      rd.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      rd.click();
+    });
+    await flushAsync();
+    const note = document.querySelector('[data-testid="connection-editor-preview-note"]');
+    expect(note?.textContent).toMatch(/^Preview: still being tested/);
   });
 });

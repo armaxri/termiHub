@@ -13,3 +13,38 @@
 /* The card itself (icon badge, title, description, actions) is the shared
    EmptyState `card` variant (src/components/ui/EmptyState.tsx); this wrapper
    only centres it in the SplitView content area. */
+
+/* #5856: the button row, then (with saved connections) the recent list. */
+.empty-window__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  width: 100%;
+}
+
+.empty-window__row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-sm);
+}
+
+.empty-window__recent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  width: 100%;
+  text-align: left;
+}
+
+.empty-window__recent-label {
+  margin: 0 0 var(--spacing-xxs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+}
+
+.empty-window__recent-item {
+  justify-content: flex-start;
+}

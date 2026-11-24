@@ -17,13 +17,14 @@
   --bg-selected-hover: color-mix(in srgb, var(--accent-color) 10%, transparent);
   /* Selected rows in every selectable list (#5562, #5591): the connection
      tree, file browser, plugin list and transfer panes. Default to the accent
-     tints with no indicator bar; a theme with a fixed palette (Solarized Light
+     tints with an accent left bar (#5888: the tint alone sits near 1.2:1 on the
+     sidebar, the bar reaches 3:1 there in Dark and Light); a theme with a fixed palette (Solarized Light
      and Dark, #5582) overrides them through ThemeDefinition.selection. The
      plain tokens are drawn on the sidebar; the -secondary pair is for rows on
      --bg-secondary panes (the transfer view) and falls back to the plain pair. */
   --selected-row-bg: var(--bg-selected);
   --selected-row-hover-bg: var(--bg-selected-hover);
-  --selected-row-indicator: transparent;
+  --selected-row-indicator: var(--accent-color);
   /* #5853: a 1px outline for a theme whose opaque selected row sits below 3:1
      on the sidebar (Solarized). The shadow paints the left bar over it. */
   --selected-row-outline: transparent;

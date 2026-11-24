@@ -54,6 +54,14 @@ export function protectionNote(biometric: BiometricUnlockStatus): ProtectionNote
 }
 
 /**
+ * When the master password is needed again, shown with the protection note
+ * while the unlock is on (#5876). The toggle's own hint stays one short line.
+ */
+export function biometricConditionsText(method: string): string {
+  return tf("biometricUnlock.note.conditions", { method });
+}
+
+/**
  * Settings → Security → "Unlock with Touch ID / Windows Hello" (PROD-064).
  *
  * Only rendered where the OS supports biometric verification. Turning it on
@@ -121,7 +129,8 @@ export function BiometricUnlockSettings() {
     <div className="settings-panel__field" data-testid="biometric-unlock-settings">
       <SettingsField
         label={`Unlock with ${label}`}
-        hint={`Unlock the credential store with ${label} instead of typing your master password. Your master password keeps working, and is needed again after you change it or your ${label} enrollment changes.`}
+        hint={`Use ${label} instead of typing your master password.`}
+        hintTestId="biometric-unlock-hint"
       >
         <Toggle
           checked={biometric.enabled || enabling}
@@ -146,6 +155,14 @@ export function BiometricUnlockSettings() {
             <TriangleAlert className="ui-field__hint-icon" aria-hidden="true" />
           ) : null}
           <span>{note.text}</span>
+        </p>
+      )}
+      {note && (
+        <p
+          className="settings-form__hint biometric-unlock__note"
+          data-testid="biometric-unlock-conditions"
+        >
+          {biometricConditionsText(label)}
         </p>
       )}
       {enabling && !biometric.enabled && (

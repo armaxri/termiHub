@@ -176,7 +176,7 @@ export function resolveTheme(
 /**
  * The selected-row CSS variables a theme sets (#5562, #5591), or `null` for
  * each one that falls back to its `variables.css` default (the accent tint,
- * no indicator bar; the `-secondary` pair falls back to the plain pair).
+ * an accent indicator bar; the `-secondary` pair falls back to the plain pair).
  */
 export function selectionVariables(theme: ThemeDefinition): Record<string, string | null> {
   const sel = theme.selection;
