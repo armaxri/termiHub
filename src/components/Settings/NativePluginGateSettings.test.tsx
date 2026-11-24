@@ -149,6 +149,14 @@ describe("NativePluginGateSettings", () => {
     expect(query("settings-native-plugins-enabled")!.getAttribute("aria-checked")).toBe("false");
   });
 
+  it("keeps the per-plugin trust warning visible in one short line (#5900)", async () => {
+    await renderFlushed();
+    expect(query("settings-native-plugins-enabled-hint")!.textContent).toBe(
+      "Each native plugin must still be trusted below before it loads."
+    );
+    expect(query("settings-native-plugins-enabled-help")).not.toBeNull();
+  });
+
   it("reflects the global switch being enabled", async () => {
     getNativePluginTrust.mockResolvedValue({
       enabled: true,

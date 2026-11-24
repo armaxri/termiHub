@@ -30,7 +30,10 @@ export function MonitoringSettingsFields() {
     <>
       <SettingsField
         label="Monitor local shells"
-        hint="Show CPU, memory, disk and network for this computer in local shell tabs. Remote sessions are monitored with Power monitoring."
+        hint="Show CPU, memory, disk and network for this computer in local shell tabs."
+        help="Remote sessions are monitored with Power monitoring."
+        hintTestId="settings-monitor-local-shells-hint"
+        helpTestId="settings-monitor-local-shells-help"
       >
         <Toggle
           checked={settings.monitorLocalShells ?? false}
@@ -44,6 +47,7 @@ export function MonitoringSettingsFields() {
       <SettingsField
         label="Status bar metrics"
         hint="The host metrics shown in the status bar. The host menu always lists every metric."
+        hintTestId="settings-status-bar-metrics-hint"
         layout="stack"
       >
         <div

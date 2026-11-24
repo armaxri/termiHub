@@ -468,7 +468,7 @@ impl ConnectionType for RemoteProxy {
     /// The algorithms the remote session's SSH transport negotiated (#5896),
     /// asked of the agent when the status bar's security popover opens.
     /// `None` when not connected, for a non-SSH session, and for an agent
-    /// older than protocol 0.43.0 (method not found) — the popover then says
+    /// older than protocol 0.44.0 (method not found) — the popover then says
     /// only "Encrypted (SSH)".
     async fn ssh_algorithms(&self) -> Option<SshNegotiatedAlgorithms> {
         let session_id = self.remote_session_id()?;

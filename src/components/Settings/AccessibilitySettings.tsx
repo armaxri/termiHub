@@ -27,7 +27,10 @@ export function AccessibilitySettings({
       {show("screenReaderMode") && (
         <SettingsField
           label="Screen reader mode"
-          hint="Expose terminal output to assistive technology (screen readers such as VoiceOver, NVDA, JAWS). Adds some rendering overhead — enable only if you use a screen reader."
+          hint="Let screen readers such as VoiceOver, NVDA and JAWS read terminal output."
+          help="Adds some rendering overhead, so turn it on only if you use a screen reader."
+          hintTestId="settings-screen-reader-mode-hint"
+          helpTestId="settings-screen-reader-mode-help"
         >
           <Toggle
             checked={settings.screenReaderMode ?? false}

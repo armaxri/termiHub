@@ -665,8 +665,17 @@ fn wire_session_managers(
     // A newly opened session — from the connect command, the backend
     // reconnect redrive or a persistent session — resumes the transfers
     // waiting for its saved connection or agent (#3883, #4114, #4301).
+    // Opening a session for a saved connection also stamps its last-used
+    // time (#5940), off the async runtime since it writes connections.json.
     let opened_app = app.handle().clone();
     session_manager.set_session_opened_hook(std::sync::Arc::new(move |trigger| {
+        if let crate::files::transfer::relaunch_auto::WaitTrigger::ConnectionOpened(id) = &trigger {
+            let app = opened_app.clone();
+            let id = id.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                crate::commands::connection::record_connection_used(&app, &id);
+            });
+        }
         crate::files::transfer::relaunch_auto::spawn_resume_waiting(&opened_app, trigger);
     }));
     // The graphical sessions own their File Browser side channels (#4384):
@@ -1313,6 +1322,11 @@ pub(crate) fn init_secondary_managers_with<R: tauri::Runtime>(
         }
     }
 
+    // Automations (#5818): migrate the legacy macro and workflow files first,
+    // then load the merged store and its run history. Runs before the macro
+    // and workflow managers so they never see a half-migrated profile.
+    init_automations(app, recovery_warnings);
+
     // Initialize macro manager with recovery loading.
     // On failure, the app still starts but macros are unavailable.
     match macros::manager::MacroManager::new(app.handle()) {
@@ -1662,6 +1676,74 @@ pub(crate) fn finalize<R: tauri::Runtime>(
                 }
             }
         });
+    }
+}
+
+/// Run the automation boot migration and manage the automation store and run
+/// history (#5818). Every failure leaves the app running: the legacy macro
+/// and workflow stores still serve the UI until the frontend switches over.
+fn init_automations<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+    recovery_warnings: &mut Vec<crate::connection::recovery::RecoveryWarning>,
+) {
+    use crate::automations::{history_manager, manager, migrate};
+
+    // A failed migration is reported only when the store itself loads: an
+    // unusable config dir is already reported once, by the manager below.
+    let migration_warning = match crate::utils::config_paths::resolve_app_config_dir(app.handle())
+        .and_then(|dir| migrate::run_boot_migration(&dir, chrono::Utc::now()))
+    {
+        Ok(report) => {
+            // The legacy files are still the live stores until slice 4, so
+            // merged-back edits are this build's own: log them only.
+            if let Some(merged) = migrate::merge_warning(&report.library) {
+                tracing::info!("{}", merged.message);
+            }
+            tracing::debug!("Automation boot migration: {report:?}");
+            None
+        }
+        Err(e) => {
+            tracing::error!("Automation boot migration failed: {e:#}");
+            Some(RecoveryWarning {
+                file_name: "automations.json".to_string(),
+                message: "Could not migrate macros and workflows to automations. Your macros \
+                          and workflows are unchanged; the migration runs again on the next \
+                          start."
+                    .to_string(),
+                details: Some(format!("{e:#}")),
+            })
+        }
+    };
+
+    match manager::AutomationManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(migration_warning);
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize automation manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "automations.json".to_string(),
+                message: "Could not initialize automation storage.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
+    match history_manager::AutomationRunHistoryManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize automation run-history manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "automation-runs.json".to_string(),
+                message: "Could not initialize automation run-history storage.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
     }
 }
 

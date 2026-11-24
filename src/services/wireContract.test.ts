@@ -323,6 +323,7 @@ describe("wire contract: agent connect / definitions", () => {
       "iconColor",
       "iconEmoji",
       "id",
+      "lastUsedAt",
       "name",
       "persistent",
       "sessionType",
@@ -337,6 +338,8 @@ describe("wire contract: agent connect / definitions", () => {
     expect(serial.iconEmoji).toBe("🚀");
     // #5769: the definition's description.
     expect(serial.description).toBe("Lab bench console");
+    // #5940: when a session was last created from the definition.
+    expect(serial.lastUsedAt).toBe(1767225600000);
 
     expect(keys(shell)).toEqual(["config", "folderId", "id", "name", "persistent", "sessionType"]);
     expect(shell.folderId).toBeNull();

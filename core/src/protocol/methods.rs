@@ -99,7 +99,7 @@ pub const CONNECTION_MONITORING_UNSUBSCRIBE: &str = "connection.monitoring.unsub
 pub const CONNECTION_PROCESSES_LIST: &str = "connection.processes.list";
 pub const CONNECTION_PROCESSES_KILL: &str = "connection.processes.kill";
 
-/// The algorithms a held SSH session's transport negotiated (protocol 0.43.0,
+/// The algorithms a held SSH session's transport negotiated (protocol 0.44.0,
 /// #5896), for the desktop's "Connection security" popover.
 pub const CONNECTION_SSH_ALGORITHMS: &str = "connection.sshAlgorithms";
 
@@ -1335,6 +1335,12 @@ pub struct ConnectionDefinition {
     /// when unset and from agents older than protocol 0.42.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// When a session was last created from this definition (#5940), Unix
+    /// milliseconds. The agent stamps it on each successful
+    /// `connection.create` naming the definition. Absent when never used and
+    /// from agents older than protocol 0.43.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
@@ -2516,6 +2522,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: None,
         };
         // `serde_json` (no `preserve_order`) emits struct fields in declaration
@@ -2543,6 +2550,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: Some("/home/pi/team.json".to_string()),
         };
         assert_eq!(
@@ -2568,6 +2576,7 @@ mod tests {
             icon_color: Some("red".to_string()),
             icon_emoji: Some("\u{1F680}".to_string()),
             description: None,
+            last_used_at: None,
             source_file: None,
         };
         assert_eq!(
@@ -3796,6 +3805,7 @@ mod tests {
             icon_color: Some("teal".to_string()),
             icon_emoji: None,
             description: Some("Lab bench console".to_string()),
+            last_used_at: None,
             source_file: Some("/etc/termihub/shared.json".to_string()),
         };
         assert_eq!(
@@ -3812,6 +3822,42 @@ mod tests {
             serde_json::from_value(json!({"id": "c", "name": "Bench", "session_type": "serial"}))
                 .unwrap();
         assert_eq!(older.description, None);
+    }
+
+    /// #5940: a definition's last use is on the wire only when set (after
+    /// the description, before `source_file`), so a never-used definition
+    /// keeps the exact pre-#5940 bytes; an older agent's reply without it
+    /// parses as never used.
+    #[test]
+    fn connection_definition_last_used_at_is_skipped_when_unset() {
+        let def = ConnectionDefinition {
+            id: "c".to_string(),
+            name: "Bench".to_string(),
+            session_type: "serial".to_string(),
+            config: Value::Null,
+            persistent: false,
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            icon_color: None,
+            icon_emoji: None,
+            description: Some("Rack 3".to_string()),
+            last_used_at: Some(1_767_225_600_000),
+            source_file: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&def).unwrap(),
+            "{\"id\":\"c\",\"name\":\"Bench\",\"session_type\":\"serial\",\"config\":null,\
+             \"persistent\":false,\"folder_id\":null,\"description\":\"Rack 3\",\
+             \"last_used_at\":1767225600000}"
+        );
+        let parsed: ConnectionDefinition =
+            serde_json::from_str(&serde_json::to_string(&def).unwrap()).unwrap();
+        assert_eq!(parsed.last_used_at, Some(1_767_225_600_000));
+        let older: ConnectionDefinition =
+            serde_json::from_value(json!({"id": "c", "name": "Bench", "session_type": "serial"}))
+                .unwrap();
+        assert_eq!(older.last_used_at, None);
     }
 
     #[test]

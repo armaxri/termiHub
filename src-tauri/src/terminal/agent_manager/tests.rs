@@ -476,6 +476,7 @@ fn definition_info_source_file_omitted_when_none() {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         source_file: None,
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -497,6 +498,7 @@ fn definition_info_source_file_camel_case() {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         source_file: Some("/home/pi/team.json".to_string()),
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -545,6 +547,7 @@ fn definition_info_serializes_camel_case() {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         source_file: None,
     };
     let v = serde_json::to_value(&def).unwrap();
@@ -588,6 +591,7 @@ fn connections_data_serialization() {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: None,
         }],
         folders: vec![AgentFolderInfo {

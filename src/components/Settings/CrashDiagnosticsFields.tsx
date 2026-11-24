@@ -19,7 +19,10 @@ export function CrashDiagnosticsFields({ settings, onChange }: CrashDiagnosticsF
     <>
       <SettingsField
         label="Crash report notice"
-        hint="After termiHub closes unexpectedly, show a notice on the next start offering to view or export the local crash report. Crash reports never leave this computer unless you export them."
+        hint="Offer the crash report on the next start. Reports stay on this computer."
+        help="After termiHub closes unexpectedly, the next start shows a notice offering to view or export the local crash report. Crash reports never leave this computer unless you export them."
+        hintTestId="settings-show-crash-report-notice-hint"
+        helpTestId="settings-show-crash-report-notice-help"
       >
         <Toggle
           checked={settings.showCrashReportNotice ?? true}
@@ -31,7 +34,10 @@ export function CrashDiagnosticsFields({ settings, onChange }: CrashDiagnosticsF
       </SettingsField>
       <SettingsField
         label="Export diagnostics"
-        hint="Save a zip with the recent redacted logs, crash reports and version/platform info to a location you choose — for attaching to a bug report. Nothing is sent anywhere."
+        hint="Save redacted logs and crash reports as a zip. Nothing is sent anywhere."
+        help="The zip holds the recent redacted logs, the crash reports and version and platform info, saved to a location you choose, for attaching to a bug report."
+        hintTestId="settings-export-diagnostics-hint"
+        helpTestId="settings-export-diagnostics-help"
       >
         <Button
           variant="secondary"

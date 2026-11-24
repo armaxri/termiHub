@@ -20,8 +20,8 @@ mod agents_projection;
 /// held in managed state, so long-lived background tasks are cancelled and
 /// awaited (bounded) at teardown instead of outliving it — see [`app_tasks`].
 mod app_tasks;
-/// The merged macro + workflow model and its pure legacy converters (#5818).
-/// Public so the slice-1 model is not dead code before slice 2 wires it in.
+/// The merged macro + workflow model, its store, run history and the boot
+/// migration from the legacy macro and workflow files (#5818).
 pub mod automations;
 mod backup;
 /// Ordered application boot phases (ARCH-002 / TAURI-009): the wiring the
@@ -911,6 +911,14 @@ pub fn run() -> anyhow::Result<()> {
             commands::workflows::list_workflow_runs,
             commands::workflows::record_workflow_run,
             commands::workflows::clear_workflow_run_history,
+            // Automations (#5818): the merged macro + workflow store
+            commands::automations::list_automations,
+            commands::automations::get_automation,
+            commands::automations::save_automation,
+            commands::automations::delete_automation,
+            commands::automations::list_automation_runs,
+            commands::automations::record_automation_run,
+            commands::automations::clear_automation_run_history,
             // Scheduled runs (PROD-043)
             commands::schedules::list_schedules,
             commands::schedules::save_schedule,

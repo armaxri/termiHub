@@ -245,12 +245,16 @@ use termihub_core::monitoring::{
 /// matching `capabilities.connectionDescription` flag (#5769). An older agent
 /// ignores the unknown key, so the desktop shows the Description field only to
 /// an agent that advertises the flag; an older desktop never sends it.
-/// Bumped to 0.43.0 for the additive `connection.sshAlgorithms` method
+/// Bumped to 0.43.0 for the additive, optional `last_used_at` the agent stamps
+/// on a saved definition on each successful `connection.create` naming it and
+/// reports in the definitions it returns (#5940). No request changes and no
+/// capability: an older desktop ignores the key, an older agent never sends it.
+/// Bumped to 0.44.0 for the additive `connection.sshAlgorithms` method
 /// (#5896): the cipher, MAC, key exchange and host-key algorithm an
 /// agent-hosted SSH session negotiated, for the desktop's security popover.
 /// An older agent answers method-not-found and the popover says only
 /// "Encrypted (SSH)"; an older desktop never asks.
-const AGENT_PROTOCOL_VERSION: &str = "0.43.0";
+const AGENT_PROTOCOL_VERSION: &str = "0.44.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -1207,6 +1211,12 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         span.record("session_id", snapshot.id.as_str());
         span.in_scope(|| info!("agent session created"));
 
+        // A session created from a saved definition stamps its last use
+        // (#5940), reported by `connections.list` as `last_used_at`.
+        if let Some(definition_id) = snapshot.definition_id.as_deref() {
+            stamp_definition_used(&ctx, definition_id).await;
+        }
+
         to_result_value(&SessionCreateResult {
             session_id: snapshot.id,
             title: snapshot.title,
@@ -1217,6 +1227,23 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         })
     })?;
     Ok(())
+}
+
+/// Stamp now as the last use of the saved definition `definition_id` (#5940).
+/// Best-effort: the session already exists, so a store that cannot be written
+/// (one a newer agent wrote, #3920) is logged and the create still succeeds.
+async fn stamp_definition_used(ctx: &Mutex<HandlerState>, definition_id: &str) {
+    let Ok(store) = get_connection_store(ctx).await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    match store.record_used(definition_id, now).await {
+        Ok(_) => {}
+        Err(e) => warn!(
+            definition_id,
+            "could not store the definition's last use: {e}"
+        ),
+    }
 }
 
 /// The `tracing` span a `connection.create` runs under (#3085, OBS-004).
@@ -1653,6 +1680,7 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             icon_color: p.icon_color,
             icon_emoji: p.icon_emoji,
             description: p.description,
+            last_used_at: None,
             extra: serde_json::Map::new(),
         };
 
@@ -4086,11 +4114,12 @@ mod tests {
     /// and 0.41.0 `connection.files.truncate` with its `fileTruncate`
     /// capability (#5736),
     /// and 0.42.0 the definition `description` with its
-    /// `connectionDescription` capability (#5769), and 0.43.0
+    /// `connectionDescription` capability (#5769),
+    /// and 0.43.0 the definition `last_used_at` (#5940), and 0.44.0
     /// `connection.sshAlgorithms` (#5896).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.43.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.44.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
@@ -6857,6 +6886,7 @@ mod tests {
                 icon_color: conn.icon_color,
                 icon_emoji: conn.icon_emoji,
                 description: conn.description,
+                last_used_at: None,
                 source_file: None,
             };
             self.connections.lock().await.push(snap.clone());
@@ -7237,6 +7267,75 @@ mod tests {
             monitoring_manager as Arc<dyn MonitoringManagerApi>,
         )
         .unwrap()
+    }
+
+    /// #5940: a session created from a saved definition stamps the
+    /// definition's `last_used_at`, which `connections.list` reports; a
+    /// definition never connected reports none.
+    #[tokio::test]
+    async fn connection_create_from_a_definition_stamps_its_last_use() {
+        let handler = make_mock_handler();
+        dispatch(&handler, "initialize", init_params(), 1).await;
+        let create_def = |name: &str, id: u64| {
+            dispatch(
+                &handler,
+                "connections.create",
+                json!({"name": name, "type": "local"}),
+                id,
+            )
+        };
+        let used = create_def("Used", 2).await["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let unused = create_def("Unused", 3).await["result"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let before = chrono::Utc::now().timestamp_millis() as u64;
+
+        let result = dispatch(
+            &handler,
+            "connection.create",
+            json!({"type": "local", "config": {}, "definition_id": used}),
+            4,
+        )
+        .await;
+        assert!(result["result"]["session_id"].is_string(), "{result}");
+
+        let list = dispatch(&handler, "connections.list", json!({}), 5).await;
+        let conns = list["result"]["connections"].as_array().unwrap();
+        let find = |id: &str| conns.iter().find(|c| c["id"] == id).unwrap().clone();
+        let stamp = find(&used)["last_used_at"].as_u64().expect("stamped");
+        assert!(stamp >= before, "{stamp} < {before}");
+        assert!(find(&unused).get("last_used_at").is_none(), "{list}");
+    }
+
+    /// #5940: a failed create leaves the definition never-used.
+    #[tokio::test]
+    async fn a_failed_connection_create_does_not_stamp_the_definition() {
+        let handler =
+            make_mock_handler_failing(SessionCreateError::BackendFailed("PTY spawn failed".into()));
+        dispatch(&handler, "initialize", init_params(), 1).await;
+        let def = dispatch(
+            &handler,
+            "connections.create",
+            json!({"name": "Bench", "type": "local"}),
+            2,
+        )
+        .await;
+        let id = def["result"]["id"].as_str().unwrap().to_string();
+        let result = dispatch(
+            &handler,
+            "connection.create",
+            json!({"type": "local", "config": {}, "definition_id": id}),
+            3,
+        )
+        .await;
+        assert!(result["error"].is_object(), "{result}");
+        let list = dispatch(&handler, "connections.list", json!({}), 4).await;
+        let conn = &list["result"]["connections"][0];
+        assert!(conn.get("last_used_at").is_none(), "{list}");
     }
 
     fn make_mock_handler_failing(error: SessionCreateError) -> AgentHandler {

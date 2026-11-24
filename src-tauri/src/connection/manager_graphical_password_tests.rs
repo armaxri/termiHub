@@ -22,6 +22,7 @@ fn graphical(type_id: &str, name: &str, settings: serde_json::Value) -> SavedCon
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         id: format!("conn-{name}"),
         name: name.to_string(),
         config: ConnectionConfig {

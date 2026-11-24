@@ -1,4 +1,4 @@
-//! `connection.sshAlgorithms` (protocol 0.43.0, #5896).
+//! `connection.sshAlgorithms` (protocol 0.44.0, #5896).
 //!
 //! The cipher, MAC, key exchange and host-key algorithm a held SSH session's
 //! transport negotiated, for the desktop's "Connection security" popover. A

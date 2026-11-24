@@ -200,8 +200,10 @@ fn unusable_tunnel_storage_adds_a_warning_and_no_tunnel_manager() {
 // ── Secondary-managers phase ────────────────────────────────────────────────
 
 /// Every store the secondary-managers phase loads with recovery, in phase order.
-const SECONDARY_STORES: [&str; 11] = [
+const SECONDARY_STORES: [&str; 13] = [
     "workspaces.json",
+    "automations.json",
+    "automation-runs.json",
     "macros.json",
     "macro-runs.json",
     "session-history.json",
@@ -228,6 +230,12 @@ fn assert_secondary_managed(app: &MockApp) {
     };
     assert!(app
         .try_state::<workspace::manager::WorkspaceManager>()
+        .is_some());
+    assert!(app
+        .try_state::<crate::automations::manager::AutomationManager>()
+        .is_some());
+    assert!(app
+        .try_state::<crate::automations::history_manager::AutomationRunHistoryManager>()
         .is_some());
     assert!(app.try_state::<macros::manager::MacroManager>().is_some());
     assert!(app

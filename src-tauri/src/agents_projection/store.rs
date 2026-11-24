@@ -171,6 +171,9 @@ pub struct AgentDefinition {
     /// Optional one-line description (#5769).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// When a session was last created from this definition (#5940), Unix ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,
 }
