@@ -669,8 +669,7 @@ fn wire_session_managers(
     // time (#5940), off the async runtime since it writes connections.json.
     let opened_app = app.handle().clone();
     session_manager.set_session_opened_hook(std::sync::Arc::new(move |trigger| {
-        if let crate::files::transfer::relaunch_auto::WaitTrigger::ConnectionOpened(id) = &trigger
-        {
+        if let crate::files::transfer::relaunch_auto::WaitTrigger::ConnectionOpened(id) = &trigger {
             let app = opened_app.clone();
             let id = id.clone();
             tauri::async_runtime::spawn_blocking(move || {
