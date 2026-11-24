@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { keyFileName, sshSecurityChip, sshTrustLevel } from "./sshSecurityChip";
+import { keyFileName, plainAlgorithmName, sshSecurityChip, sshTrustLevel } from "./sshSecurityChip";
+import type { SshNegotiatedAlgorithms } from "@/types/generated/SshNegotiatedAlgorithms";
 import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
 import type { ConnectionConfig } from "@/types/terminal";
 
@@ -102,5 +103,78 @@ describe("sshSecurityChip (#5839)", () => {
     const target = sshSecurityChip(config, [key("changedOnce", "app", 2222)])!;
     expect(target.trust).toBe("once");
     expect(target.rows.find((r) => r.id === "auth")!.value).toBe("SSH agent");
+  });
+});
+
+describe("negotiated algorithms in the popover (#5896)", () => {
+  const AEAD: SshNegotiatedAlgorithms = {
+    kex: "curve25519-sha256",
+    hostKey: "ssh-ed25519",
+    cipher: "chacha20-poly1305@openssh.com",
+    mac: null,
+  };
+  const WITH_MAC: SshNegotiatedAlgorithms = {
+    kex: "sntrup761x25519-sha512@openssh.com",
+    hostKey: "rsa-sha2-512",
+    cipher: "aes256-ctr",
+    mac: "hmac-sha2-256-etm@openssh.com",
+  };
+
+  function rows(algorithms?: SshNegotiatedAlgorithms | null) {
+    return sshSecurityChip(SSH, [key("remembered")], algorithms)!.rows;
+  }
+
+  it("drops the vendor suffix of a wire name", () => {
+    expect(plainAlgorithmName("chacha20-poly1305@openssh.com")).toBe("chacha20-poly1305");
+    expect(plainAlgorithmName("curve25519-sha256")).toBe("curve25519-sha256");
+    expect(plainAlgorithmName(" aes256-gcm@openssh.com ")).toBe("aes256-gcm");
+  });
+
+  it("keeps the plain encryption row while the algorithms are unknown", () => {
+    for (const unknown of [undefined, null]) {
+      const r = rows(unknown);
+      expect(r.map((row) => row.id)).toEqual(["endpoint", "encryption", "auth", "hostKey"]);
+      expect(r.find((row) => row.id === "encryption")!.value).toBe("Encrypted (SSH)");
+    }
+  });
+
+  it("names the cipher and key exchange, and no MAC for an AEAD cipher", () => {
+    const r = rows(AEAD);
+    expect(r.map((row) => row.id)).toEqual([
+      "endpoint",
+      "encryption",
+      "keyExchange",
+      "auth",
+      "hostKey",
+      "hostKeyAlgorithm",
+    ]);
+    const encryption = r.find((row) => row.id === "encryption")!;
+    expect(encryption).toMatchObject({
+      label: "Encryption",
+      value: "chacha20-poly1305",
+      title: "chacha20-poly1305@openssh.com",
+    });
+    const kex = r.find((row) => row.id === "keyExchange")!;
+    expect(kex).toEqual({ id: "keyExchange", label: "Key exchange", value: "curve25519-sha256" });
+    expect(r.find((row) => row.id === "hostKeyAlgorithm")!.value).toBe("ssh-ed25519");
+  });
+
+  it("adds the integrity MAC for a cipher that needs one", () => {
+    const r = rows(WITH_MAC);
+    expect(r.find((row) => row.id === "encryption")!.value).toBe("aes256-ctr");
+    expect(r.find((row) => row.id === "integrity")).toMatchObject({
+      label: "Integrity",
+      value: "hmac-sha2-256-etm",
+    });
+    expect(r.find((row) => row.id === "keyExchange")!.value).toBe("sntrup761x25519-sha512");
+    expect(r.find((row) => row.id === "hostKeyAlgorithm")!.value).toBe("rsa-sha2-512");
+  });
+
+  it("never names the algorithms on the chip itself", () => {
+    const plain = sshSecurityChip(SSH, [key("remembered")])!;
+    const known = sshSecurityChip(SSH, [key("remembered")], WITH_MAC)!;
+    expect(known.label).toBe(plain.label);
+    expect(known.ariaLabel).toBe(plain.ariaLabel);
+    expect(known.tooltip).toBe(plain.tooltip);
   });
 });
