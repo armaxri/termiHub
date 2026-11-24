@@ -9,7 +9,7 @@
   move (#5971).
 - A macro now plays at its saved typing speed from every place you start it; the Play
   dialog's speed choice applies to that one playback only.
-- A workflow step that runs a macro is now recorded once, in the workflow's history, and
-  no longer also as a separate entry in the macro history.
-- Clearing the Macros history no longer touches the Workflows history, and the other way
-  round.
+- A workflow step that runs a macro is recorded in the workflow's history entry, and the
+  macro gets one entry of its own per workflow run, "Run by another automation".
+- Macros and workflows share one History. "Clear…" clears the runs of the macro or workflow
+  it is narrowed to, or every run.

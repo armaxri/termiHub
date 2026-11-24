@@ -52,6 +52,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 import { useAppStore } from "@/store/appStore";
+import { automationRunsState } from "@/store/slices/automationStoreState";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -148,55 +149,55 @@ describe("MacroSidebar", () => {
     expect(query("macro-name-macro-1")?.textContent).toBe("Deploy sequence");
   });
 
-  it("narrows the run history to a macro from its Recent runs action (#3543)", async () => {
+  it("narrows the one history to a macro from its Recent runs action (#3543, #5818)", async () => {
     const base = {
       startedAt: "2026-09-20T00:00:00Z",
       endedAt: "2026-09-20T00:00:01Z",
       status: "completed" as const,
-      stepsPlayed: 1,
-      totalSteps: 1,
+      stepsCompleted: 1,
+      total: 1,
       targetCount: 1,
       origin: "manual" as const,
     };
     useAppStore.setState({
       macros: sampleMacros,
-      loadMacroRuns: vi.fn().mockResolvedValue(undefined),
-      macroRuns: [
-        { ...base, id: "r1", macroId: "macro-1", macroName: "Deploy sequence" },
-        { ...base, id: "r2", macroId: "macro-2", macroName: "Login banner" },
-      ],
+      loadAutomationRuns: vi.fn().mockResolvedValue(undefined),
+      ...automationRunsState([
+        { ...base, id: "r1", automationId: "macro-1", automationName: "Deploy sequence" },
+        { ...base, id: "r2", automationId: "macro-2", automationName: "Login banner" },
+      ]),
     });
     await render();
-    expect(query("macro-run-r1")).not.toBeNull();
-    expect(query("macro-run-r2")).not.toBeNull();
+    expect(query("automation-run-r1")).not.toBeNull();
+    expect(query("automation-run-r2")).not.toBeNull();
 
     act(() => query("macro-history-macro-2")!.click());
-    expect(query("macro-run-r1")).toBeNull();
-    expect(query("macro-run-r2")).not.toBeNull();
+    expect(query("automation-run-r1")).toBeNull();
+    expect(query("automation-run-r2")).not.toBeNull();
 
-    act(() => query("macro-history-show-all")!.click());
-    expect(query("macro-run-r1")).not.toBeNull();
+    act(() => query("automation-history-show-all")!.click());
+    expect(query("automation-run-r1")).not.toBeNull();
   });
 
   it("shows each macro's latest run on its row (#5680)", async () => {
     const base = {
       startedAt: "2026-09-20T00:00:00Z",
       status: "completed" as const,
-      stepsPlayed: 1,
-      totalSteps: 1,
+      stepsCompleted: 1,
+      total: 1,
       targetCount: 1,
       origin: "manual" as const,
-      macroId: "macro-1",
-      macroName: "Deploy sequence",
+      automationId: "macro-1",
+      automationName: "Deploy sequence",
     };
     const recent = new Date(Date.now() - 1000).toISOString();
     useAppStore.setState({
       macros: sampleMacros,
-      loadMacroRuns: vi.fn().mockResolvedValue(undefined),
-      macroRuns: [
+      loadAutomationRuns: vi.fn().mockResolvedValue(undefined),
+      ...automationRunsState([
         { ...base, id: "old", endedAt: "2026-09-20T00:00:01Z", targetLabels: ["old-tab"] },
         { ...base, id: "new", endedAt: recent, targetLabels: ["new-tab"] },
-      ],
+      ]),
     });
     await render();
     // In the row tooltip, not on the row (#5757).

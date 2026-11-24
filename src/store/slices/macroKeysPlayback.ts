@@ -120,6 +120,10 @@ export interface MacroTargetOutcome {
   status: MacroPlaybackStatus | undefined;
   /** Chunks typed into this target. */
   stepsPlayed: number;
+  /** When this target's own run started (a queued one starts later). */
+  startedAt?: Date;
+  /** When this target's own run ended. */
+  endedAt?: Date;
 }
 
 /** Hooks of {@link playAutomationKeysOnTargets}. */
@@ -165,6 +169,8 @@ export function playAutomationKeysOnTargets(
   // Targets stopped before their run started; they must never type.
   const stopped = new Set<number>();
   const started = new Set<number>();
+  const startedAt: Date[] = [];
+  const endedAt: Date[] = [];
   const handle = runAutomationOnTargets(
     automation,
     targets,
@@ -184,9 +190,13 @@ export function playAutomationKeysOnTargets(
       parallel: options.parallel,
       onTargetStart: (index) => {
         started.add(index);
+        startedAt[index] = new Date();
         if (stopped.has(index)) handle.cancel(index);
       },
-      onTargetEnd: (index) => hooks.onTargetEnd?.(targets[index]),
+      onTargetEnd: (index) => {
+        endedAt[index] = new Date();
+        hooks.onTargetEnd?.(targets[index]);
+      },
     }
   );
   return {
@@ -202,6 +212,8 @@ export function playAutomationKeysOnTargets(
                 ? "error"
                 : result.status,
         stepsPlayed: played[index],
+        startedAt: startedAt[index],
+        endedAt: endedAt[index],
       }))
     ),
     cancel: (tabId) => {
