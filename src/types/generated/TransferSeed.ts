@@ -5,4 +5,8 @@ import type { TransferDirection } from "./TransferDirection";
  * The minimal description of a transfer known at registration time, before any
  * `transfer-progress` event — mirrors the frontend `TransferSeed` (#1632).
  */
-export type TransferSeed = { id: string, sessionId: string, direction: TransferDirection, name: string, path?: string, totalBytes?: number | null, };
+export type TransferSeed = { id: string, sessionId: string, direction: TransferDirection, name: string, path?: string, 
+/**
+ * A download's local destination (#5834), see [`TransferEntry::local_path`].
+ */
+localPath?: string, totalBytes?: number | null, };

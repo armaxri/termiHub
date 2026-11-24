@@ -113,6 +113,13 @@ pub struct TransferEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
+    /// Where a download lands on this computer, when the app chose it (#5834):
+    /// a finished download offers to show this file in the OS file manager.
+    /// Absent for uploads and for downloads with no user-visible destination
+    /// (a drag-out staging copy). `#[serde(default)]` keeps older rows readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub local_path: Option<String>,
     /// Derived lifecycle state.
     pub state: TransferQueueState,
     /// Bytes transferred so far.
@@ -165,6 +172,10 @@ pub struct TransferSeed {
     #[serde(default)]
     #[cfg_attr(test, ts(optional))]
     pub path: Option<String>,
+    /// A download's local destination (#5834), see [`TransferEntry::local_path`].
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
+    pub local_path: Option<String>,
     #[serde(default)]
     #[cfg_attr(test, ts(optional, type = "number | null"))]
     pub total_bytes: Option<u64>,
@@ -372,6 +383,7 @@ impl TransferEntry {
             direction: seed.direction,
             name: seed.name.clone(),
             path: seed.path.clone(),
+            local_path: seed.local_path.clone(),
             state: TransferQueueState::Queued,
             transferred: 0,
             total_bytes: seed.total_bytes.filter(|&t| t > 0),
@@ -416,6 +428,8 @@ impl TransferEntry {
                 .path
                 .clone()
                 .or_else(|| prev.and_then(|p| p.path.clone())),
+            // No event carries it: the seed's destination rides along.
+            local_path: prev.and_then(|p| p.local_path.clone()),
             state,
             transferred: progress.transferred,
             total_bytes,
