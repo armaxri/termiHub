@@ -83,6 +83,18 @@ describe("TerminalSlot — agent setup tab (#5865)", () => {
     expect(q("stub-session-end-strip")).toBeNull();
   });
 
+  it("a Windows exit 0 shows the check, then its outcome, never installed by itself (#5992)", () => {
+    useAgentSetupStatus
+      .getState()
+      .registerSetupTab(TAB, { agentId: "a", agentName: "box", reportsExit: false });
+    lifecycle = { reconnecting: false, exited: true, exitInfo: { code: 0, reason: "clean" } };
+    render();
+    expect(q("stub-setup-strip")?.dataset.kind).toBe("checking");
+    expect(q("stub-session-end-strip")).toBeNull();
+    act(() => useAgentSetupStatus.getState().applyProgress("a", "failed", "no agent"));
+    expect(q("stub-setup-strip")?.dataset.kind).toBe("failed");
+  });
+
   it("a failure before the script shows on the live shell", () => {
     lifecycle = { reconnecting: false, exited: false };
     useAgentSetupStatus.getState().applyProgress("a", "error", "SFTP connection failed");

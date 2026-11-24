@@ -1,6 +1,6 @@
-//! Scheduled workflows and macros (PROD-043).
+//! Scheduled automations (PROD-043, schema v3 since #5818).
 //!
-//! A [`config::Schedule`] runs a stored workflow (or macro) against an explicit
+//! A [`config::Schedule`] runs a stored automation against an explicit
 //! set of targets — saved connection ids or a named broadcast group, never
 //! "whatever tab is active" — on a time-based rule: every N minutes, daily at a
 //! local time, or on chosen weekdays at a local time.
@@ -23,6 +23,7 @@
 pub mod config;
 pub mod history;
 pub mod manager;
+pub mod migrate;
 pub mod runner;
 pub mod storage;
 mod tick;

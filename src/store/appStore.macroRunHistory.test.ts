@@ -136,14 +136,17 @@ describe("appStore — macro run history (#3543)", () => {
     await vi.waitFor(() => expect(useAppStore.getState().macroRuns).toHaveLength(1));
   });
 
-  it("records the caller's origin and pre-generated run id", async () => {
+  it("records the caller's origin and hands it the record", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
+    const onRecorded = vi.fn();
     await useAppStore
       .getState()
-      .playMacro("m1", { timingMode: "instant", origin: "palette", runId: "mrun-fixed" });
+      .playMacro("m1", { timingMode: "instant", origin: "palette", onRecorded });
 
-    expect(await lastRecorded()).toMatchObject({ id: "mrun-fixed", origin: "palette" });
+    expect(onRecorded).toHaveBeenCalledTimes(1);
+    const { id } = onRecorded.mock.calls[0][0];
+    expect(await lastRecorded()).toMatchObject({ id, origin: "palette" });
   });
 
   it("records a playback that lost its terminal as an error", async () => {
@@ -161,11 +164,12 @@ describe("appStore — macro run history (#3543)", () => {
   it("records a multi-target playback once per terminal (#5818)", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
+    const handed: string[] = [];
     await useAppStore.getState().playMacro("m1", {
       timingMode: "instant",
       targetTabIds: ["a", "b", "c"],
       origin: "scheduled",
-      runId: "mrun-fixed",
+      onRecorded: (run) => handed.push(run.id),
     });
 
     // c is not connected, so it never became a target.
@@ -182,9 +186,8 @@ describe("appStore — macro run history (#3543)", () => {
         origin: "scheduled",
       });
     }
-    // The caller's pre-generated id names the first terminal's record.
-    expect(byLabel["title-a"].id).toBe("mrun-fixed");
-    expect(byLabel["title-b"].id).not.toBe("mrun-fixed");
+    // The caller gets every terminal's record.
+    expect(handed.sort()).toEqual(recorded.map((r) => r.id).sort());
   });
 
   it("records each terminal's own outcome when one drops out (#5818)", async () => {

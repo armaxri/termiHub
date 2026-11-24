@@ -57,3 +57,26 @@
   flex-shrink: 0;
   color: var(--text-accent);
 }
+
+/* One session name never breaks across lines (5980): it moves to the next
+   line whole and, only in a sidebar narrower than the name, ellipsizes (the
+   full name is its tooltip). */
+.agent-update-banner__session-part {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+.agent-update-banner__session {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What the apply does to the open sessions, under the button (5980). */
+.agent-update-banner__consequence {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  text-align: right;
+}

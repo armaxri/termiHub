@@ -15,7 +15,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "../appStore";
 
 /**
- * Scheduled workflows and macros (PROD-043): the frontend mirror of the
+ * Scheduled automations (PROD-043): the frontend mirror of the
  * backend scheduler's state. The backend is authoritative — every action goes
  * through a command and then adopts the returned state; `schedules-changed`
  * events (a run settled, a next run moved) trigger {@link loadSchedules}.
@@ -44,10 +44,10 @@ export interface SchedulesSlice {
   setSchedulesPaused: (paused: boolean) => Promise<void>;
   /**
    * The open schedule editor: an existing schedule (`scheduleId`) or a new one,
-   * optionally pre-targeting a workflow/macro. `null` when closed.
+   * optionally pre-targeting an automation. `null` when closed.
    */
   scheduleEditor: ScheduleEditorState | null;
-  /** Open the schedule editor (from the schedules list or a workflow/macro row). */
+  /** Open the schedule editor (from the schedules list or an automation row). */
   openScheduleEditor: (opts?: ScheduleEditorState) => void;
   /** Close the schedule editor. */
   closeScheduleEditor: () => void;
@@ -57,7 +57,7 @@ export interface SchedulesSlice {
 export interface ScheduleEditorState {
   /** The schedule to edit; absent for a new schedule. */
   scheduleId?: string;
-  /** For a new schedule: the workflow/macro to pre-select. */
+  /** For a new schedule: the automation to pre-select. */
   action?: ScheduleAction;
   /** The id a new schedule is saved under (minted when the editor opens). */
   draftId?: string;

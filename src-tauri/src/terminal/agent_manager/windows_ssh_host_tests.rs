@@ -95,6 +95,9 @@ mod rollback;
 /// Update while a session daemon holds the installed exe (#5254).
 mod daemon_update;
 
+/// The setup tab's outcome, also of a deliberately failed setup (#5992).
+mod setup_outcome;
+
 const PORT_ENV: &str = "TERMIHUB_NATIVE_SSHD_PORT";
 const USER_ENV: &str = "TERMIHUB_NATIVE_SSHD_USER";
 const KEY_ENV: &str = "TERMIHUB_NATIVE_SSHD_KEY";

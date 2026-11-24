@@ -28,7 +28,7 @@ Reachable here, and covered:
 * an **unstaged** announcement folds into the store but shows no banner,
 * the banner is gated on the agent being connected — and an update announced
   while it was disconnected surfaces once it connects,
-* Dismiss hides the banner, and a freshly announced update re-arms it.
+* Later hides the banner, and a freshly announced update re-arms it.
 
 Each "nothing renders" assertion is paired with a **positive control** that makes
 the same banner appear, because the store folds synchronously while React renders
@@ -136,6 +136,13 @@ class TestAgentUpdateBannerLive(
         assert re.search(
             r"The agent restarts and reconnects\.|Waits for \d+ sessions? \(.+\) to close\.", text
         ), text
+        # The secondary button puts the update off; "Close" beside "to close."
+        # read as closing the session (#5980). A held-up update says under the
+        # apply button that the sessions keep running.
+        assert self.driver.get_text(f"{self.UPDATE_BANNER_DISMISS}-{agent['id']}") == "Later"
+        assert "Restart agent and update" in text
+        kept = re.search(r"Your (session keeps|\d+ sessions keep) running\.", text)
+        assert bool(kept) == ("Waits for" in text), text
 
         # The event folded through the real listener into the store.
         update = self.agent_update_state(agent["id"])

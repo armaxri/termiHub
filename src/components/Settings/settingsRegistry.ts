@@ -1059,7 +1059,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "schedules",
     label: "Schedules",
-    description: "View, pause, resume and delete scheduled workflow and macro runs",
+    description: "View, pause, resume and delete scheduled automation runs",
     category: "schedules",
     keywords: [
       "schedule",

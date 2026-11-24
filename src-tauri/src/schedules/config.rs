@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::automations::config::LegacySource;
+
 /// A weekday, serialised as a lowercase three-letter string (`mon` … `sun`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -74,24 +76,40 @@ pub enum ScheduleRule {
     },
 }
 
-/// What a schedule runs.
+/// What a schedule runs (schema v3, #5818 slice 10): one stored automation.
+///
+/// Up to v2 a schedule ran either a macro or a workflow; the v2 → v3
+/// migration (`super::migrate`) turns both into this single kind, following
+/// the ids the automation migration changed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScheduleAction {
-    /// A stored workflow (the preferred target).
+    /// A stored automation, run on every target.
     #[serde(rename_all = "camelCase")]
-    Workflow {
-        /// The workflow's id.
-        workflow_id: String,
+    Automation {
+        /// The automation's id.
+        automation_id: String,
+        /// Set only while the migration from a v2 action could not yet check
+        /// the id against `automations.json` (a restored backup, or a boot
+        /// whose automation migration failed): the legacy kind it named. The
+        /// next boot resolves and removes it; until then a run is skipped
+        /// unless the automation came from that kind, so a macro schedule
+        /// never runs a workflow that has the same id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        legacy_source: Option<LegacySource>,
     },
-    /// A stored macro, played into every target.
-    #[serde(rename_all = "camelCase")]
-    Macro {
-        /// The macro's id.
-        macro_id: String,
-    },
+}
+
+impl ScheduleAction {
+    /// The id of the automation this action runs.
+    pub fn automation_id(&self) -> &str {
+        match self {
+            ScheduleAction::Automation { automation_id, .. } => automation_id,
+        }
+    }
 }
 
 /// Which terminals a scheduled run types into. Always explicit: the run goes
@@ -166,16 +184,12 @@ pub struct ScheduleRunResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub duration_ms: Option<u64>,
-    /// Ids of the workflow run-history records this attempt produced (one per
-    /// terminal a workflow ran on). Empty for macros and skips.
+    /// Ids of the automation run-history records this attempt produced (one
+    /// per terminal or window the automation ran in). Empty for skips. Schema
+    /// v3 merges the v2 `workflowRunIds` / `macroRunIds` into this list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
-    pub workflow_run_ids: Vec<String>,
-    /// Ids of the macro run-history records this attempt produced (one per
-    /// window a macro played in, #3543). Empty for workflows and skips.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
-    pub macro_run_ids: Vec<String>,
+    pub run_ids: Vec<String>,
     /// How it ended.
     pub outcome: ScheduleRunOutcome,
     /// Human-readable detail (the skip reason, the failure, the target count).
@@ -296,14 +310,27 @@ impl crate::utils::migrate::VersionedStore for ScheduleStore {
     /// seeds each schedule's history with its `lastResult`; the bump is what
     /// makes the change downgrade-safe: a v1 build refuses to overwrite a v2
     /// file (PER-004) instead of silently dropping every schedule's history.
-    const CURRENT_VERSION: u32 = 2;
+    ///
+    /// v3 (#5818 slice 10) runs automations: the macro and workflow actions
+    /// become `automation` and the two run-id lists merge into `runIds`. A v2
+    /// build refuses to overwrite a v3 file the same way. The boot migration
+    /// (`super::migrate::migrate_schedules`) does this step with the id map of
+    /// `automations.json`; this in-memory path (a restored backup, or a boot
+    /// whose automation migration failed) keeps the id and marks the action
+    /// with its `legacySource`, for the boot migration to resolve.
+    const CURRENT_VERSION: u32 = 3;
 
-    fn migrate(value: serde_json::Value, from_version: u32) -> anyhow::Result<serde_json::Value> {
-        Ok(if from_version < 2 {
-            crate::schedules::history::migrate_v1_to_v2(value)
-        } else {
-            value
-        })
+    fn migrate(
+        mut value: serde_json::Value,
+        from_version: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        if from_version < 2 {
+            value = crate::schedules::history::migrate_v1_to_v2(value);
+        }
+        if from_version < 3 {
+            value = crate::schedules::migrate::migrate_v2_to_v3(value, None);
+        }
+        Ok(value)
     }
 
     /// Per-entry salvage (PER-004): drop only the corrupt schedules.
@@ -318,7 +345,7 @@ mod tests {
 
     #[test]
     fn schedule_round_trips_with_camel_case_and_kebab_tags() {
-        let json = r#"{"id":"s1","name":"Health","action":{"kind":"workflow","workflowId":"wf"},"targets":{"kind":"broadcast-group","groupId":"g1"},"rule":{"kind":"weekly","days":["mon","fri"],"time":"09:30"},"missedRuns":"run-once","enabled":true,"confirmedAt":"2026-09-26T00:00:00Z","createdAt":"c","updatedAt":"u"}"#;
+        let json = r#"{"id":"s1","name":"Health","action":{"kind":"automation","automationId":"wf"},"targets":{"kind":"broadcast-group","groupId":"g1"},"rule":{"kind":"weekly","days":["mon","fri"],"time":"09:30"},"missedRuns":"run-once","enabled":true,"confirmedAt":"2026-09-26T00:00:00Z","createdAt":"c","updatedAt":"u"}"#;
         let parsed: Schedule = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.missed_runs, MissedRunPolicy::RunOnce);
         assert_eq!(
@@ -336,7 +363,7 @@ mod tests {
 
     #[test]
     fn minimal_schedule_defaults_to_disabled_and_skip() {
-        let json = r#"{"id":"s","name":"n","action":{"kind":"macro","macroId":"m"},"targets":{"kind":"connections","connectionIds":["c"]},"rule":{"kind":"interval","everyMinutes":5}}"#;
+        let json = r#"{"id":"s","name":"n","action":{"kind":"automation","automationId":"m"},"targets":{"kind":"connections","connectionIds":["c"]},"rule":{"kind":"interval","everyMinutes":5}}"#;
         let parsed: Schedule = serde_json::from_str(json).unwrap();
         assert!(!parsed.enabled);
         assert_eq!(parsed.missed_runs, MissedRunPolicy::Skip);
@@ -345,7 +372,7 @@ mod tests {
 
     #[test]
     fn store_preserves_unknown_top_level_keys() {
-        let json = r#"{"version":"2","paused":true,"schedules":[],"futureKey":{"a":1}}"#;
+        let json = r#"{"version":"3","paused":true,"schedules":[],"futureKey":{"a":1}}"#;
         let store: ScheduleStore = serde_json::from_str(json).unwrap();
         assert!(store.paused);
         let out = serde_json::to_value(&store).unwrap();
@@ -358,8 +385,7 @@ mod tests {
             at: "t".into(),
             started_at: None,
             duration_ms: None,
-            workflow_run_ids: Vec::new(),
-            macro_run_ids: Vec::new(),
+            run_ids: Vec::new(),
             outcome: ScheduleRunOutcome::Skipped,
             message: Some("why".into()),
             catch_up: false,
@@ -368,8 +394,7 @@ mod tests {
         assert!(!s.contains("catchUp"));
         assert!(!s.contains("startedAt"));
         assert!(!s.contains("durationMs"));
-        assert!(!s.contains("workflowRunIds"));
-        assert!(!s.contains("macroRunIds"));
+        assert!(!s.contains("runIds"));
         assert!(s.contains("\"outcome\":\"skipped\""));
     }
 }

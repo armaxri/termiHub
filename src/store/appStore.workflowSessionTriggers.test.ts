@@ -25,6 +25,15 @@ vi.mock("@/services/storage", () => ({
   getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
+const invokeRunLocalProcess = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve({ exitCode: 0, timedOut: false, cancelled: false }))
+);
+vi.mock("@/services/localProcessApi", () => ({
+  invokeRunLocalProcess,
+  cancelLocalProcess: vi.fn(() => Promise.resolve(true)),
+  subscribeLocalProcessOutput: vi.fn(() => Promise.resolve(() => {})),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
@@ -62,9 +71,11 @@ vi.mock("@/services/automationApi", async () => {
 });
 const { apiSaveWorkflow, apiRecordWorkflowRun } = apis;
 
+import { toast } from "@/components/ui";
+import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { useAppStore } from "./appStore";
 import { seedLayoutState } from "@/test/layoutState";
-import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { terminalDispatcher } from "@/services/events";
@@ -266,6 +277,65 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         { kind: "on-output-match", connectionIds: ["conn-1"], pattern: "(a+)+", isRegex: true },
       ]);
       expect(tap).toBeNull();
+    });
+  });
+
+  describe("a local-process workflow (#5988)", () => {
+    const steps: WorkflowStep[] = [{ kind: "run-local-process", program: "make", args: [] }];
+    const fireOutput = async () => {
+      const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
+      await useAppStore.getState().loadWorkflows();
+      setTap.mock.calls[setTap.mock.calls.length - 1]?.[0]?.("sess-1", btoa("match\r\n"));
+    };
+    const fireDisconnect = async () => {
+      await useAppStore.getState().loadWorkflows();
+      useAppStore.getState().setTerminalExited("tab-1", { code: null, reason: "dropped" });
+    };
+    const origins: [string, WorkflowTrigger, () => Promise<void>][] = [
+      ["on-disconnect", { kind: "on-disconnect", connectionIds: ["conn-1"] }, fireDisconnect],
+      [
+        "on-output-match",
+        { kind: "on-output-match", connectionIds: ["conn-1"], pattern: "match" },
+        fireOutput,
+      ],
+    ];
+    const allow = (experimentalFeaturesEnabled?: boolean) =>
+      seedSettings({
+        experimentalFeaturesEnabled,
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["make"],
+      });
+    beforeEach(() => invokeRunLocalProcess.mockClear());
+
+    it.each(origins)("experimental off: %s is refused up front", async (_name, trigger, fire) => {
+      const error = vi.spyOn(toast, "error");
+      allow(false);
+      savedWorkflows.push(workflow("wf-lp", steps, [trigger]));
+      seedTab("sess-1");
+      await fire();
+      await vi.waitFor(
+        () =>
+          expect(error).toHaveBeenCalledWith(
+            'Workflow "Workflow wf-lp" was not run',
+            expect.objectContaining({ description: LOCAL_PROCESS_REASON })
+          ),
+        { timeout: OUTPUT_TRIGGER_LIMITS.batchMs * 20 }
+      );
+      expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+      expect(recorded()).toEqual([]);
+    });
+
+    it.each(origins)("experimental on: %s runs as before", async (name, trigger, fire) => {
+      allow(true);
+      savedWorkflows.push(workflow("wf-lp", steps, [trigger]));
+      seedTab("sess-1");
+      await fire();
+      await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1), {
+        timeout: OUTPUT_TRIGGER_LIMITS.batchMs * 20,
+      });
+      await vi.waitFor(() =>
+        expect(recorded()).toEqual([{ triggeredBy: name, status: "completed" }])
+      );
     });
   });
 

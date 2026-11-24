@@ -31,7 +31,7 @@ const PAYLOADS: Record<string, unknown> = {
     attached_tab_count: 1,
     error_message: null,
   },
-  onAgentSetupProgress: { agentId: "a-1", step: "upload", message: "Uploading" },
+  onAgentSetupProgress: { agentId: "a-1", step: "sent", message: "Sent", sessionId: "s-1" },
   onAgentUpdateAvailable: {
     agent_id: "a-1",
     currentVersion: "0.1.0",
@@ -61,7 +61,7 @@ const EXPECTED_ARGS: Record<string, unknown[]> = {
       errorMessage: null,
     },
   ],
-  onAgentSetupProgress: ["a-1", "upload", "Uploading"],
+  onAgentSetupProgress: ["a-1", "sent", "Sent", "s-1"],
   onAgentUpdateAvailable: [
     { agentId: "a-1", currentVersion: "0.1.0", availableVersion: "0.2.0", staged: true },
   ],

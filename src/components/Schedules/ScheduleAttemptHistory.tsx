@@ -38,16 +38,14 @@ function attemptDuration(attempt: ScheduleRunResult): string {
 }
 
 /**
- * The "N workflow runs" / "N macro runs" note linking an attempt to the
- * workflow or macro run history (#3543), plus the linked ids for the tooltip.
- * `null` when the attempt produced no run-history records.
+ * The "N runs in history" note linking an attempt to the automation run
+ * history (#3543, #5818), plus the linked ids for the tooltip. `null` when
+ * the attempt produced no run-history records.
  */
 function linkedRuns(attempt: ScheduleRunResult): { note: string; ids: string[] } | null {
-  const [kind, ids] = attempt.workflowRunIds?.length
-    ? ["workflow", attempt.workflowRunIds]
-    : ["macro", attempt.macroRunIds ?? []];
+  const ids = attempt.runIds ?? [];
   if (ids.length === 0) return null;
-  return { note: `${ids.length} ${kind} run${ids.length === 1 ? "" : "s"} in history`, ids };
+  return { note: `${ids.length} run${ids.length === 1 ? "" : "s"} in history`, ids };
 }
 
 /** Props of {@link ScheduleAttemptHistory}. */
@@ -61,7 +59,7 @@ export interface ScheduleAttemptHistoryProps {
 /**
  * The recent run attempts of one schedule (#3528), newest first: outcome,
  * when it settled, how long it ran, whether it was a catch-up, the skip
- * reason / failure detail, and how many workflow or macro run-history records
+ * reason / failure detail, and how many automation run-history records
  * it produced (their ids are in the tooltip). Tokens only.
  */
 export function ScheduleAttemptHistory({ scheduleId, attempts }: ScheduleAttemptHistoryProps) {

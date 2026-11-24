@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { ArrowUpCircle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -41,6 +41,42 @@ function namedSessions(names: readonly string[]): string {
   return `${sessionCount(names.length)} (${names.join(", ")})`;
 }
 
+/**
+ * The strip's note naming the sessions the update waits for (#5953). Each name
+ * stays on one line (#5980): "sys-pr-agent-24ef8dc4 · bash" used to break at
+ * " · bash)", so the shell name sat alone on the next line.
+ */
+function waitingNote(names: readonly string[]): ReactNode {
+  return (
+    <>
+      Waits for {sessionCount(names.length)}{" "}
+      {names.map((name, i) => (
+        <Fragment key={`${i}-${name}`}>
+          {/* The parenthesis or comma stays with its name, never alone on a line. */}
+          <span className="agent-update-banner__session-part">
+            {i === 0 && "("}
+            <span className="agent-update-banner__session" title={name}>
+              {name}
+            </span>
+            {i === names.length - 1 ? ")" : ","}
+          </span>{" "}
+        </Fragment>
+      ))}
+      to close.
+    </>
+  );
+}
+
+/**
+ * What "Restart agent and update" does to the open sessions (#5980): nothing.
+ * The agent does not cut them off; it updates when the last one closes.
+ */
+export function keptSessionsLine(openSessions: number): string {
+  return openSessions === 1
+    ? "Your session keeps running."
+    : `Your ${openSessions} sessions keep running.`;
+}
+
 /** Props for {@link AgentUpdateMarker}. */
 export interface AgentUpdateMarkerProps {
   /** Id of the agent whose staged update the marker flags. */
@@ -79,7 +115,10 @@ export function AgentUpdateMarker({ agentId }: AgentUpdateMarkerProps) {
  * immediately (`applied: true`); otherwise it defers until the last active
  * session disconnects (`applied: false`, `activeSessions: N`). The staged
  * binary is applied automatically on that last disconnect regardless — the
- * banner just lets the user trigger it sooner. Every outcome resolves with a
+ * banner just lets the user trigger it sooner. "Later" hides the strip (#5980:
+ * "Close" beside "Waits for 1 session to close." read as closing the session),
+ * and the line under the apply button says the open sessions keep running.
+ * Every outcome resolves with a
  * toast; a post-apply connection drop is treated as expected.
  */
 export function AgentUpdateBanner({
@@ -200,9 +239,7 @@ export function AgentUpdateBanner({
         className="agent-update-banner__note"
         data-testid={`agent-update-banner-note-${agentId}`}
       >
-        {openSessions > 0
-          ? `Waits for ${namedSessions(sessionNames)} to close.`
-          : "The agent restarts and reconnects."}
+        {openSessions > 0 ? waitingNote(sessionNames) : "The agent restarts and reconnects."}
       </span>
       <div className="agent-update-banner__actions">
         <Button
@@ -211,7 +248,7 @@ export function AgentUpdateBanner({
           onClick={handleDismiss}
           data-testid={`agent-update-banner-dismiss-${agentId}`}
         >
-          Close
+          Later
         </Button>
         <Button
           variant="primary"
@@ -222,6 +259,14 @@ export function AgentUpdateBanner({
           Restart agent and update
         </Button>
       </div>
+      {openSessions > 0 && (
+        <span
+          className="agent-update-banner__consequence"
+          data-testid={`agent-update-banner-consequence-${agentId}`}
+        >
+          {keptSessionsLine(openSessions)}
+        </span>
+      )}
       <ConfirmDialog
         open={confirming}
         title={`Update "${agentName}"?`}

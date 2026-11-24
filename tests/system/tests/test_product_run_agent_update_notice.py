@@ -7,7 +7,7 @@ three columns inside the sidebar row: its text wrapped one word per line and
 was cut off (R-001), and "Apply now" did not say what it does (R-012).
 
 Now the row carries only a compact marker and the notice is a full-width
-strip under it: "Update to v<x> available", a short note, Close and "Restart
+strip under it: "Update to v<x> available", a short note, Later and "Restart
 agent and update". With session tabs open on the agent the button asks first
 and names them (#5953: the sessions the agent lists); the agent does not
 interrupt them, it waits for the last one to close before it restarts.
@@ -216,7 +216,7 @@ class TestProductRunAgentUpdateNotice(
             "row and a full-width strip under it (#5821)",
             expect="the 200px sidebar: the agent row with its name and a small arrow-up "
             "marker, under it a strip reading 'Update to v99.0.0 available', a short muted "
-            "note, Close and 'Restart agent and update'; no word-per-line wrapping, nothing "
+            "note, Later and 'Restart agent and update'; no word-per-line wrapping, nothing "
             "cut off",
         ):
             agent = self.deploy_and_connect_agent(self.name, install_dir=INSTALL_DIR)
