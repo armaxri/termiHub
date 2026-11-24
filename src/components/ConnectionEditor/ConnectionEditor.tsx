@@ -843,10 +843,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const iconEmojiError = topLevelValidity.errors["iconEmoji"] ?? null;
 
   // Every name issue gates Save. The blank-name one is only shown inline once
-  // the user has touched the Name field or tried to save (#5284): before that
-  // a brand-new connection's empty name is not yet a mistake. A duplicate name
-  // is shown at once, as before.
+  // the user has edited the Name field and left it, or tried to save (#5284,
+  // #5909): before that a brand-new connection's empty name is not yet a
+  // mistake. Focus alone does not count — Name is autofocused, so picking a
+  // Type first must not flag it. A duplicate name is shown at once, as before.
   const nameError = topLevelValidity.errors["name"] ?? null;
+  const nameEditedRef = useRef(false);
   const [nameTouched, setNameTouched] = useState(false);
   const [saveAttempted, setSaveAttempted] = useState(false);
   const visibleNameError =
@@ -1023,6 +1025,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleTypeChange = useCallback(
     (typeId: string) => {
       setSelectedType(typeId);
+      // Another type's fields are a fresh form: hold their errors back until the
+      // user edits them or tries to save again (#5909).
+      setSaveAttempted(false);
       if (typeId === "remote") {
         // "remote" is not in the registry; seed defaults from AGENT_SCHEMA so
         // required fields like authMethod are present from the start.
@@ -1875,11 +1880,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                 type="text"
                 value={field.value ?? ""}
                 onChange={(e) => {
-                  setNameTouched(true);
+                  nameEditedRef.current = true;
                   field.onChange(e.target.value);
                 }}
                 onBlur={() => {
-                  setNameTouched(true);
+                  if (nameEditedRef.current) setNameTouched(true);
                   field.onBlur();
                 }}
                 placeholder="Connection name"
@@ -1954,6 +1959,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           settings={connSettings}
           onChange={handleSchemaSettingsChange}
           onValidityChange={handleFormValidityChange}
+          showAllErrors={saveAttempted}
           hiddenFieldKeys={usesSharedCredential ? SHARED_CREDENTIAL_HIDDEN_FIELDS : undefined}
           labelAction={
             // An editor helper, not an import (#5195): it fills in *this* form
