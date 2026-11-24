@@ -135,11 +135,23 @@ describe("showReopenToast (#5828)", () => {
     expect(addTab.mock.calls.map((c) => c[0])).toEqual(["c"]);
   });
 
-  it("a close after the window starts a fresh toast instead of joining", () => {
+  it("a close after the toast timed out starts a fresh toast instead of joining", () => {
     showReopenToast(payload("a"));
     vi.advanceTimersByTime(REOPEN_COALESCE_MS + 1);
+    shown.clear(); // it timed out
     showReopenToast(payload("b"));
     expect(theToast().message).toBe("Closed “b”");
+  });
+
+  it("a close long after the last joins the toast still on offer (#5919)", () => {
+    // Still on offer past its 6 s: hover-paused, or hidden behind a slow
+    // confirm dialog (#5914). Starting afresh would lose a's undo.
+    showReopenToast(payload("a"));
+    vi.advanceTimersByTime(REOPEN_COALESCE_MS * 3);
+    showReopenToast(payload("b"));
+    expect(theToast().message).toBe("Closed 2 tabs");
+    pressReopen();
+    expect(addTab.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
   });
 
   it("a close after the toast went away (its close button, a timeout) starts afresh", () => {

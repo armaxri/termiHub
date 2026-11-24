@@ -11,7 +11,10 @@ by a dialog (#5665 reviewed under the same rule).
 
 The grade closes an exited local terminal, opens the workflow editor, reads
 the toast stack while it is open, cancels it, and presses Reopen on the toast
-that came back. No servers needed.
+that came back. A second step (#5919) closes another tab right after the
+dialog, more than the 6 s coalesce window after the first close: it must join
+the toast still on offer ("Closed 2 tabs" · Reopen all), not replace it. No
+servers needed.
 
 The ``test_grade_*`` functions grade fixed measurements without an app and run
 in the normal lane.
@@ -34,6 +37,7 @@ from termihub_harness import (
     WorkflowUi,
 )
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.reopen_toast import expected_message
 from termihub_harness.product_run.undo_dialog import (
     offer_shown,
     undo_across_dialog_problems,
@@ -122,6 +126,59 @@ class TestProductRunUndoSurvivesDialog(
     def _offer_items(self, title: str) -> list[dict[str, Any]] | None:
         items = self._toast_items()
         return items if offer_shown(items, title, "Reopen") else None
+
+    def _exited_terminal(self) -> tuple[str, str]:
+        """Open a local terminal, end its shell, and return its id and title."""
+        before_tabs = self.tab_ids()
+        self.open_new_terminal()
+        self.wait(lambda: len(self.tab_ids()) == len(before_tabs) + 1, what="a terminal")
+        tab = next(t for t in self.tab_ids() if t not in before_tabs)
+        self.wait(lambda: self.driver.read_terminal(tab).strip(), what="the prompt")
+        title = next(t.get("title", "") for t in self._all_tabs() if t["id"] == tab)
+        # An exited tab closes at once, without its confirm dialog.
+        self.run_command("exit")
+        self.wait(lambda: self.terminal_session_exited(tab), what="the shell to exit")
+        return tab, title
+
+    def test_20_close_after_a_slow_dialog_joins_the_toast(self):
+        with self.step(
+            "toasts.undo.dialog-join",
+            "A tab closed after a long dialog joins the 'Closed …' toast still on offer (#5919)",
+            expect="#5919: one 'Closed 2 tabs' toast with Reopen all, which restores both tabs; "
+            "the first tab's undo is not replaced by the second close",
+        ):
+            self.enable_experimental_features()
+            self.open_workflows_sidebar()
+            first, first_title = self._exited_terminal()
+            second, second_title = self._exited_terminal()
+            self.close_tab(first)
+            self.wait(
+                lambda: self._offer_items(f"Closed “{first_title}”"), timeout=5.0, what="the toast"
+            )
+            self.open_new_workflow()
+            # Longer than the 6 s coalesce window, measured from the first close.
+            time.sleep(7.0)
+            self.cancel_clean_editor()
+            self.close_tab(second)
+            want = expected_message([first_title, second_title])
+            items = self.wait(
+                lambda: (lambda i: i if offer_shown(i, want, "Reopen all") else None)(
+                    self._toast_items()
+                ),
+                timeout=5.0,
+                what=f"the {want!r} toast",
+            )
+            self.evidence(f"toast items {[i['text'] or i.get('label') for i in items]}")
+            self.shot(label="joined")
+            closed = [i for i in items if (i.get("text") or "").startswith("Closed")]
+            assert len(closed) == 1, f"want one 'Closed …' toast, saw {[i['text'] for i in closed]}"
+            open_before = self.tab_ids()
+            self.driver.click(REOPEN_ACTION)
+            self.wait(
+                lambda: len([t for t in self.tab_ids() if t not in open_before]) >= 2,
+                what="both reopened tabs",
+            )
+        self.close_all_tabs()
 
     def test_10_reopen_toast_survives_a_dialog(self):
         with self.step(
