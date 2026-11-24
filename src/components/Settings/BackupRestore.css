@@ -1,5 +1,7 @@
 /* Unified backup and restore (PROD-068). */
 
+/* The dialog body is the one scroll area: the section list never scrolls
+   inside it, so nothing in it is clipped (#5847, #5935). */
 .backup-restore__list {
   display: flex;
   flex-direction: column;
@@ -7,8 +9,6 @@
   margin: 0;
   padding: var(--spacing-sm);
   list-style: none;
-  max-height: 320px;
-  overflow-y: auto;
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
 }
@@ -76,19 +76,14 @@
   color: var(--text-secondary);
 }
 
-/* Backup export (#5847): the dialog body is the one scroll area, so the list
-   never scrolls inside it and nothing in it is clipped. */
-.backup-export__list {
-  max-height: none;
-  overflow: visible;
-}
-
 .backup-export__step {
   margin: 0;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
-.backup-export__nothing-saved {
+/* "3 other kinds have nothing saved yet." under the list: the empty kinds as
+   one line, named in its tooltip (#5847, #5935). */
+.backup-restore__folded {
   margin: 0;
 }

@@ -232,10 +232,12 @@ describe("BackupExportDialog labels and layout (#5613, #5847)", () => {
 
   it("does not scroll the list inside the dialog (#5847)", async () => {
     await renderDialog("master_password");
-    expect(query("backup-export-sections")!.classList).toContain("backup-export__list");
-    const rule = /\.backup-export__list\s*\{([^}]*)\}/.exec(backupCss)?.[1] ?? "";
-    expect(rule).toMatch(/max-height:\s*none/);
-    expect(rule).toMatch(/overflow:\s*visible/);
+    expect(query("backup-export-sections")!.classList).toContain("backup-restore__list");
+    // The shared list rule (Back up and Restore, #5935) never bounds or scrolls.
+    const rule = /\.backup-restore__list\s*\{([^}]*)\}/.exec(backupCss)?.[1] ?? "";
+    expect(rule).not.toBe("");
+    expect(rule).not.toMatch(/max-height/);
+    expect(rule).not.toMatch(/overflow/);
   });
 
   it("saves without a passphrase only when nothing locked-only is included", async () => {
