@@ -1,0 +1,107 @@
+{
+  "listAutomationRuns": [
+    {
+      "automationId": "workflow-1",
+      "automationName": "Rotate logs",
+      "endedAt": "2026-11-20T09:10:30Z",
+      "id": "run-2",
+      "origin": "scheduled",
+      "startedAt": "2026-11-20T09:10:00Z",
+      "status": "completed",
+      "stepsCompleted": 2,
+      "tabId": "tab-1",
+      "targetLabel": "db-1",
+      "total": 2
+    },
+    {
+      "automationId": "macro-1",
+      "automationName": "Sudo password",
+      "endedAt": "2026-11-20T09:00:01Z",
+      "error": "Terminal closed",
+      "id": "run-1",
+      "origin": "run-by-automation",
+      "startedAt": "2026-11-20T09:00:00Z",
+      "status": "failed",
+      "stepsCompleted": 1,
+      "targetCount": 2,
+      "targetLabels": [
+        "prod-web",
+        "prod-db"
+      ],
+      "total": 2
+    }
+  ],
+  "listAutomations": [
+    {
+      "createdAt": "2026-11-01T00:00:00Z",
+      "id": "macro-1",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Sudo password",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "s3cret",
+              "delayMs": 120
+            },
+            {
+              "data": "\r",
+              "delayMs": 0
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [
+        "auth"
+      ],
+      "triggers": [],
+      "updatedAt": "2026-11-02T00:00:00Z"
+    },
+    {
+      "createdAt": "2026-11-01T00:00:00Z",
+      "id": "workflow-1",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Rotate logs",
+      "steps": [
+        {
+          "command": "logrotate -f /etc/logrotate.conf",
+          "kind": "send-command"
+        },
+        {
+          "body": [
+            {
+              "automationId": "macro-1",
+              "continueOnError": true,
+              "kind": "run-automation"
+            }
+          ],
+          "kind": "loop",
+          "loop": {
+            "count": 2,
+            "kind": "count"
+          }
+        }
+      ],
+      "tags": [],
+      "triggers": [
+        {
+          "connectionIds": [
+            "db-1"
+          ],
+          "kind": "on-connect"
+        }
+      ],
+      "triggersEnabled": false,
+      "updatedAt": "2026-11-03T00:00:00Z"
+    }
+  ]
+}
