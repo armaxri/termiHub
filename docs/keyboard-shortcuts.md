@@ -103,6 +103,10 @@ job from inside the terminal.
 
 The shortcuts overlay marks the bare keys as active "Outside terminals". A
 rebound key on one of these actions still yields while a terminal has focus.
+In Settings the pair reads "Show keyboard shortcuts (also from terminal)" and
+"Show keyboard shortcuts (not from terminal)", and every yielding row says that
+a focused terminal keeps its key. The recorder enforces the rule for every
+other action: it refuses a plain function key and asks for a modifier.
 
 ## Prompt navigation and command output (OSC 133)
 
@@ -349,8 +353,9 @@ interactive editor.
 platform. Check **All platforms** first to list the Win / Linux and macOS
 bindings side by side, for example to share with someone on another OS.
 
-In that editor, click a binding — or <kbd>Tab</kbd> to it and press
-<kbd>Enter</kbd> or <kbd>Space</kbd> — to **record** a new shortcut:
+In that editor, each row shows its binding with a **Change** label. Click it —
+or <kbd>Tab</kbd> to it and press <kbd>Enter</kbd> or <kbd>Space</kbd> — to
+**record** a new shortcut:
 
 - Press a single combination (e.g. <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>)
   and it is captured after a brief pause.
@@ -360,17 +365,33 @@ In that editor, click a binding — or <kbd>Tab</kbd> to it and press
   captured combos live while recording, and the chord finalizes as soon as the
   second combination is pressed.
 - <kbd>Backspace</kbd> before any key unbinds the action; during a chord it
-  removes the last captured combo. <kbd>Esc</kbd> cancels recording.
+  removes the last captured combo. <kbd>Esc</kbd> or the row's **Cancel**
+  button cancels recording.
 - A bare <kbd>Tab</kbd> or <kbd>Shift</kbd>+<kbd>Tab</kbd> is reserved for
   moving focus: pressing it leaves recording without changing the shortcut, so
   the recorder never traps the keyboard. Combined with <kbd>Ctrl</kbd>,
   <kbd>Alt</kbd> or <kbd>Cmd</kbd> (e.g. <kbd>Ctrl</kbd>+<kbd>Tab</kbd>), Tab is
   recorded like any other key.
-- Each row's **Clear shortcut** button (×) unbinds the action;
-  **Reset to default** restores the built-in binding.
+- Keyboard layouts with <kbd>Option</kbd> / <kbd>AltGr</kbd> characters and
+  dead keys (a German Mac types "@" with <kbd>Option</kbd>+<kbd>L</kbd>) record
+  the key itself, so <kbd>Option</kbd>+<kbd>L</kbd> is stored as Alt+L and
+  fires on that key again. A dead key that is not a letter or digit (´ ` ^ on a
+  German layout) produces no key of its own and is refused with a reason.
+- A plain function key (<kbd>F1</kbd>–<kbd>F24</kbd>, with or without
+  <kbd>Shift</kbd>) is refused for an action that fires while a terminal has
+  focus: terminal programs keep those keys (see
+  [Function keys belong to the terminal program](#function-keys-belong-to-the-terminal-program)).
+  Add <kbd>Ctrl</kbd>, <kbd>Alt</kbd> or <kbd>Cmd</kbd>. Actions that already
+  yield to a focused terminal (their row says so) accept the plain key.
+- A combination another action already uses is explained in a line under the
+  row, naming that action. **Reassign** moves it to this row (the other action
+  loses it, with an Undo toast); **Cancel** keeps both unchanged.
+- Each row's **Clear shortcut** button (×) unbinds the action and offers Undo.
+  An unchanged row reads **Default**; once you change it, that becomes a
+  **Reset to default** button that restores the built-in binding.
 - Screen readers hear when recording starts and what the binding became
-  (set, cleared, reset or cancelled); a conflict with another action is
-  announced as an alert and leaves the binding unchanged.
+  (set, cleared, reset or canceled); a conflict or a refused key is announced
+  as an alert and leaves the binding unchanged.
 
 Recorded chords fire through the same chord matcher the built-in defaults use.
 

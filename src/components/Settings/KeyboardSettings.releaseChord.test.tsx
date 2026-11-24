@@ -42,6 +42,14 @@ function bindingButton(): HTMLButtonElement {
   return el;
 }
 
+/** The binding text on the release chord's button, without its "Change" label. */
+function keysText(): string {
+  return (
+    container.querySelector(`[data-testid="keybinding-keys-${RELEASE_CHORD_ACTION}"]`)
+      ?.textContent ?? ""
+  );
+}
+
 function conflictText(): string {
   return container.querySelector('[data-testid="keyboard-settings-conflict"]')?.textContent ?? "";
 }
@@ -95,7 +103,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     await renderComponent();
     expect(container.textContent).toContain("Remote desktop");
     expect(container.textContent).toContain("Release remote desktop keyboard");
-    expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
+    expect(keysText()).toBe("Ctrl+Shift+Alt");
   });
 
   it("offers no Clear button, so the escape chord can never be unbound", async () => {
@@ -109,7 +117,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     await renderComponent();
     startRecording();
     expect(announcement()).toContain("Hold at least two modifier keys");
-    expect(bindingButton().textContent).toContain("Hold 2+ modifier keys");
+    expect(keysText()).toContain("Hold 2+ modifier keys");
   });
 
   it("records a modifier-only combo and persists it", async () => {
@@ -117,7 +125,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     startRecording();
     key("keydown", "Control", { ctrlKey: true });
     key("keydown", "Alt", { ctrlKey: true, altKey: true });
-    expect(bindingButton().textContent).toContain("Ctrl+Alt");
+    expect(keysText()).toContain("Ctrl+Alt");
     await act(async () => {
       key("keyup", "Alt", { ctrlKey: true });
       await Promise.resolve();
@@ -125,7 +133,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
 
     expect(releaseOverride()).toBe("Ctrl+Alt");
     expect(getReleaseChord()).toEqual({ key: "", ctrl: true, alt: true });
-    expect(bindingButton().textContent).toBe("Ctrl+Alt");
+    expect(keysText()).toBe("Ctrl+Alt");
     expect(announcement()).toBe("Release remote desktop keyboard shortcut set to Ctrl+Alt.");
   });
 
@@ -158,7 +166,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
 
     expect(conflictText()).toContain("cannot be cleared");
     expect(releaseOverride()).toBeUndefined();
-    expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
+    expect(keysText()).toBe("Ctrl+Shift+Alt");
   });
 
   it("cancels with Escape and leaves a bare Tab uncaptured (no keyboard trap)", async () => {
@@ -170,14 +178,14 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
     startRecording();
     const tab = key("keydown", "Tab");
     expect(tab.defaultPrevented).toBe(false);
-    expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
+    expect(keysText()).toBe("Ctrl+Shift+Alt");
     expect(releaseOverride()).toBeUndefined();
   });
 
   it("shows a persisted override after a reload, and reset restores the default", async () => {
     setOverrides([{ action: RELEASE_CHORD_ACTION, key: "Ctrl+Cmd" }]);
     await renderComponent();
-    expect(bindingButton().textContent).toMatch(/^(Ctrl\+Cmd|Cmd\+Ctrl)$/);
+    expect(keysText()).toMatch(/^(Ctrl\+Cmd|Cmd\+Ctrl)$/);
 
     await act(async () => {
       container
@@ -187,7 +195,7 @@ describe("KeyboardSettings — remote-desktop release chord (#4524)", () => {
         ?.click();
       await Promise.resolve();
     });
-    expect(bindingButton().textContent).toBe("Ctrl+Shift+Alt");
+    expect(keysText()).toBe("Ctrl+Shift+Alt");
     expect(releaseOverride()).toBeUndefined();
   });
 });
@@ -242,7 +250,9 @@ describe("KeyboardSettings — experimental gate (#5365)", () => {
     expect(releaseOverride()).toBe("Ctrl+Alt");
 
     await act(async () => seedSettings({ experimentalFeaturesEnabled: true }));
-    expect(releaseButton()?.textContent).toBe("Ctrl+Alt");
+    expect(releaseButton()?.querySelector('[data-testid^="keybinding-keys-"]')?.textContent).toBe(
+      "Ctrl+Alt"
+    );
     expect(releaseOverride()).toBe("Ctrl+Alt");
   });
 
