@@ -274,6 +274,8 @@ fn agent_fixture() -> Value {
             icon_emoji: Some("\u{1F680}".into()),
             // A description on an agent definition (#5769).
             description: Some("Lab bench console".into()),
+            // When a session was last created from it (#5940), Unix ms.
+            last_used_at: Some(1_767_225_600_000),
             source_file: Some("/etc/termihub/shared.json".into()),
         },
         AgentDefinitionInfo {
@@ -288,6 +290,7 @@ fn agent_fixture() -> Value {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: None,
         },
     ];

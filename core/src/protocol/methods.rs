@@ -1331,6 +1331,12 @@ pub struct ConnectionDefinition {
     /// when unset and from agents older than protocol 0.42.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// When a session was last created from this definition (#5940), Unix
+    /// milliseconds. The agent stamps it on each successful
+    /// `connection.create` naming the definition. Absent when never used and
+    /// from agents older than protocol 0.43.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
     /// Source file path on the remote host, or `None` for the primary store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_file: Option<String>,

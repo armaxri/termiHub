@@ -261,6 +261,11 @@ pub enum ConnectionTreeNode {
         /// under the name in the sidebar. Absent on disk = no description.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
+        /// When this connection last connected successfully (#5940), Unix
+        /// milliseconds. Stamped by the backend on each successful connect;
+        /// absent on disk = never used (and in files written before #5940).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_used_at: Option<u64>,
         /// Unknown per-node fields, kept verbatim (#3947).
         #[serde(flatten)]
         extra: NodeExtra,
@@ -610,6 +615,14 @@ pub struct SavedConnection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
+    /// When this connection last connected successfully (#5940), as Unix
+    /// milliseconds. The backend stamps it on each successful connect
+    /// ([`ConnectionManager::record_connection_used`](crate::connection::manager::ConnectionManager::record_connection_used));
+    /// a save never moves it back. Absent = never used. Ranks the empty
+    /// window's "Recent connections" and is never shown on a row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub last_used_at: Option<u64>,
     /// Runtime-only: which external file this connection was loaded from.
     /// `None` = main connections.json, `Some(path)` = external file.
     ///
@@ -706,6 +719,7 @@ mod tests {
                 icon_color: None,
                 icon_emoji: None,
                 description: None,
+                last_used_at: None,
                 name: "My SSH".to_string(),
                 config: make_ssh_config(),
                 terminal_options: None,
@@ -740,6 +754,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             name: "Local Shell".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -758,8 +773,10 @@ mod tests {
                 icon_color,
                 icon_emoji,
                 description: _,
+                last_used_at,
                 extra,
             } => {
+                assert!(last_used_at.is_none());
                 assert!(extra.is_empty(), "{extra:?}");
                 assert!(icon_color.is_none() && icon_emoji.is_none());
                 assert_eq!(name, "Local Shell");
@@ -789,6 +806,7 @@ mod tests {
                         icon_color: None,
                         icon_emoji: None,
                         description: None,
+                        last_used_at: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
                         terminal_options: None,
@@ -800,6 +818,7 @@ mod tests {
                     icon_color: None,
                     icon_emoji: None,
                     description: None,
+                    last_used_at: None,
                     name: "Local".to_string(),
                     config: make_local_config(),
                     terminal_options: None,
@@ -1025,6 +1044,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             name: "Test".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -1264,6 +1284,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: None,
         };
         let json = serde_json::to_value(&conn).unwrap();
@@ -1286,6 +1307,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json.get("icon").unwrap(), "server");
@@ -1318,6 +1340,7 @@ mod tests {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: None,
             extra: extra.clone(),
         };

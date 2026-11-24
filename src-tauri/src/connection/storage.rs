@@ -468,6 +468,7 @@ mod tests {
                 icon_color: None,
                 icon_emoji: None,
                 description: None,
+                last_used_at: None,
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
                     type_id: "local".to_string(),
@@ -507,6 +508,7 @@ mod tests {
                     icon_color: None,
                     icon_emoji: None,
                     description: None,
+                    last_used_at: None,
                     name: "SSH".to_string(),
                     config: crate::terminal::backend::ConnectionConfig {
                         type_id: "ssh".to_string(),
@@ -640,6 +642,7 @@ mod tests {
                 icon_color: None,
                 icon_emoji: None,
                 description: None,
+                last_used_at: None,
                 id: "Work/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
