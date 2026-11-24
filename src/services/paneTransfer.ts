@@ -79,15 +79,26 @@ function startQueuedUpload(
  * Start a queued download of a session file to the local disk, seeding its
  * Transfer Queue row. `onRegistered` also sees the transfer id. Resolves with
  * the bytes transferred once it completes.
+ *
+ * The row records `localPath` so the finished download can be shown in the OS
+ * file manager (#5834). A caller whose destination is not a place the user chose
+ * (the drag-out staging copy) passes `showDestination: false`.
  */
 export function startQueuedDownload(
   sessionId: string,
   remotePath: string,
   localPath: string,
-  onRegistered?: (transferId: string) => void
+  onRegistered?: (transferId: string) => void,
+  showDestination = true
 ): Promise<number> {
   return sessionDownload(sessionId, remotePath, localPath, (transferId) => {
-    seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath });
+    seedTransferQueueRow({
+      transferId,
+      sessionId,
+      direction: "download",
+      remotePath,
+      ...(showDestination ? { localPath } : {}),
+    });
     onRegistered?.(transferId);
   });
 }

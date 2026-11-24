@@ -3,6 +3,7 @@ import { Progress } from "@/components/ui";
 import { formatThroughput, type TransferEntry, type TransferQueueState } from "@/types/transfer";
 import { formatBytes, formatElapsed } from "@/utils/formatters";
 import { TransferControls } from "./TransferControls";
+import { revealDownload, revealDownloadLabel, revealableDownloadPath } from "./revealDownload";
 
 /** Props for {@link TransferEntryRow}. */
 export interface TransferEntryProps {
@@ -110,6 +111,7 @@ export function TransferEntryRow({
   const indeterminate = entry.percent == null && entry.state === "active";
   const state: TransferQueueState = entry.state;
   const location = entry.path ? splitTransferLocation(entry.path, entry.name) : null;
+  const revealPath = revealableDownloadPath(entry);
 
   const controls = (
     <TransferControls
@@ -119,6 +121,8 @@ export function TransferEntryRow({
       onCancel={() => onCancel(entry.id)}
       onRetry={() => onRetry(entry.id)}
       onRemove={() => onRemove(entry.id)}
+      onReveal={revealPath ? () => revealDownload(revealPath) : undefined}
+      revealLabel={revealDownloadLabel()}
     />
   );
 

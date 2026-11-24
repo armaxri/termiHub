@@ -1,4 +1,4 @@
-import { Pause, Play, X, RotateCw, ListX } from "lucide-react";
+import { Pause, Play, X, RotateCw, ListX, FolderOpen } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import type { TransferQueueState } from "@/types/transfer";
 
@@ -16,6 +16,13 @@ export interface TransferControlsProps {
   onRetry: () => void | Promise<void>;
   /** Remove a terminal row from the queue (local only). */
   onRemove: () => void;
+  /**
+   * Show a finished download in the OS file manager (#5834). Rendered only for a
+   * `completed` row, and only when given (a download whose destination is known).
+   */
+  onReveal?: () => void;
+  /** Platform wording for {@link onReveal} ("Reveal in Finder", …). */
+  revealLabel?: string;
 }
 
 const ICON = 14;
@@ -26,7 +33,7 @@ const ICON = 14;
  * - `active`    → Pause, Cancel
  * - `paused`    → Resume, Cancel
  * - `queued`    → Cancel
- * - `completed` → Remove
+ * - `completed` → Reveal in Finder (a download with a known destination), Remove
  * - `failed` / `cancelled` → Retry, Remove
  *
  * Remove only drops the row from the list, so it is a "list ×" icon labelled
@@ -51,6 +58,8 @@ export function TransferControls({
   onCancel,
   onRetry,
   onRemove,
+  onReveal,
+  revealLabel = "Show in folder",
 }: TransferControlsProps) {
   return (
     <span className="transfer-row__actions">
@@ -106,6 +115,20 @@ export function TransferControls({
             data-testid="transfer-cancel"
             icon={<X size={ICON} />}
             onClick={onCancel}
+          />
+        </Tooltip>
+      )}
+
+      {state === "completed" && onReveal && (
+        <Tooltip content={revealLabel} side="top">
+          <Button
+            iconOnly
+            variant="ghost"
+            size="sm"
+            aria-label={revealLabel}
+            data-testid="transfer-reveal"
+            icon={<FolderOpen size={ICON} />}
+            onClick={onReveal}
           />
         </Tooltip>
       )}

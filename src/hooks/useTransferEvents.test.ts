@@ -31,6 +31,17 @@ vi.mock("@/services/events", () => ({
   }),
 }));
 
+// The authoritative transfers view the toast reads a download's destination
+// from (#5834); a test sets the rows it needs.
+const transfersQueue = vi.hoisted(() => ({ rows: {} as Record<string, unknown> }));
+vi.mock("@/store/transfersBridge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/store/transfersBridge")>();
+  return {
+    ...actual,
+    currentTransfersView: () => ({ queue: transfersQueue.rows, minimized: false }),
+  };
+});
+
 vi.mock("@/components/ui", () => ({
   toast: {
     success: vi.fn((_message: unknown, _opts?: unknown) => undefined),
@@ -57,6 +68,7 @@ import {
   showTransferSummary,
 } from "@/components/TransferQueue/transferSummaryVisibility";
 import type { TransferProgress } from "@/services/api";
+import { fileManagerActionLabel } from "@/utils/platform";
 
 // The global `invoke` stub (src/test/setup.ts) resolves `undefined`, but the
 // backend's session-ownership map is never undefined: stub it as the real
@@ -158,6 +170,30 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     hide();
     act(() => emit!(progress({ transferId: "t4", phase: "done" })));
     expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers to reveal a finished download whose destination is known (#5834)", async () => {
+    await mountHook();
+    transfersQueue.rows = {
+      t1: { id: "t1", localPath: "/Users/me/Downloads/file.txt" },
+      t2: { id: "t2" },
+    };
+
+    act(() => {
+      emit!(progress({ phase: "done" }));
+      // No recorded destination (a drag-out staging copy): no action.
+      emit!(progress({ transferId: "t2", phase: "done" }));
+      // An upload never offers it.
+      emit!(progress({ transferId: "t1", direction: "upload", phase: "done" }));
+    });
+    transfersQueue.rows = {};
+
+    const calls = vi.mocked(toast.success).mock.calls;
+    expect(calls).toHaveLength(3);
+    const first = calls[0][1] as { action?: { label: string } };
+    expect(first.action?.label).toBe(fileManagerActionLabel());
+    expect((calls[1][1] as { action?: unknown }).action).toBeUndefined();
+    expect((calls[2][1] as { action?: unknown }).action).toBeUndefined();
   });
 
   it("tags the terminal toasts with test ids a system test can find (#4128)", async () => {

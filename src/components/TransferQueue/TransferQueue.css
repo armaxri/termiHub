@@ -279,6 +279,9 @@
 .transfer-summary-chip__bar {
   flex-shrink: 0;
   display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
   padding: var(--spacing-xs) var(--spacing-sm);
   border-top: 1px solid var(--border-secondary);
   background: var(--bg-secondary);
@@ -288,6 +291,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
+  min-width: 0;
   max-width: 100%;
   height: var(--control-height-sm);
   padding: 0 var(--spacing-sm);
@@ -313,6 +317,11 @@
 
 .transfer-summary-chip--failed {
   color: var(--color-error);
+}
+
+/* "Reveal in Finder" beside the line (#5834): never squeezed, the count gives way. */
+.transfer-summary-chip__reveal {
+  flex-shrink: 0;
 }
 
 .transfer-summary-chip__label {

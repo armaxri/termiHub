@@ -111,6 +111,7 @@ export function transferEntryFromSeed(seed: TransferSeed, now: number): Transfer
     direction: seed.direction,
     name: seed.name,
     path: seed.path,
+    ...(seed.localPath ? { localPath: seed.localPath } : {}),
     state: "queued",
     transferred: 0,
     totalBytes,
@@ -206,6 +207,8 @@ export function transferEntryFromProgress(
     direction: progress.direction,
     name: progress.fileName,
     path: progress.path ?? prev?.path,
+    // No event carries a download's destination (#5834): keep the seed's.
+    ...(prev?.localPath ? { localPath: prev.localPath } : {}),
     state,
     transferred: progress.transferred,
     totalBytes,

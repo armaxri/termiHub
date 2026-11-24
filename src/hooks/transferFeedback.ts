@@ -34,6 +34,11 @@ export function seedTransferQueueRow(seed: {
   sessionId: string;
   direction: TransferDirection;
   remotePath: string;
+  /**
+   * Where a download lands on this computer (#5834). The finished row then
+   * offers to show the file in the OS file manager.
+   */
+  localPath?: string;
 }): void {
   dispatchTransferIntentBestEffort("transfer.seed", {
     seed: {
@@ -42,6 +47,7 @@ export function seedTransferQueueRow(seed: {
       direction: seed.direction,
       name: getBasename(seed.remotePath),
       path: seed.remotePath,
+      ...(seed.localPath ? { localPath: seed.localPath } : {}),
     },
   });
 }

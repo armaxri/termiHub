@@ -215,6 +215,7 @@ describe("shared per-leg helpers (#3563)", () => {
       sessionId: "s1",
       direction: "download",
       remotePath: "/r/b",
+      localPath: "/l/b",
     });
   });
 
@@ -232,8 +233,19 @@ describe("shared per-leg helpers (#3563)", () => {
       sessionId: "s1",
       direction: "download",
       remotePath: "/r/x",
+      localPath: "/stage/x",
     });
     expect(onRegistered).toHaveBeenCalledWith("t-down");
+  });
+
+  it("startQueuedDownload leaves the destination off a row the user never placed (#5834)", async () => {
+    await startQueuedDownload("s1", "/r/x", "/stage/x", undefined, false);
+    expect(feedback.seedTransferQueueRow).toHaveBeenCalledWith({
+      transferId: "t-down",
+      sessionId: "s1",
+      direction: "download",
+      remotePath: "/r/x",
+    });
   });
 
   it("copyPaneEntry copies one entry without its own toast", async () => {

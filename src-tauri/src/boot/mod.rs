@@ -1184,6 +1184,11 @@ fn seed_rehydrated_transfers(
             direction,
             name: r.file_name,
             path: (!r.remote_path.is_empty()).then_some(r.remote_path),
+            // A download's destination, so it can be shown once it finishes (#5834).
+            local_path: match direction {
+                TransferDirection::Download => r.local_path.filter(|p| !p.is_empty()),
+                TransferDirection::Upload => None,
+            },
             state: TransferQueueState::Paused,
             transferred: r.transferred,
             total_bytes,
