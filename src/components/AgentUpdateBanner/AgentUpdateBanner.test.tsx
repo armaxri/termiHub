@@ -6,7 +6,10 @@ import type { AgentPendingUpdate } from "@/store/appStore";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import * as api from "@/services/api";
-import { AgentUpdateBanner } from "./AgentUpdateBanner";
+import { AgentUpdateBanner, AgentUpdateMarker } from "./AgentUpdateBanner";
+import { readFileSync } from "fs";
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
 import * as expectedApplyDisconnect from "./expectedApplyDisconnect";
 
 vi.mock("@/themes", () => ({
@@ -60,15 +63,51 @@ function stagedUpdate(overrides: Partial<AgentPendingUpdate> = {}): AgentPending
 let container: HTMLDivElement;
 let root: Root;
 
-async function render() {
+async function render(openSessions?: number) {
   await act(async () => {
-    root.render(<AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} />);
+    root.render(
+      <AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} openSessions={openSessions} />
+    );
   });
+}
+
+/** The banner inside a sidebar at its narrowest width, beside the row marker. */
+async function renderInNarrowSidebar() {
+  await act(async () => {
+    root.render(
+      <div style={{ width: 200 }} data-testid="narrow-sidebar">
+        <div data-testid="agent-row">
+          <span>{AGENT_NAME}</span>
+          <AgentUpdateMarker agentId={AGENT_ID} />
+        </div>
+        <AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} openSessions={2} />
+      </div>
+    );
+  });
+}
+
+/** The declarations of one CSS rule, `{}` when the selector is missing. */
+function cssRule(selector: string): Record<string, string> {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(bannerCss);
+  if (!match) return {};
+  return Object.fromEntries(
+    match[2]
+      .split(";")
+      .map((d) => d.split(":").map((part) => part.trim()))
+      .filter(([k, v]) => k && v)
+      .map(([k, v]) => [k, v])
+  );
 }
 
 function byTestId(id: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${id}"]`);
 }
+
+const bannerCss = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), "AgentUpdateBanner.css"),
+  "utf8"
+);
 
 const bannerId = `agent-update-banner-${AGENT_ID}`;
 const applyId = `agent-update-banner-apply-${AGENT_ID}`;
@@ -100,8 +139,114 @@ describe("AgentUpdateBanner", () => {
   it("renders when a staged update exists", async () => {
     await render();
     expect(byTestId(bannerId)).not.toBeNull();
-    expect(byTestId(bannerId)?.textContent).toContain("0.2.0");
-    expect(byTestId(bannerId)?.textContent).toContain(AGENT_NAME);
+    expect(byTestId(`agent-update-banner-title-${AGENT_ID}`)?.textContent).toBe(
+      "Update to v0.2.0 available"
+    );
+    // The strip is a region named after its agent, not prose about it.
+    expect(byTestId(bannerId)?.getAttribute("aria-label")).toBe(`Update for "${AGENT_NAME}"`);
+  });
+
+  it("labels the apply button with what it does", async () => {
+    await render();
+    expect(byTestId(applyId)?.textContent).toBe("Restart agent and update");
+    expect(byTestId(dismissId)?.textContent).toBe("Close");
+  });
+
+  describe("narrow sidebar (#5821)", () => {
+    it("puts only a marker on the row and the words in the strip", async () => {
+      await renderInNarrowSidebar();
+      const row = byTestId("agent-row");
+      const marker = byTestId(`agent-update-marker-${AGENT_ID}`);
+      expect(marker).not.toBeNull();
+      expect(row?.contains(marker)).toBe(true);
+      // No prose on the row: just the agent's name; the marker speaks via its label.
+      expect(row?.textContent).toBe(AGENT_NAME);
+      expect(marker?.getAttribute("aria-label")).toBe("Update to v0.2.0 available");
+      // The strip is a sibling of the row, not inside it.
+      const strip = byTestId(bannerId);
+      expect(row?.contains(strip)).toBe(false);
+      expect(strip?.parentElement).toBe(byTestId("narrow-sidebar"));
+    });
+
+    it("stacks the strip full width so its text never shares a line with the buttons", () => {
+      const strip = cssRule(".agent-update-banner");
+      expect(strip["flex-direction"]).toBe("column");
+      expect(strip.width).toBe("100%");
+      // The actions wrap on their own line rather than squeezing the text.
+      expect(cssRule(".agent-update-banner__actions")["flex-wrap"]).toBe("wrap");
+      expect(cssRule(".agent-update-banner__title")["overflow-wrap"]).toBe("anywhere");
+    });
+
+    it("keeps the strip's text short", async () => {
+      await renderInNarrowSidebar();
+      const title = byTestId(`agent-update-banner-title-${AGENT_ID}`)?.textContent ?? "";
+      const note = byTestId(`agent-update-banner-note-${AGENT_ID}`)?.textContent ?? "";
+      expect(title.split(" ").length).toBeLessThanOrEqual(4);
+      expect(note).toBe("Waits for 2 sessions to close.");
+    });
+
+    it("shows neither marker nor strip once closed", async () => {
+      await renderInNarrowSidebar();
+      await act(async () => {
+        byTestId(dismissId)?.click();
+      });
+      expect(byTestId(`agent-update-marker-${AGENT_ID}`)).toBeNull();
+      expect(byTestId(bannerId)).toBeNull();
+    });
+  });
+
+  describe("confirm before apply (#5821)", () => {
+    const confirmId = `agent-update-confirm-${AGENT_ID}`;
+
+    it("applies at once, without asking, when no session is open", async () => {
+      await render(0);
+      expect(byTestId(`agent-update-banner-note-${AGENT_ID}`)?.textContent).toBe(
+        "The agent restarts and reconnects."
+      );
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      expect(byTestId(confirmId)).toBeNull();
+      expect(mockedApi.requestAgentDeferredUpdate).toHaveBeenCalledWith(AGENT_ID);
+    });
+
+    it("asks first and names the open sessions", async () => {
+      await render(2);
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      expect(mockedApi.requestAgentDeferredUpdate).not.toHaveBeenCalled();
+      const dialog = byTestId(confirmId);
+      expect(dialog).not.toBeNull();
+      expect(dialog?.textContent).toContain(`Update "${AGENT_NAME}"?`);
+      expect(dialog?.textContent).toContain("2 sessions are open on this agent");
+      expect(dialog?.textContent).toContain("not interrupted");
+      await act(async () => {
+        byTestId(`${confirmId}-confirm`)?.click();
+      });
+      expect(mockedApi.requestAgentDeferredUpdate).toHaveBeenCalledWith(AGENT_ID);
+    });
+
+    it("uses the singular for one session", async () => {
+      await render(1);
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      expect(byTestId(confirmId)?.textContent).toContain("1 session is open on this agent");
+    });
+
+    it("does nothing when the confirm is canceled", async () => {
+      await render(3);
+      await act(async () => {
+        byTestId(applyId)?.click();
+      });
+      await act(async () => {
+        byTestId(`${confirmId}-cancel`)?.click();
+      });
+      expect(mockedApi.requestAgentDeferredUpdate).not.toHaveBeenCalled();
+      expect(byTestId(confirmId)).toBeNull();
+      expect(byTestId(bannerId)).not.toBeNull();
+    });
   });
 
   it("does not render when no update is recorded", async () => {

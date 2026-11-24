@@ -92,6 +92,12 @@ class AgentUi(HarnessMixin):
     UPDATE_BANNER = "agent-update-banner"
     UPDATE_BANNER_DISMISS = "agent-update-banner-dismiss"
     UPDATE_BANNER_APPLY = "agent-update-banner-apply"
+    UPDATE_BANNER_TITLE = "agent-update-banner-title"
+    UPDATE_BANNER_NOTE = "agent-update-banner-note"
+    # The compact marker on the agent row and the confirm that "Restart agent and
+    # update" shows while the agent has open session tabs (#5821).
+    UPDATE_MARKER = "agent-update-marker"
+    UPDATE_CONFIRM = "agent-update-confirm"
 
     # ── lookups ─────────────────────────────────────────────────────────────────
     def remote_agents(self) -> list[dict[str, Any]]:
@@ -619,7 +625,10 @@ class AgentUi(HarnessMixin):
         self.wait_no_agent_update_banner(agent_id)
 
     def apply_agent_update_now(self, agent_id: str) -> None:
-        """Click the banner's "Apply Now" button (does not wait for an outcome).
+        """Click the strip's "Restart agent and update" (does not wait for an outcome).
+
+        With session tabs open on the agent the button asks first (#5821); this
+        confirms that dialog when it appears.
 
         Fires the ``requestAgentDeferredUpdate`` desktop command against the live
         agent's ``agent.request_deferred_update`` RPC. On a *busy* agent the RPC
@@ -627,6 +636,15 @@ class AgentUi(HarnessMixin):
         caller waits on that dismissal (or on :meth:`agent_update_dismissed`).
         """
         self.driver.click(f"{self.UPDATE_BANNER_APPLY}-{agent_id}")
+        confirm = f"{self.UPDATE_CONFIRM}-{agent_id}-confirm"
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if self.driver.exists(confirm):
+                self.driver.click(confirm)
+                return
+            if not self.agent_update_banner_present(agent_id):
+                return
+            time.sleep(0.1)
 
     def agent_update_dismissed(self, agent_id: str) -> bool:
         """Whether the banner for ``agent_id`` is flagged dismissed in the store.

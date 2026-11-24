@@ -112,7 +112,7 @@ describe("emitEvent verb → agent-update-available → banner", () => {
 
     const banner = container.querySelector(`[data-testid="agent-update-banner-${AGENT_ID}"]`);
     expect(banner).not.toBeNull();
-    expect(banner?.textContent).toContain("Build Box");
+    expect(banner?.getAttribute("aria-label")).toContain("Build Box");
     expect(banner?.textContent).toContain("0.2.0");
 
     // The event reached the store through the real listener, not a direct write.
