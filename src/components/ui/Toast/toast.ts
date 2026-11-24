@@ -117,16 +117,59 @@ function cancelRedismiss(id: string | number | undefined): void {
   pendingRedismiss.delete(id);
 }
 
+/**
+ * The sonner id a toast id shows under now, for ids that were dismissed
+ * (#5904). sonner applies a dismiss two animation frames after it is issued,
+ * to whatever toast then has that id. A toast shown again under the same id
+ * within those frames — a deferred success toast re-shown as the stack undocks,
+ * a loading toast replaced right after its dismiss — was taken down by the
+ * stale dismiss. So a dismissed id moves to a fresh sonner id: the stale
+ * dismiss only ever reaches the toast it was meant for. Updating a toast that
+ * is still showing keeps its sonner id, so it is replaced in place.
+ */
+const sonnerIds = new Map<string | number, string>();
+
+/** At most this many moved ids are remembered; the oldest are dropped. */
+const MAX_SONNER_IDS = 200;
+
+/** Counter making each moved sonner id unique. */
+let nextSonnerGeneration = 0;
+
+/** The sonner id the toast `id` shows under. */
+function sonnerIdOf(id: string | number): string | number;
+function sonnerIdOf(id: string | number | undefined): string | number | undefined;
+function sonnerIdOf(id: string | number | undefined): string | number | undefined {
+  return id === undefined ? undefined : (sonnerIds.get(id) ?? id);
+}
+
+/** Move `id` to a fresh sonner id, out of reach of the dismiss just issued. */
+function retireSonnerId(id: string | number): void {
+  sonnerIds.delete(id);
+  sonnerIds.set(id, `${String(id)}~${++nextSonnerGeneration}`);
+  if (sonnerIds.size > MAX_SONNER_IDS) {
+    const oldest = sonnerIds.keys().next().value;
+    if (oldest !== undefined) sonnerIds.delete(oldest);
+  }
+}
+
+/** `id`, a fresh id sonner just gave a toast, now shows under itself. */
+function adoptSonnerId(id: string | number): string | number {
+  sonnerIds.delete(id);
+  return id;
+}
+
 /** Dismiss `id` now and once more after any pending mount of it has landed. */
 function dismissById(id: string | number): void {
   cancelRedismiss(id);
   shownTransient.delete(id);
-  sonnerToast.dismiss(id);
+  const sonnerId = sonnerIdOf(id);
+  retireSonnerId(id);
+  sonnerToast.dismiss(sonnerId);
   pendingRedismiss.set(
     id,
     setTimeout(() => {
       pendingRedismiss.delete(id);
-      sonnerToast.dismiss(id);
+      sonnerToast.dismiss(sonnerId);
     }, 0)
   );
 }
@@ -302,7 +345,7 @@ function showTransient(spec: TransientSpec): string | number {
   };
   const show = spec.kind === "success" ? sonnerToast.success : sonnerToast.info;
   show(spec.message, {
-    id,
+    id: sonnerIdOf(id),
     description: spec.opts.description,
     duration: spec.opts.duration,
     // Pressing either button closes the toast without sonner's onDismiss, so
@@ -424,16 +467,18 @@ export const toast: ToastApi = {
   error(message, opts) {
     cancelRedismiss(opts?.id);
     forgetTransientSpec(opts?.id);
-    const id = sonnerToast.error(message, {
-      id: opts?.id,
+    const shown = sonnerToast.error(message, {
+      id: sonnerIdOf(opts?.id),
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
       cancel: sonnerAction(opts?.cancel),
       testId: opts?.testId,
     });
-    trackTransient(id ?? opts?.id, false);
-    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
+    // Callers keep using their own id; sonner's own only when they gave none.
+    const id = opts?.id ?? adoptSonnerId(shown);
+    trackTransient(id, false);
+    trackModalStale(id, opts?.dismissOnModal);
     return id;
   },
 
@@ -444,21 +489,23 @@ export const toast: ToastApi = {
   loading(message, opts) {
     cancelRedismiss(opts?.id);
     forgetTransientSpec(opts?.id);
-    const id = sonnerToast.loading(message, {
-      id: opts?.id,
+    const shown = sonnerToast.loading(message, {
+      id: sonnerIdOf(opts?.id),
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
       cancel: sonnerAction(opts?.cancel),
       testId: opts?.testId,
     });
-    trackTransient(id ?? opts?.id, false);
-    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
+    // Callers keep using their own id; sonner's own only when they gave none.
+    const id = opts?.id ?? adoptSonnerId(shown);
+    trackTransient(id, false);
+    trackModalStale(id, opts?.dismissOnModal);
     return id;
   },
 
   promise<T>(promise: Promise<T>, messages: ToastPromiseMessages<T>): Promise<T> {
-    const id = sonnerToast.loading(messages.loading);
+    const id = adoptSonnerId(sonnerToast.loading(messages.loading));
     promise.then(
       (value) => {
         const msg =
@@ -467,7 +514,7 @@ export const toast: ToastApi = {
       },
       (error: unknown) => {
         const msg = typeof messages.error === "function" ? messages.error(error) : messages.error;
-        sonnerToast.error(msg, { id, duration: PERSIST_DURATION });
+        sonnerToast.error(msg, { id: sonnerIdOf(id), duration: PERSIST_DURATION });
       }
     );
     return promise;
