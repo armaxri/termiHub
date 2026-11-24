@@ -20,7 +20,9 @@ import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
 import { continueTabClose, requestTabClose } from "@/utils/tabCloseFlow";
 import { ConfirmDialog } from "@/components/ui";
+import { useAgentSetupStatus } from "@/store/agentSetupStatus";
 import { useTerminalRegistry } from "./TerminalRegistry";
+import { withSetupOutcome } from "./AgentSetupTabStrip";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
 import { RenameDialog } from "./RenameDialog";
@@ -63,7 +65,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     // #2625: exited tabs sourced purely from the region (the per-client
     // `appStore.terminalExitedTabs` slice was deleted).
     terminalExitedTabs,
+    terminalExitInfo,
   } = useProjectedSessionLifecycleMaps();
+  // A finished agent setup tab shows a success check, not a red plug (#5980).
+  const setupTabs = useAgentSetupStatus((s) => s.tabs);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   // Broadcast participation (#1957): the badge shows on every tab in the target
   // set, active or not, so participation is visible at a glance. Sourced from the
@@ -276,18 +281,22 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onFocusOwningWindow={handleFocusOwningWindow}
               status={
                 tab.contentType === "terminal"
-                  ? deriveTabStatus(
-                      {
-                        terminalConnecting,
-                        terminalReconnectingTabs,
-                        terminalSpawnErrors,
-                        terminalDisconnectErrors,
-                        terminalExitedTabs,
-                        terminalSessionLost,
-                        terminalEvicted,
-                        terminalAwaitingFirstPrompt,
-                      },
-                      tab.id
+                  ? withSetupOutcome(
+                      deriveTabStatus(
+                        {
+                          terminalConnecting,
+                          terminalReconnectingTabs,
+                          terminalSpawnErrors,
+                          terminalDisconnectErrors,
+                          terminalExitedTabs,
+                          terminalSessionLost,
+                          terminalEvicted,
+                          terminalAwaitingFirstPrompt,
+                        },
+                        tab.id
+                      ),
+                      setupTabs[tab.id],
+                      terminalExitInfo?.[tab.id]
                     )
                   : undefined
               }

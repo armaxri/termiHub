@@ -241,6 +241,12 @@
   color: var(--state-disconnected);
 }
 
+/* A setup tab whose setup exited 0 (#5980): its work is done, so a calm
+   success check instead of the red unplugged disconnect. */
+.tab__state-dot--finished {
+  color: var(--color-success);
+}
+
 /* Taken over by another desktop/window (SM-003): the session is alive but not
    ours — a calm, non-pulsing neutral tone distinct from connected and from the
    alert states. */

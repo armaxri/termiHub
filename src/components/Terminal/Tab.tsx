@@ -30,6 +30,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CircleDashed,
+  CheckCircle2,
   SquareSplitHorizontal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -66,6 +67,7 @@ const STATUS_LABELS: Record<TabStatus, string> = {
   failed: "Connection failed",
   disconnected: "Disconnected",
   evicted: "Taken over by another desktop",
+  finished: "Finished",
 };
 
 /**
@@ -83,6 +85,7 @@ const STATUS_ICON: Record<TabStatus, LucideIcon> = {
   failed: TriangleAlert,
   disconnected: Unplug,
   evicted: MonitorX,
+  finished: CheckCircle2,
 };
 
 interface TabProps {

@@ -248,6 +248,22 @@ export interface ProjectedSessionLifecycleMaps {
    * derived purely from the region ({@link effectiveExitedMap}, #2625). Drives the
    * tab-strip status dot and the close-confirmation live count. */
   terminalExitedTabs: Record<string, boolean>;
+  /** Each ended tab's exit cause and code ({@link effectiveExitInfo}): the
+   * tab strip reads a setup tab's exit 0 as "finished", not "disconnected"
+   * (#5980). Optional so partial test doubles stay valid. */
+  terminalExitInfo?: Record<string, TerminalExitInfo>;
+}
+
+/** Build the `tabId → exit info` map from the projected region view. */
+function exitInfoMap(
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, TerminalExitInfo> {
+  const map: Record<string, TerminalExitInfo> = {};
+  for (const [tabId, life] of Object.entries(view)) {
+    const exit = effectiveExitInfo(life);
+    if (exit) map[tabId] = exit;
+  }
+  return map;
 }
 
 /** Build the `tabId → true` session-lost map from the projected region view. */
@@ -305,6 +321,7 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
       terminalSessionLost: sessionLostMap(view),
       terminalEvicted: effectiveEvictedMap(view),
       terminalExitedTabs: effectiveExitedMap(view),
+      terminalExitInfo: exitInfoMap(view),
     }),
     [view]
   );

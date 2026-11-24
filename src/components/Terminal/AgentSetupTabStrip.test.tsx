@@ -11,7 +11,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { AgentSetupTabStrip, agentSetupTabNotice } from "./AgentSetupTabStrip";
+import {
+  AgentSetupTabStrip,
+  agentSetupTabFinished,
+  agentSetupTabNotice,
+  withSetupOutcome,
+} from "./AgentSetupTabStrip";
 import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
@@ -39,6 +44,25 @@ function setupTab(overrides: Partial<AgentSetupTab> = {}): AgentSetupTab {
 const exit = (code: number | null): TerminalExitInfo => ({
   code,
   reason: code === null ? "dropped" : "clean",
+});
+
+describe("withSetupOutcome (#5980)", () => {
+  it("turns a setup tab that exited 0 from disconnected into finished", () => {
+    expect(withSetupOutcome("disconnected", setupTab(), exit(0))).toBe("finished");
+    // Also after the user closed the strip.
+    expect(agentSetupTabFinished(setupTab({ dismissed: true }), exit(0))).toBe(true);
+  });
+
+  it("keeps the status of a failed, dropped or cancelled setup and of other tabs", () => {
+    expect(withSetupOutcome("disconnected", setupTab(), exit(2))).toBe("disconnected");
+    expect(withSetupOutcome("disconnected", setupTab(), exit(null))).toBe("disconnected");
+    expect(
+      withSetupOutcome("disconnected", setupTab({ progress: { kind: "cancelled" } }), exit(0))
+    ).toBe("disconnected");
+    expect(withSetupOutcome("disconnected", undefined, exit(0))).toBe("disconnected");
+    // A live setup tab is not finished.
+    expect(withSetupOutcome("connected", setupTab(), undefined)).toBe("connected");
+  });
 });
 
 describe("agentSetupTabNotice (#5865)", () => {

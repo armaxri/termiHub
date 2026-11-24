@@ -11,7 +11,13 @@ export type TabStatus =
   | "connected"
   | "failed"
   | "disconnected"
-  | "evicted";
+  | "evicted"
+  /**
+   * The session ended because its work is done (#5980): an agent setup tab
+   * whose setup exited 0. Not derived here — the tab strip sets it on a
+   * setup tab that would otherwise read `disconnected` (a red plug).
+   */
+  | "finished";
 
 /**
  * The subset of the app store's tab-lifecycle maps needed to derive a tab's
