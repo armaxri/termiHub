@@ -380,7 +380,7 @@ describe("TerminalView — toolbar layout icons and the … menu (#5559, #5756)"
     expect(row.textContent).toContain("Broadcast input…");
   });
 
-  it("draws record macro as a record glyph, not a plain circle", async () => {
+  it("draws Record automation as a record glyph, not a plain circle", async () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     const svg = button("terminal-view-record")!.querySelector("svg")!;
