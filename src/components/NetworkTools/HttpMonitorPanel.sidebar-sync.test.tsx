@@ -46,14 +46,12 @@ function makeMonitor(over: Partial<HttpMonitorState> = {}): HttpMonitorState {
     paused: false,
     lastResult: {
       monitorId: "mon-2",
-      timestamp: Date.now(),
-      status: 0,
-      latencyMs: 0,
+      timestampMs: Date.now(),
       ok: false,
       error: "connection refused",
     },
     ...over,
-  } as HttpMonitorState;
+  };
 }
 
 let container: HTMLDivElement;
