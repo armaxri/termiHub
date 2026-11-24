@@ -1,0 +1,109 @@
+{
+  "version": "3",
+  "workflows": [
+    {
+      "id": "workflow-01JDWF00000000000000000001",
+      "name": "Deploy prep",
+      "description": "Pull, build and restart the web tier",
+      "tags": ["deploy"],
+      "steps": [
+        { "kind": "send-command", "command": "cd /srv/${app}" },
+        {
+          "kind": "run-script",
+          "script": "git pull\nmake build ENV=${env}",
+          "perLineDelayMs": 50,
+          "sourcePath": "/home/ops/deploy.sh",
+          "retry": { "count": 3, "delayMs": 500, "backoff": "exponential" }
+        },
+        { "kind": "run-macro", "macroId": "macro-01JDREC0000000000000000001", "continueOnError": true },
+        { "kind": "wait", "delayMs": 500 },
+        {
+          "kind": "wait-for-output",
+          "pattern": "Build (OK|DONE)",
+          "isRegex": true,
+          "timeoutMs": 60000,
+          "retry": { "count": 1 }
+        },
+        { "kind": "wait-for-output", "pattern": "$ " },
+        { "kind": "run-local-process", "program": "notify-send", "args": ["deployed", "${app}"] },
+        {
+          "kind": "conditional",
+          "condition": { "left": "${env}", "op": "eq", "right": "prod" },
+          "then": [
+            { "kind": "run-macro", "macroId": "macro-01JDREC0000000000000000002" },
+            {
+              "kind": "loop",
+              "loop": { "kind": "count", "count": 3 },
+              "body": [
+                { "kind": "send-command", "command": "curl -fsS localhost/health #${iteration}" },
+                { "kind": "run-macro", "macroId": "macro-01JDREC0000000000000000001" }
+              ]
+            }
+          ],
+          "else": [{ "kind": "send-command", "command": "echo skipped" }]
+        },
+        {
+          "kind": "loop",
+          "loop": {
+            "kind": "while",
+            "condition": { "left": "${iteration}", "op": "lt", "right": "5" }
+          },
+          "body": [
+            {
+              "kind": "conditional",
+              "condition": { "left": "${app}", "op": "contains", "right": "web" },
+              "then": [{ "kind": "wait", "delayMs": 100 }]
+            }
+          ],
+          "continueOnError": true
+        }
+      ],
+      "triggers": [
+        { "kind": "manual" },
+        { "kind": "hotkey", "binding": "Ctrl+Alt+D" }
+      ],
+      "parameters": [
+        { "name": "app", "label": "Application", "type": "string", "default": "web", "required": true },
+        { "name": "env", "type": "enum", "default": "dev", "options": ["dev", "prod"] },
+        { "name": "replicas", "type": "number", "default": 2 },
+        { "name": "dryRun", "type": "boolean", "default": false }
+      ],
+      "createdAt": "2026-09-01T10:00:00Z",
+      "updatedAt": "2026-11-20T16:45:00Z"
+    },
+    {
+      "id": "workflow-01JDWF00000000000000000002",
+      "name": "Answer on match",
+      "tags": [],
+      "steps": [{ "kind": "send-command", "command": "yes" }],
+      "triggers": [
+        { "kind": "on-output-match", "connectionIds": ["conn-db-1"], "pattern": "Continue? [y/N]", "cooldownMs": 5000, "maxFiresPerSession": 3 },
+        { "kind": "on-output-match", "connectionIds": [], "pattern": "ERROR \\d+", "isRegex": true }
+      ],
+      "triggersEnabled": false,
+      "createdAt": "2026-09-02T10:00:00Z",
+      "updatedAt": "2026-09-02T10:00:00Z"
+    },
+    {
+      "id": "workflow-01JDWF00000000000000000003",
+      "name": "Session hooks",
+      "steps": [{ "kind": "send-command", "command": "uptime" }],
+      "triggers": [
+        { "kind": "on-connect", "connectionIds": ["conn-web-1", "folder/conn-web-2"] },
+        { "kind": "on-disconnect", "connectionIds": ["conn-web-1"] },
+        { "kind": "on-disconnect", "connectionIds": ["conn-web-2"], "when": "user-close" },
+        { "kind": "on-disconnect", "connectionIds": [], "when": "any" }
+      ],
+      "createdAt": "2026-09-03T10:00:00Z",
+      "updatedAt": "2026-09-03T10:00:00Z"
+    },
+    {
+      "id": "workflow-01JDWF00000000000000000004",
+      "name": "Manual only",
+      "steps": [{ "kind": "run-macro", "macroId": "macro-deleted-long-ago" }],
+      "triggers": [{ "kind": "manual" }],
+      "createdAt": "2026-09-04T10:00:00Z",
+      "updatedAt": "2026-09-04T10:00:00Z"
+    }
+  ]
+}

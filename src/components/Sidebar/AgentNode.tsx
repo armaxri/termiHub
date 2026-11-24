@@ -35,6 +35,7 @@ import {
   ArrowDown,
   Folder,
   FolderInput,
+  AppWindow,
 } from "lucide-react";
 import {
   folderMoveTargets,
@@ -90,6 +91,7 @@ import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBa
 import { AgentUpdateBanner, AgentUpdateMarker } from "@/components/AgentUpdateBanner";
 import { collectLiveTabs } from "@/store/layoutHelpers";
 import { agentSessionLabels } from "./agentSessionLabels";
+import { focusTabAnywhere, useOpenAgentSessionTabs } from "./openAgentSessionTabs";
 import { agentShellTabTitle, numberedTabTitle } from "@/utils/defaultTabTitle";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -1086,6 +1088,8 @@ export function AgentNode({
   // The update strip names the same sessions the list shows.
   const sessionLabels = useMemo(() => agentSessionLabels(agentSessions), [agentSessions]);
   const sessionNames = useMemo(() => [...sessionLabels.values()], [sessionLabels]);
+  // The open tab each listed session is shown in (#5960).
+  const openSessionTabs = useOpenAgentSessionTabs(agent.id, agentSessions);
   const agentDefinitions = projectedDefinitions[agent.id] ?? EMPTY_DEFINITIONS;
   const agentFolders = projectedFolders[agent.id] ?? EMPTY_FOLDERS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
@@ -1619,6 +1623,10 @@ export function AgentNode({
 
   const handleAttachSession = useCallback(
     (session: OpenableAgentSession) => {
+      // A session an open tab shows: bring that tab forward, never a second
+      // tab on the same session (#5960).
+      const openTab = openSessionTabs.get(session.sessionId);
+      if (openTab && focusTabAnywhere(openTab)) return;
       // Always bind the new tab to the agent's existing session (with scrollback
       // replay) through the adopt+attach path — never spawn a fresh one. When the
       // agent reported the saved-connection definition the session came from,
@@ -1632,7 +1640,7 @@ export function AgentNode({
         .getState()
         .adoptAndAttachAgentPersistentSession(agent.id, def, session.sessionId);
     },
-    [agent.id, agentDefinitions]
+    [agent.id, agentDefinitions, openSessionTabs]
   );
 
   const handleOpenDefinition = useCallback(
@@ -2282,6 +2290,11 @@ export function AgentNode({
                         ariaLevel={1}
                         tabIndex={rowIndex === activeIndex ? 0 : -1}
                         title={`${sessionLabels.get(session.sessionId) ?? session.title} (${session.status})`}
+                        onClick={
+                          openSessionTabs.has(session.sessionId)
+                            ? () => handleAttachSession(session)
+                            : undefined
+                        }
                         onDoubleClick={() => handleAttachSession(session)}
                         onKeyDown={(e) => handleTreeKeyDown(e, session.sessionId)}
                         onFocus={() => handleRowFocus(rowIndex)}
@@ -2293,6 +2306,19 @@ export function AgentNode({
                         >
                           {sessionLabels.get(session.sessionId) ?? session.title}
                         </span>
+                        {/* The session an open tab shows (#5960): an icon,
+                            so the row keeps its name only. */}
+                        {openSessionTabs.has(session.sessionId) && (
+                          <span
+                            className="agent-node__open-marker"
+                            role="img"
+                            aria-label="Open in a tab"
+                            title="Open in a tab"
+                            data-testid={`agent-session-open-${session.sessionId}`}
+                          >
+                            <AppWindow size={12} aria-hidden="true" />
+                          </span>
+                        )}
                         {/* Names, not settings (#5770): a running session is
                             routine; only an exited one gets a marker. */}
                         {session.status !== "running" && (

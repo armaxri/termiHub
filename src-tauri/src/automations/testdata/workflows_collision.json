@@ -1,0 +1,38 @@
+{
+  "version": "1",
+  "workflows": [
+    {
+      "id": "shared",
+      "name": "Workflow keeps its id",
+      "steps": [
+        { "kind": "run-macro", "macroId": "shared" },
+        { "kind": "run-macro", "macroId": "dup" },
+        {
+          "kind": "loop",
+          "loop": { "kind": "count", "count": 2 },
+          "body": [{ "kind": "run-macro", "macroId": "shared", "retry": { "count": 2 } }]
+        },
+        { "kind": "run-macro", "macroId": "plain" }
+      ],
+      "triggers": [{ "kind": "manual" }, { "kind": "on-connect", "connectionIds": ["c1"] }]
+    },
+    {
+      "id": "wf-twice",
+      "name": "First dup workflow",
+      "steps": [{ "kind": "run-macro", "macroId": "wf-other" }]
+    },
+    {
+      "id": "wf-twice",
+      "name": "Second dup workflow",
+      "steps": [
+        {
+          "kind": "conditional",
+          "condition": { "left": "a", "op": "ne", "right": "b" },
+          "then": [{ "kind": "run-macro", "macroId": "wf-twice" }],
+          "else": [{ "kind": "run-macro", "macroId": "gone" }]
+        }
+      ]
+    },
+    { "id": "wf-other", "name": "Target of a dangling run-macro", "steps": [] }
+  ]
+}

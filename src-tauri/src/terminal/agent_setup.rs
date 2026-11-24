@@ -523,7 +523,9 @@ fn rollback_uploaded_binary(sftp_session: &SshSession, upload_path: &str) {
 
 /// Install the uploaded agent on a Windows host by injecting the
 /// platform-appropriate `cmd.exe`/PowerShell install + verify commands into the
-/// visible terminal. No systemd service is installed (Phase 1 uses on-demand
+/// visible terminal ([`windows_setup_lines`]). They end the tab's shell with
+/// the install's status, so the setup tab learns the outcome from the session's
+/// exit code (#5946). No systemd service is installed (Phase 1 uses on-demand
 /// `--stdio` launch).
 fn run_windows_install(
     agent_id: &str,
@@ -554,7 +556,6 @@ fn run_windows_install(
             return;
         }
     };
-    let plan = agent_install::windows_deploy_install_plan(shell);
     info!("Agent setup: installing on Windows via {shell:?}");
 
     emit_progress(
@@ -563,40 +564,11 @@ fn run_windows_install(
         "install",
         "Installing agent binary...",
     );
-    inject_commands(
-        session_manager,
-        session_id,
-        "echo === termiHub Agent Setup ===\n",
-        rt_handle,
-    );
-    inject_commands(
-        session_manager,
-        session_id,
-        &format!("{}\n", plan.install_command),
-        rt_handle,
-    );
-    inject_commands(
-        session_manager,
-        session_id,
-        &format!("{}\n", plan.verify_command),
-        rt_handle,
-    );
-    // The install renames a running agent's exe aside (#5254); delete those
-    // stale images that nothing runs any more.
-    if let Some(cleanup) = &plan.cleanup_stale_command {
-        inject_commands(
-            session_manager,
-            session_id,
-            &format!("{cleanup}\n"),
-            rt_handle,
-        );
+    // The last line exits the tab's shell with the install's status, so the
+    // session's exit code says installed or failed, as on POSIX (#5946).
+    for line in windows_setup_lines(shell) {
+        inject_commands(session_manager, session_id, &format!("{line}\n"), rt_handle);
     }
-    inject_commands(
-        session_manager,
-        session_id,
-        "echo === Setup Complete ===\n",
-        rt_handle,
-    );
 
     // The install lands at the managed Windows location, not the POSIX default
     // the next connect would run: store it as the agent path (#5522).
@@ -613,6 +585,98 @@ fn run_windows_install(
         "Setup commands sent to terminal",
     );
     info!("Agent setup: Windows install commands sent for agent {agent_id}");
+}
+
+/// The `cmd.exe` variable holding a Windows setup's status (0 installed).
+const WINDOWS_STATUS_VAR: &str = "TERMIHUB_SETUP_STATUS";
+
+/// The line a Windows setup prints when it installed the agent.
+const WINDOWS_SETUP_DONE: &str = "=== Setup Complete ===";
+
+/// The line a Windows setup prints when a step failed.
+const WINDOWS_SETUP_FAILED: &str = "Agent setup failed: see the output above.";
+
+/// The PowerShell lines of a Windows setup (install, verify, stale cleanup),
+/// ending in `exit` with the setup's status: 0 when the install and the
+/// agent's `--version` check succeeded, 1 otherwise (#5946).
+///
+/// The install and verify run in a child scope with `$ErrorActionPreference =
+/// 'Stop'`, so a failed `Move-Item` or a missing exe is caught, and a non-zero
+/// `--version` exit is turned into an error. The cleanup is best effort and
+/// never changes the status.
+fn powershell_setup_lines(plan: &agent_install::InstallPlan) -> Vec<String> {
+    let cleanup = plan.cleanup_stale_command.clone().into_iter();
+    std::iter::once("Write-Output '=== termiHub Agent Setup ==='".to_string())
+        .chain(std::iter::once(format!(
+            "$global:termihubSetupStatus = 1; & {{ $ErrorActionPreference = 'Stop'; try {{ \
+             {install}; {verify}; if ($LASTEXITCODE -ne 0) {{ throw \"the agent's version \
+             check exited with code $LASTEXITCODE\" }}; $global:termihubSetupStatus = 0 }} \
+             catch {{ Write-Output \"[error] $_\" }} }}",
+            install = plan.install_command,
+            verify = plan.verify_command,
+        )))
+        .chain(cleanup)
+        .chain(std::iter::once(format!(
+            "if ($termihubSetupStatus -eq 0) {{ Write-Output '{WINDOWS_SETUP_DONE}' }} else \
+             {{ Write-Output '{WINDOWS_SETUP_FAILED}' }}; exit $termihubSetupStatus"
+        )))
+        .collect()
+}
+
+/// The `cmd.exe` lines of a Windows setup, ending in `exit` with the setup's
+/// status like [`powershell_setup_lines`]. Each line is typed into the live
+/// shell, so `%TERMIHUB_SETUP_STATUS%` is expanded after the line before set
+/// it. The install chain is grouped: `&` binds looser than `&&`.
+fn cmd_setup_lines(plan: &agent_install::InstallPlan) -> Vec<String> {
+    let mut lines = vec![
+        "echo === termiHub Agent Setup ===".to_string(),
+        format!("set \"{WINDOWS_STATUS_VAR}=1\""),
+        format!(
+            "({}) && ({}) && set \"{WINDOWS_STATUS_VAR}=0\"",
+            plan.install_command, plan.verify_command
+        ),
+    ];
+    lines.extend(plan.cleanup_stale_command.clone());
+    lines.push(format!(
+        "if \"%{WINDOWS_STATUS_VAR}%\"==\"0\" (echo {WINDOWS_SETUP_DONE}) else (echo \
+         {WINDOWS_SETUP_FAILED})"
+    ));
+    lines.push(format!("exit %{WINDOWS_STATUS_VAR}%"));
+    lines
+}
+
+/// The lines a Windows setup types into its tab for `shell` (#5946). Each one
+/// is a single command line; the last ends the tab's shell with the setup's
+/// status (0 installed, non-zero failed), so the session's exit code tells the
+/// setup tab the outcome, as `exec sh setup.sh` does on POSIX
+/// ([`setup_exec_command`]). No output is ever read to decide it.
+///
+/// A login shell that is neither `cmd.exe` nor PowerShell gets the PowerShell
+/// lines as one encoded `powershell.exe` script, and then exits with its
+/// status (`exit $?`, as Git Bash, MSYS2 and Cygwin all spell it).
+pub(crate) fn windows_setup_lines(shell: agent_install::WindowsDeployShell) -> Vec<String> {
+    use agent_install::{WindowsDeployShell, WindowsShell};
+    match shell {
+        WindowsDeployShell::Native(WindowsShell::Cmd) => {
+            cmd_setup_lines(&agent_install::windows_install_plan(WindowsShell::Cmd))
+        }
+        WindowsDeployShell::Native(WindowsShell::PowerShell) => powershell_setup_lines(
+            &agent_install::windows_install_plan(WindowsShell::PowerShell),
+        ),
+        WindowsDeployShell::EncodedPowerShell => {
+            let script = powershell_setup_lines(&agent_install::windows_install_plan(
+                WindowsShell::PowerShell,
+            ))
+            .join("\n");
+            vec![
+                "echo === termiHub Agent Setup ===".to_string(),
+                format!(
+                    "{}; exit $?",
+                    agent_install::powershell_encoded_command(&script)
+                ),
+            ]
+        }
+    }
 }
 
 /// Store the launch path a Windows setup resolved as the agent's `agentPath`
@@ -1401,3 +1465,7 @@ mod install_path_tests;
 #[cfg(test)]
 #[path = "agent_setup_output_tests.rs"]
 mod output_tests;
+
+#[cfg(test)]
+#[path = "agent_setup_windows_tests.rs"]
+mod windows_tests;

@@ -1913,6 +1913,21 @@ impl SessionManager {
         ))
     }
 
+    /// The agent's own session id of each agent-hosted session among
+    /// `session_ids` (desktop session ids), keyed by desktop session id (#5960).
+    /// Direct and unknown sessions are left out. The sidebar marks the agent's
+    /// "Active sessions" rows that an open tab shows with it.
+    pub async fn agent_session_ids(&self, session_ids: &[String]) -> HashMap<String, String> {
+        let sessions = self.sessions.lock().await;
+        session_ids
+            .iter()
+            .filter_map(|id| {
+                let remote = sessions.get(id)?.remote_session_id.clone()?;
+                Some((id.clone(), remote))
+            })
+            .collect()
+    }
+
     /// Explicit **Reclaim** of an evicted agent tab (SM-003, single-attach): send
     /// a takeover `connection.attach` for the tab's remote session, so this desktop
     /// controls it again and the desktop that took it over is evicted in turn.
