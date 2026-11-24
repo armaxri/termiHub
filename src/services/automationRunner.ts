@@ -152,6 +152,11 @@ export interface AutomationFanoutOptions {
   hooksFor?: (index: number) => WorkflowRunHooks | undefined;
   /** Called when a target's run starts, with its index. */
   onTargetStart?: (index: number) => void;
+  /**
+   * Called when one target's run ends, with its index and result, as soon as
+   * it ends (not when the slowest target ends).
+   */
+  onTargetEnd?: (index: number, result: WorkflowRunResult) => void;
 }
 
 /** A run of one automation on several targets. */
@@ -197,7 +202,9 @@ export function runAutomationOnTargets<T>(
       handles.set(index, handle);
       options.onTargetStart?.(index);
       try {
-        return await handle.done;
+        const result = await handle.done;
+        options.onTargetEnd?.(index, result);
+        return result;
       } finally {
         handles.delete(index);
       }

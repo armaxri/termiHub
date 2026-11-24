@@ -1,10 +1,11 @@
 /**
  * Tests for multi-target ("broadcast") macro playback (PROD-042, #3443).
  *
- * Pins `playMacro(id, { targetTabIds })`: every connected target receives every
- * step in lock-step, disconnected targets are skipped up front, a target that
- * drops mid-run stops receiving, and the summary toast never reports a partial
- * run as a clean success.
+ * Pins `playMacro(id, { targetTabIds })`: every connected target runs the
+ * macro as its own run (#5818 slice 5, replacing the lock-step fan-out),
+ * disconnected targets are skipped up front, a target that drops mid-run stops
+ * receiving while the others go on, one target can be stopped on its own, and
+ * the summary toast never reports a partial run as a clean success.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
@@ -109,7 +110,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     vi.useRealTimers();
   });
 
-  it("plays every step into every connected target in lock-step", async () => {
+  it("plays every step into every connected target", async () => {
     seedFleet();
     useAppStore.setState({
       macros: [
@@ -124,12 +125,8 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       .getState()
       .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
 
-    expect(injected).toEqual([
-      ["a", "l"],
-      ["b", "l"],
-      ["a", "s\r"],
-      ["b", "s\r"],
-    ]);
+    expect(injected.filter(([id]) => id === "a").map(([, d]) => d)).toEqual(["l", "s\r"]);
+    expect(injected.filter(([id]) => id === "b").map(([, d]) => d)).toEqual(["l", "s\r"]);
     expect(toast.success).toHaveBeenCalledWith(
       'Played macro "Macro m1" on 2 terminals',
       expect.anything()
@@ -321,6 +318,121 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     await done;
   });
 
+  it("stops one terminal from its badge while the others keep typing (#5818)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 100 },
+        ]),
+      ],
+    });
+
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    await vi.advanceTimersByTimeAsync(0);
+    useAppStore.getState().cancelMacroPlaybackOnTab("b");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a"]);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(done).resolves.toBe("cancelled");
+
+    expect(injected.filter(([id]) => id === "a").map(([, d]) => d)).toEqual(["one", "two"]);
+    expect(injected.filter(([id]) => id === "b").map(([, d]) => d)).toEqual(["one"]);
+  });
+
+  it("tracks each terminal's own progress (#5818)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 1000 },
+        ]),
+      ],
+    });
+
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAppStore.getState().macroPlayback?.targetProgress).toEqual({ a: 1, b: 1 });
+    useAppStore.getState().cancelMacroPlayback();
+    await done;
+  });
+
+  it("runs the targets one after another when parallel is off (#5818)", async () => {
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "1", delayMs: 0 },
+          { data: "2", delayMs: 0 },
+        ]),
+      ],
+    });
+
+    await useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"], parallel: false });
+
+    expect(injected).toEqual([
+      ["a", "1"],
+      ["a", "2"],
+      ["b", "1"],
+      ["b", "2"],
+    ]);
+  });
+
+  it("stopping a queued terminal keeps it from ever starting (#5818)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 100 },
+        ]),
+      ],
+    });
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"], parallel: false });
+    await vi.advanceTimersByTimeAsync(0);
+    useAppStore.getState().cancelMacroPlaybackOnTab("b");
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a"]);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(done).resolves.toBe("cancelled");
+    expect(injected.map(([id]) => id)).toEqual(["a", "a"]);
+  });
+
+  it("replaying the same macro keeps the new run's badges (#5818)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 1000 },
+        ]),
+      ],
+    });
+    const play = () =>
+      useAppStore.getState().playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const first = play();
+    await vi.advanceTimersByTimeAsync(0);
+    const second = play();
+    await vi.advanceTimersByTimeAsync(0);
+    await first;
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(second).resolves.toBe("completed");
+  });
+
   it("treats a single-element targetTabIds as a normal single-terminal run", async () => {
     seedFleet();
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
@@ -394,12 +506,12 @@ describe("appStore — multi-target playback drops a target whose injection fail
       .getState()
       .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
 
-    expect(injected).toEqual([
-      ["a", "one"],
-      ["b", "one"],
-      ["a", "two"],
-      ["a", "three"],
+    expect(injected.filter(([id]) => id === "a").map(([, d]) => d)).toEqual([
+      "one",
+      "two",
+      "three",
     ]);
+    expect(injected.filter(([id]) => id === "b").map(([, d]) => d)).toEqual(["one"]);
     expect(toast.error).toHaveBeenCalledWith(
       'Played macro "Macro m1" on 1 of 2 terminals',
       expect.anything()
