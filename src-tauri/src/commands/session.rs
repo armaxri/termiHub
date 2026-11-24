@@ -1877,6 +1877,15 @@ pub async fn get_agent_session_buffer(
     Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }
 
+/// Whether the connect that opened `session_id` resumed the tab's own agent
+/// session after a user agent Disconnect, rather than starting a new one
+/// (#5953). One-shot: the tab asks once, right after its reconnect, to repaint
+/// the session's own scrollback and say "session resumed".
+#[tauri::command]
+pub fn take_resumed_agent_session(session_id: String, manager: State<'_, SessionManager>) -> bool {
+    manager.take_resumed_session(&session_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

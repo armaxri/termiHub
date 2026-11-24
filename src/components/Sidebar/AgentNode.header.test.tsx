@@ -69,7 +69,6 @@ vi.mock("./InlineFolderInput", () => ({ InlineFolderInput: () => null }));
 vi.mock("@/components/AgentUpdateBanner", () => ({
   AgentUpdateBanner: () => null,
   AgentUpdateMarker: () => null,
-  countAgentSessionTabs: () => 0,
 }));
 
 // The header's action buttons wrap their icons in the Radix-backed Tooltip, which

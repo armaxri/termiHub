@@ -11,6 +11,7 @@ import {
   reconnectHeadingFor,
   reconnectStatusFor,
   reconnectedMarker,
+  resumedMarker,
   sessionEndSeparator,
 } from "./dropCopy";
 
@@ -190,5 +191,15 @@ describe("scrollback separators", () => {
     expect(reconnectedMarker(AT)).toBe(
       "— reconnected 09:05:07 — new session; running programs were lost"
     );
+  });
+
+  it("names a new agent session a new remote shell, like SSH (#5953)", () => {
+    expect(reconnectedMarker(AT, "agent")).toBe(
+      "— reconnected 09:05:07 — new remote shell; running programs were lost"
+    );
+  });
+
+  it("says an agent session that was re-attached was resumed (#5953)", () => {
+    expect(resumedMarker(AT)).toBe("— reconnected 09:05:07 — session resumed —");
   });
 });

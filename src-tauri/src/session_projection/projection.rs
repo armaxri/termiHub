@@ -420,6 +420,9 @@ pub fn fold_agent_session_user_ended<R: tauri::Runtime>(
     });
     sync_timer_generic(app_handle, tab_id);
     if let Some(manager) = app_handle.try_state::<SessionManager>() {
+        // The user Disconnect detaches the session; the tab's Reconnect resumes
+        // it (#5953). Remember which one before the request is scrubbed.
+        manager.park_user_ended_agent_session(tab_id);
         manager.clear_retained_request_with_agent_scrub(tab_id);
     }
     applied

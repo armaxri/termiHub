@@ -577,24 +577,11 @@ impl RemoteProxy {
             ));
         }
 
-        // Extract the remote connection type and config from settings.
-        // Normalise frontend aliases: "shell" is the user-facing name but the
-        // agent registry uses "local".  Apply the same mapping here so that
-        // capability lookups and the monitoring-host check ("local" → "self")
-        // work correctly when the frontend sends type = "shell".
-        let raw_type = settings
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("local");
-        let session_type = match raw_type {
-            "shell" => "local".to_string(),
-            other => other.to_string(),
-        };
-
-        let config = settings
-            .get("config")
-            .cloned()
-            .unwrap_or_else(|| settings.clone());
+        let RemoteSessionTarget {
+            session_type,
+            config,
+            definition_id,
+        } = RemoteSessionTarget::from_settings(&settings);
 
         // The frontend puts the tab's title inside the connection settings,
         // which `SessionManager::create_connection` wraps under `config` (like
@@ -603,20 +590,6 @@ impl RemoteProxy {
         let title = settings
             .get("title")
             .or_else(|| config.get("title"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        // Optional: link this session to a saved connection definition so it
-        // can be re-attached after tab close, agent restart, or desktop restart.
-        // The frontend places `definitionId` inside the connection settings
-        // (which the desktop's `SessionManager::create_connection` wraps under
-        // a `config` key before reaching us), so look there first; fall back
-        // to the top level for callers that pass it alongside `type`.
-        let definition_id = config
-            .get("definitionId")
-            .or_else(|| config.get("definition_id"))
-            .or_else(|| settings.get("definitionId"))
-            .or_else(|| settings.get("definition_id"))
             .and_then(|v| v.as_str())
             .map(String::from);
 
@@ -743,132 +716,8 @@ impl RemoteProxy {
         }
 
         // Query capabilities from the agent for this session type.
-        let mgr = self.agent_manager.clone();
-        let agent_id_owned = self.agent_id.clone();
-        let caps_result = tokio::task::spawn_blocking(move || {
-            mgr.send_request(
-                &agent_id_owned,
-                termihub_core::protocol::methods::CONNECTION_TYPES,
-                serde_json::json!({}),
-            )
-        })
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
-        // Parse the reply into the shared `ConnectionTypesResult` DTO (DUP-001)
-        // and pick this session type's typed `Capabilities` — replacing the
-        // hand-rolled `get("types")`/`get("typeId")`/`get("capabilities")`
-        // indexing. A malformed reply leaves the defaults in place.
-        if let Ok(caps_result) = caps_result {
-            let type_info = serde_json::from_value::<ConnectionTypesResult>(caps_result)
-                .ok()
-                .and_then(|r| r.types.into_iter().find(|t| t.type_id == session_type));
-            if let Some(type_info) = type_info {
-                let parsed = type_info.capabilities;
-                if let Ok(mut c) = self.remote_capabilities.lock() {
-                    *c = parsed.clone();
-                }
-                // Set up file browser proxy if supported. The agent browses
-                // a session by its remote session id: a local session on the
-                // agent host, an SSH/Docker/FTP/WSL session inside its own
-                // remote host, container, server or distribution — which only
-                // a 0.22.0+ agent (`sessionFiles`, #3242) serves. On an older
-                // agent the file browser says to update the agent.
-                if parsed.file_browser {
-                    let is_local = session_type == "local";
-                    let agent_caps = self.agent_manager.get_capabilities(self.agent_id());
-                    let agent_browses_session =
-                        agent_caps.as_ref().is_some_and(|caps| caps.session_files);
-                    let agent_outdated = !is_local && !agent_browses_session;
-                    // Queued transfers (#3587) need ranged slices on top.
-                    let file_ranges =
-                        !agent_outdated && agent_caps.as_ref().is_some_and(|caps| caps.file_ranges);
-                    // A crashed upload trims its partial (#5736) on top.
-                    let file_truncate =
-                        file_ranges && agent_caps.as_ref().is_some_and(|caps| caps.file_truncate);
-                    self.file_browser_proxy = Some(RemoteFileBrowserProxy {
-                        agent_id: self.agent_id.clone(),
-                        remote_session_id: remote_sid.clone(),
-                        agent_manager: self.agent_manager.clone(),
-                        agent_outdated,
-                        file_ranges,
-                        file_truncate,
-                        definition_id: definition_id.clone(),
-                        filesystem: hosted_filesystem(&self.agent_id, &session_type, &config),
-                        filesystem_hint: hosted_filesystem_hint(
-                            &self.agent_id,
-                            &session_type,
-                            &config,
-                            definition_id.as_deref(),
-                        )
-                        .or_else(|| {
-                            // A local session browses the agent host itself
-                            // (#5439): the server the agent was dialled to.
-                            (session_type == "local")
-                                .then(|| self.agent_manager.agent_host_hint(self.agent_id()))
-                                .flatten()
-                        }),
-                        attribute_ops: hosted_attribute_ops(
-                            &session_type,
-                            agent_outdated,
-                            agent_caps
-                                .as_ref()
-                                .and_then(|caps| caps.host_file_attribute_ops),
-                        ),
-                    });
-                }
-                // Set up monitoring proxy if supported.
-                if parsed.monitoring {
-                    // Local sessions are monitored on the agent host itself
-                    // via the "self" sentinel; SSH/Docker/WSL sessions use the
-                    // session ID, which a 0.21.0+ agent (`sessionMonitoring`,
-                    // #3871) serves through that session's own backend. On an
-                    // older agent the status bar says to update the agent.
-                    let is_local = session_type == "local";
-                    let monitoring_host = if is_local {
-                        "self".to_string()
-                    } else {
-                        remote_sid.clone()
-                    };
-                    let agent_monitors_session = self
-                        .agent_manager
-                        .get_capabilities(self.agent_id())
-                        .is_some_and(|caps| caps.session_monitoring);
-                    self.monitoring_proxy = Some(Arc::new(RemoteMonitoringProxy {
-                        agent_id: self.agent_id.clone(),
-                        monitoring_host,
-                        agent_manager: self.agent_manager.clone(),
-                        interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
-                        paused_tx: tokio::sync::watch::channel(false).0,
-                        subscribed: AtomicBool::new(false),
-                        agent_outdated: !is_local && !agent_monitors_session,
-                    }));
-                    // A host that can be monitored can also have its processes
-                    // listed/killed (PROD-0028). For a local agent session the
-                    // "self"-hosted manager runs on the agent; the agent scopes
-                    // by the connection id it receives (None for local). An
-                    // SSH/Docker/WSL session is scoped to its remote session id,
-                    // which a 0.20.0+ agent (`sessionProcesses`, #3210) serves
-                    // through that session's own backend. On an older agent the
-                    // table still opens and says to update the agent.
-                    let is_local = session_type == "local";
-                    let process_connection_id = if is_local {
-                        None
-                    } else {
-                        Some(remote_sid.clone())
-                    };
-                    let agent_serves_session = self
-                        .agent_manager
-                        .get_capabilities(self.agent_id())
-                        .is_some_and(|caps| caps.session_processes);
-                    self.process_proxy = Some(Arc::new(RemoteProcessProxy {
-                        agent_id: self.agent_id.clone(),
-                        connection_id: process_connection_id,
-                        agent_manager: self.agent_manager.clone(),
-                        agent_outdated: !is_local && !agent_serves_session,
-                    }));
-                }
-            }
-        }
+        self.adopt_session_capabilities(&session_type, &config, definition_id.clone(), &remote_sid)
+            .await?;
 
         self.connected.store(true, Ordering::SeqCst);
         debug!(
@@ -1008,7 +857,9 @@ pub(crate) fn hosted_attribute_ops(
 }
 
 mod ranged;
+mod session_caps;
 pub(crate) use ranged::{confirm_truncated, truncate_params};
+use session_caps::RemoteSessionTarget;
 
 /// Message of the `agent_outdated` file-browser failure (#3242).
 const FILES_AGENT_OUTDATED: &str =
