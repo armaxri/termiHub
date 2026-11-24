@@ -106,7 +106,7 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
     await render();
     search("auto-check");
     expect(container.querySelector("[data-testid='update-settings']")).not.toBeNull();
-    expect(container.querySelector("[data-testid='update-auto-check-on']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='update-auto-check']")).not.toBeNull();
     // Only the matched field is shown; the status block stays hidden.
     expect(container.querySelector("[data-testid='update-check-now']")).toBeNull();
     expect(navItem("updates")?.className).not.toContain("settings-nav__item--dimmed");

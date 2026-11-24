@@ -37,6 +37,17 @@ const GIT_BASH_SETUP = "__git_bash_setup__";
  */
 export type SettingsUpdate = AppSettings | ((prev: AppSettings) => AppSettings);
 
+/** The File browser default in plain words (#5846): ordinary SSH, not "agent sessions". */
+const FILE_BROWSER_HINT =
+  "Show the file browser for SSH connections. Each connection can override it.";
+
+/**
+ * What turning it off really does (#5846): the browser of open sessions that use
+ * the default closes; their terminals stay connected, so no confirmation is needed.
+ */
+const FILE_BROWSER_HELP =
+  "Also applies to the other connections that can browse files, such as sessions on a remote agent. Turning it off closes the file browser of open sessions that use this default; their terminals stay connected.";
+
 interface GeneralSettingsProps {
   settings: AppSettings;
   onChange: (update: SettingsUpdate) => void;
@@ -231,7 +242,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("defaultX11Forwarding") && (
             <SettingsField
               label="X11 forwarding by default"
-              hint="Pre-enable X11 forwarding for new SSH connections. Off by default: it lets the remote host open windows on your local X server and read what you type into them, so turn it on only for hosts you trust."
+              hint="Only for trusted hosts: they can read what you type into their windows."
+              help="Pre-enables X11 forwarding for new SSH connections. Off by default: it lets the remote host open windows on your local X server and read what you type into them."
+              hintTestId="settings-default-x11-forwarding-hint"
+              helpTestId="settings-default-x11-forwarding-help"
             >
               <Toggle
                 checked={settings.defaultX11Forwarding ?? false}
@@ -247,7 +261,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("fileBrowser") && (
             <SettingsField
               label="File browser"
-              hint="Enable the SFTP file browser for SSH agent sessions. Individual connections can override it in their settings. Turning it off disconnects active sessions that use the default."
+              hint={FILE_BROWSER_HINT}
+              help={FILE_BROWSER_HELP}
+              hintTestId="settings-file-browser-hint"
+              helpTestId="settings-file-browser-help"
             >
               <Toggle
                 checked={settings.fileBrowserEnabled}
@@ -269,12 +286,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <>
               <SettingsField
                 label="Log file verbosity"
-                hint={
-                  "How much detail termiHub writes to its log file. Raise it to Debug when reporting a bug, then attach or paste the file. " +
+                hint="How much termiHub writes to its log file. Use Debug when reporting a bug."
+                help={
                   "Info is the default; changes apply immediately and persist across restarts. " +
                   (logFilePath ? `Log file: ${logFilePath}. ` : "") +
                   "The TERMIHUB_FILE_LOG environment variable overrides this at startup."
                 }
+                hintTestId="settings-file-log-level-hint"
+                helpTestId="settings-file-log-level-help"
               >
                 <Select
                   value={settings.fileLogLevel ?? "info"}
@@ -294,10 +313,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
 
               <SettingsField
                 label="Debug info"
-                hint={
-                  "Copy a consolidated diagnostics summary (app version, build, platform, log file path, and credential store mode) " +
-                  "for pasting into a bug report. Secrets are redacted before the text leaves the app."
-                }
+                hint="Copy a summary for a bug report. Secrets are left out."
+                help="The summary holds the app version, build, platform, log file path and credential store mode. Secrets are redacted before the text leaves the app."
+                hintTestId="settings-copy-debug-info-hint"
+                helpTestId="settings-copy-debug-info-help"
               >
                 <Button
                   variant="secondary"

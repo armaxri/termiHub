@@ -6,7 +6,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { UpdateSettings } from "./UpdateSettings";
 import { checkA11y } from "@/test/axe";
-import { pressRadioArrow } from "@/test/radioKeyboard";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -240,7 +239,7 @@ describe("UpdateSettings", () => {
 
   it("names the manual-check button as it is labelled (#5615)", async () => {
     await render();
-    expect(container.textContent).toContain("Use \u201cCheck now\u201d to check manually.");
+    expect(container.textContent).toContain("\u201cCheck now\u201d always works.");
   });
 
   it("does not hand a disallowed-scheme release URL to the OS opener (SEC-012)", async () => {
@@ -378,24 +377,34 @@ describe("UpdateSettings", () => {
     });
   });
 
-  describe("auto-check selector semantics (UISF2-002)", () => {
-    it("is a radiogroup named by its section heading", async () => {
+  describe("auto-check toggle (#5846)", () => {
+    it("is one switch named by its label, not a pair of radio cards", async () => {
       await render();
-      const group = query("update-auto-check-group") as HTMLElement;
-      expect(group.getAttribute("role")).toBe("radiogroup");
-      const labelId = group.getAttribute("aria-labelledby") as string;
-      expect(document.getElementById(labelId)?.textContent).toBe("Auto-check for updates");
-      expect(query("update-auto-check-on")?.getAttribute("role")).toBe("radio");
-      expect(query("update-auto-check-on")?.getAttribute("aria-checked")).toBe("true");
-      expect(query("update-auto-check-off")?.getAttribute("aria-checked")).toBe("false");
+      const toggle = query("update-auto-check") as HTMLElement;
+      expect(toggle.getAttribute("role")).toBe("switch");
+      expect(toggle.getAttribute("aria-label")).toBe("Check for updates automatically");
+      expect(container.querySelector("[role='radiogroup']")).toBeNull();
+      expect(query("update-auto-check-on")).toBeNull();
+      expect(query("update-auto-check-off")).toBeNull();
     });
 
-    it("selects 'Never' with the arrow key and persists it", async () => {
+    it("is on by default", async () => {
       await render();
-      const on = query("update-auto-check-on") as HTMLElement;
-      act(() => on.focus());
-      await pressRadioArrow(on, "ArrowDown");
-      expect(document.activeElement).toBe(query("update-auto-check-off"));
+      expect(query("update-auto-check")?.getAttribute("aria-checked")).toBe("true");
+    });
+
+    it("says when it checks and that Check now always works", async () => {
+      await render();
+      expect(query("update-auto-check-hint")?.textContent).toBe(
+        "On startup and every 24 hours. “Check now” always works."
+      );
+    });
+
+    it("turns automatic checks off and persists it", async () => {
+      await render();
+      await act(async () => {
+        (query("update-auto-check") as HTMLElement).click();
+      });
       expect(mockedInvoke).toHaveBeenCalledWith("set_update_auto_check", { enabled: false });
     });
 

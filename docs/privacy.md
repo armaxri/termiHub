@@ -50,8 +50,8 @@ installs anything on its own.
 - **What GitHub sees:** your IP address, the time, and a `User-Agent` header with the version
   you run (`termiHub/<version>`). The request carries no token, cookie or anything about your
   connections.
-- **Turning it off:** set **Settings → Updates → Auto-check for updates** to **Never**. termiHub
-  then checks only when you click **Check now** there.
+- **Turning it off:** turn off **Settings → Updates → Check for updates automatically**.
+  termiHub then checks only when you click **Check now** there.
 
 ### Downloading an update
 

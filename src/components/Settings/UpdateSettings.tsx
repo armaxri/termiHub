@@ -9,7 +9,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
 import { formatBuildDate } from "@/utils/formatters";
-import { Button, RadioGroup, Spinner, StatusDot, Tooltip, toast } from "@/components/ui";
+import { Button, Spinner, StatusDot, Toggle, Tooltip, toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
 import {
   capitalize,
@@ -20,6 +20,7 @@ import { AppUpdateInstallActions } from "@/components/UpdateNotification/AppUpda
 import { isInAppUpdate, releasePageHint } from "@/components/UpdateNotification/installRoute";
 import "./UpdateSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
+import { SettingsField } from "./SettingsField";
 
 interface UpdateSettingsProps {
   visibleFields?: Set<string>;
@@ -256,36 +257,21 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
 
       {show("updateAutoCheck") && (
         <div className="settings-panel__section">
-          <SettingsSectionHeading id="update-auto-check-title">
-            Auto-check for updates
-          </SettingsSectionHeading>
-          <RadioGroup
-            variant="cards"
-            className="settings-panel__radio-group"
-            value={autoCheck ? "on" : "off"}
-            onValueChange={(v) => {
-              if (!savingAutoCheck) void handleAutoCheckToggle(v === "on");
-            }}
-            disabled={savingAutoCheck}
-            aria-labelledby="update-auto-check-title"
-            data-testid="update-auto-check-group"
-            options={[
-              {
-                value: "on",
-                label: "On startup",
-                description: "Check for updates on startup and every 24 hours while running.",
-                "data-testid": "update-auto-check-on",
-              },
-              {
-                value: "off",
-                label: "Never",
-                description: (
-                  <>Disable automatic checks. Use &ldquo;Check now&rdquo; to check manually.</>
-                ),
-                "data-testid": "update-auto-check-off",
-              },
-            ]}
-          />
+          {/* One toggle, not two radio cards (#5846); develop defaults it on. */}
+          <SettingsField
+            label="Check for updates automatically"
+            hint="On startup and every 24 hours. “Check now” always works."
+            hintTestId="update-auto-check-hint"
+          >
+            <Toggle
+              checked={autoCheck}
+              onCheckedChange={(checked) => {
+                if (!savingAutoCheck) void handleAutoCheckToggle(checked);
+              }}
+              disabled={savingAutoCheck}
+              data-testid="update-auto-check"
+            />
+          </SettingsField>
         </div>
       )}
 
