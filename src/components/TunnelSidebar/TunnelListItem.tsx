@@ -16,7 +16,7 @@ import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { useByteRate } from "@/hooks/useByteRate";
-import { connectionStateLabel } from "@/utils/statusLabel";
+import { tunnelStatusLabel } from "@/utils/statusLabel";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import {
   resolveTunnelHost,
@@ -174,6 +174,72 @@ export function TunnelListItem({
     pair: pairLabel && !pairWarn ? pairLabel : null,
   });
 
+  // The row's run control (#5852): always visible on the trailing edge, like
+  // a macro's Play. Stop while it runs, Retry after an error, Start otherwise.
+  // A tunnel whose SSH connection was deleted cannot start; its row offers
+  // "Choose connection" instead.
+  // The store surfaces its own start/stop toast, so each run control suppresses
+  // the Button's duplicate error toast and keeps the pending spinner.
+  let primaryAction: React.ReactNode;
+  if (isActive) {
+    primaryAction = (
+      <Tooltip content="Stop" side="top">
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Stop"
+          data-testid={`tunnel-stop-${tunnel.id}`}
+          icon={<Square size={12} />}
+          errorToast={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            return onStop(tunnel.id);
+          }}
+        />
+      </Tooltip>
+    );
+  } else if (isError) {
+    primaryAction = (
+      <Tooltip content="Retry" side="top">
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Retry"
+          data-testid={`tunnel-retry-${tunnel.id}`}
+          icon={<RotateCw size={12} />}
+          errorToast={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            return onStart(tunnel.id);
+          }}
+        />
+      </Tooltip>
+    );
+  } else if (!isMissingConnection) {
+    primaryAction = (
+      <Tooltip content="Start" side="top">
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Start"
+          data-testid={`tunnel-start-${tunnel.id}`}
+          icon={<Play size={12} />}
+          errorToast={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            return onStart(tunnel.id);
+          }}
+        />
+      </Tooltip>
+    );
+  }
+  const statusLabel = isMissingConnection
+    ? t("tunnel.missingConnection.status")
+    : tunnelStatusLabel(status);
+
   return (
     <SidebarListItem
       ref={rowRef}
@@ -196,11 +262,8 @@ export function TunnelListItem({
       status={
         <SidebarStatusDot
           tone={statusTone(status)}
-          label={
-            isMissingConnection
-              ? t("tunnel.missingConnection.status")
-              : connectionStateLabel(status)
-          }
+          label={statusLabel}
+          title={statusLabel}
           testId={`tunnel-status-${tunnel.id}`}
         />
       }
@@ -208,6 +271,9 @@ export function TunnelListItem({
       descriptionTestId={`tunnel-description-${tunnel.id}`}
       tooltip={tooltip}
       tooltipTestId={`tunnel-tooltip-${tunnel.id}`}
+      primaryAction={primaryAction}
+      primaryActionTestId={`tunnel-primary-${tunnel.id}`}
+      moreActionsLabel={`More actions for ${tunnel.name}`}
       actions={
         <>
           {status === "connected" && (
@@ -227,71 +293,18 @@ export function TunnelListItem({
               />
             </Tooltip>
           )}
-          {isActive && (
-            <Tooltip content="Stop" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                aria-label="Stop"
-                data-testid={`tunnel-stop-${tunnel.id}`}
-                icon={<Square size={12} />}
-                // The store surfaces its own start/stop toast; suppress the
-                // Button's duplicate error toast and keep the pending spinner.
-                errorToast={false}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  return onStop(tunnel.id);
-                }}
-              />
-            </Tooltip>
-          )}
           {isError && (
-            <>
-              <Tooltip content="View last error" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="View last error"
-                  data-testid={`tunnel-view-error-${tunnel.id}`}
-                  icon={<Info size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleViewError();
-                  }}
-                />
-              </Tooltip>
-              <Tooltip content="Retry" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="Retry"
-                  data-testid={`tunnel-retry-${tunnel.id}`}
-                  icon={<RotateCw size={12} />}
-                  errorToast={false}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    return onStart(tunnel.id);
-                  }}
-                />
-              </Tooltip>
-            </>
-          )}
-          {!isActive && !isError && !isMissingConnection && (
-            <Tooltip content="Start" side="top">
+            <Tooltip content="View last error" side="top">
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                aria-label="Start"
-                data-testid={`tunnel-start-${tunnel.id}`}
-                icon={<Play size={12} />}
-                errorToast={false}
+                aria-label="View last error"
+                data-testid={`tunnel-view-error-${tunnel.id}`}
+                icon={<Info size={12} />}
                 onClick={(e) => {
                   e.stopPropagation();
-                  return onStart(tunnel.id);
+                  handleViewError();
                 }}
               />
             </Tooltip>

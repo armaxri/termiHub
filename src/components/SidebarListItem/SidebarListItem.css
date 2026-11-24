@@ -152,6 +152,55 @@
   pointer-events: auto;
 }
 
+/*
+ * Rows with a run control (#5852: a tunnel's or service's Start / Stop) keep
+ * it visible at rest in the header's flow after the name; it is one square
+ * `md` icon button. The other actions form a group positioned against the
+ * header that overlays the name's tail just before the run control on
+ * hover/focus, like the shared hover-reveal, so the name keeps the row at
+ * rest. A narrow row wraps the group onto a second line over the details
+ * instead of clipping it. Mirrors the macro row's Play (#5636).
+ */
+.sidebar-list-item__primary {
+  display: inline-flex;
+  align-items: center;
+}
+
+.sidebar-list-item__more {
+  position: absolute;
+  top: 0;
+  right: calc(var(--control-height-md) + var(--spacing-xxs));
+  max-width: calc(100% - var(--control-height-md) - var(--spacing-xxs));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  padding-left: var(--spacing-xs);
+  background: var(--sidebar-list-item-surface);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-list-item:hover .sidebar-list-item__more,
+.sidebar-list-item:focus-within .sidebar-list-item__more {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* An errored row keeps every recovery action visible in the flow (issue 1240),
+   so the name ellipsizes before them instead of hiding under them. */
+.sidebar-list-item--error .sidebar-list-item__more {
+  position: static;
+  order: -1;
+  max-width: none;
+  flex-wrap: nowrap;
+  padding-left: 0;
+  background: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .sidebar-list-item__details {
   display: flex;
   flex-direction: column;
