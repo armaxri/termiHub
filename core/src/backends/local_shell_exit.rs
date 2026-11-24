@@ -74,16 +74,18 @@ impl ExitStatusSlot {
 /// them, or let them arrive after the exit line. A reader that reaches EOF ends
 /// the wait at once; the bound only covers a child that left a background job
 /// holding the terminal open.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "local-shell"))]
 pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Set once the output reader has forwarded everything it read and stopped.
+#[cfg(any(feature = "local-shell", test))]
 #[derive(Debug, Default)]
 pub(super) struct ReaderDone {
     done: Mutex<bool>,
     finished: Condvar,
 }
 
+#[cfg(any(feature = "local-shell", test))]
 impl ReaderDone {
     /// The reader has stopped: wake a watcher waiting in [`Self::wait`].
     pub(super) fn finish(&self) {
@@ -93,7 +95,7 @@ impl ReaderDone {
     }
 
     /// Block until the reader has stopped, or `timeout` passes.
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg(any(unix, test))]
     pub(super) fn wait(&self, timeout: Duration) {
         let done = self.done.lock().unwrap_or_else(|e| e.into_inner());
         let _ = self
