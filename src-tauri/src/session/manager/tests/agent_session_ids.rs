@@ -38,6 +38,9 @@ async fn maps_agent_hosted_sessions_to_their_agent_session_ids() {
         .expect("the agent session has an agent id");
     assert_eq!(ids.get(&agent_tab), Some(&remote));
     assert!(!ids.contains_key(&direct), "a direct session has none");
-    assert!(!ids.contains_key("gone-session"), "an unknown id is skipped");
+    assert!(
+        !ids.contains_key("gone-session"),
+        "an unknown id is skipped"
+    );
     assert_eq!(ids.len(), 1);
 }
