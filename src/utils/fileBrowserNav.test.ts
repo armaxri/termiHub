@@ -281,7 +281,14 @@ describe("collapseCrumbs", () => {
     ).toEqual({ hiddenStart: 1, hiddenEnd: 1, parentWidth: 60 });
   });
 
-  it("never folds a two-segment path (the leaf ellipsizes instead)", () => {
+  it("folds every other segment before cutting a leaf wider than the row (#5833)", () => {
+    // The leaf alone (300) is wider than the row: only "…" stays beside it.
+    expect(
+      collapseCrumbs({ available: 200, widths: [10, 40, 40, 60, 300], ellipsisWidth })
+    ).toEqual({ hiddenStart: 0, hiddenEnd: 4 });
+  });
+
+  it("never folds a two-segment path (the leaf wraps instead)", () => {
     expect(collapseCrumbs({ available: 10, widths: [10, 300], ellipsisWidth })).toEqual({
       hiddenStart: 0,
       hiddenEnd: 0,

@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Input } from "@/components/ui";
+import { Copy } from "lucide-react";
+import { Button, Input, Tooltip } from "@/components/ui";
 import { CollapsingBreadcrumbs } from "./FileBrowserBreadcrumbs";
 import { isImeComposing } from "@/utils/imeComposition";
 import { eventMatchesSingleBinding } from "@/services/keybindings";
@@ -43,7 +44,10 @@ interface FileBrowserPathBarProps {
   disabled?: boolean;
   /** Breadcrumb segments are drag-to-move drop targets (default `true`). */
   dropTargets?: boolean;
-  /** Copy the full path; offered in the folded segments' menu (#5624). */
+  /**
+   * Copy the full path: a "Copy path" button at the end of the bar (#5833,
+   * `<prefix>-path-copy`) and an entry in the folded segments' menu (#5624).
+   */
   onCopyPath?: () => void;
 }
 
@@ -58,7 +62,10 @@ interface FileBrowserPathBarProps {
  * or pressing the edit-path shortcut, wired by the owning surface through the
  * imperative handle — switches to a free-text input holding the full path,
  * selected (#5540): Enter navigates to the typed path, Escape (or blur)
- * cancels. Both states keep the bar's fixed height.
+ * cancels. Both states keep the bar's control height, unless a current
+ * folder wider than the bar wraps onto more lines (#5833). With `onCopyPath`,
+ * a "Copy path" icon button sits at the bar's end, so the full path is one
+ * click away in place (#5833).
  */
 export const FileBrowserPathBar = forwardRef<FileBrowserPathBarHandle, FileBrowserPathBarProps>(
   function FileBrowserPathBar(
@@ -156,6 +163,20 @@ export const FileBrowserPathBar = forwardRef<FileBrowserPathBarHandle, FileBrows
           dropTargets={dropTargets}
           onCopyPath={onCopyPath}
         />
+        {onCopyPath && !disabled && (
+          <Tooltip content="Copy path" side="bottom">
+            <Button
+              variant="ghost"
+              size="xs"
+              iconOnly
+              icon={<Copy size={12} />}
+              className="file-browser__path-copy"
+              aria-label="Copy path"
+              onClick={onCopyPath}
+              data-testid={`${testIdPrefix}-path-copy`}
+            />
+          </Tooltip>
+        )}
       </div>
     );
   }

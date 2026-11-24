@@ -147,6 +147,40 @@ describe("FileBrowserPathBar", () => {
     expect((query("file-browser-path-input") as HTMLInputElement).value).toBe("/etc");
   });
 
+  it("copies the full path from a button at the bar's end (#5833)", () => {
+    const onCopyPath = vi.fn();
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <FileBrowserPathBar
+            currentPath="/home/user"
+            onNavigate={vi.fn()}
+            onCopyPath={onCopyPath}
+          />
+        </TooltipProvider>
+      );
+    });
+    const copy = query("file-browser-path-copy")!;
+    expect(copy.getAttribute("aria-label")).toBe("Copy path");
+    act(() => copy.click());
+    expect(onCopyPath).toHaveBeenCalledTimes(1);
+    // Copying never opens the editor.
+    expect(query("file-browser-path-input")).toBeNull();
+  });
+
+  it("shows no copy button without a copy handler or while disabled", () => {
+    render("/home/user");
+    expect(query("file-browser-path-copy")).toBeNull();
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <FileBrowserPathBar currentPath="" onNavigate={vi.fn()} onCopyPath={vi.fn()} disabled />
+        </TooltipProvider>
+      );
+    });
+    expect(query("file-browser-path-copy")).toBeNull();
+  });
+
   it("stays read-only while disabled", () => {
     render("/etc", vi.fn(), true);
     expect(query("file-browser-path-edit")).toBeNull();

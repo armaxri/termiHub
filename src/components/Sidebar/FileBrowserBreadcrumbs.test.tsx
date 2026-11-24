@@ -3,6 +3,9 @@
  * into a "…" menu so the leaf stays visible; the full path stays the tooltip.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -170,5 +173,107 @@ describe("CollapsingBreadcrumbs", () => {
       copy!.click();
     });
     expect(onCopyPath).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a current folder wider than the row (#5833)", () => {
+    /** The product run's deep path: five long folders, then a long leaf. */
+    const SEGMENTS = Array.from(
+      { length: 6 },
+      (_, i) => `${i + 1}-a-rather-long-folder-name-for-the-path-bar-check`
+    );
+    const DEEP = `/home/tester/${SEGMENTS.join("/")}`;
+    const LEAF = SEGMENTS[5];
+
+    async function openFold() {
+      const trigger = container.querySelector<HTMLButtonElement>(
+        '[data-testid="file-browser-crumb-overflow"]'
+      )!;
+      await act(async () => {
+        trigger.focus();
+        trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+    }
+
+    it.each([150, 200, 260])("keeps the whole leaf at %ipx, folding the rest first", (w) => {
+      width.value = w;
+      render(DEEP);
+      // Root, every ancestor and the parent fold; only "…" stays beside the leaf.
+      expect(visible()).toEqual(["…", LEAF]);
+      const leaf = container.querySelector<HTMLElement>(
+        `[data-testid="file-browser-crumb-${LEAF}"]`
+      )!;
+      // The leaf is never middle-truncated: no head/tail split, the whole name.
+      expect(leaf.textContent).toBe(LEAF);
+      expect(leaf.querySelector(".file-browser__crumb-head")).toBeNull();
+      expect(leaf.getAttribute("aria-current")).toBe("location");
+      const group = leaf.closest<HTMLElement>(".file-browser__crumb-group")!;
+      expect(group.classList.contains("file-browser__crumb-group--leaf")).toBe(true);
+      expect(group.style.maxWidth).toBe("");
+    });
+
+    it("keeps nearer ancestors beside a long leaf when there is room", () => {
+      width.value = 800;
+      render(DEEP);
+      const shown = visible();
+      expect(shown[shown.length - 1]).toBe(LEAF);
+      expect(shown).toContain("…");
+      expect(shown.length).toBeGreaterThan(2);
+    });
+
+    it("lists every folded folder in the '…' menu and navigates to it", async () => {
+      width.value = 200;
+      const onNavigate = render(DEEP);
+      await openFold();
+      const items = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-testid^="file-browser-crumb-menu-"]')
+      ).map((el) => el.dataset.testid);
+      expect(items).toEqual([
+        "file-browser-crumb-menu-/",
+        "file-browser-crumb-menu-home",
+        "file-browser-crumb-menu-tester",
+        ...SEGMENTS.slice(0, 5).map((s) => `file-browser-crumb-menu-${s}`),
+      ]);
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(`[data-testid="file-browser-crumb-menu-${SEGMENTS[4]}"]`)!
+          .click();
+      });
+      expect(onNavigate).toHaveBeenCalledWith(`/home/tester/${SEGMENTS.slice(0, 5).join("/")}`);
+    });
+
+    it("navigates to the root from the '…' menu", async () => {
+      width.value = 150;
+      const onNavigate = render(DEEP);
+      await openFold();
+      await act(async () => {
+        document.querySelector<HTMLElement>('[data-testid="file-browser-crumb-menu-/"]')!.click();
+      });
+      expect(onNavigate).toHaveBeenCalledWith("/");
+    });
+
+    it("carries the full path as the row's tooltip", () => {
+      width.value = 150;
+      render(DEEP);
+      const nav = container.querySelector('[data-testid="file-browser-current-path"]')!;
+      expect(nav.getAttribute("title")).toBe(DEEP);
+    });
+
+    it("styles the rendered leaf to wrap, never to ellipsize", () => {
+      const css = readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "FileBrowserPathBar.css"),
+        "utf8"
+      );
+      const rule = css.match(
+        /\.file-browser__breadcrumbs > \.file-browser__crumb-group--leaf \.file-browser__crumb \{([^}]*)\}/
+      );
+      expect(rule).not.toBeNull();
+      expect(rule![1]).toMatch(/white-space:\s*normal/);
+      expect(rule![1]).toMatch(/overflow-wrap:\s*anywhere/);
+      expect(rule![1]).not.toMatch(/text-overflow:\s*ellipsis/);
+      // The bar may grow for a wrapped leaf: a minimum, not a fixed height.
+      const bar = css.match(/\.file-browser__path-bar \{([^}]*)\}/)![1];
+      expect(bar).toMatch(/min-height:/);
+      expect(bar).not.toMatch(/(^|[^-])height:/);
+    });
   });
 });
