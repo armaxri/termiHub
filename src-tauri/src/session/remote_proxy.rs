@@ -49,6 +49,7 @@ use tracing::{debug, warn};
 
 use termihub_core::connection::{
     Capabilities, ConnectionType, OutputReceiver, SessionEndCause, SettingsSchema,
+    SshNegotiatedAlgorithms,
 };
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::paste_guard::PathCanonicalizer;
@@ -62,6 +63,7 @@ use termihub_core::monitoring::{
 use termihub_core::protocol::methods::{
     ConnectionTypesResult, FilesListResult, FilesReadResult, MonitoringStatusNotification,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, ProcessesListResult,
+    SshAlgorithmsParams, SshAlgorithmsResult, CONNECTION_SSH_ALGORITHMS,
 };
 
 use crate::session::ssh_keyboard_interactive::current_prompt_owner;
@@ -223,6 +225,18 @@ impl RemoteProxy {
         };
         Ok((proxy, outcome))
     }
+}
+
+/// How long the security popover waits for the agent's
+/// `connection.sshAlgorithms` answer (#5896) before it falls back.
+const SSH_ALGORITHMS_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The algorithms in a `connection.sshAlgorithms` result (#5896); `None` for
+/// a `null` answer or one this desktop cannot read.
+fn parse_ssh_algorithms(value: Value) -> Option<SshNegotiatedAlgorithms> {
+    serde_json::from_value::<SshAlgorithmsResult>(value)
+        .ok()?
+        .algorithms
 }
 
 /// Map a failed agent `connection.create` to the core error the connect
@@ -449,6 +463,35 @@ impl ConnectionType for RemoteProxy {
         self.process_proxy
             .as_ref()
             .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
+    }
+
+    /// The algorithms the remote session's SSH transport negotiated (#5896),
+    /// asked of the agent when the status bar's security popover opens.
+    /// `None` when not connected, for a non-SSH session, and for an agent
+    /// older than protocol 0.44.0 (method not found) — the popover then says
+    /// only "Encrypted (SSH)".
+    async fn ssh_algorithms(&self) -> Option<SshNegotiatedAlgorithms> {
+        let session_id = self.remote_session_id()?;
+        let mgr = self.agent_manager.clone();
+        let agent_id = self.agent_id.clone();
+        let params = serde_json::to_value(SshAlgorithmsParams { session_id }).ok()?;
+        let reply = tokio::task::spawn_blocking(move || {
+            mgr.send_request_bounded(
+                &agent_id,
+                CONNECTION_SSH_ALGORITHMS,
+                params,
+                SSH_ALGORITHMS_TIMEOUT,
+            )
+        })
+        .await
+        .ok()?;
+        match reply {
+            Ok(value) => parse_ssh_algorithms(value),
+            Err(e) => {
+                debug!(agent_id = %self.agent_id, "no SSH algorithms from the agent: {e}");
+                None
+            }
+        }
     }
 
     /// The agent's files-only verdict for the remote session (#4081), so the
@@ -3758,6 +3801,9 @@ mod tests {
 
     /// Crashed agent-hosted uploads trimmed back to their checkpoint (#5736).
     mod truncate_tests;
+
+    /// The negotiated SSH algorithms of agent-hosted sessions (#5896).
+    mod ssh_algorithms_tests;
 
     /// Pastes between two sessions that reach one filesystem (#5355).
     mod cross_session_tests;

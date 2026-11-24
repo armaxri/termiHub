@@ -711,6 +711,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::session_monitoring_cancel,
             // Process list + kill (PROD-0028)
             commands::session::list_processes,
+            commands::session::get_ssh_algorithms,
             commands::session::kill_process,
             // Session output logging (#1960)
             commands::session::session_logging_start,

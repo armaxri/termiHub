@@ -63,6 +63,7 @@ import {
   sessionCopy,
   // session monitoring
   sessionGetCapabilities,
+  getSshAlgorithms,
   sessionMonitoringClose,
   sessionMonitoringSetPaused,
   sessionMonitoringSetInterval,
@@ -746,6 +747,16 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("session_get_capabilities", { sessionId: "s-1" });
       expect(result).toEqual(caps);
+    });
+
+    it("getSshAlgorithms asks for the session's negotiated algorithms (#5896)", async () => {
+      const algorithms = { kex: "k", hostKey: "h", cipher: "c", mac: null };
+      mockedInvoke.mockResolvedValue(algorithms);
+
+      const result = await getSshAlgorithms("s-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_ssh_algorithms", { sessionId: "s-1" });
+      expect(result).toEqual(algorithms);
     });
 
     it("sessionMonitoringClose forwards the session id", async () => {

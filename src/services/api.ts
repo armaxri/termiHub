@@ -15,6 +15,7 @@ import type { RemoteDesktopFileChannel } from "@/types/generated/RemoteDesktopFi
 import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
 import type { RemoteDesktopFileBrowser } from "@/types/generated/RemoteDesktopFileBrowser";
 import type { FileAttributeOps } from "@/types/generated/FileAttributeOps";
+import type { SshNegotiatedAlgorithms } from "@/types/generated/SshNegotiatedAlgorithms";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
@@ -2850,6 +2851,16 @@ export async function sessionGetCapabilities(
       sessionId,
     }
   );
+}
+
+/**
+ * The cipher, MAC, key exchange and host-key algorithm the session's SSH
+ * transport negotiated (#5896), asked when the status bar's security popover
+ * opens. `null` for a non-SSH session, an unknown one, and an agent-hosted
+ * one on an agent that predates it — the popover then says "Encrypted (SSH)".
+ */
+export async function getSshAlgorithms(sessionId: string): Promise<SshNegotiatedAlgorithms | null> {
+  return await invoke<SshNegotiatedAlgorithms | null>("get_ssh_algorithms", { sessionId });
 }
 
 /**

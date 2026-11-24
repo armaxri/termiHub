@@ -1560,6 +1560,19 @@ pub async fn list_processes(
     crate::session::process_ops::list_processes(&manager, &session_id).await
 }
 
+/// The cipher, MAC, key exchange and host-key algorithm an SSH session's
+/// transport negotiated (#5896), for the status bar's "Connection security"
+/// popover, which asks when it opens. `null` for an unknown or non-SSH
+/// session and an agent-hosted one on an agent that predates it — the
+/// popover then says only "Encrypted (SSH)".
+#[tauri::command]
+pub async fn get_ssh_algorithms(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<termihub_core::connection::SshNegotiatedAlgorithms>, TerminalError> {
+    Ok(manager.ssh_algorithms(&session_id).await)
+}
+
 /// Terminate a process in a session (PROD-0028).
 ///
 /// Destructive. `signal` is limited to SIGTERM / SIGKILL and is delivered to the

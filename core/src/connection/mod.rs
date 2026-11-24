@@ -39,6 +39,7 @@ pub mod schema;
 pub mod schema_defaults;
 pub mod secrets;
 pub mod shell_hook;
+pub mod ssh_algorithms;
 pub mod validation;
 pub mod x11_forwarding;
 
@@ -86,6 +87,7 @@ pub use registry::{
 };
 pub use save_password::{normalize_save_password, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY};
 pub use schema::*;
+pub use ssh_algorithms::SshNegotiatedAlgorithms;
 pub use validation::{validate_settings, ValidationError};
 pub use x11_forwarding::{X11ForwardingMode, X11ForwardingReason};
 
@@ -392,6 +394,15 @@ pub trait ConnectionType: Send + Sync {
     /// that can never be files-only returns `None`, the default. The sender lives in the backend, so a receiver's `changed()`
     /// errors once the connection is dropped — a watcher never outlives it.
     fn files_only_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        None
+    }
+
+    /// The algorithms the session's SSH transport negotiated (#5896): cipher,
+    /// MAC, key exchange and host-key algorithm, for the status bar's
+    /// "Connection security" popover. `None` while disconnected and for every
+    /// backend without an SSH transport (the default). Async so a proxy can
+    /// ask the agent hosting the session.
+    async fn ssh_algorithms(&self) -> Option<SshNegotiatedAlgorithms> {
         None
     }
 
