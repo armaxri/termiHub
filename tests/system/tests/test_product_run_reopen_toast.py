@@ -162,6 +162,19 @@ class TestProductRunReopenToast(
             what=f"the {want!r} toast",
         )
 
+    def _wait_for_no_reopen_toast(self) -> None:
+        """Wait until no earlier "Closed …" toast is on offer.
+
+        A close joins the reopen toast while it is still on screen (#5828), so
+        the previous step's cleanup would otherwise count toward this step's
+        "Closed N tabs".
+        """
+        self.wait(
+            lambda: not closed_titles(self._toast_items()),
+            timeout=15.0,
+            what="the previous reopen toast to time out",
+        )
+
     def _reopen(self, closed: list[str]) -> None:
         before = self.tab_ids()
         self.driver.click(REOPEN_ACTION)
@@ -207,6 +220,7 @@ class TestProductRunReopenToast(
             names = [unique_name("pr-reopen") for _ in range(CLOSES)]
             tabs = [self._exited_connection_tab(n) for n in names]
             self.open_new_connection_editor()
+            self._wait_for_no_reopen_toast()
             for tab in tabs:
                 self.close_tab(tab)
             items = self._wait_for_toast(names)
