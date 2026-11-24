@@ -2712,7 +2712,11 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   bar with a minimized status-bar indicator, driven by `transfer-progress` events and generic
   `transfer_*` IPC commands. The panel is the one place transfers are listed: the file browser
   shows only a one-line summary that opens it, and the panel collapses into the indicator once
-  every transfer has completed (#5625). See
+  every transfer has completed (#5625). That summary is the one report of a finished transfer
+  (#5834): while it covers every queued transfer the indicator hides and the success toast stays
+  away. A download's row records its local destination (`localPath` on the seed and row), so a
+  finished download offers "Reveal in Finder" (per-platform wording), which opens the folder
+  through `local_open_folder`. See
   [ADR-12](#adr-12-connection-type-agnostic-transfer-queue). SFTP, Docker and
   **local-disk copies** now use it too (PARITY-004, #3567): a local file copy
   above 8 MiB (`local_copy_start`, including local ↔ WSL copies over the
