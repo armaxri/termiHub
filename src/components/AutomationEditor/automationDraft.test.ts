@@ -228,6 +228,6 @@ it("follows a renamed connection in every trigger, and is itself otherwise (#360
   expect(remapDraftTriggers(draft, (id) => id)).toBe(draft);
   const moved = remapDraftTriggers(draft, (id) => (id === "conn-web-1" ? "Prod/web-1" : id));
   expect(fromDraft(moved, a).triggers).toEqual(
-    JSON.parse(bytes(a.triggers).replaceAll('"conn-web-1"', '"Prod/web-1"'))
+    JSON.parse(bytes(a.triggers).split('"conn-web-1"').join('"Prod/web-1"'))
   );
 });

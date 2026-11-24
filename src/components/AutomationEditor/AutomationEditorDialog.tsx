@@ -6,13 +6,13 @@ import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { useAppStore } from "@/store/appStore";
 import type { Automation } from "@/types/generated/Automation";
+import { remapTriggerConnections } from "@/utils/connectionIdChanges";
 import { ITEM_DESCRIPTION_MAX_LENGTH } from "@/utils/itemDescription";
 import {
   draftContentKey,
   fromDraft,
   onlyTypesKeys,
   remapDraftTriggers,
-  remapTriggers,
   toDraft,
   visitStepDrafts,
   type AutomationDraft,
@@ -109,8 +109,8 @@ export function AutomationEditorDialog({
 
   useConnectionIdChanges((remap) => {
     setBase((b) => {
-      const triggers = remapTriggers(b.triggers, remap);
-      return triggers ? { ...b, triggers } : b;
+      const triggers = remapTriggerConnections(b.triggers, remap);
+      return triggers === b.triggers ? b : { ...b, triggers };
     });
     setInitial((d) => remapDraftTriggers(d, remap));
     setDraft((d) => remapDraftTriggers(d, remap));

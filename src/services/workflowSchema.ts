@@ -4,7 +4,7 @@
  * One declarative description of {@link WorkflowStep}, {@link WorkflowTrigger},
  * {@link WorkflowParameter} and {@link Workflow}, used to validate **untrusted**
  * imported workflow files (`services/workflowIo.ts`) and shared with the
- * editor's step-policy schema (`workflowStepPolicySchema.ts`).
+ * editor's step-policy schema (`stepPolicySchema.ts`).
  *
  * The schemas carry **no user-facing messages**: the import layer maps each zod
  * issue (by its path and the offending value) to its own human-readable error,
@@ -32,6 +32,7 @@ import { z } from "zod";
 
 import { type AssertExact, nonBlankStringSchema } from "@/services/importEnvelope";
 import { validateOutputPattern } from "@/services/workflowOutputTriggers";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type {
   Workflow,
   WorkflowCondition,
@@ -162,8 +163,26 @@ const waitForOutputStep = z.object({
   ...stepPolicyShape,
 });
 
+/**
+ * An automation's Type keys step (#5818). The exported list is of workflow
+ * views, which carry it unchanged (an automation with a trigger, or with other
+ * steps beside its keys), so a file may hold one anywhere.
+ */
+const typeKeysStep = z.object({
+  kind: z.literal("type-keys"),
+  chunks: z.array(z.object({ data: z.string(), delayMs: nonNegative().default(0) })),
+  timing: z.enum(["recorded", "fixed", "instant"]).optional(),
+  fixedDelayMs: nonNegative().optional(),
+  recorded: z.boolean().optional(),
+  ...stepPolicyShape,
+});
+
 /* Each step kind's schema must infer exactly its generated type (drift guard). */
 type StepOut<S extends z.ZodType> = z.output<S>;
+const _typeKeysExact: AssertExact<
+  StepOut<typeof typeKeysStep>,
+  KindOf<AutomationStep, "type-keys">
+> = true;
 const _sendCommandExact: AssertExact<
   StepOut<typeof sendCommandStep>,
   KindOf<WorkflowStep, "send-command">
@@ -200,19 +219,23 @@ const stepOptions = [
   conditionalStep,
   loopStep,
   waitForOutputStep,
+  typeKeysStep,
 ] as const;
 
 /* Every step kind has a schema, and no schema exists for a kind that does not. */
 const _stepKindsExact: AssertExact<
   z.output<(typeof stepOptions)[number]>["kind"],
-  WorkflowStep["kind"]
+  WorkflowStep["kind"] | "type-keys"
 > = true;
 
-/** One workflow step — a discriminated union on `kind`, recursive via containers. */
-export const workflowStepSchema: z.ZodType<WorkflowStep> = z.discriminatedUnion(
+/**
+ * One workflow step — a discriminated union on `kind`, recursive via containers.
+ * Typed as the workflow view's step, which a Type keys step passes through.
+ */
+export const workflowStepSchema = z.discriminatedUnion(
   "kind",
   stepOptions
-);
+) as unknown as z.ZodType<WorkflowStep>;
 
 // ---------------------------------------------------------------------------
 // Triggers
@@ -330,6 +353,7 @@ void [
   _retryExact,
   _conditionExact,
   _loopExact,
+  _typeKeysExact,
   _sendCommandExact,
   _runScriptExact,
   _runMacroExact,

@@ -133,7 +133,8 @@ export async function mountEditor(
     save: async () => {
       click("automation-editor-save");
       await flushAsync();
-      const request = onSave.mock.calls.at(-1)?.[0];
+      const { calls } = onSave.mock;
+      const request = calls[calls.length - 1]?.[0];
       if (!request?.automation) throw new Error("nothing was saved");
       return request.automation;
     },

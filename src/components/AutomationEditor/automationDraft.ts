@@ -14,7 +14,7 @@ import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { TypeKeysChunk } from "@/types/generated/TypeKeysChunk";
 import type { WorkflowParameter } from "@/types/generated/WorkflowParameter";
-import { remapConnectionIdList, type ConnectionIdRemap } from "@/utils/connectionIdChanges";
+import { remapTriggerConnections, type ConnectionIdRemap } from "@/utils/connectionIdChanges";
 import { draftKey } from "@/utils/draftKey";
 import { normalizeItemDescription } from "@/utils/itemDescription";
 import { parseTags } from "@/utils/parseTags";
@@ -22,9 +22,6 @@ import { escapeMacroStepData, parseMacroStepText } from "./keysFormat";
 
 /** The `type-keys` automation step. */
 export type TypeKeysStep = Extract<AutomationStep, { kind: "type-keys" }>;
-
-/** A trigger that is bound to connections. */
-export type ConnectionTrigger = Exclude<AutomationTrigger, { kind: "hotkey" }>;
 
 /** One row of a Type keys step: escape notation plus the delay before it. */
 export interface KeyDraft {
@@ -228,32 +225,14 @@ export function draftContentKey(draft: AutomationDraft): string {
   });
 }
 
-/** Re-point the triggers of a draft at renamed connections; itself when none changed. */
-export function remapTriggers<T extends AutomationTrigger>(
-  triggers: readonly T[],
-  remap: ConnectionIdRemap
-): T[] | null {
-  let changed = false;
-  const next = triggers.map((trigger) => {
-    if (trigger.kind === "hotkey") return trigger;
-    const connectionIds = remapConnectionIdList(trigger.connectionIds, remap);
-    if (connectionIds === trigger.connectionIds) return trigger;
-    changed = true;
-    return { ...trigger, connectionIds };
-  });
-  return changed ? next : null;
-}
-
-/** {@link remapTriggers} over a whole draft; itself when nothing changed. */
+/** Re-point the draft's triggers at renamed connections; itself when none changed. */
 export function remapDraftTriggers(
   draft: AutomationDraft,
   remap: ConnectionIdRemap
 ): AutomationDraft {
-  const next = remapTriggers(
-    draft.triggers.map((t) => t.trigger),
-    remap
-  );
-  if (!next) return draft;
+  const triggers = draft.triggers.map((t) => t.trigger);
+  const next = remapTriggerConnections(triggers, remap);
+  if (next === triggers) return draft;
   return { ...draft, triggers: draft.triggers.map((t, i) => ({ ...t, trigger: next[i] })) };
 }
 

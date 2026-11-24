@@ -136,8 +136,7 @@ const storeFns = {
   runWorkflow: vi.fn(),
   duplicateAutomation: vi.fn(),
   deleteAutomationFromBackend: vi.fn(),
-  saveMacroToBackend: vi.fn(),
-  saveWorkflowToBackend: vi.fn(),
+  saveAutomationToBackend: vi.fn(),
   setWorkflowTriggersEnabled: vi.fn(),
   importMacros: vi.fn(),
   importWorkflows: vi.fn(),
@@ -279,7 +278,7 @@ describe("empty state", () => {
     click("automation-empty-record-btn");
     expect(storeFns.toggleMacroRecording).toHaveBeenCalledTimes(1);
     click("automation-empty-new-btn");
-    expect(query("workflow-editor-dialog")).not.toBeNull();
+    expect(query("automation-editor-dialog")).not.toBeNull();
   });
 
   it("keeps Import reachable and disables Export all", async () => {
@@ -300,15 +299,16 @@ describe("toolbar (R-037)", () => {
     expect(query("automation-export-all-btn")!.textContent).toBe("Export all…");
   });
 
-  it("creates step by step or from typed keystrokes, in the editor that fits", async () => {
+  it("creates step by step or from typed keystrokes, in the one editor", async () => {
     await render();
     openMenu("automation-new-btn");
     click("automation-new-steps");
-    expect(query("workflow-editor-dialog")).not.toBeNull();
-    click("workflow-editor-cancel");
+    expect(query("automation-editor-no-steps")).not.toBeNull();
+    click("automation-editor-cancel");
+    expect(query("automation-editor-dialog")).toBeNull();
     openMenu("automation-new-btn");
     click("automation-new-keys");
-    expect(query("macro-editor-dialog")).not.toBeNull();
+    expect(query("automation-editor-keys-text-0-0")).not.toBeNull();
   });
 
   it("records, and says so while it does", async () => {
@@ -474,7 +474,7 @@ describe("markers", () => {
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", false);
     key(query("automation-arm-toggle-workflow-2")!, "Enter");
     expect(storeFns.runAutomation).not.toHaveBeenCalled();
-    expect(query("workflow-editor-dialog")).toBeNull();
+    expect(query("automation-editor-dialog")).toBeNull();
   });
 
   it("shows Off, meaning the trigger, and arms again", async () => {
@@ -536,18 +536,18 @@ describe("markers", () => {
 });
 
 describe("row actions", () => {
-  it.each([
-    ["macro-1", "macro-editor-dialog"],
-    ["workflow-1", "workflow-editor-dialog"],
-  ])("opens the editor that fits %s, from the button and the menu", async (id, dialog) => {
-    await render();
-    click(`automation-edit-${id}`);
-    expect(query(dialog)).not.toBeNull();
-    click(dialog.replace("-dialog", "-cancel"));
-    expect(query(dialog)).toBeNull();
-    choose(id, "edit");
-    expect(query(dialog)).not.toBeNull();
-  });
+  it.each(["macro-1", "workflow-1"])(
+    "opens the editor on %s, from the button and the menu",
+    async (id) => {
+      await render();
+      click(`automation-edit-${id}`);
+      expect(query("automation-editor-dialog")).not.toBeNull();
+      click("automation-editor-cancel");
+      expect(query("automation-editor-dialog")).toBeNull();
+      choose(id, "edit");
+      expect(query("automation-editor-dialog")).not.toBeNull();
+    }
+  );
 
   it("schedules, shows recent runs, duplicates and runs from the menu", async () => {
     await render();
@@ -580,9 +580,9 @@ describe("row actions", () => {
   it("starts a new automation from typed keystrokes (was: promote a macro)", async () => {
     await render();
     choose("macro-1", "use-in-new");
-    expect((query("workflow-editor-name") as HTMLInputElement).value).toBe("Sudo login");
-    expect(query("workflow-editor-step-0")).not.toBeNull();
-    click("workflow-editor-cancel");
+    expect((query("automation-editor-name") as HTMLInputElement).value).toBe("Sudo login");
+    expect(query("automation-editor-step-automation-0")!.textContent).toContain("Sudo login");
+    click("automation-editor-cancel");
     openAutomationRowMenu("workflow-1");
     expect(query("automation-menu-use-in-new-workflow-1")).toBeNull();
   });
@@ -633,50 +633,92 @@ describe("row actions", () => {
   });
 });
 
-describe("editors", () => {
-  it("saves a hand-written keystroke automation and keeps the dialog on failure", async () => {
-    storeFns.saveMacroToBackend.mockRejectedValueOnce(new Error("disk full"));
+describe("the editor", () => {
+  const set = (testId: string, value: string) => {
+    const input = query(testId) as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("stores an edit and keeps the dialog when that fails", async () => {
+    storeFns.saveAutomationToBackend.mockRejectedValueOnce(new Error("disk full"));
     await render();
     click("automation-edit-macro-1");
-    click("macro-editor-save");
+    set("automation-editor-name", "Sudo prompt");
+    click("automation-editor-save");
     await flushAsync();
     expect(toastError).toHaveBeenCalledWith("Failed to save automation: disk full");
-    expect(query("macro-editor-dialog")).not.toBeNull();
-    click("macro-editor-save");
+    expect(query("automation-editor-dialog")).not.toBeNull();
+    click("automation-editor-save");
     await flushAsync();
-    expect(query("macro-editor-dialog")).toBeNull();
-    expect(storeFns.saveMacroToBackend).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: "macro-1", name: "Sudo login", tags: ["ops"] })
-    );
+    expect(query("automation-editor-dialog")).toBeNull();
+    expect(storeFns.saveAutomationToBackend).toHaveBeenLastCalledWith({
+      ...typed,
+      name: "Sudo prompt",
+    });
+    expect(storeFns.runAutomation).not.toHaveBeenCalled();
   });
 
-  it("creates a keystroke automation with a fresh id", async () => {
+  it("stores nothing when nothing changed", async () => {
+    await render();
+    click("automation-edit-macro-1");
+    click("automation-editor-save");
+    await flushAsync();
+    expect(query("automation-editor-dialog")).toBeNull();
+    expect(storeFns.saveAutomationToBackend).not.toHaveBeenCalled();
+    expect(query("automation-item-macro-1")!.hasAttribute("data-just-saved")).toBe(false);
+  });
+
+  it("creates typed keys under a fresh id, and Save and run runs them", async () => {
     await render();
     openMenu("automation-new-btn");
     click("automation-new-keys");
-    const set = (testId: string, value: string) => {
-      const input = query(testId) as HTMLInputElement;
-      const proto =
-        input instanceof HTMLTextAreaElement
-          ? window.HTMLTextAreaElement.prototype
-          : window.HTMLInputElement.prototype;
-      act(() => {
-        Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    };
-    set("macro-editor-name", "Greet");
-    if (!query("macro-editor-step-data-0")) click("macro-editor-add-step");
-    set("macro-editor-step-data-0", "echo hi\\r");
-    click("macro-editor-save");
+    set("automation-editor-name", "Greet");
+    set("automation-editor-keys-text-0-0", "echo hi\\r");
+    click("automation-editor-save-run");
     await flushAsync();
-    expect(storeFns.saveMacroToBackend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "Greet",
-        steps: [expect.objectContaining({ data: "echo hi\r" })],
-      })
-    );
-    expect(storeFns.saveMacroToBackend.mock.calls[0][0].id).toMatch(/^macro-/);
+    const saved = storeFns.saveAutomationToBackend.mock.calls[0][0] as Automation;
+    expect(saved).toMatchObject({
+      name: "Greet",
+      steps: [
+        { kind: "type-keys", chunks: [{ data: "echo hi\r", delayMs: 0 }], timing: "recorded" },
+      ],
+    });
+    expect(saved.id).toMatch(/^automation-/);
+    expect(storeFns.runAutomation).toHaveBeenCalledWith(saved.id);
+  });
+
+  it("Save and run asks where without an active terminal", async () => {
+    await render();
+    seedTerminals(null);
+    await flushAsync();
+    click("automation-edit-workflow-1");
+    click("automation-editor-save-run");
+    await flushAsync();
+    expect(storeFns.runAutomation).not.toHaveBeenCalled();
+    expect(query("run-targets-dialog")).not.toBeNull();
+  });
+
+  it("opens the schedule editor for a new automation once it is saved", async () => {
+    await render();
+    openMenu("automation-new-btn");
+    click("automation-new-keys");
+    set("automation-editor-name", "Greet");
+    set("automation-editor-keys-text-0-0", "x");
+    click("automation-editor-when-toggle");
+    openMenu("automation-editor-add-trigger");
+    click("automation-editor-add-schedule");
+    await flushAsync();
+    expect(storeFns.openScheduleEditor).not.toHaveBeenCalled();
+    click("automation-editor-save");
+    await flushAsync();
+    const { id } = storeFns.saveAutomationToBackend.mock.calls[0][0] as Automation;
+    expect(storeFns.openScheduleEditor).toHaveBeenCalledWith({
+      action: { kind: "automation", automationId: id },
+    });
   });
 
   describe("mark the saved row (#5687)", () => {
@@ -685,39 +727,40 @@ describe("editors", () => {
       delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
     });
 
-    it.each([
-      ["macro-1", "macro-editor-save"],
-      ["workflow-2", "workflow-editor-save"],
-    ])("highlights %s, scrolls it into view, then unmarks it", async (id, save) => {
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      const scrolled: Array<{ testId: string | null; opts: unknown }> = [];
-      HTMLElement.prototype.scrollIntoView = function (this: HTMLElement, opts?: unknown) {
-        scrolled.push({ testId: this.getAttribute("data-testid"), opts });
-      } as HTMLElement["scrollIntoView"];
-      await act(async () => {
-        setLibrary(library);
-        root.render(withTooltip(<AutomationSidebar />));
-      });
-      click(`automation-edit-${id}`);
-      scrolled.length = 0;
-      click(save);
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-      const row = query(`automation-item-${id}`)!;
-      expect(row.getAttribute("data-just-saved")).toBe("true");
-      expect(row.classList.contains("automation-item--just-saved")).toBe(true);
-      expect(scrolled.filter((s) => s.testId === `automation-item-${id}`)).toEqual([
-        { testId: `automation-item-${id}`, opts: { block: "nearest", behavior: "smooth" } },
-      ]);
-      expect(query("automation-item-workflow-1")!.hasAttribute("data-just-saved")).toBe(false);
-      act(() => {
-        vi.advanceTimersByTime(AUTOMATION_JUST_SAVED_MS);
-      });
-      expect(query(`automation-item-${id}`)!.hasAttribute("data-just-saved")).toBe(false);
-      expect(toastSuccess).not.toHaveBeenCalled();
-    });
+    it.each(["macro-1", "workflow-2"])(
+      "highlights %s, scrolls it into view, then unmarks it",
+      async (id) => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const scrolled: Array<{ testId: string | null; opts: unknown }> = [];
+        HTMLElement.prototype.scrollIntoView = function (this: HTMLElement, opts?: unknown) {
+          scrolled.push({ testId: this.getAttribute("data-testid"), opts });
+        } as HTMLElement["scrollIntoView"];
+        await act(async () => {
+          setLibrary(library);
+          root.render(withTooltip(<AutomationSidebar />));
+        });
+        click(`automation-edit-${id}`);
+        set("automation-editor-name", "Renamed");
+        scrolled.length = 0;
+        click("automation-editor-save");
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        const row = query(`automation-item-${id}`)!;
+        expect(row.getAttribute("data-just-saved")).toBe("true");
+        expect(row.classList.contains("automation-item--just-saved")).toBe(true);
+        expect(scrolled.filter((s) => s.testId === `automation-item-${id}`)).toEqual([
+          { testId: `automation-item-${id}`, opts: { block: "nearest", behavior: "smooth" } },
+        ]);
+        expect(query("automation-item-workflow-1")!.hasAttribute("data-just-saved")).toBe(false);
+        act(() => {
+          vi.advanceTimersByTime(AUTOMATION_JUST_SAVED_MS);
+        });
+        expect(query(`automation-item-${id}`)!.hasAttribute("data-just-saved")).toBe(false);
+        expect(toastSuccess).not.toHaveBeenCalled();
+      }
+    );
   });
 });
 
