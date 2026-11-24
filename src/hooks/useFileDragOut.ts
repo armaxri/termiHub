@@ -95,9 +95,11 @@ async function stageRemote(sessionId: string, entries: FileEntry[]): Promise<str
     const tree = await buildStagingTree(entries, (path) => sessionListFiles(sessionId, path));
     const staging = await dragOutCreateStaging(tree.staging);
     dir = staging.dir;
-    // Each file is a queued leg of the shared pane transfer engine (#3913).
+    // Each file is a queued leg of the shared pane transfer engine (#3913). The
+    // staging copy is not where the user put the file, so its row offers no
+    // "Reveal in Finder" (#5834).
     await runBounded(tree.downloads, DRAG_OUT_DOWNLOAD_CONCURRENCY, ({ index, remotePath }) =>
-      startQueuedDownload(sessionId, remotePath, staging.paths[index])
+      startQueuedDownload(sessionId, remotePath, staging.paths[index], undefined, false)
     );
     const roots = tree.roots.map((i) => staging.paths[i]);
     rememberStaging(sessionId, entries, staging.dir, roots);
