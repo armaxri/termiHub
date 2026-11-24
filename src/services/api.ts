@@ -1297,6 +1297,15 @@ export async function takeResumedAgentSession(sessionId: string): Promise<boolea
   return await invoke<boolean>("take_resumed_agent_session", { sessionId });
 }
 
+/**
+ * The agent's own session id of each agent-hosted session among the desktop
+ * `sessionIds`, keyed by desktop session id (#5960). Direct and unknown
+ * sessions are left out.
+ */
+export async function agentSessionIds(sessionIds: string[]): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("agent_session_ids", { sessionIds });
+}
+
 /** List all active local sessions (includes remote proxy sessions). */
 export async function listLocalSessions(): Promise<LocalSessionInfo[]> {
   return await invoke<LocalSessionInfo[]>("list_local_sessions");

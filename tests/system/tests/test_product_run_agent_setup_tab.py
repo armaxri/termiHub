@@ -76,6 +76,42 @@ def test_grade_a_failed_setup_needs_the_failed_variant():
     assert setup_tab_problems(variant="agent-setup-failed", text=failed, buttons=["Close tab"])
 
 
+WINDOWS_SENT_TEXT = (
+    "Setup commands sent The install runs in this tab: check its output, then close the tab. "
+    "Close tab"
+)
+
+
+def test_grade_a_windows_setup_that_only_says_sent_fails():
+    # Before #5946: a Windows setup tab could only say its commands were sent.
+    problems = setup_tab_problems(
+        variant="agent-setup-sent", text=WINDOWS_SENT_TEXT, buttons=["Close tab"]
+    )
+    assert "the setup tab only says its commands were sent, not the outcome" in problems
+    failed = setup_tab_problems(
+        variant="agent-setup-sent", text=WINDOWS_SENT_TEXT, buttons=["Close tab"], outcome="failed"
+    )
+    assert "the setup tab only says its commands were sent, not the outcome" in failed
+
+
+def test_grade_a_windows_setup_reads_installed_or_failed_from_its_exit():
+    # The Windows commands end the shell with `exit`, so the strip is the same
+    # installed / failed strip as on POSIX (#5946).
+    assert (
+        setup_tab_problems(
+            variant="agent-setup-installed", text=INSTALLED_TEXT, buttons=["Close tab"], keep_clear=1
+        )
+        == []
+    )
+    failed = "Agent setup failed The output below says what went wrong. The setup script exited with code 1."
+    assert (
+        setup_tab_problems(
+            variant="agent-setup-failed", text=failed, buttons=["Close tab"], outcome="failed"
+        )
+        == []
+    )
+
+
 def test_grade_every_outcome_has_a_heading():
     assert set(HEADINGS) == {"installed", "failed", "cancelled", "sent"}
 

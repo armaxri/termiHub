@@ -16,6 +16,10 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import {
+  clearAgentDisconnectIntent,
+  markAgentDisconnectIntent,
+} from "@/store/agentDisconnectIntent";
 import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
 import {
   FakeSessionTransport,
@@ -89,13 +93,21 @@ const mockSubscribeOutput = vi.fn((sid: string, cb: (data: Uint8Array) => void) 
   outputCallbacks[sid] = cb;
   return vi.fn();
 });
-const mockSubscribeExit = vi.fn(() => vi.fn());
+// The exit callback per session, so a test can end a session (#5959).
+const exitCallbacks: Record<string, (code: number | null, cause?: unknown) => void> = {};
+const mockSubscribeExit = vi.fn(
+  (sid: string, cb: (code: number | null, cause?: unknown) => void) => {
+    exitCallbacks[sid] = cb;
+    return vi.fn();
+  }
+);
 const mockClearPendingOutput = vi.fn();
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
     subscribeOutput: (...a: unknown[]) => mockSubscribeOutput(...(a as [string, () => void])),
-    subscribeExit: (...a: unknown[]) => mockSubscribeExit(...(a as [])),
+    subscribeExit: (...a: unknown[]) =>
+      mockSubscribeExit(...(a as [string, (code: number | null) => void])),
     clearPendingExit: vi.fn(),
     clearPendingOutput: (...a: unknown[]) => mockClearPendingOutput(...(a as [])),
   },
@@ -234,5 +246,31 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
     expect(lines.some((line) => line.includes("new remote shell"))).toBe(false);
     // The daemon's live re-forward of the same buffer is dropped.
     expect(mockClearPendingOutput).toHaveBeenCalledWith("fresh-session");
+  });
+});
+
+describe("Terminal — the line a user agent Disconnect leaves (#5959)", () => {
+  it("writes 'disconnected by you', not 'connection lost'", async () => {
+    await mountConnected();
+    markAgentDisconnectIntent("agent-1");
+    try {
+      act(() => {
+        exitCallbacks["S1"]?.(null, null);
+      });
+    } finally {
+      clearAgentDisconnectIntent("agent-1");
+    }
+    const lines = written(xtermInstances[xtermInstances.length - 1]);
+    expect(lines.some((line) => line.includes("disconnected by you"))).toBe(true);
+    expect(lines.some((line) => line.includes("connection lost"))).toBe(false);
+  });
+
+  it("still says 'connection lost' for a real drop", async () => {
+    await mountConnected();
+    act(() => {
+      exitCallbacks["S1"]?.(null, null);
+    });
+    const lines = written(xtermInstances[xtermInstances.length - 1]);
+    expect(lines.some((line) => line.includes("connection lost"))).toBe(true);
   });
 });

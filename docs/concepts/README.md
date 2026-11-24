@@ -102,7 +102,9 @@ All features in this folder are live in the codebase.
 These features have something built, but there are meaningful gaps. See the
 **## Implementation Status** section at the bottom of each document for details.
 
-_No concepts are currently partially implemented._
+| Document                                     | Summary                                                                                                                                                                                                                                                              |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [automations.html](partial/automations.html) | Merge macros and workflows into one **Automations** type: `type-keys` steps with a saved typing speed, optional triggers, one sidebar, editor, history and run picker, and a reversible migration (umbrella #5818; slice 1 of 12, the model and converters, is done) |
 
 ---
 

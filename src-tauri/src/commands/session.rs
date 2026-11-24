@@ -1890,6 +1890,17 @@ pub async fn get_agent_session_buffer(
     Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }
 
+/// The agent's own session id of each agent-hosted session among the desktop
+/// `session_ids`, keyed by desktop session id (#5960), so the sidebar can mark
+/// the agent's "Active sessions" rows an open tab shows.
+#[tauri::command]
+pub async fn agent_session_ids(
+    session_ids: Vec<String>,
+    manager: State<'_, SessionManager>,
+) -> Result<std::collections::HashMap<String, String>, TerminalError> {
+    Ok(manager.agent_session_ids(&session_ids).await)
+}
+
 /// Whether the connect that opened `session_id` resumed the tab's own agent
 /// session after a user agent Disconnect, rather than starting a new one
 /// (#5953). One-shot: the tab asks once, right after its reconnect, to repaint
