@@ -11,6 +11,8 @@
 import { t, tf } from "@/i18n/catalog";
 import { RECONNECTING_HEADING } from "@/utils/reconnectStatus";
 import type { SessionEndCause } from "@/types/generated/SessionEndCause";
+import type { TerminalExitInfo } from "@/types/terminal";
+import { serialDeviceName } from "@/utils/serialDeviceName";
 
 /** What kind of link a dropped session ran over. */
 export type DropTransport = "serial" | "ssh" | "telnet" | "agent" | "other";
@@ -39,9 +41,108 @@ export function dropTransportOf(identity: DropIdentity | undefined): DropTranspo
   }
 }
 
-/** The strip heading while an automatic reconnect runs. */
-export function reconnectHeadingFor(transport: DropTransport): string {
-  if (transport === "serial") return t("drop.heading.serial");
+/**
+ * Why a session ended, in one word (#5831): the user disconnected it, it ended
+ * normally, its process exited with a code, the server closed the link, the
+ * link timed out, the network failed, the device went away, or the link was
+ * lost for a reason the backend could not tell.
+ */
+export type DisconnectCause =
+  | "user"
+  | "ended"
+  | "exited"
+  | "server"
+  | "timeout"
+  | "network"
+  | "device"
+  | "lost";
+
+/** Causes where the link dropped on its own (no process exit, no user action). */
+const LINK_CAUSES: ReadonlySet<DisconnectCause> = new Set([
+  "server",
+  "timeout",
+  "network",
+  "device",
+  "lost",
+]);
+
+/** Whether `cause` is a dropped link, the only kind auto-reconnect retries. */
+export function isLinkDrop(cause: DisconnectCause | undefined): boolean {
+  return cause !== undefined && LINK_CAUSES.has(cause);
+}
+
+/** What the cause line needs to know about how the session ended. */
+export interface DisconnectCauseInput {
+  transport: DropTransport;
+  /** The classified exit, when the session has exited (it is cleared while a
+   * reconnect loop runs). */
+  exit?: TerminalExitInfo;
+  /** The backend's verdict on why the link ended (#5696), kept through the
+   * reconnect loop and its give-up. */
+  endCause?: SessionEndCause | null;
+}
+
+/**
+ * Classify why a session ended (#5831). A user kill and a process exit win over
+ * the link's end cause; a serial transport's drop is its device going away.
+ * `undefined` when nothing is known (no exit and no end cause).
+ */
+export function disconnectCauseOf(input: DisconnectCauseInput): DisconnectCause | undefined {
+  const { transport, exit, endCause } = input;
+  if (exit?.reason === "killed") return "user";
+  if (exit && exit.code !== null) {
+    return exit.reason === "clean" && exit.code === 0 ? "ended" : "exited";
+  }
+  if (exit?.reason === "clean") return "ended";
+  if (!exit && !endCause) return undefined;
+  if (endCause === "device_gone" || transport === "serial") return "device";
+  if (endCause === "remote_closed") return "server";
+  if (endCause === "timeout") return "timeout";
+  if (endCause === "io_error") return "network";
+  return "lost";
+}
+
+/**
+ * The one cause line every disconnect notice shows (#5831): the strip, the
+ * overlay and the view-mode banner all say why the session ended the same way.
+ * `device` is the serial port path, when known (its short name is shown).
+ */
+export function disconnectCauseLine(
+  cause: DisconnectCause,
+  details: { code?: number | null; device?: string } = {}
+): string {
+  switch (cause) {
+    case "user":
+      return t("drop.cause.user");
+    case "ended":
+      return details.code === null || details.code === undefined
+        ? t("drop.cause.ended")
+        : tf("drop.cause.endedCode", { code: details.code });
+    case "exited":
+      return tf("drop.cause.exited", { code: details.code ?? "?" });
+    case "server":
+      return t("drop.cause.server");
+    case "timeout":
+      return t("drop.cause.timeout");
+    case "network":
+      return t("drop.cause.network");
+    case "device":
+      return details.device
+        ? tf("drop.cause.device", { device: serialDeviceName(details.device) })
+        : t("drop.cause.deviceUnknown");
+    case "lost":
+      return t("drop.cause.lost");
+  }
+}
+
+/**
+ * The strip heading while an automatic reconnect runs. The link's cause, when
+ * the backend knows it, wins over the transport's default wording (#5831).
+ */
+export function reconnectHeadingFor(transport: DropTransport, cause?: DisconnectCause): string {
+  if (cause === "device" || transport === "serial") return t("drop.heading.serial");
+  if (cause === "server") return t("drop.heading.server");
+  if (cause === "timeout") return t("drop.heading.timeout");
   if (transport === "telnet") return t("drop.heading.telnet");
   return RECONNECTING_HEADING;
 }
@@ -116,7 +217,16 @@ export function sessionEndSeparator(input: {
   return exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
 }
 
-/** The marker written after a successful reconnect (#5660). */
-export function reconnectedMarker(at: Date): string {
-  return tf("drop.separator.reconnected", { time: formatClock(at) });
+/**
+ * The marker written after a successful reconnect (#5660). It says what the new
+ * session lost (#5831, R-101): SSH opens a new remote shell, telnet a new
+ * telnet session and any other session starts afresh, so running programs are
+ * gone; a serial device is reopened and keeps the plain marker.
+ */
+export function reconnectedMarker(at: Date, transport: DropTransport = "other"): string {
+  const time = formatClock(at);
+  if (transport === "serial") return tf("drop.separator.reconnected", { time });
+  if (transport === "telnet") return tf("drop.separator.reconnectedTelnet", { time });
+  if (transport === "ssh") return tf("drop.separator.reconnectedShell", { time });
+  return tf("drop.separator.reconnectedSession", { time });
 }

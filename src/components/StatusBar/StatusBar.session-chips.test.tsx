@@ -126,7 +126,9 @@ describe("StatusBar — session chips (#5628)", () => {
     expect(container.querySelector('[data-testid="status-bar-ssh"]')).toBeNull();
     const chip = container.querySelector('[data-testid="status-bar-serial"]');
     expect(chip).not.toBeNull();
-    expect(chip!.textContent).toContain("/dev/ttyPR0 · 9600 8N1");
+    expect(chip!.textContent).toContain("ttyPR0 · 9600 8N1");
+    expect(chip!.textContent).not.toContain("/dev/");
+    expect(chip!.getAttribute("title")).toContain("/dev/ttyPR0");
   });
 
   it("shows the telnet chip with the Unencrypted badge (#5749)", async () => {

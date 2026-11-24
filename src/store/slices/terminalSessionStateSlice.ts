@@ -294,6 +294,13 @@ export interface TerminalSessionStateSlice {
    * shows no active reconnect for the tab.
    */
   cancelAutoReconnect: (tabId: string, error?: string) => void;
+  /**
+   * Retry now (#5831): run the waiting attempt of a tab's resilient-reconnect
+   * loop at once instead of at the end of its backoff window
+   * (`session.reconnectNow`). The backend owns the loop, so this only asks it to
+   * collapse the window; a no-op when the region shows no running loop.
+   */
+  retryAutoReconnectNow: (tabId: string) => void;
 }
 
 /**
@@ -554,7 +561,7 @@ export const createTerminalSessionStateSlice: StateCreator<
     // exit (which dispatches no status intent). Only fires when the exit was
     // classified (a bare `setTerminalExited(tabId)` with no info records nothing).
     if (info) {
-      mirrorSessionExited(tabId, info);
+      mirrorSessionExited(tabId, info, endCause);
       // On-disconnect workflow triggers (#3791): a drop or a user close.
       notifyWorkflowSessionExited({ get, set }, tabId, info.reason);
     }
@@ -776,6 +783,10 @@ export const createTerminalSessionStateSlice: StateCreator<
   dismissTerminalReconnectPrompt: (tabId) =>
     set((state) => ({ terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId) })),
 
+  retryAutoReconnectNow: (tabId) => {
+    if (currentSessionView()[tabId]?.status !== "reconnecting") return;
+    mirrorSessionIntent("session.reconnectNow", tabId);
+  },
   cancelAutoReconnect: (tabId, error) => {
     // The reconnect loop lives entirely in the region now (#2205 PR-B). No active
     // loop → nothing to cancel (avoid spuriously forcing the overlay).

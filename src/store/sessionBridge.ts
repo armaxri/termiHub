@@ -44,6 +44,7 @@ import {
   type Transport,
 } from "@/services/transport";
 import type { TerminalAutoReconnectState, TerminalExitInfo } from "@/types/terminal";
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import {
   RECONNECT_POLICY,
   initialReconnectState,
@@ -142,6 +143,11 @@ export interface ProjectedSessionLifecycle {
    * Twin of the Rust `SessionLifecycle.plugin_exit`, folded by the backend at the
    * `terminal-exit` source; drives the plugin crash overlay. Omitted otherwise. */
   pluginExit?: PluginSessionExit;
+  /** Why the session's link last ended on its own (#5831): the server closed it,
+   * the network failed, it timed out or the device went away. Twin of the Rust
+   * `SessionLifecycle.end_cause`. Unlike `exit` it is kept while the reconnect
+   * loop runs and after it gives up; cleared by a fresh or successful connect. */
+  endCause?: SessionEndCause;
 }
 
 /** Why a plugin session's sandboxed plugin process failed (#4188) — twin of the
@@ -175,6 +181,7 @@ export type SessionIntentKind =
   | "session.cancelReconnect"
   | "session.reconnectTrigger"
   | "session.exited"
+  | "session.reconnectNow"
   | "session.remove";
 
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
@@ -307,12 +314,13 @@ export function mirrorSessionLive(tabId: string): void {
  * catches — never a synchronous throw. */
 async function dispatchSessionExited(
   sessionId: string,
-  exit: TerminalExitInfo
+  exit: TerminalExitInfo,
+  endCause: SessionEndCause | null | undefined
 ): Promise<IntentAck> {
   return transport().dispatch({
     intentId: newIntentId(),
     kind: "session.exited",
-    payload: { sessionId, reason: exit.reason, code: exit.code },
+    payload: { sessionId, reason: exit.reason, code: exit.code, endCause: endCause ?? null },
     clientId,
   });
 }
@@ -322,7 +330,11 @@ async function dispatchSessionExited(
  * onto the shared `session-lifecycle` region. A pure-metadata write (it does not
  * touch the coarse lifecycle status). Swallows and logs any failure so the local
  * exit path is never disrupted by a bridge hiccup; never throws. */
-export function mirrorSessionExited(sessionId: string, exit: TerminalExitInfo): void {
+export function mirrorSessionExited(
+  sessionId: string,
+  exit: TerminalExitInfo,
+  endCause?: SessionEndCause | null
+): void {
   // Route through the optimistic path (#2621) so the region-derived mount gate
   // ({@link regionExited}) flips synchronously — a clean exit fires no status
   // intent, so `exit` is the only signal and it must not wait for the async diff.
@@ -332,7 +344,7 @@ export function mirrorSessionExited(sessionId: string, exit: TerminalExitInfo): 
   } catch (err) {
     // No transport (non-Tauri without a socket): fall back to a plain dispatch
     // (which will itself no-op/log), preserving the pre-cut resilience contract.
-    void dispatchSessionExited(sessionId, exit)
+    void dispatchSessionExited(sessionId, exit, endCause)
       .then((ack) => {
         if (ack.status === "rejected") {
           logSessionBridgeFallback("session.exited", new Error(ack.error?.message ?? "rejected"));
@@ -346,11 +358,16 @@ export function mirrorSessionExited(sessionId: string, exit: TerminalExitInfo): 
   const intent: Intent = {
     intentId: newIntentId(),
     kind: "session.exited",
-    payload: { sessionId, reason: exit.reason, code: exit.code },
+    payload: { sessionId, reason: exit.reason, code: exit.code, endCause: endCause ?? null },
     clientId,
   };
   const overlay: OptimisticFold = (view) =>
-    sessionExitedFold((view ?? { sessions: {} }) as SessionLifecycleView, sessionId, exit);
+    sessionExitedFold(
+      (view ?? { sessions: {} }) as SessionLifecycleView,
+      sessionId,
+      exit,
+      endCause ?? undefined
+    );
   void client
     .dispatchOptimistic(intent, overlay)
     .then((ack) => {
@@ -515,12 +532,18 @@ const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimis
 function sessionExitedFold(
   view: SessionLifecycleView,
   sessionId: string,
-  exit: TerminalExitInfo
+  exit: TerminalExitInfo,
+  endCause: SessionEndCause | undefined
 ): SessionLifecycleView {
   const prev = view.sessions[sessionId] ?? projectedConnected();
+  // The link's end cause sits beside `exit` (#5831), as on the Rust record.
+  const { endCause: _stale, ...rest } = prev;
+  const next: ProjectedSessionLifecycle = endCause
+    ? { ...rest, exit, endCause }
+    : { ...rest, exit };
   return {
     ...view,
-    sessions: { ...view.sessions, [sessionId]: { ...prev, exit } },
+    sessions: { ...view.sessions, [sessionId]: next },
   };
 }
 

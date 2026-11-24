@@ -63,6 +63,26 @@ export function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
 }
 
 /**
+ * Whether `tab` is a direct SSH, serial or telnet terminal whose connection has
+ * auto-reconnect turned off (#5831): a dropped link then shows the manual
+ * overlay, which says so and where to turn it on. False for agent-hosted and
+ * persistent tabs (they reconnect through their own machinery) and for types
+ * without the setting.
+ */
+export function isAutoReconnectOffTab(tab: TerminalTab | undefined): boolean {
+  if (!tab || tab.contentType !== "terminal" || tab.persistentConnectionId) return false;
+  const cfg = tab.config?.config as Record<string, unknown> | undefined;
+  if (!cfg || cfg.agentId) return false;
+  if (!TERMINAL_AUTO_RECONNECT_TYPES.includes(tab.connectionType)) return false;
+  return !isAutoReconnectEnabled(cfg, tab.connectionType);
+}
+
+/** {@link isAutoReconnectOffTab} for a tab id; false when the tab is gone. */
+export function isAutoReconnectOffTabId(tabId: string): boolean {
+  return isAutoReconnectOffTab(findTabById(tabId));
+}
+
+/**
  * Whether a lost link (no exit code) on `tab` arms the resilient reconnect:
  * a resilient tab, unless its agent said the session's device is gone for good
  * (`device_gone`, #5783). An agent reopens its own serial port in place

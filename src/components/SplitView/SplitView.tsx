@@ -55,7 +55,10 @@ import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
-import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
+import {
+  disconnectCauseLineForTab,
+  TerminalDisconnectOverlay,
+} from "@/components/Terminal/TerminalDisconnectOverlay";
 import { consumeTerminalRefocusPending } from "@/components/Terminal/terminalRefocus";
 import { isFocusUnclaimed } from "@/utils/focusGuard";
 import { TerminalFilesOnlyPanel } from "@/components/Terminal/TerminalFilesOnlyPanel";
@@ -1170,7 +1173,10 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       {!isEvicted && <InitialCommandHeldNotice tabId={tabId} />}
       {isExited && isViewMode && (
         <>
-          <TerminalViewModeBanner tabId={tabId} />
+          <TerminalViewModeBanner
+            tabId={tabId}
+            cause={disconnectCauseLineForTab(tabId, lifecycle.exitInfo, lifecycle.endCause)}
+          />
           {isReconnectPromptVisible && <TerminalReconnectPrompt tabId={tabId} />}
         </>
       )}

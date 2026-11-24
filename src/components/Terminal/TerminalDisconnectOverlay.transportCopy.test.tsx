@@ -72,7 +72,11 @@ describe("TerminalDisconnectOverlay — transport-specific wording", () => {
     await renderWith(loop);
     const text = container.textContent ?? "";
     expect(text).toContain("Device disconnected — reconnecting…");
-    expect(text).toContain("Waiting for /dev/ttyUSB0 to come back.");
+    // #5831 (R-072): the device's short name, the full path in the tooltip.
+    expect(text).toContain("Waiting for ttyUSB0 to come back.");
+    expect(
+      container.querySelector("[data-testid='terminal-reconnect-detail']")?.getAttribute("title")
+    ).toBe("/dev/ttyUSB0");
     expect(text).not.toMatch(/agent|shell/i);
   });
 
@@ -103,7 +107,9 @@ describe("TerminalDisconnectOverlay — transport-specific wording", () => {
     seedTab({ type: "ssh", config: { host: "bastion" } });
     await renderWith(withExit(disconnected("unexpected"), { code: null, reason: "dropped" }));
     const text = container.textContent ?? "";
-    expect(text).toContain("Your scrollback is kept — choose View scrollback to read it.");
+    // #5831 (R-028): no scrim hides it, so there is nothing to choose first.
+    expect(text).toContain("Scrollback is kept.");
+    expect(text).not.toContain("choose View scrollback");
     expect(text).not.toContain("preserved below");
   });
 

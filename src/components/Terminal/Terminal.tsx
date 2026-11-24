@@ -896,7 +896,9 @@ export function Terminal({
         // (#5660), below the replayed scrollback. Skipped when the agent
         // re-forwards the buffer as live output: the marker would land above it.
         if (isReconnect && !isBackendDrivenAgentReconnectTabId(tabId)) {
-          xterm.writeln(`\r\n\x1b[90m${reconnectedMarker(new Date())}\x1b[0m`);
+          xterm.writeln(
+            `\r\n\x1b[90m${reconnectedMarker(new Date(), dropTransportOf(connectOverlayIdentity(config)))}\x1b[0m`
+          );
         }
 
         // Push the resolved line ending to the backend BEFORE wiring onData, so

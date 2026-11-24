@@ -15,6 +15,7 @@ import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrusted
 import type { SshHostKeyTrust } from "@/types/generated/SshHostKeyTrust";
 import { isUnencryptedSession } from "@/utils/unencryptedSession";
 import { t, tf } from "@/i18n/catalog";
+import { serialDeviceName } from "@/utils/serialDeviceName";
 
 /** A status-bar chip: its visible label and its tooltip. */
 export interface SessionChip {
@@ -105,8 +106,8 @@ export function sshStatusChip(
 }
 
 /**
- * The serial chip: `<port> · <baud> <data><parity><stop>`, e.g.
- * `/dev/ttyPR0 · 9600 8N1`. Missing settings fall back to the backend defaults.
+ * The serial chip: `<device> · <baud> <data><parity><stop>`, e.g.
+ * `ttyPR0 · 9600 8N1`, with the full port path in the tooltip (#5831). Missing settings fall back to the backend defaults.
  * Returns `null` for non-serial configs or one without a port.
  */
 export function serialStatusChip(config: ConnectionConfig | undefined | null): SessionChip | null {
@@ -119,8 +120,12 @@ export function serialStatusChip(config: ConnectionConfig | undefined | null): S
   const stopBits = numberOr(fields.stopBits, SERIAL_DEFAULTS.stopBits);
   const parity = typeof fields.parity === "string" ? fields.parity : SERIAL_DEFAULTS.parity;
   const parityLetter = (parity.charAt(0) || "n").toUpperCase();
-  const label = `${port} · ${baud} ${dataBits}${parityLetter}${stopBits}`;
-  return { label, tooltip: `Serial: ${label}` };
+  const frame = `${baud} ${dataBits}${parityLetter}${stopBits}`;
+  // The device's short name leads (#5831, R-072): a ~110-character absolute
+  // path used to push the important part off the chip. The full path stays in
+  // the tooltip.
+  const label = `${serialDeviceName(port)} · ${frame}`;
+  return { label, tooltip: `Serial: ${port} · ${frame}` };
 }
 
 /**

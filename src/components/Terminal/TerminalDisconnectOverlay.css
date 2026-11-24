@@ -16,6 +16,23 @@
   font-size: var(--font-size-sm);
 }
 
+/* A session that ended keeps its scrollback readable around the notice (#5831,
+   R-028): no scrim or blur, the card sits at the top of the pane like the
+   reconnect strip and the view-mode banner, and pointer events reach the
+   terminal around it, so the last lines can be read, scrolled and selected
+   without dismissing the notice first. */
+.terminal-disconnect-overlay--clear {
+  justify-content: flex-start;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+.terminal-disconnect-overlay--clear .terminal-disconnect-overlay__card {
+  margin-top: var(--spacing-sm);
+  pointer-events: auto;
+}
+
 /* The notice card (#5619): holds the body and its dismiss control together, so
    the "x" belongs to the notice instead of floating at the pane's corner. */
 .terminal-disconnect-overlay__card {

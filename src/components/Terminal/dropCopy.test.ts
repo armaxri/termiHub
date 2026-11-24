@@ -179,6 +179,16 @@ describe("scrollback separators", () => {
   });
 
   it("marks a reconnect with the time", () => {
-    expect(reconnectedMarker(AT)).toBe("— reconnected 09:05:07 —");
+    // #5831 (R-101): it says what the new session lost, per transport.
+    expect(reconnectedMarker(AT, "serial")).toBe("— reconnected 09:05:07 —");
+    expect(reconnectedMarker(AT, "ssh")).toBe(
+      "— reconnected 09:05:07 — new remote shell; running programs were lost"
+    );
+    expect(reconnectedMarker(AT, "telnet")).toBe(
+      "— reconnected 09:05:07 — new telnet session; the remote state was not restored"
+    );
+    expect(reconnectedMarker(AT)).toBe(
+      "— reconnected 09:05:07 — new session; running programs were lost"
+    );
   });
 });
