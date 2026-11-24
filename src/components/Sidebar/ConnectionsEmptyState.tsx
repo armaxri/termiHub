@@ -90,7 +90,12 @@ export function ConnectionsEmptyState({
               className="connections-empty__hint"
               data-testid="connections-empty-experimental-hint"
             >
-              <p className="connections-empty__hint-text">{EXPERIMENTAL_HINT_TEXT}</p>
+              <p
+                className="connections-empty__hint-text"
+                data-testid="connections-empty-experimental-text"
+              >
+                {EXPERIMENTAL_HINT_TEXT}
+              </p>
               <Button
                 variant="ghost"
                 size="sm"

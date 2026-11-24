@@ -96,7 +96,7 @@ describe("light hint text reads clearly on the sidebar (#5853 R-115)", () => {
       /color:\s*var\(--text-secondary\)/
     );
     expect(
-      ruleBody(css("components/Sidebar/ConnectionList.css"), ".connections-empty__hint")
+      ruleBody(css("components/Sidebar/ConnectionList.css"), ".connections-empty__hint-text")
     ).toMatch(/color:\s*var\(--text-secondary\)/);
   });
 });
