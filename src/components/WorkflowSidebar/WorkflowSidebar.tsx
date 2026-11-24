@@ -18,6 +18,7 @@ import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem, WORKFLOW_JUST_SAVED_MS } from "./WorkflowListItem";
 import { WorkflowHistorySection } from "./WorkflowHistorySection";
+import { WorkflowsExperimentalNotice } from "./WorkflowsExperimentalNotice";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
@@ -348,6 +349,7 @@ export function WorkflowSidebar() {
 
   return (
     <div className="workflow-sidebar" data-testid="workflow-sidebar">
+      <WorkflowsExperimentalNotice />
       <SidebarToolbar
         align="center"
         aria-label="Workflow actions"
