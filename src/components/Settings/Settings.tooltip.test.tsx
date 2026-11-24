@@ -68,7 +68,8 @@ describe("Settings icon controls tooltip adoption", () => {
 
     it("gives the copy-override button an aria-label and no bare title", async () => {
       await renderWithMapping();
-      // Built-in reference rows expose the copy-into-add-form icon control.
+      // Built-in reference rows (folded away since #5841) expose the copy icon control.
+      act(() => btn("file-type-builtin-disclosure")!.click());
       const copy = container.querySelector<HTMLButtonElement>('[data-testid^="file-type-copy-"]');
       expect(copy, "a copy button should render").toBeTruthy();
       expect(copy?.getAttribute("aria-label")).toMatch(/^Copy /);

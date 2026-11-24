@@ -1,21 +1,19 @@
-import { useState, useCallback, useRef, useMemo } from "react";
-import { Plus, Trash2, RotateCcw, Copy } from "lucide-react";
+import { useState, useCallback, useRef, useMemo, useId } from "react";
+import { Plus, Trash2, RotateCcw, Copy, ChevronDown, ChevronRight } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
-import { Button, ConfirmDialog, Input, Tooltip, EmptyState } from "@/components/ui";
+import { Button, ConfirmDialog, Input, SearchInput, Tooltip, EmptyState } from "@/components/ui";
 import { compareNames } from "@/utils/locale";
 import { isImeComposing } from "@/utils/imeComposition";
+import { itemMatchesQuery } from "@/hooks/useListFilter";
+import type { LanguageInfo } from "@/types/terminal";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
+import { SettingsHelpTip } from "./SettingsHelpTip";
+import { FileTypeLanguagePicker } from "./FileTypeLanguagePicker";
+import { FileTypeBuiltInTable, type BuiltInRow } from "./FileTypeBuiltInTable";
 import "./FileTypeSettings.css";
-
-/** Combined view of a built-in mapping row (shown in the reference table). */
-interface BuiltInRow {
-  pattern: string;
-  language: string;
-  kind: "filename" | "extension";
-}
 
 const ALL_BUILT_IN_ROWS: BuiltInRow[] = [
   ...Object.entries(BUILT_IN_FILENAME_MAPPINGS).map(([pattern, language]) => ({
@@ -34,6 +32,33 @@ const ALL_BUILT_IN_ROWS: BuiltInRow[] = [
   const keyB = b.pattern.replace(/^\./, "").toLowerCase();
   return compareNames(keyA, keyB);
 });
+
+/**
+ * Built-in rows whose pattern or language matches `query` (shared substring
+ * matcher, case- and diacritic-insensitive). An empty query keeps every row.
+ */
+export function filterBuiltInRows(rows: readonly BuiltInRow[], query: string): BuiltInRow[] {
+  const q = query.trim();
+  if (!q) return [...rows];
+  return rows.filter((r) => itemMatchesQuery(r, (row) => [row.pattern, row.language], q));
+}
+
+/**
+ * The languages the picker offers: every language the editor knows, plus any
+ * language a built-in mapping uses that is not registered yet, so copying a
+ * built-in row into the form always lands on a listed language (#5841).
+ */
+export function mappingLanguageOptions(available: readonly LanguageInfo[]): LanguageInfo[] {
+  const known = new Set(available.map((l) => l.id));
+  const extra: LanguageInfo[] = [];
+  for (const { language } of ALL_BUILT_IN_ROWS) {
+    if (!known.has(language)) {
+      known.add(language);
+      extra.push({ id: language, name: language });
+    }
+  }
+  return [...available, ...extra].sort((a, b) => compareNames(a.name, b.name));
+}
 
 interface FileTypeSettingsProps {
   visibleFields?: Set<string>;
@@ -55,7 +80,19 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
   const [newPattern, setNewPattern] = useState("");
   const [newLanguage, setNewLanguage] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
-  const languageInputRef = useRef<HTMLInputElement>(null);
+  const languageInputRef = useRef<HTMLButtonElement>(null);
+  const languages = useMemo(() => mappingLanguageOptions(getAvailableLanguages()), []);
+  const languageIds = useMemo(() => new Set(languages.map((l) => l.id)), [languages]);
+  // Built-in mappings stay folded away until asked for (#5841): the page's task
+  // is adding a mapping, and the full table is ~100 rows.
+  const [builtInsOpen, setBuiltInsOpen] = useState(false);
+  const [builtInQuery, setBuiltInQuery] = useState("");
+  const builtInListId = useId();
+  const addErrorId = useId();
+  const visibleBuiltIns = useMemo(
+    () => filterBuiltInRows(ALL_BUILT_IN_ROWS, builtInQuery),
+    [builtInQuery]
+  );
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -68,7 +105,11 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
       return;
     }
     if (!language) {
-      setAddError("Language ID is required.");
+      setAddError("Choose a language.");
+      return;
+    }
+    if (!languageIds.has(language)) {
+      setAddError(`"${language}" is not a known language. Choose one from the list.`);
       return;
     }
     if (!/^[a-zA-Z0-9._\-+]+$/.test(pattern)) {
@@ -81,7 +122,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
     setNewPattern("");
     setNewLanguage("");
     setAddError(null);
-  }, [newPattern, newLanguage, userMappings, settings, updateSettings]);
+  }, [newPattern, newLanguage, languageIds, userMappings, settings, updateSettings]);
 
   const handleRemove = useCallback(
     (pattern: string) => {
@@ -110,7 +151,6 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
     languageInputRef.current?.focus();
   }, []);
 
-  const availableLanguages = useMemo(() => getAvailableLanguages(), []);
   const userEntries = Object.entries(userMappings);
 
   return (
@@ -139,20 +179,12 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               )}
             </div>
             <p className="settings-panel__description">
-              Override the built-in language detection. Use exact filenames (e.g.{" "}
-              <code>Jenkinsfile</code>) or extensions (e.g. <code>.conf</code>). Values must be
-              valid Monaco language IDs (e.g. <code>groovy</code>, <code>ini</code>,{" "}
-              <code>shell</code>).
+              Choose the language a file opens in. Your mappings win over the built-in ones.{" "}
+              <SettingsHelpTip name="Custom file type mappings" data-testid="file-type-help">
+                Use an exact filename such as <code>Jenkinsfile</code> or an extension such as{" "}
+                <code>.conf</code>. Letters, digits, dots, dashes, underscores and + only.
+              </SettingsHelpTip>
             </p>
-
-            {/* Language ID datalist for autocomplete */}
-            <datalist id="file-type-language-list">
-              {availableLanguages.map(({ id, name }) => (
-                <option key={id} value={id}>
-                  {name}
-                </option>
-              ))}
-            </datalist>
 
             {/* Add new mapping */}
             <div className="settings-panel__create-prompt">
@@ -170,21 +202,16 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                 placeholder="Filename or .ext"
                 data-testid="file-type-pattern-input"
               />
-              <Input
+              <FileTypeLanguagePicker
                 ref={languageInputRef}
-                className="settings-panel__create-input"
                 value={newLanguage}
-                onChange={(e) => {
-                  setNewLanguage(e.target.value);
+                languages={languages}
+                onChange={(id) => {
+                  setNewLanguage(id);
                   setAddError(null);
                 }}
-                onKeyDown={(e) => {
-                  if (isImeComposing(e)) return;
-                  if (e.key === "Enter") handleAdd();
-                }}
-                placeholder="Language ID (e.g. groovy)"
-                list="file-type-language-list"
-                data-testid="file-type-language-input"
+                aria-invalid={addError ? true : undefined}
+                aria-describedby={addError ? addErrorId : undefined}
               />
               <Button
                 variant="primary"
@@ -198,7 +225,12 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               </Button>
             </div>
             {addError && (
-              <p className="settings-panel__file-error" data-testid="file-type-add-error">
+              <p
+                id={addErrorId}
+                className="settings-panel__file-error"
+                role="alert"
+                data-testid="file-type-add-error"
+              >
                 {addError}
               </p>
             )}
@@ -224,6 +256,14 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                     >
                       → {language}
                     </span>
+                    {!languageIds.has(language) && (
+                      <span
+                        className="settings-panel__badge file-type-settings__badge"
+                        data-testid={`file-type-unknown-language-${pattern}`}
+                      >
+                        unknown language
+                      </span>
+                    )}
                     <Tooltip content={`Remove mapping for ${pattern}`}>
                       <Button
                         variant="ghost"
@@ -241,72 +281,56 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
             )}
           </div>
 
-          {/* Built-in reference table */}
-          <div className="settings-panel__section">
+          {/* Built-in reference table, folded away by default (#5841). */}
+          <div className="settings-panel__section" data-testid="file-type-builtin-section">
             <div className="settings-panel__section-header">
-              <SettingsSectionHeading>Built-in defaults</SettingsSectionHeading>
+              <SettingsSectionHeading>Built-in mappings</SettingsSectionHeading>
             </div>
-            <p className="settings-panel__description">
-              These mappings are applied automatically. Click{" "}
-              <Copy size={11} style={{ display: "inline", verticalAlign: "middle" }} /> to copy a
-              row into the add form and override it.
-            </p>
-            {/* Dense pattern → language table (#5713): one aligned row per mapping. */}
-            <table className="file-type-settings__table" data-testid="file-type-builtin-table">
-              <thead>
-                <tr>
-                  <th scope="col">Pattern</th>
-                  <th scope="col">Language</th>
-                  <th scope="col" className="file-type-settings__action-col">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {ALL_BUILT_IN_ROWS.map(({ pattern, language }) => {
-                  const isOverridden = pattern in userMappings;
-                  return (
-                    <tr
-                      key={pattern}
-                      className="file-type-settings__row"
-                      data-overridden={isOverridden ? "true" : undefined}
-                      data-testid={`file-type-builtin-row-${pattern}`}
-                    >
-                      <td className="file-type-settings__pattern">
-                        <span data-testid={`file-type-builtin-pattern-${pattern}`}>{pattern}</span>
-                        {isOverridden && (
-                          <span
-                            className="settings-panel__badge file-type-settings__badge"
-                            data-testid={`file-type-overridden-badge-${pattern}`}
-                          >
-                            overridden
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        className="file-type-settings__language"
-                        data-testid={`file-type-builtin-language-${pattern}`}
-                      >
-                        {language}
-                      </td>
-                      <td className="file-type-settings__action">
-                        <Tooltip content={`Copy "${pattern}" into the add form`}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            iconOnly
-                            icon={<Copy size={14} />}
-                            onClick={() => handlePrefillOverride(pattern, language)}
-                            aria-label={`Copy "${pattern}" into the add form`}
-                            data-testid={`file-type-copy-${pattern}`}
-                          />
-                        </Tooltip>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={builtInsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              aria-expanded={builtInsOpen}
+              aria-controls={builtInListId}
+              onClick={() => setBuiltInsOpen((v) => !v)}
+              data-testid="file-type-builtin-disclosure"
+            >
+              {builtInsOpen
+                ? "Hide built-in mappings"
+                : `Show built-in mappings (${ALL_BUILT_IN_ROWS.length})`}
+            </Button>
+            {builtInsOpen && (
+              <div id={builtInListId} className="file-type-settings__builtins">
+                <p className="settings-panel__description">
+                  These apply automatically. Click{" "}
+                  <Copy size={11} style={{ display: "inline", verticalAlign: "middle" }} /> to copy
+                  one into the form above and change it.
+                </p>
+                <SearchInput
+                  size="sm"
+                  className="file-type-settings__builtin-filter"
+                  placeholder="Filter by file or language"
+                  aria-label="Filter built-in mappings"
+                  value={builtInQuery}
+                  onValueChange={setBuiltInQuery}
+                  clearLabel="Clear built-in mapping filter"
+                  data-testid="file-type-builtin-filter"
+                />
+                {visibleBuiltIns.length === 0 ? (
+                  <EmptyState
+                    variant="panel"
+                    title="No built-in mapping matches this filter."
+                    data-testid="file-type-builtin-no-match"
+                  />
+                ) : (
+                  <FileTypeBuiltInTable
+                    rows={visibleBuiltIns}
+                    userMappings={userMappings}
+                    onCopy={handlePrefillOverride}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </>
       )}
