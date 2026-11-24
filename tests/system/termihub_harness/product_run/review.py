@@ -17,7 +17,14 @@ Screenshots are grouped by *surface* (the second segment of the step id,
 one reviewer sees one family of screens. After the reviewers ran,
 :mod:`.review_merge` validates, dedupes and renders their findings.
 
-Plain file I/O, unit-tested in the normal lane (``tests/test_product_run_review.py``).
+A loop round (#5817, :mod:`.review_loop`: the run links ``review/previous-run``)
+reviews only its looped surfaces, and each prompt carries the previous round's
+grade and findings (the reviewer gives a verdict on each), the grade trend and
+the PRs that touched the surface since the previous run, so the coordinator can
+pick a reviewer who did not build or fix it.
+
+Plain file I/O, unit-tested in the normal lane (``tests/test_product_run_review.py``,
+``tests/test_product_run_review_loop.py``).
 """
 
 from __future__ import annotations
@@ -27,14 +34,20 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import review_loop
 from .recorder import _write_atomic, safe_step_id
 from .review_images import contact_sheet_file
 from .review_schema import (
     FINDING_FIELDS,
     FINDING_JSON_SCHEMA,
+    GRADE_MEANING,
+    GRADING_ORDER,
     KIND_MEANING,
     SEVERITY_MEANING,
+    VERDICT_MEANING,
 )
+
+REPO = Path(__file__).resolve().parents[4]
 
 REVIEW_SCHEMA = 1
 REQUEST_KIND = "termihub-product-run-ui-review"
@@ -60,6 +73,11 @@ LOOK_FOR = (
     "Usefulness: elements that do not earn their place (useless, redundant, decorative noise), "
     "wrong emphasis, missing affordances or feedback, confusing or inconsistent wording, and "
     "whether the screen actually serves what the step is about.",
+)
+
+INDEPENDENCE = (
+    "Independence: you must not have built, fixed or reviewed-to-fix this surface. If you "
+    "worked on it (or on one of the PRs listed for it), stop and say so instead of grading."
 )
 
 NOT_FINDINGS = (
@@ -147,6 +165,40 @@ def _schema_lines() -> list[str]:
     return lines
 
 
+def _grade_lines() -> list[str]:
+    lines = ["Grade the whole surface 1-5 (`grade`, an integer) with a one-or-two-sentence "
+             "`grade_reason`. Usability first, in this order:"]
+    lines += [f"{n}. {item}" for n, item in enumerate(GRADING_ORDER, 1)]
+    lines += [f"- grade {g}: {m}" for g, m in sorted(GRADE_MEANING.items(), reverse=True)]
+    return lines
+
+
+def _loop_lines(ctx: Optional[dict[str, Any]]) -> list[str]:
+    """The previous round's grade + findings and the PRs since then (loop rounds)."""
+    if not ctx:
+        return []
+    trend = " -> ".join("-" if g is None else str(g) for g in ctx.get("trend") or []) or "-"
+    lines = [
+        f"Loop round: this surface was graded {ctx.get('previous_grade')} in the previous "
+        f"round (trend {trend}); the target is {ctx.get('target_grade')}. Judge this round's "
+        "screens on their own, then give a verdict on every previous finding in `previous`: "
+        '[{"id": "R-001", "verdict": "fixed", "note": "..."}], verdict one of:',
+        *[f"- `{v}`: {m}" for v, m in VERDICT_MEANING.items()],
+        "Previous findings:",
+    ]
+    for f in ctx.get("previous_findings") or []:
+        fix = f.get("recommendation") or f.get("suggestion") or ""
+        lines.append(f"- {f.get('id')} {f.get('severity')} {f.get('kind')}: {f.get('finding')}"
+                     f" (recommended: {fix})")
+    if not ctx.get("previous_findings"):
+        lines.append("- (none)")
+    prs = ctx.get("touched_prs") or []
+    lines.append("Changes since the previous round that touched this surface (best effort):")
+    lines += [f"- {'#' + str(p['pr']) if p.get('pr') else p['commit'][:10]}: {p['subject']}"
+              for p in prs] or ["- (none found)"]
+    return lines
+
+
 def _shot_lines(shots: list[dict[str, Any]], *, absolute: bool) -> list[str]:
     lines = []
     for n, s in enumerate(shots, 1):
@@ -162,13 +214,22 @@ def _shot_lines(shots: list[dict[str, Any]], *, absolute: bool) -> list[str]:
 
 
 def reviewer_prompt(
-    *, surface: str, title: str, shots: list[dict[str, Any]], contact: Optional[str], output: str
+    *,
+    surface: str,
+    title: str,
+    shots: list[dict[str, Any]],
+    contact: Optional[str],
+    output: str,
+    loop: Optional[dict[str, Any]] = None,
 ) -> str:
     """The self-contained brief one reviewer agent gets for one surface."""
+    previous_key = '"previous": [ ... ], ' if loop else ""
     lines = [
         f"You are a senior UI/UX expert reviewing the '{title}' surface of termiHub from "
-        "screenshots of an automated product run. Analyse looks AND usefulness; the maintainer "
-        "will not look at the screens, your review replaces that.",
+        "screenshots of an automated product run. Analyse looks AND usefulness, usability "
+        "first; the maintainer will not look at the screens, your review replaces that.",
+        "",
+        INDEPENDENCE,
         "",
         "Product: " + PRODUCT_CONTEXT,
         "",
@@ -187,13 +248,17 @@ def reviewer_prompt(
         "run the app. Report only what you can see on these screenshots; at most 12 findings, "
         "most severe first; merge near-duplicates yourself. An empty list is a valid answer.",
         "",
+        *_grade_lines(),
+        "",
+        *([*_loop_lines(loop), ""] if loop else []),
         f"Write your result as JSON to `{output}`:",
-        f'{{"surface": "{surface}", "reviewer": "ui-review-{surface}", "findings": [ ... ]}}',
+        f'{{"surface": "{surface}", "reviewer": "ui-review-{surface}", "grade": 3, '
+        f'"grade_reason": "...", {previous_key}"findings": [ ... ]}}',
         "Each finding has exactly these string fields (all required):",
         *_schema_lines(),
         f"`surface` must be \"{surface}\"; `screenshot` is the run-relative path (`shots/...`) "
         "shown in backticks above minus the run directory.",
-        "Finish by replying with the number of findings per severity.",
+        "Finish by replying with the grade and the number of findings per severity.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -210,10 +275,19 @@ def _brief(run: dict[str, Any], surfaces: list[dict[str, Any]], review_dir: Path
         "",
         PRODUCT_CONTEXT,
         "",
+        "## Reviewer independence",
+        "",
+        INDEPENDENCE + " The coordinator picks reviewers who authored none of the PRs listed "
+        "per surface below.",
+        "",
         "## What to review",
         "",
         *[f"- {item}" for item in LOOK_FOR],
         f"- {NOT_FINDINGS}",
+        "",
+        "## Grade",
+        "",
+        *_grade_lines(),
         "",
         "## Findings schema",
         "",
@@ -230,6 +304,8 @@ def _brief(run: dict[str, Any], surfaces: list[dict[str, Any]], review_dir: Path
         if entry["contact_sheet"]:
             lines += [f"Contact sheet: `{entry['contact_sheet']}`", ""]
         lines += _shot_lines(entry["shots"], absolute=False)
+        if entry.get("loop"):
+            lines += ["", *_loop_lines(entry["loop"])]
         lines += ["", f"Findings go to `{entry['output']}`."]
     lines += [
         "",
@@ -242,18 +318,38 @@ def _brief(run: dict[str, Any], surfaces: list[dict[str, Any]], review_dir: Path
 
 
 def prepare_review(
-    run_dir: Path, *, contact_sheets: bool = True, clock: Callable[[], str] = _now
+    run_dir: Path,
+    *,
+    contact_sheets: bool = True,
+    clock: Callable[[], str] = _now,
+    repo: Path = REPO,
+    git: Optional[Callable[..., Optional[str]]] = None,
 ) -> dict[str, Any]:
-    """Write ``<run>/review/`` (see the module docstring); returns the request."""
+    """Write ``<run>/review/`` (see the module docstring); returns the request.
+
+    A loop round reviews only its looped surfaces; ``repo`` / ``git`` are where
+    the PRs that touched a surface are looked up (best effort).
+    """
     run_dir = Path(run_dir).resolve()
     record = _read_json(run_dir / "results.json") or _read_json(run_dir / "status.json")
     if record is None:
         raise FileNotFoundError(f"no product run at {run_dir} (no results.json / status.json)")
     review_dir = run_dir / "review"
     (review_dir / "findings").mkdir(parents=True, exist_ok=True)
+    loop = review_loop.loop_context(run_dir, repo=repo, **({"git": git} if git else {}))
+    groups = group_shots(run_dir)
+    skipped_surfaces: list[str] = []
+    if loop:
+        skipped_surfaces = [s for s in groups if s not in loop["surfaces"]]
+        groups = {s: shots for s, shots in groups.items() if s in loop["surfaces"]}
     surfaces = []
-    for surface, shots in group_shots(run_dir).items():
+    for surface, shots in groups.items():
         title = surface_title(surface, shots)
+        surface_loop = (
+            {**loop["per_surface"].get(surface, {}), "target_grade": loop["target_grade"]}
+            if loop
+            else None
+        )
         contact, skipped = None, []
         if contact_sheets:
             sheet = review_dir / "contact" / f"{surface}.png"
@@ -271,12 +367,15 @@ def prepare_review(
                 "contact_sheet_skipped": skipped,
                 "output": output.relative_to(run_dir).as_posix(),
                 "shots": shots,
+                "loop": surface_loop,
+                "touched_prs": (surface_loop or {}).get("touched_prs", []),
                 "prompt": reviewer_prompt(
                     surface=surface,
                     title=title,
                     shots=shots,
                     contact=str(run_dir / contact) if contact else None,
                     output=str(output),
+                    loop=surface_loop,
                 ),
             }
         )
@@ -292,10 +391,18 @@ def prepare_review(
         "product_context": PRODUCT_CONTEXT,
         "how_to": {
             "spawn": "one read-only reviewer agent per entry of `reviewers`, prompt = its "
-            "`prompt`; each writes its `output` file (run-relative)",
+            "`prompt`; each writes its `output` file (run-relative). The reviewer must be "
+            "independent: not the agent that built or fixed the surface (see `touched_prs`)",
             "merge": MERGE_COMMAND.format(run_dir=run_dir),
         },
         "finding_schema": FINDING_JSON_SCHEMA,
+        "independence": INDEPENDENCE,
+        "loop": (
+            {k: v for k, v in loop.items() if k != "per_surface"}
+            | {"not_reviewed": skipped_surfaces}
+            if loop
+            else None
+        ),
         "reviewers": surfaces,
     }
     _write_atomic(review_dir / "review-request.json", json.dumps(request, indent=2) + "\n")
