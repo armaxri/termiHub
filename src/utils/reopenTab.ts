@@ -25,11 +25,10 @@ export function reopenPayloadForTab(
 export const REOPEN_TOAST_ID = "th-reopen-closed-tabs";
 
 /**
- * How long the reopen toast stays up, and how close together closes must come
- * to join one toast (#5828): a close within this long of the previous one adds
- * to the toast on screen; a later one starts a fresh toast for just that tab.
- * Replacing the toast restarts its timer, so the undo stays reachable for this
- * long after the last close.
+ * How long the reopen toast stays up (#5828). Every close made while it is
+ * still on offer joins it (#5919), and replacing it restarts its timer, so the
+ * undo stays reachable for this long after the last close. Once it is gone,
+ * the next close starts a fresh toast for just that tab.
  */
 export const REOPEN_COALESCE_MS = 6000;
 
@@ -38,13 +37,10 @@ const MAX_LISTED_TITLES = 3;
 
 /** The tabs the reopen toast on screen would restore, oldest close first. */
 let closedBatch: readonly ReopenTabPayload[] = [];
-/** When the last tab joined {@link closedBatch} (`Date.now()`). */
-let lastCloseAt = -Infinity;
 
 /** Forget the pending batch (tests, and after Reopen). */
 export function resetReopenToastBatch(): void {
   closedBatch = [];
-  lastCloseAt = -Infinity;
 }
 
 /** The toast title for `closed`: the tab's name for one, a count for several. */
@@ -74,21 +70,20 @@ function reopenAll(closed: readonly ReopenTabPayload[]): void {
  * opens a fresh tab from the saved connection config. No-op when `payload` is
  * null (nothing reconnectable to offer).
  *
- * Closes that come within {@link REOPEN_COALESCE_MS} of each other share one
- * toast (#5828): it is replaced in place and reads "Closed 3 tabs", and its
- * "Reopen all" restores every one of them, in the order they were closed. A
+ * Closes made while the toast is still on offer share it (#5828, #5919): it
+ * is replaced in place and reads "Closed 3 tabs", and its "Reopen all"
+ * restores every one of them, in the order they were closed. A
  * dialog opening hides the toast and it comes back when the dialog closes
  * (#5914), so the undo is never lost to an unrelated dialog.
  */
 export function showReopenToast(payload: ReopenTabPayload | null): void {
   if (!payload) return;
-  const now = Date.now();
-  // A close joins the toast on screen; once that toast is gone (timed out,
-  // dismissed; a dialog only hides it, #5914), the next close starts afresh.
-  if (now - lastCloseAt > REOPEN_COALESCE_MS || !toast.isActive(REOPEN_TOAST_ID)) {
-    closedBatch = [];
-  }
-  lastCloseAt = now;
+  // A close joins the toast while it is still on offer, however long after the
+  // last close (#5919): hidden behind a slow confirm dialog (#5914) or paused
+  // under the pointer, it outlives its 6 s, and replacing it with a fresh one
+  // would lose the earlier tabs' undo. Once it is gone (timed out, dismissed,
+  // its Reopen pressed), the next close starts afresh.
+  if (!toast.isActive(REOPEN_TOAST_ID)) closedBatch = [];
   const closed = [...closedBatch, payload];
   closedBatch = closed;
   // toast-policy: undo — offers Reopen for the tabs just closed
