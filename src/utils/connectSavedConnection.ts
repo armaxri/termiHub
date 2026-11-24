@@ -244,6 +244,7 @@ export async function connectSavedConnection(
       label: connection.name,
     });
     if (fieldSecrets.status === "canceled") {
+      // toast-policy: explains-outcome — no tab opens, and this says the secret prompt was canceled
       toast.info(fieldSecrets.reason);
       return { status: "canceled" };
     }
@@ -293,6 +294,7 @@ export async function connectSavedConnection(
       );
     }
     dismissConnecting();
+    // toast-policy: explains-outcome — the tab closes without connecting, and this says it was canceled
     toast.info(CONNECT_CANCELED_MESSAGE);
   };
 
@@ -380,6 +382,7 @@ export async function connectSavedConnection(
       ...(transport ? { transport } : {}),
     });
     if (resolved.status === "canceled") {
+      // toast-policy: explains-outcome — no tab opens, and this says it was canceled
       toast.info(CONNECT_CANCELED_MESSAGE);
       return { status: "canceled" };
     }
@@ -486,6 +489,7 @@ export async function connectSavedConnection(
     if (unlock === "canceled") {
       // Escape/× on the unlock dialog: acknowledge it like every other cancel.
       dismissConnecting();
+      // toast-policy: explains-outcome — no tab opens, and this says it was canceled
       toast.info(CONNECT_CANCELED_MESSAGE);
       return { status: "canceled" };
     }
@@ -643,6 +647,7 @@ export async function connectSavedConnection(
       if (answer === null) {
         // Acknowledge the cancel so the click isn't silently dropped (UX-012),
         // matching the editor path's toast.info on connect-cancel.
+        // toast-policy: explains-outcome — no tab opens, and this says it was canceled
         toast.info(CONNECT_CANCELED_MESSAGE);
         return { status: "canceled" };
       }
@@ -671,6 +676,7 @@ export async function connectSavedConnection(
       );
       if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.
+        // toast-policy: explains-outcome — no tab opens, and this says it was canceled
         toast.info(CONNECT_CANCELED_MESSAGE);
         return { status: "canceled" };
       }

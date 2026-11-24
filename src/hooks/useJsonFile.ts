@@ -53,6 +53,7 @@ export function useJsonFileExport(
         const filePath = await save({ defaultPath, filters: JSON_FILTERS });
         if (!filePath) return;
         await writeTextFile(filePath, text);
+        // toast-policy: no-in-place-surface — the export is a file on disk
         toast.success(successMessage);
         onWritten?.();
       } catch (err) {

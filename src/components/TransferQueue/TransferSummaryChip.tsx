@@ -1,8 +1,10 @@
+import { useEffect } from "react";
 import { ArrowDownUp } from "lucide-react";
 import { Tooltip } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
+import { showTransferSummary } from "./transferSummaryVisibility";
 import "./TransferQueue.css";
 
 /** Props for {@link TransferSummaryChip}. */
@@ -39,10 +41,17 @@ function summarizeSessionTransfers(entries: TransferEntry[]): string {
 export function TransferSummaryChip({ sessionId }: TransferSummaryChipProps) {
   const { queue } = useProjectedTransfers();
   const setMinimized = useAppStore((s) => s.setTransferQueueMinimized);
+  const entries = sessionId ? Object.values(queue).filter((t) => t.sessionId === sessionId) : [];
+  const visible = sessionId !== null && entries.length > 0;
 
-  if (!sessionId) return null;
-  const entries = Object.values(queue).filter((t) => t.sessionId === sessionId);
-  if (entries.length === 0) return null;
+  // While this line is on screen it is the session's transfer feedback: the
+  // "Downloaded …" toast stays away (#5859).
+  useEffect(
+    () => (visible && sessionId ? showTransferSummary(sessionId) : undefined),
+    [visible, sessionId]
+  );
+
+  if (!visible) return null;
 
   const pending = entries.some((e) => !isTerminalTransferState(e.state));
   const failed = !pending && entries.some((e) => e.state === "failed");

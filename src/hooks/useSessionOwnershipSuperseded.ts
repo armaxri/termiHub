@@ -28,6 +28,7 @@ export function useSessionOwnershipSuperseded(): void {
         "session_ownership",
         `session ${payload.sessionId} claimed by ${payload.newOwner}; input and resize disabled in this window`
       );
+      // toast-policy: background — another window took the session over
       toast.info(
         "This session was taken over by another window — input and resize are paused here until you reclaim it."
       );

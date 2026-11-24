@@ -162,15 +162,18 @@ export function toastFanoutSummary(
     });
     keepWorkflowRunFailure(toastId);
   } else if (cancelled) {
+    // toast-policy: explains-outcome — says how far the canceled run got
     toast.info(`Workflow "${workflowName}" canceled`, { id: toastId, description: summary });
     collapseWorkflowRunOutcome(toastId);
   } else if (skipped > 0 || tolerated) {
+    // toast-policy: explains-outcome — some terminals were skipped or tolerated failures
     toast.info(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, {
       id: toastId,
       description: summary,
     });
     keepWorkflowRunFailure(toastId);
   } else {
+    // toast-policy: background — the run spans several terminals, most of them off-screen
     toast.success(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, { id: toastId });
     collapseWorkflowRunOutcome(toastId);
   }

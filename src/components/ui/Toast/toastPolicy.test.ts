@@ -24,8 +24,10 @@ const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 /** The reasons a success/info toast may exist, and what each one means. */
 export const REASONS = {
-  /** It finished off-screen or without the user watching it. */
+  /** It ran without the user driving it: automatic, scheduled, external or long-running. */
   background: "a transfer, scheduled/automatic run, reconnect or external request finished",
+  /** The user's action landed in a view that is not on screen. */
+  "off-screen": "the list or tab the result shows in is not the one on screen",
   /** It carries an Undo / Reopen action for what just went away. */
   undo: "it offers to undo what the user just did",
   /** The result has no surface in termiHub's visible UI. */

@@ -135,6 +135,7 @@ export async function runBlockingTransfer(
   const toastId = toast.loading(messages.loading);
   try {
     await action();
+    // toast-policy: background — a blocking transfer finished; no transfer event reports it
     toast.success(messages.success, { id: toastId });
     return true;
   } catch (error) {
@@ -177,6 +178,7 @@ export async function runMaybeTrackedTransfer(
       toast.dismiss(toastId);
     } else {
       // Byte-based round-trip: no event will cover it, so own the success toast.
+      // toast-policy: background — a byte-based transfer finished; no transfer event reports it
       toast.success(messages.success, { id: toastId });
     }
     return true;

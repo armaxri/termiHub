@@ -91,7 +91,6 @@ export const createWorkspacesSlice: StateCreator<AppState, [], [], WorkspacesSli
     try {
       await apiDuplicateWorkspace(workspaceId);
       await get().loadWorkspaces();
-      toast.success("Duplicated workspace");
     } catch (err) {
       frontendLog("app_store", `Failed to duplicate workspace: ${errorMessage(err)}`);
       toast.error(`Failed to duplicate workspace: ${errorMessage(err)}`);

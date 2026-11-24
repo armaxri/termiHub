@@ -173,12 +173,13 @@ export function toastRunOutcome(
 ): void {
   const tolerated = result.continuedFailures ?? [];
   if (result.status === "completed" && tolerated.length === 0) {
-    toast.success(`Ran workflow "${workflowName}"`, { id: toastId });
-    collapseWorkflowRunOutcome(toastId);
+    // The terminal output and the run history show it (#5859).
+    toast.dismiss(toastId);
   } else if (result.status === "completed") {
     // Completed, but some steps failed and were tolerated via continue-on-error
     // (PROD-045) — say so rather than reporting a clean success.
     const first = tolerated[0];
+    // toast-policy: explains-outcome — a clean-looking run hid tolerated step failures
     toast.info(
       `Ran workflow "${workflowName}" with ${tolerated.length} tolerated step failure` +
         (tolerated.length === 1 ? "" : "s"),
@@ -186,6 +187,7 @@ export function toastRunOutcome(
     );
     keepWorkflowRunFailure(toastId);
   } else if (result.status === "cancelled") {
+    // toast-policy: explains-outcome — says how far the canceled run got
     toast.info(`Workflow "${workflowName}" canceled`, {
       id: toastId,
       description: `Stopped after ${result.stepsCompleted} of ${total} steps`,

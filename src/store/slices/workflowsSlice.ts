@@ -383,6 +383,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     }
 
     if (workflow.steps.length === 0) {
+      // toast-policy: explains-outcome — nothing runs, and this says why
       toast.info(`Workflow "${workflow.name}" has no steps to run`);
       return;
     }
@@ -401,6 +402,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       });
       set({ workflowParamPrompt: null });
       if (collected === null) {
+        // toast-policy: explains-outcome — the parameter prompt was dismissed, nothing runs
         toast.info(`Workflow "${workflow.name}" canceled`);
         return;
       }
