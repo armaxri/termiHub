@@ -988,10 +988,11 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "backupRestore",
     label: "Backup & restore",
     description:
-      "Back up all app data (optionally with encrypted credentials) to one file and restore it",
+      "Save your connections, settings and other data to one file, and restore it here or on another computer",
     category: "backup",
     keywords: [
       "backup",
+      "back up everything",
       "restore",
       "export",
       "import",

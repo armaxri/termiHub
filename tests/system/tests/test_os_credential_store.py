@@ -172,13 +172,20 @@ class TestOsCredentialStore(
         )
         self._toggle_on("backup-export-section-connections")
         self._toggle_on("backup-export-credentials")
+        # One secret per step (#5847): the backup passphrase, then the master password.
+        self.driver.click("backup-export-next")
         self.wait(
-            lambda: self.driver.exists("backup-export-master-password"),
-            what="the master password field",
+            lambda: self.driver.exists("backup-export-passphrase"),
+            what="the backup passphrase step",
         )
-        self.driver.type("backup-export-master-password", _MASTER_PASSWORD)
         self.driver.type("backup-export-passphrase", _PASSPHRASE)
         self.driver.type("backup-export-confirm", _PASSPHRASE)
+        self.driver.click("backup-export-next")
+        self.wait(
+            lambda: self.driver.exists("backup-export-master-password"),
+            what="the master password step",
+        )
+        self.driver.type("backup-export-master-password", _MASTER_PASSWORD)
         self.driver.stub_native_dialog("save", target)
         self.driver.click("backup-export-submit")
         self.wait(

@@ -105,11 +105,11 @@ NUMERIC_SETTINGS = (
     ("terminal", "settings-scrollback-buffer", "scrollbackBuffer", "Scrollback buffer"),
 )
 #: The backup export dialog's password fields and their visible labels (#5613).
-#: The master password shows only in master-password mode.
+#: The master password has its own last step, only in master-password mode (#5847).
 BACKUP_PASSWORD_LABELS = (
     ("backup-export-passphrase", "Backup passphrase"),
     ("backup-export-confirm", "Repeat backup passphrase"),
-    ("backup-export-master-password", "Current master password"),
+    ("backup-export-master-password", "Master password"),
 )
 
 
@@ -642,24 +642,45 @@ class TestProductRunSettingsThemes(
     def test_04_backup_labels(self):
         with self.step(
             "settings.backup.labels",
-            "Back up everything: every password field has a visible label; Credentials is "
-            "visible without scrolling (#5613)",
-            expect="the Back up dialog with labelled passphrase fields and Credentials in view",
+            "Back up: every password field has a visible label; Credentials is visible "
+            "without scrolling (#5613, #5847)",
+            expect="the Back up dialog with Credentials in view, then the passphrase step "
+            "with labelled fields",
         ):
             self.open_settings_category("backup")
             self.wait(lambda: self.driver.exists("backup-export-btn"), what="the Back up button")
             self.driver.click("backup-export-btn")
             # A fresh profile has no connections, so their row collapses into the
-            # "Nothing saved yet" line (#5613): wait for the list itself.
+            # "… have nothing saved yet" line (#5613): wait for the list itself.
             self.wait(
                 lambda: self.driver.exists("backup-export-credentials"),
                 what="the backup sections to load",
             )
             problems = []
+            box = self.driver.measure_element("backup-export-sections")["rect"]
+            row = self.driver.measure_element("backup-export-credentials")["rect"]
+            self.evidence(f"sections box {box}; credentials checkbox {row}")
+            if row["y"] < box["y"] or row["y"] + row["height"] > box["y"] + box["height"]:
+                problems.append("the Credentials row is outside the visible list area")
+            # One secret per step (#5847): the fields live on the later steps.
+            needs_master = (
+                self.driver.get_attribute("backup-export-credentials", "aria-checked") == "true"
+                and "master password" in self.driver.get_text("backup-export-credentials-detail")
+            )
+            self.driver.click("backup-export-next")
+            self.wait(
+                lambda: self.driver.exists("backup-export-passphrase"),
+                what="the backup passphrase step",
+            )
             for field, text in BACKUP_PASSWORD_LABELS:
-                if not self.driver.exists(field):
-                    if field == "backup-export-master-password":
+                if field == "backup-export-master-password":
+                    if not needs_master:
                         continue
+                    self.driver.type("backup-export-passphrase", "product-run-labels-pass")
+                    self.driver.type("backup-export-confirm", "product-run-labels-pass")
+                    self.driver.click("backup-export-next")
+                    self.wait(lambda: self.driver.exists(field), what="the master password step")
+                if not self.driver.exists(field):
                     problems.append(f"{field}: missing")
                     continue
                 label = f"{field}-label"
@@ -677,11 +698,6 @@ class TestProductRunSettingsThemes(
                     problems.append(f"{field}: label not associated (for={linked!r})")
                 if box["width"] <= 2 or box["height"] <= 2:
                     problems.append(f"{field}: label not visible")
-            box = self.driver.measure_element("backup-export-sections")["rect"]
-            row = self.driver.measure_element("backup-export-credentials")["rect"]
-            self.evidence(f"sections box {box}; credentials checkbox {row}")
-            if row["y"] < box["y"] or row["y"] + row["height"] > box["y"] + box["height"]:
-                problems.append("the Credentials row is outside the visible list area")
             self.driver.click("modal-close")
             assert not problems, "; ".join(problems)
 

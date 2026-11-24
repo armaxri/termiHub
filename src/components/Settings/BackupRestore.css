@@ -67,16 +67,6 @@
   color: var(--text-primary);
 }
 
-/* Backup export: a row whose option carries a follow-up field (the master
-   password under Credentials, #5613). */
-.backup-export__row-body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-  min-width: 0;
-}
-
 /* Restore footer: "Credentials will not be restored." on the left, beside the
    actions (#5631). */
 .backup-restore__skipped {
@@ -84,4 +74,21 @@
   margin-right: auto;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
+}
+
+/* Backup export (#5847): the dialog body is the one scroll area, so the list
+   never scrolls inside it and nothing in it is clipped. */
+.backup-export__list {
+  max-height: none;
+  overflow: visible;
+}
+
+.backup-export__step {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.backup-export__nothing-saved {
+  margin: 0;
 }

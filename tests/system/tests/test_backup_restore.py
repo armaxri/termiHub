@@ -4,7 +4,7 @@
 The Rust suites (``src-tauri/src/backup/tests*.rs``) prove the format, the
 encryption and the staged restore that the next start swaps in. What they do not
 cover is the user's path through the real app: Settings → Backup & Restore →
-**Back up everything…** with a passphrase and the native Save dialog, then
+**Back up…** with a passphrase and the native Save dialog, then
 **Restore…** with the native Open dialog, the preview, **Restore and restart**,
 and the app coming back with the data restored.
 
@@ -72,6 +72,11 @@ class TestBackupRestore(ConnectionsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
                 f"backup-export-section-{section}", "aria-checked"
             )
             assert checked == "true", f"the {section} section is not selected: {checked!r}"
+        self.driver.click("backup-export-next")  # one secret per step (#5847)
+        self.wait(
+            lambda: self.driver.exists("backup-export-passphrase"),
+            what="the backup passphrase step",
+        )
         self.driver.type("backup-export-passphrase", _PASSPHRASE)
         self.driver.type("backup-export-confirm", _PASSPHRASE)
         self.driver.stub_native_dialog("save", target)
