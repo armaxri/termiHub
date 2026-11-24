@@ -63,10 +63,19 @@ function stagedUpdate(overrides: Partial<AgentPendingUpdate> = {}): AgentPending
 let container: HTMLDivElement;
 let root: Root;
 
+/** `n` session labels as the sidebar numbers them: bash, bash 2, … */
+function names(n: number): string[] {
+  return Array.from({ length: n }, (_, i) => (i === 0 ? "bash" : `bash ${i + 1}`));
+}
+
 async function render(openSessions?: number) {
   await act(async () => {
     root.render(
-      <AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} openSessions={openSessions} />
+      <AgentUpdateBanner
+        agentId={AGENT_ID}
+        agentName={AGENT_NAME}
+        sessionNames={openSessions === undefined ? undefined : names(openSessions)}
+      />
     );
   });
 }
@@ -80,7 +89,7 @@ async function renderInNarrowSidebar() {
           <span>{AGENT_NAME}</span>
           <AgentUpdateMarker agentId={AGENT_ID} />
         </div>
-        <AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} openSessions={2} />
+        <AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} sessionNames={names(2)} />
       </div>
     );
   });
@@ -182,7 +191,7 @@ describe("AgentUpdateBanner", () => {
       const title = byTestId(`agent-update-banner-title-${AGENT_ID}`)?.textContent ?? "";
       const note = byTestId(`agent-update-banner-note-${AGENT_ID}`)?.textContent ?? "";
       expect(title.split(" ").length).toBeLessThanOrEqual(4);
-      expect(note).toBe("Waits for 2 sessions to close.");
+      expect(note).toBe("Waits for 2 sessions (bash, bash 2) to close.");
     });
 
     it("shows neither marker nor strip once closed", async () => {
@@ -219,7 +228,7 @@ describe("AgentUpdateBanner", () => {
       const dialog = byTestId(confirmId);
       expect(dialog).not.toBeNull();
       expect(dialog?.textContent).toContain(`Update "${AGENT_NAME}"?`);
-      expect(dialog?.textContent).toContain("2 sessions are open on this agent");
+      expect(dialog?.textContent).toContain("2 sessions (bash, bash 2) are open on this agent");
       expect(dialog?.textContent).toContain("not interrupted");
       await act(async () => {
         byTestId(`${confirmId}-confirm`)?.click();
@@ -232,7 +241,7 @@ describe("AgentUpdateBanner", () => {
       await act(async () => {
         byTestId(applyId)?.click();
       });
-      expect(byTestId(confirmId)?.textContent).toContain("1 session is open on this agent");
+      expect(byTestId(confirmId)?.textContent).toContain("1 session (bash) is open on this agent");
     });
 
     it("does nothing when the confirm is canceled", async () => {

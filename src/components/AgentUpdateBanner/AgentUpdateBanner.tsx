@@ -14,11 +14,12 @@ export interface AgentUpdateBannerProps {
   /** Display name of the agent, named in the strip's accessible label and the confirm. */
   agentName: string;
   /**
-   * Open terminal sessions on this agent (#5821). When there are any, the
-   * apply button asks first and names the count: the agent does not cut them
-   * off, it waits for the last one to close before it restarts.
+   * The sessions running on this agent, by the labels its "Active sessions"
+   * list shows (#5821, #5953). When there are any, the strip and the apply
+   * confirm name them: the agent does not cut them off, it waits for the last
+   * one to close before it restarts.
    */
-  openSessions?: number;
+  sessionNames?: readonly string[];
 }
 
 /** Whether the agent has a staged update the user has not closed (#1352). */
@@ -28,9 +29,16 @@ function useVisibleUpdate(agentId: string) {
   return update && update.staged && !dismissed ? update : null;
 }
 
+const NO_SESSIONS: readonly string[] = [];
+
 /** `1 session` / `2 sessions`. */
 function sessionCount(n: number): string {
   return `${n} session${n === 1 ? "" : "s"}`;
+}
+
+/** `1 session (bash)` / `2 sessions (bash, bash 2)` (#5953). */
+function namedSessions(names: readonly string[]): string {
+  return `${sessionCount(names.length)} (${names.join(", ")})`;
 }
 
 /** Props for {@link AgentUpdateMarker}. */
@@ -77,8 +85,9 @@ export function AgentUpdateMarker({ agentId }: AgentUpdateMarkerProps) {
 export function AgentUpdateBanner({
   agentId,
   agentName,
-  openSessions = 0,
+  sessionNames = NO_SESSIONS,
 }: AgentUpdateBannerProps) {
+  const openSessions = sessionNames.length;
   const update = useVisibleUpdate(agentId);
   const [confirming, setConfirming] = useState(false);
   const dismissAgentUpdate = useAppStore((s) => s.dismissAgentUpdate);
@@ -192,7 +201,7 @@ export function AgentUpdateBanner({
         data-testid={`agent-update-banner-note-${agentId}`}
       >
         {openSessions > 0
-          ? `Waits for ${sessionCount(openSessions)} to close.`
+          ? `Waits for ${namedSessions(sessionNames)} to close.`
           : "The agent restarts and reconnects."}
       </span>
       <div className="agent-update-banner__actions">
@@ -217,7 +226,7 @@ export function AgentUpdateBanner({
         open={confirming}
         title={`Update "${agentName}"?`}
         message={
-          `${sessionCount(openSessions)} ${openSessions === 1 ? "is" : "are"} open on this ` +
+          `${namedSessions(sessionNames)} ${openSessions === 1 ? "is" : "are"} open on this ` +
           "agent. They are not interrupted: the agent restarts and updates when the last " +
           "one closes."
         }
