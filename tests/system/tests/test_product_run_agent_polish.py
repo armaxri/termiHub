@@ -7,10 +7,10 @@ P3s (see :mod:`termihub_harness.product_run.agent_polish`):
   under "Restart agent and update" that the open sessions keep running, and
   keeps each session name on one line;
 - the disconnected-agent banner announces its own visible text, "Agent
-  disconnected. Press Enter to resume.", never "a new session";
+  disconnected. Press Enter to reconnect.", promising no resume (#5989);
 - agent and setup tabs grow to their full title before truncating;
-- a setup tab that exited 0 shows a "Finished" check, not the red plug, and
-  the status bar drops its SSH chip;
+- an ended setup tab's icon shows its outcome (a "Finished" check only for an
+  installed agent, #5992), and the status bar drops its SSH chip;
 - an expanded disconnected agent says "Not connected." with no second
   Connect beside the row's own action.
 
@@ -42,6 +42,7 @@ from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.agent_deploy import AgentDeployUi, reap_agents_under
 from termihub_harness.product_run.agent_polish import (
     FINISHED_DOT_CLASS,
+    OUTCOME_DOTS,
     TAB_MAX_WIDTH,
     banner_announcement_problems,
     kept_sessions_line,
@@ -98,7 +99,7 @@ def test_grade_update_strip_wrong_consequence_fails():
 
 
 def test_grade_banner_announcement():
-    shown = "Agent disconnected. Press Enter to resume."
+    shown = "Agent disconnected. Press Enter to reconnect."
     assert banner_announcement_problems(visible=shown, announcement=shown,
                                         agent_disconnected=True) == []
     plain = "Session ended. Press Enter to reconnect."
@@ -116,7 +117,15 @@ def test_grade_banner_announcement_of_run_20261124T155441Z_fails():
     )
     assert any("but announces" in p for p in problems)
     assert any("promises a new session" in p for p in problems)
-    assert any("Press Enter to resume." in p for p in problems)
+
+
+def test_grade_banner_that_promises_a_resume_fails():
+    # #5989: whether the session resumes is only known after reconnecting.
+    text = "Agent disconnected. Press Enter to resume."
+    problems = banner_announcement_problems(visible=text, announcement=text,
+                                            agent_disconnected=True)
+    assert any("promises a resume" in p for p in problems)
+    assert any("Press Enter to reconnect." in p for p in problems)
 
 
 def _tab(width: float, scroll: float, client: float, tooltip: Optional[str] = None) -> dict:
@@ -148,25 +157,31 @@ def test_grade_tab_growth_of_run_20261124T155441Z_fails():
     assert any("not the full title" in p for p in wrong)
 
 
-def test_grade_setup_tab_icon():
-    finished = f"tab__state-dot {FINISHED_DOT_CLASS}"
-    assert setup_tab_icon_problems(exit_code=0, dot_class=finished, dot_label="Finished",
+@pytest.mark.parametrize("outcome", sorted(OUTCOME_DOTS))
+def test_grade_setup_tab_icon(outcome):
+    suffix, label = OUTCOME_DOTS[outcome]
+    dot = f"tab__state-dot tab__state-dot--{suffix}"
+    assert setup_tab_icon_problems(outcome=outcome, dot_class=dot, dot_label=label,
                                    ssh_chip=False) == []
-    red = "tab__state-dot tab__state-dot--disconnected"
-    assert setup_tab_icon_problems(exit_code=1, dot_class=red, dot_label="Disconnected",
-                                   ssh_chip=True) == []
+
+
+@pytest.mark.parametrize("outcome", sorted(set(OUTCOME_DOTS) - {"installed"}))
+def test_grade_green_check_without_an_installed_agent_fails(outcome):
+    # #5992: a failed Windows setup also exits 0.
+    problems = setup_tab_icon_problems(
+        outcome=outcome, dot_class=f"tab__state-dot {FINISHED_DOT_CLASS}",
+        dot_label="Finished", ssh_chip=False,
+    )
+    assert len(problems) == 2
 
 
 def test_grade_setup_tab_icon_of_run_20261124T155441Z_fails():
-    # R-002: the red plug and the SSH chip after "[Process exited with code 0]".
+    # R-002: the red plug and the SSH chip after an installed agent.
     red = "tab__state-dot tab__state-dot--disconnected"
-    problems = setup_tab_icon_problems(exit_code=0, dot_class=red, dot_label="Disconnected",
-                                       ssh_chip=True)
+    problems = setup_tab_icon_problems(outcome="installed", dot_class=red,
+                                       dot_label="Disconnected", ssh_chip=True)
     assert len(problems) == 3
     assert any("SSH chip" in p for p in problems)
-    wrong = setup_tab_icon_problems(exit_code=2, dot_class=f"x {FINISHED_DOT_CLASS}",
-                                    dot_label="Finished", ssh_chip=False)
-    assert wrong == ["a setup that exited 2 shows the finished check"]
 
 
 def test_grade_disconnected_row_has_one_connect():
@@ -225,6 +240,12 @@ class TestProductRunAgentPolish(
                       f"{tab.get('head')}, strip free {free:.0f}px")
         return tab_growth_problems(tab, strip_free=free)
 
+    def _setup_outcome_variant(self) -> Optional[str]:
+        """The finished setup strip's variant, once the host is no longer checked."""
+        variant = self.driver.get_attribute("terminal-disconnect-overlay", "data-variant")
+        done = variant and variant != "agent-setup-checking"
+        return variant if done and variant.startswith("agent-setup-") else None
+
     def _grade_setup_tab(self) -> list[str]:
         """The setup tab's icon and the SSH chip, when this run opened a setup tab."""
         setup = self.find_tab(f"Setup: {self.name}")
@@ -236,8 +257,8 @@ class TestProductRunAgentPolish(
         self.switch_to_tab(tab_id)
         self.wait(lambda: self.driver.exists("agent-setup-tab-strip"), timeout=60.0,
                   what="the setup tab's finished strip")
-        variant = self.driver.get_attribute("terminal-disconnect-overlay", "data-variant")
-        exit_code = 0 if variant == "agent-setup-installed" else 1
+        variant = self.wait(self._setup_outcome_variant, timeout=60.0,
+                            what="the setup's outcome")
         dot = f"tab-state-dot-{tab_id}"
         dot_class = self.driver.get_attribute(dot, "class") or ""
         dot_label = self.driver.get_attribute(dot, "aria-label")
@@ -246,7 +267,8 @@ class TestProductRunAgentPolish(
         self.evidence(f"setup tab {variant!r}: dot {dot_class!r} {dot_label!r}; "
                       f"SSH chip {ssh_chip}")
         return problems + setup_tab_icon_problems(
-            exit_code=exit_code, dot_class=dot_class, dot_label=dot_label, ssh_chip=ssh_chip
+            outcome=variant.removeprefix("agent-setup-"), dot_class=dot_class,
+            dot_label=dot_label, ssh_chip=ssh_chip,
         )
 
     def _grade_update_strip(self, agent_id: str) -> list[str]:
@@ -320,11 +342,11 @@ class TestProductRunAgentPolish(
             "agent.polish",
             "Round-3 agent polish (#5980): tab titles shown whole, a 'Finished' check on the "
             "setup tab, 'Later' and 'Your session keeps running.' on the update strip, the "
-            "banner announcing 'Press Enter to resume.', one Connect on a disconnected row",
+            "banner announcing 'Press Enter to reconnect.', one Connect on a disconnected row",
             expect="the agent tab '<agent> · bash' and 'Setup: <agent>' untruncated with a "
             "green check on the setup tab; the update strip with Later / Restart agent and "
             "update and 'Your session keeps running.' under it; the disconnected banner "
-            "'Agent disconnected. Press Enter to resume.'; a fresh agent row reading 'Not "
+            "'Agent disconnected. Press Enter to reconnect.'; a fresh agent row reading 'Not "
             "connected.' with only the row's Connect icon",
         ):
             agent = self.deploy_and_connect_agent(self.name, install_dir=INSTALL_DIR)
