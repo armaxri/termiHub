@@ -51,6 +51,8 @@ this suite with #1546.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from termihub_harness import (
@@ -124,11 +126,16 @@ class TestAgentUpdateBannerLive(
         self.announce_agent_update(agent["id"], available_version=self.NEW_VERSION)
 
         text = self.wait_agent_update_banner(agent["id"])
-        # The copy names the agent and the version on offer, and explains that the
-        # staged binary lands on the last disconnect regardless of Apply Now.
-        assert agent["name"] in text
+        # The strip sits under its agent's row (#5821): its region names the
+        # agent, its text the version on offer and when the staged binary lands
+        # (sessions left by other suites on the shared host hold it up, named).
+        banner = self.agent_update_banner_testid(agent["id"])
+        region = self.driver.get_attribute(banner, "aria-label")
+        assert region == f'Update for "{agent["name"]}"'
         assert self.NEW_VERSION in text
-        assert "last session disconnects" in text
+        assert re.search(
+            r"The agent restarts and reconnects\.|Waits for \d+ sessions? \(.+\) to close\.", text
+        ), text
 
         # The event folded through the real listener into the store.
         update = self.agent_update_state(agent["id"])
