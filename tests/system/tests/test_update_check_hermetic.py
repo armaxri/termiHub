@@ -90,12 +90,21 @@ class TestUpdateCheckAgainstALoopbackFeed(SettingsUi, SystemTest):
         request.addfinalizer(cls.feed.close)
         return {"TERMIHUB_TEST_HTTP_BASE": cls.feed.base}
 
+    #: What the "Latest version" row reads while no check has finished
+    #: (``UpdateSettings.tsx``; the "not checked" wording is #5615's).
+    _NO_RESULT_YET = ("", "—", "Checking…", "Not checked yet", "Not checked since launch")
+
     def _latest_version_text(self) -> str:
         if not self.driver.exists("update-latest-version"):
             return ""
         return self.driver.get_text("update-latest-version").strip()
 
     def test_no_automatic_check_then_check_now_reads_the_feed(self):
+        if self.feed.paths:
+            # A rerun in the same app: grade a fresh launch against a clean
+            # feed, or this attempt only repeats what the last one left behind.
+            self.feed.paths.clear()
+            self.restart_app()
         assert self.persisted_settings()["updates"]["autoCheck"] is False
         time.sleep(STARTUP_QUIET_SECONDS)
         assert self.feed.paths == [], (
@@ -106,7 +115,7 @@ class TestUpdateCheckAgainstALoopbackFeed(SettingsUi, SystemTest):
         self.wait(lambda: self.driver.exists("update-check-now"), what="the Check Now button")
         self.driver.click("update-check-now")
         self.wait(
-            lambda: self._latest_version_text() not in ("", "—"),
+            lambda: self._latest_version_text() not in self._NO_RESULT_YET,
             timeout=30,
             what="the update check to finish",
         )
