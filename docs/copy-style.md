@@ -85,6 +85,12 @@ Inside an open dialog, success and info messages show in the dialog's own status
 result with no other on-screen state shows in an `InlineStatus` line beside its button (the
 connection editor's "Reached web — Nothing was saved.").
 
+Opening a dialog dismisses the success and info confirmations still showing: old feedback never sits
+beside a new decision. Undo offers (any toast with a button) are not lost that way
+([#5914](https://github.com/armaxri/termiHub/issues/5914)): they hide while the dialog is open and
+come back, with the time they had left, once it closes. Only a toast raised with `dismissOnModal`
+goes for good; no toast uses it today.
+
 Every `toast.success`, `toast.info` and `toast.promise` call carries a `// toast-policy: <reason>`
 comment naming why it is not visible in place (`background`, `off-screen`, `undo`,
 `no-in-place-surface`, `dialog-status`, `explains-outcome`). `src/components/ui/Toast/toastPolicy.test.ts`
