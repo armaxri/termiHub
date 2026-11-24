@@ -199,6 +199,14 @@ pub const MSG_FILES_ONLY: u8 = 0x8E;
 /// mid-loop. Append-only: a pre-#5396 worker logs the unknown frame and carries
 /// on; a pre-#5396 daemon never reopens, and its session ends on a drop.
 pub const MSG_RECONNECT: u8 = 0x8F;
+/// Daemon → Agent: the algorithms the session's SSH transport negotiated
+/// (#5896). Payload: JSON
+/// [`SshNegotiatedAlgorithms`](termihub_core::connection::SshNegotiatedAlgorithms).
+/// Sent right after [`MSG_READY`] to every worker that attaches, for an SSH
+/// session only. Append-only: a pre-#5896 worker logs the unknown frame and
+/// carries on; a pre-#5896 daemon never sends it, and the desktop's security
+/// popover then says only "Encrypted (SSH)".
+pub const MSG_SSH_ALGORITHMS: u8 = 0x90;
 
 /// [`MSG_CAPABILITIES`] flag: the daemon serves [`MSG_PROCESS_REQUEST`] through
 /// its session backend's process manager.

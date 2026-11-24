@@ -245,7 +245,12 @@ use termihub_core::monitoring::{
 /// matching `capabilities.connectionDescription` flag (#5769). An older agent
 /// ignores the unknown key, so the desktop shows the Description field only to
 /// an agent that advertises the flag; an older desktop never sends it.
-const AGENT_PROTOCOL_VERSION: &str = "0.42.0";
+/// Bumped to 0.43.0 for the additive `connection.sshAlgorithms` method
+/// (#5896): the cipher, MAC, key exchange and host-key algorithm an
+/// agent-hosted SSH session negotiated, for the desktop's security popover.
+/// An older agent answers method-not-found and the popover says only
+/// "Encrypted (SSH)"; an older desktop never asks.
+const AGENT_PROTOCOL_VERSION: &str = "0.43.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -917,6 +922,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_monitoring_unsubscribe(module)?;
     register_processes_list(module)?;
     register_processes_kill(module)?;
+    ssh_algorithms::register(module)?;
     register_tunnel_start(module)?;
     register_tunnel_stop(module)?;
     register_tunnel_status(module)?;
@@ -1841,6 +1847,7 @@ fn register_connections_folders_delete(
 // ── connection.files.* ────────────────────────────────────────────
 
 mod file_ranges;
+mod ssh_algorithms;
 
 /// Resolve the [`FileBrowser`] capability for a `connection.files.*` request.
 ///
@@ -4079,10 +4086,11 @@ mod tests {
     /// and 0.41.0 `connection.files.truncate` with its `fileTruncate`
     /// capability (#5736),
     /// and 0.42.0 the definition `description` with its
-    /// `connectionDescription` capability (#5769).
+    /// `connectionDescription` capability (#5769), and 0.43.0
+    /// `connection.sshAlgorithms` (#5896).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.42.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.43.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and
