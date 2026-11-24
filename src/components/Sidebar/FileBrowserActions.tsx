@@ -1,17 +1,17 @@
 import React, { Fragment, useCallback, useLayoutEffect, useRef, useState } from "react";
-import { Check, MoreHorizontal } from "lucide-react";
+import { Folder, MoreHorizontal } from "lucide-react";
 import {
   Button,
   DropdownMenuContent,
   DropdownMenuRoot,
   DropdownMenuTrigger,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuItemIndicator,
+  MenuLabel,
   MenuSeparator,
   Tooltip,
 } from "@/components/ui";
 import { useElementWidth } from "@/hooks/useElementWidth";
+import { getBasename } from "@/utils/paths";
+import { ActionMenuEntry, InlineMenuButton, keepFieldFocus } from "./FileBrowserActionMenu";
 
 /** Menu section of a {@link FileBrowserAction}; sections are split by separators. */
 export type FileBrowserActionGroup = "navigate" | "terminal" | "create" | "view" | "open";
@@ -58,6 +58,16 @@ export interface FileBrowserAction {
   busy?: boolean;
   /** Visible text beside the icon of the inline button (e.g. "Refreshing…"). */
   inlineText?: string;
+  /**
+   * A menu button (#5832): inline, a "+ ▾" button opening these entries; in the
+   * overflow menu, a sub-menu of them. The entries' own `inline` is ignored.
+   */
+  children?: FileBrowserAction[];
+  /**
+   * The action opens an inline field that takes the focus ("New ▸ File"): as a
+   * menu entry it runs only after the menu closed and returned focus (#5832).
+   */
+  opensField?: boolean;
   /**
    * Render this node in the menu instead of a plain entry — e.g. a sub-menu.
    * Such an action is always menu-only.
@@ -109,6 +119,10 @@ const FALLBACK_ICON_WIDTH = 28;
 const FALLBACK_GAP = 2;
 /** Estimated width of an inline button's visible text, per character. */
 const CHAR_WIDTH = 7;
+/** Extra width of a menu button's "▾" caret beside its icon. */
+const MENU_BUTTON_EXTRA = 12;
+/** Width of the divider between the pinned navigation and the other icons. */
+const DIVIDER_WIDTH = 1;
 /** Gap the overflow menu keeps to the window's top, right and bottom edges. */
 const MENU_EDGE_PADDING = 8;
 
@@ -118,6 +132,11 @@ export interface FileBrowserActionsProps {
   actions: FileBrowserAction[];
   /** Accessible name and tooltip of the overflow trigger. */
   overflowLabel?: string;
+  /**
+   * The folder the actions act on: named in a muted first line of the "…"
+   * menu, its full path as the tooltip (#5832).
+   */
+  folder?: string;
 }
 
 /**
@@ -130,6 +149,7 @@ export interface FileBrowserActionsProps {
 export function FileBrowserActions({
   actions,
   overflowLabel = "More actions",
+  folder,
 }: FileBrowserActionsProps): React.ReactElement {
   const [observeRow, width] = useElementWidth<HTMLDivElement>();
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -170,7 +190,12 @@ export function FileBrowserActions({
   const fit = fitInlineActions({
     available: width,
     widths: candidates.map(
-      (a) => metrics.iconWidth + (a.inlineText ? a.inlineText.length * CHAR_WIDTH : 0)
+      (a, i) =>
+        metrics.iconWidth +
+        (a.inlineText ? a.inlineText.length * CHAR_WIDTH : 0) +
+        (a.children ? MENU_BUTTON_EXTRA : 0) +
+        // The first unpinned icon brings the divider (and its gap) along.
+        (!a.pinned && (i === 0 || candidates[i - 1].pinned) ? DIVIDER_WIDTH + metrics.gap : 0)
     ),
     pinned: candidates.filter((a) => a.pinned).length,
     triggerWidth: metrics.iconWidth,
@@ -196,24 +221,17 @@ export function FileBrowserActions({
       data-testid="file-browser-actions"
       data-inline-count={inline.length}
     >
-      {inline.map((action) => (
-        <Tooltip key={action.id} content={action.tooltip ?? action.label} side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly={!action.inlineText}
-            icon={action.icon}
-            onClick={action.onClick}
-            disabled={action.disabled}
-            aria-label={action.label}
-            aria-pressed={action.checked}
-            aria-busy={action.busy}
-            data-testid={action.testId}
-            data-icon={action.iconName}
-          >
-            {action.inlineText}
-          </Button>
-        </Tooltip>
+      {inline.map((action, i) => (
+        <Fragment key={action.id}>
+          {!action.pinned && (i === 0 || inline[i - 1].pinned) && (
+            <span className="file-browser__actions-divider" aria-hidden="true" />
+          )}
+          {action.children ? (
+            <InlineMenuButton action={action} />
+          ) : (
+            <InlineActionButton action={action} />
+          )}
+        </Fragment>
       ))}
       <span className="file-browser__actions-spacer" aria-hidden="true" />
       <DropdownMenuRoot onOpenChange={onMenuOpenChange}>
@@ -241,11 +259,22 @@ export function FileBrowserActions({
             bottom: MENU_EDGE_PADDING,
           }}
           data-collision-left={menuLeft}
+          onCloseAutoFocus={keepFieldFocus}
           data-testid="file-browser-more-menu"
         >
+          {folder && (
+            <MenuLabel
+              className="file-browser__menu-folder"
+              title={folder}
+              data-testid="file-browser-more-menu-folder"
+            >
+              <Folder size={14} aria-hidden="true" />
+              <span className="file-browser__menu-folder-name">{getBasename(folder)}</span>
+            </MenuLabel>
+          )}
           {sections.map((section, i) => (
             <Fragment key={section[0].id}>
-              {i > 0 && <MenuSeparator />}
+              {(i > 0 || folder) && <MenuSeparator />}
               {section.map((action) => (
                 <ActionMenuEntry key={action.id} action={action} />
               ))}
@@ -257,32 +286,25 @@ export function FileBrowserActions({
   );
 }
 
-/** One action as an overflow-menu entry. */
-function ActionMenuEntry({ action }: { action: FileBrowserAction }) {
-  if (action.menuNode !== undefined) return <>{action.menuNode}</>;
-  if (action.checked !== undefined) {
-    return (
-      <MenuCheckboxItem
-        checked={action.checked}
-        disabled={action.disabled}
-        onSelect={action.onClick}
-        data-testid={action.testId}
-      >
-        <MenuItemIndicator>
-          <Check size={14} />
-        </MenuItemIndicator>
-        {action.icon} {action.label}
-      </MenuCheckboxItem>
-    );
-  }
+/** One plain inline action: an icon button with a tooltip. */
+function InlineActionButton({ action }: { action: FileBrowserAction }) {
   return (
-    <MenuItem
-      icon={action.icon}
-      disabled={action.disabled}
-      onSelect={action.onClick}
-      data-testid={action.testId}
-    >
-      {action.label}
-    </MenuItem>
+    <Tooltip content={action.tooltip ?? action.label} side="top">
+      <Button
+        variant="ghost"
+        size="sm"
+        iconOnly={!action.inlineText}
+        icon={action.icon}
+        onClick={action.onClick}
+        disabled={action.disabled}
+        aria-label={action.label}
+        aria-pressed={action.checked}
+        aria-busy={action.busy}
+        data-testid={action.testId}
+        data-icon={action.iconName}
+      >
+        {action.inlineText}
+      </Button>
+    </Tooltip>
   );
 }

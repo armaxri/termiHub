@@ -5,10 +5,10 @@ import {
   Copy,
   CornerLeftUp,
   ExternalLink,
-  Eye,
   FilePlus,
   FolderPlus,
   FolderSync,
+  Plus,
   RefreshCw,
   Terminal,
   Upload,
@@ -50,6 +50,12 @@ export interface FileBrowserActionsInput {
   onCopyPath: () => void;
   /** The file list's active sort, offered as the "Sort by" sub-menu (#5671). */
   sort: FileSort;
+  /**
+   * Whether the column headers cannot change the sort right now (a column is
+   * hidden at this width, #5832). Only then does the menu offer "Sort by":
+   * otherwise the headers are the one sort control.
+   */
+  sortInMenu: boolean;
   onSort: (sort: FileSort) => void;
 }
 
@@ -61,9 +67,9 @@ export function isRootPath(path: string): boolean {
 /**
  * The file browser's header actions (#5520), in display order. Inline (icon)
  * by usefulness: Up and Refresh are pinned (core navigation, never collapsed);
- * New file, New folder, Upload (remote only) and Paste (only while the file
- * clipboard holds entries) follow, collapsing into the "…" menu as the sidebar
- * narrows. Everything else is a labelled entry of the overflow menu.
+ * "New ▾" (File / Folder, #5832), Upload (remote only) and Paste (only while
+ * the file clipboard holds entries) follow, collapsing into the "…" menu as the
+ * sidebar narrows. Everything else is a labelled entry of the overflow menu.
  */
 export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBrowserAction[] {
   const refreshing = input.isLoading;
@@ -101,22 +107,35 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       pinned: true,
     },
     {
-      id: "new-file",
-      label: "New file",
-      icon: <FilePlus size={14} />,
-      onClick: input.onNewFile,
-      testId: "file-browser-new-file",
-      group: "create",
-      inline: 5,
-    },
-    {
-      id: "new-folder",
-      label: "New folder",
-      icon: <FolderPlus size={14} />,
-      onClick: input.onNewFolder,
-      testId: "file-browser-new-folder",
+      // One slot for both creations (#5832): "New ▾" opens File / Folder.
+      id: "new",
+      label: "New",
+      tooltip: "New file or folder",
+      icon: <Plus size={14} />,
+      iconName: "plus",
+      testId: "file-browser-new",
       group: "create",
       inline: 4,
+      children: [
+        {
+          id: "new-file",
+          label: "File",
+          icon: <FilePlus size={14} />,
+          onClick: input.onNewFile,
+          opensField: true,
+          testId: "file-browser-new-file",
+          group: "create",
+        },
+        {
+          id: "new-folder",
+          label: "Folder",
+          icon: <FolderPlus size={14} />,
+          onClick: input.onNewFolder,
+          opensField: true,
+          testId: "file-browser-new-folder",
+          group: "create",
+        },
+      ],
     },
   ];
   if (input.mode === "session") {
@@ -146,7 +165,8 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
     },
     {
       id: "go-to-cwd",
-      label: "Follow terminal folder",
+      // A command, so a command's name: "Follow …" read as a toggle (#5832).
+      label: "Go to terminal folder",
       tooltip: "Go to the terminal's working directory",
       icon: <FolderSync size={14} />,
       onClick: input.onNavigateToCwd,
@@ -182,17 +202,10 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       group: "terminal",
     },
     {
-      id: "sort",
-      label: "Sort by",
-      icon: null,
-      testId: "file-browser-sort-menu",
-      group: "view",
-      menuNode: <FileSortSubmenu sort={input.sort} onSort={input.onSort} />,
-    },
-    {
       id: "toggle-hidden",
       label: "Show hidden files",
-      icon: <Eye size={14} />,
+      // A toggle: its tick sits in the icon column of the menu (#5832).
+      icon: null,
       onClick: input.onToggleHidden,
       checked: input.showHiddenFiles,
       testId: "file-browser-toggle-hidden",
@@ -207,6 +220,17 @@ export function buildFileBrowserActions(input: FileBrowserActionsInput): FileBro
       group: "view",
     }
   );
+  if (input.sortInMenu) {
+    const toggleIndex = actions.findIndex((a) => a.id === "toggle-hidden");
+    actions.splice(toggleIndex, 0, {
+      id: "sort",
+      label: "Sort by",
+      icon: null,
+      testId: "file-browser-sort-menu",
+      group: "view",
+      menuNode: <FileSortSubmenu sort={input.sort} onSort={input.onSort} />,
+    });
+  }
   if (input.mode === "local") {
     actions.push({
       id: "open-in-explorer",

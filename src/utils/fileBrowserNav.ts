@@ -138,6 +138,40 @@ export function collapseCrumbs({
 }
 
 /**
+ * Narrowest file-browser width (CSS px) at which each data column and its
+ * header show. Mirrors the `@container file-browser` queries in
+ * `FileBrowser.css` (Size hides below 240 px, Modified below 320 px).
+ */
+export const SORT_COLUMN_MIN_WIDTH: Record<Exclude<FileSortKey, "name">, number> = {
+  size: 240,
+  modified: 320,
+};
+
+/** Inputs of {@link sortNeedsMenu}. */
+export interface SortNeedsMenuInput {
+  /** Content-box width of the file browser, or `null` before layout. */
+  width: number | null;
+  /** Which data columns the listing has (a column without data never renders). */
+  columns: { modified: boolean; size: boolean };
+  /** The active sort column. */
+  sortKey: FileSortKey;
+}
+
+/**
+ * Whether the "…" menu must offer "Sort by" (#5832): the column headers are the
+ * one sort control, so the menu offers it only while a header that could sort
+ * is hidden by the width, or the active sort's column is not shown at all (its
+ * header cannot flip the direction). An unknown width shows every header.
+ */
+export function sortNeedsMenu({ width, columns, sortKey }: SortNeedsMenuInput): boolean {
+  if (sortKey !== "name" && !columns[sortKey]) return true;
+  if (width === null) return false;
+  return (["modified", "size"] as const).some(
+    (key) => columns[key] && width < SORT_COLUMN_MIN_WIDTH[key]
+  );
+}
+
+/**
  * Sort file entries for display. Directories are always grouped before files
  * (regardless of direction); the chosen key and direction order entries within
  * each group, with a name tiebreaker for stable results.
