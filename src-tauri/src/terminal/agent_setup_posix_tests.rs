@@ -391,6 +391,31 @@ mod executed {
     }
 
     #[test]
+    fn the_next_deploy_can_back_up_the_agent_after_a_setup_was_killed() {
+        use crate::terminal::agent_install::posix_install_plan;
+        for shell in shells() {
+            for at in 0..markers() {
+                let host = Host::update(shell, NEW);
+                let script = faulty(&host.script(&host.target(), false), at, "kill -KILL $$");
+                let (_, out) = host.run(&script);
+                let installed = std::fs::read_to_string(host.target()).unwrap();
+                let plan = posix_install_plan(host.target().to_str().unwrap(), "/unused");
+                let done = Command::new(shell)
+                    .args(["-c", &plan.backup_command])
+                    .output()
+                    .unwrap();
+                assert!(done.status.success(), "{shell} at {at}: {done:?}\n{out}");
+                // A copy of its own: the install may be replaced or restored.
+                use std::os::unix::fs::MetadataExt;
+                let ino = |p: &Path| std::fs::metadata(p).unwrap().ino();
+                let backup = host.file(".previous");
+                assert_ne!(ino(&host.target()), ino(&backup), "{shell} at {at}");
+                assert_eq!(std::fs::read_to_string(&backup).unwrap(), installed);
+            }
+        }
+    }
+
+    #[test]
     fn a_failed_first_install_leaves_nothing() {
         for shell in shells() {
             for at in 0..markers() {
