@@ -348,3 +348,17 @@ export function nestedRunRecord(
   if (targetLabel) record.targetLabel = targetLabel;
   return record;
 }
+
+/**
+ * Add a finished nested run to a run's `nested` records, keyed by automation
+ * id. An automation called several times in one run (a loop, a retry) keeps one
+ * record: from its first start, with its latest outcome. Otherwise one looping
+ * automation would push every other run out of the capped history.
+ */
+export function collectNestedRun(nested: Map<string, AutomationRun>, record: AutomationRun): void {
+  const first = nested.get(record.automationId);
+  nested.set(
+    record.automationId,
+    first ? { ...record, id: first.id, startedAt: first.startedAt } : record
+  );
+}

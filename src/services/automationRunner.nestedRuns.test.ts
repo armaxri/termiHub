@@ -6,7 +6,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { runAutomation } from "./automationRunner";
 import type { WorkflowNestedRunEvent, WorkflowRunnerDeps } from "./workflowRunner";
-import { nestedRunRecord } from "@/store/slices/automationViews";
+import { collectNestedRun, nestedRunRecord } from "@/store/slices/automationViews";
+import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 
@@ -106,5 +107,23 @@ describe("nested automation runs (#5818, slice 9)", () => {
     });
     // No targetCount: it is not a macro fan-out playback.
     expect(record.targetCount).toBeUndefined();
+  });
+
+  it("keeps one record for an automation a loop calls many times", async () => {
+    const inner = automation("inner", [keys("a")]);
+    const outer = automation("outer", [
+      { kind: "loop", loop: { kind: "count", count: 300 }, body: [call("inner")] },
+    ]);
+    const { events } = await run([inner, outer], (n) => n < 299);
+    expect(events).toHaveLength(300);
+    const nested = new Map<string, AutomationRun>();
+    events.forEach((e, i) => collectNestedRun(nested, nestedRunRecord(e, "t", "x", `r${i}`)));
+    expect([...nested.values()]).toHaveLength(1);
+    expect(nested.get("inner")).toMatchObject({
+      id: "r0",
+      startedAt: events[0].startedAt.toISOString(),
+      endedAt: events[299].endedAt.toISOString(),
+      status: "failed",
+    });
   });
 });
