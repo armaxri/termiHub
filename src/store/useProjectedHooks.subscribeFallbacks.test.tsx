@@ -232,6 +232,7 @@ const CASES: HookCase[] = [
       terminalSessionLost: {},
       terminalEvicted: {},
       terminalExitedTabs: {},
+      terminalExitInfo: {},
     }),
   },
   {
