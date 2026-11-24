@@ -152,11 +152,13 @@ class TestProductRunAutomationRunPicker(
                 what="the $HOME line in both terminals",
             )
             texts = {t: self.driver.read_terminal(t) for t in self.tabs}
-            self.evidence({t: home_line(x, marker) for t, x in texts.items()})
+            self.evidence(str({t: home_line(x, marker) for t, x in texts.items()}))
             problems = typed_on_problems(texts, marker)
             assert not problems, problems
-            runs = self.macro_runs(self.ids["macro"])
-            assert runs and runs[-1].get("targetCount") == 2, runs
+            runs = self.wait(
+                lambda: self.macro_runs(self.ids["macro"]), what="the macro's run in the history"
+            )
+            assert runs[0].get("targetCount") == 2, runs
 
     def test_20_badges_and_stop_one(self):
         t = self.tag
@@ -186,7 +188,7 @@ class TestProductRunAutomationRunPicker(
                 tab: self.driver.get_attribute(f"tab-automation-badge-{tab}", "aria-label")
                 for tab in self.tabs
             }
-            self.evidence(labels)
+            self.evidence(str(labels))
             self.shot(label="badges")
             for label in labels.values():
                 assert label and label.startswith('Running automation "Pick workflow'), labels
@@ -203,7 +205,7 @@ class TestProductRunAutomationRunPicker(
                 what="one canceled and one completed run",
             )
             problems = stopped_one_problems(self.workflow_runs(wid), stopped, other)
-            assert not badge_problems(self._badged(), []), self._badged()
+            self.wait(lambda: not self._badged(), what="every badge to clear")
             done = f"PR_PICK_DONE_{t}"
             assert done in self.driver.read_terminal(other), "the other terminal did not finish"
             assert done not in self.driver.read_terminal(stopped), "the stopped one went on"

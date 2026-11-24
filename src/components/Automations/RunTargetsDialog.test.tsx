@@ -72,6 +72,16 @@ const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`
 const click = (testId: string) => act(() => q(testId).click());
 const runButton = () => q("run-targets-run") as HTMLButtonElement;
 
+/** Press Enter like a browser: the keydown, then the focused button's own click. */
+function pressEnter(testId: string) {
+  const el = q(testId);
+  const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  act(() => {
+    el.dispatchEvent(event);
+  });
+  if (!event.defaultPrevented && el instanceof HTMLButtonElement) act(() => el.click());
+}
+
 function render(
   onRun = vi.fn(),
   automations: RunPickerAutomation[] = [deploy],
@@ -239,6 +249,59 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
 
     render(onRun, [deploy], false);
     render(onRun, [deploy], true);
+    expect(q("run-targets-target-all").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("one Enter on Run opens the confirmation and never passes it", () => {
+    seedTabs([term("a", "s-a"), term("b", "s-b")]);
+    const onRun = render();
+    click("run-targets-target-all");
+    pressEnter("run-targets-run");
+    expect(q("run-targets-confirm-step")).not.toBeNull();
+    expect(onRun).not.toHaveBeenCalled();
+    pressEnter("run-targets-run");
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("Enter on Cancel or More does not run; Enter on a target choice does", () => {
+    seedTabs([term("a", "s-a")]);
+    const onRun = render();
+    pressEnter("run-targets-cancel");
+    pressEnter("run-targets-more");
+    expect(onRun).not.toHaveBeenCalled();
+    pressEnter("run-targets-target-active");
+    expect(onRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("a double click on Run does not pass the confirmation", () => {
+    seedTabs([term("a", "s-a"), term("b", "s-b")]);
+    const onRun = render();
+    click("run-targets-target-all");
+    for (const detail of [1, 2]) {
+      act(() => {
+        runButton().dispatchEvent(new MouseEvent("click", { bubbles: true, detail }));
+      });
+    }
+    expect(q("run-targets-confirm-step")).not.toBeNull();
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
+  it("runs only the terminals the confirmation named when another one connects", () => {
+    seedTabs([term("a", "s-a"), term("b", "s-b"), term("c", null)]);
+    const onRun = render();
+    click("run-targets-target-all");
+    click("run-targets-run");
+    act(() => seedTabs([term("a", "s-a"), term("b", "s-b"), term("c", "s-c")]));
+    expect(q("run-targets-confirm-list").textContent).not.toContain("host-c");
+    click("run-targets-run");
+    expect(onRun).toHaveBeenCalledWith("m1", ["a", "b"], { parallel: true });
+  });
+
+  it("keeps the choice when the library reloads while the dialog is open", () => {
+    seedTabs([term("a", "s-a"), term("b", "s-b")]);
+    const onRun = render();
+    click("run-targets-target-all");
+    render(onRun, [{ ...deploy }]);
     expect(q("run-targets-target-all").getAttribute("aria-checked")).toBe("true");
   });
 });

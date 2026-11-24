@@ -102,7 +102,7 @@ describe("describeMacroFanoutOutcome (PROD-042)", () => {
     );
   });
 
-  it("summarises a cancelled run with the steps played", () => {
+  it("says how many terminals a stopped run finished on", () => {
     const s = describeMacroFanoutOutcome("M", {
       ...base,
       status: "cancelled",
@@ -111,9 +111,18 @@ describe("describeMacroFanoutOutcome (PROD-042)", () => {
       skipped: 1,
     });
     expect(s.kind).toBe("info");
-    expect(s.description).toBe(
-      "Stopped after 1 of 4 steps on 2 terminals · 1 skipped (not connected)"
-    );
+    expect(s.description).toBe("Finished on 2 of 3 terminals · 1 skipped (not connected)");
+  });
+
+  it("never hides a dropped terminal behind a stopped run", () => {
+    const s = describeMacroFanoutOutcome("M", {
+      ...base,
+      status: "cancelled",
+      delivered: 0,
+      dropped: 1,
+    });
+    expect(s.kind).toBe("error");
+    expect(s.description).toContain("1 stopped early (disconnected mid-playback)");
   });
 
   it("reports an errored run when no target is left", () => {
