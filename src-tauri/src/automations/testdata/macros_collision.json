@@ -1,0 +1,10 @@
+{
+  "version": "1",
+  "macros": [
+    { "id": "shared", "name": "Macro with a workflow's id", "steps": [{ "data": "a", "delayMs": 1 }] },
+    { "id": "dup", "name": "First dup macro", "steps": [{ "data": "b", "delayMs": 2 }] },
+    { "id": "dup", "name": "Second dup macro", "steps": [{ "data": "c", "delayMs": 3 }] },
+    { "id": "automation-shared", "name": "Owns the obvious new id", "steps": [] },
+    { "id": "plain", "name": "No collision", "steps": [{ "data": "d" }] }
+  ]
+}
