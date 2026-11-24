@@ -9,7 +9,12 @@ import type { Mock } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AppSettings } from "@/types/connection";
-import { XServerSettings } from "./XServerSettings";
+import type { Platform } from "@/utils/platform";
+import {
+  PROVIDE_X_SERVER_HINTS,
+  STOP_X_SERVER_INACTIVE_HINT,
+  XServerSettings,
+} from "./XServerSettings";
 import type { SettingsUpdate } from "./GeneralSettings";
 
 let container: HTMLDivElement;
@@ -26,11 +31,20 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-function renderWith(settings: AppSettings, visibleFields?: Set<string>): Mock {
+function renderWith(
+  settings: AppSettings,
+  visibleFields?: Set<string>,
+  platform: Platform = "windows"
+): Mock {
   const onChange = vi.fn();
   act(() => {
     root.render(
-      <XServerSettings settings={settings} onChange={onChange} visibleFields={visibleFields} />
+      <XServerSettings
+        settings={settings}
+        onChange={onChange}
+        visibleFields={visibleFields}
+        platform={platform}
+      />
     );
   });
   return onChange;
@@ -89,6 +103,70 @@ describe("XServerSettings", () => {
     renderWith(defaultSettings, new Set(["provideXServerAutomatically"]));
     expect(query("settings-provide-x-server")).not.toBeNull();
     expect(query("settings-stop-x-server-idle")).toBeNull();
+  });
+
+  describe("dependency on 'Provide X server automatically' (#5844)", () => {
+    const PLATFORMS: Platform[] = ["windows", "macos", "linux"];
+
+    it.each(PLATFORMS)("shows only the %s line in the provide hint", (platform) => {
+      renderWith(defaultSettings, undefined, platform);
+      const hint = query("settings-provide-x-server-hint")!.textContent;
+      expect(hint).toBe(PROVIDE_X_SERVER_HINTS[platform]);
+      for (const other of PLATFORMS.filter((p) => p !== platform)) {
+        expect(container.textContent).not.toContain(PROVIDE_X_SERVER_HINTS[other]);
+      }
+      expect(container.textContent).not.toContain("macOS/Linux");
+    });
+
+    it("nests 'Stop X server when idle' under its parent", () => {
+      renderWith(defaultSettings);
+      const stop = query("settings-stop-x-server-idle")!;
+      expect(stop.closest(".settings-panel__nested")).not.toBeNull();
+      expect(query("settings-provide-x-server")!.closest(".settings-panel__nested")).toBeNull();
+    });
+
+    it.each([
+      // [platform, stored provide value, effective provide]
+      ["windows", undefined, true],
+      ["macos", undefined, false],
+      ["linux", undefined, false],
+      ["macos", true, true],
+      ["windows", false, false],
+    ] as const)(
+      "on %s with provide=%s the child is enabled only when provide is effectively %s",
+      (platform, stored, effective) => {
+        renderWith(
+          { ...defaultSettings, provideXServerAutomatically: stored, stopXServerWhenIdle: true },
+          undefined,
+          platform
+        );
+        const provide = query("settings-provide-x-server")!;
+        const stop = query("settings-stop-x-server-idle")! as HTMLButtonElement;
+        expect(provide.getAttribute("aria-checked")).toBe(String(effective));
+        expect(stop.disabled).toBe(!effective);
+        // Never "on while the parent is off": the child shows its effective state.
+        expect(stop.getAttribute("aria-checked")).toBe(String(effective));
+        const hint = query("settings-stop-x-server-idle-hint")!.textContent;
+        if (effective) expect(hint).not.toBe(STOP_X_SERVER_INACTIVE_HINT);
+        else expect(hint).toBe(STOP_X_SERVER_INACTIVE_HINT);
+      }
+    );
+
+    it("keeps the stored idle value while the parent is off", () => {
+      const start = {
+        ...defaultSettings,
+        provideXServerAutomatically: false,
+        stopXServerWhenIdle: true,
+      };
+      const onChange = renderWith(start, undefined, "macos");
+      act(() => query("settings-stop-x-server-idle")!.click());
+      expect(onChange).not.toHaveBeenCalled();
+      // Turning the parent on brings the stored "on" back.
+      act(() => root.unmount());
+      root = createRoot(container);
+      renderWith({ ...start, provideXServerAutomatically: true }, undefined, "macos");
+      expect(query("settings-stop-x-server-idle")!.getAttribute("aria-checked")).toBe("true");
+    });
   });
 
   it("renders nothing when visibleFields excludes both fields", () => {
