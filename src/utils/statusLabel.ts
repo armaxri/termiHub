@@ -1,5 +1,6 @@
 import type { PersistentRunState } from "@/types/connection";
 import type { ServerStatus } from "@/types/embeddedServer";
+import type { TunnelStatus } from "@/types/tunnel";
 
 /**
  * Screen-reader-facing labels for the various colour-coded status dots across
@@ -63,4 +64,22 @@ const SERVER_STATUS_LABELS: Record<ServerStatus, string> = {
  */
 export function serverStatusLabel(status: ServerStatus | undefined): string {
   return status ? SERVER_STATUS_LABELS[status] : "Stopped";
+}
+
+const TUNNEL_STATUS_LABELS: Record<TunnelStatus, string> = {
+  disconnected: "Stopped",
+  connecting: "Starting",
+  connected: "Running",
+  reconnecting: "Reconnecting",
+  error: "Error",
+  missingConnection: "SSH connection deleted",
+};
+
+/**
+ * Label for a tunnel row's status dot (#5852), shown as the dot's tooltip and
+ * accessible name. Uses the run words of the row's Start / Stop control
+ * (Running, Stopped) rather than the connection words agents use.
+ */
+export function tunnelStatusLabel(status: TunnelStatus): string {
+  return TUNNEL_STATUS_LABELS[status] ?? status;
 }

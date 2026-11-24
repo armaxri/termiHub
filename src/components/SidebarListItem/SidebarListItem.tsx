@@ -39,6 +39,18 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
    * they are revealed on a second line below the name instead (#4972).
    */
   actions: React.ReactNode;
+  /**
+   * The row's run control (#5852): a tunnel's or service's Start / Stop, a
+   * macro's Play. Always visible on the row's trailing edge, so the list's main
+   * task never depends on hover discovery. With it, `actions` become a group
+   * revealed on hover/focus that overlays the name's tail just before it (on an
+   * errored row they stay visible in the flow).
+   */
+  primaryAction?: React.ReactNode;
+  /** Accessible name of the hover-revealed group when a `primaryAction` is set. */
+  moreActionsLabel?: string;
+  /** Test hook for the always-visible run control's wrapper. */
+  primaryActionTestId?: string;
   /** Optional leading status indicator (typically a {@link SidebarStatusDot}). */
   status?: React.ReactNode;
   /** Optional badge content shown next to the name (e.g. a protocol/type tag). */
@@ -132,6 +144,9 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       nameTestId,
       nameTooltip,
       actions,
+      primaryAction,
+      moreActionsLabel,
+      primaryActionTestId,
       status,
       badge,
       badgeTestId,
@@ -150,7 +165,10 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
   ) {
     const headerRef = useRef<HTMLDivElement | null>(null);
     const [stacked, setStacked] = useState(false);
-    const hasActions = actions != null;
+    const hasPrimary = primaryAction != null;
+    const hasActions = actions != null || hasPrimary;
+    // A run control keeps the actions in the header's flow, like `actionsVisible`.
+    const inFlow = actionsVisible || hasPrimary;
 
     // Decide between the overlay and the second-line layout (#4972). Every
     // input is the same whether or not the row is hovered, so revealing the
@@ -159,7 +177,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       const header = headerRef.current;
       const actionsEl = header?.querySelector<HTMLElement>(".sidebar-list-item__actions");
       const nameEl = header?.querySelector<HTMLElement>(".sidebar-list-item__name");
-      if (!header || !actionsEl || !nameEl || error || actionsVisible) {
+      if (!header || !actionsEl || !nameEl || error || inFlow) {
         setStacked(false);
         return;
       }
@@ -172,7 +190,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
           actions: actionsWidth(actionsEl),
         })
       );
-    }, [error, actionsVisible]);
+    }, [error, inFlow]);
 
     // Re-measure after every render: the action set changes with the row's
     // state (a running tunnel has more actions than a stopped one).
@@ -194,7 +212,8 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
     const classes = [
       "sidebar-list-item",
       error ? "sidebar-list-item--error" : "",
-      actionsVisible ? "sidebar-list-item--actions-visible" : "",
+      inFlow ? "sidebar-list-item--actions-visible" : "",
+      hasPrimary ? "sidebar-list-item--primary-action" : "",
       stacked ? "sidebar-list-item--stacked-actions" : "",
       className ?? "",
     ]
@@ -250,7 +269,24 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
             </span>
           )}
           {nameEl}
-          {actions != null && <div className="sidebar-list-item__actions">{actions}</div>}
+          {hasPrimary ? (
+            <div className="sidebar-list-item__actions">
+              <span className="sidebar-list-item__primary" data-testid={primaryActionTestId}>
+                {primaryAction}
+              </span>
+              {actions != null && (
+                <span
+                  className="sidebar-list-item__more"
+                  role="group"
+                  aria-label={moreActionsLabel}
+                >
+                  {actions}
+                </span>
+              )}
+            </div>
+          ) : (
+            actions != null && <div className="sidebar-list-item__actions">{actions}</div>
+          )}
         </div>
         {(shownDescription || details) && (
           <div className="sidebar-list-item__details">

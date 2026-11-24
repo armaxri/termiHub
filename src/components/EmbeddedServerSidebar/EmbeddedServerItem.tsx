@@ -174,6 +174,7 @@ export function EmbeddedServerItem({
             <SidebarStatusDot
               tone={statusTone(status)}
               label={serverStatusLabel(status)}
+              title={serverStatusLabel(status)}
               testId={`server-status-${config.id}`}
             />
           }
@@ -181,41 +182,45 @@ export function EmbeddedServerItem({
           descriptionTestId={`server-description-${config.id}`}
           tooltip={tooltip}
           tooltipTestId={`server-tooltip-${config.id}`}
+          primaryAction={
+            active ? (
+              <Tooltip content="Stop" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Stop"
+                  data-testid={`server-stop-${config.id}`}
+                  errorToast={false}
+                  icon={<Square size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    return handleStop();
+                  }}
+                />
+              </Tooltip>
+            ) : (
+              <Tooltip content="Start" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Start"
+                  data-testid={`server-start-${config.id}`}
+                  errorToast={false}
+                  icon={<Play size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    return handleStart();
+                  }}
+                />
+              </Tooltip>
+            )
+          }
+          primaryActionTestId={`server-primary-${config.id}`}
+          moreActionsLabel={`More actions for ${config.name}`}
           actions={
             <>
-              {active ? (
-                <Tooltip content="Stop" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label="Stop"
-                    data-testid={`server-stop-${config.id}`}
-                    errorToast={false}
-                    icon={<Square size={12} />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      return handleStop();
-                    }}
-                  />
-                </Tooltip>
-              ) : (
-                <Tooltip content="Start" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label="Start"
-                    data-testid={`server-start-${config.id}`}
-                    errorToast={false}
-                    icon={<Play size={12} />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      return handleStart();
-                    }}
-                  />
-                </Tooltip>
-              )}
               <Tooltip content={showActivity ? "Hide activity" : "Show activity"} side="top">
                 <Button
                   variant="ghost"
