@@ -40,6 +40,7 @@ from ..bridge import BridgeError, screenshot_to_png_bytes
 from ..display_runner import bring_app_foreground
 from ..window_capture import CaptureUnavailable, capture_window, save_png
 from ..ui.base import HarnessMixin
+from .capture_guard import check_in_frame, parse_px, screen_problem
 from .config import ProductRunInputs, load_inputs
 from .grades import (
     drop_separator_problems,
@@ -186,6 +187,9 @@ class ProductRunUi(HarnessMixin):
     inputs: ClassVar[ProductRunInputs]
     profile_home: ClassVar[Path]
     _failed_steps: list[str]
+    #: The running step's (id, expect_testid, expect) for the capture guard (#5857).
+    _guard: Optional[tuple[str, Optional[str], str]] = None
+    _main_shot_taken: bool = False
 
     if TYPE_CHECKING:  # supplied by SystemTest
         app: Any
@@ -222,20 +226,29 @@ class ProductRunUi(HarnessMixin):
         title: str,
         *,
         expect: str = "",
+        expect_testid: Optional[str] = None,
         screenshot: bool = True,
     ) -> Iterator[None]:
         """Record one graded step; see the module docstring.
 
         ``expect`` says what the screen should show at the end of the step (it
-        goes to the screenshot manifest for the UI review). A step that builds on
-        an earlier one calls :meth:`require` first.
+        goes to the screenshot manifest for the UI review). ``expect_testid``
+        names the element the step's main capture must show (#5857): the capture
+        checks it is in frame first and otherwise fails the step as a harness
+        error (:mod:`.capture_guard`) instead of handing a reviewer the wrong
+        screen. A step whose body closes what it shows (cancels the dialog,
+        leaves the settings page) takes its main capture itself with
+        ``self.shot()`` before that cleanup; the end-of-step capture is then
+        skipped. A step that builds on an earlier one calls :meth:`require` first.
         """
         rec = self.recorder
         rec.begin(step_id, title, phase=self.phase, expect=expect, node=current_node())
+        self._guard = (step_id, expect_testid, expect)
+        self._main_shot_taken = False
         started = time.monotonic()
         try:
             yield
-            if screenshot:
+            if screenshot and not self._main_shot_taken:
                 # Inside the try: a capture that never settles fails the step.
                 self.shot(step_id)
         except pytest.skip.Exception as exc:
@@ -251,6 +264,8 @@ class ProductRunUi(HarnessMixin):
             rec.end(step_id, "fail", reason=message.splitlines()[0][:300] if message else None)
             self._failed_steps.append(step_id)
             return
+        finally:
+            self._guard = None
         rec.evidence(step_id, f"took {time.monotonic() - started:.1f}s")
         rec.end(step_id, "pass")
 
@@ -300,6 +315,9 @@ class ProductRunUi(HarnessMixin):
         pid = getattr(self.app, "pid", None)
         if pid:
             bring_app_foreground(pid)
+        main = label is None and (self._guard or ("",))[0] == step_id
+        if main:
+            expect = self._check_expected_in_frame(expect)
         settled = self._settle(step_id, label=label, expect=expect, scope=scope, timeout=settle_timeout)
         path = self.recorder.shot_path(step_id, label)
         meta: dict[str, Any] = {"label": label, "theme": self._theme_name()}
@@ -320,7 +338,38 @@ class ProductRunUi(HarnessMixin):
                 self.recorder.evidence(step_id, f"no screenshot: {exc}; DOM: {dom_exc}")
                 return None
         self.recorder.add_screenshot(step_id, path, meta)
+        if main:
+            self._main_shot_taken = True
         return path
+
+    def _check_expected_in_frame(self, expect: Optional[str]) -> Optional[str]:
+        """The wrong-screen guard of a step's main capture (#5857).
+
+        Checks the step's ``expect_testid`` (or the capture's own ``expect``) is
+        in the page, rendered and inside the window; raises
+        :class:`~.capture_guard.WrongScreen` otherwise. Returns the testid the
+        settle wait should also require.
+        """
+        _, step_testid, step_expect = self._guard or ("", None, "")
+        testid = expect or step_testid
+        if not testid:
+            return expect
+
+        def probe() -> Optional[str]:
+            exists = self.driver.exists(testid)
+            rect = self.driver.measure_element(testid)["rect"] if exists else None
+            return screen_problem(testid, exists=exists, rect=rect, viewport=self._view_size())
+
+        check_in_frame(testid, probe, step_expect=step_expect)
+        return testid
+
+    def _view_size(self) -> Optional[tuple[float, float]]:
+        try:
+            width = parse_px(self.driver.get_computed_style("width"))
+            height = parse_px(self.driver.get_computed_style("height"))
+        except BridgeError:
+            return None
+        return (width, height) if width and height else None
 
     def _settle(
         self,
