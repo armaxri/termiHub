@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { Button, ColorInput, Field, Input, Modal, ModalClose, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { BASE_THEME_ORDER, COLOR_TOKEN_GROUPS, previewTheme, resolveBaseTheme } from "@/themes";
@@ -86,9 +87,12 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
   const {
     form: { control, getValues, reset, setValue },
     draft: meta,
-    errors,
+    errors: allErrors,
     canSave,
   } = useZodEditorForm<ThemeMeta>({ schema: themeMetaSchema, defaultValues: metaOf(initialTheme) });
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5917). `canSave` still reads every error.
+  const { shown: errors, rootProps, revealAndFocus, rebaseline } = useRevealOnSave(allErrors, meta);
 
   // The color grid is held imperatively (see {@link ThemeMeta}).
   const [colors, setColors] = useState<ThemeColors>(initialTheme.colors);
@@ -102,9 +106,16 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
 
   // Reset both halves of the draft whenever a different theme is opened.
   useEffect(() => {
-    reset(metaOf(initialTheme));
+    const initialMeta = metaOf(initialTheme);
+    reset(initialMeta);
+    rebaseline(initialMeta);
     setColors(initialTheme.colors);
-  }, [initialTheme, reset]);
+  }, [initialTheme, reset, rebaseline]);
+
+  // Each opening starts pristine: no error shows until a field is left.
+  useEffect(() => {
+    if (open) rebaseline(getValues());
+  }, [open, rebaseline, getValues]);
 
   const draft: ThemeDefinition = useMemo(() => ({ ...meta, colors }), [meta, colors]);
 
@@ -135,7 +146,12 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
   };
 
   const handleSave = () => {
-    if (!canSave) return;
+    // Save stays reachable while invalid (aria-disabled, not disabled):
+    // activating it then points at the problem instead of saving.
+    if (!canSave) {
+      revealAndFocus();
+      return;
+    }
     const current = getValues();
     onSave({ ...current, name: current.name.trim(), colors });
   };
@@ -160,7 +176,8 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={!canSave}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             data-testid="theme-editor-save"
           >
             Save theme
@@ -168,7 +185,7 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
         </>
       }
     >
-      <div className="theme-editor" data-testid="theme-editor">
+      <div className="theme-editor" data-testid="theme-editor" {...rootProps}>
         <Controller
           name="name"
           control={control}

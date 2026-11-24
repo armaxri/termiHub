@@ -100,3 +100,9 @@
   gap: var(--spacing-xxs);
   flex-shrink: 0;
 }
+
+/* Wraps the fields so leaving one, or a failed Save, can reveal errors (#5917);
+   it adds no box, so the Modal body lays the fields out as before. */
+.macro-editor__form {
+  display: contents;
+}

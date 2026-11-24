@@ -3,6 +3,7 @@ import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/i
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
 import {
@@ -156,18 +157,24 @@ export function EmbeddedServerDialog({
   const {
     form: { control, getValues, setValue, reset },
     draft: form,
-    errors,
+    errors: allErrors,
     canSave,
   } = useZodEditorForm<ServerFormState>({
     schema: serverFormSchema,
     defaultValues: config ? { ...config } : defaultConfig(),
   });
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5917) — a new service does not open with "Name is required." in red.
+  // `canSave` still reads every error.
+  const { shown: errors, rootProps, revealAndFocus, rebaseline } = useRevealOnSave(allErrors, form);
 
   // Reload the working copy each time the dialog opens so a prior edit never
   // leaks in and the network-interface list refreshes.
   useEffect(() => {
     if (open) {
-      reset(config ? { ...config } : defaultConfig());
+      const initial = config ? { ...config } : defaultConfig();
+      reset(initial);
+      rebaseline(initial);
       setLocation(runLocation);
       setLanWarning(false);
       listNetworkInterfaces()
@@ -180,7 +187,7 @@ export function EmbeddedServerDialog({
           );
         });
     }
-  }, [open, config, reset, runLocation]);
+  }, [open, config, reset, runLocation, rebaseline]);
 
   const handleProtocolChange = (type: ServerType) => {
     const cur = getValues();
@@ -208,9 +215,9 @@ export function EmbeddedServerDialog({
     setLanWarning(false);
   };
 
-  const handleSubmit = async () => {
+  const submit = async () => {
     const values = getValues();
-    if (!canSave || values.port === "") return;
+    if (values.port === "") return;
     // Close only when the save actually succeeded; on failure the dialog stays
     // open (the sidebar surfaces the error via toast) so the user can retry.
     const saved = await onSave(
@@ -218,6 +225,17 @@ export function EmbeddedServerDialog({
       location
     );
     if (saved) onOpenChange(false);
+  };
+
+  // Save stays reachable while invalid (aria-disabled, not disabled):
+  // activating it then points at the problem instead of saving. That branch
+  // stays synchronous so the Button shows no pending spinner for it.
+  const handleSubmit = () => {
+    if (!canSave) {
+      revealAndFocus();
+      return;
+    }
+    return submit();
   };
 
   const ftpAnon = !form.ftpAuth || form.ftpAuth.type === "anonymous";
@@ -287,7 +305,8 @@ export function EmbeddedServerDialog({
             <Button
               variant="primary"
               onClick={handleSubmit}
-              disabled={!canSave}
+              aria-disabled={!canSave}
+              data-invalid={!canSave || undefined}
               data-testid="server-dialog-save"
             >
               Save
@@ -295,7 +314,7 @@ export function EmbeddedServerDialog({
           </>
         }
       >
-        <div className="server-dialog__form">
+        <div className="server-dialog__form" {...rootProps}>
           {/* Name */}
           <Controller
             name="name"

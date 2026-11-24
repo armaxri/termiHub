@@ -224,5 +224,8 @@ class WorkflowUi(HarnessMixin):
         assert not self.unsaved_prompt_open(), "the unsaved prompt outlived the editor"
 
     def save_disabled(self) -> bool:
-        """Whether the Save button is disabled (no name / no steps)."""
-        return self.is_disabled("workflow-editor-save")
+        """Whether Save refuses to save (no name / no steps).
+
+        Save stays clickable while blocked (``aria-disabled``, #5917).
+        """
+        return self.is_blocked("workflow-editor-save")
