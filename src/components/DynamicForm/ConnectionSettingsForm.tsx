@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Controller } from "react-hook-form";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealedErrors } from "@/hooks/useRevealedErrors";
 import { ChevronRight } from "lucide-react";
 import type { SettingsSchema, SettingsGroup } from "@/types/schema";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
@@ -117,6 +118,12 @@ interface ConnectionSettingsFormProps {
    * select (#5560), and must not read as the first field's label (#5641).
    */
   leadNote?: React.ReactNode;
+  /**
+   * Show every field error at once — pass `true` once the user tried to save
+   * (#5909). Otherwise a field's error appears only after the user edited the
+   * field and left it, so a new form does not open full of red messages.
+   */
+  showAllErrors?: boolean;
 }
 
 /**
@@ -145,6 +152,7 @@ export function ConnectionSettingsForm({
   afterField,
   labelAction,
   leadNote,
+  showAllErrors = false,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
@@ -156,6 +164,13 @@ export function ConnectionSettingsForm({
     draft: watchedValues,
     errors: schemaErrors,
   } = useZodEditorForm<Record<string, unknown>>({ schema: zodSchema, defaultValues: settings });
+  // Which errors the user sees (#5909): an edited field's once they leave it,
+  // all of them once they try to save. Validity below still counts every one.
+  const {
+    shown: shownSchemaErrors,
+    revealProps,
+    rebaseline: rebaselineErrors,
+  } = useRevealedErrors(schemaErrors, watchedValues, showAllErrors);
 
   // Whether this schema has a sibling `port` field — gates the host:port split.
   const hasPortField = useMemo(
@@ -270,6 +285,8 @@ export function ConnectionSettingsForm({
       // as a no-op and not forwarded to the parent as a spurious change.
       lastPropagatedRef.current = JSON.stringify(resetValues);
       reset(resetValues);
+      // Another type's form is a fresh form: nothing is the user's to fix yet.
+      rebaselineErrors();
     }
     // Only trigger on schema change, not on every settings update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -361,6 +378,12 @@ export function ConnectionSettingsForm({
     onValidityChange?.(validity.valid, validity.errors);
   }, [validity, onValidityChange]);
 
+  // The top-level field keys whose error is revealed.
+  const revealedKeys = useMemo(
+    () => new Set(Object.keys(shownSchemaErrors).map((path) => path.split(".")[0])),
+    [shownSchemaErrors]
+  );
+
   // While nothing can save it, the shown password field says so and offers
   // "Turn on saving…" (#5835); its save toggle then drops its own copy of it.
   const passwordNotSaved =
@@ -370,7 +393,7 @@ export function ConnectionSettingsForm({
   // The lead note goes to the first group that renders at all.
   let leadNoteShown = false;
   return (
-    <div data-testid="connection-settings-form">
+    <div data-testid="connection-settings-form" {...revealProps}>
       {schema.groups.map((group) => {
         const visibleFields = group.fields.filter(isShown);
         if (visibleFields.length === 0) return null;
@@ -407,7 +430,7 @@ export function ConnectionSettingsForm({
                       key={field.key}
                       name={field.key}
                       control={control}
-                      render={({ field: rhfField, fieldState }) => (
+                      render={({ field: rhfField }) => (
                         <DynamicField
                           field={field}
                           value={rhfField.value}
@@ -419,7 +442,9 @@ export function ConnectionSettingsForm({
                           labelAction={
                             labelAction?.key === field.key ? labelAction.node : undefined
                           }
-                          error={fieldState.error?.message}
+                          error={
+                            revealedKeys.has(field.key) ? validity.errors[field.key] : undefined
+                          }
                           credentialSaved={
                             credentialSavedHint &&
                             field.fieldType.type === "password" &&
