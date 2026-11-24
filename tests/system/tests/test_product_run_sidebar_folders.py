@@ -18,6 +18,8 @@ in the normal lane.
 
 from __future__ import annotations
 
+from typing import Any, ClassVar
+
 import pytest
 
 from termihub_harness import (
@@ -118,7 +120,7 @@ class TestProductRunSidebarFolders(
 ):
     phase = "Sidebar folders"
     request_timeout = 90.0
-    ids: dict[str, str] = {}
+    ids: ClassVar[dict[str, str]] = {}
 
     def _expanded(self, folder_id: str) -> bool:
         return self.driver.get_attribute(folder_toggle_testid(folder_id), "aria-expanded") == "true"
@@ -172,12 +174,12 @@ class TestProductRunSidebarFolders(
             self.tab_id_of(outside)
             self._collapse(marked)
             self.switch_to_tab(inside_tab)
-            active = self.wait(
-                lambda: (lambda a: a if a and a.get("id") == inside_tab else None)(
-                    self.active_tab()
-                ),
-                what="the in-folder tab to become active",
-            )
+
+            def in_folder_tab_active() -> dict[str, Any] | None:
+                tab = self.active_tab()
+                return tab if tab and tab.get("id") == inside_tab else None
+
+            active = self.wait(in_folder_tab_active, what="the in-folder tab to become active")
             connection_id = active.get("connectionId")
             assert connection_id, "the in-folder tab carries no saved-connection id"
             row = folder_toggle_testid(marked)

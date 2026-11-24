@@ -14,7 +14,7 @@ styles over the bridge. :func:`chevron_side_problems` and
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 #: The marker's accessible name and the row's tooltip (``ConnectionList.tsx``).
 CONTAINS_ACTIVE = "Contains the active connection"
@@ -73,7 +73,7 @@ def chevron_side_problems(rows: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
-def _weight(value: Optional[str]) -> int:
+def _weight(value: str | None) -> int:
     text = (value or "").strip()
     if text == "bold":
         return 700
