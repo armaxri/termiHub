@@ -164,6 +164,28 @@ const en = {
   "statusBar.telnet.label": "Telnet: {endpoint}",
   "statusBar.telnet.labelNoHost": "Telnet",
 
+  // ── Status-bar SSH, local-shell and lock chips (#5839) ───────────────────
+  // The SSH chip names its trust and encryption and opens a details popover.
+  "statusBar.ssh.trust.trusted": "host key trusted",
+  "statusBar.ssh.trust.once": "host key trusted once",
+  "statusBar.ssh.trust.pending": "host key not checked yet",
+  "statusBar.ssh.ariaLabel": "SSH: {label}, encrypted, {trust}. Show connection security",
+  "statusBar.ssh.encrypted": "Encrypted (SSH)",
+  "statusBar.ssh.hostKey.pending": "Not checked yet (still connecting)",
+  "statusBar.ssh.row.endpoint": "Host",
+  "statusBar.ssh.row.encryption": "Encryption",
+  "statusBar.ssh.row.auth": "Signed in with",
+  "statusBar.ssh.row.hostKey": "Host key",
+  "statusBar.ssh.title": "Connection security",
+  "statusBar.ssh.manageTrust": "Manage trusted host keys",
+  "statusBar.local.tooltip": "Local shell: {shell}",
+  "statusBar.local.startDir": "Starts in {dir}",
+  "statusBar.local.unknownShell": "Local shell",
+  "statusBar.lock.locked": "Locked",
+  "statusBar.lock.unlocked": "Unlocked",
+  "statusBar.lock.lockNow": "Unlocked, lock the credential store now",
+  "statusBar.lock.unlock": "Locked, unlock the credential store",
+
   // ── Unlock dialog raised by a connect (UnlockDialog, #5684) ──────────────
   // Names the connection waiting on the unlock; several waiting connects
   // name the first and count the rest. {target} is "prod-db (SSH)".
