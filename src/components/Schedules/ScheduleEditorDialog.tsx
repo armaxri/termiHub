@@ -86,7 +86,7 @@ function automationOptions(
       : { value: a.id, label: a.name }
   );
   if (selected && !automations.some((a) => a.id === selected)) {
-    options.push({ value: selected, label: "Deleted automation" });
+    options.push({ value: selected, label: "Missing automation" });
   }
   return options;
 }
@@ -99,7 +99,7 @@ function automationOptions(
  * confirmation of the target hosts first.
  *
  * A schedule whose automation was deleted keeps its id: the picker shows it
- * as "Deleted automation" so saving never rewrites the action silently.
+ * as "Missing automation" so saving never rewrites the action silently.
  */
 export function ScheduleEditorDialog({
   open,

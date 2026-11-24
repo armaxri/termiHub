@@ -73,7 +73,7 @@ export function WorkflowRunOutput() {
     <section
       className={`workflow-run-output ${meta.className}`}
       data-testid="workflow-run-output"
-      aria-label="Workflow run output"
+      aria-label="Automation output"
     >
       <header className="workflow-run-output__header">
         <span
@@ -97,7 +97,7 @@ export function WorkflowRunOutput() {
               variant="ghost"
               size="sm"
               iconOnly
-              aria-label="Stop workflow run"
+              aria-label="Stop the automation"
               data-testid="workflow-run-output-stop"
               icon={<Square size={12} fill="currentColor" />}
               onClick={() => cancelRun()}

@@ -12,7 +12,7 @@ import {
 } from "@/services/keybindings";
 import { CONTEXT_COMMANDS } from "@/services/contextCommands";
 import { cycleLandmarkFocus } from "@/services/landmarkFocus";
-import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
+import { matchHotkeyAutomation } from "@/services/workflowTriggers";
 import {
   activeContextFromTab,
   isEventFromTextInput,
@@ -64,14 +64,14 @@ export function useKeyboardShortcuts() {
 
       const action = processKeyEvent(e);
       if (!action) {
-        // No app shortcut matched — try workflow `hotkey` triggers (#1855). A
-        // workflow bound to this key runs against the focused terminal via the
-        // store's single-run-at-a-time `runWorkflow`. Checked after app
-        // shortcuts so a user's app binding always wins over a workflow hotkey.
-        const wfId = matchHotkeyWorkflow(e, useAppStore.getState().workflows);
-        if (wfId) {
+        // No app shortcut matched — try the automations' `hotkey` triggers
+        // (#1855). One bound to this key runs on the focused terminal. Checked
+        // after app shortcuts, so a user's app binding always wins.
+        const { automations, runAutomation } = useAppStore.getState();
+        const automationId = matchHotkeyAutomation(e, automations);
+        if (automationId) {
           e.preventDefault();
-          void useAppStore.getState().runWorkflow(wfId, { triggeredBy: "hotkey" });
+          void runAutomation(automationId, { origin: "hotkey" });
         }
         return;
       }

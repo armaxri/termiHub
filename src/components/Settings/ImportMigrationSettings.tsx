@@ -15,6 +15,7 @@ import { BulkSshImportDialog } from "@/components/Sidebar/BulkSshImportDialog";
 import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
 import "./CredentialVault.css";
 import "./ImportMigrationSettings.css";
+import { AutomationFileSettings } from "./AutomationFileSettings";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 type Discovery = { status: "checking" } | { status: "found"; path: string } | { status: "none" };
@@ -30,6 +31,7 @@ type Discovery = { status: "checking" } | { status: "found"; path: string } | { 
  * - CSV / inventory fleet onboarding (`FleetOnboardDialog`, #1961);
  * - JSON connection import / export (the app-level `ImportDialog` /
  *   `ExportDialog`, opened through the store);
+ * - JSON automation import / export (`AutomationFileSettings`, #5818);
  * - MobaXterm migration (the app-level `MobaxtermImportHost`, through the store),
  *   with a hint naming any MobaXterm configuration found on this computer;
  * - a link to Backup & restore for whole-app backups.
@@ -173,6 +175,8 @@ export function ImportMigrationSettings() {
           </Button>
         </div>
       </section>
+
+      <AutomationFileSettings />
 
       <section className="import-migration__group" data-testid="import-migration-mobaxterm">
         <SettingsSectionHeading>Import from MobaXterm</SettingsSectionHeading>

@@ -1,13 +1,8 @@
 /**
- * Import/export of workflows as portable JSON files (#1852 foundation; the
- * file-dialog UI that drives these is #1856).
- *
- * Pure helpers: serialising workflows into a small versioned envelope,
- * validating/parsing an envelope back into workflows (declaratively, with the
- * zod schemas in {@link "@/services/workflowSchema"}, #4386), and
- * resolving id/name collisions when merging imported workflows into an existing
- * library. Mirrors {@link "@/services/macroIo"}; keeping the
- * serialise/validate/collision logic here makes it unit-testable in isolation.
+ * Validated reading of the entries of an automations file (#1852, #4386, #5818):
+ * the `workflows` list older builds exported and today's `automations` list have
+ * the same fields, so one schema ({@link "@/services/workflowSchema"}) and one set
+ * of messages serve both. `automationFileIo.ts` puts the lists together.
  */
 
 import type {
@@ -25,69 +20,10 @@ import {
   isRecord,
   parseImportEnvelope,
 } from "@/services/importEnvelope";
-import { newId } from "@/services/transport/ids";
 import { importedWorkflowSchema } from "@/services/workflowSchema";
 
-/**
- * Current version of the workflow export envelope. Bump only on an incompatible
- * change to the on-disk shape; the parser rejects any other version so a newer
- * file fails loudly rather than importing as a corrupt workflow.
- */
+/** The version of every automations file so far, in any of its formats. */
 export const WORKFLOW_EXPORT_VERSION = 1;
-
-/**
- * The stable, explicit on-disk shape for exported workflows. A versioned wrapper
- * around the workflow list — deliberately NOT the raw internal store — so the
- * file format can evolve independently of the runtime {@link Workflow} type.
- */
-export interface WorkflowExportEnvelope {
-  /** Envelope schema version; see {@link WORKFLOW_EXPORT_VERSION}. */
-  version: number;
-  /** The exported workflows. */
-  workflows: Workflow[];
-}
-
-/** Suffix appended to imported workflow names that collide with an existing one. */
-const COLLISION_SUFFIX = "imported";
-
-/**
- * The outcome of importing a workflow file, surfaced to the user (#1856).
- *
- * Beyond the plain count, this makes the **security-sensitive** part explicit:
- * how many imported workflows carry a `run-local-process` step. Such steps are
- * **preserved, not stripped** on import (so #1857's run-time guard applies), but
- * they are **never auto-authorized** — the runner refuses to spawn them until the
- * user explicitly enables the step. The counts let the sidebar flag them rather
- * than silently trust an imported file.
- */
-export interface WorkflowImportResult {
-  /** Number of workflows merged into the library. */
-  imported: number;
-  /** How many imported workflows contain at least one `run-local-process` step. */
-  workflowsWithLocalProcess: number;
-  /** Total `run-local-process` steps across all imported workflows. */
-  localProcessSteps: number;
-  /**
-   * Local file paths that imported `run-script` steps referenced through
-   * `sourcePath` and that were **removed** on import (#4310, FEC2-001). An
-   * imported file must not decide which local file a step reads, so the step
-   * keeps only its visible script; the user re-picks the file to load from disk.
-   */
-  removedScriptSourcePaths: string[];
-}
-
-/**
- * Serialise workflows into a pretty-printed export envelope string ready to
- * write to a `.json` file. Works for a single workflow (`[workflow]`) or the
- * whole library.
- */
-export function serializeWorkflows(workflows: Workflow[]): string {
-  const envelope: WorkflowExportEnvelope = {
-    version: WORKFLOW_EXPORT_VERSION,
-    workflows,
-  };
-  return `${JSON.stringify(envelope, null, 2)}\n`;
-}
 
 // ---------------------------------------------------------------------------
 // Human-readable error mapping for the zod import schema
@@ -105,7 +41,9 @@ type StepFieldOf<K extends WorkflowStepKind> = Exclude<
  */
 const STEP_FIELD_PROBLEMS: { [K in WorkflowStepKind]: Record<StepFieldOf<K>, string> } & {
   "type-keys": Record<"chunks" | "timing" | "fixedDelayMs" | "recorded", string>;
+  "run-automation": Record<"automationId", string>;
 } = {
+  "run-automation": { automationId: 'is missing "automationId".' },
   "type-keys": {
     chunks: 'has invalid "chunks".',
     timing: 'has an invalid "timing".',
@@ -241,17 +179,18 @@ function describeParameterIssue(raw: unknown, at: string, path: PropertyKey[]): 
 }
 
 /**
- * Describe an issue inside workflow `index` as `<location> <problem>`. The
- * location names the workflow by index and — once its name is valid — by name,
+ * Describe an issue inside entry `index` as `<location> <problem>`. The
+ * location names the entry by index and — once its name is valid — by name,
  * then the offending step / trigger / parameter.
  */
-function describeWorkflowIssue(
+function describeEntryIssue(
+  noun: string,
   issue: ImportIssue,
   raw: unknown,
   index: number,
   path: PropertyKey[]
 ): string {
-  const where = `workflow at index ${index}`;
+  const where = `${noun} at index ${index}`;
   if (!isRecord(raw)) return `${where} is not an object.`;
   const label = isNonBlankString(raw.name) ? `${where} ("${raw.name}")` : where;
   const [field, entry, ...rest] = path;
@@ -287,189 +226,33 @@ function describeWorkflowIssue(
   }
 }
 
+/** The lists that hold step-by-step entries, and what one entry is called. */
+const ENTRY_NOUN = { automations: "automation", workflows: "workflow" } as const;
+
 /**
- * Parse and validate an exported-workflow file, returning the workflows it
- * contains. Throws an `Error` with a human-readable, recoverable message for
- * malformed JSON, a missing/unsupported envelope version, or any malformed
- * workflow — so a bad file never corrupts the library, it just surfaces a toast.
+ * Parse and validate one list of an exported file. Throws an `Error` with a
+ * human-readable, recoverable message for malformed JSON, a missing or
+ * unsupported envelope version, or any malformed entry — so a bad file never
+ * corrupts the library, it just surfaces a toast.
  *
- * Validation is the declarative {@link importedWorkflowSchema}: every field of
- * every step / trigger / parameter kind is checked, unknown keys are stripped
- * (a forged extra key never survives), and absent optional keys stay absent.
+ * Every field of every step / trigger / parameter kind is checked; the result
+ * holds the known fields only, and absent optional keys stay absent.
  */
-export function parseWorkflowEnvelope(json: string): Workflow[] {
-  const workflows = parseImportEnvelope(json, {
-    label: "workflow",
+export function parseStepEntries(json: string, listKey: keyof typeof ENTRY_NOUN): Workflow[] {
+  const noun = ENTRY_NOUN[listKey];
+  const entries = parseImportEnvelope(json, {
+    label: noun,
     version: WORKFLOW_EXPORT_VERSION,
-    listKey: "workflows",
+    listKey,
     entry: importedWorkflowSchema,
-    describeEntryIssue: describeWorkflowIssue,
+    describeEntryIssue: (issue, raw, index, path) =>
+      describeEntryIssue(noun, issue, raw, index, path),
   });
-  // Normalise to the stable key order, and keep `parameters` only when it has
-  // entries so a parameter-free workflow round-trips without an empty key.
-  // `triggersEnabled` is kept only when it disarms (#5674): absent = armed.
-  return workflows.map(
-    ({
-      id,
-      name,
-      description,
-      tags,
-      steps,
-      triggers,
-      parameters,
-      triggersEnabled,
-      createdAt,
-      updatedAt,
-    }) => ({
-      id,
-      name,
-      description,
-      tags,
-      steps,
-      triggers,
-      ...(parameters && parameters.length > 0 ? { parameters } : {}),
-      ...(triggersEnabled === false ? { triggersEnabled } : {}),
-      createdAt,
-      updatedAt,
-    })
-  );
-}
-
-/**
- * Count the `run-local-process` steps carried by a set of workflows, and how
- * many workflows contain at least one. Used to surface a security warning when a
- * file is imported: these steps are guarded and must be explicitly authorized
- * (#1857) before they can run, so an imported file that carries them is flagged
- * rather than silently trusted. Returns `{0, 0}` when there are none.
- */
-export function summarizeLocalProcessSteps(workflows: Workflow[]): {
-  workflowsWithLocalProcess: number;
-  localProcessSteps: number;
-} {
-  let workflowsWithLocalProcess = 0;
-  let localProcessSteps = 0;
-  for (const workflow of workflows) {
-    const count = countLocalProcessSteps(workflow.steps);
-    if (count > 0) {
-      workflowsWithLocalProcess += 1;
-      localProcessSteps += count;
-    }
-  }
-  return { workflowsWithLocalProcess, localProcessSteps };
-}
-
-/**
- * Count `run-local-process` steps in a step list, **descending into the
- * container step kinds** — a conditional's `then`/`else` (PROD-0044) and a
- * loop's `body` (PROD-044) — so a guarded step nested inside one is still
- * counted; otherwise an imported container could hide one from the security
- * warning.
- */
-function countLocalProcessSteps(steps: WorkflowStep[]): number {
-  let count = 0;
-  for (const step of steps) {
-    if (step.kind === "run-local-process") {
-      count += 1;
-    } else if (step.kind === "conditional") {
-      count += countLocalProcessSteps(step.then);
-      if (step.else) count += countLocalProcessSteps(step.else);
-    } else if (step.kind === "loop") {
-      count += countLocalProcessSteps(step.body);
-    }
-  }
-  return count;
-}
-
-/**
- * Remove every `run-script` `sourcePath` from imported workflows (#4310,
- * FEC2-001), **descending into container steps** (a conditional's `then`/`else`,
- * a loop's `body`) so a nested step cannot hide one. A `sourcePath` makes the
- * runner read a local file and type it into the remote shell; an imported file
- * must never choose that file, so the step keeps only its visible `script` and
- * the user has to re-pick the file on this machine. Pure: returns new workflows
- * plus the removed paths (in step order) so the import can tell the user.
- */
-export function stripScriptSourcePaths(workflows: Workflow[]): {
-  workflows: Workflow[];
-  removedPaths: string[];
-} {
-  const removedPaths: string[] = [];
-  const stripSteps = (steps: WorkflowStep[]): WorkflowStep[] =>
-    steps.map((step) => {
-      switch (step.kind) {
-        case "run-script": {
-          if (step.sourcePath === undefined) return step;
-          const { sourcePath, ...rest } = step;
-          removedPaths.push(sourcePath);
-          return rest;
-        }
-        case "conditional": {
-          const next: WorkflowStep = { ...step, then: stripSteps(step.then) };
-          if (step.else) next.else = stripSteps(step.else);
-          return next;
-        }
-        case "loop":
-          return { ...step, body: stripSteps(step.body) };
-        default:
-          return step;
-      }
-    });
-  const stripped = workflows.map((workflow) => ({
-    ...workflow,
-    steps: stripSteps(workflow.steps),
+  // `parameters` only when it has entries, so a parameter-free entry does not
+  // gain an empty key; `triggersEnabled` only when it disarms (#5674).
+  return entries.map(({ parameters, triggersEnabled, ...entry }) => ({
+    ...entry,
+    ...(parameters && parameters.length > 0 ? { parameters } : {}),
+    ...(triggersEnabled === false ? { triggersEnabled } : {}),
   }));
-  return { workflows: stripped, removedPaths };
-}
-
-/** Default fresh-id generator; mirrors the store's `generateWorkflowId`. */
-function defaultGenerateId(): string {
-  return newId("workflow");
-}
-
-/**
- * Given a desired name and the set of names already in use, return a unique name
- * by appending "(imported)", then "(imported 2)", … until it no longer collides.
- * Leaves the name untouched when there is no collision.
- */
-function uniqueName(name: string, used: Set<string>): string {
-  if (!used.has(name)) return name;
-  let candidate = `${name} (${COLLISION_SUFFIX})`;
-  let n = 2;
-  while (used.has(candidate)) {
-    candidate = `${name} (${COLLISION_SUFFIX} ${n})`;
-    n += 1;
-  }
-  return candidate;
-}
-
-/**
- * Prepare imported workflows for merging into an existing library. Every imported
- * workflow is given a **fresh id** (so it never overwrites an existing one, even
- * when the file was exported from this same instance), has its create/update
- * timestamps cleared (the backend re-stamps them on save), and gets a
- * **deterministically de-duplicated name** — a name that already exists (in the
- * library or earlier in this same batch) is suffixed with "(imported)".
- *
- * @param imported Workflows parsed from a file (see {@link parseWorkflowEnvelope}).
- * @param existing The current library, used for name-collision detection.
- * @param generateId Injectable id generator (defaults to a crypto-based uuid).
- */
-export function resolveImportCollisions(
-  imported: Workflow[],
-  existing: Workflow[],
-  generateId: () => string = defaultGenerateId
-): Workflow[] {
-  const usedNames = new Set(existing.map((w) => w.name));
-  return imported.map((workflow) => {
-    const name = uniqueName(workflow.name, usedNames);
-    usedNames.add(name);
-    return {
-      ...workflow,
-      id: generateId(),
-      name,
-      // Cleared so the backend stamps authoritative timestamps on save.
-      createdAt: "",
-      updatedAt: "",
-    };
-  });
 }

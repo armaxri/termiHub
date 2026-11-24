@@ -1,8 +1,6 @@
 import { StateCreator } from "zustand";
 
 import { toast } from "@/components/ui";
-import { saveAutomation as apiSaveAutomation } from "@/services/automationApi";
-import { parseMacroEnvelope, resolveImportCollisions } from "@/services/macroIo";
 import {
   getTerminalInputInjector,
   type MacroInjector,
@@ -10,14 +8,13 @@ import {
 } from "@/services/macroPlayback";
 import { Macro, MacroRun, MacroRunOrigin } from "@/types/macro";
 import { frontendLog } from "@/utils/frontendLog";
-import { newId } from "@/services/transport/ids";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
 
 import type { AppState } from "../appStore";
 import { collectLiveTabs, getActiveTab } from "../layoutHelpers";
 import { filterConnectedTerminalTabIds } from "../tabQueries";
-import { automationToMacro, isMacroShaped, macroToAutomation } from "./automationViews";
+import { automationToMacro, isMacroShaped } from "./automationViews";
 import { createTargetInjector, describeMacroFanoutOutcome, tallyMacroTargets } from "./macroFanout";
 import {
   playAutomationKeys,
@@ -103,11 +100,6 @@ function stopActivePlayback(): void {
   activePlayback = null;
 }
 
-/** Generate a unique macro id. */
-function generateMacroId(): string {
-  return newId("macro");
-}
-
 /**
  * Macros domain slice (#2114): the stored-macro library plus the
  * playback (#1675) state and the actions that drive them. Extracted
@@ -122,13 +114,6 @@ export interface MacrosSlice {
   loadMacros: () => Promise<void>;
   /** Delete a macro by ID; only mutates local state after the backend delete resolves. */
   deleteMacroFromBackend: (macroId: string) => Promise<void>;
-  /**
-   * Import macros from an exported-macro file's JSON, merging them into the
-   * library. Malformed/incompatible files reject with a clear error and leave
-   * the library untouched; imported macros get fresh ids and de-duplicated
-   * names (see {@link resolveImportCollisions}). Returns the number imported.
-   */
-  importMacros: (json: string) => Promise<number>;
 
   // Macro run history (#3543)
   /** Recorded playbacks, newest first. Metadata only — never the macro's input. */
@@ -191,7 +176,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     }
     if (macro.steps.length === 0) {
       // toast-policy: explains-outcome — nothing plays, and this says why
-      toast.info(`Macro "${macro.name}" has no steps to play`);
+      toast.info(`Automation "${macro.name}" has no steps to run`);
       return null;
     }
     stopActivePlayback();
@@ -205,7 +190,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     const startedAt = new Date();
     const toastId = `macro-playback-${macro.id}-multi`;
     const total = macro.steps.length;
-    const title = `Playing macro "${macro.name}" on ${targets.length} terminals…`;
+    const title = `Running automation "${macro.name}" on ${targets.length} terminals…`;
     const progress: Record<string, number> = Object.fromEntries(targets.map((id) => [id, 0]));
     toast.loading(title, { id: toastId, description: `0 / ${total} steps` });
     set({
@@ -333,19 +318,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       await get().deleteAutomationFromBackend(macroId);
     },
 
-    importMacros: async (json) => {
-      // Parse+validate first: a malformed file throws here, before any backend
-      // write, so a bad import can never corrupt the existing library (#1677).
-      const parsed = parseMacroEnvelope(json);
-      const prepared = resolveImportCollisions(parsed, get().macros, generateMacroId);
-      for (const macro of prepared) {
-        await apiSaveAutomation(macroToAutomation(macro));
-      }
-      // Refresh once, after all saves, rather than per-macro.
-      await get().loadAutomations();
-      return prepared.length;
-    },
-
     // Macro run history (#3543)
     macroRuns: [],
 
@@ -360,7 +332,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     playMacro: async (macroId, opts) => {
       const macro = get().macros.find((m) => m.id === macroId) ?? (await fetchMacro(macroId));
       if (!macro) {
-        toast.error("Macro not found");
+        toast.error("Automation not found");
         return null;
       }
       const state = get();
@@ -372,7 +344,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
 
       const targetTabId = requested?.[0] ?? opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
       if (!targetTabId) {
-        toast.error("No active terminal to play the macro into");
+        toast.error("No active terminal to run the automation on");
         return null;
       }
 
@@ -392,7 +364,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
 
       if (macro.steps.length === 0) {
         // toast-policy: explains-outcome — nothing plays, and this says why
-        toast.info(`Macro "${macro.name}" has no steps to play`);
+        toast.info(`Automation "${macro.name}" has no steps to run`);
         return null;
       }
 
@@ -409,7 +381,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       const total = macro.steps.length;
       const targetLabel = tab.title || "Terminal";
       const startedAt = new Date();
-      toast.loading(`Playing macro "${macro.name}"…`, {
+      toast.loading(`Running automation "${macro.name}"…`, {
         id: toastId,
         description: `0 / ${total} steps`,
       });
@@ -432,7 +404,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
               ? { macroPlayback: { ...s.macroPlayback, played } }
               : {}
           );
-          toast.loading(`Playing macro "${macro.name}"…`, {
+          toast.loading(`Running automation "${macro.name}"…`, {
             id: toastId,
             description: `${played} / ${stepTotal} steps`,
           });
@@ -453,12 +425,12 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         toast.dismiss(toastId);
       } else if (result.status === "cancelled") {
         // toast-policy: explains-outcome — says how far the canceled playback got
-        toast.info(`Playback of "${macro.name}" canceled`, {
+        toast.info(`Automation "${macro.name}" canceled`, {
           id: toastId,
           description: `Stopped after ${result.stepsPlayed} of ${total} steps`,
         });
       } else {
-        toast.error(`Could not play "${macro.name}" — the terminal is no longer connected`, {
+        toast.error(`Automation "${macro.name}" stopped: the terminal is no longer connected`, {
           id: toastId,
         });
       }

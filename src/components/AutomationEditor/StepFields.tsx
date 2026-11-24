@@ -8,7 +8,7 @@ import { LocalProcessFields } from "./LocalProcessFields";
 import { ScriptSourceField } from "./ScriptSourceField";
 import { SecondsInput } from "./SecondsInput";
 import { useStepEditor } from "./stepEditorContext";
-import { formatSeconds } from "./stepMeta";
+import { MISSING_AUTOMATION, formatSeconds } from "./stepMeta";
 import { TypeKeysFields } from "./TypeKeysFields";
 
 /** Props of {@link StepFields}. */
@@ -157,12 +157,12 @@ interface RunAutomationFieldProps {
   onChange: (step: AutomationStep) => void;
 }
 
-/** Which automation the step runs. A deleted one stays shown as such. */
+/** Which automation the step runs. A missing one stays shown as such. */
 function RunAutomationField({ step, path, onChange }: RunAutomationFieldProps) {
   const { automations } = useStepEditor();
   const options = automations.map((a) => ({ value: a.id, label: a.name }));
   if (step.automationId && !automations.some((a) => a.id === step.automationId)) {
-    options.unshift({ value: step.automationId, label: "Deleted automation" });
+    options.unshift({ value: step.automationId, label: MISSING_AUTOMATION });
   }
   return (
     <Field label="Automation" htmlFor={`automation-step-automation-${path}`}>

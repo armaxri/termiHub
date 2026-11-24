@@ -299,8 +299,11 @@ export function macroRunToAutomationRun(run: MacroRun): AutomationRun {
   return record;
 }
 
+/** A finished step-by-step run; unlike the workflow view, any origin. */
+export type FinishedRun = Omit<WorkflowRun, "triggeredBy"> & { triggeredBy: AutomationRunOrigin };
+
 /** A finished workflow run as an automation run (mirrors the Rust migration). */
-export function workflowRunToAutomationRun(run: WorkflowRun): AutomationRun {
+export function workflowRunToAutomationRun(run: FinishedRun): AutomationRun {
   const record: AutomationRun = {
     id: run.id,
     automationId: run.workflowId,

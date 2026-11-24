@@ -32,7 +32,7 @@ fails until its fix lands; the grade is never weakened to pass.
    offers "Sort by" (Name / Modified / Size) and "Copy path".
 7. **Toast noise** (#5665, #5675, #5686): a toast shown while the workflow
    editor is open covers none of the dialog; three runs of two workflows
-   leave no "Ran workflow" toast (#5859: the terminal output and the run
+   leave no "Ran automation" toast (#5859: the terminal output and the run
    history show it); Save and connect raises no "Saved" toast; a
    "Closed … / Reopen" toast hides while a dialog is open and comes back
    once it closes (#5914).
@@ -242,7 +242,7 @@ class TestProductRunComplaints(
         with self.step(
             "complaints.automations.palette",
             "Command-palette entries show the bare name, no step count (#5519)",
-            expect="#5519 complaint: the command palette lists the macro and the workflow by "
+            expect="#5519 complaint: the command palette lists both automations by "
             "name only (no 'Run macro:' prefix in front, no step count)",
         ):
             self.require("complaints.automations.create")
@@ -251,7 +251,7 @@ class TestProductRunComplaints(
             self.wait(lambda: self.driver.exists("command-palette-input"), what="the palette")
             self.driver.type("command-palette-input", tag)
             for kind, name in (("macro", macro_name), ("workflow", workflow_name)):
-                item = f"command-palette-item-{kind}:{ids[kind]}"
+                item = f"command-palette-item-automation:{ids[kind]}"
                 self.wait(lambda i=item: self.driver.exists(i), what=f"the {kind} entry")
                 self._row_grade(item, name, f"palette {kind}")
         if self.driver.exists("command-palette-input"):
@@ -721,10 +721,10 @@ class TestProductRunComplaints(
         tag = unique_name("pr").split("-")[-1]
         with self.step(
             "complaints.toasts.dialog",
-            "No toast covers the workflow editor; the earlier 'Ran workflow' toast is dismissed "
+            "No toast covers the workflow editor; the earlier 'Ran automation' toast is dismissed "
             "when it opens (#5686, #5830)",
             expect="#5686/#5830 complaint: with the workflow editor open, no toast covers the "
-            "dialog ('Add parameter…' visible) and the stale 'Ran workflow' toast is gone",
+            "dialog ('Add parameter…' visible) and the stale 'Ran automation' toast is gone",
             expect_testid=WORKFLOW_DIALOG,
         ):
             workflow = self._create_workflow(f"Toast clear {tag}", [f"echo PR_TOAST_DLG_{tag}"])
@@ -740,8 +740,8 @@ class TestProductRunComplaints(
             try:
                 # A dialog opening dismisses the success toasts still showing (#5830).
                 self.wait(
-                    lambda: not self._toast_titles("Ran workflow"),
-                    what="the stale 'Ran workflow' toast to go when the editor opens",
+                    lambda: not self._toast_titles("Ran automation"),
+                    what="the stale 'Ran automation' toast to go when the editor opens",
                 )
                 for item in self._toast_items():
                     assert not _intersects(item["rect"], dialog), (
@@ -758,8 +758,8 @@ class TestProductRunComplaints(
         tag = unique_name("pr").split("-")[-1]
         with self.step(
             "complaints.toasts.runs",
-            "Running workflows several times in a row shows no 'Ran workflow' toast (#5675, #5859)",
-            expect="#5675/#5859 complaint: after three runs of two workflows no 'Ran workflow' "
+            "Running workflows several times in a row shows no 'Ran automation' toast (#5675, #5859)",
+            expect="#5675/#5859 complaint: after three runs of two workflows no 'Ran automation' "
             "toast shows: the terminal output and the run history are the feedback",
         ):
             first = self._create_workflow(f"Run once {tag}", [f"echo PR_RUN_A_{tag}"])
@@ -781,8 +781,8 @@ class TestProductRunComplaints(
                 ) else []
                 self.evidence(f"after run {marker}: toasts {shown}")
             time.sleep(0.5)  # a late toast would land by now
-            titles = [t["text"] for t in self._toast_titles("Ran workflow")]
-            self.evidence(f"'Ran workflow' toasts: {titles}")
+            titles = [t["text"] for t in self._toast_titles("Ran automation")]
+            self.evidence(f"'Ran automation' toasts: {titles}")
             assert not titles, f"runs in the visible terminal still toast: {titles}"
         self.close_all_tabs()
 

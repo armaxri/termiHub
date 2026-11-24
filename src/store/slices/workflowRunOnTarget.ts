@@ -37,7 +37,8 @@ import {
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
-import type { Workflow, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
+import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
+import type { Workflow } from "@/types/workflow";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { AnsiStreamStripper } from "@/utils/stripAnsi";
@@ -65,6 +66,7 @@ import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import {
   collectNestedRun,
   nestedRunRecord,
+  type FinishedRun,
   workflowRunToAutomationRun,
   workflowToAutomation,
 } from "./automationViews";
@@ -154,7 +156,7 @@ export interface WorkflowTargetRun {
   /** Collected parameter values (PROD-0040). */
   paramValues: WorkflowParamValues;
   /** What launched the run, recorded in history (PROD-0046). */
-  triggeredBy: WorkflowRunTrigger;
+  triggeredBy: AutomationRunOrigin;
   /** A human-readable name for the target (its tab title), for the progress list. */
   targetLabel?: string;
   /** Set when this target is one of several in a fan-out run (PROD-047, #3418). */
@@ -194,21 +196,21 @@ export function toastRunOutcome(
     const first = tolerated[0];
     // toast-policy: explains-outcome — a clean-looking run hid tolerated step failures
     toast.info(
-      `Ran workflow "${workflowName}" with ${tolerated.length} tolerated step failure` +
+      `Ran automation "${workflowName}" with ${tolerated.length} tolerated step failure` +
         (tolerated.length === 1 ? "" : "s"),
       { id: toastId, description: `Step ${first.stepIndex + 1}: ${first.error}` }
     );
     keepWorkflowRunFailure(toastId);
   } else if (result.status === "cancelled") {
     // toast-policy: explains-outcome — says how far the canceled run got
-    toast.info(`Workflow "${workflowName}" canceled`, {
+    toast.info(`Automation "${workflowName}" canceled`, {
       id: toastId,
       description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
     });
     collapseWorkflowRunOutcome(toastId);
   } else {
     const stepNumber = (result.failedStepIndex ?? result.stepsCompleted) + 1;
-    toast.error(`Workflow "${workflowName}" failed at step ${stepNumber}`, {
+    toast.error(`Automation "${workflowName}" failed at step ${stepNumber}`, {
       id: toastId,
       description: result.error,
     });
@@ -478,7 +480,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   const startedAt = new Date().toISOString();
   if (!fanout) {
     claimWorkflowRunToast(toastId);
-    toast.loading(`Running workflow "${workflow.name}"…`, {
+    toast.loading(`Running automation "${workflow.name}"…`, {
       id: toastId,
       description: `0 / ${total} steps`,
     });
@@ -542,7 +544,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
           fanout.onProgress?.(completed);
           return;
         }
-        toast.loading(`Running workflow "${workflow.name}"…`, {
+        toast.loading(`Running automation "${workflow.name}"…`, {
           id: toastId,
           description: `${completed} / ${total} steps`,
         });
@@ -563,7 +565,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
           fanout.onProgress?.(event.stepIndex, retryNote);
           return;
         }
-        toast.loading(`Running workflow "${workflow.name}"…`, {
+        toast.loading(`Running automation "${workflow.name}"…`, {
           id: toastId,
           description: retryNote,
         });
@@ -590,7 +592,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // Persist a metadata-only record of this run (PROD-0046). Fire-and-forget:
   // a history-write failure must NEVER fail or block the run, so it is logged
   // (never rethrown) and the returned, capped list is mirrored into the store.
-  const runRecord: WorkflowRun = {
+  const runRecord: FinishedRun = {
     id: newId("workflow-run"),
     workflowId,
     workflowName: workflow.name,

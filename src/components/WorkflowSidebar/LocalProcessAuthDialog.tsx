@@ -64,8 +64,8 @@ export function LocalProcessAuthDialog() {
           <p className="local-process-auth__lead">
             <AlertTriangle size={16} className="local-process-auth__icon" />
             <span>
-              The workflow <strong>{prompt.workflowName}</strong> wants to run a program on this
-              computer. Only allow it if you trust this workflow.
+              The automation <strong>{prompt.workflowName}</strong> wants to run a program on this
+              computer. Only allow it if you trust this automation.
             </span>
           </p>
           <div className="local-process-auth__field">

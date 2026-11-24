@@ -1,22 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { matchSorter } from "match-sorter";
-import {
-  TerminalSquare,
-  Play,
-  Workflow as WorkflowIcon,
-  LayoutGrid,
-  Radio,
-  ChevronLeft,
-} from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { TerminalSquare, LayoutGrid, Radio, ChevronLeft, Zap } from "lucide-react";
+import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { buildCommands } from "@/services/commands";
+import { openRunPicker } from "@/services/contextCommands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { Modal, Input, EmptyState } from "@/components/ui";
+import type { Automation } from "@/types/generated/Automation";
 import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
 import { useComboboxListNav } from "@/hooks/useComboboxListNav";
@@ -46,6 +41,8 @@ type PaletteEntry =
        * find/clear) are disabled and non-activatable when false.
        */
       available: boolean;
+      /** What else finds it; never shown. */
+      aliases: string[];
       /** Activate the entry. */
       run: () => void;
     }
@@ -58,43 +55,33 @@ type PaletteEntry =
       connection: SavedConnection;
     }
   | {
-      kind: "macro";
+      kind: "automation";
       key: string;
-      /** The macro's name — the primary text, never behind a prefix (#5519). */
+      /** The automation's name — the primary text, never behind a prefix (#5519). */
       label: string;
-      /** Secondary match key ("Run macro: <name>") so the verb still finds it. */
-      searchText: string;
-      /** The macro to replay into the active terminal. */
-      macroId: string;
+      /** What else finds it: the verb, its former names, its tags. */
+      aliases: string[];
+      automationId: string;
     }
   | {
-      kind: "workflow";
-      key: string;
-      /** The workflow's name — the primary text, never behind a prefix (#5519). */
-      label: string;
-      /** Secondary match key ("Run workflow: <name>") so the verb still finds it. */
-      searchText: string;
-      /** The workflow to run against the active terminal (manual trigger). */
-      workflowId: string;
-    }
-  | {
-      kind: "broadcast-workflow";
+      kind: "broadcast";
       key: string;
       label: string;
+      aliases: string[];
       /**
        * Whether the broadcast group has at least one connected terminal and
-       * there is a workflow to pick. Disabled and non-activatable when false.
+       * there is an automation to pick. Disabled and non-activatable when false.
        */
       available: boolean;
       /** Tooltip explaining why the entry is disabled. */
       unavailableReason: string;
     }
   | {
-      kind: "broadcast-workflow-pick";
+      kind: "broadcast-pick";
       key: string;
       label: string;
-      /** The workflow to run on the broadcast group's connected terminals. */
-      workflowId: string;
+      /** The automation to run on the broadcast group's connected terminals. */
+      automationId: string;
     }
   | {
       kind: "workspace";
@@ -108,24 +95,46 @@ type PaletteEntry =
     };
 
 /** The palette's sub-picker, or null for the root command list. */
-type PaletteMode = "root" | "broadcast-workflow";
+type PaletteMode = "root" | "broadcast";
+
+/** What commands were called before, by action id. */
+const COMMAND_ALIASES: Record<string, string[]> = {
+  "toggle-macro-recording": ["Record macro"],
+  "play-macro": ["Play macro", "Run macro", "Run workflow"],
+};
 
 /**
- * The entry's secondary match key: a connection's host, or a macro/workflow/
- * workspace's "Run …: <name>" / "Launch workspace: <name>" phrase so typing the
+ * What else an automation is found by: the verb, and what it was called before
+ * macros and workflows became automations (#5818, maintainer decision), so an old
+ * habit still works. Never shown.
+ */
+function automationAliases({ name, tags }: Pick<Automation, "name" | "tags">): string[] {
+  return [`Run automation: ${name}`, `Run macro: ${name}`, `Run workflow: ${name}`, ...tags];
+}
+
+/**
+ * The entry's secondary match keys: a connection's host, an automation's
+ * aliases, or a workspace's "Launch workspace: <name>" phrase, so typing the
  * verb still finds an entry whose row shows only its name (#5519, #5530).
  */
-function secondaryMatchKey(entry: PaletteEntry): string {
-  if (entry.kind === "connection") return entry.host;
-  if (entry.kind === "macro" || entry.kind === "workflow" || entry.kind === "workspace") {
-    return entry.searchText;
+function secondaryMatchKeys(entry: PaletteEntry): string | string[] {
+  switch (entry.kind) {
+    case "connection":
+      return entry.host;
+    case "command":
+    case "automation":
+    case "broadcast":
+      return entry.aliases;
+    case "workspace":
+      return entry.searchText;
+    default:
+      return "";
   }
-  return "";
 }
 
 /** Whether an entry is shown but inert in the current context. */
 function isDisabled(entry: PaletteEntry): boolean {
-  return (entry.kind === "command" || entry.kind === "broadcast-workflow") && !entry.available;
+  return (entry.kind === "command" || entry.kind === "broadcast") && !entry.available;
 }
 
 /**
@@ -138,21 +147,24 @@ function isDisabled(entry: PaletteEntry): boolean {
  * delegated to `match-sorter`. Connecting reuses {@link useConnectSavedConnection}
  * so the palette shares the sidebar's exact credential flow.
  *
- * While broadcasting, a "Run workflow on broadcast group" entry (#3430) opens a
- * workflow sub-picker; the chosen workflow runs concurrently on the group's
- * connected terminals via `runWorkflow(id, { targetTabIds })`, which owns the
- * progress toast and per-target run history. Backspace on an empty picker
- * query returns to the root list.
+ * An automation runs on the active terminal, which its row names ("→ prod-web",
+ * R-083); without one the run picker asks where. While broadcasting, a "Run
+ * automation on broadcast group" entry (#3430) opens a sub-picker; the chosen
+ * automation runs on the group's connected terminals. Every run goes through
+ * `runAutomation`. Backspace on an empty picker query returns to the root list.
  */
 export function CommandPalette(): React.ReactElement {
   const open = useAppStore((s) => s.commandPaletteOpen);
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const { connections } = useProjectedConnections();
-  const macros = useAppStore((s) => s.macros);
-  const workflows = useAppStore((s) => s.workflows);
+  const automations = useAppStore((s) => s.automations);
+  const runAutomation = useAppStore((s) => s.runAutomation);
+  // Where an automation would type (R-083): the active terminal tab's title.
+  const runTarget = useAppStore((s) => {
+    const tab = getActiveTab(s);
+    return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
+  });
   const workspaces = useAppStore((s) => s.workspaces);
-  const playMacro = useAppStore((s) => s.playMacro);
-  const runWorkflow = useAppStore((s) => s.runWorkflow);
   const requestLaunchWorkspace = useAppStore((s) => s.requestLaunchWorkspace);
   const getBroadcastTargetTabIds = useAppStore((s) => s.getBroadcastTargetTabIds);
   // Subscribed so the broadcast entry appears/disappears as broadcasting toggles.
@@ -170,12 +182,12 @@ export function CommandPalette(): React.ReactElement {
   // All entries (commands first, then connections) in declaration order — the
   // order shown when the query is empty.
   const entries = useMemo<PaletteEntry[]>(() => {
-    if (mode === "broadcast-workflow") {
-      return workflows.map((w) => ({
-        kind: "broadcast-workflow-pick",
-        key: `broadcast-workflow-pick:${w.id}`,
-        label: w.name,
-        workflowId: w.id,
+    if (mode === "broadcast") {
+      return automations.map((a) => ({
+        kind: "broadcast-pick",
+        key: `broadcast-pick:${a.id}`,
+        label: a.name,
+        automationId: a.id,
       }));
     }
     const commandEntries: PaletteEntry[] = buildCommands().map((cmd) => ({
@@ -184,6 +196,7 @@ export function CommandPalette(): React.ReactElement {
       label: cmd.label,
       accelerator: cmd.accelerator,
       available: cmd.available,
+      aliases: COMMAND_ALIASES[cmd.id] ?? [],
       run: cmd.run,
     }));
     const connectionEntries: PaletteEntry[] = connections.map((conn) => ({
@@ -193,35 +206,29 @@ export function CommandPalette(): React.ReactElement {
       host: readConfigString(conn.config, "host") ?? "",
       connection: conn,
     }));
-    const macroEntries: PaletteEntry[] = macros.map((m) => ({
-      kind: "macro",
-      key: `macro:${m.id}`,
-      label: m.name,
-      searchText: `Run macro: ${m.name}`,
-      macroId: m.id,
-    }));
-    const workflowEntries: PaletteEntry[] = workflows.map((w) => ({
-      kind: "workflow",
-      key: `workflow:${w.id}`,
-      label: w.name,
-      searchText: `Run workflow: ${w.name}`,
-      workflowId: w.id,
+    const automationEntries: PaletteEntry[] = automations.map((a) => ({
+      kind: "automation",
+      key: `automation:${a.id}`,
+      label: a.name,
+      aliases: automationAliases(a),
+      automationId: a.id,
     }));
     // Only offered while broadcasting (#3430); disabled when the group has no
-    // connected terminal or there is no workflow to pick.
+    // connected terminal or there is no automation to pick.
     const broadcastEntries: PaletteEntry[] = [];
     if (broadcast.active) {
       const connectedCount = getBroadcastTargetTabIds().length;
       const noun = connectedCount === 1 ? "terminal" : "terminals";
       broadcastEntries.push({
-        kind: "broadcast-workflow",
-        key: "broadcast-workflow",
-        label: `Run workflow on broadcast group (${connectedCount} ${noun})…`,
-        available: connectedCount > 0 && workflows.length > 0,
+        kind: "broadcast",
+        key: "broadcast",
+        label: `Run automation on broadcast group (${connectedCount} ${noun})…`,
+        aliases: ["Run macro on broadcast group", "Run workflow on broadcast group"],
+        available: connectedCount > 0 && automations.length > 0,
         unavailableReason:
           connectedCount === 0
             ? "No connected terminals in the broadcast group"
-            : "No workflows to run",
+            : "No automations to run",
       });
     }
     const workspaceEntries: PaletteEntry[] = workspaces.map((ws) => ({
@@ -233,9 +240,8 @@ export function CommandPalette(): React.ReactElement {
     }));
     return [
       ...commandEntries,
-      ...macroEntries,
       ...broadcastEntries,
-      ...workflowEntries,
+      ...automationEntries,
       ...workspaceEntries,
       ...connectionEntries,
     ];
@@ -250,8 +256,7 @@ export function CommandPalette(): React.ReactElement {
     broadcast,
     getBroadcastTargetTabIds,
     connections,
-    macros,
-    workflows,
+    automations,
     workspaces,
     rootPanel,
     activePanelId,
@@ -261,7 +266,7 @@ export function CommandPalette(): React.ReactElement {
   const results = useMemo<PaletteEntry[]>(() => {
     if (query.trim() === "") return entries;
     return matchSorter(entries, query, {
-      keys: ["label", secondaryMatchKey],
+      keys: ["label", secondaryMatchKeys],
     });
   }, [entries, query]);
 
@@ -282,8 +287,8 @@ export function CommandPalette(): React.ReactElement {
       // affordance) rather than silently dismissing.
       if (isDisabled(entry)) return;
       // Entering a sub-picker keeps the palette open with a fresh query.
-      if (entry.kind === "broadcast-workflow") {
-        setMode("broadcast-workflow");
+      if (entry.kind === "broadcast") {
+        setMode("broadcast");
         setQuery("");
         return;
       }
@@ -292,13 +297,16 @@ export function CommandPalette(): React.ReactElement {
       setOpen(false);
       if (entry.kind === "command") {
         entry.run();
-      } else if (entry.kind === "macro") {
-        void playMacro(entry.macroId, { origin: "palette" });
-      } else if (entry.kind === "workflow") {
-        void runWorkflow(entry.workflowId);
-      } else if (entry.kind === "broadcast-workflow-pick") {
+      } else if (entry.kind === "automation") {
+        // Without a terminal there is nothing to type into: ask where.
+        if (runTarget === null) openRunPicker(entry.automationId);
+        else void runAutomation(entry.automationId, { origin: "palette" });
+      } else if (entry.kind === "broadcast-pick") {
         // Resolve the group at run time so it reflects the latest connections.
-        void runWorkflow(entry.workflowId, { targetTabIds: getBroadcastTargetTabIds() });
+        void runAutomation(entry.automationId, {
+          targetTabIds: getBroadcastTargetTabIds(),
+          origin: "palette",
+        });
       } else if (entry.kind === "workspace") {
         // The shared entry point confirms first when live sessions would end (UX2-002).
         requestLaunchWorkspace(entry.workspaceId);
@@ -306,7 +314,7 @@ export function CommandPalette(): React.ReactElement {
         void connect(entry.connection);
       }
     },
-    [connect, playMacro, runWorkflow, requestLaunchWorkspace, getBroadcastTargetTabIds, setOpen]
+    [connect, runAutomation, runTarget, requestLaunchWorkspace, getBroadcastTargetTabIds, setOpen]
   );
 
   // Backspace on an empty sub-picker query returns to the root list.
@@ -342,7 +350,7 @@ export function CommandPalette(): React.ReactElement {
       data-testid="command-palette"
     >
       <div className="command-palette">
-        {mode === "broadcast-workflow" && (
+        {mode === "broadcast" && (
           <button
             type="button"
             className="command-palette__picker"
@@ -354,7 +362,7 @@ export function CommandPalette(): React.ReactElement {
             data-testid="command-palette-picker"
           >
             <ChevronLeft size={14} aria-hidden="true" />
-            Run workflow on broadcast group
+            Run automation on broadcast group
           </button>
         )}
         <Input
@@ -362,8 +370,8 @@ export function CommandPalette(): React.ReactElement {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={
-            mode === "broadcast-workflow"
-              ? "Pick a workflow to run on the broadcast group…"
+            mode === "broadcast"
+              ? "Pick an automation to run on the broadcast group…"
               : "Type a command or connection…"
           }
           aria-label="Command or connection search"
@@ -374,8 +382,8 @@ export function CommandPalette(): React.ReactElement {
         {results.length === 0 ? (
           <EmptyState
             title={
-              mode === "broadcast-workflow"
-                ? "No matching workflows."
+              mode === "broadcast"
+                ? "No matching automations."
                 : "No matching commands or connections."
             }
             data-testid="command-palette-empty"
@@ -398,7 +406,7 @@ export function CommandPalette(): React.ReactElement {
                   }${disabled ? " command-palette__item--disabled" : ""}`}
                   title={
                     disabled
-                      ? entry.kind === "broadcast-workflow"
+                      ? entry.kind === "broadcast"
                         ? entry.unavailableReason
                         : "Unavailable in the current context"
                       : undefined
@@ -408,12 +416,10 @@ export function CommandPalette(): React.ReactElement {
                   <span className="command-palette__icon" aria-hidden="true">
                     {entry.kind === "command" ? (
                       <TerminalSquare size={16} />
-                    ) : entry.kind === "macro" ? (
-                      <Play size={16} />
-                    ) : entry.kind === "broadcast-workflow" ? (
+                    ) : entry.kind === "broadcast" ? (
                       <Radio size={16} />
-                    ) : entry.kind === "workflow" || entry.kind === "broadcast-workflow-pick" ? (
-                      <WorkflowIcon size={16} />
+                    ) : entry.kind === "automation" || entry.kind === "broadcast-pick" ? (
+                      <Zap size={16} />
                     ) : entry.kind === "workspace" ? (
                       <LayoutGrid size={16} />
                     ) : (
@@ -431,11 +437,12 @@ export function CommandPalette(): React.ReactElement {
                     entry.accelerator ? (
                       <span className="command-palette__accelerator">{entry.accelerator}</span>
                     ) : null
-                  ) : entry.kind === "macro" ? (
-                    <span className="command-palette__type">macro</span>
-                  ) : entry.kind === "workflow" || entry.kind === "broadcast-workflow" ? (
-                    <span className="command-palette__type">workflow</span>
-                  ) : entry.kind === "broadcast-workflow-pick" ? (
+                  ) : entry.kind === "automation" ? (
+                    <span className="command-palette__target">
+                      <span aria-hidden="true">→ </span>
+                      {runTarget ?? "choose a terminal"}
+                    </span>
+                  ) : entry.kind === "broadcast" || entry.kind === "broadcast-pick" ? (
                     <span className="command-palette__type">broadcast</span>
                   ) : entry.kind === "workspace" ? (
                     <span className="command-palette__type">workspace</span>

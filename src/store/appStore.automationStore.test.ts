@@ -139,7 +139,7 @@ describe("appStore — single automation store (#5818, slice 4)", () => {
       await useAppStore.getState().runAutomation("m1");
       expect(playMacro).toHaveBeenCalledWith("m1", {});
       await useAppStore.getState().runAutomation("w1");
-      expect(runWorkflow).toHaveBeenCalledWith("w1", undefined);
+      expect(runWorkflow).toHaveBeenCalledWith("w1", {});
     });
 
     it("hands on the picked terminals and the parallel choice", async () => {
@@ -158,6 +158,25 @@ describe("appStore — single automation store (#5818, slice 4)", () => {
         targetTabIds: ["a", "b"],
         concurrency: 1,
       });
+    });
+
+    it("says what started it, for the history (slice 11)", async () => {
+      const run = useAppStore.getState().runAutomation;
+      await run("m1", { origin: "palette" });
+      expect(playMacro).toHaveBeenLastCalledWith("m1", { origin: "palette" });
+      await run("w1", { origin: "palette" });
+      expect(runWorkflow).toHaveBeenLastCalledWith("w1", { triggeredBy: "palette" });
+      await run("w1", { origin: "hotkey" });
+      expect(runWorkflow).toHaveBeenLastCalledWith("w1", { triggeredBy: "hotkey" });
+    });
+
+    it.each(["m1", "w1"])("never falls back to the active terminal for %s", async (id) => {
+      // The broadcast group's last terminal can drop between the pick and the run.
+      const error = vi.spyOn(toast, "error");
+      await useAppStore.getState().runAutomation(id, { targetTabIds: [] });
+      expect(error).toHaveBeenCalledWith("None of the selected terminals are connected");
+      expect(playMacro).not.toHaveBeenCalled();
+      expect(runWorkflow).not.toHaveBeenCalled();
     });
 
     it("says so when the automation is gone", async () => {

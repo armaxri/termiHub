@@ -84,9 +84,9 @@ let scheduledInFlight = 0;
 function busyReason(state: AppState): string | null {
   if (scheduledInFlight > 0) return "Skipped: another scheduled run was in progress";
   if (activeWorkflowRunCount() > 0 || state.workflowParamPrompt || state.localProcessPrompt) {
-    return "Skipped: another workflow run was in progress";
+    return "Skipped: another automation was running";
   }
-  if (state.macroPlayback) return "Skipped: a macro was playing";
+  if (state.macroPlayback) return "Skipped: another automation was typing";
   return null;
 }
 

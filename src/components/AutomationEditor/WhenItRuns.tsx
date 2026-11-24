@@ -36,7 +36,7 @@ export const AUTOMATION_TRIGGER_KINDS: readonly AutomationTriggerKind[] = [
 /** Props of {@link WhenItRuns}. */
 export interface WhenItRunsProps {
   triggers: TriggerDraft[];
-  /** The Armed switch of the automatic triggers. */
+  /** The Armed switch of the triggers. */
   triggersEnabled: boolean;
   /** The stored automation's id; `null` while it is new. */
   automationId: string | null;
@@ -75,7 +75,6 @@ export function WhenItRuns({
   const afterClose = useRef<(() => void) | null>(null);
   const linked =
     automationId === null ? [] : schedules.filter((s) => s.action.automationId === automationId);
-  const hasAutomatic = triggers.some((t) => t.trigger.kind !== "hotkey");
 
   const addTrigger = (kind: AutomationTriggerKind) => {
     const index = triggers.length;
@@ -102,15 +101,15 @@ export function WhenItRuns({
         <Hand size={14} aria-hidden="true" /> When you run it: from the sidebar, the command palette
         or a terminal.
       </p>
-      {hasAutomatic && (
+      {triggers.length > 0 && (
         <Field
           label="Armed"
           htmlFor="automation-editor-armed"
           layout="inline"
           hint={
             triggersEnabled
-              ? "The triggers below start it by themselves."
-              : "Off: only a hotkey, a schedule or you can start it."
+              ? "The triggers below can start it."
+              : "Off: only a schedule or you can start it."
           }
         >
           <Toggle

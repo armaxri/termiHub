@@ -975,7 +975,7 @@ export async function executeStep(
   const resolved = resolveStepParams(step, paramValues ?? {}, (name) =>
     frontendWarn(
       "workflow",
-      `parameter "\${${name}}" is not declared by this workflow; leaving it literal`
+      `parameter "\${${name}}" is not declared by this automation; leaving it literal`
     )
   );
 

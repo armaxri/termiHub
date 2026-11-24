@@ -126,7 +126,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     expect(injected.filter(([id]) => id === "a").map(([, d]) => d)).toEqual(["l", "s\r"]);
     expect(injected.filter(([id]) => id === "b").map(([, d]) => d)).toEqual(["l", "s\r"]);
     expect(toast.success).toHaveBeenCalledWith(
-      'Played macro "Macro m1" on 2 terminals',
+      'Ran automation "Macro m1" on 2 terminals',
       expect.anything()
     );
     expect(useAppStore.getState().macroPlayback).toBeNull();
@@ -141,7 +141,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     expect(injected.map(([id]) => id)).toEqual(["a", "b"]);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith(
-      'Played macro "Macro m1" on 2 of 3 terminals',
+      'Ran automation "Macro m1" on 2 of 3 terminals',
       expect.objectContaining({ description: "1 skipped (not connected)" })
     );
   });
@@ -176,7 +176,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ["a", "two"],
     ]);
     expect(toast.error).toHaveBeenCalledWith(
-      'Played macro "Macro m1" on 1 of 2 terminals',
+      'Ran automation "Macro m1" on 1 of 2 terminals',
       expect.objectContaining({ description: "1 stopped early (disconnected mid-playback)" })
     );
   });
@@ -200,7 +200,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
 
     expect(status).toBeNull();
     expect(injected).toEqual([]);
-    expect(toast.info).toHaveBeenCalledWith('Macro "Macro m0" has no steps to play');
+    expect(toast.info).toHaveBeenCalledWith('Automation "Macro m0" has no steps to run');
   });
 
   it("a newer fan-out supersedes an in-flight one without losing its own state (#2979)", async () => {
@@ -484,7 +484,7 @@ describe("appStore — multi-target playback drops a target whose injection fail
     ]);
     expect(injected.filter(([id]) => id === "b").map(([, d]) => d)).toEqual(["one"]);
     expect(toast.error).toHaveBeenCalledWith(
-      'Played macro "Macro m1" on 1 of 2 terminals',
+      'Ran automation "Macro m1" on 1 of 2 terminals',
       expect.anything()
     );
   });

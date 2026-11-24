@@ -1,19 +1,15 @@
 /**
- * Tests for the macro import/export helpers (#1677).
- *
- * Covers the versioned envelope serialise/deserialise round-trip, rejection of
- * malformed/incompatible files with clear errors, and deterministic id/name
- * collision handling when merging imported macros into an existing library.
+ * Tests for reading the `macros` list of a file (#1677): what a valid file reads
+ * back as, and rejection of malformed/incompatible files with clear errors.
  */
 import { describe, it, expect } from "vitest";
-import {
-  MACRO_EXPORT_VERSION,
-  serializeMacros,
-  parseMacroEnvelope,
-  resolveImportCollisions,
-} from "./macroIo";
+import { MACRO_EXPORT_VERSION, parseMacroEnvelope } from "./macroIo";
 import type { Macro } from "@/types/macro";
 import { parseMacroStepText } from "@/components/AutomationEditor/keysFormat";
+
+/** A `macros` file as older builds exported it. */
+const serializeMacros = (macros: Macro[]) =>
+  JSON.stringify({ version: MACRO_EXPORT_VERSION, macros });
 
 function makeMacro(overrides: Partial<Macro> = {}): Macro {
   return {
@@ -29,14 +25,6 @@ function makeMacro(overrides: Partial<Macro> = {}): Macro {
 }
 
 describe("macroIo — serialize/parse envelope", () => {
-  it("wraps macros in a versioned envelope", () => {
-    const json = serializeMacros([makeMacro()]);
-    const parsed = JSON.parse(json);
-    expect(parsed.version).toBe(MACRO_EXPORT_VERSION);
-    expect(parsed.macros).toHaveLength(1);
-    expect(parsed.macros[0].name).toBe("Deploy");
-  });
-
   it("round-trips a macro to an equivalent, runnable macro", () => {
     const original = makeMacro({
       steps: [
@@ -193,53 +181,5 @@ describe("macroIo — zod import validation (#4386)", () => {
     );
     expect(macro).not.toHaveProperty("trusted");
     expect(macro.steps).toStrictEqual([{ data: "a", delayMs: 0 }]);
-  });
-});
-
-describe("macroIo — collision handling", () => {
-  const counter = () => {
-    let n = 0;
-    return () => `macro-new-${++n}`;
-  };
-
-  it("assigns fresh ids so imports never overwrite existing macros", () => {
-    const imported = [makeMacro({ id: "macro-1", name: "One" })];
-    const existing = [makeMacro({ id: "macro-1", name: "Existing" })];
-    const resolved = resolveImportCollisions(imported, existing, counter());
-    expect(resolved[0].id).toBe("macro-new-1");
-    expect(resolved[0].id).not.toBe("macro-1");
-  });
-
-  it("clears timestamps so the backend re-stamps them", () => {
-    const resolved = resolveImportCollisions([makeMacro()], [], counter());
-    expect(resolved[0].createdAt).toBe("");
-    expect(resolved[0].updatedAt).toBe("");
-  });
-
-  it("suffixes a name that collides with an existing macro", () => {
-    const imported = [makeMacro({ name: "Deploy" })];
-    const existing = [makeMacro({ name: "Deploy" })];
-    const resolved = resolveImportCollisions(imported, existing, counter());
-    expect(resolved[0].name).toBe("Deploy (imported)");
-  });
-
-  it("keeps a non-colliding name untouched", () => {
-    const resolved = resolveImportCollisions([makeMacro({ name: "Fresh" })], [], counter());
-    expect(resolved[0].name).toBe("Fresh");
-  });
-
-  it("de-duplicates names that collide within the same import batch", () => {
-    const imported = [
-      makeMacro({ name: "Deploy" }),
-      makeMacro({ name: "Deploy" }),
-      makeMacro({ name: "Deploy" }),
-    ];
-    const existing = [makeMacro({ name: "Deploy" })];
-    const resolved = resolveImportCollisions(imported, existing, counter());
-    expect(resolved.map((m) => m.name)).toEqual([
-      "Deploy (imported)",
-      "Deploy (imported 2)",
-      "Deploy (imported 3)",
-    ]);
   });
 });

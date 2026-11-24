@@ -125,12 +125,12 @@ export function describeMacroFanoutOutcome(
   if (problems.length === 0 && o.delivered === o.requested) {
     return {
       kind: "success",
-      message: `Played macro "${macroName}" on ${plural(o.delivered, "terminal")}`,
+      message: `Ran automation "${macroName}" on ${plural(o.delivered, "terminal")}`,
     };
   }
   return {
     kind: "error",
-    message: `Played macro "${macroName}" on ${o.delivered} of ${plural(o.requested, "terminal")}`,
+    message: `Ran automation "${macroName}" on ${o.delivered} of ${plural(o.requested, "terminal")}`,
     description: detail,
   };
 }

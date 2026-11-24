@@ -316,7 +316,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       await vi.waitFor(
         () =>
           expect(error).toHaveBeenCalledWith(
-            'Workflow "Workflow wf-lp" was not run',
+            'Automation "Workflow wf-lp" was not run',
             expect.objectContaining({ description: LOCAL_PROCESS_REASON })
           ),
         { timeout: OUTPUT_TRIGGER_LIMITS.batchMs * 20 }
@@ -455,7 +455,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       vi.mocked(apiSaveWorkflow).mockClear();
       await expect(
         useAppStore.getState().setWorkflowTriggersEnabled("nope", false)
-      ).rejects.toThrow("Workflow not found");
+      ).rejects.toThrow("Automation not found");
       expect(apiSaveWorkflow).not.toHaveBeenCalled();
     });
   });

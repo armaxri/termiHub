@@ -48,6 +48,8 @@ export interface VisualScenario {
    * with an update whose preview carries an access diff (#4418).
    */
   pluginUpdate?: boolean;
+  /** The file the open dialog picks, and its text (#5818). */
+  openFile?: { path: string; text: string };
   /**
    * Answer `discover_mobaxterm_configs` with a found configuration and
    * `preview_mobaxterm_import` with a mixed preview (#4850).
@@ -968,7 +970,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
       });
       return null;
     case "plugin:dialog|open":
-      return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : null;
+      return scenario.pluginUpdate ? PLUGIN_UPDATE_PACKAGE : (scenario.openFile?.path ?? null);
+    case "plugin:fs|read_text_file":
+      return Array.from(new TextEncoder().encode(scenario.openFile?.text ?? ""));
     case "preview_plugin":
       // Answered at once, like every other mock: a loading toast dismissed
       // before it mounted is still removed (#4812).

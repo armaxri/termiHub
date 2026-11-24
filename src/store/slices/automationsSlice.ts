@@ -8,6 +8,11 @@ import {
   listAutomations as apiListAutomations,
   saveAutomation as apiSaveAutomation,
 } from "@/services/automationApi";
+import {
+  parseAutomationFile,
+  prepareAutomationImport,
+  type AutomationImport,
+} from "@/services/automationFileIo";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import { toast } from "@/components/ui";
@@ -30,6 +35,8 @@ export interface RunAutomationOptions {
   targetTabIds?: string[];
   /** Run several terminals at the same time (the default) or one after another. */
   parallel?: boolean;
+  /** What started the run, for the history; omitted = by hand. */
+  origin?: "palette" | "hotkey";
 }
 
 /**
@@ -57,8 +64,14 @@ export interface AutomationsSlice {
    */
   fetchAutomationForRun: (automationId: string) => Promise<Automation | undefined>;
   /**
+   * Import the automations of a file (see {@link parseAutomationFile} and
+   * {@link prepareAutomationImport}). A malformed file rejects before anything
+   * is saved. Resolves with what was imported and what to tell the user.
+   */
+  importAutomations: (json: string) => Promise<AutomationImport>;
+  /**
    * Run an automation by hand (#5818, slice 6). The one entry point of the
-   * Automations sidebar: an automation that only types keystrokes plays through
+   * Automations sidebar, the run picker, the command palette and hotkeys: an automation that only types keystrokes plays through
    * {@link AppState.playMacro}, every other one through
    * {@link AppState.runWorkflow}, which own their guards (connected terminal,
    * experimental local process), progress and history.
@@ -124,6 +137,27 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
       }
     },
 
+    importAutomations: async (json) => {
+      const file = parseAutomationFile(json);
+      const prepared = prepareAutomationImport(file, get().automations);
+      let saved = 0;
+      try {
+        for (const automation of prepared.automations) {
+          await apiSaveAutomation(automation);
+          saved += 1;
+        }
+      } catch (err) {
+        const failed = prepared.automations[saved].name;
+        throw new Error(
+          `"${failed}" could not be saved (${errorMessage(err)}). ` +
+            `Imported ${saved} of ${prepared.automations.length}.`
+        );
+      } finally {
+        await get().loadAutomations();
+      }
+      return prepared;
+    },
+
     runAutomation: async (automationId, options) => {
       const automation = await get().fetchAutomationForRun(automationId);
       if (!automation) {
@@ -132,19 +166,28 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
       }
       const targets = options?.targetTabIds;
       const parallel = options?.parallel ?? true;
+      const origin = options?.origin;
+      if (targets?.length === 0) {
+        // Never falls back to the active terminal: it was not what was chosen.
+        toast.error("None of the selected terminals are connected");
+        return;
+      }
       if (isMacroShaped(automation)) {
-        await get().playMacro(automationId, targets ? { targetTabIds: targets, parallel } : {});
+        await get().playMacro(automationId, {
+          ...(targets ? { targetTabIds: targets, parallel } : {}),
+          ...(origin === "palette" ? { origin } : {}),
+        });
         return;
       }
       // One terminal runs as a plain run (its own toast); several fan out.
-      await get().runWorkflow(
-        automationId,
-        !targets
-          ? undefined
+      await get().runWorkflow(automationId, {
+        ...(!targets
+          ? {}
           : targets.length === 1
             ? { targetTabId: targets[0] }
-            : { targetTabIds: targets, ...(parallel ? {} : { concurrency: 1 }) }
-      );
+            : { targetTabIds: targets, ...(parallel ? {} : { concurrency: 1 }) }),
+        ...(origin ? { triggeredBy: origin } : {}),
+      });
     },
 
     duplicateAutomation: async (automationId) => {
