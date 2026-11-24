@@ -83,6 +83,26 @@ sum() {
     fi
 }
 
+# The inode number of a file, empty when there is none.
+inode() {
+    ls -di "$1" 2>/dev/null | {
+        read -r NUMBER _ || true
+        printf '%s' "$NUMBER"
+    }
+}
+
+# Rename $1 to $2 in the same directory. The kept agent may be a second name (a
+# hard link) of the file it is to replace, when a setup was cut off before the
+# swap. GNU mv refuses to rename that and BSD mv does not, so drop the name.
+rename() {
+    RENAME_FROM=$(inode "$1")
+    if [ -n "$RENAME_FROM" ] && [ "$RENAME_FROM" = "$(inode "$2")" ]; then
+        $SUDO rm -f "$1"
+    else
+        $SUDO mv -f "$1" "$2"
+    fi
+}
+
 # Put the installed agent back after a failure. Only this run's own binary is
 # replaced; whatever else is at the path by now is left alone while it starts.
 roll_back() {
@@ -95,7 +115,7 @@ roll_back() {
         return 0
     fi
     if [ "$OWN_PREVIOUS" = true ] && [ -f "$PREVIOUS" ]; then
-        $SUDO mv -f "$PREVIOUS" "$TARGET"
+        rename "$PREVIOUS" "$TARGET"
     elif [ "$OURS" = true ]; then
         # Nothing was installed before.
         $SUDO rm -f "$TARGET"
@@ -262,7 +282,7 @@ if [ -f "$PREVIOUS" ] && ! starts_surely "$TARGET" && starts "$PREVIOUS"; then
     if [ ! -e "$TARGET" ] || [ -f "$TARGET" ]; then
         say "[..] Restoring the previous agent left by an unfinished setup"
         #@
-        $SUDO mv -f "$PREVIOUS" "$TARGET"
+        rename "$PREVIOUS" "$TARGET"
         #@
     fi
 fi
@@ -349,7 +369,7 @@ if [ -e "$TARGET" ]; then
         fi
     fi
     #@
-    $SUDO mv -f "$PREVIOUS.$$" "$PREVIOUS"
+    rename "$PREVIOUS.$$" "$PREVIOUS"
     OWN_PREVIOUS=true
     #@
     $SUDO rm -f "$PREVIOUS.$$"

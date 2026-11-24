@@ -27,7 +27,7 @@ fn the_installed_agent_is_only_ever_replaced_by_a_rename() {
     }
     let at = |part: &str| SETUP_SCRIPT_TEMPLATE.find(part).expect(part);
     let proven = at("VERSION_OUT=$(\"$NEW\" --version");
-    let kept = at("mv -f \"$PREVIOUS.$$\" \"$PREVIOUS\"");
+    let kept = at("rename \"$PREVIOUS.$$\" \"$PREVIOUS\"");
     let swapped = at("$SUDO mv -f \"$NEW\" \"$TARGET\"");
     let service = at("systemctl restart termihub-agent ||");
     assert!(proven < kept && kept < swapped && swapped < service);
