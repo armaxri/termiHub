@@ -4,6 +4,7 @@
  * permission text used across the Plugin Manager UI.
  */
 import { describe, it, expect } from "vitest";
+import { Binary, Network, Puzzle, SlidersHorizontal } from "lucide-react";
 import type { PluginExtensions, PluginManifest } from "@/types/plugin";
 import type { PluginTrustInfo } from "@/types/plugin";
 import {
@@ -13,8 +14,12 @@ import {
   extensionPoints,
   fingerprintShort,
   hasSettings,
+  pluginDotLabel,
   pluginDotState,
   pluginHasNativeCode,
+  pluginsIndicatorCopy,
+  pluginTypeIcon,
+  pluginTypeName,
   pluginStatusLabel,
   pluginTypeLabel,
   trustBanner,
@@ -213,5 +218,57 @@ describe("describeFilesystemPath (#4533)", () => {
   it("shows a plain absolute entry verbatim", () => {
     expect(describeFilesystemPath("/var/log/app", resolved)).toBe("/var/log/app");
     expect(describeFilesystemPath("/var/log/app", undefined)).toBe("/var/log/app");
+  });
+});
+
+describe("plugin row labels (#5931)", () => {
+  it("labels the dot with the word for its colour", () => {
+    expect(pluginDotLabel("active")).toBe("Enabled");
+    expect(pluginDotLabel("disabled")).toBe("Disabled");
+    expect(pluginDotLabel("installed")).toBe("Disabled");
+    expect(pluginDotLabel("error")).toBe("Error");
+    expect(pluginDotLabel("incompatible")).toBe("Error");
+  });
+
+  it("names the type icon in sentence case", () => {
+    expect(pluginTypeName({ protocolParser: { name: "x" } } as PluginExtensions)).toBe(
+      "Protocol parser"
+    );
+    expect(
+      pluginTypeName({
+        terminalBackend: { connectionType: "k", displayName: "K", configSchema: {} },
+      } as PluginExtensions)
+    ).toBe("Terminal backend");
+    expect(pluginTypeName({})).toBe("Plugin");
+  });
+
+  it("does not use the settings (sliders) icon for a protocol parser", () => {
+    const parser = { protocolParser: { name: "x" } } as PluginExtensions;
+    expect(pluginTypeIcon(parser)).toBe(Binary);
+    expect(pluginTypeIcon(parser)).not.toBe(SlidersHorizontal);
+    expect(extensionPoints(parser)[0].icon).toBe(Binary);
+    expect(
+      pluginTypeIcon({
+        terminalBackend: { connectionType: "k", displayName: "K", configSchema: {} },
+      } as PluginExtensions)
+    ).toBe(Network);
+    expect(pluginTypeIcon({})).toBe(Puzzle);
+  });
+});
+
+describe("pluginsIndicatorCopy (#5931)", () => {
+  it("reads 'N plugin(s)' in words, not 'N · M'", () => {
+    expect(pluginsIndicatorCopy(1, 1).text).toBe("1 plugin");
+    expect(pluginsIndicatorCopy(3, 2).text).toBe("3 plugins");
+    expect(pluginsIndicatorCopy(3, 2).text).not.toContain("·");
+  });
+
+  it("puts the enabled count and the click target in the label, which starts with the text", () => {
+    const copy = pluginsIndicatorCopy(3, 2);
+    expect(copy.label).toBe("3 plugins installed, 2 enabled — click to open the plugin list");
+    expect(copy.label.startsWith(copy.text)).toBe(true);
+    expect(pluginsIndicatorCopy(1, 0).label).toBe(
+      "1 plugin installed, 0 enabled — click to open the plugin list"
+    );
   });
 });

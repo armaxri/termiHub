@@ -506,4 +506,37 @@ describe("PluginManagerView (#1997)", () => {
       expect(container.querySelector('[data-testid="plugin-update-badge-b"]')).toBeNull();
     });
   });
+
+  it("labels the row's state dot and type icon for hover and screen readers (#5931)", () => {
+    useAppStore.setState({
+      plugins: [
+        plugin("k8s", "Kubernetes Exec", "1.2.0", "active"),
+        plugin("logcol", "Log Colorizer", "0.3.0", "disabled"),
+        plugin("aws", "AWS CloudShell", "0.9.0", "error"),
+      ],
+    });
+    render();
+
+    const dot = (id: string) =>
+      container.querySelector<HTMLElement>(`[data-testid="plugin-state-dot-${id}"]`)!;
+    for (const [id, word] of [
+      ["k8s", "Enabled"],
+      ["logcol", "Disabled"],
+      ["aws", "Error"],
+    ] as const) {
+      expect(dot(id).getAttribute("role")).toBe("img");
+      expect(dot(id).getAttribute("aria-label")).toBe(word);
+      expect(dot(id).getAttribute("title")).toBe(word);
+      expect(dot(id).getAttribute("aria-hidden")).toBeNull();
+    }
+
+    const icon = container.querySelector<HTMLElement>('[data-testid="plugin-type-icon-k8s"]')!;
+    expect(icon.getAttribute("role")).toBe("img");
+    expect(icon.getAttribute("aria-label")).toBe("Terminal backend");
+    expect(icon.getAttribute("title")).toBe("Terminal backend");
+    // The labels add no visible text: the row still reads name + description.
+    expect(container.querySelector('[data-testid="plugin-row-k8s"]')!.textContent).toBe(
+      "Kubernetes Execdesc"
+    );
+  });
 });
