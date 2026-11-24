@@ -99,7 +99,8 @@ export interface CollapseCrumbsInput {
  * then as many of the leaf's nearest ancestors as fit. When not even the
  * leaf's direct parent fits in full but enough room is left, the parent stays
  * as a middle-truncated segment of that width (#5624) instead of folding. A
- * leaf that is wider than the row on its own is left to ellipsize in CSS.
+ * leaf that is wider than the row on its own keeps only the "…" beside it and
+ * wraps in CSS (#5833), so the current folder is never cut.
  */
 export function collapseCrumbs({
   available,

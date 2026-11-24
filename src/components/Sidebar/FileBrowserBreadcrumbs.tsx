@@ -184,8 +184,9 @@ function CollapsedCrumbs({
 /**
  * The path as clickable breadcrumb segments (#5521). When the path is wider
  * than its row, the middle segments fold into one "…" (a menu of them) so the
- * leaf folder — and the root, when there is room — stays legible; a leaf wider
- * than the row on its own ellipsizes. The row never scrolls. The full path is
+ * leaf folder — and the root, when there is room — stays legible. The leaf is
+ * never cut: earlier segments fold first, and a leaf wider than the row on its
+ * own wraps onto more lines (#5833). The row never scrolls. The full path is
  * the row's tooltip (`title`, also what the system harness reads). Shared by
  * the sidebar file browser and the transfer view's panes (#5541).
  *
