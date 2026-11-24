@@ -30,6 +30,8 @@ struct Rig {
     store: Arc<SessionLifecycleStore>,
     scheduler: Arc<ManualScheduler>,
     agents: AgentConnectionManager<tauri::test::MockRuntime>,
+    /// The fake agent hosting the sessions (#5953: what it minted, attached).
+    agent: Arc<FakeAgent>,
 }
 
 impl Rig {
@@ -53,7 +55,7 @@ impl Rig {
         let agent = Arc::new(FakeAgent::session_host());
         handle.manage(SessionManager::new(
             ConnectionTypeRegistry::new(),
-            agent as Arc<dyn AgentRpcClient>,
+            agent.clone() as Arc<dyn AgentRpcClient>,
         ));
 
         let store = Arc::new(SessionLifecycleStore::new());
@@ -102,6 +104,7 @@ impl Rig {
             store,
             scheduler,
             agents,
+            agent,
         }
     }
 
@@ -282,3 +285,7 @@ fn plain_connect_cancel_leaves_the_event_to_the_connect() {
     assert_eq!(events[0]["state"], "disconnected");
     assert!(events[0].get("ended_tabs").is_none(), "{events:?}");
 }
+
+/// #5953: the tab's Reconnect after a user Disconnect resumes its session.
+#[path = "agent_user_end_resume_tests.rs"]
+mod resume;

@@ -44,8 +44,32 @@ describe("splitTabTitle (#5827)", () => {
     expect(tail).toBe("🚀".repeat(8));
   });
 
+  it("keeps an agent tab's whole name in the head and its shell suffix in the tail (#5956)", () => {
+    expect(splitTabTitle("sys-pr-agent-8829f19f · bash")).toEqual({
+      head: "sys-pr-agent-8829f19f",
+      tail: " · bash",
+    });
+    expect(splitTabTitle("pi · zsh (2)")).toEqual({ head: "pi", tail: " · zsh (2)" });
+    expect(splitTabTitle("build-host · WSL: Ubuntu")).toEqual({
+      head: "build-host",
+      tail: " · WSL: Ubuntu",
+    });
+  });
+
+  it("does not treat long text after a middle dot as a shell suffix", () => {
+    const title = "release notes · draft for the quarterly review";
+    const { head, tail } = splitTabTitle(title);
+    expect(tail).toHaveLength(TAB_TITLE_TAIL_CHARS);
+    expect(head + tail).toBe(title);
+  });
+
   it("always rejoins to the full title", () => {
-    for (const title of ["a", "Production database replica 12", "x".repeat(40) + " (3)"]) {
+    for (const title of [
+      "a",
+      "Production database replica 12",
+      "x".repeat(40) + " (3)",
+      "agent-1 · bash (4)",
+    ]) {
       const { head, tail } = splitTabTitle(title);
       expect(head + tail).toBe(title);
     }

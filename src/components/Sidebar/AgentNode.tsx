@@ -87,12 +87,9 @@ import { connectionStateLabel } from "@/utils/statusLabel";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
-import {
-  AgentUpdateBanner,
-  AgentUpdateMarker,
-  countAgentSessionTabs,
-} from "@/components/AgentUpdateBanner";
+import { AgentUpdateBanner, AgentUpdateMarker } from "@/components/AgentUpdateBanner";
 import { collectLiveTabs } from "@/store/layoutHelpers";
+import { agentSessionLabels } from "./agentSessionLabels";
 import { agentShellTabTitle, numberedTabTitle } from "@/utils/defaultTabTitle";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -1085,8 +1082,10 @@ export function AgentNode({
     agentFolders: projectedFolders,
   } = useProjectedAgents();
   const agentSessions = projectedSessions[agent.id] ?? EMPTY_SESSIONS;
-  // Open terminal tabs on this agent: the update strip names them (#5821).
-  const openSessionTabs = useAppStore((s) => countAgentSessionTabs(collectLiveTabs(s), agent.id));
+  // One label per listed session, numbered apart when titles repeat (#5953).
+  // The update strip names the same sessions the list shows.
+  const sessionLabels = useMemo(() => agentSessionLabels(agentSessions), [agentSessions]);
+  const sessionNames = useMemo(() => [...sessionLabels.values()], [sessionLabels]);
   const agentDefinitions = projectedDefinitions[agent.id] ?? EMPTY_DEFINITIONS;
   const agentFolders = projectedFolders[agent.id] ?? EMPTY_FOLDERS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
@@ -2183,11 +2182,7 @@ export function AgentNode({
           (it self-gates on the store's staged/dismissed state, #1352). Full width
           under the row, never inside it (#5821). */}
       {isConnected && (
-        <AgentUpdateBanner
-          agentId={agent.id}
-          agentName={agent.name}
-          openSessions={openSessionTabs}
-        />
+        <AgentUpdateBanner agentId={agent.id} agentName={agent.name} sessionNames={sessionNames} />
       )}
 
       {confirmingDelete && (
@@ -2286,13 +2281,18 @@ export function AgentNode({
                         indentPx={32}
                         ariaLevel={1}
                         tabIndex={rowIndex === activeIndex ? 0 : -1}
-                        title={`${session.title} (${session.status})`}
+                        title={`${sessionLabels.get(session.sessionId) ?? session.title} (${session.status})`}
                         onDoubleClick={() => handleAttachSession(session)}
                         onKeyDown={(e) => handleTreeKeyDown(e, session.sessionId)}
                         onFocus={() => handleRowFocus(rowIndex)}
                       >
                         <SessionTypeIcon type={session.type} />
-                        <span className="connection-tree__label">{session.title}</span>
+                        <span
+                          className="connection-tree__label"
+                          data-testid={`agent-session-label-${session.sessionId}`}
+                        >
+                          {sessionLabels.get(session.sessionId) ?? session.title}
+                        </span>
                         {/* Names, not settings (#5770): a running session is
                             routine; only an exited one gets a marker. */}
                         {session.status !== "running" && (

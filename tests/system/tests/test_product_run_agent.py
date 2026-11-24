@@ -53,7 +53,12 @@ from termihub_harness.product_run.agent_deploy import (
 from termihub_harness.product_run.agent_setup_tab import setup_tab_problems
 from termihub_harness.product_run.grades import setup_output_problems
 from termihub_harness.product_run.session_end_strip import strip_layout_problems
+from termihub_harness.product_run.round2_polish import (
+    agent_tab_label_problems,
+    default_shell_name_problems,
+)
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
+from termihub_harness.product_run.tab_labels import measure_tab_label
 from termihub_harness.product_run.tab_names import agent_tab_name_problems
 from termihub_harness.ui.theme import ThemeUi
 
@@ -214,7 +219,7 @@ class TestProductRunAgent(
             "above the output (#5865)",
             expect="the setup tab with a strip across its top: a green check, 'Agent installed', "
             "'Connect \"<agent>\" from the sidebar.', Close tab; the install output "
-            "('Agent installed (v…) at …') fully readable below the strip",
+            "('Agent v… installed at …') fully readable below the strip",
         ):
             self.require("agent.deploy")
             tab_id = self.tab_id_of(f"Setup: {self.name}")
@@ -290,7 +295,9 @@ class TestProductRunAgent(
         with self.step(
             "agent.shell.name",
             "The agent's shell tab names the agent and the shell, not 'Shell: /bin/bash' (#5829)",
-            expect="the agent shell tab titled '<agent name> · bash' (or the agent's shell)",
+            expect="the agent shell tab titled '<agent name> · bash' (or the agent's shell), "
+            "the agent name uncut unless the tab is too narrow and ' · bash' always whole; "
+            "the agent's saved connection named 'Default shell'",
         ):
             self.require("agent.shell")
             tab = self.state["shell_tab"]
@@ -298,6 +305,15 @@ class TestProductRunAgent(
             shell = (self.agent_available_shells(self.name) or [None])[0]
             self.evidence(f"agent shell tab {title!r} (shell {shell!r})")
             problems = agent_tab_name_problems(title, self.name, shell)
+            # The whole agent name and the ' · <shell>' suffix stay readable (#5956).
+            label = measure_tab_label(self.driver, tab, title)
+            self.evidence(f"tab label head {label['head'] and label['head']['text']!r}, "
+                          f"tail {label['tail'] and label['tail']['text']!r}")
+            problems += agent_tab_label_problems(label)
+            # The agent's built-in connection reads "Default shell" (#5956).
+            names = [d.get("name", "") for d in self.agent_definitions(self._agent_id())]
+            self.evidence(f"agent saved connections {names}")
+            problems += default_shell_name_problems(names)
             assert not problems, problems
 
     def test_20_files_via_agent(self):

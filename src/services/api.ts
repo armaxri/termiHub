@@ -1287,6 +1287,15 @@ export async function getAgentSessionBuffer(sessionId: string): Promise<Uint8Arr
   return base64ToBytes(b64);
 }
 
+/**
+ * Whether the connect that opened `sessionId` resumed the tab's own agent
+ * session after a user agent Disconnect, instead of starting a new one
+ * (#5953). One-shot: the backend forgets the answer once asked.
+ */
+export async function takeResumedAgentSession(sessionId: string): Promise<boolean> {
+  return await invoke<boolean>("take_resumed_agent_session", { sessionId });
+}
+
 /** List all active local sessions (includes remote proxy sessions). */
 export async function listLocalSessions(): Promise<LocalSessionInfo[]> {
   return await invoke<LocalSessionInfo[]>("list_local_sessions");

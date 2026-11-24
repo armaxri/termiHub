@@ -54,7 +54,7 @@ export function reopenToastDescription(closed: readonly ReopenTabPayload[]): str
   if (closed.length < 2) return undefined;
   const listed = closed.slice(0, MAX_LISTED_TITLES).map((p) => p.title);
   const more = closed.length - listed.length;
-  return more > 0 ? `${listed.join(", ")} and ${more} more` : listed.join(", ");
+  return more > 0 ? `${listed.join(", ")} +${more} more` : listed.join(", ");
 }
 
 /** Open a fresh tab for each of `closed`, in the order they were closed. */
@@ -66,12 +66,14 @@ function reopenAll(closed: readonly ReopenTabPayload[]): void {
 }
 
 /**
- * Show a success toast confirming a tab was closed, with a Reopen action that
- * opens a fresh tab from the saved connection config. No-op when `payload` is
- * null (nothing reconnectable to offer).
+ * Show an undo toast for a closed tab, with a Reopen action that opens a fresh
+ * tab from the saved connection config. No-op when `payload` is null (nothing
+ * reconnectable to offer). Like every undo offer it uses the neutral info
+ * style (#5956): closing a tab is not a success to confirm.
  *
  * Closes made while the toast is still on offer share it (#5828, #5919): it
- * is replaced in place and reads "Closed 3 tabs", and its "Reopen all"
+ * is replaced in place and reads "Closed 3 tabs" over the first three names
+ * (then "+N more"), and its "Reopen all"
  * restores every one of them, in the order they were closed. A
  * dialog opening hides the toast and it comes back when the dialog closes
  * (#5914), so the undo is never lost to an unrelated dialog.
@@ -87,7 +89,7 @@ export function showReopenToast(payload: ReopenTabPayload | null): void {
   const closed = [...closedBatch, payload];
   closedBatch = closed;
   // toast-policy: undo — offers Reopen for the tabs just closed
-  toast.success(reopenToastMessage(closed), {
+  toast.info(reopenToastMessage(closed), {
     id: REOPEN_TOAST_ID,
     description: reopenToastDescription(closed),
     duration: REOPEN_COALESCE_MS,

@@ -684,18 +684,21 @@ impl ConnectionStore {
         .await
     }
 
-    /// Ensure a "Default Shell" connection exists if the store is empty.
+    /// Ensure a "Default shell" connection exists if the store is empty.
     /// Call this after loading to auto-create the default on first run.
     ///
-    /// On Windows it also repairs a previously auto-created "Default Shell"
-    /// that still points at a Unix path such as `/bin/sh` (#3727).
+    /// An untouched entry an older agent auto-created as "Default Shell" is
+    /// renamed to the sentence-case "Default shell" (#5956). On Windows it also
+    /// repairs a previously auto-created default that still points at a Unix
+    /// path such as `/bin/sh` (#3727).
     pub async fn ensure_default_shell(&self) {
         let result = self
             .mutate(|defs| {
                 if !defs.connections.is_empty() {
+                    let renamed = rename_legacy_default_shell(defs);
                     let repaired =
                         cfg!(windows) && repair_unix_default_shell(defs, &detect_default_shell());
-                    return ((), repaired);
+                    return ((), renamed || repaired);
                 }
 
                 let shell = detect_default_shell();
@@ -1341,20 +1344,65 @@ fn select_unix_default_shell(shell_env: Option<&str>, exists: impl Fn(&str) -> b
 }
 
 /// Name of the connection [`ConnectionStore::ensure_default_shell`] creates.
-const DEFAULT_SHELL_NAME: &str = "Default Shell";
+const DEFAULT_SHELL_NAME: &str = "Default shell";
 
-/// Repair an auto-created "Default Shell" whose shell is a Unix path on a host
+/// The Title Case name older agents gave the auto-created default (#5956).
+const LEGACY_DEFAULT_SHELL_NAME: &str = "Default Shell";
+
+/// Whether `conn` is still exactly the default an older agent auto-created as
+/// [`LEGACY_DEFAULT_SHELL_NAME`]: a local connection with that name whose
+/// config holds nothing but its `shell`, and nothing the user set (folder,
+/// icon, description, terminal options, persistence). A connection the user
+/// named or edited themselves does not match and is never renamed.
+fn is_untouched_legacy_default_shell(conn: &Connection) -> bool {
+    let config_is_shell_only = conn
+        .config
+        .as_object()
+        .is_some_and(|obj| obj.keys().all(|k| k == "shell") && obj.contains_key("shell"));
+    matches!(conn.session_type.as_str(), "local" | "shell")
+        && conn.name == LEGACY_DEFAULT_SHELL_NAME
+        && config_is_shell_only
+        && !conn.persistent
+        && conn.folder_id.is_none()
+        && conn.terminal_options.is_none()
+        && conn.icon.is_none()
+        && conn.icon_color.is_none()
+        && conn.icon_emoji.is_none()
+        && conn.description.is_none()
+        && conn.extra.is_empty()
+}
+
+/// Rename an untouched auto-created "Default Shell" to [`DEFAULT_SHELL_NAME`]
+/// (#5956, sentence case). Returns whether anything changed.
+fn rename_legacy_default_shell(defs: &mut Definitions) -> bool {
+    let mut changed = false;
+    for conn in defs.connections.values_mut() {
+        if is_untouched_legacy_default_shell(conn) {
+            info!(
+                "Renaming default shell connection {} to {DEFAULT_SHELL_NAME:?}",
+                conn.id
+            );
+            conn.name = DEFAULT_SHELL_NAME.to_string();
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Repair an auto-created "Default shell" whose shell is a Unix path on a host
 /// that cannot run it (#3727: Windows agents used to persist `/bin/sh`).
 ///
 /// Only the auto-created entry is touched — a local connection named
-/// [`DEFAULT_SHELL_NAME`] whose `config.shell` is a string starting with `/` —
+/// [`DEFAULT_SHELL_NAME`] (or the legacy [`LEGACY_DEFAULT_SHELL_NAME`]) whose `config.shell` is a string starting with `/` —
 /// and it is rewritten to `detected`. Returns whether anything changed. The
 /// caller decides when the host is one where Unix paths are invalid (Windows).
 fn repair_unix_default_shell(defs: &mut Definitions, detected: &str) -> bool {
     let mut changed = false;
     for conn in defs.connections.values_mut() {
         let is_local = matches!(conn.session_type.as_str(), "local" | "shell");
-        if !is_local || conn.name != DEFAULT_SHELL_NAME {
+        let is_default_name =
+            conn.name == DEFAULT_SHELL_NAME || conn.name == LEGACY_DEFAULT_SHELL_NAME;
+        if !is_local || !is_default_name {
             continue;
         }
         let stale = conn
@@ -2580,7 +2628,7 @@ mod tests {
 
         let (conns, _) = store.list().await;
         assert_eq!(conns.len(), 1);
-        assert_eq!(conns[0].name, "Default Shell");
+        assert_eq!(conns[0].name, "Default shell");
         assert_eq!(conns[0].session_type, "local");
         assert!(conns[0].id.starts_with("conn-"));
     }
@@ -2658,14 +2706,85 @@ mod tests {
 
     const PWSH: &str = r"C:\Program Files\PowerShell\7\pwsh.exe";
 
+    fn legacy_default(id: &str) -> Connection {
+        Connection {
+            session_type: "local".to_string(),
+            config: json!({ "shell": "/bin/zsh" }),
+            ..make_connection(id, LEGACY_DEFAULT_SHELL_NAME, false)
+        }
+    }
+
+    #[test]
+    fn an_untouched_legacy_default_shell_is_renamed_to_sentence_case() {
+        let mut defs = defs_with(vec![legacy_default("conn-a")]);
+        assert!(rename_legacy_default_shell(&mut defs));
+        assert_eq!(defs.connections["conn-a"].name, "Default shell");
+        assert_eq!(
+            defs.connections["conn-a"].config,
+            json!({ "shell": "/bin/zsh" })
+        );
+        // Idempotent: nothing left to rename.
+        assert!(!rename_legacy_default_shell(&mut defs));
+    }
+
+    #[test]
+    fn a_user_named_or_edited_default_shell_is_never_renamed() {
+        let mut edited_config = legacy_default("conn-config");
+        edited_config.config = json!({ "shell": "/bin/zsh", "startingDirectory": "~/src" });
+        let mut in_folder = legacy_default("conn-folder");
+        in_folder.folder_id = Some("f1".to_string());
+        let mut described = legacy_default("conn-desc");
+        described.description = Some("mine".to_string());
+        let mut persistent = legacy_default("conn-persist");
+        persistent.persistent = true;
+        let mut ssh = legacy_default("conn-ssh");
+        ssh.session_type = "ssh".to_string();
+        let other_case = make_connection("conn-other", "DEFAULT SHELL", false);
+        let mut defs = defs_with(vec![
+            edited_config,
+            in_folder,
+            described,
+            persistent,
+            ssh,
+            other_case,
+        ]);
+        assert!(!rename_legacy_default_shell(&mut defs));
+        for (id, conn) in &defs.connections {
+            assert_ne!(conn.name, "Default shell", "{id} was renamed");
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_default_shell_renames_the_legacy_default_on_load() {
+        let tmp = TempDir::new().unwrap();
+        let store = ConnectionStore::new_temp(tmp.path().join("connections.json"));
+        store
+            .mutate(|defs| {
+                let conn = legacy_default("conn-legacy");
+                defs.connections.insert(conn.id.clone(), conn);
+                ((), true)
+            })
+            .await
+            .unwrap();
+        store.ensure_default_shell().await;
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].name, "Default shell");
+    }
+
     #[test]
     fn repair_rewrites_stale_unix_default_shell() {
         let mut defs = defs_with(vec![
             default_shell_conn("conn-a", "local", "/bin/sh"),
             default_shell_conn("conn-b", "shell", "/bin/bash"),
+            // An older agent's Title Case name is still its default (#5956).
+            Connection {
+                name: LEGACY_DEFAULT_SHELL_NAME.to_string(),
+                ..default_shell_conn("conn-c", "local", "/bin/sh")
+            },
         ]);
         assert!(repair_unix_default_shell(&mut defs, PWSH));
-        for id in ["conn-a", "conn-b"] {
+        for id in ["conn-a", "conn-b", "conn-c"] {
             let conn = &defs.connections[id];
             assert_eq!(conn.config["shell"], json!(PWSH));
             // Other config keys survive.

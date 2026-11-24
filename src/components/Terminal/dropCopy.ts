@@ -219,16 +219,26 @@ export function sessionEndSeparator(input: {
 
 /**
  * The marker written after a successful reconnect (#5660). It says what the new
- * session lost (#5831, R-101): SSH opens a new remote shell, telnet a new
- * telnet session and any other session starts afresh, so running programs are
- * gone; a serial device is reopened and keeps the plain marker.
+ * session lost (#5831, R-101): SSH and an agent open a new remote shell (#5953),
+ * telnet a new telnet session and any other session starts afresh, so running
+ * programs are gone; a serial device is reopened and keeps the plain marker.
  */
 export function reconnectedMarker(at: Date, transport: DropTransport = "other"): string {
   const time = formatClock(at);
   if (transport === "serial") return tf("drop.separator.reconnected", { time });
   if (transport === "telnet") return tf("drop.separator.reconnectedTelnet", { time });
-  if (transport === "ssh") return tf("drop.separator.reconnectedShell", { time });
+  if (transport === "ssh" || transport === "agent") {
+    return tf("drop.separator.reconnectedShell", { time });
+  }
   return tf("drop.separator.reconnectedSession", { time });
+}
+
+/**
+ * The marker written when an agent tab's reconnect re-attached its own,
+ * still-running session (#5953): nothing was lost.
+ */
+export function resumedMarker(at: Date): string {
+  return tf("drop.separator.resumed", { time: formatClock(at) });
 }
 
 /**

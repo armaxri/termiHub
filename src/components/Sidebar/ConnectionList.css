@@ -646,28 +646,6 @@
   display: flex;
 }
 
-/* Secondary experimental-features signpost under the empty-state button:
-   smaller and quieter than the one-sentence description (R-122, #5702). It
-   takes a full line of the wrapping action row so it sits under the button.
-   One short sentence, then one small button that never wraps (#5873, R-098). */
-.connections-empty__hint {
-  flex-basis: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: inherit;
-  gap: var(--spacing-xxs);
-}
-
-.connections-empty__hint-text {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-}
-
-.connections-empty__hint-action {
-  white-space: nowrap;
-}
-
 /* Inline text-button link inside a connections empty state (the remote-agents
    "New remote agent", #5851). Styled as a link, tokens only.
    `--text-link` (not the `--accent-color` button fill) so the text meets AA on

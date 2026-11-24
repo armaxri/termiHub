@@ -17,13 +17,15 @@ export interface UndoToastOptions {
 }
 
 /**
- * Show the success toast for a delete that can be undone: it carries an Undo
- * button and stays up for {@link UNDO_WINDOW_MS}. Returns the toast id.
+ * Show the toast for a delete that can be undone: it carries an Undo button
+ * and stays up for {@link UNDO_WINDOW_MS}. Returns the toast id. An undo offer
+ * uses the neutral info style, not the green success one (#5956): a delete is
+ * not a success to confirm, and the Undo button is the point of the toast.
  */
 export function showUndoToast(message: string, opts: UndoToastOptions): string | number {
   let used = false;
   // toast-policy: undo — offers Undo for what was just deleted
-  return toast.success(message, {
+  return toast.info(message, {
     id: opts.id,
     duration: UNDO_WINDOW_MS,
     testId: opts.testId,
