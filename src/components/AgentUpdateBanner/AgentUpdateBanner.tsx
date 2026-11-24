@@ -97,6 +97,7 @@ export function AgentUpdateBanner({
         const result = await requestAgentUpdate(agentId);
         if (result.applied) {
           const n = result.notifiedClients;
+          // toast-policy: background — the agent updates and reconnects on its own
           toast.success(
             n > 0
               ? `Agent updating — ${n} other host${n === 1 ? "" : "s"} notified. Reconnecting…`
@@ -104,6 +105,7 @@ export function AgentUpdateBanner({
           );
         } else {
           const n = result.activeSessions;
+          // toast-policy: background — the update waits for the agent's sessions to end
           toast.info(
             `Update deferred — it will be applied automatically when the last of ${n} active ` +
               `session${n === 1 ? "" : "s"} disconnects.`
@@ -114,9 +116,11 @@ export function AgentUpdateBanner({
       }
       const result = await requestAgentDeferredUpdate(agentId);
       if (result.applied) {
+        // toast-policy: background — the agent updates and reconnects on its own
         toast.success("Agent updated — reconnecting…");
       } else {
         const n = result.activeSessions;
+        // toast-policy: background — the update waits for the agent's sessions to end
         toast.info(
           `Update deferred — it will be applied automatically when the last of ${n} active ` +
             `session${n === 1 ? "" : "s"} disconnects.`
@@ -133,6 +137,7 @@ export function AgentUpdateBanner({
       // was locale-fragile and over-broad (I18N-008). If neither shows the
       // transport closed, this was a real update failure — surface it.
       if (await isExpectedApplyDisconnect(agentId, err)) {
+        // toast-policy: background — the agent updates and reconnects on its own
         toast.info("Agent is updating — it will reconnect automatically once the swap completes.");
         dismissAgentUpdate(agentId);
         return;

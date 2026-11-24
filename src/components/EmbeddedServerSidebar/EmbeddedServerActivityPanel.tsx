@@ -136,6 +136,7 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
     const text = [TSV_HEADER, ...visible.map(entryToTsv)].join("\n");
     try {
       await writeClipboard(text);
+      // toast-policy: no-in-place-surface — the entries are on the clipboard
       toast.success(`Copied ${visible.length} log entries`);
     } catch (err) {
       toast.error("Failed to copy access log", { description: errorMessage(err) });
@@ -145,7 +146,6 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
   const handleClear = async () => {
     try {
       await clear();
-      toast.success("Access log cleared");
     } catch (err) {
       toast.error("Failed to clear access log", { description: errorMessage(err) });
     }

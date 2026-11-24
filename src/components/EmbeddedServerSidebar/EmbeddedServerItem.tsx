@@ -137,6 +137,7 @@ export function EmbeddedServerItem({
 
   const handleCopyUrl = () => {
     writeClipboard(url)
+      // toast-policy: no-in-place-surface — the URL is on the clipboard
       .then(() => toast.success("Copied URL to clipboard"))
       .catch((err: unknown) =>
         toast.error("Failed to copy URL", { description: errorMessage(err) })

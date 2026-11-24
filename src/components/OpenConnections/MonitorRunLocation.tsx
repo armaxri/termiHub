@@ -5,12 +5,7 @@ import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { useAppStore } from "@/store/appStore";
-import {
-  encodeRunLocation,
-  isAgentHost,
-  THIS_COMPUTER,
-  type RunLocation,
-} from "@/utils/runLocation";
+import { encodeRunLocation, THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -56,9 +51,6 @@ export function MonitorRunLocation({ entry }: MonitorRunLocationProps) {
         // current subscription down, then re-open on the new vantage.
         await disconnectMonitoring(entry.key);
         await connectMonitoring(entry.key, entry.host, location);
-        toast.success(
-          isAgentHost(location) ? "Monitoring moved to agent" : "Monitoring moved to this computer"
-        );
       } catch (err: unknown) {
         setLocation(entry.key, previous); // roll back on failure
         toast.error("Couldn't change run location", {

@@ -106,10 +106,9 @@ export function WorkflowSidebar() {
   const { query, setQuery, filtered } = useListFilter(workflows, nameDescriptionTagsFields);
   const exportWorkflowsToFile = useJsonFileExport("workflows");
   const importWorkflowsFromFile = useJsonFileImport("workflows");
-  const workflowDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+  const workflowDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
       await deleteWorkflowFromBackend(id);
-      toast.success(`Deleted workflow "${name}"`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to delete workflow: ${message}`);
@@ -193,7 +192,6 @@ export function WorkflowSidebar() {
       };
       try {
         await saveWorkflowToBackend(duplicate);
-        toast.success(`Duplicated "${original.name}"`);
       } catch (err) {
         const message = errorMessage(err);
         toast.error(`Failed to duplicate "${original.name}"`, { description: message });
@@ -268,11 +266,11 @@ export function WorkflowSidebar() {
           `${stepLabel} ${verb} (${removed.join(", ")}). The untrusted file reference was removed, so only the visible script runs. Re-pick the file in the step editor to load it from disk.`
         );
       }
+      // The imported rows show in the list (#5859); only warnings need a toast.
       if (warnings.length > 0) {
         // Flag it prominently (persistent toast) so it is never silently trusted.
-        toast.success(summary, { description: warnings.join(" "), duration: Infinity });
-      } else {
-        toast.success(summary);
+        // toast-policy: explains-outcome — the rows do not show what needs a second look
+        toast.info(summary, { description: warnings.join(" "), duration: Infinity });
       }
     });
   }, [importWorkflows, importWorkflowsFromFile]);
@@ -305,7 +303,6 @@ export function WorkflowSidebar() {
         setEditing(null);
         justSavedSeq.current += 1;
         setJustSaved({ id: updated.id, seq: justSavedSeq.current });
-        toast.success(`Saved workflow "${result.name}"`);
       } catch (err) {
         // Keep the dialog open so the edits are not lost on a failed save.
         const message = errorMessage(err);

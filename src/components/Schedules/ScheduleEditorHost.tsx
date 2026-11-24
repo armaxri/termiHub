@@ -41,11 +41,14 @@ export function ScheduleEditorHost() {
       try {
         const saved = await saveSchedule(next);
         closeScheduleEditor();
-        toast.success(`Saved schedule "${saved.name}"`, {
-          description: saved.enabled
-            ? undefined
-            : "It is disabled — enable it in the Schedules list when you are ready.",
-        });
+        // The saved row shows in the Schedules list (#5859). A disabled one
+        // will not run, which the row alone does not explain.
+        if (!saved.enabled) {
+          // toast-policy: explains-outcome — the schedule was saved but will not run yet
+          toast.info(`Saved schedule "${saved.name}" disabled`, {
+            description: "Enable it in the Schedules list when you are ready.",
+          });
+        }
       } catch (err) {
         toast.error(`Failed to save schedule: ${errorMessage(err)}`);
         throw err;

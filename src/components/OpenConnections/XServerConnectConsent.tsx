@@ -150,6 +150,7 @@ export function XServerConnectConsent() {
       return driveXServerEnsure({
         onProgress: setProgress,
         onSuccess: () => {
+          // toast-policy: background — the X server starts outside termiHub as the dialog closes
           toast.success("X server ready");
           close();
         },
@@ -171,6 +172,7 @@ export function XServerConnectConsent() {
           setProgress(p);
           if (!TERMINAL_STEPS.has(p.step)) return;
           if (p.step === "ready") {
+            // toast-policy: background — the X server starts outside termiHub as the dialog closes
             toast.success("X server ready");
             close();
           } else if (p.step === "skipped") {
@@ -219,6 +221,7 @@ export function XServerConnectConsent() {
     try {
       await xServerInstallDependency();
       frontendLog("x_server_connect_consent", `installed dependency ${dep}`);
+      // toast-policy: dialog-status — names the dependency installed outside termiHub
       toast.success(`${dep} installed`);
       driverRef.current = "ensure";
       setPhase("provisioning");
