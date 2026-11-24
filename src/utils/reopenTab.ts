@@ -76,14 +76,15 @@ function reopenAll(closed: readonly ReopenTabPayload[]): void {
  *
  * Closes that come within {@link REOPEN_COALESCE_MS} of each other share one
  * toast (#5828): it is replaced in place and reads "Closed 3 tabs", and its
- * "Reopen all" restores every one of them, in the order they were closed. The
- * toast goes away when a dialog opens (#5665).
+ * "Reopen all" restores every one of them, in the order they were closed. A
+ * dialog opening hides the toast and it comes back when the dialog closes
+ * (#5914), so the undo is never lost to an unrelated dialog.
  */
 export function showReopenToast(payload: ReopenTabPayload | null): void {
   if (!payload) return;
   const now = Date.now();
   // A close joins the toast on screen; once that toast is gone (timed out,
-  // dismissed, taken down by a dialog), the next close starts afresh.
+  // dismissed; a dialog only hides it, #5914), the next close starts afresh.
   if (now - lastCloseAt > REOPEN_COALESCE_MS || !toast.isActive(REOPEN_TOAST_ID)) {
     closedBatch = [];
   }
@@ -96,10 +97,6 @@ export function showReopenToast(payload: ReopenTabPayload | null): void {
     description: reopenToastDescription(closed),
     duration: REOPEN_COALESCE_MS,
     testId: "reopen-tab-toast",
-    // The undo belongs to the moment of closing: a dialog opened afterwards
-    // (a settings confirm, an unlock) dismisses it rather than sitting beside
-    // it (#5665).
-    dismissOnModal: true,
     action: {
       label: closed.length === 1 ? "Reopen" : "Reopen all",
       testId: "reopen-tab-toast-action",

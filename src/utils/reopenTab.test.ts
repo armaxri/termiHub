@@ -89,7 +89,8 @@ describe("showReopenToast (#5828)", () => {
     expect(t.message).toBe("Closed “web-1”");
     expect(t.opts.description).toBeUndefined();
     expect(t.opts.action.label).toBe("Reopen");
-    expect(t.opts.dismissOnModal).toBe(true);
+    // A dialog hides the undo and brings it back, rather than dismissing it (#5914).
+    expect(t.opts.dismissOnModal).toBeUndefined();
     expect(t.opts.duration).toBe(REOPEN_COALESCE_MS);
 
     pressReopen();
@@ -141,9 +142,9 @@ describe("showReopenToast (#5828)", () => {
     expect(theToast().message).toBe("Closed “b”");
   });
 
-  it("a close after the toast went away (a dialog, its close button) starts afresh", () => {
+  it("a close after the toast went away (its close button, a timeout) starts afresh", () => {
     showReopenToast(payload("a"));
-    shown.clear(); // e.g. dismissed when a dialog opened (#5665)
+    shown.clear(); // e.g. its close button, or it timed out
     showReopenToast(payload("b"));
     expect(theToast().message).toBe("Closed “b”");
   });

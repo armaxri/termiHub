@@ -1,5 +1,10 @@
 import { useEffect } from "react";
-import { dismissModalStaleToasts, toast } from "./toast";
+import {
+  dismissModalStaleToasts,
+  hideOffersForDialog,
+  restoreOffersAfterDialog,
+  toast,
+} from "./toast";
 
 /** An open modal dialog: the shared `Modal` and any other `aria-modal` dialog. */
 const OPEN_MODAL_SELECTOR = '[aria-modal="true"]';
@@ -11,10 +16,12 @@ function openModalCount(): number {
 
 /**
  * Dismiss the toasts raised with `dismissOnModal` whenever a dialog opens
- * (#5665): a "Closed … / Reopen" undo raised before the dialog would only sit
- * beside it, over a backdrop that blocks its button. The success/info
+ * (#5665): their offer is stale once a dialog takes over. The success/info
  * confirmations still showing go too (#5830): old feedback never mixes with
- * the new decision the dialog asks for. Errors and loading toasts stay.
+ * the new decision the dialog asks for. Undo offers (a toast with a button)
+ * are hidden instead and come back, with their remaining lifetime, once the
+ * dialog closes (#5914): an unrelated dialog never takes a recovery away.
+ * Errors and loading toasts stay.
  * Watches the DOM rather than the `Modal` component so every dialog counts,
  * whatever opened it.
  */
@@ -25,7 +32,10 @@ export function useDismissOnModalOpen(): void {
       const now = openModalCount();
       if (now > open) {
         dismissModalStaleToasts();
+        hideOffersForDialog(open);
         toast.dismissTransient();
+      } else if (now < open) {
+        restoreOffersAfterDialog(now);
       }
       open = now;
     };
