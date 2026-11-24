@@ -620,7 +620,7 @@ class AgentUi(HarnessMixin):
         return entry if isinstance(entry, dict) else None
 
     def dismiss_agent_update_banner(self, agent_id: str) -> None:
-        """Click the banner's Dismiss and wait for it to disappear."""
+        """Click the banner's "Later" and wait for it to disappear."""
         self.driver.click(f"{self.UPDATE_BANNER_DISMISS}-{agent_id}")
         self.wait_no_agent_update_banner(agent_id)
 

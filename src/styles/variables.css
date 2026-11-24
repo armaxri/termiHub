@@ -67,9 +67,10 @@
   --tab-active-border: var(--accent-color);
   --tab-height: 35px;
   /* Tab sizing (#5557): tabs grow to fit their title up to the max and shrink
-     toward the min only when the strip is full. */
+     toward the min only when the strip is full. 360px (#5980) fits an agent
+     tab "<agent-name-with-id> · bash" and its "Setup: <agent>" tab whole. */
   --tab-min-width: 120px;
-  --tab-max-width: 240px;
+  --tab-max-width: 360px;
   /* Form sizing (#5641): forms such as the connection editor stop growing at
      a readable line length; short numeric inputs (port, timeout) stay narrow. */
   --form-max-width: 560px;

@@ -29,6 +29,8 @@ import {
   ArrowLeft,
   ArrowRight,
   CircleDashed,
+  CheckCircle2,
+  CircleHelp,
   CircleStop,
   SquareSplitHorizontal,
 } from "lucide-react";
@@ -68,6 +70,9 @@ const STATUS_LABELS: Record<TabStatus, string> = {
   disconnected: "Disconnected",
   exited: "Process exited",
   evicted: "Taken over by another desktop",
+  finished: "Finished",
+  checking: "Checking the agent…",
+  unknown: "Agent setup outcome unknown",
 };
 
 /**
@@ -87,6 +92,9 @@ const STATUS_ICON: Record<TabStatus, LucideIcon> = {
   // A process that exited is no lost connection (#5955): a neutral stop sign.
   exited: CircleStop,
   evicted: MonitorX,
+  finished: CheckCircle2,
+  checking: CircleDashed,
+  unknown: CircleHelp,
 };
 
 interface TabProps {

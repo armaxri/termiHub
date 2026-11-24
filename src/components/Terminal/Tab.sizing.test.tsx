@@ -97,9 +97,10 @@ afterEach(() => {
 });
 
 describe("flexible tab width (#5557)", () => {
-  it("lets a tab grow to 240px and shrink only to 120px", () => {
+  it("lets a tab grow to 360px and shrink only to 120px", () => {
     expect(px("--tab-min-width")).toBe(120);
-    expect(px("--tab-max-width")).toBe(240);
+    // #5980: 240px cut "sys-pr-agent-24ef8dc4 · bash" with the strip half empty.
+    expect(px("--tab-max-width")).toBe(360);
     const tab = ruleBody(tabBarCss, ".tab");
     expect(tab).toMatch(/min-width:\s*var\(--tab-min-width\);/);
     expect(tab).toMatch(/max-width:\s*var\(--tab-max-width\);/);

@@ -14,6 +14,7 @@ import { useAgentSetupStatus, type AgentSetupTab } from "@/store/agentSetupStatu
 import { findLeafByTab } from "@/utils/panelTree";
 import { Button, ContentOverlay } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
+import type { TabStatus } from "@/utils/tabStatus";
 import { t } from "@/i18n/catalog";
 import { DisconnectStrip, type DisconnectStripTone } from "./DisconnectStrip";
 import "./TerminalDisconnectOverlay.css";
@@ -71,6 +72,45 @@ export function agentSetupTabNotice(
   return exit.code === 0
     ? { kind: "installed" }
     : { kind: "failed", reason: `The setup script exited with code ${exit.code}.` };
+}
+
+/** How a setup tab's setup ended; `null` while it runs or when nothing is known. */
+export type AgentSetupOutcome = AgentSetupTabNotice["kind"];
+
+/**
+ * A setup tab's outcome (#5992), also after the user dismissed its strip: the
+ * one source for the tab's icon (#5980), its label and the SSH chip.
+ */
+export function agentSetupTabOutcome(
+  tab: AgentSetupTab | undefined,
+  exit: TerminalExitInfo | undefined
+): AgentSetupOutcome | null {
+  if (!tab) return null;
+  return agentSetupTabNotice({ ...tab, dismissed: false }, exit)?.kind ?? null;
+}
+
+/** The tab status each outcome shows: only a confirmed install is `finished`. */
+const OUTCOME_STATUS: Record<AgentSetupOutcome, TabStatus> = {
+  installed: "finished",
+  failed: "disconnected",
+  cancelled: "disconnected",
+  checking: "checking",
+  unknown: "unknown",
+};
+
+/**
+ * An ended setup tab's status comes from its outcome (#5980), never from the
+ * exit code alone: Windows reports 0 for a failed setup too (#5992). A setup
+ * without an outcome (a dropped POSIX link) and any other tab keep their status.
+ */
+export function withSetupOutcome(
+  status: TabStatus,
+  tab: AgentSetupTab | undefined,
+  exit: TerminalExitInfo | undefined
+): TabStatus {
+  if (status !== "disconnected" && status !== "exited") return status;
+  const outcome = agentSetupTabOutcome(tab, exit);
+  return outcome ? OUTCOME_STATUS[outcome] : status;
 }
 
 const TONES: Record<AgentSetupTabNotice["kind"], DisconnectStripTone> = {

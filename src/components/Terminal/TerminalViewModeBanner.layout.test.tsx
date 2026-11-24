@@ -124,11 +124,10 @@ describe("TerminalViewModeBanner layout (#5823)", () => {
     // The R-003 sentence was 92 characters; heading + hint now fit one line.
     expect(label?.textContent).toBe(`Agent disconnected. ${VIEW_MODE_ENTER_HINT}`);
     expect(label!.textContent!.length).toBeLessThanOrEqual(48);
-    // The full instruction stays in the tooltip and the announcement.
+    // The full instruction stays in the tooltip; the announcement is the
+    // visible text itself (#5980).
     expect(q("terminal-view-mode-reconnect-btn").getAttribute("title")).toContain("Enter");
-    expect(document.querySelector("[role='status']")?.textContent).toContain(
-      "click Reconnect to reconnect it"
-    );
+    expect(document.querySelector("[role='status']")?.textContent).toBe(label?.textContent);
   });
 
   it("is a toast keep-clear zone", () => {

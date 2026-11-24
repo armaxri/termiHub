@@ -24,6 +24,8 @@ EPS = 1.0
 #: Twin of ``AGENT_TAB_SEPARATOR`` / ``AGENT_SHELL_SUFFIX_MAX_CHARS`` (#5956).
 AGENT_SEPARATOR = " · "
 AGENT_SHELL_MAX_CHARS = 16
+#: Twin of ``SETUP_TAB_PREFIX``: a setup tab is cut from its end (#5980).
+SETUP_PREFIX = "Setup: "
 
 
 def expected_tail(title: str) -> str:
@@ -40,7 +42,7 @@ def expected_tail(title: str) -> str:
         shell = base[at + len(AGENT_SEPARATOR):]
         if shell.strip() and len(shell) <= AGENT_SHELL_MAX_CHARS:
             return base[at:] + counter
-    if len(base) <= TAIL_CHARS * 2:
+    if base.startswith(SETUP_PREFIX) or len(base) <= TAIL_CHARS * 2:
         return counter
     return base[-TAIL_CHARS:] + counter
 
