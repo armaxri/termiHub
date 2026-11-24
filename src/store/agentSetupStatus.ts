@@ -12,9 +12,9 @@
  *
  * It also records the setup's own terminal tab (#5865), so the tab can say
  * when the setup is over: failed or cancelled (from the progress events), or
- * finished, which a POSIX setup reports through the exit code of the shell it
- * ends (the setup script runs with `exec`), and a Windows setup cannot report
- * beyond "the commands were sent".
+ * finished, which a setup reports through the exit code of the shell it ends:
+ * the POSIX setup script runs with `exec`, and the Windows install commands
+ * end with `exit` and the install's status (#5946).
  *
  * Session-only, like the backend's setup state: nothing is persisted.
  */
@@ -41,8 +41,9 @@ export interface AgentSetupTab {
   agentId: string;
   agentName: string;
   /**
-   * The run ends the tab's shell with the setup script's exit code (POSIX), so
-   * the session's exit says whether the agent was installed.
+   * The run ends the tab's shell with the setup's exit code (POSIX `exec`,
+   * Windows `exit`, #5946), so the session's exit says whether the agent was
+   * installed. `false` falls back to "the commands were sent".
    */
   reportsExit: boolean;
   progress: AgentSetupTabProgress;
@@ -108,7 +109,7 @@ export function setupTabProgressAfterStep(
   if (tab.progress.kind !== "running") return tab.progress;
   if (step === "error") return { kind: "failed", message };
   if (step === "cancelled") return { kind: "cancelled" };
-  // A POSIX run's "done" only means the script was started: its exit says more.
+  // A reporting run's "done" only means the commands started: its exit says more.
   if (step === "done" && !tab.reportsExit) return { kind: "sent" };
   return tab.progress;
 }
