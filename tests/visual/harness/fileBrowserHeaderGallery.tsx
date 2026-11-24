@@ -60,6 +60,17 @@ const CELLS: HeaderCell[] = [
     width: 260,
   },
   {
+    // The product run's deep path (#5833): long folders and a long current one.
+    id: "deep-long-leaf-narrow",
+    title: "Long current folder, narrow",
+    path: `/home/tester/${Array.from(
+      { length: 6 },
+      (_, i) => `${i + 1}-a-rather-long-folder-name-for-the-path-bar-check`
+    ).join("/")}`,
+    mode: "session",
+    width: 200,
+  },
+  {
     id: "narrow-local",
     title: "Long local path, narrow",
     path: LONG_LOCAL,

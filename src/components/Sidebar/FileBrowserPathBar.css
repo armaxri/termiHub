@@ -2,17 +2,19 @@
    (#5521, #5540, #5541). Imported by FileBrowserPathBar.tsx, so every surface
    that renders the bar gets its styles. */
 
-/* Editable breadcrumb path bar (#5521). One fixed-height row in both states,
+/* Editable breadcrumb path bar (#5521). One control-height row in both states,
    so switching to the input never shifts the list below. A path wider than
-   the bar collapses its middle segments into "…"; the leaf stays visible and
-   ellipsizes only when it alone is wider than the bar. Never scrolls or clips. */
+   the bar collapses its middle segments into "…"; the leaf (current folder)
+   always shows in full: when it alone is wider than the bar it wraps onto a
+   second (and third) line instead of ellipsizing (#5833), which is the one
+   case the bar grows taller. Never scrolls or clips sideways. */
 .file-browser__path-bar {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-xxs);
   width: 100%;
   min-width: 0;
-  height: var(--control-height-md);
+  min-height: var(--control-height-md);
   /* A subtle field so the bar reads as a navigable path (#5624). */
   padding: 0 var(--spacing-xxs);
   background: var(--bg-input);
@@ -36,9 +38,31 @@
   min-width: 0;
 }
 
-/* The leaf segment is the only one allowed to shrink (and ellipsize). */
+/* The leaf segment is the only one allowed to shrink. */
 .file-browser__crumb-group--leaf {
   flex-shrink: 1;
+}
+
+/* A leaf wider than the row wraps rather than ellipsizes (#5833): the current
+   folder is the one segment the user needs whole. It breaks anywhere (folder
+   names rarely have spaces) and clamps at three lines; the full path stays the
+   row's tooltip. Scoped to the rendered row, not the measuring copy. */
+.file-browser__breadcrumbs > .file-browser__crumb-group--leaf .file-browser__crumb {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+  line-height: 1.25;
+  padding-block: var(--spacing-xxs);
+}
+
+/* Copy the full path in place (#5833), beside the segments. */
+.file-browser__path-copy {
+  flex-shrink: 0;
+  color: var(--text-secondary);
 }
 
 /* The current folder reads as the primary segment (#5624). */

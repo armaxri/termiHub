@@ -6,6 +6,8 @@
  * sidebar, that the leaf folder stays visible while the middle of a long path
  * folds into "…", that the full path stays the tooltip, and that the action
  * row stays one line; then screenshots each theme and the overflow menu.
+ * #5833: the leaf is never cut: a leaf wider than the bar wraps onto more
+ * lines, and the bar carries an in-place "Copy path" button.
  */
 
 import { join } from "node:path";
@@ -18,8 +20,8 @@ const THEMES = ["dark", "light", "solarized-dark", "solarized-light"] as const;
 
 /** The one cell whose path fits its bar unfolded. */
 const UNFOLDED = "short-local";
-/** The one cell whose leaf alone is wider than the bar (it ellipsizes). */
-const WIDE_LEAF = "long-leaf";
+/** Cells whose leaf alone is wider than the bar: it wraps, never ellipsizes (#5833). */
+const WIDE_LEAVES = ["long-leaf", "deep-long-leaf-narrow"];
 
 test.use({ viewport: { width: 1000, height: 900 } });
 
@@ -31,8 +33,12 @@ interface CellReport {
   collapsed: boolean;
   firstLabel: string;
   leafLabel: string;
-  /** The leaf segment shows its whole name (not ellipsized). */
+  /** The leaf segment shows its whole name (not ellipsized or clamped). */
   leafWhole: boolean;
+  /** Text lines the leaf segment takes. */
+  leafLines: number;
+  /** The in-place "Copy path" button is rendered inside the bar (#5833). */
+  copyInBar: boolean;
   issues: string[];
 }
 
@@ -78,6 +84,10 @@ test("the file browser header keeps long paths legible and its actions on one ro
         if (tops.size > 1) issues.push("the action row wraps");
         const labels = groups.map((g) => (g.textContent ?? "").trim());
         const leaf = groups[groups.length - 1]?.querySelector("button");
+        const bar = cell.querySelector<HTMLElement>(".file-browser__path-bar")!;
+        const copy = bar.querySelector<HTMLElement>("[data-testid=file-browser-path-copy]");
+        const lineHeight = leaf ? parseFloat(getComputedStyle(leaf).lineHeight) || 16 : 16;
+        const leafText = leaf ? box(leaf).height - 4 : 0;
         return {
           id: cell.dataset.testid!.replace("fbg-cell-", ""),
           path: cell.dataset.path!,
@@ -85,13 +95,18 @@ test("the file browser header keeps long paths legible and its actions on one ro
           collapsed: nav.hasAttribute("data-collapsed"),
           firstLabel: labels[0] ?? "",
           leafLabel: labels[labels.length - 1] ?? "",
-          leafWhole: !!leaf && leaf.scrollWidth <= leaf.clientWidth + 1,
+          leafWhole:
+            !!leaf &&
+            leaf.scrollWidth <= leaf.clientWidth + 1 &&
+            leaf.scrollHeight <= leaf.clientHeight + 1,
+          leafLines: Math.max(1, Math.round(leafText / lineHeight)),
+          copyInBar: !!copy && within(box(copy), box(bar)) && box(copy).width > 2,
           issues,
         };
       })
     );
 
-    expect(cells.length, `${theme}: every gallery cell rendered`).toBe(8);
+    expect(cells.length, `${theme}: every gallery cell rendered`).toBe(9);
     for (const c of cells) {
       const where = `${theme} / ${c.id}`;
       expect.soft(c.issues, where).toEqual([]);
@@ -99,7 +114,11 @@ test("the file browser header keeps long paths legible and its actions on one ro
       expect
         .soft(c.leafLabel, `${where}: the leaf folder stays visible`)
         .toBe(c.path.split("/").pop());
-      expect.soft(c.leafWhole, `${where}: the leaf shows its whole name`).toBe(c.id !== WIDE_LEAF);
+      expect.soft(c.leafWhole, `${where}: the leaf shows its whole name`).toBe(true);
+      if (WIDE_LEAVES.includes(c.id)) {
+        expect.soft(c.leafLines, `${where}: a too-wide leaf wraps`).toBeGreaterThan(1);
+      }
+      expect.soft(c.copyInBar, `${where}: "Copy path" sits in the bar`).toBe(true);
       expect.soft(c.collapsed, `${where}: a long path folds its middle`).toBe(c.id !== UNFOLDED);
     }
     const windows = cells.find((c) => c.id === "deep-windows");
