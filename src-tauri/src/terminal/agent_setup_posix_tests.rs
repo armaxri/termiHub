@@ -838,6 +838,23 @@ mod executed {
     }
 
     #[test]
+    fn a_new_service_is_stopped_and_removed_when_its_setup_is_cut_off() {
+        let first = marker_before("    SERVICE_CHANGING=true");
+        for shell in shells() {
+            for at in first..markers() {
+                let host = Host::update(shell, NEW);
+                fake_systemd(&host, false);
+                let script = faulty(&host.script(&host.target(), true), at, "kill -TERM $$");
+                let (status, out) = host.run(&script);
+                let what = format!("{shell} at {at}: {out}");
+                assert_eq!(status, Some(EXIT_SERVICE_FAILED), "{what}");
+                host.assert_only(Some(NEW), &what);
+                assert_service(&host, None, false, &what);
+            }
+        }
+    }
+
+    #[test]
     fn a_failure_signal_or_kill_in_the_service_step_leaves_a_running_service() {
         let first = marker_before("    SERVICE_CHANGING=true");
         for shell in shells() {
