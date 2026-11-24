@@ -402,11 +402,20 @@
   background-color: var(--selected-row-hover-bg);
 }
 
-/* #5706: a collapsed folder hiding the active tab's connection. The dot and
-   left bar reuse the selection tokens so the hint reads as "the selected row
-   is in here" without claiming the folder itself is selected. */
+/* #5706: a collapsed folder hiding the active tab's connection. The left bar
+   reuses the selection tokens so the hint reads as "the selected row is in
+   here" without claiming the folder itself is selected. #5855: the name is
+   tinted and bold too, so the dot after it is not the only cue and does not
+   read as an unread badge; the row's tooltip says what it means. */
 .connection-tree__folder--contains-active {
   box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
+}
+
+.connection-tree__folder--contains-active .connection-tree__label {
+  /* The dot sits right after the name rather than at the row's far end. */
+  flex: 0 1 auto;
+  color: var(--text-accent);
+  font-weight: 600;
 }
 
 .connection-tree__active-marker {
@@ -414,7 +423,14 @@
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
-  background-color: var(--accent-color);
+  background-color: var(--text-accent);
+}
+
+/* #5855: keeps a folder being named in line with the folder rows, whose
+   chevron leads. */
+.connection-tree__chevron-spacer {
+  flex-shrink: 0;
+  width: 16px;
 }
 
 .connection-tree__folder--drop-over {

@@ -30,6 +30,19 @@ export function treeRowPaddingLeft(depth: number): number {
   return depth * 16 + 8;
 }
 
+/**
+ * Width (px) of a folder row's leading chevron plus the row gap (#5855): the
+ * chevron sits on the left, like the section headers and agent rows, so item
+ * rows reserve the same column and their icons line up with folder icons at
+ * the same depth (the alignment #640 asked for).
+ */
+export const TREE_CHEVRON_COLUMN_PX = 20;
+
+/** Left padding (px) for an item row at `depth` in a tree that has folders. */
+export function treeItemPaddingLeft(depth: number): number {
+  return treeRowPaddingLeft(depth) + TREE_CHEVRON_COLUMN_PX;
+}
+
 /** The drag attributes/listeners a caller obtains from dnd-kit's `useDraggable`. */
 type DragAttributes = ReturnType<typeof useDraggable>["attributes"];
 type DragListeners = ReturnType<typeof useDraggable>["listeners"];
@@ -106,16 +119,18 @@ export interface TreeFolderRowProps extends Omit<
   icon?: React.ReactNode;
   /**
    * Accessible text of a "contains the active item" marker (#5706): when set,
-   * the collapsed folder hides the active tab's row, so a small selection-tinted
-   * dot is drawn before the chevron and the row gets the `--contains-active`
-   * modifier. The text joins the button's accessible name.
+   * the collapsed folder hides the active tab's row, so the folder name is
+   * tinted and bold, a small accent dot follows it and the row gets the
+   * `--contains-active` modifier. The text joins the button's accessible name
+   * and is the row's tooltip (#5855), so the dot never reads as an unread badge.
    */
   containsActiveLabel?: string;
 }
 
 /**
- * A depth-indented folder row for the sidebar trees: folder icon, label, and a
- * trailing expand/collapse chevron, wrapped in the shared
+ * A depth-indented folder row for the sidebar trees: a leading expand/collapse
+ * chevron (on the left, like the section headers and agent rows, #5855), the
+ * folder icon and the label, wrapped in the shared
  * `connection-tree__folder` button with tree ARIA + roving-tabindex wiring.
  */
 export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowProps>(
@@ -151,19 +166,29 @@ export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowPr
         aria-expanded={expanded}
         aria-level={ariaLevel}
         tabIndex={tabIndex}
+        title={rest.title ?? containsActiveLabel}
       >
+        <Chevron
+          size={16}
+          className="connection-tree__chevron"
+          aria-hidden
+          data-testid={testId ? `${testId}-chevron` : undefined}
+        />
         {icon ?? <Folder size={16} />}
-        <span className="connection-tree__label">{label}</span>
+        <span
+          className="connection-tree__label"
+          data-testid={testId ? `${testId}-label` : undefined}
+        >
+          {label}
+        </span>
         {containsActiveLabel && (
           <span
             className="connection-tree__active-marker"
             role="img"
             aria-label={containsActiveLabel}
-            title={containsActiveLabel}
             data-testid={testId ? `${testId}-active-marker` : undefined}
           />
         )}
-        <Chevron size={16} className="connection-tree__chevron" />
       </button>
     );
   }

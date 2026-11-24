@@ -65,7 +65,12 @@ export function SidebarGroupHeader({
       aria-expanded={expanded}
       data-testid={toggleTestId}
     >
-      <Chevron size={16} className="connection-tree__chevron" />
+      <Chevron
+        size={16}
+        className="connection-tree__chevron"
+        aria-hidden
+        data-testid={toggleTestId ? `${toggleTestId}-chevron` : undefined}
+      />
       <span className="connection-list__group-title">{title}</span>
     </button>
   );

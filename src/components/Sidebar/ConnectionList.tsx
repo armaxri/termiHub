@@ -102,7 +102,7 @@ import {
   useConnectionFolderRename,
   type ConnectionFolderRenameActions,
 } from "./useConnectionFolderRename";
-import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
+import { TreeFolderRow, TreeItemRow, treeItemPaddingLeft, treeRowPaddingLeft } from "./TreeRow";
 import { SidebarGroupHeader } from "./SidebarGroupHeader";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
@@ -549,7 +549,7 @@ function ConnectionItem({
           <div className="connection-tree__item-row" role="none">
             <TreeItemRow
               buttonRef={setRowNode}
-              indentPx={treeRowPaddingLeft(depth)}
+              indentPx={treeItemPaddingLeft(depth)}
               ariaLevel={depth + 1}
               tabIndex={rowIndex === activeIndex ? 0 : -1}
               ariaSelected={isSelected}
