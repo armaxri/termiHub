@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { RotateCcw, Download, Upload, FileDown, X } from "lucide-react";
+import { useState, useCallback } from "react";
+import { RotateCcw, Download, Upload, FileDown } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
@@ -21,26 +21,21 @@ import {
   unbindAction,
   isUnboundCombo,
   isValidModifierOnlyCombo,
-  isActionCustomized,
+  releaseBindingFrom,
 } from "@/services/keybindings";
 import {
-  MODIFIER_KEYS,
   MODIFIER_ONLY_RECORDING_INSTRUCTIONS,
   MODIFIER_ONLY_REJECTION_TEXT,
-  recordModifierOnlyChord,
-  type ModifierOnlyRejection,
 } from "./modifierOnlyRecorder";
+import {
+  deadKeyRejectionText,
+  takesKeyFromTerminalPrograms,
+  terminalKeyRejectionText,
+} from "./keybindingRecorder";
+import { KeybindingRow, type RecordRejection, type RowNotice } from "./KeybindingRow";
 import { serializeKeybindings, parseKeybindingEnvelope } from "@/services/keybindingIo";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
-import {
-  Button,
-  Checkbox,
-  ConfirmDialog,
-  Field,
-  Toggle,
-  Tooltip,
-  SearchInput,
-} from "@/components/ui";
+import { Button, Checkbox, ConfirmDialog, Field, Toggle, SearchInput } from "@/components/ui";
 import { showUndoToast } from "@/utils/undoableDelete";
 import { customBindingCount, restoreKeybindings } from "./restoreKeybindings";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
@@ -106,7 +101,8 @@ interface KeyboardSettingsProps {
 
 export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
-  const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+  // A refused or conflicting recording, shown under the recorded row (#5842).
+  const [notice, setNotice] = useState<(RowNotice & { action: string }) | null>(null);
   // Text of the polite live region that tells screen-reader users what a
   // rebinding did: recording started, binding set/cleared/reset, or cancelled.
   const [announcement, setAnnouncement] = useState("");
@@ -219,19 +215,20 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     (binding: KeyBinding) => {
       setOverride(binding.action, null);
       persistOverrides();
-      setConflictWarning(null);
+      setNotice(null);
       setAnnouncement(`${binding.label} shortcut reset to ${describeEffective(binding.action)}.`);
     },
     [persistOverrides]
   );
 
-  // Clearing is one click, so it confirms with a toast that can undo it (#5561).
-  const handleUnbindOne = useCallback(
+  // Clearing is one click (or Backspace while recording), so it confirms with a
+  // toast that can undo it (#5561, #5842).
+  const clearWithUndo = useCallback(
     (binding: KeyBinding) => {
       const snapshot = getOverrides();
       unbindAction(binding.action);
       persistOverrides();
-      setConflictWarning(null);
+      setNotice(null);
       setAnnouncement(`${binding.label} shortcut cleared.`);
       showUndoToast(`Shortcut for ${binding.label} cleared`, {
         testId: "keybinding-unbind-toast",
@@ -246,26 +243,36 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
   const handleStartRecording = useCallback((binding: KeyBinding) => {
     setRecordingAction(binding.action);
-    setConflictWarning(null);
+    setNotice(null);
     const instructions = binding.modifierOnly
       ? MODIFIER_ONLY_RECORDING_INSTRUCTIONS
       : RECORDING_INSTRUCTIONS;
     setAnnouncement(`Recording shortcut for ${binding.label}. ${instructions}`);
   }, []);
 
-  /** A modifier-only recording was unusable: keep the old chord and say why. */
-  const handleRecordRejected = useCallback((binding: KeyBinding, reason: ModifierOnlyRejection) => {
+  /** Show `text` under `binding`'s row; the role="alert" line announces it assertively. */
+  const showNotice = useCallback((binding: KeyBinding, notice: RowNotice) => {
     setRecordingAction(null);
-    // Announced assertively by the role="alert" banner.
+    // Clear the polite region so the two do not talk over each other.
     setAnnouncement("");
-    setConflictWarning(
-      `${MODIFIER_ONLY_REJECTION_TEXT[reason]} ${binding.label} shortcut unchanged.`
-    );
+    setNotice({ action: binding.action, ...notice });
   }, []);
+
+  /** A recording was unusable: keep the old binding and say why. */
+  const handleRecordRejected = useCallback(
+    (binding: KeyBinding, reason: RecordRejection) => {
+      const text =
+        reason === "dead-key"
+          ? deadKeyRejectionText(binding.label)
+          : `${MODIFIER_ONLY_REJECTION_TEXT[reason]} ${binding.label} shortcut unchanged.`;
+      showNotice(binding, { text });
+    },
+    [showNotice]
+  );
 
   const handleCancelRecording = useCallback((binding: KeyBinding) => {
     setRecordingAction(null);
-    setConflictWarning(null);
+    setNotice(null);
     setAnnouncement(`Recording canceled. ${binding.label} shortcut unchanged.`);
   }, []);
 
@@ -273,7 +280,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     (binding: KeyBinding, combo: KeyCombo | KeyCombo[] | null) => {
       const { action } = binding;
       setRecordingAction(null);
-      setConflictWarning(null);
+      setNotice(null);
 
       // Defense in depth: a modifier-only action never accepts an unusable chord
       // (the service would also drop it), so a rebind cannot trap the user.
@@ -283,23 +290,25 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
       }
 
       if (combo === null) {
-        // Backspace pressed — unbind
-        unbindAction(action);
-        persistOverrides();
-        setAnnouncement(`${binding.label} shortcut cleared.`);
+        clearWithUndo(binding);
+        return;
+      }
+
+      // Plain function keys stay with terminal programs (#4773).
+      if (takesKeyFromTerminalPrograms(action, combo)) {
+        showNotice(binding, { text: terminalKeyRejectionText(binding.label, combo) });
         return;
       }
 
       const conflict = checkConflict(combo, action);
       if (conflict) {
-        const conflictBinding = bindings.find((b) => b.action === conflict);
-        // Announced assertively by the role="alert" conflict banner; clear the
-        // polite region so the two do not talk over each other.
-        setAnnouncement("");
-        setConflictWarning(
-          `"${formatBindingForDisplay(combo)}" is already used by "${conflictBinding?.label ?? conflict}". ` +
-            `${binding.label} shortcut unchanged.`
-        );
+        const other = bindings.find((b) => b.action === conflict);
+        const otherLabel = other?.label ?? conflict;
+        const text =
+          `"${formatBindingForDisplay(combo)}" is already used by "${otherLabel}". ` +
+          `Reassign it to ${binding.label} (${otherLabel} loses it), or cancel to keep both ` +
+          `shortcuts unchanged.`;
+        showNotice(binding, { text, conflict: other ? { combo, other } : undefined });
         return;
       }
 
@@ -307,7 +316,36 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
       persistOverrides();
       setAnnouncement(`${binding.label} shortcut set to ${formatBindingForDisplay(combo)}.`);
     },
-    [persistOverrides, bindings, handleRecordRejected]
+    [persistOverrides, bindings, handleRecordRejected, clearWithUndo, showNotice]
+  );
+
+  /** "Reassign": move the conflicting shortcut to `binding`, with an Undo (#5842). */
+  const handleReassign = useCallback(
+    (binding: KeyBinding, combo: KeyCombo | KeyCombo[], other: KeyBinding) => {
+      const snapshot = getOverrides();
+      // Release it from every action that holds it (normally just `other`);
+      // bounded by the number of actions, so it always terminates.
+      let owner = checkConflict(combo, binding.action);
+      for (let left = bindings.length; owner && left > 0; left--) {
+        releaseBindingFrom(owner, combo);
+        owner = checkConflict(combo, binding.action);
+      }
+      setOverride(binding.action, combo);
+      persistOverrides();
+      setNotice(null);
+      const keys = formatBindingForDisplay(combo);
+      setAnnouncement(
+        `${binding.label} shortcut set to ${keys}. ${other.label} is now ${describeEffective(other.action)}.`
+      );
+      showUndoToast(`${keys} moved from ${other.label} to ${binding.label}`, {
+        testId: "keybinding-reassign-toast",
+        onUndo: () => {
+          restoreKeybindings(snapshot);
+          forceRender((n) => n + 1);
+        },
+      });
+    },
+    [persistOverrides, bindings]
   );
 
   const show = !visibleFields || visibleFields.has("keybindings");
@@ -380,16 +418,6 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         {announcement}
       </div>
 
-      {conflictWarning && (
-        <div
-          className="keyboard-settings__conflict"
-          role="alert"
-          data-testid="keyboard-settings-conflict"
-        >
-          {conflictWarning}
-        </div>
-      )}
-
       {groupedBindings.map((group) => (
         <div key={group.category} className="keyboard-settings__group">
           <h4
@@ -412,12 +440,18 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
                   key={binding.action}
                   binding={binding}
                   isRecording={recordingAction === binding.action}
+                  notice={notice?.action === binding.action ? notice : null}
                   onStartRecording={() => handleStartRecording(binding)}
                   onRecordComplete={(combo) => handleRecordComplete(binding, combo)}
                   onRecordRejected={(reason) => handleRecordRejected(binding, reason)}
                   onCancel={() => handleCancelRecording(binding)}
                   onReset={() => handleResetOne(binding)}
-                  onUnbind={() => handleUnbindOne(binding)}
+                  onUnbind={() => clearWithUndo(binding)}
+                  onReassign={() =>
+                    notice?.conflict &&
+                    handleReassign(binding, notice.conflict.combo, notice.conflict.other)
+                  }
+                  onDismissNotice={() => setNotice(null)}
                 />
               ))}
             </tbody>
@@ -508,271 +542,4 @@ interface PendingReplace {
   summary: string;
   confirmLabel: string;
   apply: () => void;
-}
-
-interface KeybindingRowProps {
-  binding: KeyBinding;
-  isRecording: boolean;
-  onStartRecording: () => void;
-  onRecordComplete: (combo: KeyCombo | KeyCombo[] | null) => void;
-  /** A modifier-only recording was unusable (#4524). */
-  onRecordRejected: (reason: ModifierOnlyRejection) => void;
-  onCancel: () => void;
-  onReset: () => void;
-  onUnbind: () => void;
-}
-
-/**
- * How long the recorder waits after a single combo before finalizing it, giving
- * the user a window to press a second combo and record a chord instead. A chord
- * finalizes immediately on its second combo, so this delay only affects the
- * common single-combo case. Mirrors the engine's chord timeout in spirit.
- */
-const RECORD_CHORD_WINDOW_MS = 800;
-
-/** The engine matches chords of exactly two combos, so cap a recorded chord there. */
-const MAX_CHORD_LENGTH = 2;
-
-function KeybindingRow({
-  binding,
-  isRecording,
-  onStartRecording,
-  onRecordComplete,
-  onRecordRejected,
-  onCancel,
-  onReset,
-  onUnbind,
-}: KeybindingRowProps) {
-  const combo = getEffectiveCombo(binding.action);
-  const isUnbound = !combo || isUnboundCombo(combo);
-  // Reset only when it would change something: a default row shows no reset (#5561).
-  const isCustomized = isActionCustomized(binding.action);
-  // Alternate defaults are listed too, e.g. "Cmd+P / Cmd+Shift+P" (#5084).
-  const displayStr = formatActionBindings(binding.action) ?? "(unbound)";
-  const buttonRef = useRef<HTMLButtonElement>(null);
-
-  // Live preview of the combos captured so far while recording (e.g. "Cmd+K"
-  // after the first key of a chord). Empty until the first non-modifier keypress.
-  const [recordingPreview, setRecordingPreview] = useState("");
-
-  // Keep the latest callbacks in refs so the keydown listener stays stable across
-  // re-renders — otherwise a new `onRecordComplete` identity each render would
-  // tear down and re-arm the listener mid-chord, dropping the accumulated combos.
-  const onRecordCompleteRef = useRef(onRecordComplete);
-  const onRecordRejectedRef = useRef(onRecordRejected);
-  const onCancelRef = useRef(onCancel);
-  useEffect(() => {
-    onRecordCompleteRef.current = onRecordComplete;
-    onRecordRejectedRef.current = onRecordRejected;
-    onCancelRef.current = onCancel;
-  });
-  const modifierOnly = binding.modifierOnly === true;
-
-  // Keep focus on the binding button while recording: a mouse click does not
-  // focus a button in WebKit, and the result is announced relative to it.
-  useEffect(() => {
-    if (isRecording) buttonRef.current?.focus();
-  }, [isRecording]);
-
-  useEffect(() => {
-    if (!isRecording || !modifierOnly) return;
-    return recordModifierOnlyChord({
-      onPreview: setRecordingPreview,
-      onComplete: (combo) => {
-        onRecordCompleteRef.current(combo);
-        buttonRef.current?.focus();
-      },
-      onReject: (reason) => {
-        onRecordRejectedRef.current(reason);
-        buttonRef.current?.focus();
-      },
-      onCancel: (refocus) => {
-        onCancelRef.current();
-        if (refocus) buttonRef.current?.focus();
-      },
-    });
-  }, [isRecording, modifierOnly]);
-
-  useEffect(() => {
-    if (!isRecording || modifierOnly) return;
-
-    /** Return focus to the binding button once recording ends via the keyboard. */
-    const refocus = () => buttonRef.current?.focus();
-
-    // Combos accumulated so far this recording session, and the pending "single
-    // combo?" finalize timer.
-    const combos: KeyCombo[] = [];
-    let finishTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const clearFinishTimer = () => {
-      if (finishTimer !== null) {
-        clearTimeout(finishTimer);
-        finishTimer = null;
-      }
-    };
-
-    const finish = () => {
-      clearFinishTimer();
-      if (combos.length === 0) return;
-      // A single combo persists as a bare KeyCombo (matching the default shape);
-      // a chord persists as the KeyCombo[] the engine's chord matcher consumes.
-      onRecordCompleteRef.current(combos.length === 1 ? combos[0] : [...combos]);
-      refocus();
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // A bare Tab / Shift+Tab is reserved for focus navigation: leave record
-      // mode without capturing it and let the browser move focus as usual, so
-      // recording can never trap keyboard focus. With Ctrl/Alt/Cmd it is a
-      // normal recordable key (e.g. Ctrl+Tab).
-      if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        clearFinishTimer();
-        onCancelRef.current();
-        return;
-      }
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (e.key === "Escape") {
-        clearFinishTimer();
-        onCancelRef.current();
-        refocus();
-        return;
-      }
-      if (e.key === "Backspace") {
-        clearFinishTimer();
-        if (combos.length > 0) {
-          // Undo the last captured combo instead of unbinding mid-chord.
-          combos.pop();
-          setRecordingPreview(formatBindingForDisplay(combos));
-          return;
-        }
-        onRecordCompleteRef.current(null);
-        refocus();
-        return;
-      }
-
-      // Ignore lone modifier keys
-      if (MODIFIER_KEYS.includes(e.key)) return;
-
-      combos.push({
-        key: e.key,
-        ctrl: e.ctrlKey || undefined,
-        shift: e.shiftKey || undefined,
-        alt: e.altKey || undefined,
-        meta: e.metaKey || undefined,
-      });
-      setRecordingPreview(formatBindingForDisplay(combos));
-
-      if (combos.length >= MAX_CHORD_LENGTH) {
-        // A full chord — finalize immediately, no need to wait.
-        finish();
-        return;
-      }
-
-      // First combo: wait briefly for a possible second combo (chord) before
-      // committing this as a single-combo binding.
-      clearFinishTimer();
-      finishTimer = setTimeout(finish, RECORD_CHORD_WINDOW_MS);
-    };
-
-    setRecordingPreview("");
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      clearFinishTimer();
-      window.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [isRecording, modifierOnly]);
-
-  /**
-   * Enter / Space enter record mode explicitly. Handled on keydown (and the
-   * default prevented) so the activating key is never mistaken for the first
-   * key of the new binding, and Space's keyup-click cannot double-trigger.
-   */
-  const handleButtonKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (isRecording) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onStartRecording();
-    }
-  };
-
-  /** Clear the binding; its button then unmounts, so hand focus to the binding. */
-  const handleUnbind = () => {
-    onUnbind();
-    buttonRef.current?.focus();
-  };
-
-  const accessibleName = isRecording
-    ? `Recording shortcut for ${binding.label}`
-    : `Change shortcut for ${binding.label}, currently ${isUnbound ? "unbound" : displayStr}`;
-
-  return (
-    <tr data-testid={`keybinding-row-${binding.action}`}>
-      <td className="keyboard-settings__action-cell">{binding.label}</td>
-      <td className="keyboard-settings__binding-cell">
-        <Button
-          ref={buttonRef}
-          variant="ghost"
-          size="sm"
-          fullWidth
-          className={[
-            "keyboard-settings__binding-btn",
-            isRecording ? "keyboard-settings__binding-btn--recording" : "",
-            !isRecording && isUnbound ? "keyboard-settings__binding-btn--unbound" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          onClick={!isRecording ? onStartRecording : undefined}
-          onKeyDown={handleButtonKeyDown}
-          aria-label={accessibleName}
-          data-testid={`keybinding-binding-${binding.action}`}
-          data-unbound={!isRecording && isUnbound ? "true" : undefined}
-        >
-          {isRecording ? recordingLabel(modifierOnly, recordingPreview) : displayStr}
-        </Button>
-      </td>
-      <td className="keyboard-settings__row-actions">
-        {!isUnbound && !modifierOnly && (
-          <Tooltip content="Clear shortcut">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              icon={<X size={12} />}
-              onClick={handleUnbind}
-              aria-label={`Clear shortcut for ${binding.label}`}
-              data-testid={`keybinding-unbind-${binding.action}`}
-            />
-          </Tooltip>
-        )}
-        {isCustomized && (
-          <Tooltip content="Reset to default">
-            <Button
-              variant="ghost"
-              size="sm"
-              iconOnly
-              icon={<RotateCcw size={12} />}
-              onClick={onReset}
-              aria-label={`Reset ${binding.label} to default`}
-              data-testid={`keybinding-reset-${binding.action}`}
-            />
-          </Tooltip>
-        )}
-      </td>
-    </tr>
-  );
-}
-
-/** Text on the binding button while recording. */
-function recordingLabel(modifierOnly: boolean, preview: string): string {
-  if (modifierOnly) {
-    return preview
-      ? `${preview} … (release to set)`
-      : "Hold 2+ modifier keys, then release… (Esc cancels)";
-  }
-  return preview
-    ? `${preview} … (press another key to chord)`
-    : "Press a key combination… (Esc cancels, Backspace clears)";
 }

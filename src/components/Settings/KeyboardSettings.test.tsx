@@ -226,7 +226,9 @@ describe("KeyboardSettings", () => {
     const bindingCell = container.querySelector(
       '[data-testid="keybinding-binding-toggle-sidebar"]'
     ) as HTMLElement;
-    expect(bindingCell.textContent).toBe("(unbound)");
+    expect(
+      bindingCell.querySelector('[data-testid="keybinding-keys-toggle-sidebar"]')?.textContent
+    ).toBe("(unbound)");
     expect(bindingCell.getAttribute("data-unbound")).toBe("true");
 
     // Unbind button disappears once there is nothing left to clear.
@@ -248,7 +250,7 @@ describe("KeyboardSettings", () => {
       ).click();
     });
     expect(
-      (container.querySelector('[data-testid="keybinding-binding-toggle-sidebar"]') as HTMLElement)
+      (container.querySelector('[data-testid="keybinding-keys-toggle-sidebar"]') as HTMLElement)
         .textContent
     ).toBe("(unbound)");
 

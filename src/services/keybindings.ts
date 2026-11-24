@@ -78,7 +78,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts",
-    label: "Show keyboard shortcuts",
+    label: "Show keyboard shortcuts (also from terminal)",
     category: "general",
     macDefault: [
       { key: "k", meta: true },
@@ -92,7 +92,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "show-shortcuts-outside-terminal",
-    label: "Show keyboard shortcuts outside terminals",
+    label: "Show keyboard shortcuts (not from terminal)",
     category: "general",
     // Bare F1 is the long-standing "help" key, but terminal programs own it
     // (htop, mc, nano, vim, …): a focused terminal keeps it, the same as F6
@@ -966,6 +966,30 @@ export function checkConflict(
     if (collides) return binding.action;
   }
   return null;
+}
+
+/**
+ * Take `candidate` away from `action` so another action can use it (the
+ * "Reassign" resolution of a recording conflict, #5842). Every effective
+ * binding of `action` that collides with `candidate` is dropped; the first
+ * remaining one becomes its override, or the action is unbound when none is
+ * left. An override holds a single binding, so other alternates are dropped
+ * with it — the same rule as any other rebind (see {@link getEffectiveAlternates}).
+ */
+export function releaseBindingFrom(action: string, candidate: KeyCombo | KeyCombo[]): void {
+  const candidateSeq = normalizeSequence(candidate);
+  const kept = getEffectiveBindings(action).filter(
+    (binding) => !bindingsCollide(candidateSeq, normalizeSequence(binding))
+  );
+  if (kept.length === 0) unbindAction(action);
+  else setOverride(action, kept[0]);
+}
+
+/** The platform default binding of `action`, or `null` when it ships unbound. */
+export function getDefaultCombo(action: string): KeyCombo | KeyCombo[] | null {
+  const binding = DEFAULT_BINDINGS.find((b) => b.action === action);
+  if (!binding) return null;
+  return isMac() ? binding.macDefault : binding.winLinuxDefault;
 }
 
 /** Normalize a binding to a combo sequence (single combos become a length-1 array). */
