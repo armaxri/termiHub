@@ -404,6 +404,11 @@ describe("toast API", () => {
   });
 });
 
+/** The newest entry of `list`. */
+function last<T>(list: T[]): T | undefined {
+  return list[list.length - 1];
+}
+
 describe("inline dialog status (#5830)", () => {
   let lines: Array<InlineStatus | null>;
   let unregister: () => void;
@@ -425,7 +430,7 @@ describe("inline dialog status (#5830)", () => {
   it("routes success/info to the open dialog's status line, not sonner", () => {
     toast.success("Copied", { id: "c" });
     expect(success).not.toHaveBeenCalled();
-    expect(lines.at(-1)).toMatchObject({ id: "c", kind: "success", message: "Copied" });
+    expect(last(lines)).toMatchObject({ id: "c", kind: "success", message: "Copied" });
     expect(toast.isActive("c")).toBe(true);
   });
 
@@ -440,14 +445,14 @@ describe("inline dialog status (#5830)", () => {
   it("clears the line after its duration, on dismiss and when the dialog closes", () => {
     toast.info("One", { id: "a" });
     vi.advanceTimersByTime(INLINE_STATUS_DURATION);
-    expect(lines.at(-1)).toBeNull();
+    expect(last(lines)).toBeNull();
     expect(toast.isActive("a")).toBe(false);
     toast.info("Two", { id: "b" });
     toast.dismiss("b");
-    expect(lines.at(-1)).toBeNull();
+    expect(last(lines)).toBeNull();
     toast.info("Three", { id: "d" });
     unregister();
-    expect(lines.at(-1)).toBeNull();
+    expect(last(lines)).toBeNull();
     expect(toast.isActive("d")).toBe(false);
   });
 
@@ -455,7 +460,7 @@ describe("inline dialog status (#5830)", () => {
     await toast.promise(Promise.resolve(1), { loading: "Saving…", success: "Saved", error: "x" });
     await Promise.resolve();
     expect(dismiss).toHaveBeenCalledWith("toast-id");
-    expect(lines.at(-1)).toMatchObject({ id: "toast-id", message: "Saved" });
+    expect(last(lines)).toMatchObject({ id: "toast-id", message: "Saved" });
   });
 
   it("feeds the innermost dialog while dialogs are nested", () => {
@@ -465,6 +470,6 @@ describe("inline dialog status (#5830)", () => {
     off();
     toast.success("Outer");
     expect(inner[0]).toMatchObject({ message: "Inner" });
-    expect(lines.at(-1)).toMatchObject({ message: "Outer" });
+    expect(last(lines)).toMatchObject({ message: "Outer" });
   });
 });
