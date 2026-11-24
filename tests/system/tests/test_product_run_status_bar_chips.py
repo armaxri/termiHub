@@ -154,7 +154,7 @@ GOOD_CHIP = {
 GOOD_ROWS = {
     "endpoint": "arne@127.0.0.1:22400",
     "encryption": "Encrypted (SSH)",
-    "auth": "key ~/.ssh/pr_ed25519",
+    "auth": "key pr_ed25519",
     "hostKey": "trusted · ssh-ed25519 SHA256:abc",
 }
 
