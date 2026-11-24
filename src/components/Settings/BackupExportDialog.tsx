@@ -308,7 +308,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
 
   const chooseStep = (
     <>
-      <ul className="backup-restore__list backup-export__list" data-testid="backup-export-sections">
+      <ul className="backup-restore__list" data-testid="backup-export-sections">
         {firstSections.map(renderSection)}
         <li className="backup-restore__row" data-testid="backup-export-credentials-row">
           <Checkbox
@@ -329,7 +329,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
       </ul>
       {emptySections.length > 0 && (
         <p
-          className="backup-restore__detail backup-export__nothing-saved"
+          className="backup-restore__detail backup-restore__folded"
           title={`Nothing saved yet: ${emptySections.map((sec) => midSentence(sec.label)).join(", ")}`}
           data-testid="backup-export-empty-sections"
         >
