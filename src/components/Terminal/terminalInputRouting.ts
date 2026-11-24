@@ -26,6 +26,13 @@ export interface TerminalKeyRoutingContext {
   hasCommandMarks: () => boolean;
   /** Show the "reconnect?" prompt for a view-mode tab. */
   showReconnectPrompt: () => void;
+  /**
+   * Whether the session-end strip is up (#5955): the session ended and the
+   * strip offers Restart / Reconnect. Only read for Enter without a session.
+   */
+  isSessionEndStripUp?: () => boolean;
+  /** Run the session-end strip's primary action (Restart / Reconnect). */
+  runSessionEndAction?: () => void;
   /** Copy the terminal selection to the clipboard. */
   copySelection: () => void;
   /** Paste the clipboard into the terminal. */
@@ -50,6 +57,13 @@ export function routeTerminalKeyEvent(e: KeyboardEvent, ctx: TerminalKeyRoutingC
   // In view mode the session is dead. Enter shows the reconnect prompt.
   if (e.key === "Enter" && !ctx.hasSession && ctx.isViewMode) {
     ctx.showReconnectPrompt();
+    return false;
+  }
+
+  // The session-end strip says "Press Enter to restart / reconnect" (#5955):
+  // Enter in the dead terminal runs its action, as the focused button does.
+  if (e.key === "Enter" && !ctx.hasSession && ctx.isSessionEndStripUp?.()) {
+    ctx.runSessionEndAction?.();
     return false;
   }
 

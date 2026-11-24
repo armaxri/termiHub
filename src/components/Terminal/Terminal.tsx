@@ -98,8 +98,10 @@ import {
   currentSessionView,
   isTabEvicted,
   onSessionView,
+  sessionEndStripUp,
   waitForBackendAgentReconnectOutcome,
 } from "@/store/sessionBridge";
+import { markTerminalRefocusPending } from "./terminalRefocus";
 import {
   resolveEstablishmentPlan,
   resolveBackendRedriveOutcome,
@@ -1770,6 +1772,11 @@ export function Terminal({
         passthroughEnabled: currentSettingsView().terminalKeyPassthrough !== false,
         hasCommandMarks: () => commandMarks.hasMarks(),
         showReconnectPrompt: () => useAppStore.getState().showTerminalReconnectPrompt(tabId),
+        isSessionEndStripUp: () => sessionEndStripUp(currentSessionView()[tabId]),
+        runSessionEndAction: () => {
+          markTerminalRefocusPending(tabId);
+          useAppStore.getState().reconnectTerminal(tabId);
+        },
         copySelection: () => copySelectionToClipboard(tabId),
         paste: () => pasteToTerminal(tabId),
         selectAll: () => xterm.selectAll(),
