@@ -2287,7 +2287,10 @@ export function AgentNode({
                         onFocus={() => handleRowFocus(rowIndex)}
                       >
                         <SessionTypeIcon type={session.type} />
-                        <span className="connection-tree__label">
+                        <span
+                          className="connection-tree__label"
+                          data-testid={`agent-session-label-${session.sessionId}`}
+                        >
                           {sessionLabels.get(session.sessionId) ?? session.title}
                         </span>
                         {/* Names, not settings (#5770): a running session is
