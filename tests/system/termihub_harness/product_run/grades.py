@@ -124,7 +124,8 @@ def reconnect_wording_problems(text: str, *, serial: bool = False) -> list[str]:
 OCTAL_ESCAPE = re.compile(r"\\[0-7]{3}")
 #: The setup script's one summary line after a successful install (#5822).
 SETUP_INSTALLED_LINE = re.compile(
-    r"^Agent installed \(v[^)\s]+\) at \S.*\. You can close this tab\.$"
+    # A dev build's version carries its branch: "v0.1.0 (branch: develop)".
+    r"^Agent installed \(v[^()\s]+(?: \([^()]*\))?\) at \S.*\. You can close this tab\.$"
 )
 #: Shell cleanup commands that must not be the visible setup output (#5822).
 _SETUP_NOISE = re.compile(r"(^|[;&|]\s*)(rm -f|rmdir)\s")

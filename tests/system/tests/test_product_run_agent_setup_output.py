@@ -52,6 +52,12 @@ def test_a_plain_successful_setup_passes():
     assert setup_output_problems(GOOD) == []
 
 
+def test_a_dev_build_version_with_its_branch_passes():
+    # A dev build reports "0.1.0 (branch: develop)" (run 20261124T080801Z).
+    dev = GOOD.replace("(v0.1.0)", "(v0.1.0 (branch: develop))")
+    assert setup_output_problems(dev) == []
+
+
 def test_the_run_before_the_fix_is_named_on_every_count():
     problems = setup_output_problems(BEFORE)
     assert problems[0] == "raw octal escape '\\\\360' in the setup output"
