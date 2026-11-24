@@ -147,8 +147,7 @@ class TestProductRunUndoSurvivesDialog(
             expect="#5919: one 'Closed 2 tabs' toast with Reopen all, which restores both tabs; "
             "the first tab's undo is not replaced by the second close",
         ):
-            self.enable_experimental_features()
-            self.open_workflows_sidebar()
+            self.show_automations()
             first, first_title = self._exited_terminal()
             second, second_title = self._exited_terminal()
             self.close_tab(first)
@@ -190,8 +189,7 @@ class TestProductRunUndoSurvivesDialog(
         ):
             # Open the dialog's sidebar first: the toast lifetime runs until
             # the dialog opens, so nothing slow may sit between.
-            self.enable_experimental_features()
-            self.open_workflows_sidebar()
+            self.show_automations()
             before_tabs = self.tab_ids()
             self.open_new_terminal()
             self.wait(lambda: len(self.tab_ids()) == len(before_tabs) + 1, what="a terminal")

@@ -866,9 +866,12 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
     /// v3 (#5844) folds the two overlapping close-confirm flags into the single
     /// `closeLiveSessionConfirm` choice (`migrate_close_confirm`).
     ///
+    /// v4 (#5818) replaces the `macros` and `workflows` sidebar views with the
+    /// one `automations` view (`migrate_automations_view`).
+    ///
     /// Each bump is also downgrade-safe: an older build refuses to overwrite a
     /// newer file (PER-004).
-    const CURRENT_VERSION: u32 = 3;
+    const CURRENT_VERSION: u32 = 4;
 
     fn migrate(
         mut value: serde_json::Value,
@@ -883,6 +886,9 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
             }
             if from_version < 3 {
                 migrate_close_confirm(obj);
+            }
+            if from_version < 4 {
+                migrate_automations_view(obj);
             }
             obj.insert(
                 "version".to_string(),
@@ -921,6 +927,57 @@ fn migrate_close_confirm(obj: &mut serde_json::Map<String, serde_json::Value>) {
         "closeLiveSessionConfirm".to_string(),
         serde_json::Value::String(choice.as_str().to_string()),
     );
+}
+
+/// The sidebar views the Automations view replaced in v4 (#5818).
+const RETIRED_AUTOMATION_VIEWS: [&str; 2] = ["macros", "workflows"];
+/// The view that replaced [`RETIRED_AUTOMATION_VIEWS`].
+const AUTOMATIONS_VIEW: &str = "automations";
+
+/// The v3 → v4 settings step (#5818): the `macros` and `workflows` views are one
+/// `automations` view.
+///
+/// A user who hid both keeps it hidden, at the place of the first one in the
+/// list; a user who hid only one had chosen to see the other, so Automations
+/// shows. Every other hidden view keeps its order. A last-open view of either
+/// name becomes `automations`.
+fn migrate_automations_view(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(layout) = obj
+        .get_mut("layout")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let retired = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .is_some_and(|view| RETIRED_AUTOMATION_VIEWS.contains(&view))
+    };
+    if let Some(hidden) = layout
+        .get_mut("hiddenActivityBarViews")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        let hid_both = RETIRED_AUTOMATION_VIEWS
+            .iter()
+            .all(|view| hidden.iter().any(|v| v.as_str() == Some(view)));
+        let mut placed = hidden.iter().any(|v| v.as_str() == Some(AUTOMATIONS_VIEW));
+        let mut kept = Vec::with_capacity(hidden.len());
+        for value in hidden.drain(..) {
+            if !retired(&value) {
+                kept.push(value);
+            } else if hid_both && !placed {
+                placed = true;
+                kept.push(serde_json::Value::String(AUTOMATIONS_VIEW.to_string()));
+            }
+        }
+        *hidden = kept;
+    }
+    if layout.get("sidebarView").is_some_and(retired) {
+        layout.insert(
+            "sidebarView".to_string(),
+            serde_json::Value::String(AUTOMATIONS_VIEW.to_string()),
+        );
+    }
 }
 
 /// Handles reading/writing the settings JSON file.
@@ -1091,7 +1148,7 @@ mod tests {
 
         let result = storage.load_with_recovery().unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.data.version, "3");
+        assert_eq!(result.data.version, "4");
         assert!(result.data.power_monitoring_enabled);
     }
 
@@ -1122,7 +1179,7 @@ mod tests {
         assert!(result.warnings[0].message.contains("corrupt"));
         assert!(result.warnings[0].details.is_some());
         // Returns defaults
-        assert_eq!(result.data.version, "3");
+        assert_eq!(result.data.version, "4");
         assert!(result.data.power_monitoring_enabled);
 
         // Backup should exist
@@ -1263,7 +1320,7 @@ mod tests {
     /// every schema version, and a stored `false` stays off.
     #[test]
     fn a_stored_x11_forwarding_default_is_kept() {
-        for version in ["1", "2", "3"] {
+        for version in ["1", "2", "3", "4"] {
             for stored in [true, false] {
                 let json = format!(
                     r#"{{"version":"{version}","externalConnectionFiles":[],"defaultX11Forwarding":{stored}}}"#
@@ -1405,7 +1462,7 @@ mod tests {
             r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
         );
         assert!(!settings.default_shell_integration);
-        assert_eq!(settings.version, "3");
+        assert_eq!(settings.version, "4");
     }
 
     /// The reset only touches the shell-hook default, not its sibling toggles.
@@ -1432,7 +1489,7 @@ mod tests {
 
         let raw = std::fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("3"));
+        assert_eq!(on_disk["version"], serde_json::json!("4"));
 
         let reloaded = storage.load_with_recovery().unwrap().data;
         assert!(reloaded.default_shell_integration);
@@ -1453,7 +1510,7 @@ mod tests {
         storage.save(&settings).unwrap();
 
         let reloaded = storage.load_with_recovery().unwrap().data;
-        assert_eq!(reloaded.version, "3");
+        assert_eq!(reloaded.version, "4");
         assert!(reloaded.default_shell_integration);
     }
 
@@ -2107,7 +2164,7 @@ mod tests {
                 settings.close_live_session_confirm, expected,
                 "shortcut {shortcut:?}, pointer {pointer:?}"
             );
-            assert_eq!(settings.version, "3");
+            assert_eq!(settings.version, "4");
             // The old flags are gone, not parked in the catch-all.
             assert!(settings.extra.is_empty(), "{:?}", settings.extra);
         }
@@ -2137,6 +2194,127 @@ mod tests {
             settings.close_live_session_confirm,
             Some(CloseLiveSessionConfirm::Pointer)
         );
+    }
+
+    #[test]
+    fn v3_hidden_macro_and_workflow_views_become_automations() {
+        // #5818: both hidden stays hidden, at the first one's place; one hidden
+        // shows Automations; the other hidden views keep their order.
+        let cases: [(&[&str], &[&str]); 9] = [
+            (&[], &[]),
+            (&["macros"], &[]),
+            (&["workflows"], &[]),
+            (&["macros", "workflows"], &["automations"]),
+            (&["workflows", "macros"], &["automations"]),
+            (
+                &["tunnels", "macros", "services", "workflows", "plugins"],
+                &["tunnels", "automations", "services", "plugins"],
+            ),
+            (&["tunnels", "workflows", "files"], &["tunnels", "files"]),
+            // A hand-edited file that lists a view twice.
+            (&["macros", "macros"], &[]),
+            (&["automations", "macros", "workflows"], &["automations"]),
+        ];
+        for (before, after) in cases {
+            let settings = load_migrated(
+                &serde_json::json!({
+                    "version": "3",
+                    "externalConnectionFiles": [],
+                    "layout": {
+                        "activityBarPosition": "left",
+                        "sidebarPosition": "left",
+                        "sidebarVisible": true,
+                        "statusBarVisible": true,
+                        "hiddenActivityBarViews": before,
+                    },
+                })
+                .to_string(),
+            );
+            let layout = settings.layout.expect("layout kept");
+            assert_eq!(layout.hidden_activity_bar_views, after, "from {before:?}");
+            assert_eq!(settings.version, "4");
+        }
+    }
+
+    #[test]
+    fn v3_last_open_macro_or_workflow_view_becomes_automations() {
+        for (before, after) in [
+            ("macros", "automations"),
+            ("workflows", "automations"),
+            ("files", "files"),
+        ] {
+            let settings = load_migrated(
+                &serde_json::json!({
+                    "version": "3",
+                    "externalConnectionFiles": [],
+                    "layout": {
+                        "activityBarPosition": "left",
+                        "sidebarPosition": "left",
+                        "sidebarVisible": true,
+                        "statusBarVisible": true,
+                        "sidebarView": before,
+                    },
+                })
+                .to_string(),
+            );
+            let layout = settings.layout.expect("layout kept");
+            assert_eq!(layout.sidebar_view.as_deref(), Some(after));
+            assert!(layout.hidden_activity_bar_views.is_empty());
+        }
+    }
+
+    #[test]
+    fn v3_settings_without_a_usable_layout_migrate_untouched() {
+        // No layout, and layout fields of the wrong shape: the step changes
+        // nothing and never fails the load.
+        let mut no_layout = serde_json::json!({"version": "3", "externalConnectionFiles": []});
+        let migrated =
+            <AppSettings as crate::utils::migrate::VersionedStore>::migrate(no_layout.clone(), 3)
+                .unwrap();
+        no_layout["version"] = serde_json::json!("4");
+        assert_eq!(migrated, no_layout);
+
+        let odd = serde_json::json!({"version": "3", "layout": {"hiddenActivityBarViews": "macros", "sidebarView": 7}});
+        let migrated =
+            <AppSettings as crate::utils::migrate::VersionedStore>::migrate(odd.clone(), 3)
+                .unwrap();
+        assert_eq!(migrated["layout"], odd["layout"]);
+    }
+
+    #[test]
+    fn v4_hidden_views_are_not_migrated_again_and_survive_a_restart() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(
+            &storage.file_path,
+            r#"{"version":"3","externalConnectionFiles":[],"layout":{
+                "activityBarPosition":"left","sidebarPosition":"left",
+                "sidebarVisible":true,"statusBarVisible":true,
+                "hiddenActivityBarViews":["macros","workflows"]}}"#,
+        )
+        .unwrap();
+        let first = storage.load_with_recovery().unwrap().data;
+        storage.save(&first).unwrap();
+        let again = storage.load_with_recovery().unwrap().data;
+        assert_eq!(
+            again.layout.unwrap().hidden_activity_bar_views,
+            vec!["automations"]
+        );
+        // Shown again by the user, it stays shown.
+        let mut shown = first;
+        shown
+            .layout
+            .as_mut()
+            .unwrap()
+            .hidden_activity_bar_views
+            .clear();
+        storage.save(&shown).unwrap();
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert!(reloaded
+            .layout
+            .unwrap()
+            .hidden_activity_bar_views
+            .is_empty());
     }
 
     #[test]
@@ -2299,15 +2477,16 @@ mod tests {
     const LEGACY_DEFAULTS: &str = include_str!("testdata/settings_legacy_defaults.json");
     const LEGACY_UNKNOWN_KEYS: &str = include_str!("testdata/settings_legacy_unknown_keys.json");
 
-    /// The bytes a legacy (v1) fixture re-saves as: the same file, stamped v3,
+    /// The bytes a legacy (v1) fixture re-saves as: the same file, stamped v4,
     /// with the old shell-hook default switched off (#5042) and the two old
-    /// close-confirm flags folded into `closeLiveSessionConfirm` (#5844) — the
-    /// only on-disk changes the v1 → v3 steps make. Both flags on is the
-    /// default, so that fold just drops the line.
+    /// close-confirm flags folded into `closeLiveSessionConfirm` (#5844), and the
+    /// hidden `workflows` view, hidden on its own, gone (#5818) — the only
+    /// on-disk changes the v1 → v4 steps make. Both flags on is the default, so
+    /// that fold just drops the line.
     fn as_current(legacy: &str) -> String {
         legacy
             .trim_end()
-            .replacen(r#""version": "1""#, r#""version": "3""#, 1)
+            .replacen(r#""version": "1""#, r#""version": "4""#, 1)
             .replacen(
                 r#""defaultShellIntegration": true"#,
                 r#""defaultShellIntegration": false"#,
@@ -2319,6 +2498,11 @@ mod tests {
                 1,
             )
             .replacen("  \"confirmCloseTabOnShortcut\": true,\n", "", 1)
+            .replacen(
+                "\"hiddenActivityBarViews\": [\n      \"workflows\"\n    ]",
+                "\"hiddenActivityBarViews\": []",
+                1,
+            )
     }
 
     /// Load `raw` through the real storage path and return the re-saved file.

@@ -7,7 +7,7 @@ import { useAppStore } from "@/store/appStore";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { withTooltip } from "@/test/tooltip";
 import type { ScheduleView } from "@/types/schedule";
-import { SchedulesSection } from "./SchedulesSection";
+import { SchedulesSection, type SchedulesSectionProps } from "./SchedulesSection";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
@@ -39,7 +39,11 @@ let setSchedulesPaused: ReturnType<typeof vi.fn>;
 let deleteSchedule: ReturnType<typeof vi.fn>;
 let openScheduleEditor: ReturnType<typeof vi.fn>;
 
-async function render(schedules: ScheduleView[], paused = false) {
+async function render(
+  schedules: ScheduleView[],
+  paused = false,
+  collapse?: SchedulesSectionProps["collapse"]
+) {
   // Wrapped in act: the second render in a test updates an already-mounted tree.
   act(() => {
     useAppStore.setState({
@@ -62,7 +66,7 @@ async function render(schedules: ScheduleView[], paused = false) {
       openScheduleEditor,
     } as never);
   });
-  await act(async () => root.render(withTooltip(<SchedulesSection />)));
+  await act(async () => root.render(withTooltip(<SchedulesSection collapse={collapse} />)));
   await flushAsync();
 }
 
@@ -100,6 +104,58 @@ describe("SchedulesSection (PROD-043)", () => {
     await render([]);
     act(() => query("schedules-empty-new-btn")!.click());
     expect(openScheduleEditor).toHaveBeenCalledWith();
+  });
+
+  describe("collapsed in the Automations sidebar (#5818)", () => {
+    const onChange = vi.fn();
+    const closed = { expanded: false, onChange };
+    beforeEach(() => onChange.mockClear());
+
+    it("keeps the header, its count and New schedule, and hides the list", async () => {
+      await render([view(), view({ id: "s2" })], false, closed);
+      expect(query("schedules-section-toggle")!.textContent).toBe("Schedules (2)");
+      expect(query("schedules-list")).toBeNull();
+      act(() => query("schedules-section-toggle")!.click());
+      expect(onChange).toHaveBeenCalledWith(true);
+      // A new schedule's row must be in view once it is saved.
+      onChange.mockClear();
+      act(() => query("schedules-new-btn")!.click());
+      expect(openScheduleEditor).toHaveBeenCalledWith();
+      expect(onChange).toHaveBeenCalledWith(true);
+    });
+
+    it("opens to the list", async () => {
+      await render([view()], false, { expanded: true, onChange });
+      expect(query("schedule-item-s1")).not.toBeNull();
+      act(() => query("schedules-section-toggle")!.click());
+      expect(onChange).toHaveBeenCalledWith(false);
+    });
+
+    it("says on the closed header that a scheduled run failed", async () => {
+      const failed = {
+        at: new Date().toISOString(),
+        outcome: "failed",
+        catchUp: false,
+      } as ScheduleView["lastResult"];
+      await render([view({ enabled: true, lastResult: failed })], false, closed);
+      expect(query("schedules-failed-dot")).not.toBeNull();
+      await render([view({ enabled: false, lastResult: failed })], false, closed);
+      expect(query("schedules-failed-dot")).toBeNull();
+      await render([view({ enabled: true, lastResult: failed })], false, {
+        expanded: true,
+        onChange,
+      });
+      expect(query("schedules-failed-dot")).toBeNull();
+    });
+
+    it("offers Pause all only with something to pause, or to undo a pause (R-135)", async () => {
+      await render([], false, closed);
+      expect(query("schedules-pause-toggle")).toBeNull();
+      await render([], true, closed);
+      expect(query("schedules-pause-toggle")).not.toBeNull();
+      await render([view()], false, closed);
+      expect(query("schedules-pause-toggle")).not.toBeNull();
+    });
   });
 
   const tip = (id: string) => query(`schedule-item-${id}`)!.getAttribute("aria-description");

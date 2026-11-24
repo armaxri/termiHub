@@ -12,12 +12,12 @@ export const EXPERIMENTAL_SETTING_PATH = `Settings ▸ General ▸ ${EXPERIMENTA
 
 /**
  * What is still behind the toggle, in the words its hint uses (#5858). SSH
- * tunnels, services and network tools graduated and are always on; workflows
- * graduate with the Automations merge (#5818). Keep this list in step with the
+ * tunnels, services and network tools graduated and are always on; so did
+ * Automations, except its Run local process step (#5818). Keep this list in step with the
  * gates (`useExperimentalFeatures()` callers).
  */
 export const EXPERIMENTAL_FEATURE_NAMES: readonly string[] = [
-  "workflows",
+  "the Run local process automation step",
   "remote agents",
   "RDP and VNC remote desktop",
 ];

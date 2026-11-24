@@ -121,7 +121,6 @@ class TestProductRunAutomationRunPicker(
             "Two local-shell terminals to run on",
             expect="two local-shell terminal tabs, both at a prompt",
         ):
-            self.enable_experimental_features()
             for n in (1, 2):
                 name = f"pr-pick-{n}-{self.tag}"
                 self.switch_to_connections_sidebar()
@@ -143,7 +142,7 @@ class TestProductRunAutomationRunPicker(
             self.ids["macro"] = self.create_macro(
                 f"Pick macro {self.tag}", [f"echo {marker} $HOME\\r"]
             )
-            self.play_macro_on(self.ids["macro"], self.tabs)
+            self.run_automation_on(self.ids["macro"], self.tabs)
             self.wait(
                 lambda: not typed_on_problems(
                     {t: self.driver.read_terminal(t) for t in self.tabs}, marker
@@ -187,7 +186,7 @@ class TestProductRunAutomationRunPicker(
             )
             self.save_workflow()
             wid = self.ids["workflow"] = self.workflow_id(f"Pick workflow {t}")
-            self.run_workflow_on(wid, self.tabs)
+            self.run_automation_on(wid, self.tabs)
             self.wait(
                 lambda: not badge_problems(self._badged(), self.tabs), what="a badge on both tabs"
             )
@@ -227,8 +226,8 @@ class TestProductRunAutomationRunPicker(
             "each with a green live dot",
         ):
             self.require("automation-run-picker.badges")
-            self.open_workflows_sidebar()
-            self.driver.click(f"workflow-run-on-{self.ids['workflow']}")
+            self.show_automations()
+            self.automation_menu(self.ids['workflow'], "run-on")
             self.wait(lambda: self.driver.exists(RUN_TARGETS), what="the run picker")
             checked = self.driver.get_attribute("run-targets-target-pick", "data-state")
             ticked = [

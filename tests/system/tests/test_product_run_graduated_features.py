@@ -1,13 +1,13 @@
-"""Product run: SSH tunnels, Services and Network tools are on by default (#5858).
+"""Product run: SSH tunnels, Services, Network tools and Automations are on by default (#5858).
 
 The live grade is hand-triggered only (``scripts/internal/product-run.sh``;
 deselected without ``--product-run``). The UI review of run
 ``20261123T215628Z`` found these advertised core features hidden behind
 Settings ▸ General ▸ Allow experimental features, a switch with an amber "may
 break" warning (R-007), so most users would never find them. They graduated:
-with experimental features OFF the activity bar shows SSH tunnels, Services and
-Network tools, and each opens its sidebar. Workflows stay behind the switch
-until the Automations merge (#5818). A view the user hid stays hidden. The
+with experimental features OFF the activity bar shows SSH tunnels, Services,
+Network tools and, since the Automations merge (#5818), Automations, and each
+opens its sidebar. Macros and Workflows no longer show. A view the user hid stays hidden. The
 switch's hint lists what is still behind it.
 
 The ``test_grade_*`` functions grade fixed inputs without an app and run in the
@@ -25,7 +25,7 @@ from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.graduated_features import (
     GRADUATED_SIDEBARS,
     GRADUATED_VIEWS,
-    STILL_EXPERIMENTAL_VIEWS,
+    REPLACED_VIEWS,
     activity_bar_problems,
     experimental_hint_problems,
 )
@@ -35,11 +35,10 @@ SETTINGS_CONTENT = "settings-panel-content"
 #: Text that starts the switch's hint (``EXPERIMENTAL_SETTING_HINT``).
 HINT_START = "Turns on features still under active development"
 APP_HINT = (
-    "Turns on features still under active development: workflows, remote agents and "
-    "RDP and VNC remote desktop. They may change, break, or be removed without notice."
+    "Turns on features still under active development: the Run local process automation "
+    "step, remote agents and RDP and VNC remote desktop. They may change, break, or be removed without notice."
 )
 ALL_GRADUATED = set(GRADUATED_VIEWS.values())
-WORKFLOWS = STILL_EXPERIMENTAL_VIEWS["workflows"]
 
 
 # ── app-free grade tests ──────────────────────────────────────────────────
@@ -53,10 +52,11 @@ def test_grade_missing_graduated_view_fails():
     assert problems == ["services: missing from the activity bar with experimental off"]
 
 
-def test_grade_workflows_with_experimental_off_fail():
-    problems = activity_bar_problems(ALL_GRADUATED | {WORKFLOWS}, experimental=False)
-    assert any("workflows: shows with experimental off" in p for p in problems)
-    assert activity_bar_problems(ALL_GRADUATED | {WORKFLOWS}, experimental=True) == []
+@pytest.mark.parametrize("experimental", [False, True])
+def test_grade_a_replaced_view_fails(experimental):
+    for view, test_id in REPLACED_VIEWS.items():
+        problems = activity_bar_problems(ALL_GRADUATED | {test_id}, experimental=experimental)
+        assert problems == [f"{view}: shows, but the Automations view replaced it"]
 
 
 def test_grade_user_hidden_view_must_stay_hidden():
@@ -73,7 +73,7 @@ def test_grade_switch_hint_matches_the_app():
         "change, break, or be removed at any time without notice."
     )
     problems = experimental_hint_problems(old)
-    assert any("'workflows'" in p for p in problems)
+    assert any("Run local process" in p for p in problems)
     assert any("'RDP and VNC remote desktop'" in p for p in problems)
 
 
@@ -100,7 +100,7 @@ class TestProductRunGraduatedFeatures(ProductRunUi, SettingsUi, SidebarUi, TabsU
         self.switch_to_connections_sidebar()
 
     def _present(self) -> set[str]:
-        ids = set(GRADUATED_VIEWS.values()) | set(STILL_EXPERIMENTAL_VIEWS.values())
+        ids = set(GRADUATED_VIEWS.values()) | set(REPLACED_VIEWS.values())
         return {t for t in ids if self.driver.exists(t)}
 
     def _hidden_views(self) -> list[str]:
@@ -120,10 +120,10 @@ class TestProductRunGraduatedFeatures(ProductRunUi, SettingsUi, SidebarUi, TabsU
     def test_10_views_show_with_experimental_off(self):
         with self.step(
             "graduated.activity-bar",
-            "With experimental features off, the activity bar shows SSH tunnels, Services "
-            "and Network tools; Workflows stay hidden (#5858)",
-            expect="the activity bar with the SSH tunnels, Services and Network tools icons "
-            "and no Workflows icon; Settings ▸ General ▸ Allow experimental features is off",
+            "With experimental features off, the activity bar shows SSH tunnels, Services, "
+            "Network tools and Automations; Macros and Workflows are gone (#5858, #5818)",
+            expect="the activity bar with the SSH tunnels, Services, Network tools and one "
+            "Automations icon, no Macros or Workflows icon; Settings ▸ General ▸ Allow experimental features is off",
         ):
             self._set_experimental(False)
             hidden = self._hidden_views()
@@ -182,9 +182,9 @@ class TestProductRunGraduatedFeatures(ProductRunUi, SettingsUi, SidebarUi, TabsU
         with self.step(
             "graduated.switch-hint",
             "The experimental switch's hint lists what is still behind it (#5858)",
-            expect="Settings ▸ General: the 'Allow experimental features' hint names workflows, "
-            "remote agents and RDP and VNC remote desktop, and no longer tunnels, services "
-            "or network tools",
+            expect="Settings ▸ General: the 'Allow experimental features' hint names the "
+            "Run local process automation step, remote agents and RDP and VNC remote desktop, "
+            "and no longer tunnels, services, network tools or workflows",
         ):
             self.open_settings_category("general")
             self.wait(lambda: self.driver.exists(TOGGLE), what="the experimental toggle")

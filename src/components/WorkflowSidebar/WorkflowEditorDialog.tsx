@@ -34,15 +34,11 @@ import { WorkflowStepRow, type WorkflowStepEntry } from "./WorkflowStepRow";
 import { WorkflowTriggersEditor } from "./WorkflowTriggersEditor";
 import { WorkflowParametersEditor } from "./WorkflowParametersEditor";
 import { workflowStepsPolicyValid } from "./workflowStepPolicySchema";
-import {
-  WORKFLOW_STEP_KINDS,
-  stepKindLabel,
-  stepKindIcon,
-  newWorkflowStep,
-} from "./workflowStepMeta";
+import { offeredStepKinds, stepKindLabel, stepKindIcon, newWorkflowStep } from "./workflowStepMeta";
 import { newId } from "@/services/transport/ids";
 import { parseTags } from "@/utils/parseTags";
 import { draftKey } from "@/utils/draftKey";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { remapWorkflowTriggers } from "@/utils/connectionIdChanges";
 import { workflowTriggersValid } from "@/services/workflowOutputTriggers";
@@ -488,6 +484,7 @@ interface AddStepMenuProps {
  */
 function AddStepMenu({ onAdd }: AddStepMenuProps) {
   const portalContainer = useModalPortalContainer();
+  const experimental = useExperimentalFeatures();
   return (
     <DropdownMenuRoot>
       <DropdownMenuTrigger asChild>
@@ -501,7 +498,7 @@ function AddStepMenu({ onAdd }: AddStepMenuProps) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent container={portalContainer} align="start" sideOffset={4}>
-        {WORKFLOW_STEP_KINDS.map((kind) => {
+        {offeredStepKinds(experimental).map((kind) => {
           const Icon = stepKindIcon(kind);
           return (
             <MenuItem

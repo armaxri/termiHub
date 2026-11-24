@@ -19,7 +19,7 @@ three and a half minutes:
    the two completed runs.
 
 The schedule is authored like a user would: a local-shell connection opened
-from the sidebar, a one-step macro, the macro row's Schedule action, then
+from the sidebar, a one-step automation, its row menu's Schedule… entry, then
 Settings -> Schedules to enable (with the first-enable confirmation) and to
 pause/resume. Experimental features stay off; none of this needs them.
 """
@@ -34,6 +34,7 @@ from typing import Any, Optional
 import pytest
 
 from termihub_harness import (
+    AutomationSidebarUi,
     ConnectionsUi,
     SettingsUi,
     SidebarUi,
@@ -67,7 +68,9 @@ def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(text).astimezone(timezone.utc)
 
 
-class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest):
+class TestScheduledRuns(
+    AutomationSidebarUi, ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
+):
     """One 1-minute interval schedule: fires once, skips while paused, resumes."""
 
     def reset_before_rerun(self) -> None:
@@ -102,8 +105,9 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
 
     # ── authoring ────────────────────────────────────────────────────────────
     def _open_schedules_settings(self) -> None:
+        self.close_automation_schedules()  # its rows share Settings' testIds
         self.open_settings_category("schedules")
-        self.wait(lambda: self.driver.exists("schedules-section"), what="Settings -> Schedules")
+        self.wait(lambda: self.driver.exists("schedules-settings"), what="Settings -> Schedules")
 
     def _set_paused(self, paused: bool) -> None:
         """Flip the "Pause all" switch like a user and wait for the backend."""
@@ -114,40 +118,12 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
         self.wait(lambda: self._paused() == paused, what=f"scheduling paused={paused}")
 
     def _create_macro(self, name: str, step_text: str) -> str:
-        """Author a one-step macro in the Macros sidebar; return its id."""
-        self._ensure_sidebar("macros", "activity-bar-macros")
-        self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
-        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
-        self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
-        self.driver.type("macro-editor-name", name)
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0")
-            or self.driver.exists("macro-editor-no-steps"),
-            what="the macro editor's steps",
-        )
-        if not self.driver.exists("macro-editor-step-data-0"):
-            self.driver.click("macro-editor-add-step")
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0"), what="the first macro step"
-        )
-        self.driver.type("macro-editor-step-data-0", step_text)
-        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
-        self.driver.click("macro-editor-save")
-        self.wait(
-            lambda: not self.driver.exists("macro-editor-dialog"), what="the macro editor to close"
-        )
-        macro = self.wait(
-            lambda: next(
-                (m for m in self.driver.get_state("macros") or [] if m.get("name") == name),
-                None,
-            ),
-            what=f"the saved macro {name!r}",
-        )
-        return macro["id"]
+        """Write a one-step automation in the Automations sidebar; return its id."""
+        return self.create_typed_automation(name, [step_text])
 
     def _create_schedule(self, name: str, macro_id: str, connection_id: str) -> str:
         """Schedule the macro every minute on the connection; return its id."""
-        self.driver.click(f"macro-schedule-{macro_id}")
+        self.automation_menu(macro_id, "schedule")
         self.wait(lambda: self.driver.exists(EDITOR), what="the schedule editor")
         self.driver.type("schedule-editor-name", name)
         checkbox = f"schedule-editor-connection-{connection_id}"

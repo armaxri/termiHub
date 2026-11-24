@@ -89,8 +89,7 @@ class TestProductRunToastNarrow(
         return [i for i in self._toast_items() if i["text"].startswith("Ran workflow")]
 
     def _create_workflow(self, name: str, command: str) -> str:
-        self.enable_experimental_features()
-        self.open_workflows_sidebar()
+        self.show_automations()
         self.open_new_workflow()
         self.add_step("send-command")
         self.set_command(0, command)
@@ -110,7 +109,7 @@ class TestProductRunToastNarrow(
         ):
             workflow = self._create_workflow(f"Toast narrow {tag}", f"echo PR_TOAST_NARROW_{tag}")
             self.ensure_terminal()
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.driver.resize_window(*NARROW_WINDOW)
             try:
                 self.run_workflow(workflow)

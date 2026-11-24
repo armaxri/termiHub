@@ -93,16 +93,10 @@ describe("light hint text reads clearly on the sidebar (#5853 R-115)", () => {
     );
   });
 
-  it("the empty-state body and the workflows experimental note use the secondary token", () => {
+  it("the empty-state body uses the secondary token", () => {
     expect(ruleBody(css("components/ui/ui.css"), ".ui-empty__description")).toMatch(
       /color:\s*var\(--text-secondary\)/
     );
-    expect(
-      ruleBody(
-        css("components/WorkflowSidebar/WorkflowSidebar.css"),
-        ".workflow-sidebar__experimental-text"
-      )
-    ).toMatch(/color:\s*var\(--text-secondary\)/);
   });
 });
 

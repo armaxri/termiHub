@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { History, Trash2, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, ConfirmDialog, EmptyState, Select, Tooltip, toast } from "@/components/ui";
@@ -18,6 +18,8 @@ export interface HistorySectionProps {
   automationId: string | null;
   /** Narrow the history to one automation, or `null` for every run again. */
   onFilterChange: (automationId: string | null) => void;
+  /** Make the section collapsible (slice 6); absent = always open. */
+  collapse?: { expanded: boolean; onChange: (expanded: boolean) => void };
 }
 
 /**
@@ -29,7 +31,9 @@ export interface HistorySectionProps {
  * clears that automation's runs (or every run) after a confirmation.
  * Metadata only: neither the typed input nor the terminal output is stored.
  */
-export function HistorySection({ automationId, onFilterChange }: HistorySectionProps) {
+export function HistorySection({ automationId, onFilterChange, collapse }: HistorySectionProps) {
+  const contentId = useId();
+  const open = collapse?.expanded ?? true;
   const automationRuns = useAppStore((s) => s.automationRuns);
   const automations = useAppStore((s) => s.automations);
   const loadAutomationRuns = useAppStore((s) => s.loadAutomationRuns);
@@ -105,31 +109,44 @@ export function HistorySection({ automationId, onFilterChange }: HistorySectionP
         title="History"
         data-testid="automation-history-header"
         icon={<History size={12} aria-hidden="true" />}
+        collapse={
+          collapse
+            ? {
+                expanded: open,
+                onToggle: () => collapse.onChange(!open),
+                controls: contentId,
+                testId: "automation-history-toggle",
+              }
+            : undefined
+        }
         actions={
-          <Tooltip
-            content={
-              automationId
-                ? `Clear the history of "${filterName}"…`
-                : "Clear the history of every automation…"
-            }
-            side="top"
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              className="automation-history__clear"
-              aria-label="Clear history"
-              data-testid="automation-history-clear"
-              icon={<Trash2 size={12} />}
-              disabled={clearDisabled}
-              onClick={() => setConfirmClear(true)}
+          // Clear belongs to the runs it clears: nothing destructive on a closed section.
+          !open ? null : (
+            <Tooltip
+              content={
+                automationId
+                  ? `Clear the history of "${filterName}"…`
+                  : "Clear the history of every automation…"
+              }
+              side="top"
             >
-              Clear…
-            </Button>
-          </Tooltip>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="automation-history__clear"
+                aria-label="Clear history"
+                data-testid="automation-history-clear"
+                icon={<Trash2 size={12} />}
+                disabled={clearDisabled}
+                onClick={() => setConfirmClear(true)}
+              >
+                Clear…
+              </Button>
+            </Tooltip>
+          )
         }
       />
-      {automationRuns.length > 0 || automationId ? (
+      {open && (automationRuns.length > 0 || automationId) ? (
         <div className="automation-history__filter-bar">
           <Select
             value={automationId ?? ALL}
@@ -173,13 +190,20 @@ export function HistorySection({ automationId, onFilterChange }: HistorySectionP
         onConfirm={handleConfirm}
         onCancel={() => setConfirmClear(false)}
       />
-      {runs.length === 0 ? (
-        <EmptyState
-          title={automationId ? t("automationHistory.empty.filtered") : t("runHistory.empty")}
-          data-testid="automation-history-empty"
-        />
+      {!open ? null : runs.length === 0 ? (
+        <div id={contentId}>
+          <EmptyState
+            title={automationId ? t("automationHistory.empty.filtered") : t("runHistory.empty")}
+            data-testid="automation-history-empty"
+          />
+        </div>
       ) : (
-        <div className="automation-history__list" role="list" data-testid="automation-history-list">
+        <div
+          id={contentId}
+          className="automation-history__list"
+          role="list"
+          data-testid="automation-history-list"
+        >
           {runs.map((run) => (
             <HistoryRunRow
               key={run.id}

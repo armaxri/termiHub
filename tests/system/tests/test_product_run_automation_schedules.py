@@ -7,7 +7,7 @@ fired attempt links the records it produced in the single automation run
 history (``runIds``).
 
 Steps: a local-shell terminal; a recorded (typed) automation from the Macros
-sidebar and a command automation from the Workflows sidebar; each scheduled
+sidebar and a command automation from the Automations sidebar; each scheduled
 every minute from its row, which opens the editor with that automation picked;
 each schedule fires by itself, prints into the terminal and links its
 ``scheduled`` record in ``automation-runs.json``; then both are switched off.
@@ -171,7 +171,6 @@ class TestProductRunAutomationSchedules(
             "A saved local-shell connection, connected from the sidebar",
             expect="one local-shell terminal tab at a prompt",
         ):
-            self.enable_experimental_features()
             name = f"pr-sched-local-{self.tag}"
             self.switch_to_connections_sidebar()
             self.create_local_connection(name)
@@ -193,7 +192,7 @@ class TestProductRunAutomationSchedules(
         ):
             t = self.tag
             self.ids["typed"] = self.create_macro(f"Sched typed {t}", [f"echo PR_SCHED_T_{t}\\r"])
-            sid = self.schedule_macro(self.ids["typed"], f"Typed every minute {t}", self.ids["conn"])
+            sid = self.schedule_automation(self.ids["typed"], f"Typed every minute {t}", self.ids["conn"])
             self._fires_and_links(sid, self.ids["typed"], f"PR_SCHED_T_{t}")
             self.shot(label="typed-disabled")
 
@@ -206,13 +205,13 @@ class TestProductRunAutomationSchedules(
             screenshot=False,
         ):
             t = self.tag
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.author_workflow(
                 f"Sched command {t}", [("send-command", {"command": f"echo PR_SCHED_C_{t}"})]
             )
             self.save_workflow()
             self.ids["command"] = self.workflow_id(f"Sched command {t}")
-            sid = self.schedule_workflow(
+            sid = self.schedule_automation(
                 self.ids["command"], f"Command every minute {t}", self.ids["conn"]
             )
             self._fires_and_links(sid, self.ids["command"], f"PR_SCHED_C_{t}")

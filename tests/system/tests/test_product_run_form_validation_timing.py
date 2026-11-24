@@ -203,9 +203,7 @@ class TestProductRunDialogValidationTiming(ProductRunUi, AutomationPhaseUi, Side
             expect="#5917: the new-macro dialog opens clean; Save is aria-disabled, "
             "not disabled; after Save, Name and the empty step each show their error",
         ):
-            self.show_macros()
-            self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
-            self.wait(lambda: self.driver.exists(MACRO_EDITOR), what="the macro editor")
+            self.open_new_keystrokes()
             pristine = self._shown_errors()
             disabled = self.driver.get_attribute(MACRO_SAVE, "disabled")
             aria_disabled = self.driver.get_attribute(MACRO_SAVE, "aria-disabled")

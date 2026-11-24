@@ -5,8 +5,7 @@ deselected without ``--product-run``). #5873 shaped the experimental signpost
 in the empty Connections card as one sentence and one button. The next UI
 review (#5954) found it in the wrong place: "Workflows are still experimental.
 Turn on in Settings." read as if connections needed an experimental switch.
-The note moved to the Workflows view (graded in
-``test_product_run_workflows_experimental_note.py``); this grade checks the
+The note left with the Workflows view (#5818); this grade checks the
 Connections empty state, with experimental features off and on, says nothing
 about them.
 

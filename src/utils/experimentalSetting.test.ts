@@ -9,8 +9,8 @@ import { filterSettings } from "@/components/Settings/settingsRegistry";
 describe("experimental setting copy (#5858)", () => {
   it("lists what is still behind the switch", () => {
     expect(EXPERIMENTAL_SETTING_HINT).toBe(
-      "Turns on features still under active development: workflows, remote agents " +
-        "and RDP and VNC remote desktop. They may change, break, or be removed without notice."
+      "Turns on features still under active development: the Run local process " +
+        "automation step, remote agents and RDP and VNC remote desktop. They may change, break, or be removed without notice."
     );
     for (const name of EXPERIMENTAL_FEATURE_NAMES) {
       expect(EXPERIMENTAL_SETTING_HINT).toContain(name);
@@ -18,7 +18,7 @@ describe("experimental setting copy (#5858)", () => {
   });
 
   it("no longer names the graduated features", () => {
-    expect(EXPERIMENTAL_SETTING_HINT).not.toMatch(/tunnel|services|network tools/i);
+    expect(EXPERIMENTAL_SETTING_HINT).not.toMatch(/tunnel|services|network tools|workflows/i);
   });
 
   it("the settings-search entry carries the same hint", () => {

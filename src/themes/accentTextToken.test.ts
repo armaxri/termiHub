@@ -101,7 +101,11 @@ const MIGRATED: [string, string, string][] = [
   ["components/Settings/PluginSettingsSection.css", ".plugin-settings__saved", "--text-accent"],
   ["components/FileEditor/FileEditor.css", ".file-editor__remote-badge", "--text-accent"],
   ["components/LogViewer/LogViewer.css", ".log-viewer__level--INFO", "--text-accent"],
-  ["components/WorkflowSidebar/WorkflowSidebar.css", ".workflow-item__armed", "--text-accent"],
+  [
+    "components/AutomationSidebar/AutomationSidebar.css",
+    ".automation-item__marker--armed",
+    "--text-accent",
+  ],
   [
     "components/OpenConnections/OpenConnectionsModal.css",
     ".oc-row__badge--managed",

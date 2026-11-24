@@ -2061,31 +2061,37 @@ step:
 `src/services/automationRunner.ts` adds two things. `runAutomation` checks for cycles before any
 step runs, so a cyclic automation types nothing. `runAutomationOnTargets` runs one automation on
 several terminals as independent runs, at most 8 at once or one after another. This replaces the
-lock-step macro fan-out. Since slice 4 the Macros and Workflows views run through them (see
-below).
+lock-step macro fan-out. Since slice 4 every run goes through them (see below).
 
 #### Automation store
 
 Since slice 4 of #5818 the frontend keeps one library and one run history
 (`src/store/slices/automationsSlice.ts`), backed by the `*_automation*` commands
 (`src/services/automationApi.ts`, `src-tauri/src/commands/automations.rs`). It is the only writer
-of `automations.json` and `automation-runs.json`. The Macros and Workflows sidebars, editors,
-palette entries and history panels are unchanged. They read `macros`, `workflows`, `macroRuns` and
-`workflowRuns`, which are derived from the store by the pure adapters in
-`src/store/slices/automationViews.ts`, and they write back through them:
+of `automations.json` and `automation-runs.json`. The two editors and the palette entries still
+read `macros` and `workflows`, which are derived from the store by the pure adapters in
+`src/store/slices/automationViews.ts`, and write back through them:
 
 - An automation with only `type-keys` steps, no triggers and no parameters shows as a macro, and
   every other automation shows as a workflow. An empty automation follows its `legacy` provenance.
 - The workflow view reads `run-automation` as `run-macro` and always shows the `manual` trigger.
   Saving maps both back.
-- A run shows in the Macros history when it carries `targetCount` (macro playbacks record it) and
-  in the Workflows history otherwise. Each panel's Clear removes only the runs it shows.
 
 Macro playback runs the stored automation with `runAutomation`
 (`src/store/slices/macroKeysPlayback.ts`). Its `type-keys` step uses its saved typing speed, and
 the Play dialog's timing is a one-run override. Multi-terminal playback stays lock-step until
 slice 5. A workflow run executes the stored automation, so a `run-automation` step runs the
 called automation inline and is recorded once, in the caller's history.
+
+The **Automations sidebar** (`src/components/AutomationSidebar/`, slice 6) reads the store directly:
+one list of every automation, run through `runAutomation`, which sends an automation that only
+types keystrokes to `playMacro` and every other one to `runWorkflow`. Its running markers come from
+the `workflow-run` region and `macroPlayback`, its Failed marker from the run history
+(`automationRowInfo.summarizeRuns`: an unattended run failed and nothing completed since). Until
+slice 7, Edit opens the keystroke editor or the step editor by the same shape rule. It replaced the
+`macros` and `workflows` sidebar views: settings v4 (`migrate_automations_view` in
+`src-tauri/src/connection/settings.rs`) maps the hidden activity-bar views (hidden only when both
+were) and the last open view to `automations`.
 
 The legacy `macros.json`, `workflows.json`, `macro-runs.json` and `runs.json` are frozen. The UI
 never writes them, their commands stay registered for slice 12 to remove, and connection-id
@@ -2199,7 +2205,8 @@ sequenceDiagram
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,
   target count + tab titles, origin. Metadata only — never the macro's recorded input. Capped at
-  the newest 200 records and 90 days; shown in the Macros sidebar's History panel.
+  the newest 200 records and 90 days; merged into `automation-runs.json` and shown in the
+  Automations sidebar's History section (#5818).
 
 #### Unified backup and restore
 

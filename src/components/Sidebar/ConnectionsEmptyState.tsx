@@ -24,7 +24,7 @@ export interface ConnectionsEmptyStateProps {
  * A brand-new user lands on the Connections view with no saved connections; this
  * gives them a clear call-to-action to create their first connection instead of a
  * blank pane. It says nothing about experimental features: connections need no
- * switch, and the workflows note lives in the Workflows view (#5954).
+ * switch (#5954).
  *
  * When the sidebar already shows other content (remote agents), the card
  * collapses to one line, so it stops dominating the column. That line carries

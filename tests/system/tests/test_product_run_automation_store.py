@@ -8,8 +8,8 @@ before, but they read and write ``automations.json`` and
 ``workflows.json``, ``macro-runs.json`` and ``runs.json`` stay frozen for older
 builds.
 
-Steps: a local-shell terminal; a macro saved from the Macros sidebar and a
-workflow from the Workflows sidebar, both stored as automations (the macro as
+Steps: a local-shell terminal; a macro saved from the Automations sidebar and a
+workflow from the Automations sidebar, both stored as automations (the macro as
 one recorded type-keys step, the workflow without legacy-only kinds); the macro
 played and the workflow run on the terminal, each landing in its own history
 panel and in ``automation-runs.json``; the legacy files untouched throughout.
@@ -160,7 +160,6 @@ class TestProductRunAutomationStore(
             expect="one local-shell terminal tab at a prompt",
         ):
             self.legacy.update(fingerprint(self.config_dir))
-            self.enable_experimental_features()
             name = f"pr-store-local-{self.tag}"
             self.switch_to_connections_sidebar()
             self.create_local_connection(name, connect=True)
@@ -171,8 +170,8 @@ class TestProductRunAutomationStore(
     def test_10_saved_as_automations(self):
         with self.step(
             "automation-store.saved",
-            "A macro and a workflow saved from the old sidebars are stored as automations",
-            expect="the Workflows sidebar with the new workflow row; the Macros sidebar "
+            "A typed and a step-by-step automation are stored in automations.json",
+            expect="the Automations sidebar with the new workflow row; the Automations sidebar "
             "unchanged in look, with its new macro row",
         ):
             t = self.tag
@@ -207,7 +206,7 @@ class TestProductRunAutomationStore(
             self.wait(
                 lambda: f"PR_STORE_M_{t}" in self.driver.read_terminal(tab), what="the macro output"
             )
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.run_workflow(self.ids["workflow"])
             self.wait(
                 lambda: f"PR_STORE_W_{t}" in self.driver.read_terminal(tab),

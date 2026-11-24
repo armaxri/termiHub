@@ -421,10 +421,32 @@ const en = {
   "serialPrefixes.offLinux.show": "Show Linux prefixes ({count})",
   "serialPrefixes.offLinux.hide": "Hide Linux prefixes",
 
-  // ── Macro rows and run history (#5680) ──────────────────────────────────
+  // ── Automation rows and run history (#5680, #5818) ──────────────────────
   // Sentence case; one empty-state wording for the run history (R-081).
-  "macro.play.target": "Play in: {target}",
-  "macro.play.noTarget": "Play: no active terminal",
+  "automation.run.target": "Run in: {target}",
+  "automation.run.noTarget": "Run… (no active terminal: choose where)",
+  "automation.run.label": "Run {name}",
+  "automation.run.labelPick": "Run {name} on…",
+  "automation.stop.label": "Stop {name}",
+  "automation.stop.allLabel": "Stop {name} on every terminal",
+  "automation.stop.target": "Stop on {target}",
+  "automation.armed.on": "Runs automatically: {triggers}",
+  "automation.armed.off": "Trigger off, will not run automatically: {triggers}",
+  "automation.armed.toggleOff": "Turn off the automatic trigger of {name}",
+  "automation.armed.toggleOn": "Turn on the automatic trigger of {name}",
+  "automation.marker.armed": "Armed",
+  "automation.marker.off": "Off",
+  "automation.marker.running": "Running",
+  "automation.marker.runningCount": "Running {count}",
+  "automation.marker.failed": "Failed",
+  "automation.marker.failedLabel": "Last automatic run failed. Show recent runs of {name}",
+  "automation.tooltip.lastRun": "Last run: {when}",
+  "automation.tooltip.moreSteps": "{line} (+{count} more)",
+  "automation.more.label": "More actions for {name}",
+  "automation.empty.title": "No automations yet.",
+  "automation.empty.description":
+    "Record what you type in a terminal, or create one step by step. Run it with one click, on a trigger or on a schedule.",
+  "automation.noResults": "No automations match “{query}”.",
   "runHistory.empty": "No runs yet.",
 
   // ── Automation history: one panel, unified origin labels (#5818) ────────

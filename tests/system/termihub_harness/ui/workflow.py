@@ -1,9 +1,9 @@
-"""Workflow-automation editor + sidebar helpers (#1851 E2E coverage).
+"""Step-by-step automation editor helpers (#1851 E2E coverage).
 
-``WorkflowUi`` drives the experimental Workflow Automation feature over the
-bridge: open the Workflows sidebar, author a workflow in the editor dialog (add
-typed steps through the "Add step…" menu, edit fields, reorder, remove), bind a
-trigger, save it, and run a stored workflow against the active terminal.
+``WorkflowUi`` drives the step editor over the bridge: author an automation in
+the dialog (add typed steps through the "Add step…" menu, edit fields, reorder,
+remove), bind a trigger, save it, and run it against the active terminal. The
+list itself is :class:`AutomationSidebarUi` (#5818).
 
 The "Add step…" menu is the regression surface from #1868 (a Radix menu that
 looked present in the DOM but was dead in the real app). Every add here asserts
@@ -18,10 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ..bridge import BridgeError
-from .base import HarnessMixin
+from .automation_sidebar import NEW_STEPS, AutomationSidebarUi
 
-WORKFLOW_SIDEBAR = "workflow-sidebar"
 WORKFLOW_EDITOR_DIALOG = "workflow-editor-dialog"
 WORKFLOW_EDITOR_CANCEL = "workflow-editor-cancel"
 # The shared unsaved-changes prompt the Modal raises when a dirty editor is
@@ -31,35 +29,10 @@ UNSAVED_KEEP_EDITING = "unsaved-changes-cancel"
 UNSAVED_DISCARD = "unsaved-changes-just-close"
 
 
-class WorkflowUi(HarnessMixin):
-    """Author, save and run workflows through the sidebar + editor dialog."""
+class WorkflowUi(AutomationSidebarUi):
+    """Author, save and run step-by-step automations (the store's workflow view)."""
 
     # ── Sidebar ─────────────────────────────────────────────────────────────
-    def open_workflows_sidebar(self) -> None:
-        """Show the Workflows sidebar from the activity bar (idempotent).
-
-        Clicking an already-active activity-bar icon toggles the sidebar closed,
-        so only click when Workflows isn't already the visible view.
-        """
-        # The Workflows item is experimental-gated and the activity bar mounts a
-        # beat after the bridge connects, so wait for the item before clicking
-        # (callers must enable experimental features first).
-        self.wait(
-            lambda: self.driver.exists("activity-bar-workflows"),
-            what="the Workflows activity-bar item (enable experimental features first)",
-        )
-        try:
-            showing = self.driver.get_state("sidebarView") == "workflows" and not (
-                self.driver.get_state("sidebarCollapsed")
-            )
-        except BridgeError:
-            showing = False
-        if not showing:
-            self.driver.click("activity-bar-workflows")
-        self.wait(
-            lambda: self.driver.exists(WORKFLOW_SIDEBAR), what="the workflows sidebar"
-        )
-
     def find_workflow(self, name: str) -> Optional[dict[str, Any]]:
         """Return the stored workflow with the given ``name`` (or ``None``)."""
         workflows = self.driver.get_state("workflows") or []
@@ -73,24 +46,13 @@ class WorkflowUi(HarnessMixin):
         return found["id"]
 
     def run_workflow(self, workflow_id: str) -> None:
-        """Click the Run action on a workflow row (runs against the active tab)."""
-        self.driver.click(f"workflow-run-{workflow_id}")
+        """Click the Run action on its row (runs against the active tab)."""
+        self.run_automation(workflow_id)
 
     # ── Editor dialog ───────────────────────────────────────────────────────
     def open_new_workflow(self) -> None:
-        """Open the editor on a fresh blank workflow via the New menu."""
-        # "New" is the toolbar's primary action (inline beside the "…" menu); at a
-        # width too narrow even for that it becomes a sub-menu of "…" (#4824).
-        self.invoke_toolbar_action("workflow-new-btn", overflow="workflow-toolbar-overflow")
-        self.wait(
-            lambda: self.driver.exists("workflow-new-blank"),
-            what="the New-workflow menu",
-        )
-        self.driver.click("workflow-new-blank")
-        self.wait(
-            lambda: self.driver.exists(WORKFLOW_EDITOR_DIALOG),
-            what="the workflow editor dialog",
-        )
+        """Open the step editor on a fresh draft via New ▾ → Step by step…"""
+        self.open_new_automation(NEW_STEPS, WORKFLOW_EDITOR_DIALOG)
 
     def editor_open(self) -> bool:
         """Whether the workflow editor dialog is currently mounted."""

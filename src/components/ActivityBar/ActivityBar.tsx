@@ -5,7 +5,6 @@ import {
   ArrowLeftRight,
   LayoutGrid,
   History,
-  Workflow,
   Server,
   Settings,
   FileText,
@@ -22,7 +21,6 @@ import {
 import { openDiagnosticsExport } from "@/components/Diagnostics/diagnosticsDialogStore";
 import { useAppStore, SidebarView } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
 import {
   Tooltip,
@@ -47,7 +45,6 @@ interface ActivityBarItemDef {
   /** The glyph's lucide name, exposed as `data-icon` for the product-run grade (#5848). */
   iconName: string;
   label: string;
-  experimental?: boolean;
 }
 
 const REQUIRED_ITEMS: ActivityBarItemDef[] = [
@@ -58,18 +55,12 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "files", icon: FolderOpen, iconName: "folder-open", label: "File browser" },
   { view: "recent-sessions", icon: History, iconName: "history", label: "Recent sessions" },
   { view: "workspaces", icon: LayoutGrid, iconName: "layout-grid", label: "Workspaces" },
-  // A lightning bolt reads as "quick action"; the clapperboard read as video (#5848).
-  { view: "macros", icon: Zap, iconName: "zap", label: "Macros" },
+  // One entry for what were Macros and Workflows (#5818). A lightning bolt reads
+  // as "quick action"; the clapperboard read as video (#5848).
+  { view: "automations", icon: Zap, iconName: "zap", label: "Automations" },
   { view: "tunnels", icon: ArrowLeftRight, iconName: "arrow-left-right", label: "SSH tunnels" },
   { view: "services", icon: Server, iconName: "server", label: "Services" },
   { view: "network-tools", icon: Stethoscope, iconName: "stethoscope", label: "Network tools" },
-  {
-    view: "workflows",
-    icon: Workflow,
-    iconName: "workflow",
-    label: "Workflows",
-    experimental: true,
-  },
   { view: "plugins", icon: Puzzle, iconName: "puzzle", label: "Plugins" },
 ];
 
@@ -95,11 +86,8 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const setLayoutDialogOpen = useAppStore((s) => s.setLayoutDialogOpen);
   const toggleActivityBarView = useAppStore((s) => s.toggleActivityBarView);
   const showRecentSessions = useProjectedSettings().showRecentSessions;
-  const experimental = useExperimentalFeatures();
 
-  const availableOptionalItems = OPTIONAL_ITEMS.filter(
-    (item) => (!item.experimental || experimental) && !isViewHiddenBySetting(item.view)
-  );
+  const availableOptionalItems = OPTIONAL_ITEMS.filter((item) => !isViewHiddenBySetting(item.view));
 
   function isViewHiddenBySetting(view: SidebarView): boolean {
     // The Recent Sessions panel is opt-out via the session-history settings.
@@ -238,7 +226,6 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
               checked={isVisible}
               onCheckedChange={() => toggleActivityBarView(item.view)}
               data-testid={`activity-bar-context-toggle-${item.view}`}
-              hint={item.experimental ? "— Experimental" : undefined}
             >
               <span className="ui-menu__indicator">{isVisible ? "✓" : ""}</span>
               {item.label}

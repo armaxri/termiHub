@@ -21,9 +21,9 @@ from __future__ import annotations
 from typing import Mapping, Optional, Sequence
 
 #: Glyphs a first-time user could not place (R-022).
-UNCLEAR_GLYPHS = {"clapperboard": "macros", "scroll-text": "the log viewer"}
+UNCLEAR_GLYPHS = {"clapperboard": "automations", "scroll-text": "the log viewer"}
 #: The glyphs the fix chose for the two items the review named.
-EXPECTED_GLYPHS = {"activity-bar-macros": "zap", "activity-bar-logs": "file-text"}
+EXPECTED_GLYPHS = {"activity-bar-automations": "zap", "activity-bar-logs": "file-text"}
 #: The Saved header's one "New ▾" trigger and its entries, in order.
 NEW_MENU = "connection-list-new-menu"
 NEW_MENU_ROWS = {
