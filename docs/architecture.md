@@ -367,7 +367,7 @@ The table lists the top-level modules of `src-tauri/src/` (regenerated from the 
 | **Workspace**            | `src-tauri/src/workspace/`                        | Workspace save/restore, per-workspace settings, last session, import trust                                                                                                                                                                                                                                                                                                                                                                              |
 | **Macros / Workflows**   | `src-tauri/src/macros/`, `workflows/`             | Stored macros and workflows with run history                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **Automations**          | `src-tauri/src/automations/`                      | The merged macro + workflow model (`Automation`, `type-keys` / `run-automation` steps) and the pure legacy converters with golden-file tests. Not wired in yet; storage, migration and UI follow ([concept](concepts/partial/automations.html), #5818)                                                                                                                                                                                                  |
-| **Schedules**            | `src-tauri/src/schedules/`                        | Scheduled workflow and macro runs (PROD-043)                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Schedules**            | `src-tauri/src/schedules/`                        | Scheduled automation runs (PROD-043; schema v3 since #5818)                                                                                                                                                                                                                                                                                                                                                                                             |
 | **Session history**      | `src-tauri/src/session_history/`                  | Persisted history of opened sessions                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **Backup**               | `src-tauri/src/backup/`                           | Unified backup and restore of all app data (PROD-068)                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **Window**               | `src-tauri/src/window/`                           | Multi-window foundation — backend authority for multi-window state (#1900)                                                                                                                                                                                                                                                                                                                                                                              |
@@ -2097,11 +2097,12 @@ reads cleanly and only for a store that has provenance. After that, a legacy-sid
 from an older build. The reconcile pass merges it and reports it in the recovery warnings
 (`migrate::merge_warning`), but never follows a deletion (#5971).
 
-#### Scheduled workflows and macros
+#### Scheduled automations
 
 Scheduled runs (PROD-043, `src-tauri/src/schedules/`) are **backend-timed, frontend-executed**.
 The backend owns the clock and every safety rule; each window owns its tabs and runs the workflow
-runner, so it decides where a fired run can go.
+runner, so it decides where a fired run can go. Schedules stay separate entries (they carry the
+targets, the confirmation and the attempt history), each naming one automation (#5818).
 
 ```mermaid
 sequenceDiagram
@@ -2120,17 +2121,26 @@ sequenceDiagram
 ```
 
 - **Model** — `schedules.json` (versioned, per-entry salvage, unknown keys preserved, part of the
-  backup): a workflow or macro, explicit targets (saved connection ids or a broadcast group, never
+  backup): one automation (`action: {kind: "automation", automationId}`, schema v3), explicit targets (saved connection ids or a broadcast group, never
   the active tab), a rule (every N minutes / daily / weekly at a local `HH:MM`), a missed-run
   policy, and backend-owned state (`enabled`, `confirmedAt`, `enabledAt`, `lastRunAt`,
   `lastResult`, `history`) plus a global `paused` switch.
 - **Attempt history** (`history.rs`, schema v2, #3528) — every settled attempt (a fired run or a
   skipped slot with its reason) becomes `lastResult` and the newest entry of the schedule's
   `history`, capped at the last 20. A fired run records its start time, duration and the ids of
-  the workflow or macro run-history records it produced; a paused slot records nothing. The log stays in
+  automation run-history records it produced (`runIds`); a paused slot records nothing. The log stays in
   `schedules.json` (a few KiB per schedule); the v1 → v2 migration seeds it from `lastResult`,
-  and the version bump keeps an older build from overwriting it. A scheduled macro's attempt links
-  the record it produced in the macro run history (`macroRunIds`).
+  and the version bump keeps an older build from overwriting it.
+- **Schema v3** (`migrate.rs`, #5818 slice 10) — the boot migration rewrites a v1/v2 file right
+  after `automations.json` is written: `{macro, macroId}` and `{workflow, workflowId}` become
+  `{automation, automationId}` and each attempt's `macroRunIds`/`workflowRunIds` merge into
+  `runIds`. Ids are kept, except a macro the automation migration re-ided (its id was taken by a
+  workflow or an earlier macro), which follows the provenance records / `idRemaps` of
+  `automations.json`. An id no legacy entry had keeps failing: when it now belongs to an
+  automation of the other kind it becomes `missing-macro-<id>` / `missing-workflow-<id>`, so a
+  deleted macro's schedule never runs a workflow. The v2 file is copied once to
+  `schedules.json.pre-automations.bak`, and a v2 build refuses to overwrite the v3 file (PER-004).
+  The versioned-store gate's own v2 → v3 step (a restored backup) keeps every id.
 - **Timing** — `timing.rs` is pure and generic over `chrono::TimeZone` (production uses
   `chrono::Local`). Intervals count absolute minutes from when the schedule was enabled; a local
   time that does not exist (spring-forward) fires at the first valid minute after the gap, and a
@@ -2146,8 +2156,10 @@ sequenceDiagram
 - **Execution** (`src/store/scheduledRuns.ts`) — unattended: only connected tabs opened from a
   target connection, no prompts (a required parameter without a default or an un-allowlisted
   local program makes it skip/fail), and never while another run or macro playback is active in
-  that window. Workflow runs and macro playbacks are recorded in their run histories with the
-  `scheduled` origin; the status bar shows "N schedules active".
+  that window. The window resolves the automation (`fetchAutomationForRun`); a typing-only one
+  plays like a macro, any other runs per target like a workflow, and either is recorded in the
+  automation run history with the `scheduled` origin; a missing one is skipped with "The
+  automation no longer exists"; the status bar shows "N schedules active".
 - **Connect if not connected** (#3527, opt-in per schedule, `connectIfNeeded`, default off) — the
   fire names one `connectWindow` (the main window, else the first listening one). That window
   connects each target with no connected terminal there through the shared saved-connection flow
