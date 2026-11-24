@@ -19,11 +19,9 @@ export function BackupRestoreSettings() {
   return (
     <div className="settings-panel__section" data-testid="backup-restore-settings">
       <SettingsSectionHeading>Backup &amp; restore</SettingsSectionHeading>
-      <p className="settings-panel__description">
-        Save everything — connections, settings, themes, keyboard shortcuts, workspaces, macros,
-        workflows, tunnels, trusted host keys, plugins and optionally your saved credentials — to
-        one passphrase-protected file, to keep a backup or move to another machine. Restore lets you
-        pick what to bring back and whether to merge it with or replace what is here.
+      <p className="settings-panel__description" data-testid="backup-restore-description">
+        Save your connections, settings and other data to one file, and restore it here or on
+        another computer.
       </p>
       <div className="credential-vault__actions">
         <Button
@@ -33,7 +31,7 @@ export function BackupRestoreSettings() {
           onClick={() => setExportOpen(true)}
           data-testid="backup-export-btn"
         >
-          Back up everything…
+          Back up…
         </Button>
         <Button
           variant="secondary"
