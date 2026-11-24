@@ -807,6 +807,9 @@ export function Terminal({
               useAppStore.getState().setTerminalConnecting(tabId, false);
               useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
               useAppStore.getState().setTerminalSpawnError(tabId, null);
+              // List the new session under its agent right away (#5907): the
+              // agent's list is otherwise only refreshed when the agent connects.
+              if (agentId) void useAppStore.getState().refreshAgentSessions(agentId);
               break;
             } catch (err) {
               useAppStore.getState().setConnectStarting(tabId, null);
@@ -1399,7 +1402,13 @@ export function Terminal({
                   useAppStore.getState().clearMovingSession(sid);
                   return;
                 }
-                fireAndForget(closeTerminal(sid), `close session ${sid} on teardown`);
+                fireAndForget(
+                  closeTerminal(sid).then(() => {
+                    // The ended session leaves its agent's list too (#5907).
+                    if (agentId) void useAppStore.getState().refreshAgentSessions(agentId);
+                  }),
+                  `close session ${sid} on teardown`
+                );
               }
             });
           }

@@ -215,6 +215,15 @@
   flex-shrink: 0;
 }
 
+/* A state word in place of the row action, e.g. "Installing…" (#5906). */
+.connection-list__group-status {
+  flex-shrink: 0;
+  padding-right: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .connection-list__tree {
   flex: 1;
   overflow-y: auto;
