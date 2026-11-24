@@ -380,3 +380,26 @@ fn an_unreadable_external_file_does_not_block_the_rename_or_the_other_references
     );
     assert_eq!(std::fs::read_to_string(&broken).unwrap(), "{ not json");
 }
+
+/// A connect opened for a saved connection or agent names it on its host-key
+/// prompt (#5943): the names resolve by id; an unknown id names nothing.
+#[test]
+fn saved_connection_and_agent_names_resolve_for_prompts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    let id = mgr
+        .save_connection(ssh("db", "prod db", None, &[]))
+        .unwrap();
+    assert_eq!(mgr.saved_connection_name(&id).as_deref(), Some("prod db"));
+    assert_eq!(mgr.saved_connection_name("missing"), None);
+
+    let agent: SavedRemoteAgent = serde_json::from_value(json!({
+        "id": "a1",
+        "name": "build box",
+        "config": { "host": "agent.example.com", "port": 22, "username": "u" },
+    }))
+    .unwrap();
+    mgr.save_agent(agent).unwrap();
+    assert_eq!(mgr.saved_agent_name("a1").as_deref(), Some("build box"));
+    assert_eq!(mgr.saved_agent_name("missing"), None);
+}

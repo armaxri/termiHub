@@ -161,16 +161,21 @@ pub async fn connect_agent(
     config: RemoteAgentConfig,
     agent_settings: Option<AgentSettings>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    conn_manager: State<'_, ConnectionManager>,
 ) -> Result<AgentConnectResult, TerminalError> {
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
+    // A host-key prompt of this connect names the agent (#5943): it has no tab.
+    let agent_name = conn_manager.saved_agent_name(&agent_id);
     // A manual connect supersedes a coordinated-update reconnect the backend
     // is driving for this agent (#4489): this connect owns the agent now. An
     // attempt of it in flight is cancelled and awaited, so its connect
     // reservation is gone before this connect reserves the agent (#4621).
     await_update_reconnect_takeover(manager.as_ref(), &agent_id).await;
     tauri::async_runtime::spawn_blocking(move || {
-        manager.connect_agent(&agent_id, &config, agent_settings.as_ref())
+        crate::session::prompt_connection_name::in_agent_scope_sync(agent_name.as_deref(), || {
+            manager.connect_agent(&agent_id, &config, agent_settings.as_ref())
+        })
     })
     .await
     .unwrap_or_else(|e| Err(blocking_join_error(e)))

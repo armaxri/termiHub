@@ -39,6 +39,9 @@ struct Connected {
 struct SshProcessExecSource {
     config: SshConfig,
     state: Arc<Mutex<Option<Connected>>>,
+    /// The connection name scoped around the connect that built this source
+    /// (#5943): its own later login's host-key prompt names it.
+    prompt_connection_name: Option<String>,
 }
 
 impl SshProcessExecSource {
@@ -46,12 +49,17 @@ impl SshProcessExecSource {
         Self {
             config,
             state: Arc::new(Mutex::new(None)),
+            prompt_connection_name: super::prompt_owner::current_prompt_connection_name(),
         }
     }
 
     /// Establish a fresh session from the stored config.
     async fn connect(&self) -> Result<Connected, CoreError> {
-        let (session, registry, gateway) = connect_target(&self.config, None).await?;
+        let (session, registry, gateway) = super::prompt_owner::with_prompt_connection_name(
+            self.prompt_connection_name.as_deref(),
+            connect_target(&self.config, None),
+        )
+        .await?;
         Ok(Connected {
             session,
             _registry: registry,
@@ -109,4 +117,23 @@ impl ProcessExecSource for SshProcessExecSource {
 /// returned manager connects lazily on the first list/kill.
 pub(crate) fn ssh_process_manager(config: SshConfig) -> ExecProcessManager {
     ExecProcessManager::new(Arc::new(SshProcessExecSource::new(config)))
+}
+
+#[cfg(test)]
+mod prompt_name_tests {
+    use super::*;
+
+    /// A process source built inside a connect's connection-name scope keeps
+    /// it for its own later login's host-key prompt (#5943).
+    #[tokio::test]
+    async fn the_source_remembers_the_connection_name_it_was_built_under() {
+        let named =
+            crate::backends::ssh::prompt_owner::with_prompt_connection_name(Some("prod"), async {
+                SshProcessExecSource::new(SshConfig::default())
+            })
+            .await;
+        assert_eq!(named.prompt_connection_name.as_deref(), Some("prod"));
+        let unnamed = SshProcessExecSource::new(SshConfig::default());
+        assert_eq!(unnamed.prompt_connection_name, None);
+    }
 }
