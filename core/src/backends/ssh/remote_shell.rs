@@ -263,11 +263,13 @@ pub enum BannerVerdict {
 /// [Version 10.0.20348.2849]` (`[Versión ...` and the like when localised).
 const CMD_BANNER: &str = "Microsoft Windows [";
 
-/// The banner an interactive Windows PowerShell 5.1 prints first, its two
-/// lines joined as [`visible_text`] joins them: `Windows PowerShell`, then
-/// `Copyright (C) Microsoft Corporation. All rights reserved.` (the rest of
-/// that line is localised).
-const WINDOWS_POWERSHELL_BANNER: &str = "Windows PowerShell Copyright (C) Microsoft Corporation";
+/// The first line of the banner an interactive Windows PowerShell 5.1 prints:
+/// `Windows PowerShell`, or `Windows PowerShell 5.1` on a newer Windows build.
+const WINDOWS_POWERSHELL_BANNER: &str = "Windows PowerShell ";
+
+/// Its second line, `Copyright (C) Microsoft Corporation. All rights
+/// reserved.` (the rest of that line is localised).
+const WINDOWS_POWERSHELL_COPYRIGHT: &str = "Copyright (C) Microsoft Corporation";
 
 /// The word an interactive PowerShell 7 (`pwsh`) banner starts with, before
 /// its version: `PowerShell 7.4.6`.
@@ -285,8 +287,8 @@ const PS_PROMPT_MAX_PATH: usize = 260;
 /// and it must be one of:
 ///
 /// - cmd.exe's banner, `Microsoft Windows [Version ...]`;
-/// - Windows PowerShell 5.1's, `Windows PowerShell` + `Copyright (C)
-///   Microsoft Corporation...`;
+/// - Windows PowerShell 5.1's, `Windows PowerShell` (with or without its
+///   version) + `Copyright (C) Microsoft Corporation...`;
 /// - PowerShell 7's, `PowerShell <major>.<minor>...`;
 /// - with no banner (a shell started with `-NoLogo`, say), PowerShell's
 ///   default prompt, `PS <drive>:\<path>>`.
@@ -310,7 +312,7 @@ pub fn shell_banner_verdict(output: &[u8]) -> BannerVerdict {
     }
     let verdicts = [
         prefix_verdict(text, CMD_BANNER, RemoteShell::Cmd),
-        prefix_verdict(text, WINDOWS_POWERSHELL_BANNER, RemoteShell::PowerShell),
+        windows_powershell_banner_verdict(text),
         pwsh_banner_verdict(text),
         ps_prompt_verdict(text),
     ];
@@ -346,6 +348,34 @@ fn undecided_if(may_still_match: bool) -> BannerVerdict {
     } else {
         BannerVerdict::Unrecognised
     }
+}
+
+/// Windows PowerShell 5.1's banner: [`WINDOWS_POWERSHELL_BANNER`], optionally
+/// its version (`5.1`), then [`WINDOWS_POWERSHELL_COPYRIGHT`], the two lines
+/// joined as [`visible_text`] joins them.
+fn windows_powershell_banner_verdict(text: &str) -> BannerVerdict {
+    let Some(rest) = text.strip_prefix(WINDOWS_POWERSHELL_BANNER) else {
+        return undecided_if(WINDOWS_POWERSHELL_BANNER.starts_with(text));
+    };
+    let copyright = if rest.starts_with(|c: char| c.is_ascii_digit()) {
+        let Some((version, after)) = rest.split_once(' ') else {
+            // The version is still coming: it must look like one so far.
+            return undecided_if(rest.chars().all(|c| c.is_ascii_digit() || c == '.'));
+        };
+        let parts: Vec<&str> = version.split('.').collect();
+        let is_number = |p: &&str| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit());
+        if parts.len() < 2 || !parts.iter().all(is_number) {
+            return BannerVerdict::Unrecognised;
+        }
+        after
+    } else {
+        rest
+    };
+    prefix_verdict(
+        copyright,
+        WINDOWS_POWERSHELL_COPYRIGHT,
+        RemoteShell::PowerShell,
+    )
 }
 
 /// PowerShell 7's banner: [`PWSH_BANNER`], then a version token with at
@@ -2824,6 +2854,23 @@ mod tests {
             ]),
             (POWERSHELL, 3)
         );
+        // A serviced Windows prints the version in it: measured on the same
+        // lane once its runner image updated (run 45441683624).
+        let mut start = CONPTY_START.to_vec();
+        start.extend_from_slice(&[
+            b"Windows PowerShell 5.1\r\nCopyright (C) Microsoft Corporation. All rights reserved.",
+            b"\x1b[?25l\x1b[4;1H\x1b[?25h",
+        ]);
+        assert_eq!(replay(&start), (POWERSHELL, 3));
+        // The same banner split inside the version.
+        assert_eq!(
+            replay(&[
+                b"Windows PowerShell 5",
+                b".1\r\nCopyright",
+                b" (C) Microsoft Corporation. Alle Rechte vorbehalten.",
+            ]),
+            (POWERSHELL, 3)
+        );
         // An older 5.1 banner with the "Install the latest PowerShell" line.
         assert_eq!(
             shell_banner_verdict(
@@ -2872,6 +2919,9 @@ mod tests {
             b"PowerShell v7\r\n",
             b"PowerShell 7\r\n",
             b"Windows PowerShell\r\nLoading profile\r\n",
+            b"Windows PowerShell 5.1\r\nLoading profile\r\n",
+            b"Windows PowerShell 5\r\nCopyright (C) Microsoft Corporation.",
+            b"Windows PowerShell 5.1.x\r\nCopyright (C) Microsoft Corporation.",
             // Git Bash and an MSYS2 fish.
             b"\x1b[2J\x1b[H\x1b]0;MINGW64:/c/Users/u\x07\r\nu@host MINGW64 ~\r\n$ ",
             b"Welcome to fish, the friendly interactive shell\r\n",
@@ -2900,6 +2950,10 @@ mod tests {
             &b"W"[..],
             b"Windows PowerShell\r\n",
             b"Windows PowerShell\r\nCopyright (C) Micro",
+            b"Windows PowerShell 5",
+            b"Windows PowerShell 5.1",
+            b"Windows PowerShell 5.1\r\n",
+            b"Windows PowerShell 5.1\r\nCopyright (C) Micro",
             b"Power",
             b"PowerShell ",
             b"PowerShell 7.",

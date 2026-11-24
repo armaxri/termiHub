@@ -502,3 +502,43 @@ fn a_resize_while_hiding_counts_line_breaks_only() {
     assert!(!text.contains("\x1b[1A"), "{text:?}");
     assert!(text.contains("\r\x1b[J"), "{text:?}");
 }
+
+/// What macOS's `/bin/bash` (3.2) printed when the env setup line (#5555) was
+/// typed at a 77-column prompt on an 80-column terminal: the line ends on the
+/// last cell of its row, and Enter makes readline go up and draw that whole
+/// row again. A CI host with a long name hit it in `native_05k`.
+const MARGIN_LINE: &str =
+    " export TH_5555_VAR='it'\\''s a $HOME value'; printf '\\e]6973;termihub-setup-done\\a'\n";
+const MARGIN_ECHO: &str = " ex \rport TH_5555_VAR='it'\\''s a $HOME value'; \
+     printf '\\e]6973;termihub-setup-done\\a' \r\x1b[Aport TH_5555_VAR='it'\\''s a $HOME value'; \
+     printf '\\e]6973;termihub-setup-done\\a\x1b[K'\r\n";
+
+fn run_at_the_margin(echo: &str) -> (Vec<u8>, SetupEchoFilter, String) {
+    let prompt = format!("{}$ ", "h".repeat(75));
+    let mut f = SetupEchoFilter::new();
+    f.set_width(80);
+    let before = format!("Last login: Tue\r\n{prompt}\x1b]7;file:///Users/u\x07");
+    let mut out = f.feed(before.as_bytes(), at(T0_MS));
+    f.arm(MARGIN_LINE.as_bytes(), at(10));
+    let after = format!("{echo}{}{prompt}", done());
+    out.extend(f.feed(after.as_bytes(), at(20)));
+    out.extend(f.poll(at(20) + REPROMPT_CAP));
+    (out, f, prompt)
+}
+
+#[test]
+fn bash_redrawing_a_line_that_ends_at_the_margin_is_hidden() {
+    let (out, f, prompt) = run_at_the_margin(MARGIN_ECHO);
+    assert_eq!(f.outcome(), Some(HideOutcome::Hidden));
+    assert_eq!(screen(&out), vec!["Last login: Tue", prompt.trim_end()]);
+    let text = String::from_utf8_lossy(&out);
+    assert!(!text.contains("TH_5555_VAR"), "setup leaked: {text:?}");
+}
+
+#[test]
+fn other_output_with_a_margin_redraw_is_shown() {
+    let echo = format!("{MARGIN_ECHO}bash: not the echo\r\n");
+    let (out, f, _) = run_at_the_margin(&echo);
+    assert_eq!(f.outcome(), Some(HideOutcome::NotRecognised));
+    assert!(String::from_utf8_lossy(&out).contains("bash: not the echo"));
+}

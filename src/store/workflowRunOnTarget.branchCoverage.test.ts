@@ -299,7 +299,7 @@ describe("runWorkflowOnTarget — sessionless runs (#3791)", () => {
 });
 
 describe("runWorkflowOnTarget — run-macro and history", () => {
-  it("types a run-macro step inline and records only the workflow's run (#5818)", async () => {
+  it("types a run-macro step inline and records the callee and the workflow (#5818)", async () => {
     state.macros = [
       { id: "m1", name: "M", tags: [], steps: [{ data: "x", delayMs: 0 }] } as unknown as Macro,
     ];
@@ -308,8 +308,13 @@ describe("runWorkflowOnTarget — run-macro and history", () => {
 
     expect(result.status).toBe("completed");
     expect(mocks.injector).toHaveBeenCalledWith("tab-1", "x");
-    expect(mocks.recordAutomationRun).toHaveBeenCalledTimes(1);
-    expect(mocks.recordAutomationRun).toHaveBeenCalledWith(
+    expect(mocks.recordAutomationRun).toHaveBeenCalledTimes(2);
+    expect(mocks.recordAutomationRun).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ automationId: "m1", origin: "run-by-automation", tabId: "tab-1" })
+    );
+    expect(mocks.recordAutomationRun).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({ automationId: "wf-wf", origin: "manual", tabId: "tab-1" })
     );
   });

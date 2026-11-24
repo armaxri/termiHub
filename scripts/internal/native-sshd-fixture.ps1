@@ -640,7 +640,10 @@ function Restore-FixtureDefaultShell {
     if (-not (Test-Path -LiteralPath $PreviousShellFile)) {
         return
     }
-    $previous = [string](Get-Content -LiteralPath $PreviousShellFile -Raw)
+    # Not Get-Content -Raw: it returns nothing for an empty file (the value was
+    # unset), which even a [string] cast leaves null, so .Trim() threw and down
+    # stopped halfway.
+    $previous = [IO.File]::ReadAllText($PreviousShellFile)
     Set-OpenSshDefaultShell $previous.Trim()
     Remove-Item -LiteralPath $PreviousShellFile -Force
     Write-FixtureLog "OpenSSH DefaultShell restored to $(if ($previous.Trim()) { $previous.Trim() } else { '<unset>' })"

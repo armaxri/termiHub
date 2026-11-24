@@ -211,7 +211,7 @@ class TestRemoteAgent(
         self.cancel_running_agent_setup()
 
         # The setup terminal reports the cancellation once the backend stops ...
-        self.wait_for_output("termiHub agent setup cancelled.", timeout=120.0)
+        self.wait_for_output("Agent setup cancelled.", timeout=120.0)
         # ... and the partial upload has been rolled back.
         self.wait(
             lambda: not server.path_exists(UPLOAD_PATH),

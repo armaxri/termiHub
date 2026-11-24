@@ -1,7 +1,9 @@
 /**
- * Tab-strip "receiving macro" marker (#3446): while a multi-target macro plays,
- * every receiving tab — across split panels — carries a distinct, accessible
- * badge that clears as targets drop out and when the run ends.
+ * Tab-strip "running automation" badge (#5818 slice 5; was the receiving-macro
+ * marker of #3446): every tab a macro or a workflow is typing into, across
+ * split panels, carries one distinct, accessible badge with its progress
+ * there. It clears as targets drop out and when the run ends, and stops the
+ * run on that tab only.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React from "react";
@@ -12,6 +14,7 @@ import { TooltipProvider } from "@/components/ui";
 import { useAppStore, type MacroPlaybackState } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
+import { setWorkflowRunViewForTest } from "@/store/workflowRunBridge";
 import { flushAsync } from "@/test/flushAsync";
 
 vi.mock("@dnd-kit/sortable", () => ({
@@ -87,7 +90,7 @@ async function render() {
 }
 
 function badge(tabId: string): HTMLElement | null {
-  return container.querySelector(`[data-testid="tab-macro-badge-${tabId}"]`);
+  return container.querySelector(`[data-testid="tab-automation-badge-${tabId}"]`);
 }
 
 function setPlayback(p: MacroPlaybackState | null) {
@@ -107,9 +110,10 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   useAppStore.setState({ macroPlayback: null });
+  setWorkflowRunViewForTest({ run: null, output: null });
 });
 
-describe("TabBar — receiving-macro marker (#3446)", () => {
+describe("TabBar — running-automation badge (#5818)", () => {
   it("marks every receiving tab across split panels, and only those", async () => {
     setPlayback(playback());
     await render();
@@ -119,23 +123,17 @@ describe("TabBar — receiving-macro marker (#3446)", () => {
     expect(badge("b")).toBeNull();
   });
 
-  it("exposes the macro name and progress as the accessible label and tooltip", async () => {
-    setPlayback(playback());
+  it("names the automation and that tab's own progress", async () => {
+    setPlayback(playback({ targetProgress: { a: 4, c: 2, d: 3 } }));
     await render();
     const el = badge("c")!;
     expect(el.getAttribute("role")).toBe("img");
-    expect(el.getAttribute("aria-label")).toBe('Receiving macro "deploy" (2/5 steps)');
-    expect(el.getAttribute("title")).toBe('Receiving macro "deploy" (2/5 steps)');
+    expect(el.getAttribute("aria-label")).toBe('Running automation "deploy" (2/5)');
+    expect(el.textContent).toBe("2/5");
+    expect(badge("a")?.getAttribute("aria-label")).toBe('Running automation "deploy" (4/5)');
   });
 
-  it("updates the progress as steps are played", async () => {
-    setPlayback(playback());
-    await render();
-    setPlayback(playback({ played: 4 }));
-    expect(badge("a")?.getAttribute("aria-label")).toBe('Receiving macro "deploy" (4/5 steps)');
-  });
-
-  it("clears the marker on a target that dropped out mid-run, keeping the rest", async () => {
+  it("clears the badge on a target that dropped out mid-run, keeping the rest", async () => {
     setPlayback(playback());
     await render();
     setPlayback(playback({ targetTabIds: ["a", "d"] }));
@@ -144,23 +142,53 @@ describe("TabBar — receiving-macro marker (#3446)", () => {
     expect(badge("d")).not.toBeNull();
   });
 
-  it("clears every marker when the run ends (finished or cancelled)", async () => {
+  it("clears every badge when the run ends (finished or canceled)", async () => {
     setPlayback(playback());
     await render();
     setPlayback(null);
     for (const id of ["a", "b", "c", "d"]) expect(badge(id)).toBeNull();
   });
 
-  it("does not mark the tab of a single-terminal playback", async () => {
-    setPlayback(playback({ targetTabIds: undefined }));
+  it("marks the tab of a single-terminal playback too", async () => {
+    setPlayback(playback({ tabId: "b", targetTabIds: undefined }));
     await render();
-    for (const id of ["a", "b", "c", "d"]) expect(badge(id)).toBeNull();
+    expect(badge("b")).not.toBeNull();
+    for (const id of ["a", "c", "d"]) expect(badge(id)).toBeNull();
+  });
+
+  it("shows the same badge for a running workflow, and stops that run", async () => {
+    const cancelWorkflowRun = vi.fn();
+    useAppStore.setState({ cancelWorkflowRun });
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r1",
+        workflowId: "w1",
+        workflowName: "Health check",
+        tabId: "d",
+        total: 3,
+        completed: 1,
+      },
+      output: null,
+    });
+    await render();
+    expect(badge("d")?.getAttribute("aria-label")).toBe('Running automation "Health check" (1/3)');
+    act(() => badge("d")!.click());
+    expect(cancelWorkflowRun).toHaveBeenCalledWith("r1");
+  });
+
+  it("stops a macro on the clicked tab only", async () => {
+    const cancelMacroPlaybackOnTab = vi.fn();
+    useAppStore.setState({ cancelMacroPlaybackOnTab });
+    setPlayback(playback());
+    await render();
+    act(() => badge("c")!.click());
+    expect(cancelMacroPlaybackOnTab).toHaveBeenCalledWith("c");
   });
 
   it("is distinct from the broadcast badge", async () => {
     setPlayback(playback());
     await render();
-    expect(badge("a")?.className).toBe("tab__macro-badge");
+    expect(badge("a")?.className).toBe("tab__automation-badge");
     expect(container.querySelector('[data-testid="tab-broadcast-badge-a"]')).toBeNull();
   });
 });

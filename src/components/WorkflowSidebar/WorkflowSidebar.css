@@ -140,29 +140,3 @@
   flex-shrink: 0;
   align-items: center;
 }
-
-/* Persisted run-history panel (PROD-0046). */
-.workflow-history {
-  display: flex;
-  flex-direction: column;
-  max-height: 40%;
-  border-top: 1px solid var(--border-primary);
-}
-
-/* The destructive action reads as such on hover/focus without shouting at rest. */
-.workflow-history__clear:hover:not([disabled]),
-.workflow-history__clear:focus-visible {
-  color: var(--color-error);
-}
-
-.workflow-history__list {
-  overflow-y: auto;
-  padding: var(--spacing-xxs) 0;
-}
-
-/* One ellipsizing line with the full text in a tooltip (R-082, #5680). */
-.workflow-history__meta {
-  display: block;
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-}

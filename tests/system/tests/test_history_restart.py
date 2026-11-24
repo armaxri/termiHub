@@ -11,8 +11,8 @@ asserts the history is shown again, then clears it:
   empties it. Then, with recording turned off in Settings → Sessions, a new ping
   is not recorded.
 * **Macro run history (#3543)** — play a hand-authored macro into a local
-  terminal from the Macros sidebar; the per-macro filter narrows the history
-  panel; restart, the playback row is back; Clear history empties it.
+  terminal from the Macros sidebar; the per-macro filter narrows the one
+  Automation history panel (#5818); restart, the playback row is back; Clear history empties it.
 * **HTTP monitor check history (#3462)** — monitor a local stdlib HTTP server
   (the per-monitor "Private network" opt-in allows the loopback target, #4021),
   stop, restart; "Show checks" restores the chart and table, Resume appends a
@@ -295,20 +295,20 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
         )
         run_id = run["id"]
         assert run.get("origin") == "manual"
-        self.wait(lambda: self.driver.exists(f"macro-run-{run_id}"), what="the playback row")
+        self.wait(lambda: self.driver.exists(f"automation-run-{run_id}"), what="the playback row")
 
         # The per-macro filter narrows the panel: the idle macro has no playbacks,
         # the played one shows its row; "Show all" drops the filter.
         self.driver.click(f"macro-history-{other_id}")
-        self.wait(lambda: self.driver.exists("macro-history-filter"), what="the macro filter")
-        self.wait(lambda: self.driver.exists("macro-history-empty"), what="an empty filtered list")
+        self.wait(lambda: self.driver.exists("automation-history-show-all"), what="the macro filter")
+        self.wait(lambda: self.driver.exists("automation-history-empty"), what="an empty filtered list")
         self.driver.click(f"macro-history-{played_id}")
         self.wait(
-            lambda: self.driver.exists(f"macro-run-{run_id}"), what="the filtered playback row"
+            lambda: self.driver.exists(f"automation-run-{run_id}"), what="the filtered playback row"
         )
-        self.driver.click("macro-history-show-all")
+        self.driver.click("automation-history-show-all")
         self.wait(
-            lambda: not self.driver.exists("macro-history-filter"), what="the filter to clear"
+            lambda: not self.driver.exists("automation-history-show-all"), what="the filter to clear"
         )
 
         self.wait(
@@ -320,20 +320,20 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
 
         self._open_macros_sidebar()
         self.wait(
-            lambda: self.driver.exists(f"macro-run-{run_id}"), what="the playback row after restart"
+            lambda: self.driver.exists(f"automation-run-{run_id}"), what="the playback row after restart"
         )
         restored = next(r for r in self.driver.get_state("macroRuns") or [] if r["id"] == run_id)
         assert restored.get("status") == "completed"
         assert restored.get("origin") == "manual"
 
-        self.driver.click("macro-history-clear")
-        # Clearing every macro's history asks first (#5636).
+        self.driver.click("automation-history-clear")
+        # Clearing the whole automation history asks first (#5636, #5818).
         self.wait(
-            lambda: self.driver.exists("macro-history-clear-confirm-confirm"),
+            lambda: self.driver.exists("automation-history-clear-confirm-confirm"),
             what="the clear-history confirmation",
         )
-        self.driver.click("macro-history-clear-confirm-confirm")
-        self.wait(lambda: self.driver.exists("macro-history-empty"), what="the history to clear")
+        self.driver.click("automation-history-clear-confirm-confirm")
+        self.wait(lambda: self.driver.exists("automation-history-empty"), what="the history to clear")
         assert not self.driver.get_state("macroRuns")
         self.wait(
             lambda: not self._stored_macro_runs(), what=f"the runs to leave {MACRO_RUNS_FILE}"
