@@ -15,7 +15,7 @@ import {
   FileEdit,
   FileInput,
   SquarePen,
-  ScrollText,
+  FileText,
   ArrowLeftRight,
   LayoutGrid,
   Pencil,
@@ -430,7 +430,7 @@ export function SplitView() {
               {zoomedTab.contentType === "settings" ? (
                 <SettingsIcon size={14} />
               ) : zoomedTab.contentType === "log-viewer" ? (
-                <ScrollText size={14} />
+                <FileText size={14} />
               ) : zoomedTab.contentType === "editor" ? (
                 <FileEdit size={14} />
               ) : zoomedTab.contentType === "connection-editor" ? (
@@ -1189,7 +1189,7 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
     tab.contentType === "settings"
       ? SettingsIcon
       : tab.contentType === "log-viewer"
-        ? ScrollText
+        ? FileText
         : tab.contentType === "editor"
           ? FileEdit
           : tab.contentType === "connection-editor"

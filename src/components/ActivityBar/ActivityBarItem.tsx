@@ -3,12 +3,20 @@ import { Tooltip } from "@/components/ui";
 
 interface ActivityBarItemProps {
   icon: LucideIcon;
+  /** The glyph's lucide name, rendered as `data-icon` (#5848). */
+  iconName?: string;
   label: string;
   isActive: boolean;
   onClick: () => void;
 }
 
-export function ActivityBarItem({ icon: Icon, label, isActive, onClick }: ActivityBarItemProps) {
+export function ActivityBarItem({
+  icon: Icon,
+  iconName,
+  label,
+  isActive,
+  onClick,
+}: ActivityBarItemProps) {
   return (
     <Tooltip content={label}>
       <button
@@ -16,6 +24,7 @@ export function ActivityBarItem({ icon: Icon, label, isActive, onClick }: Activi
         onClick={onClick}
         aria-label={label}
         data-testid={`activity-bar-${label.toLowerCase().replace(/\s+/g, "-")}`}
+        data-icon={iconName}
       >
         <Icon size={24} strokeWidth={1.5} />
         {isActive && <div className="activity-bar__indicator" />}

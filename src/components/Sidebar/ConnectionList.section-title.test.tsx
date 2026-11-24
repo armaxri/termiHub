@@ -1,7 +1,8 @@
 /**
  * The Connections sidebar must not say "Connections" twice (#5559): the panel
  * title names the view, so the first section below it carries a distinct name
- * ("Saved") while keeping its folder / new / import actions on that row.
+ * ("Saved") while keeping its folder / new / import actions on that row, in
+ * one "New ▾" menu (#5848).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -13,6 +14,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { TooltipProvider } from "@/components/ui";
 import { flushAsync } from "@/test/flushAsync";
 import type { RemoteAgentDefinition } from "@/types/connection";
+import { openConnectionsNewMenu, pickConnectionsNewMenuItem } from "@/test/connectionsNewMenu";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -90,16 +92,31 @@ describe("Connections sidebar — no duplicate heading (#5559)", () => {
     });
   }
 
-  it("keeps the section's actions on the renamed header row", async () => {
+  it("keeps the section's actions in one New menu on the renamed header row", async () => {
     seedSettings({ ...baseSettings });
     await render();
     const header = container.querySelector("[data-testid='sidebar-group-header-connections']")!;
+    // One "New ▾" trigger, no bare icons (#5848, R-022).
+    expect(header.querySelectorAll("button:not(.connection-list__group-toggle)")).toHaveLength(1);
+    expect(header.querySelector("[data-testid='connection-list-new-menu']")).not.toBeNull();
+    await openConnectionsNewMenu();
     for (const id of [
       "connection-list-new-folder",
       "connection-list-new-connection",
       "connection-list-open-import-settings",
     ]) {
-      expect(header.querySelector(`[data-testid='${id}']`), id).not.toBeNull();
+      expect(document.querySelector(`[data-testid='${id}']`), id).not.toBeNull();
     }
+  });
+
+  it("New ▸ New folder opens the inline folder input and keeps its focus", async () => {
+    seedSettings({ ...baseSettings });
+    await render();
+    await pickConnectionsNewMenuItem("connection-list-new-folder");
+    const input = document.querySelector<HTMLInputElement>(
+      "[data-testid='inline-folder-name-input']"
+    );
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
   });
 });

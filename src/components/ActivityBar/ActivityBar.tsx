@@ -4,12 +4,12 @@ import {
   FolderOpen,
   ArrowLeftRight,
   LayoutGrid,
-  Clapperboard,
   History,
   Workflow,
   Server,
   Settings,
-  ScrollText,
+  FileText,
+  Zap,
   LayoutDashboard,
   Stethoscope,
   Activity,
@@ -44,24 +44,33 @@ import "./ActivityBar.css";
 interface ActivityBarItemDef {
   view: SidebarView;
   icon: typeof Network;
+  /** The glyph's lucide name, exposed as `data-icon` for the product-run grade (#5848). */
+  iconName: string;
   label: string;
   experimental?: boolean;
 }
 
 const REQUIRED_ITEMS: ActivityBarItemDef[] = [
-  { view: "connections", icon: Network, label: "Connections" },
+  { view: "connections", icon: Network, iconName: "network", label: "Connections" },
 ];
 
 const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
-  { view: "files", icon: FolderOpen, label: "File browser" },
-  { view: "recent-sessions", icon: History, label: "Recent sessions" },
-  { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
-  { view: "macros", icon: Clapperboard, label: "Macros" },
-  { view: "tunnels", icon: ArrowLeftRight, label: "SSH tunnels" },
-  { view: "services", icon: Server, label: "Services" },
-  { view: "network-tools", icon: Stethoscope, label: "Network tools" },
-  { view: "workflows", icon: Workflow, label: "Workflows", experimental: true },
-  { view: "plugins", icon: Puzzle, label: "Plugins" },
+  { view: "files", icon: FolderOpen, iconName: "folder-open", label: "File browser" },
+  { view: "recent-sessions", icon: History, iconName: "history", label: "Recent sessions" },
+  { view: "workspaces", icon: LayoutGrid, iconName: "layout-grid", label: "Workspaces" },
+  // A lightning bolt reads as "quick action"; the clapperboard read as video (#5848).
+  { view: "macros", icon: Zap, iconName: "zap", label: "Macros" },
+  { view: "tunnels", icon: ArrowLeftRight, iconName: "arrow-left-right", label: "SSH tunnels" },
+  { view: "services", icon: Server, iconName: "server", label: "Services" },
+  { view: "network-tools", icon: Stethoscope, iconName: "stethoscope", label: "Network tools" },
+  {
+    view: "workflows",
+    icon: Workflow,
+    iconName: "workflow",
+    label: "Workflows",
+    experimental: true,
+  },
+  { view: "plugins", icon: Puzzle, iconName: "puzzle", label: "Plugins" },
 ];
 
 const EMPTY_HIDDEN_VIEWS: string[] = [];
@@ -113,6 +122,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
               <ActivityBarItem
                 key={item.view}
                 icon={item.icon}
+                iconName={item.iconName}
                 label={item.label}
                 isActive={sidebarView === item.view && !sidebarCollapsed}
                 onClick={() => setSidebarView(item.view)}
@@ -125,9 +135,11 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 className="activity-bar__item"
                 aria-label="Log viewer"
                 data-testid="activity-bar-logs"
+                data-icon="file-text"
                 onClick={openLogViewerTab}
               >
-                <ScrollText size={24} strokeWidth={1.5} />
+                {/* A file of text lines: the conventional log glyph (#5848, R-022). */}
+                <FileText size={24} strokeWidth={1.5} />
               </button>
             </Tooltip>
             <DropdownMenuRoot>
@@ -137,6 +149,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                     className="activity-bar__item"
                     aria-label="Settings"
                     data-testid="activity-bar-settings"
+                    data-icon="settings"
                   >
                     <Settings size={24} strokeWidth={1.5} />
                   </button>

@@ -469,15 +469,15 @@ trigger testid:
 self.invoke_toolbar_action("workspace-save-current-btn", overflow="workspace-toolbar-overflow")
 # Only reveal it (opens the menu if needed; returns True when it did — close it with Escape):
 opened = self.reveal_toolbar_action("connection-list-new-folder",
-                                    overflow="sidebar-group-header-connections-overflow")
+                                    overflow="connection-list-new-menu")
 ```
 
-| Toolbar            | Overflow trigger testid                     |
-| ------------------ | ------------------------------------------- |
-| Connections header | `sidebar-group-header-connections-overflow` |
-| Workspaces         | `workspace-toolbar-overflow`                |
-| Macros             | `macro-toolbar-overflow`                    |
-| Workflows          | `workflow-toolbar-overflow`                 |
+| Toolbar                     | Overflow trigger testid      |
+| --------------------------- | ---------------------------- |
+| Saved header (New ▾, #5848) | `connection-list-new-menu`   |
+| Workspaces                  | `workspace-toolbar-overflow` |
+| Macros                      | `macro-toolbar-overflow`     |
+| Workflows                   | `workflow-toolbar-overflow`  |
 
 ### Tests that need container fixtures (SSH/serial/telnet)
 
