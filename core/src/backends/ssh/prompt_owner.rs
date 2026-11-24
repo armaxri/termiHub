@@ -47,7 +47,12 @@ pub fn current_prompt_owner() -> Option<String> {
 /// Run `fut` with `name` recorded as the name of the connection behind any
 /// prompt it raises (#5943). `None` (or a blank name) runs `fut` unscoped (an
 /// inherited name, if any, stays in effect).
+///
+/// `fut` is boxed: it wraps whole SSH connects, whose state machines are large,
+/// and an unoptimized build would otherwise keep a second inline copy of it in
+/// this wrapper's own state — enough to overflow a test thread's stack.
 pub async fn with_prompt_connection_name<F: Future>(name: Option<&str>, fut: F) -> F::Output {
+    let fut = Box::pin(fut);
     match name.map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) => PROMPT_CONNECTION_NAME.scope(name.to_string(), fut).await,
         None => fut.await,
