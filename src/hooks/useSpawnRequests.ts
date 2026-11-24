@@ -16,6 +16,7 @@ import type { ContainerRuntime, SpawnChoice } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
+import { toastConnectCanceled } from "@/utils/connectCanceledToast";
 
 /** Auto-dismiss duration (ms) for the spawn confirmation toast (#1365). */
 const SPAWN_TOAST_DURATION_MS = 3000;
@@ -96,6 +97,14 @@ export function applySpawnChoice(
   }
 }
 
+/** A spawned SSH session whose unlock dialog or prompt was dismissed (#5881). */
+export interface SpawnSecretCanceled {
+  /** What the user canceled. */
+  canceled: "unlock" | "prompt";
+  /** The target, as the canceled-connect toast names it. */
+  name: string;
+}
+
 /**
  * Resolve the password / key passphrase a spawned SSH session needs before its
  * tab opens, the way a sidebar connect does: the stored credential of the saved
@@ -106,14 +115,18 @@ export function applySpawnChoice(
  *
  * Returns the spawn with the secret spliced into its settings, the spawn
  * unchanged when it needs none (not SSH, key without a passphrase, a password
- * already present), or `null` when the user dismissed the unlock dialog or the
- * prompt. A prompt-entered secret is stored when the prompt's Save box is
- * ticked. The secret is never logged.
+ * already present), or a {@link SpawnSecretCanceled} naming the target when the
+ * user dismissed the unlock dialog or the prompt. A prompt-entered secret is
+ * stored when the prompt's Save box is ticked. The secret is never logged.
+ *
+ * `skipStoredCredential` leaves a locked store locked and prompts (#5881): the
+ * "Type password instead" action after a canceled unlock.
  */
 export async function resolveSpawnSecret(
   spawn: ShellSpawn,
-  connectionRef: string | undefined
-): Promise<ShellSpawn | null> {
+  connectionRef: string | undefined,
+  { skipStoredCredential = false }: { skipStoredCredential?: boolean } = {}
+): Promise<ShellSpawn | SpawnSecretCanceled> {
   const store = useAppStore.getState();
   const schema = store.connectionTypes.find((ct) => ct.typeId === "ssh")?.schema;
   // The spawn's `--connection` names the saved connection; the credential
@@ -129,8 +142,12 @@ export async function resolveSpawnSecret(
     sourceFile,
     requestPassword: store.requestPassword,
     label: saved?.name,
+    ...(skipStoredCredential ? { skipStoredCredential } : {}),
   });
-  if (secret.status === "canceled") return null;
+  if (secret.status === "canceled") {
+    // The saved connection's name, else the `--connection` the request gave.
+    return { canceled: secret.at, name: saved?.name ?? connectionRef ?? spawn.title };
+  }
   if (secret.status === "none") return spawn;
   if (secret.source === "prompt" && saved && secret.shouldSave) {
     await saveAfterStorageChoice(() =>
@@ -157,7 +174,8 @@ async function handleSpawnRequest(
     openSpawnedContainer: ReturnType<typeof useAppStore.getState>["openSpawnedContainer"];
     openSpawnedShell: ReturnType<typeof useAppStore.getState>["openSpawnedShell"];
   },
-  picked: PickedTarget = {}
+  picked: PickedTarget = {},
+  secretOptions: { skipStoredCredential?: boolean } = {}
 ): Promise<void> {
   if (isContainerSpawn(req)) {
     const location = req.location ?? "";
@@ -198,10 +216,16 @@ async function handleSpawnRequest(
     const needsSecretStep =
       spawn.type === "ssh" &&
       useAppStore.getState().connectionTypes.some((ct) => ct.typeId === "ssh");
-    const ready = needsSecretStep ? await resolveSpawnSecret(spawn, req.connection) : spawn;
-    if (ready === null) {
-      // toast-policy: explains-outcome — no tab opens, and this says it was canceled
-      toast.info("Connect canceled");
+    const ready = needsSecretStep
+      ? await resolveSpawnSecret(spawn, req.connection, secretOptions)
+      : spawn;
+    if ("canceled" in ready) {
+      // No tab opens: name the target and offer to spawn it again (#5881).
+      toastConnectCanceled(ready.name, ready.canceled, {
+        retry: () => void handleSpawnRequest(req, open, picked, secretOptions),
+        typePasswordInstead: () =>
+          void handleSpawnRequest(req, open, picked, { skipStoredCredential: true }),
+      });
       return;
     }
     open.openSpawnedShell(ready);

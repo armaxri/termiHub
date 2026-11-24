@@ -102,18 +102,27 @@ def unlock_footer_problems(
 
 
 def canceled_toast_problems(
-    toasts: str, action: Optional[str], *, name: str, after: str
+    toasts: str,
+    action: Optional[str],
+    *,
+    name: str,
+    after: str,
+    kind: Optional[str] = None,
 ) -> list[str]:
     """What is wrong with the toast a canceled connect leaves, or ``[]``.
 
     ``toasts`` is the toast region's text, ``action`` the toast action's label
     (``None`` when it has none), ``name`` the connection's name and ``after``
-    ``"unlock"`` or ``"prompt"``: what the user canceled.
+    ``"unlock"`` or ``"prompt"``: what the user canceled. ``kind`` is the
+    toast's type when known (``"info"``, ``"success"``, …): a cancel explains
+    an outcome, so it is an info toast, never a success (#5881).
     """
     problems: list[str] = []
     text = toasts or ""
     if "canceled" not in text.lower():
         return ["no 'canceled' toast"]
+    if kind is not None and kind != "info":
+        problems.append(f"the cancel is a {kind!r} toast, want 'info'")
     if f'"{name}"' not in text:
         problems.append(f"the toast does not name the connection {name!r}: {text!r}")
     want = TYPE_PASSWORD_INSTEAD if after == "unlock" else RETRY

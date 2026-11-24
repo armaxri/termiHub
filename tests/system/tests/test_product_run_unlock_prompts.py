@@ -10,7 +10,9 @@ The UI review of run ``20261123T215628Z`` found:
 3. **R-126 / R-149**: the passphrase prompt printed the full key path over
    three lines above the field.
 4. **R-127 / R-162**: a canceled connect toasted a bare "Connect canceled",
-   naming no connection and offering no way on.
+   naming no connection and offering no way on. #5881 brought the agent
+   VNC/RDP and spawned-shell connects in line, and an agent cancel's success
+   toast is graded as the wrong kind.
 5. **R-150**: the telnet password prompt did not say termiHub answers the
    server's login prompt.
 
@@ -130,6 +132,39 @@ def test_a_missing_or_wrong_action_is_named():
     assert canceled_toast_problems("", None, name="x", after="prompt") == ["no 'canceled' toast"]
     problems = canceled_toast_problems('Connect to "x" canceled.', "Undo", name="x", after="prompt")
     assert problems == ["the toast's action reads 'Undo', want 'Retry'"]
+
+
+def test_a_named_spawned_shell_cancel_passes():
+    # #5881: a spawned SSH shell names its saved connection (or the request's
+    # --connection) and, after a canceled unlock, offers a typed password.
+    text = 'Connect to "App server" canceled. Its saved password stays locked.'
+    assert (
+        canceled_toast_problems(
+            text, TYPE_PASSWORD_INSTEAD, name="App server", after="unlock", kind="info"
+        )
+        == []
+    )
+    assert canceled_toast_problems(
+        'Connect to "conn-1" canceled.', RETRY, name="conn-1", after="prompt", kind="info"
+    ) == []
+
+
+def test_a_named_agent_desktop_cancel_passes():
+    # #5881: a VNC/RDP connection under an agent names the connection and retries.
+    text = 'Connect to "Build server" canceled.'
+    assert (
+        canceled_toast_problems(text, RETRY, name="Build server", after="prompt", kind="info") == []
+    )
+
+
+def test_a_cancel_as_a_success_toast_is_named():
+    # Before #5881 the agent connect's cancel was a bare success toast.
+    problems = canceled_toast_problems(
+        "Connect canceled", None, name="Jump Box", after="prompt", kind="success"
+    )
+    assert "the cancel is a 'success' toast, want 'info'" in problems
+    assert any("does not name the connection" in p for p in problems), problems
+    assert any("no next step" in p for p in problems), problems
 
 
 def test_the_one_storage_off_line_passes():

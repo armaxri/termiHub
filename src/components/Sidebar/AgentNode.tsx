@@ -124,6 +124,7 @@ import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
 import { TreeFolderRow, TreeItemRow, treeItemPaddingLeft, treeRowPaddingLeft } from "./TreeRow";
 import { errorMessage } from "@/utils/errorMessage";
+import { toastConnectCanceled } from "@/utils/connectCanceledToast";
 import { tf } from "@/i18n/catalog";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
@@ -1636,7 +1637,7 @@ export function AgentNode({
   );
 
   const handleOpenDefinition = useCallback(
-    (def: AgentDefinitionInfo) => {
+    function openDefinition(def: AgentDefinitionInfo): void {
       if (isAgentTunnelledGraphicalType(def.sessionType)) {
         // VNC/RDP under an agent runs on this computer and tunnels through the
         // agent's port forwarding (#3241) — a remote-desktop tab, not a session.
@@ -1651,8 +1652,8 @@ export function AgentNode({
           transport: connectionTypeDisplayName(def.sessionType),
         }).then((resolved) => {
           if (resolved.status === "canceled") {
-            // toast-policy: explains-outcome — no tab opens, and this says it was canceled
-            toast.info("Connect canceled");
+            // No tab opens: name the connection and offer to open it again (#5881).
+            toastConnectCanceled(def.name, "prompt", { retry: () => openDefinition(def) });
             return;
           }
           const tabId = addTab(

@@ -47,6 +47,7 @@
  */
 import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { toast } from "@/components/ui";
+import { toastConnectCanceled as showConnectCanceledToast } from "@/utils/connectCanceledToast";
 import { t, tf } from "@/i18n/catalog";
 import {
   cancelConnecting,
@@ -120,27 +121,12 @@ export type ConnectSavedConnectionResult =
   /** Unattended only: the connect itself failed (unreachable, timeout, …). */
   | { status: "failed"; reason: string };
 
-/**
- * The toast every attended cancel of a saved-connection connect shows (#5188):
- * a dismissed unlock dialog, a dismissed password prompt and the
- * "Connecting…" toast's Abort all acknowledge the cancel with it. It names the
- * connection (#5838): the dialog that was canceled is gone, so nothing else on
- * screen says which connect stopped.
- */
-export function connectCanceledText(name: string): string {
-  return `Connect to "${name}" canceled.`;
-}
-
-/** After a canceled unlock: the saved password stays locked (#5838). */
-export function connectCanceledLockedText(name: string): string {
-  return `${connectCanceledText(name)} Its saved password stays locked.`;
-}
-
-/** The action on a canceled unlock's toast (#5838), as in the unlock dialog. */
-export const CONNECT_CANCELED_TYPE_PASSWORD_LABEL = "Type password instead";
-
-/** The action on a canceled prompt's or aborted connect's toast (#5838). */
-export const CONNECT_CANCELED_RETRY_LABEL = "Retry";
+export {
+  connectCanceledText,
+  connectCanceledLockedText,
+  CONNECT_CANCELED_TYPE_PASSWORD_LABEL,
+  CONNECT_CANCELED_RETRY_LABEL,
+} from "@/utils/connectCanceledToast";
 
 /**
  * Acknowledge an attended cancel (#5188) and say what to do next (#5838):
@@ -153,25 +139,11 @@ function toastConnectCanceled(
   options: ConnectSavedConnectionOptions,
   after: "unlock" | "prompt"
 ): void {
-  const unlock = after === "unlock";
-  // toast-policy: explains-outcome — the canceled dialog is gone and no tab opens; this names
-  // the connect that stopped and offers the next step (#5838).
-  toast.info(
-    unlock ? connectCanceledLockedText(connection.name) : connectCanceledText(connection.name),
-    {
-      testId: "connect-canceled-toast",
-      action: {
-        label: unlock ? CONNECT_CANCELED_TYPE_PASSWORD_LABEL : CONNECT_CANCELED_RETRY_LABEL,
-        testId: "connect-canceled-retry",
-        onClick: () => {
-          void connectSavedConnection(
-            connection,
-            unlock ? { ...options, skipStoredCredential: true } : options
-          );
-        },
-      },
-    }
-  );
+  showConnectCanceledToast(connection.name, after, {
+    retry: () => void connectSavedConnection(connection, options),
+    typePasswordInstead: () =>
+      void connectSavedConnection(connection, { ...options, skipStoredCredential: true }),
+  });
 }
 
 /**
