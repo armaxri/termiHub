@@ -85,8 +85,9 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
   it("renders the clean-exit wording (with exit code) from the region", async () => {
     const overlay = await renderWithExit({ reason: "clean", code: 0 });
     expect(transport.subscribeCount).toBeGreaterThan(0);
-    expect(overlay?.textContent).toContain("Session ended");
-    expect(overlay?.textContent).toContain("exit code 0");
+    // #5955: a local process reads "Process exited (code N)" for every code.
+    expect(overlay?.textContent).toContain("Process exited (code 0)");
+    expect(overlay?.textContent).not.toContain("Session ended");
   });
 
   it("renders the dropped wording with a non-zero exit code from the region", async () => {

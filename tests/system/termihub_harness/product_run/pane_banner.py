@@ -19,8 +19,14 @@ from typing import Any, Mapping, Sequence
 #: tab-colour border).
 EPS = 3.0
 
-#: The heading the banner starts with, per cause.
-HEADINGS = ("Agent disconnected.", "Session ended.", "Process exited (code ")
+#: The heading the banner starts with, per cause: the strip's heading (#5955).
+HEADINGS = (
+    "Agent disconnected.",
+    "Session ended.",
+    "Session disconnected.",
+    "Device disconnected.",
+    "Process exited",
+)
 
 Rect = Mapping[str, float]
 

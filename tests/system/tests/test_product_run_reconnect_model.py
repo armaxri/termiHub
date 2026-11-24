@@ -49,7 +49,8 @@ TELNET_PASSWORD = "pr-telnet-pw"
 TELNET_CLOSED = (
     "Session disconnected The server closed the connection. Scrollback is kept. "
     "Auto-reconnect is off for this connection: telnet connections start with it off. "
-    "Turn it on with “Auto-reconnect” in the connection's settings. Reconnect View scrollback"
+    "Turn it on with “Auto-reconnect” in the connection's settings. "
+    "Press Enter to reconnect. Reconnect"
 )
 
 
@@ -106,7 +107,7 @@ def test_grade_an_auto_reconnect_note_on_a_retrying_connection_fails():
 
 
 def test_grade_a_process_exit_needs_its_code():
-    text = "Process exited (code 3) Scrollback is kept. Restart View scrollback"
+    text = "Process exited (code 3) Scrollback is kept. Press Enter to restart. Restart"
     assert (
         notice_problems(
             variant="disconnected", text=text, cause="exited", expected_cause="exited"
