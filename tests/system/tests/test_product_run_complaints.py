@@ -28,8 +28,8 @@ fails until its fix lands; the grade is never weakened to pass.
 6. **File browser menu and path polish** (#5624, #5671): at the minimum
    sidebar width the opened "…" menu stays inside the window and does not
    reach left of the sidebar (over the activity bar); Up and Upload use
-   different icons; the menu offers "Sort by" (Name / Modified / Size) and
-   "Copy path".
+   different icons; at the minimum width (column headers hidden) the menu
+   offers "Sort by" (Name / Modified / Size) and "Copy path".
 7. **Toast noise** (#5665, #5675, #5686): a toast shown while the workflow
    editor is open covers none of the dialog; three runs of two workflows
    leave no "Ran workflow" toast (#5859: the terminal output and the run
@@ -80,8 +80,7 @@ MAX_INLINE_ACTIONS = 6
 HEADER_ACTIONS = (
     "file-browser-up",
     "file-browser-refresh",
-    "file-browser-new-file",
-    "file-browser-new-folder",
+    "file-browser-new",  # "New ▾": File / Folder (#5832)
     "file-browser-toggle-hidden",
     "file-browser-cd-here",
 )

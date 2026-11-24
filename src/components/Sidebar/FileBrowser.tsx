@@ -74,6 +74,7 @@ import {
   filterEntries,
   filterHiddenEntries,
   resolveSymlinkTarget,
+  sortNeedsMenu,
   type FileSortKey,
   type SortDirection,
 } from "@/utils/fileBrowserNav";
@@ -117,6 +118,7 @@ import { RemoteDesktopBrowseRoute } from "@/components/RemoteDesktop/RemoteDeskt
 import "./FileBrowser.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
+import { useElementWidth } from "@/hooks/useElementWidth";
 import { errorMessage } from "@/utils/errorMessage";
 import { parentDir } from "@/utils/paths";
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
@@ -1178,7 +1180,17 @@ export function FileBrowser() {
     mode,
   } = useFileBrowser();
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // The browser's own width decides whether a column header is hidden (the
+  // CSS container queries), and so whether the "…" menu offers "Sort by".
+  const [observeBrowserWidth, browserWidth] = useElementWidth<HTMLDivElement>();
+  const setContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      containerRef.current = node;
+      observeBrowserWidth(node);
+    },
+    [observeBrowserWidth]
+  );
   const pathBarRef = useRef<FileBrowserPathBarHandle>(null);
 
   // Cmd/Ctrl+L anywhere in the focused browser edits the path (#5540).
@@ -1924,6 +1936,7 @@ export function FileBrowser() {
     onNewFolder: () => setNewDirName(""),
     onCopyPath: copyCurrentPath,
     sort,
+    sortInMenu: sortNeedsMenu({ width: browserWidth, columns, sortKey: sort.key }),
     onSort: setSort,
   });
 
@@ -1996,7 +2009,7 @@ export function FileBrowser() {
   return (
     <div
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
-      ref={containerRef}
+      ref={setContainerRef}
       onKeyDown={handleEditPathShortcut}
     >
       <FileBrowserDndProvider onDrop={requestTransfer} onDragOut={handleDragOut}>
@@ -2015,7 +2028,7 @@ export function FileBrowser() {
             onNavigate={handleNavigatePath}
             onCopyPath={copyCurrentPath}
           />
-          <FileBrowserActions actions={headerActions} />
+          <FileBrowserActions actions={headerActions} folder={currentPath} />
         </div>
         <FileBookmarksManageDialog
           scope={bookmarkScope}

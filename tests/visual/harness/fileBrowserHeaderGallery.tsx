@@ -123,6 +123,8 @@ function Header({ cell }: { cell: HeaderCell }) {
     onNewFolder: noop,
     onCopyPath: noop,
     sort: { key: "name", dir: "asc" },
+    // The 200px cells hide the Modified header: the menu then offers "Sort by" (#5832).
+    sortInMenu: cell.width < 240,
     onSort: noop,
   });
   return (
@@ -133,7 +135,7 @@ function Header({ cell }: { cell: HeaderCell }) {
       <div className="fbg-sidebar file-browser" style={{ width: cell.width }}>
         <div className="file-browser__toolbar">
           <FileBrowserPathBar currentPath={cell.path} onNavigate={noop} onCopyPath={noop} />
-          <FileBrowserActions actions={actions} />
+          <FileBrowserActions actions={actions} folder={cell.path} />
         </div>
       </div>
     </figure>

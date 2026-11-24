@@ -15,6 +15,13 @@ import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
 import { openFileBrowserMoreMenu } from "@/test/fileBrowserMenu";
 
+// Layout width of every measured element (the browser and its action row);
+// `null` = no layout, as in plain jsdom.
+const layoutWidth = vi.hoisted(() => ({ value: null as number | null }));
+vi.mock("@/hooks/useElementWidth", () => ({
+  useElementWidth: () => [() => {}, layoutWidth.value],
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
@@ -306,8 +313,15 @@ describe("FileBrowser.css – truncation + scroll rules (#5623, #2798)", () => {
 });
 
 describe("FileBrowser – sort by a hidden column (#5671)", () => {
-  beforeEach(mountHarness);
-  afterEach(unmountHarness);
+  beforeEach(() => {
+    // Narrow: the Size and Modified headers are hidden, so the menu sorts.
+    layoutWidth.value = 200;
+    mountHarness();
+  });
+  afterEach(() => {
+    unmountHarness();
+    layoutWidth.value = null;
+  });
 
   async function chooseSort(testId: string) {
     await openFileBrowserMoreMenu();
@@ -359,5 +373,40 @@ describe("FileBrowser – sort by a hidden column (#5671)", () => {
   it("shows no 'sorted by' hint while sorting by name", async () => {
     await renderLocalAt("/home");
     expect(container.querySelector('[data-testid="file-browser-sorted-by"]')).toBeNull();
+  });
+});
+
+describe("FileBrowser – one sort control (#5832)", () => {
+  beforeEach(() => {
+    mountHarness();
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(rowEntries);
+      return Promise.resolve(undefined);
+    });
+  });
+  afterEach(() => {
+    unmountHarness();
+    layoutWidth.value = null;
+  });
+
+  const sortEntry = () => document.querySelector('[data-testid="file-browser-sort-menu"]');
+
+  it("leaves sorting to the column headers while they all show", async () => {
+    layoutWidth.value = 500;
+    await renderLocalAt("/home");
+    expect(container.querySelector('[data-testid="file-browser-sort-size"]')).not.toBeNull();
+    await openFileBrowserMoreMenu();
+    expect(sortEntry()).toBeNull();
+  });
+
+  it("offers 'Sort by' with the current sort once a header hides", async () => {
+    layoutWidth.value = 300; // below Modified's 320 px
+    await renderLocalAt("/home");
+    await openFileBrowserMoreMenu();
+    expect(sortEntry()).not.toBeNull();
+    expect(sortEntry()?.getAttribute("aria-label")).toBe("Sort by: Name, ascending");
+    expect(document.querySelector('[data-testid="file-browser-sort-current"]')?.textContent).toBe(
+      "Name"
+    );
   });
 });

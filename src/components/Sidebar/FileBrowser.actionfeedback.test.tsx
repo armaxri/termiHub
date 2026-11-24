@@ -23,6 +23,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { seedLayoutState } from "@/test/layoutState";
+import { findFileBrowserAction } from "@/test/fileBrowserMenu";
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -225,8 +226,9 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
   // --- New folder ---
 
   async function createFolderNamed(name: string) {
+    const trigger = (await findFileBrowserAction("file-browser-new-folder"))!;
     await act(async () => {
-      q("file-browser-new-folder").click();
+      trigger.click();
     });
     const input = q("file-browser-new-folder-input") as HTMLInputElement;
     await setInputValue(input, name);
@@ -262,8 +264,9 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
   // --- New file ---
 
   async function createFileNamed(name: string) {
+    const trigger = (await findFileBrowserAction("file-browser-new-file"))!;
     await act(async () => {
-      q("file-browser-new-file").click();
+      trigger.click();
     });
     const input = q("file-browser-new-file-input") as HTMLInputElement;
     await setInputValue(input, name);
