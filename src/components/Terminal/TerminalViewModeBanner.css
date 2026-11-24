@@ -1,17 +1,24 @@
+/* Pinned to the top edge of the terminal slot (#5823), like the reconnect strip
+   (#5179), so the two read as one family of pane notices. At the bottom edge
+   the toast stack covered its Reconnect button; the banner is also a toast
+   keep-clear zone (data-toast-avoid) for panes whose top sits in the stack's
+   corner. */
 .terminal-view-mode-banner {
   position: absolute;
-  bottom: 0;
+  top: 0;
   left: 0;
   right: 0;
   z-index: var(--z-float);
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-xs) var(--spacing-sm);
   padding: var(--spacing-xxs) var(--spacing-md);
   background: color-mix(in srgb, var(--color-warning) 12%, var(--terminal-bg));
-  border-top: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
-  font-family: var(--font-mono);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  /* UI typography, like the reconnect strip (#5619): the banner is app chrome. */
+  font-family: var(--font-family);
   font-size: var(--font-size-xs);
+  line-height: 1.5;
   /* #5744: --text-secondary misses AA on the warning tint (4.49:1 Dark); the
      tint, border and icon carry the warning cue. */
   color: var(--text-primary);
@@ -23,11 +30,16 @@
   flex-shrink: 0;
 }
 
+/* Wraps instead of clipping (#5823): in a narrow pane the hint drops to a second
+   line and the Reconnect button keeps its full size beside it. */
 .terminal-view-mode-banner__label {
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.terminal-view-mode-banner__heading {
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Keep the reconnect Button from stretching the thin banner: the primitive

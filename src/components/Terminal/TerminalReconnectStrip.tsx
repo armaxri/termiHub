@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { WifiOff } from "lucide-react";
 import { connectionIdentityForTabId, useAppStore } from "@/store/appStore";
 import { useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, LiveRegion, Spinner } from "@/components/ui";
+import { Button, LiveRegion, Spinner, TOAST_AVOID_PROPS } from "@/components/ui";
 import { reconnectAttemptLabel } from "@/utils/reconnectStatus";
 import {
   dropTransportOf,
@@ -10,6 +10,7 @@ import {
   reconnectHeadingFor,
   reconnectStatusFor,
 } from "./dropCopy";
+import { useTopNoticeInset } from "./topNoticeInset";
 import "./TerminalReconnectStrip.css";
 
 interface TerminalReconnectStripProps {
@@ -62,6 +63,8 @@ export function TerminalReconnectStrip({
   const auto = useSessionAutoReconnect(tabId);
   const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
   const stripRef = useRef<HTMLDivElement>(null);
+  // The terminal search bar opens below the strip, not over Cancel / Stop.
+  useTopNoticeInset(stripRef);
   const waiting = auto?.phase === "waiting";
   // The loop drops typed input; a plain (agent) reconnect may not, so only the
   // loop variant makes the input claim.
@@ -157,6 +160,9 @@ export function TerminalReconnectStrip({
       // finds "the disconnect notice" for every variant.
       data-testid="terminal-disconnect-overlay"
       data-variant="strip"
+      // A toast keep-clear zone (#5823): its Cancel / Stop stays uncovered when
+      // the pane's top edge sits in the toast stack's corner.
+      {...TOAST_AVOID_PROPS}
       role="region"
       aria-label={heading}
     >
