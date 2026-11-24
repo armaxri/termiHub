@@ -1,63 +1,72 @@
 import { describe, it, expect } from "vitest";
-import { createMacroFanoutInjector, describeMacroFanoutOutcome } from "./macroFanout";
+import { createTargetInjector, describeMacroFanoutOutcome, tallyMacroTargets } from "./macroFanout";
 
-describe("createMacroFanoutInjector (PROD-042)", () => {
-  it("delivers each step to every live target", async () => {
-    const seen: string[] = [];
-    const fan = createMacroFanoutInjector(
-      ["a", "b"],
-      async (id, data) => {
-        seen.push(`${id}:${data}`);
-        return true;
-      },
-      (ids) => ids
-    );
-    expect(await fan.inject("x")).toBe(true);
-    expect(seen).toEqual(["a:x", "b:x"]);
-    expect(fan.live()).toEqual(["a", "b"]);
-  });
-
-  it("drops a target that is no longer connected before injecting into it", async () => {
+describe("createTargetInjector (#5818 slice 5)", () => {
+  it("types into a target only while it is still connected", async () => {
     const seen: string[] = [];
     let connected = ["a", "b"];
-    const fan = createMacroFanoutInjector(
-      ["a", "b"],
+    const inject = createTargetInjector(
       async (id, data) => {
         seen.push(`${id}:${data}`);
         return true;
       },
-      (ids) => ids.filter((id) => connected.includes(id))
+      (id) => connected.includes(id)
     );
-    await fan.inject("1");
+    expect(await inject("a", "1")).toBe(true);
+    expect(await inject("b", "1")).toBe(true);
     connected = ["a"];
-    await fan.inject("2");
-    expect(seen).toEqual(["a:1", "b:1", "a:2"]);
-    expect(fan.dropped()).toEqual(["b"]);
+    expect(await inject("b", "2")).toBe(false);
+    expect(seen).toEqual(["a:1", "b:1"]);
   });
 
-  it("treats a rejected injection as a failed target", async () => {
-    const fan = createMacroFanoutInjector(
-      ["a", "b"],
-      async (id) => {
-        if (id === "b") throw new Error("gone");
-        return true;
+  it("treats a rejected injection or a missing injector as stopped input", async () => {
+    const throwing = createTargetInjector(
+      async () => {
+        throw new Error("gone");
       },
-      (ids) => ids
+      () => true
     );
-    expect(await fan.inject("x")).toBe(true);
-    expect(fan.live()).toEqual(["a"]);
-    expect(fan.dropped()).toEqual(["b"]);
+    expect(await throwing("a", "x")).toBe(false);
+    expect(await createTargetInjector(null, () => true)("a", "x")).toBe(false);
+  });
+});
+
+describe("tallyMacroTargets (#5818 slice 5)", () => {
+  const done = (tabId: string, stepsPlayed = 2) => ({
+    tabId,
+    status: "completed" as const,
+    stepsPlayed,
   });
 
-  it("returns false once every target is gone or no injector exists", async () => {
-    const none = createMacroFanoutInjector(["a"], null, (ids) => ids);
-    expect(await none.inject("x")).toBe(false);
-    const allGone = createMacroFanoutInjector(
-      ["a"],
-      async () => true,
-      () => []
-    );
-    expect(await allGone.inject("x")).toBe(false);
+  it("completes when every target typed the whole macro", () => {
+    expect(tallyMacroTargets([done("a"), done("b")])).toEqual({
+      status: "completed",
+      delivered: 2,
+      dropped: 0,
+      stepsPlayed: 2,
+    });
+  });
+
+  it("stays completed when one target dropped and others finished", () => {
+    const t = tallyMacroTargets([done("a"), { tabId: "b", status: "error", stepsPlayed: 1 }]);
+    expect(t).toMatchObject({ status: "completed", delivered: 1, dropped: 1 });
+  });
+
+  it("is an error only when every target dropped", () => {
+    const t = tallyMacroTargets([
+      { tabId: "a", status: "error", stepsPlayed: 0 },
+      { tabId: "b", status: "error", stepsPlayed: 1 },
+    ]);
+    expect(t).toMatchObject({ status: "error", delivered: 0, dropped: 2, stepsPlayed: 1 });
+  });
+
+  it("is canceled when a target was stopped or never started", () => {
+    expect(
+      tallyMacroTargets([done("a"), { tabId: "b", status: "cancelled", stepsPlayed: 1 }]).status
+    ).toBe("cancelled");
+    expect(
+      tallyMacroTargets([done("a"), { tabId: "b", status: undefined, stepsPlayed: 0 }]).status
+    ).toBe("cancelled");
   });
 });
 
@@ -93,7 +102,7 @@ describe("describeMacroFanoutOutcome (PROD-042)", () => {
     );
   });
 
-  it("summarises a cancelled run with the steps played", () => {
+  it("says how many terminals a stopped run finished on", () => {
     const s = describeMacroFanoutOutcome("M", {
       ...base,
       status: "cancelled",
@@ -102,9 +111,18 @@ describe("describeMacroFanoutOutcome (PROD-042)", () => {
       skipped: 1,
     });
     expect(s.kind).toBe("info");
-    expect(s.description).toBe(
-      "Stopped after 1 of 4 steps on 2 terminals · 1 skipped (not connected)"
-    );
+    expect(s.description).toBe("Finished on 2 of 3 terminals · 1 skipped (not connected)");
+  });
+
+  it("never hides a dropped terminal behind a stopped run", () => {
+    const s = describeMacroFanoutOutcome("M", {
+      ...base,
+      status: "cancelled",
+      delivered: 0,
+      dropped: 1,
+    });
+    expect(s.kind).toBe("error");
+    expect(s.description).toContain("1 stopped early (disconnected mid-playback)");
   });
 
   it("reports an errored run when no target is left", () => {

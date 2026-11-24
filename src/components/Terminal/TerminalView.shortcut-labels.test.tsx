@@ -24,7 +24,7 @@ vi.mock("@/components/ui", async () =>
 );
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
 vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
-vi.mock("./MacroPlaybackDialog", () => ({ MacroPlaybackDialog: () => null }));
+vi.mock("@/components/Automations/RunTargetsDialog", () => ({ RunTargetsDialog: () => null }));
 vi.mock("./BroadcastScopeDialog", () => ({ BroadcastScopeDialog: () => null }));
 vi.mock("@/components/SplitView", () => ({ SplitView: () => null }));
 vi.mock("@/services/events", () => ({ terminalDispatcher: { init: vi.fn() } }));

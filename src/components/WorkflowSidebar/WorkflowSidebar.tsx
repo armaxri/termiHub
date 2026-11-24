@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Play } from "lucide-react";
-import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
-import { currentBroadcastView } from "@/store/broadcastBridge";
-import { resolveConnectedTargets, type RunnableTarget } from "@/store/slices/workflowFanout";
+import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { SearchInput, toast, EmptyState } from "@/components/ui";
@@ -17,12 +15,12 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem, WORKFLOW_JUST_SAVED_MS } from "./WorkflowListItem";
-import { WorkflowHistorySection } from "./WorkflowHistorySection";
+import { HistorySection } from "@/components/AutomationSidebar";
 import { WorkflowsExperimentalNotice } from "./WorkflowsExperimentalNotice";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
-import { WorkflowRunTargetsDialog } from "./WorkflowRunTargetsDialog";
+import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
 import "./WorkflowSidebar.css";
@@ -34,17 +32,6 @@ function generateWorkflowId(): string {
 }
 
 /** The open "Run on…" picker (PROD-047): its workflow and a snapshot of targets. */
-interface RunTargetsState {
-  workflow: Workflow;
-  candidates: RunnableTarget[];
-  broadcastTabIds: string[];
-  initialSelection: string[];
-}
-
-/** Stable empty props for the closed picker (avoids re-seeding on every render). */
-const NO_TARGETS: RunnableTarget[] = [];
-const NO_IDS: string[] = [];
-
 /** Build a fresh, empty workflow draft (backend stamps the timestamps on save). */
 function blankWorkflow(): Workflow {
   return {
@@ -97,7 +84,16 @@ export function WorkflowSidebar() {
 
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
-  const [runTargets, setRunTargets] = useState<RunTargetsState | null>(null);
+  // The automation the one history panel is narrowed to (#5818); null = every run.
+  const [historyFilterId, setHistoryFilterId] = useState<string | null>(null);
+  // "Run on…" (#5818, slice 5): the run picker for one workflow.
+  const [runOnId, setRunOnId] = useState<string | null>(null);
+  const runOnItems = useMemo(() => {
+    const workflow = workflows.find((w) => w.id === runOnId);
+    return workflow
+      ? [{ id: workflow.id, name: workflow.name, stepCount: workflow.steps.length }]
+      : [];
+  }, [workflows, runOnId]);
   // The row just saved from the editor, marked briefly so the user sees which
   // one changed (#5687). `seq` tells two saves of the same workflow apart.
   const [justSaved, setJustSaved] = useState<{ id: string; seq: number } | null>(null);
@@ -147,29 +143,7 @@ export function WorkflowSidebar() {
     [runWorkflow]
   );
 
-  const openRunTargets = useCallback(
-    (workflowId: string) => {
-      const workflow = workflows.find((w) => w.id === workflowId);
-      if (!workflow) return;
-      // Snapshot the connected terminals and broadcast group at open time.
-      const state = useAppStore.getState();
-      const { targets } = resolveConnectedTargets(
-        state,
-        collectLiveTabs(state).map((t) => t.id)
-      );
-      const broadcast = currentBroadcastView();
-      const broadcastTabIds = broadcast.active ? broadcast.targetTabIds : [];
-      const activeId = getActiveTab(state)?.id;
-      const preferred = broadcastTabIds.length > 0 ? broadcastTabIds : activeId ? [activeId] : [];
-      setRunTargets({
-        workflow,
-        candidates: targets,
-        broadcastTabIds,
-        initialSelection: targets.filter((t) => preferred.includes(t.id)).map((t) => t.id),
-      });
-    },
-    [workflows]
-  );
+  const openRunTargets = useCallback((workflowId: string) => setRunOnId(workflowId), []);
 
   const handleEdit = useCallback(
     (workflowId: string) => {
@@ -464,7 +438,7 @@ export function WorkflowSidebar() {
         </div>
       )}
       <SchedulesSection />
-      <WorkflowHistorySection />
+      <HistorySection automationId={historyFilterId} onFilterChange={setHistoryFilterId} />
       <WorkflowRunOutput />
       <WorkflowEditorDialog
         open={editing !== null}
@@ -477,22 +451,21 @@ export function WorkflowSidebar() {
         }}
         onSave={handleSaveEdit}
       />
-      <WorkflowRunTargetsDialog
-        open={runTargets !== null}
-        workflowName={runTargets?.workflow.name ?? ""}
-        candidates={runTargets?.candidates ?? NO_TARGETS}
-        broadcastTabIds={runTargets?.broadcastTabIds ?? NO_IDS}
-        initialSelection={runTargets?.initialSelection ?? NO_IDS}
+      <RunTargetsDialog
+        open={runOnId !== null}
+        automations={runOnItems}
+        emptyText="This workflow no longer exists."
         onOpenChange={(open) => {
-          if (!open) setRunTargets(null);
+          if (!open) setRunOnId(null);
         }}
-        onRun={(tabIds, { parallel }) => {
-          if (runTargets) {
-            void runWorkflow(runTargets.workflow.id, {
-              targetTabIds: tabIds,
-              ...(parallel ? {} : { concurrency: 1 }),
-            });
-          }
+        onRun={(workflowId, tabIds, { parallel }) => {
+          // One terminal runs as a plain run (its own toast); several fan out.
+          void runWorkflow(
+            workflowId,
+            tabIds.length === 1
+              ? { targetTabId: tabIds[0] }
+              : { targetTabIds: tabIds, ...(parallel ? {} : { concurrency: 1 }) }
+          );
         }}
       />
       <ConfirmDeleteDialog

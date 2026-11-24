@@ -19,11 +19,13 @@ import type { AppState } from "../appStore";
 import { collectLiveTabs, getActiveTab } from "../layoutHelpers";
 import { filterConnectedTerminalTabIds } from "../tabQueries";
 import { automationToMacro, isMacroShaped, macroToAutomation } from "./automationViews";
-import { createMacroFanoutInjector, describeMacroFanoutOutcome } from "./macroFanout";
+import { createTargetInjector, describeMacroFanoutOutcome, tallyMacroTargets } from "./macroFanout";
 import {
   effectiveTimingMode,
   playAutomationKeys,
+  playAutomationKeysOnTargets,
   type MacroKeysPlayback,
+  type MacroTargetsPlayback,
 } from "./macroKeysPlayback";
 import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
 import { errorMessage } from "@/utils/errorMessage";
@@ -49,6 +51,11 @@ export interface MacroPlaybackState {
    * receiving input, so a dropped target's tab-strip marker clears (#3446).
    */
   targetTabIds?: string[];
+  /**
+   * Chunks typed into each target of a multi-terminal playback, by tab id
+   * (#5818, slice 5): each target runs on its own, so each has its own count.
+   */
+  targetProgress?: Record<string, number>;
 }
 
 /** Options for {@link AppState.playMacro}. */
@@ -57,11 +64,16 @@ export interface PlayMacroOptions {
   targetTabId?: string;
   /**
    * Play into several terminals at once (PROD-042, #3443). With more than one
-   * id, each step is delivered to every connected target in lock-step; targets
-   * that are not connected are skipped and reported in the summary. Takes
-   * precedence over {@link targetTabId}.
+   * id, each connected target runs the macro on its own (#5818, slice 5), at
+   * most 8 at once; targets that are not connected are skipped and reported in
+   * the summary. Takes precedence over {@link targetTabId}.
    */
   targetTabIds?: string[];
+  /**
+   * Run the targets of a multi-terminal playback at the same time (the
+   * default) or, when `false`, one after another.
+   */
+  parallel?: boolean;
   /** Timing override; defaults to the macro's saved typing speed (#5818). */
   timingMode?: MacroTimingMode;
   /** Per-step delay (ms) for the `"fixed"` timing mode. */
@@ -79,8 +91,25 @@ export interface PlayMacroOptions {
  * Handle for the currently-running macro playback, held at module scope so
  * {@link AppState.cancelMacroPlayback} can stop it without threading the handle
  * through store state (it is not serializable). `null` when nothing is playing.
+ * A single-terminal playback holds one handle; a multi-terminal one holds the
+ * per-target handle, which can stop one target or all of them.
  */
-let activeMacroPlayback: MacroKeysPlayback | null = null;
+let activePlayback:
+  | { kind: "single"; tabId: string; handle: MacroKeysPlayback }
+  | { kind: "targets"; handle: MacroTargetsPlayback }
+  | null = null;
+
+/** Identity of the multi-terminal run that owns the shared playback state. */
+let currentTargetsRun: object | null = null;
+
+/** Stop the in-flight playback, if any, so a fresh one takes over. */
+function stopActivePlayback(): void {
+  currentTargetsRun = null;
+  if (!activePlayback) return;
+  if (activePlayback.kind === "single") activePlayback.handle.cancel();
+  else activePlayback.handle.cancelAll();
+  activePlayback = null;
+}
 
 /** Generate a unique macro id. */
 function generateMacroId(): string {
@@ -173,6 +202,12 @@ export interface MacrosSlice {
   playMacro: (macroId: string, opts?: PlayMacroOptions) => Promise<MacroPlaybackStatus | null>;
   /** Cancel the in-flight macro playback, if any. Idempotent. */
   cancelMacroPlayback: () => void;
+  /**
+   * Stop the playback on one terminal only (#5818, slice 5: the tab badge's
+   * Stop). On a multi-terminal playback the other terminals keep typing. A
+   * no-op when nothing plays on `tabId`.
+   */
+  cancelMacroPlaybackOnTab: (tabId: string) => void;
 }
 
 export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => {
@@ -183,11 +218,13 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
   };
 
   /**
-   * Multi-target playback (PROD-042, #3443): replay `macro` into every connected
-   * terminal in `requested`, in lock-step, through the shared `send_input` seam.
-   * Uses the broadcast fan-out's connected-terminal filter, so a disconnected or
-   * taken-over tab is never typed into; the summary reports skipped / dropped
-   * targets rather than implying the whole fleet got the macro.
+   * Multi-target playback (PROD-042, #3443; #5818 slice 5): play `macro` on
+   * every connected terminal in `requested` as independent per-target runs,
+   * at most 8 at once (or one after another when `parallel` is false).
+   * Uses the broadcast fan-out's connected-terminal filter before every chunk,
+   * so a disconnected or taken-over tab is never typed into; the summary
+   * reports skipped and dropped targets rather than implying the whole fleet
+   * got the macro.
    */
   const playMacroOnTargets = async (
     macro: Macro,
@@ -205,14 +242,12 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       toast.info(`Macro "${macro.name}" has no steps to play`);
       return null;
     }
-    if (activeMacroPlayback) {
-      activeMacroPlayback.cancel();
-      activeMacroPlayback = null;
-    }
+    stopActivePlayback();
 
     const timingMode = effectiveTimingMode(get(), macro, opts ?? {});
-    const fanout = createMacroFanoutInjector(targets, getTerminalInputInjector(), (ids) =>
-      filterConnectedTerminalTabIds(get(), ids)
+    const inject = createTargetInjector(
+      getTerminalInputInjector(),
+      (tabId) => filterConnectedTerminalTabIds(get(), [tabId]).length > 0
     );
     const firstTab = targets[0];
     const targetLabels = targets.map((id) => macroTargetLabel(get(), id));
@@ -220,6 +255,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     const toastId = `macro-playback-${macro.id}-multi`;
     const total = macro.steps.length;
     const title = `Playing macro "${macro.name}" on ${targets.length} terminals…`;
+    const progress: Record<string, number> = Object.fromEntries(targets.map((id) => [id, 0]));
     toast.loading(title, { id: toastId, description: `0 / ${total} steps` });
     set({
       macroPlayback: {
@@ -230,71 +266,113 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         total,
         played: 0,
         targetTabIds: targets,
+        targetProgress: progress,
       },
     });
     frontendLog("macro_playback", `fan-out macro=${macro.id} targets=${targets.length}`);
 
-    const handle = playAutomationKeys(
+    // Only the current run may change the shared playback state and its toast:
+    // a superseded run of the same macro on the same tabs still reports its
+    // targets ending, and must not clear the new run's badges.
+    const run = {};
+    currentTargetsRun = run;
+    const isCurrent = () => currentTargetsRun === run;
+    const handle = playAutomationKeysOnTargets(
       get(),
       macro,
-      fanout.inject,
-      { timingMode: opts?.timingMode, fixedDelayMs: opts?.fixedDelayMs },
+      targets,
+      inject,
       {
-        onProgress: (played, stepTotal) => {
-          // Narrow the receiving set to the targets still live (#3446) so a tab
-          // dropped mid-run (disconnected / taken over / injection failed) loses
-          // its tab-strip "receiving macro" marker as soon as it stops receiving.
-          const live = fanout.live();
+        override: { timingMode: opts?.timingMode, fixedDelayMs: opts?.fixedDelayMs },
+        parallel: opts?.parallel,
+      },
+      {
+        onProgress: (tabId, played) => {
+          if (!isCurrent()) return;
+          progress[tabId] = played;
+          const furthest = Math.max(...Object.values(progress));
           set((s) =>
-            s.macroPlayback &&
-            s.macroPlayback.macroId === macro.id &&
-            s.macroPlayback.tabId === firstTab
-              ? { macroPlayback: { ...s.macroPlayback, played, targetTabIds: live } }
+            isCurrent() && s.macroPlayback
+              ? {
+                  macroPlayback: {
+                    ...s.macroPlayback,
+                    played: furthest,
+                    targetProgress: { ...progress },
+                  },
+                }
               : {}
           );
           toast.loading(title, {
             id: toastId,
-            description: `${played} / ${stepTotal} steps · ${live.length} receiving`,
+            description: `${furthest} / ${total} steps`,
           });
+        },
+        // A target whose run ended (finished, stopped or dropped) loses its
+        // tab-strip "running automation" badge at once (#3446).
+        onTargetEnd: (tabId) => {
+          set((s) =>
+            isCurrent() && s.macroPlayback
+              ? {
+                  macroPlayback: {
+                    ...s.macroPlayback,
+                    targetTabIds: (s.macroPlayback.targetTabIds ?? []).filter((id) => id !== tabId),
+                  },
+                }
+              : {}
+          );
         },
       }
     );
-    activeMacroPlayback = handle;
-    const result = await handle.done;
-    if (activeMacroPlayback === handle) {
-      activeMacroPlayback = null;
+    activePlayback = { kind: "targets", handle };
+    const outcomes = await handle.done;
+    if (activePlayback?.kind === "targets" && activePlayback.handle === handle) {
+      activePlayback = null;
+      currentTargetsRun = null;
       set({ macroPlayback: null });
     }
 
+    const tally = tallyMacroTargets(outcomes);
     const summary = describeMacroFanoutOutcome(macro.name, {
-      status: result.status,
+      status: tally.status,
       requested: requested.length,
-      delivered: fanout.live().length,
-      dropped: fanout.dropped().length,
+      delivered: tally.delivered,
+      dropped: tally.dropped,
       skipped,
-      stepsPlayed: result.stepsPlayed,
+      stepsPlayed: tally.stepsPlayed,
       totalSteps: total,
     });
-    toast[summary.kind](summary.message, { id: toastId, description: summary.description });
-    const dropped = fanout.dropped().length;
-    recordMacroRun(
-      set,
-      buildMacroRun({
-        id: opts?.runId,
-        macro,
-        startedAt,
-        endedAt: new Date(),
-        status: result.status,
-        stepsPlayed: result.stepsPlayed,
-        targetLabels,
-        origin: opts?.origin ?? "manual",
-        error:
-          dropped > 0
-            ? `${dropped} of ${targets.length} terminals stopped receiving input`
-            : undefined,
-      })
-    );
-    return result.status;
+    if (summary.kind === "success") {
+      // toast-policy: background — the run spans several terminals, most of them off-screen
+      toast.success(summary.message, { id: toastId, description: summary.description });
+    } else if (summary.kind === "info") {
+      // toast-policy: explains-outcome — says how far the canceled playback got
+      toast.info(summary.message, { id: toastId, description: summary.description });
+    } else {
+      toast.error(summary.message, { id: toastId, description: summary.description });
+    }
+    // One history record per terminal (#5818): each target was its own run, with
+    // its own outcome. A target that never started has no run to record.
+    outcomes
+      .filter((outcome) => outcome.status !== undefined)
+      .forEach((outcome, index) => {
+        const status = outcome.status ?? "cancelled";
+        recordMacroRun(
+          set,
+          buildMacroRun({
+            // The caller's pre-generated id names the first terminal's record.
+            id: index === 0 ? opts?.runId : undefined,
+            macro,
+            startedAt: outcome.startedAt ?? startedAt,
+            endedAt: outcome.endedAt ?? new Date(),
+            status,
+            stepsPlayed: outcome.stepsPlayed,
+            targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
+            origin: opts?.origin ?? "manual",
+            error: status === "error" ? "The terminal stopped accepting input" : undefined,
+          })
+        );
+      });
+    return tally.status;
   };
 
   return {
@@ -482,10 +560,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       }
 
       // Only one playback at a time — cancel any in-flight run first.
-      if (activeMacroPlayback) {
-        activeMacroPlayback.cancel();
-        activeMacroPlayback = null;
-      }
+      stopActivePlayback();
 
       const timingMode = effectiveTimingMode(get(), macro, opts ?? {});
       const injector = getTerminalInputInjector();
@@ -534,14 +609,14 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           },
         }
       );
-      activeMacroPlayback = handle;
+      activePlayback = { kind: "single", tabId: targetTabId, handle };
 
       const result = await handle.done;
 
       // Only clear shared state when this run is still the current one — a newer
       // playMacro may have replaced it while this one was cancelled.
-      if (activeMacroPlayback === handle) {
-        activeMacroPlayback = null;
+      if (activePlayback?.kind === "single" && activePlayback.handle === handle) {
+        activePlayback = null;
         set({ macroPlayback: null });
       }
 
@@ -576,9 +651,15 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     },
 
     cancelMacroPlayback: () => {
-      if (activeMacroPlayback) {
-        activeMacroPlayback.cancel();
-      }
+      if (!activePlayback) return;
+      if (activePlayback.kind === "single") activePlayback.handle.cancel();
+      else activePlayback.handle.cancelAll();
+    },
+
+    cancelMacroPlaybackOnTab: (tabId) => {
+      if (!activePlayback) return;
+      if (activePlayback.kind === "targets") activePlayback.handle.cancel(tabId);
+      else if (activePlayback.tabId === tabId) activePlayback.handle.cancel();
     },
   };
 };

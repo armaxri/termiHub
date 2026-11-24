@@ -551,9 +551,9 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("records a run-macro step as part of the workflow's own run only (#5818)", async () => {
-    // The called macro runs inline through the automation runner; one run, one
-    // history record (before slice 4 a workflow that ran a macro wrote both).
+  it("records a run-macro step's callee as run by another automation (#5818)", async () => {
+    // The called macro runs inline through the automation runner. The one
+    // history (slice 9) gets the workflow's run and the callee's own run.
     seedConnectedTerminal();
     recordedMacroRuns.length = 0;
     recordedRuns.length = 0;
@@ -572,10 +572,12 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     await useAppStore.getState().runWorkflow("w1");
 
-    await vi.waitFor(() => expect(recordedRuns).toHaveLength(1));
+    await vi.waitFor(() => expect(recordedRuns).toHaveLength(2));
+    // Newest first: the callee finished first. No targetCount: not a playback.
     expect(recordedRuns[0]).toMatchObject({ workflowId: "w1", status: "completed" });
+    expect(recordedRuns[1]).toMatchObject({ workflowId: "m1", status: "completed" });
     expect(recordedMacroRuns).toEqual([]);
-    expect(JSON.stringify(recordedRuns[0])).not.toContain("tail -f");
+    expect(JSON.stringify(recordedRuns)).not.toContain("tail -f");
   });
 
   describe("run-local-process guardrails (#1857)", () => {
@@ -1327,6 +1329,45 @@ describe("appStore — workflow run slice (#1852)", () => {
         'Ran workflow "Workflow w1" on 1 terminal',
         expect.objectContaining({ description: expect.stringContaining("1 skipped") })
       );
+    });
+
+    it("records one run per terminal, and one nested run per called automation on each (#5818)", async () => {
+      seedTwoTerminals();
+      captureSends();
+      recordedRuns.length = 0;
+      recordedMacroRuns.length = 0;
+      const macro: Macro = {
+        id: "m1",
+        name: "tail log",
+        tags: [],
+        steps: [{ data: "x", delayMs: 0 }],
+        createdAt: "",
+        updatedAt: "",
+      };
+      useAppStore.setState({
+        macros: [macro],
+        workflows: [
+          workflow("w1", [
+            {
+              kind: "loop",
+              loop: { kind: "count", count: 5 },
+              body: [{ kind: "run-macro", macroId: "m1" }],
+            },
+            { kind: "run-macro", macroId: "m1" },
+          ]),
+        ],
+      });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      await vi.waitFor(() => expect(recordedRuns).toHaveLength(4));
+      expect(recordedRuns.map((r) => `${r.workflowId} ${r.tabId}`).sort()).toEqual([
+        "m1 tab-a",
+        "m1 tab-b",
+        "w1 tab-a",
+        "w1 tab-b",
+      ]);
+      expect(recordedMacroRuns).toEqual([]);
     });
 
     it("refuses when none of the selected terminals are connected", async () => {
