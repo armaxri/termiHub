@@ -68,7 +68,7 @@ fn an_older_file_without_descriptions_still_loads() {
     let json = serde_json::json!({
         "id": "s1",
         "name": "Legacy",
-        "action": { "kind": "workflow", "workflowId": "wf" },
+        "action": { "kind": "automation", "automationId": "wf" },
         "targets": { "kind": "connections", "connectionIds": ["c1"] },
         "rule": { "kind": "interval", "everyMinutes": 5 },
     });

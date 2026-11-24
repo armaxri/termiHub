@@ -1,5 +1,5 @@
 /**
- * Scheduled workflows and macros (PROD-043). The wire types are generated from
+ * Scheduled automations (PROD-043, schema v3 since #5818). The wire types are generated from
  * the Rust types in `src-tauri/src/schedules/{config,wire}.rs`.
  */
 

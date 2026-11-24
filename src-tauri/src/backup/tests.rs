@@ -69,7 +69,7 @@ fn macros_doc(items: &[(&str, &str)]) -> Value {
 
 fn schedule_doc(id: &str, name: &str) -> Value {
     json!({"id": id, "name": name,
-           "action": {"kind": "workflow", "workflowId": "wf1"},
+           "action": {"kind": "automation", "automationId": "wf1"},
            "targets": {"kind": "connections", "connectionIds": ["c1"]},
            "rule": {"kind": "daily", "time": "09:00"},
            "missedRuns": "skip", "enabled": false, "createdAt": "", "updatedAt": ""})
@@ -1166,11 +1166,11 @@ fn schedules_are_a_backup_section_that_merges_by_id() {
 fn a_newer_schedules_backup_is_refused() {
     let spec = sections::spec("schedules").unwrap();
     let err = spec
-        .normalize(json!({"version": "3", "schedules": []}))
+        .normalize(json!({"version": "4", "schedules": []}))
         .unwrap_err();
     assert!(matches!(
         err,
-        sections::NormalizeError::Newer { found: 3, .. }
+        sections::NormalizeError::Newer { found: 4, .. }
     ));
 }
 
@@ -1406,4 +1406,25 @@ fn automations_section_drops_the_migration_provenance() {
     assert!(normalized.get("migratedFrom").is_none());
     assert_eq!(normalized["idRemaps"][0]["newId"], "automation-x");
     assert_eq!(normalized["automations"][0]["id"], "a1");
+}
+
+/// #5818 slice 10: a schedules section from a v2 backup restores as v3, its
+/// actions marked pending until the boot migration resolves their ids.
+#[test]
+fn a_v2_schedules_backup_restores_as_v3() {
+    let spec = sections::spec("schedules").unwrap();
+    let doc = spec
+        .normalize(
+            json!({"version": "2", "schedules": [{"id": "s", "name": "n",
+            "action": {"kind": "macro", "macroId": "m1"},
+            "targets": {"kind": "connections", "connectionIds": ["c1"]},
+            "rule": {"kind": "daily", "time": "09:00"}}]}),
+        )
+        .unwrap();
+    assert_eq!(doc["version"], "3");
+    assert_eq!(
+        doc["schedules"][0]["action"],
+        json!({"kind": "automation", "automationId": "m1", "legacySource": "macro"}),
+        "the id is checked against automations.json on the next start"
+    );
 }

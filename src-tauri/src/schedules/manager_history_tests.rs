@@ -46,15 +46,15 @@ fn skips_no_longer_overwrite_each_other() {
 }
 
 #[test]
-fn a_fired_run_records_start_duration_and_workflow_run_ids() {
+fn a_fired_run_records_start_duration_and_run_ids() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main", "win-1"]);
     let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
     let mut a = completed(1);
-    a.workflow_run_ids = vec!["run-a".into()];
+    a.run_ids = vec!["run-a".into()];
     let mut b = completed(2);
-    b.workflow_run_ids = vec!["run-b".into(), "run-c".into()];
+    b.run_ids = vec!["run-b".into(), "run-c".into()];
     m.report(&token, "main", a, t(10, 11)).unwrap();
     m.report(&token, "win-1", b, t(10, 12)).unwrap();
     let r = &history(&m)[0];
@@ -64,25 +64,25 @@ fn a_fired_run_records_start_duration_and_workflow_run_ids() {
         Some(t(10, 10).to_rfc3339().as_str())
     );
     assert_eq!(r.duration_ms, Some(120_000));
-    assert_eq!(r.workflow_run_ids, vec!["run-a", "run-b", "run-c"]);
+    assert_eq!(r.run_ids, vec!["run-a", "run-b", "run-c"]);
 }
 
 #[test]
-fn a_fired_macro_run_records_its_macro_run_ids() {
+fn a_run_that_one_window_skipped_records_the_other_windows_run_ids() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main", "win-1"]);
     let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
     let mut a = completed(1);
-    a.macro_run_ids = vec!["mrun-a".into()];
+    a.run_ids = vec!["mrun-a".into()];
     m.report(&token, "main", a, t(10, 11)).unwrap();
     m.report(&token, "win-1", skip_report("not connected"), t(10, 11))
         .unwrap();
     let r = &history(&m)[0];
-    assert_eq!(r.macro_run_ids, vec!["mrun-a"]);
-    assert!(r.workflow_run_ids.is_empty());
+    assert_eq!(r.run_ids, vec!["mrun-a"]);
     let json = serde_json::to_string(r).unwrap();
-    assert!(json.contains("\"macroRunIds\":[\"mrun-a\"]"));
+    assert!(json.contains("\"runIds\":[\"mrun-a\"]"));
+    assert!(!json.contains("macroRunIds"));
 }
 
 #[test]

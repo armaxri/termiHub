@@ -51,9 +51,8 @@ export interface ScheduleFormValues {
   name: string;
   /** Short one-line description (#5757); `""` = none. */
   description: string;
-  actionKind: ScheduleAction["kind"];
-  workflowId: string;
-  macroId: string;
+  /** The automation to run (#5818: one picker for every automation). */
+  automationId: string;
   targetsKind: ScheduleTargets["kind"];
   connectionIds: string[];
   groupId: string;
@@ -71,9 +70,7 @@ export const scheduleFormSchema = z
   .object({
     name: z.string(),
     description: z.string(),
-    actionKind: z.enum(["workflow", "macro"]),
-    workflowId: z.string(),
-    macroId: z.string(),
+    automationId: z.string(),
     targetsKind: z.enum(["connections", "broadcast-group"]),
     connectionIds: z.array(z.string()),
     groupId: z.string(),
@@ -95,8 +92,7 @@ export const scheduleFormSchema = z
     if ((normalizeItemDescription(v.description) ?? "").length > ITEM_DESCRIPTION_MAX_LENGTH) {
       issue("description", `At most ${ITEM_DESCRIPTION_MAX_LENGTH} characters.`);
     }
-    if (v.actionKind === "workflow" && v.workflowId === "") issue("workflowId", "Pick a workflow.");
-    if (v.actionKind === "macro" && v.macroId === "") issue("macroId", "Pick a macro.");
+    if (v.automationId === "") issue("automationId", "Pick an automation.");
     if (v.targetsKind === "connections" && v.connectionIds.length === 0) {
       issue("connectionIds", "Pick at least one saved connection.");
     }
@@ -121,9 +117,7 @@ export function blankScheduleForm(action?: ScheduleAction): ScheduleFormValues {
   return {
     name: "",
     description: "",
-    actionKind: action?.kind ?? "workflow",
-    workflowId: action?.kind === "workflow" ? action.workflowId : "",
-    macroId: action?.kind === "macro" ? action.macroId : "",
+    automationId: action?.automationId ?? "",
     targetsKind: "connections",
     connectionIds: [],
     groupId: "",
@@ -157,10 +151,7 @@ export function scheduleToForm(input: ScheduleInput): ScheduleFormValues {
 
 /** Build the {@link ScheduleInput} a valid form describes. */
 export function formToScheduleInput(id: string, v: ScheduleFormValues): ScheduleInput {
-  const action: ScheduleAction =
-    v.actionKind === "workflow"
-      ? { kind: "workflow", workflowId: v.workflowId }
-      : { kind: "macro", macroId: v.macroId };
+  const action: ScheduleAction = { kind: "automation", automationId: v.automationId };
   const targets: ScheduleTargets =
     v.targetsKind === "connections"
       ? { kind: "connections", connectionIds: v.connectionIds }

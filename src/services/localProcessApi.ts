@@ -33,8 +33,8 @@ export interface RunLocalProcessArgs {
 
 /**
  * Spawn a guarded local process and resolve its outcome once it finishes. The
- * backend re-checks the master opt-in and rejects if it is disabled, so a
- * disabled setting surfaces as a rejected promise here.
+ * backend re-checks the experimental switch and the master opt-in and rejects
+ * if either is off, so a disabled setting surfaces as a rejected promise here.
  */
 export async function invokeRunLocalProcess(
   args: RunLocalProcessArgs

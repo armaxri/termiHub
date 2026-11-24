@@ -28,7 +28,7 @@ const fire: ScheduleFire = {
   token: "tok",
   scheduleId: "s1",
   scheduleName: "Health",
-  action: { kind: "workflow", workflowId: "wf" },
+  action: { kind: "automation", automationId: "wf" },
   targets: { kind: "connections", connectionIds: ["c"] },
   catchUp: false,
 };

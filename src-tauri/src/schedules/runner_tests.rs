@@ -103,8 +103,9 @@ fn start(every_minutes: u32, policy: MissedRunPolicy) -> Harness {
                 id: "s1".into(),
                 name: "Ping".into(),
                 description: None,
-                action: ScheduleAction::Workflow {
-                    workflow_id: "wf".into(),
+                action: ScheduleAction::Automation {
+                    automation_id: "wf".into(),
+                    legacy_source: None,
                 },
                 targets: ScheduleTargets::Connections {
                     connection_ids: vec!["c1".into()],
@@ -160,8 +161,7 @@ fn done(h: &Harness) {
                 outcome: ScheduleRunOutcome::Completed,
                 message: None,
                 targets_run: 1,
-                workflow_run_ids: Vec::new(),
-                macro_run_ids: Vec::new(),
+                run_ids: Vec::new(),
             },
             h.clock.now(),
         )

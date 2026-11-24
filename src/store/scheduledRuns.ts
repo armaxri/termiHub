@@ -20,8 +20,17 @@
  *   A target another window runs on itself is never connected here (#3878):
  *   each window acknowledges the fire with {@link claimedTargetIds}, and the
  *   connect window skips those, so each target runs once, where it is held;
+ * - with experimental features off it never runs an automation that can reach a
+ *   "Run local process" step (#5818): refused here before anything is connected
+ *   or typed, and again at the spawn (the authorization seam and the backend);
  * - it never supersedes something the user started: if a workflow run (or a
  *   macro playback) is already in flight in this window, the run is skipped.
+ *
+ * A schedule runs one automation (schema v3, #5818). Until the run picker is
+ * merged, a typing-only automation plays like a macro (one playback into all
+ * targets) and every other automation runs like a workflow (one run per
+ * target); both record into the single automation run history, and the
+ * report carries those records' ids as `runIds`.
  *
  * Every outcome — including "nothing to do here" — is reported, so the backend
  * can settle the run and record the reason.
@@ -29,10 +38,13 @@
 import { toast } from "@/components/ui";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import type { ScheduleFire, ScheduleTargets, WindowRunReport } from "@/types/schedule";
+import type { MacroRun } from "@/types/macro";
 import type { BroadcastGroup } from "@/types/terminal";
 import type { Workflow, WorkflowParameter } from "@/types/workflow";
+import type { Automation } from "@/types/generated/Automation";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { localProcessBlockedReason } from "@/utils/localProcessGate";
 
 import type { AppState } from "./appStore";
 import { collectLiveTabs } from "./layoutHelpers";
@@ -45,7 +57,9 @@ import {
   WORKFLOW_FANOUT_CONCURRENCY,
   type FanoutOutcome,
 } from "./slices/workflowFanout";
-import { newMacroRunId } from "./slices/macroRunHistory";
+import { automationForRun } from "./slices/automationStoreState";
+import { automationToWorkflow, isMacroShaped } from "./slices/automationViews";
+import { experimentalFeaturesOn } from "./localProcessRefusal";
 import {
   closeRunTabs,
   connectedIds,
@@ -152,7 +166,7 @@ async function runScheduledWorkflow(
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
-  if (workflow.steps.length === 0) return skip(`Workflow "${workflow.name}" has no steps`);
+  if (workflow.steps.length === 0) return skip(`Automation "${workflow.name}" has no steps`);
   const { targets } = resolveConnectedTargets(store.getState(), tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
   const params = unattendedParamValues(workflow.parameters ?? []);
@@ -163,7 +177,7 @@ async function runScheduledWorkflow(
   const toastId = `schedule-run-${fire.token}`;
   toast.loading(`Scheduled run "${fire.scheduleName}"`, {
     id: toastId,
-    description: `Running workflow "${workflow.name}" on ${targets.length} terminal${
+    description: `Running automation "${workflow.name}" on ${targets.length} terminal${
       targets.length === 1 ? "" : "s"
     }…`,
   });
@@ -186,10 +200,8 @@ async function runScheduledWorkflow(
     if (result) outcomes.push({ title: targets[index].title, result });
   });
   toastFanoutSummary(workflow.name, outcomes, targets.length, 0, toastId);
-  const workflowRunIds = outcomes.flatMap((o) =>
-    o.result.historyRunId ? [o.result.historyRunId] : []
-  );
-  const ids = workflowRunIds.length > 0 ? { workflowRunIds } : {};
+  const runIds = outcomes.flatMap((o) => (o.result.historyRunId ? [o.result.historyRunId] : []));
+  const ids = runIds.length > 0 ? { runIds } : {};
 
   const failed = outcomes.find((o) => o.result.status === "failed");
   if (failed) {
@@ -206,41 +218,38 @@ async function runScheduledWorkflow(
   return { outcome: "completed", targetsRun: outcomes.length, ...ids };
 }
 
-/** Play a macro into this window's connected targets. */
+/** Play a typing-only automation into this window's connected targets. */
 async function runScheduledMacro(
-  macroId: string,
+  automation: Automation,
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
   const state = store.getState();
-  const macro = state.macros.find((m) => m.id === macroId);
-  if (!macro) return skip("The macro no longer exists");
+  const macroId = automation.id;
+  if (automation.steps.length === 0) return skip(`Automation "${automation.name}" has no steps`);
   const targets = filterConnectedTerminalTabIds(state, tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
-  // Pre-generate the run-history record id so the schedule's attempt log can
-  // link the playback it produced (#3543), as workflow attempts do.
-  const runId = newMacroRunId();
+  // Every terminal's playback writes its own record (#5818): the attempt links
+  // exactly the ones written, and fails when any of them failed.
+  const recorded: MacroRun[] = [];
   const status = await state.playMacro(macroId, {
     targetTabIds: targets,
     origin: "scheduled",
-    runId,
+    onRecorded: (run) => recorded.push(run),
   });
-  const ids = { macroRunIds: [runId] };
-  switch (status) {
-    case "completed":
-      return { outcome: "completed", targetsRun: targets.length, ...ids };
-    case "cancelled":
-      return { outcome: "cancelled", targetsRun: targets.length, ...ids };
-    case "error":
-      return {
-        outcome: "failed",
-        message: "A target terminal disconnected during playback",
-        targetsRun: targets.length,
-        ...ids,
-      };
-    default:
-      return skip("The macro could not be played");
+  if (status === null) return skip("The automation could not be played");
+  const ran = {
+    targetsRun: recorded.length,
+    ...(recorded.length > 0 ? { runIds: recorded.map((run) => run.id) } : {}),
+  };
+  if (recorded.some((run) => run.status === "error")) {
+    return {
+      outcome: "failed",
+      message: "A target terminal disconnected during playback",
+      ...ran,
+    };
   }
+  return { outcome: status === "completed" ? "completed" : "cancelled", ...ran };
 }
 
 /** Options of {@link executeScheduledRun}. */
@@ -270,19 +279,38 @@ function withSkippedTargets(report: WindowRunReport, skipped: readonly string[])
   return { ...report, message };
 }
 
-/** Run the fire's action on `tabIds` in this window. */
+/**
+ * The automation the fire runs, or the reason it must not run at all. Checked
+ * before anything is connected or typed.
+ */
+async function resolveAction(
+  fire: ScheduleFire,
+  store: ScheduledRunStore
+): Promise<{ automation: Automation } | { refused: string }> {
+  const automation = await store.getState().fetchAutomationForRun(fire.action.automationId);
+  // An action whose legacy id is not resolved yet (`legacySource`) must never
+  // run an automation of the other kind that happens to have the same id.
+  const { legacySource } = fire.action;
+  if (!automation || (legacySource && automation.legacy?.from !== legacySource)) {
+    return { refused: "The automation no longer exists" };
+  }
+  const blocked = localProcessBlockedReason(
+    automation,
+    (id) => automationForRun(store.getState(), id),
+    experimentalFeaturesOn()
+  );
+  return blocked ? { refused: blocked } : { automation };
+}
+
+/** Run the fire's automation on `tabIds` in this window. */
 async function runAction(
   fire: ScheduleFire,
+  automation: Automation,
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
-  if (fire.action.kind === "workflow") {
-    const workflowId = fire.action.workflowId;
-    const workflow = store.getState().workflows.find((w) => w.id === workflowId);
-    if (!workflow) return skip("The workflow no longer exists");
-    return await runScheduledWorkflow(fire, workflow, tabIds, store);
-  }
-  return await runScheduledMacro(fire.action.macroId, tabIds, store);
+  if (isMacroShaped(automation)) return await runScheduledMacro(automation, tabIds, store);
+  return await runScheduledWorkflow(fire, automationToWorkflow(automation), tabIds, store);
 }
 
 /**
@@ -300,8 +328,16 @@ export async function executeScheduledRun(
   try {
     const connectionIds = resolveTargetConnectionIds(fire.targets, currentBroadcastGroups());
     if (connectionIds === null) return skip("The broadcast group no longer exists");
+    const action = await resolveAction(fire, store);
+    if ("refused" in action) return skip(action.refused);
+    const { automation } = action;
     if (!options.connectMissing) {
-      return await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
+      return await runAction(
+        fire,
+        automation,
+        targetTabIds(store.getState(), connectionIds),
+        store
+      );
     }
     const elsewhere = new Set(options.connectedElsewhere ? await options.connectedElsewhere() : []);
     const connected = await connectMissingTargets(
@@ -312,7 +348,16 @@ export async function executeScheduledRun(
     );
     closeRunTabs(store.getState, connected.abandoned, false);
     try {
-      const report = await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
+      // Connecting can take a while: the automation or the experimental switch
+      // may have changed, and nothing has been typed yet (#5988).
+      const current = await resolveAction(fire, store);
+      if ("refused" in current) return skip(current.refused);
+      const report = await runAction(
+        fire,
+        current.automation,
+        targetTabIds(store.getState(), connectionIds),
+        store
+      );
       return withSkippedTargets(report, connected.skipped);
     } finally {
       // Tabs the run opened close whatever its outcome (#3527).

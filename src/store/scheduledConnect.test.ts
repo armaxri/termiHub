@@ -76,7 +76,7 @@ function fire(connectionIds: string[]): ScheduleFire {
     token: "tok",
     scheduleId: "sch",
     scheduleName: "Health",
-    action: { kind: "macro", macroId: "m1" },
+    action: { kind: "automation", automationId: "m1" },
     targets: { kind: "connections", connectionIds },
     catchUp: false,
     connectWindow: "main",

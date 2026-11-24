@@ -1703,6 +1703,9 @@ fn init_automations<R: tauri::Runtime>(
                 );
             }
             tracing::debug!("Automation boot migration: {report:?}");
+            recovery_warnings.extend(crate::schedules::migrate::failure_warning(
+                &report.schedules,
+            ));
             migrate::merge_warning(&report.library)
         }
         Err(e) => {
