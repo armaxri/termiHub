@@ -75,8 +75,26 @@ class FileBrowserPathReads(HarnessMixin):
         return self.reveal_toolbar_action(action, overflow=self.MORE_ACTIONS)
 
     def invoke_file_browser_action(self, action: str) -> None:
-        """Click header action ``action``, inline or from the "…" menu (#5520)."""
-        self.invoke_toolbar_action(action, overflow=self.MORE_ACTIONS)
+        """Click header action ``action``, inline or from the "…" menu (#5520).
+
+        New file / New folder are entries of the "New ▾" menu button (#5832):
+        that button is opened first, inline or as its "New ▸" sub-menu of "…".
+        """
+        parent = self.FILE_BROWSER_MENU_BUTTON_OF.get(action)
+        if parent is None:
+            self.invoke_toolbar_action(action, overflow=self.MORE_ACTIONS)
+            return
+        for attempt in range(3):
+            self.reveal_toolbar_action(parent, overflow=self.MORE_ACTIONS)
+            if not self.driver.exists(action):
+                self.driver.click(parent)
+            self.wait(lambda: self.driver.exists(action), what=f"{action!r} in the 'New' menu")
+            try:
+                self.driver.click(action)
+                return
+            except BridgeError as exc:
+                if "no element" not in str(exc) or attempt == 2:
+                    raise
 
     def file_browser_busy(self) -> bool:
         """Whether a directory listing is in flight (the Refresh control's ``aria-busy``)."""
@@ -131,6 +149,9 @@ class FilesUi(FileBrowserPathReads):
     NEW_FOLDER = "file-browser-new-folder"
     NEW_FOLDER_INPUT = "file-browser-new-folder-input"
     NEW_FOLDER_CONFIRM = "file-browser-new-folder-confirm"
+    #: The header's "New ▾" menu button (#5832): New file / New folder are its entries.
+    NEW_MENU = "file-browser-new"
+    FILE_BROWSER_MENU_BUTTON_OF = {NEW_FILE: NEW_MENU, NEW_FOLDER: NEW_MENU}
     #: Toolbar Paste: an inline button only while the file clipboard holds a
     #: copy/cut (#5520); a disabled entry of the "…" menu otherwise.
     PASTE = "file-browser-paste"
