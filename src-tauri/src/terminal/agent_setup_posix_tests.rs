@@ -622,6 +622,67 @@ mod executed {
     }
 
     #[test]
+    fn a_restore_that_fails_keeps_the_copy_for_the_next_setup() {
+        for shell in shells() {
+            let host = Host::update(shell, FAILS_FINAL);
+            let mv = ["/bin/mv", "/usr/bin/mv"];
+            let mv = mv.iter().find(|p| Path::new(p).exists()).unwrap();
+            host.tool(
+                "mv",
+                &format!("case \"$2\" in *.previous) exit 1 ;; esac\nexec {mv} \"$@\""),
+            );
+            let (status, out) = host.setup();
+            assert_eq!(status, Some(1), "{shell}: {out}");
+            assert!(!out.contains("still in place"), "{out}");
+            let kept = std::fs::read_to_string(host.file(".previous")).ok();
+            assert_eq!(kept.as_deref(), Some(OLD), "{shell}: the only working copy");
+
+            host.tool("mv", &format!("exec {mv} \"$@\""));
+            host.stage(BROKEN);
+            let (status, out) = host.setup();
+            assert_eq!(status, KEPT, "{shell}: {out}");
+            host.assert_only(Some(OLD), &out);
+        }
+    }
+
+    #[test]
+    fn a_failed_setup_leaves_a_file_of_the_user_named_like_the_copy() {
+        for shell in shells() {
+            let host = Host::update(shell, BROKEN);
+            write_exec(&host.file(".previous"), NOT_AN_AGENT);
+            let (status, out) = host.setup();
+            assert_eq!(status, KEPT, "{shell}: {out}");
+            let kept = std::fs::read_to_string(host.file(".previous")).ok();
+            assert_eq!(kept.as_deref(), Some(NOT_AN_AGENT), "{out}");
+        }
+    }
+
+    #[test]
+    fn uploads_of_killed_setups_are_removed_after_two_days() {
+        for shell in shells() {
+            let host = Host::update(shell, NEW);
+            let updates = host.path("home/.config/termihub-agent/updates");
+            for name in ["upload.old123", "upload.new123", "staged"] {
+                std::fs::create_dir_all(updates.join(name)).unwrap();
+                std::fs::write(updates.join(name).join("termihub-agent"), "x").unwrap();
+            }
+            for name in ["upload.old123", "staged"] {
+                let done = Command::new("touch")
+                    .args(["-t", "202001010000"])
+                    .arg(updates.join(name))
+                    .status()
+                    .unwrap();
+                assert!(done.success());
+            }
+            let (status, out) = host.setup();
+            assert_eq!(status, Some(0), "{shell}: {out}");
+            assert!(!updates.join("upload.old123").exists());
+            assert!(updates.join("upload.new123").exists());
+            assert!(updates.join("staged").exists());
+        }
+    }
+
+    #[test]
     fn a_file_that_is_not_an_agent_is_replaced_only_at_termihubs_own_path() {
         for shell in shells() {
             let host = Host::update(shell, NEW);
