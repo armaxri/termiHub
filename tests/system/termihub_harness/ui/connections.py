@@ -33,14 +33,15 @@ class ConnectionsUi(HarnessMixin):
     # Stable connection-list / editor testids (UUID-free).
     #: Entries of the Saved header's "New ▾" menu (#5848): mounted only while
     #: the menu is open.
-    NEW_FOLDER = "connection-list-new-folder"
+    NEW_CONNECTION_FOLDER = "connection-list-new-folder"
     NEW_CONNECTION = "connection-list-new-connection"
     IMPORT_SETTINGS = "connection-list-open-import-settings"
     #: The Saved header's one "New ▾" trigger (#5848). It replaced the three
     #: header icons and their responsive "…" menu (#4824), so it is the menu
-    #: :meth:`invoke_toolbar_action` opens to reach an entry.
-    NEW_MENU = "connection-list-new-menu"
-    TOOLBAR_OVERFLOW = NEW_MENU
+    #: :meth:`invoke_toolbar_action` opens to reach an entry. Not ``NEW_MENU``:
+    #: that is ``FilesUi``'s, and a suite mixing both would drive that one.
+    NEW_CONNECTION_MENU = "connection-list-new-menu"
+    TOOLBAR_OVERFLOW = NEW_CONNECTION_MENU
     FOLDER_NAME_INPUT = "inline-folder-name-input"
     FOLDER_CONFIRM = "inline-folder-confirm"
     EDITOR_NAME = "connection-editor-name-input"
@@ -129,7 +130,7 @@ class ConnectionsUi(HarnessMixin):
         (Harness folder names never begin ``folder-``, so the prefix check cannot
         mistake a persisted id for the optimistic one.)
         """
-        self.invoke_toolbar_action(self.NEW_FOLDER, overflow=self.TOOLBAR_OVERFLOW)
+        self.invoke_toolbar_action(self.NEW_CONNECTION_FOLDER, overflow=self.TOOLBAR_OVERFLOW)
         self.wait(
             lambda: self.driver.exists(self.FOLDER_NAME_INPUT),
             what="the folder name input",
@@ -169,15 +170,17 @@ class ConnectionsUi(HarnessMixin):
             # Opening the menu mounts the entry, so the next poll clicks it.
             if self.driver.exists(self.NEW_CONNECTION):
                 self.driver.click(self.NEW_CONNECTION)
-            elif self.driver.exists(self.NEW_MENU):
-                self.driver.click(self.NEW_MENU)
+            elif self.driver.exists(self.NEW_CONNECTION_MENU):
+                self.driver.click(self.NEW_CONNECTION_MENU)
             return self.driver.exists("connection-editor-name-input")
 
         self.wait(opened, what="the connection editor")
 
     def _toolbar_entry_present(self) -> bool:
         """Whether the Saved header shows its "New ▾" menu (or the menu is open)."""
-        return self.driver.exists(self.NEW_CONNECTION) or self.driver.exists(self.NEW_MENU)
+        return self.driver.exists(self.NEW_CONNECTION) or self.driver.exists(
+            self.NEW_CONNECTION_MENU
+        )
 
     def _ensure_connections_sidebar(self) -> None:
         """Show the connections sidebar view if it is not already active.

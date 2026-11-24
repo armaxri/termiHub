@@ -38,6 +38,7 @@
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 
+use super::super::wsl_cwd::AMBIGUOUS_GAP;
 use super::super::wsl_init_script::{echoed_init_uuid, EchoedUuid};
 use super::*;
 
@@ -133,6 +134,10 @@ impl KeepAlive {
             .expect("spawn keep-alive wsl.exe");
         // Fail fast with a clear message when the distro cannot start at all.
         wsl_ok(distro, "true", &[]);
+        // The keep-alive has a terminal of its own, so a session spawned right
+        // after it counts as started together with it and is not followed
+        // (`wsl_cwd`): let it grow older than that first.
+        std::thread::sleep(AMBIGUOUS_GAP + Duration::from_millis(500));
         Self(child)
     }
 }

@@ -623,21 +623,24 @@ pub(crate) fn skip_escape(data: &[u8], at: usize) -> usize {
 /// Where the echo of `typed` starts in `pre`, if everything visible from
 /// there on is that echo: the typed text in order, possibly echoed twice
 /// (the tty and then the line editor), with a character repeated where a line
-/// editor redraws it at a line wrap. `None` when any other visible text is
-/// in that region.
+/// editor redraws it at a line wrap, or the last row drawn once more
+/// ([`is_margin_redraw`]). `None` when any other visible text is in that
+/// region.
 fn echo_start(pre: &[u8], typed: &[u8]) -> Option<usize> {
     let first = *typed.first()?;
     let vis = visible(pre);
     (0..vis.len())
         .filter(|&i| vis[i].1 == first)
-        .find(|&i| is_only_echo(&vis[i..], typed))
+        .find(|&i| is_only_echo(pre, &vis[i..], typed))
         .map(|i| vis[i].0)
 }
 
-fn is_only_echo(vis: &[(usize, u8)], typed: &[u8]) -> bool {
+fn is_only_echo(pre: &[u8], vis: &[(usize, u8)], typed: &[u8]) -> bool {
     let mut j = 0;
-    for &(_, c) in vis {
-        if j < typed.len() && c == typed[j] {
+    for (k, &(_, c)) in vis.iter().enumerate() {
+        if j == typed.len() && is_margin_redraw(pre, vis, k, typed) {
+            return true;
+        } else if j < typed.len() && c == typed[j] {
             j += 1;
         } else if j == typed.len() && c == typed[0] {
             // A second, complete echo of the same text.
@@ -649,6 +652,26 @@ fn is_only_echo(vis: &[(usize, u8)], typed: &[u8]) -> bool {
         }
     }
     j == typed.len()
+}
+
+/// How readline goes back to the row above the cursor's.
+const UP_TO_ROW_START: &[u8] = b"\r\x1b[A";
+
+/// Whether everything from `vis[k]` on is readline drawing the line's last
+/// row again: the typed line ended exactly at the right margin, so the cursor
+/// was a row below when Enter came, and bash 3.2 (macOS `/bin/bash`) goes up
+/// and prints that row once more. Only the end of the typed text may follow,
+/// after the move up.
+fn is_margin_redraw(pre: &[u8], vis: &[(usize, u8)], k: usize, typed: &[u8]) -> bool {
+    let Some(before) = k.checked_sub(1).map(|p| vis[p].0) else {
+        return false;
+    };
+    find(&pre[before..vis[k].0], UP_TO_ROW_START).is_some()
+        && vis.len() - k < typed.len()
+        && vis[k..]
+            .iter()
+            .map(|&(_, c)| c)
+            .eq(typed[typed.len() - (vis.len() - k)..].iter().copied())
 }
 
 #[cfg(test)]
