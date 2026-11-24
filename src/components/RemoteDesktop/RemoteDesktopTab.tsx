@@ -91,6 +91,12 @@ function filesButtonFor(
  */
 export const FIRST_FRAME_TIMEOUT_MS = 20_000;
 
+/**
+ * How long the toolbar stays shown on its own once a session's desktop first
+ * paints (#5836), so its actions are seen before it hides behind hover.
+ */
+export const TOOLBAR_REVEAL_MS = 4_000;
+
 interface RemoteDesktopTabProps {
   tabId: string;
   isVisible: boolean;
@@ -248,12 +254,29 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     }
   };
 
+  // The session whose canvas holds the keyboard (#5836), for the toolbar's
+  // state; keyed by session so a replaced canvas never inherits it.
+  const [capturedFor, setCapturedFor] = useState<string | null>(null);
+  const captured = capturedFor !== null && capturedFor === session.sessionId;
+  const handleCaptureChange = useCallback(
+    (held: boolean) => setCapturedFor(held ? session.sessionId : null),
+    [session.sessionId]
+  );
+  // The session whose toolbar is shown on its own after the first paint.
+  const [revealedFor, setRevealedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!revealedFor) return;
+    const timer = setTimeout(() => setRevealedFor(null), TOOLBAR_REVEAL_MS);
+    return () => clearTimeout(timer);
+  }, [revealedFor]);
+
   const handleFirstFrame = () => {
     session.noteFirstFrame();
     const id = session.sessionId;
     if (!id) return;
     paintedSessionRef.current = id;
     setPaintedSessionId(id);
+    setRevealedFor(id);
     const dims = pendingDimsRef.current;
     pendingDimsRef.current = null;
     if (dims) setRemoteDesktopResolution(id, dims.width, dims.height);
@@ -325,11 +348,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
       .forEach((code) => session.sendInput({ kind: "key", code, pressed: false }));
   }, [session]);
 
+  const nextScaleMode = scaleCycle[(scaleCycle.indexOf(scaleMode) + 1) % scaleCycle.length];
   const handleCycleScaleMode = useCallback(() => {
-    const idx = scaleCycle.indexOf(scaleMode);
-    const next = scaleCycle[(idx + 1) % scaleCycle.length];
-    setScaleModeOverride(next);
-  }, [scaleMode, scaleCycle]);
+    setScaleModeOverride(nextScaleMode);
+  }, [nextScaleMode]);
 
   const handleFullscreen = useCallback(() => {
     const el = surfaceRef.current;
@@ -445,6 +467,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onFirstFrame={handleFirstFrame}
           viewport={viewport}
           label={title || host}
+          onCaptureChange={handleCaptureChange}
         />
       )}
 
@@ -472,11 +495,14 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           resolution={resolution}
           viewOnly={session.viewOnly}
           scaleMode={scaleMode}
+          nextScaleMode={nextScaleMode}
+          captured={captured}
+          revealed={revealedFor !== null && revealedFor === session.sessionId}
           onSendCtrlAltDel={handleCtrlAltDel}
           onToggleClipboard={handleToggleClipboard}
           onCycleScaleMode={handleCycleScaleMode}
           onToggleFullscreen={handleFullscreen}
-          onDisconnect={session.reconnect}
+          onDisconnect={session.disconnect}
           monitors={monitors}
           viewport={shownIndex}
           onCycleViewport={handleCycleViewport}
@@ -514,6 +540,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           onRetry={session.reconnect}
           onEditConnection={failureActions.onEditConnection}
           onCloseTab={failureActions.onCloseTab}
+          // Abort tears the waiting session down and rests on "Connection
+          // aborted" with Retry, like an aborted reconnect (#5836).
+          onAbort={session.cancelReconnect}
           isActive={isVisible}
         />
       )}

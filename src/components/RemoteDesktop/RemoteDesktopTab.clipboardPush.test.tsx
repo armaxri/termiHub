@@ -70,6 +70,7 @@ function fakeSession(remoteClipboard: string | null): RemoteDesktopSession {
     reconnect: vi.fn(),
     cancelConnect: vi.fn(),
     cancelReconnect: vi.fn(),
+    disconnect: vi.fn(),
     awaitingFirstFrame: false,
     noteFirstFrame: vi.fn(),
   };

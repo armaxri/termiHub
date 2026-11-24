@@ -81,6 +81,7 @@ function fakeSession(state: GraphicalSessionState): RemoteDesktopSession {
     reconnect: vi.fn(),
     cancelConnect: vi.fn(),
     cancelReconnect: vi.fn(),
+    disconnect: vi.fn(),
     awaitingFirstFrame: true,
     noteFirstFrame: vi.fn(),
   };

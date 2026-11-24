@@ -1,5 +1,6 @@
 import { useRef } from "react";
-import { Monitor } from "lucide-react";
+import { Ban, Monitor } from "lucide-react";
+import { Button } from "@/components/ui";
 import { ConnectProgress } from "@/components/ui/ConnectProgress";
 import { connectTypeLabel } from "@/utils/connectStages";
 import { ConnectFailureActions } from "@/components/Terminal/ConnectFailure";
@@ -18,9 +19,21 @@ interface RemoteDesktopFirstFrameOverlayProps {
   /** Open the saved connection's editor; omitted for an unsaved tab. */
   onEditConnection?: () => void;
   onCloseTab: () => void;
+  /**
+   * Stop waiting (#5836): ends the session, and the tab rests on the
+   * "Connection aborted" screen with Retry.
+   */
+  onAbort: () => void;
   /** Focus Retry when the timeout error appears on the visible tab. */
   isActive?: boolean;
 }
+
+/**
+ * The headline while a connected session waits for its first frame (#5836):
+ * the stepper shows Connect and Authenticate done, so the headline says what
+ * is still pending instead of "Connecting to …".
+ */
+export const FIRST_FRAME_HEADING = "Waiting for the desktop…";
 
 const NO_FRAME_HINT =
   "The session is connected, but the server has sent no picture. The server may be " +
@@ -29,7 +42,9 @@ const NO_FRAME_HINT =
 /**
  * Overlay for a graphical session that is up but has not painted a frame yet
  * (#5626): the connect stepper with the first-frame step active, so the tab is
- * never a blank pane, then — after the timeout — a "No picture" resting state
+ * never a blank pane. The headline follows the stepper — connect and sign-in
+ * are done, so it says "Waiting for the desktop…", never "Connecting to …" —
+ * and Abort stops the wait (#5836). After the timeout it rests on a "No picture" state
  * with Retry, Edit connection and Close tab.
  */
 export function RemoteDesktopFirstFrameOverlay({
@@ -40,6 +55,7 @@ export function RemoteDesktopFirstFrameOverlay({
   onRetry,
   onEditConnection,
   onCloseTab,
+  onAbort,
   isActive = false,
 }: RemoteDesktopFirstFrameOverlayProps) {
   const startedAt = useRef(Date.now()).current;
@@ -87,10 +103,21 @@ export function RemoteDesktopFirstFrameOverlay({
       <ConnectProgress
         {...common}
         phase="connecting"
-        heading={`Connecting to ${host}…`}
+        heading={FIRST_FRAME_HEADING}
         stages={graphicalStages("firstFrame", via !== null)}
         status={status}
-        announcement={`${host}: ${status}`}
+        announcement={`${FIRST_FRAME_HEADING} ${host}: ${status}`}
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Ban size={14} />}
+            onClick={onAbort}
+            data-testid="remote-desktop-first-frame-abort"
+          >
+            Abort
+          </Button>
+        }
       />
     </div>
   );

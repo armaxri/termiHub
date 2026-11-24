@@ -18,6 +18,7 @@ function render(timedOut: boolean, opts: { via?: string | null; editable?: boole
   const onRetry = vi.fn();
   const onEditConnection = vi.fn();
   const onCloseTab = vi.fn();
+  const onAbort = vi.fn();
   act(() =>
     root.render(
       <RemoteDesktopFirstFrameOverlay
@@ -28,10 +29,11 @@ function render(timedOut: boolean, opts: { via?: string | null; editable?: boole
         onRetry={onRetry}
         onEditConnection={opts.editable === false ? undefined : onEditConnection}
         onCloseTab={onCloseTab}
+        onAbort={onAbort}
       />
     )
   );
-  return { onRetry, onEditConnection, onCloseTab };
+  return { onRetry, onEditConnection, onCloseTab, onAbort };
 }
 
 beforeEach(() => {
@@ -53,6 +55,22 @@ describe("RemoteDesktopFirstFrameOverlay", () => {
     expect(overlay?.textContent).toContain("Connected, waiting for the first frame");
     expect(overlay?.textContent).toContain("First frame");
     expect(q("remote-desktop-overlay-no-frame")).toBeNull();
+  });
+
+  it("heads the wait with the pending step, never 'Connecting to' (#5836)", () => {
+    render(false);
+    const heading = container.querySelector(".ui-content-overlay__heading")?.textContent;
+    expect(heading).toBe("Waiting for the desktop…");
+    expect(q("remote-desktop-overlay-first-frame")?.textContent).not.toContain("Connecting to");
+  });
+
+  it("offers Abort while waiting for the first frame (#5836)", () => {
+    const { onAbort, onRetry } = render(false);
+    const abort = q("remote-desktop-first-frame-abort");
+    expect(abort?.textContent).toBe("Abort");
+    act(() => abort?.click());
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
   });
 
   it("names the SSH gateway of a tunnelled session", () => {

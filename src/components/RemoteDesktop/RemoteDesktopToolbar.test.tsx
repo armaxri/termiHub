@@ -34,6 +34,9 @@ function render(
     filesButton: FilesButtonState;
     filesTitle: string;
     onToggleFiles: () => void;
+    captured: boolean;
+    nextScaleMode: ScaleMode;
+    revealed: boolean;
   }> = {},
   h = handlers()
 ) {
@@ -52,6 +55,9 @@ function render(
         filesButton={overrides.filesButton}
         filesTitle={overrides.filesTitle}
         onToggleFiles={overrides.onToggleFiles}
+        captured={overrides.captured}
+        nextScaleMode={overrides.nextScaleMode}
+        revealed={overrides.revealed}
         {...h}
       />
     );
@@ -79,7 +85,7 @@ describe("RemoteDesktopToolbar", () => {
   });
 
   it("discloses the keyboard release chord (#4328)", () => {
-    render();
+    render({ captured: true });
     const hint = query("remote-desktop-release-hint");
     expect(hint?.textContent).toContain("Ctrl+Shift+Alt");
     expect(hint?.getAttribute("title")).toMatch(/return keyboard focus to termiHub/i);
@@ -88,7 +94,7 @@ describe("RemoteDesktopToolbar", () => {
   it("shows a rebound release chord in the hint and its title (#4524)", () => {
     setOverride(RELEASE_CHORD_ACTION, { key: "", ctrl: true, alt: true });
     try {
-      render();
+      render({ captured: true });
       const hint = query("remote-desktop-release-hint");
       expect(hint?.querySelector("kbd")?.textContent).toBe("Ctrl+Alt");
       expect(hint?.getAttribute("title")).toBe(
@@ -126,6 +132,45 @@ describe("RemoteDesktopToolbar", () => {
   it("labels the scale button with the active scale mode", () => {
     render({ scaleMode: "pixel" });
     expect(query("remote-desktop-scale")?.getAttribute("title")).toBe("Scaling: 1:1 pixel");
+  });
+
+  it("shows the active scale mode as visible text and names the next one (#5836)", () => {
+    render({ scaleMode: "fit", nextScaleMode: "pixel" });
+    const scale = query("remote-desktop-scale");
+    expect(scale?.textContent).toBe("Fit to tab");
+    expect(scale?.getAttribute("data-scale-mode")).toBe("fit");
+    expect(scale?.getAttribute("title")).toBe("Scaling: Fit to tab — click for 1:1 pixel");
+    expect(scale?.getAttribute("aria-label")).toBe("Scaling: Fit to tab — click for 1:1 pixel");
+  });
+
+  it("says the keyboard goes to the remote desktop while the canvas holds it (#5836)", () => {
+    render({ captured: true });
+    const hint = query("remote-desktop-release-hint");
+    expect(hint?.getAttribute("data-state")).toBe("captured");
+    expect(hint?.textContent).toContain("Keyboard to remote");
+    expect(hint?.querySelector("kbd")?.textContent).toBe("Ctrl+Shift+Alt");
+  });
+
+  it("says the keyboard goes to termiHub until the desktop is clicked (#5836)", () => {
+    render({ captured: false });
+    const hint = query("remote-desktop-release-hint");
+    expect(hint?.getAttribute("data-state")).toBe("released");
+    expect(hint?.textContent).toBe("Keyboard to termiHub · click the desktop to type");
+    expect(hint?.getAttribute("title")).toContain("Ctrl+Shift+Alt");
+  });
+
+  it("shows no keyboard state in a view-only session, which sends no keys (#5836)", () => {
+    render({ viewOnly: true, captured: true });
+    expect(query("remote-desktop-release-hint")).toBeNull();
+  });
+
+  it("marks the toolbar revealed so it shows without hover (#5836)", () => {
+    render({ revealed: true });
+    const bar = query("remote-desktop-toolbar");
+    expect(bar?.classList.contains("rd-toolbar--revealed")).toBe(true);
+    expect(bar?.getAttribute("data-revealed")).toBe("true");
+    render({ revealed: false });
+    expect(query("remote-desktop-toolbar")?.classList.contains("rd-toolbar--revealed")).toBe(false);
   });
 
   it("routes each toolbar action to its handler", () => {
