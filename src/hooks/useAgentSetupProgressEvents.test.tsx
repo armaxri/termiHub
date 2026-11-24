@@ -4,7 +4,12 @@ import { createRoot } from "react-dom/client";
 import { useAgentSetupStatus } from "@/store/agentSetupStatus";
 import { useAgentSetupProgressEvents } from "./useAgentSetupProgressEvents";
 
-type ProgressCallback = (agentId: string, step: string, message: string) => void;
+type ProgressCallback = (
+  agentId: string,
+  step: string,
+  message: string,
+  sessionId?: string | null
+) => void;
 let progressCallback: ProgressCallback | null = null;
 
 vi.mock("@/services/events", () => ({
@@ -13,6 +18,9 @@ vi.mock("@/services/events", () => ({
     return vi.fn();
   }),
 }));
+
+const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
+vi.mock("@/components/ui", () => ({ toast: toastMock }));
 
 function Probe(): null {
   useAgentSetupProgressEvents();
@@ -35,6 +43,32 @@ describe("useAgentSetupProgressEvents (#5906)", () => {
     expect(useAgentSetupStatus.getState().phases).toEqual({ a: "installing" });
     act(() => progressCallback?.("a", "done", "Agent installed"));
     expect(useAgentSetupStatus.getState().phases).toEqual({ a: "installed" });
+    act(() => root.unmount());
+  });
+
+  it.each([
+    ["installed", "success", "Agent installed on box"],
+    ["failed", "error", "Agent setup on box failed: why"],
+    ["unknown", "info", "Agent setup on box: outcome unknown. why"],
+  ] as const)("announces a Windows setup's '%s' (#5992)", async (step, kind, text) => {
+    vi.clearAllMocks();
+    useAgentSetupStatus.getState().registerSetupTab("t1", {
+      agentId: "a",
+      agentName: "box",
+      sessionId: "s1",
+      reportsExit: false,
+    });
+    const root = createRoot(document.createElement("div"));
+    await act(async () => {
+      root.render(<Probe />);
+      await Promise.resolve();
+    });
+    act(() => progressCallback?.("a", "sent", "Install commands sent", "s1"));
+    act(() => progressCallback?.("a", step, "why", "s1"));
+    const calls = Object.entries(toastMock).flatMap(([k, fn]) =>
+      fn.mock.calls.map((c) => [k, c[0]])
+    );
+    expect(calls).toEqual([[kind, text]]);
     act(() => root.unmount());
   });
 

@@ -410,6 +410,29 @@ describe("runAutomationOnTargets", () => {
     expect(results.map((r) => r?.status)).toEqual(["completed", "failed", "completed"]);
   });
 
+  it("reports each target's end as soon as that target ends", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const depsFor = (t: number): WorkflowRunnerDeps => ({
+      send: async () => {
+        if (t === 0) await gate;
+        return t === 0;
+      },
+    });
+    const ended: Array<[number, string]> = [];
+    const run = runAutomationOnTargets(auto, [0, 1], depsFor, {
+      onTargetEnd: (i, result) => ended.push([i, result.status]),
+    });
+    // Target 1 fails at once while target 0 is still typing.
+    await vi.waitFor(() => expect(ended).toEqual([[1, "failed"]]));
+    release();
+    await run.done;
+    expect(ended).toEqual([
+      [1, "failed"],
+      [0, "completed"],
+    ]);
+  });
+
   it("cancelAll stops running targets and starts no queued one", async () => {
     const n = WORKFLOW_FANOUT_CONCURRENCY + 2;
     const g = gatedTargets(n);

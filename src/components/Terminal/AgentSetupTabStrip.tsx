@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useId } from "react";
-import { AlertTriangle, Ban, CheckCircle2, SquareTerminal, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  CircleHelp,
+  SquareTerminal,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { getComposedLayout } from "@/store/layoutHelpers";
 import { useAgentSetupStatus, type AgentSetupTab } from "@/store/agentSetupStatus";
@@ -13,43 +21,57 @@ import "./TerminalDisconnectOverlay.css";
 
 /**
  * How a setup tab's run ended, as its strip says it (#5865):
- * - `installed` — the setup exited 0 (POSIX script, Windows commands, #5946);
- * - `failed` — the backend reported an error, or the setup exited non-zero;
+ * - `installed` — the POSIX script exited 0, or the backend found the uploaded
+ *   agent running on a Windows host (#5992);
+ * - `failed` — the backend reported a failure, or the POSIX script exited
+ *   non-zero;
  * - `cancelled` — the user cancelled the setup;
- * - `sent` — the install commands were typed into a tab registered as not
- *   reporting its exit (no setup does that since #5946).
+ * - `checking` — the Windows tab's shell ended and the backend is still
+ *   checking the host;
+ * - `unknown` — that check could not tell.
  */
 export type AgentSetupTabNotice =
   | { kind: "installed" }
   | { kind: "failed"; reason: string }
   | { kind: "cancelled" }
-  | { kind: "sent" };
+  | { kind: "checking" }
+  | { kind: "unknown"; reason: string };
 
 /**
  * The notice a setup tab shows, or `null` while the setup still runs, for a
  * tab that is no setup tab, and once the user dismissed it. `exit` is the
  * tab's session exit, when its session ended.
  *
- * The outcome comes from signals, never from reading the output: the
- * backend's progress events (failed, cancelled) and the exit code of the
- * shell the setup ends (`exec sh setup.sh` on POSIX, a final `exit` with the
- * install's status on Windows, #5946). An exit without a code (a dropped link) says nothing
- * about the setup, so the plain session-end strip handles it.
+ * The outcome comes from signals, never from reading the output: the backend's
+ * progress events and, on POSIX only, the exit code of the shell the setup
+ * script replaced (`exec sh setup.sh`). A Windows exit code is never read: the
+ * server reports 0 for a failed setup too (#5992). A POSIX exit without a code
+ * (a dropped link) says nothing about the setup, so the plain session-end strip
+ * handles it.
  */
 export function agentSetupTabNotice(
   tab: AgentSetupTab | undefined,
   exit: TerminalExitInfo | undefined
 ): AgentSetupTabNotice | null {
   if (!tab || tab.dismissed) return null;
-  if (tab.progress.kind === "failed") return { kind: "failed", reason: tab.progress.message };
-  if (tab.progress.kind === "cancelled") return { kind: "cancelled" };
-  if (exit && exit.code !== null && tab.reportsExit) {
-    return exit.code === 0
-      ? { kind: "installed" }
-      : { kind: "failed", reason: `The setup script exited with code ${exit.code}.` };
+  switch (tab.progress.kind) {
+    case "installed":
+      return { kind: "installed" };
+    case "failed":
+      return { kind: "failed", reason: tab.progress.message };
+    case "unknown":
+      return { kind: "unknown", reason: tab.progress.message };
+    case "cancelled":
+      return { kind: "cancelled" };
+    case "running":
+      break;
   }
-  if (tab.progress.kind === "sent") return { kind: "sent" };
-  return null;
+  if (!exit) return null;
+  if (!tab.reportsExit) return { kind: "checking" };
+  if (exit.code === null) return null;
+  return exit.code === 0
+    ? { kind: "installed" }
+    : { kind: "failed", reason: `The setup script exited with code ${exit.code}.` };
 }
 
 /**
@@ -74,14 +96,24 @@ const TONES: Record<AgentSetupTabNotice["kind"], DisconnectStripTone> = {
   installed: "neutral",
   failed: "error",
   cancelled: "neutral",
-  sent: "neutral",
+  checking: "neutral",
+  unknown: "neutral",
 };
 
 const HEADINGS: Record<AgentSetupTabNotice["kind"], string> = {
   installed: "Agent installed",
   failed: "Agent setup failed",
   cancelled: "Agent setup cancelled",
-  sent: "Setup commands sent",
+  checking: "Checking the agent…",
+  unknown: "Agent setup outcome unknown",
+};
+
+const ICONS: Record<AgentSetupTabNotice["kind"], LucideIcon> = {
+  installed: CheckCircle2,
+  failed: AlertTriangle,
+  cancelled: Ban,
+  checking: SquareTerminal,
+  unknown: CircleHelp,
 };
 
 const SCROLLBACK_KEPT = t("drop.overlay.scrollbackKept");
@@ -95,8 +127,10 @@ function subheadingFor(notice: AgentSetupTabNotice, agentName: string): string {
       return `The output below says what went wrong. ${SCROLLBACK_KEPT}`;
     case "cancelled":
       return `Nothing more runs in this tab. ${SCROLLBACK_KEPT}`;
-    case "sent":
-      return "The install runs in this tab: check its output, then close the tab.";
+    case "checking":
+      return "The setup ended. termiHub is checking whether the agent was installed.";
+    case "unknown":
+      return `Check the output below. ${SCROLLBACK_KEPT}`;
   }
 }
 
@@ -153,15 +187,8 @@ export function AgentSetupTabStrip({
   }, [tabId, exited, dismissSetupTab, dismissTerminalDisconnect]);
 
   const heading = HEADINGS[notice.kind];
-  const reason = notice.kind === "failed" ? notice.reason : "";
-  const Icon =
-    notice.kind === "installed"
-      ? CheckCircle2
-      : notice.kind === "failed"
-        ? AlertTriangle
-        : notice.kind === "cancelled"
-          ? Ban
-          : SquareTerminal;
+  const reason = "reason" in notice ? notice.reason : "";
+  const Icon = ICONS[notice.kind];
   const iconTone =
     notice.kind === "failed" ? "error" : notice.kind === "installed" ? "success" : "ended";
 

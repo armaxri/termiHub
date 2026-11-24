@@ -19,7 +19,8 @@ MACRO_EDITOR = "macro-editor-dialog"
 WORKFLOW_EDITOR = "workflow-editor-dialog"
 SCHEDULE_EDITOR = "schedule-editor-dialog"
 SCHEDULE_CONFIRM = "schedule-enable-confirm"
-RUN_TARGETS = "workflow-run-targets-dialog"
+#: The one run picker (#5818, slice 5) behind every "Run on…" and Play macro….
+RUN_TARGETS = "run-targets-dialog"
 #: A field inside a workflow step row (``workflow-editor-step-delay-1``): the
 #: row starts collapsed when an existing workflow is opened (#5637).
 _STEP_FIELD = re.compile(r"^workflow-editor-step-[a-z-]+-(\d+)$")
@@ -28,7 +29,8 @@ _STEP_FIELD = re.compile(r"^workflow-editor-step-[a-z-]+-(\d+)$")
 class AutomationPhaseUi(HarnessMixin):
     """Macros, workflows and schedules through the real UI."""
 
-    if TYPE_CHECKING:  # supplied by SettingsUi / SidebarUi / WorkflowUi
+    if TYPE_CHECKING:  # supplied by SettingsUi / SidebarUi / WorkflowUi / TabsUi
+        def tab_ids(self) -> list[str]: ...
         def enable_experimental_features(self) -> None: ...
         def open_settings_category(self, category: str) -> None: ...
         def open_workflows_sidebar(self) -> None: ...
@@ -170,20 +172,55 @@ class AutomationPhaseUi(HarnessMixin):
         self.save_workflow()
 
     def run_workflow_on(self, workflow_id: str, tab_ids: list[str]) -> None:
-        """Row "Run on…": tick exactly ``tab_ids`` in the targets dialog and run."""
+        """Row "Run on…": pick exactly ``tab_ids`` in the run picker and run."""
         self.open_workflows_sidebar()
         self.driver.click(f"workflow-run-on-{workflow_id}")
-        self.wait(lambda: self.driver.exists(RUN_TARGETS), what="the Run on… dialog")
-        listed = 0
-        for tab_id in tab_ids:
-            box = f"workflow-run-target-{tab_id}"
-            self.wait(lambda b=box: self.driver.exists(b), what=f"the target {tab_id}")
-            listed += 1
-            if self.driver.get_attribute(box, "data-state") != "checked":
+        self.run_picker_on(tab_ids)
+
+    def play_macro_on(self, macro_id: str, tab_ids: list[str]) -> None:
+        """Macro row "Run on…": pick exactly ``tab_ids`` in the run picker and run."""
+        self.show_macros()
+        self.invoke_row_action(f"macro-item-{macro_id}", f"macro-run-on-{macro_id}")
+        self.run_picker_on(tab_ids)
+
+    def invoke_row_action(self, row_testid: str, action_testid: str) -> None:
+        """Click a hover-revealed row action (hovering the row first)."""
+        self.wait(lambda: self.driver.exists(row_testid), what=f"the row {row_testid}")
+        self.driver.force_hover(row_testid)
+        self.wait(lambda: self.driver.exists(action_testid), what=f"the action {action_testid}")
+        self.driver.click(action_testid)
+
+    def run_picker_on(self, tab_ids: list[str]) -> None:
+        """In the open run picker: "Pick terminals…", tick exactly ``tab_ids``,
+        run, and confirm the terminal list a multi-terminal run asks for."""
+        self.wait(lambda: self.driver.exists(RUN_TARGETS), what="the run picker")
+        self.driver.click("run-targets-target-pick")
+        self.wait(
+            lambda: self.driver.exists("run-targets-terminal-list"), what="the terminal list"
+        )
+        # The list opens on the last pick (or the active terminal): set every row.
+        for tab_id in self.tab_ids():
+            box = f"run-targets-terminal-{tab_id}"
+            if not self.driver.exists(box):
+                continue
+            ticked = self.driver.get_attribute(box, "data-state") == "checked"
+            if ticked != (tab_id in tab_ids):
                 self.driver.click(box)
-        self.wait(lambda: not self.is_disabled("workflow-run-targets-run"), what="Run to enable")
-        self.driver.click("workflow-run-targets-run")
-        self.wait(lambda: not self.driver.exists(RUN_TARGETS), what="the Run on… dialog to close")
+        for tab_id in tab_ids:
+            box = f"run-targets-terminal-{tab_id}"
+            self.wait(
+                lambda b=box: self.driver.get_attribute(b, "data-state") == "checked",
+                what=f"the target {tab_id} ticked",
+            )
+        self.wait(lambda: not self.is_blocked("run-targets-run"), what="Run to enable")
+        self.driver.click("run-targets-run")
+        if len(tab_ids) > 1:
+            self.wait(
+                lambda: self.driver.exists("run-targets-confirm-step"),
+                what="the multi-terminal confirmation",
+            )
+            self.driver.click("run-targets-run")
+        self.wait(lambda: not self.driver.exists(RUN_TARGETS), what="the run picker to close")
 
     # ── schedules ────────────────────────────────────────────────────────────
     def schedule_macro(

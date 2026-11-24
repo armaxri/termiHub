@@ -1,67 +1,64 @@
 /**
- * Multi-target ("broadcast") macro playback helpers (PROD-042, #3443).
+ * Multi-terminal macro playback helpers (PROD-042, #3443; #5818 slice 5).
  *
- * A macro can be replayed into several terminals at once. Each recorded step is
- * delivered to every still-connected target before the scheduler moves on, so
- * the targets advance in lock-step and share one timing/cancel affordance. A
- * target that disconnects (or is taken over by another window) mid-run is
- * dropped — it never receives a later step — and the run keeps going for the
- * rest; the final summary reports exactly how many terminals got the whole macro.
+ * A macro played on several terminals runs as independent per-target runs
+ * (`playAutomationKeysOnTargets`, at most 8 at once). Each target types the
+ * whole macro on its own; one that disconnects or stops accepting input ends
+ * only its own run, and the others keep going. Before every chunk the target
+ * is re-checked, so a tab that dropped or was taken over is never typed into.
+ * These helpers bind the per-target input seam and summarise the outcomes.
  */
-import type {
-  MacroInjector,
-  MacroPlaybackStatus,
-  TerminalInputInjector,
-} from "@/services/macroPlayback";
+import type { MacroPlaybackStatus, TerminalInputInjector } from "@/services/macroPlayback";
 import { withLoggedFallback } from "@/utils/loggedFallback";
 
-/** A fan-out injector plus accessors for which targets are still receiving. */
-export interface MacroFanoutInjector {
-  /** Inject one step into every live target; `false` once no target is left. */
-  inject: MacroInjector;
-  /** Targets that are still receiving input (request order). */
-  live: () => string[];
-  /** Targets dropped mid-run because they stopped being connected. */
-  dropped: () => string[];
+import type { MacroTargetOutcome } from "./macroKeysPlayback";
+
+/**
+ * The per-target input seam of a multi-terminal playback: a chunk reaches
+ * `tabId` only while `stillConnected` keeps it, and a rejected injection
+ * counts as "stopped accepting input" (the target's run then ends with an
+ * error). Never throws.
+ */
+export function createTargetInjector(
+  injector: TerminalInputInjector | null,
+  stillConnected: (tabId: string) => boolean
+): (tabId: string, data: string) => Promise<boolean> {
+  return async (tabId, data) => {
+    if (!injector || !stillConnected(tabId)) return false;
+    return withLoggedFallback(injector(tabId, data), false, "macro", `inject into target ${tabId}`);
+  };
+}
+
+/** The counts of a finished multi-terminal playback, for its summary. */
+export interface MacroTargetsTally {
+  /** The playback's overall status (see {@link tallyMacroTargets}). */
+  status: MacroPlaybackStatus;
+  /** Targets that typed the whole macro. */
+  delivered: number;
+  /** Targets that stopped accepting input mid-run. */
+  dropped: number;
+  /** The most chunks any target typed. */
+  stepsPlayed: number;
 }
 
 /**
- * Build a {@link MacroInjector} that fans each step out to `targets`.
- *
- * Before every step `stillConnected` re-filters the live set (so a target that
- * disconnected or was evicted between steps is dropped *before* it could receive
- * a partial command), and a target whose injection fails is dropped as well.
- * Resolves `false` — ending the run with `error` — only once every target is gone.
+ * Fold per-target outcomes into one playback status: `error` when no target
+ * finished and none was stopped (every one dropped), `cancelled` when any was
+ * stopped or never started, else `completed`. A **pure** helper.
  */
-export function createMacroFanoutInjector(
-  targets: readonly string[],
-  injector: TerminalInputInjector | null,
-  stillConnected: (tabIds: string[]) => string[]
-): MacroFanoutInjector {
-  let live = [...targets];
-  const dropped: string[] = [];
-  const drop = (id: string) => {
-    live = live.filter((t) => t !== id);
-    dropped.push(id);
+export function tallyMacroTargets(outcomes: readonly MacroTargetOutcome[]): MacroTargetsTally {
+  const count = (s: MacroTargetOutcome["status"]) => outcomes.filter((o) => o.status === s).length;
+  const delivered = count("completed");
+  const dropped = count("error");
+  const stopped = count("cancelled") + count(undefined);
+  const status: MacroPlaybackStatus =
+    stopped > 0 ? "cancelled" : delivered === 0 && dropped > 0 ? "error" : "completed";
+  return {
+    status,
+    delivered,
+    dropped,
+    stepsPlayed: Math.max(0, ...outcomes.map((o) => o.stepsPlayed)),
   };
-
-  const inject: MacroInjector = async (data) => {
-    if (!injector) return false;
-    const connectedNow = new Set(stillConnected(live));
-    for (const id of [...live]) if (!connectedNow.has(id)) drop(id);
-    const ids = [...live];
-    const results = await Promise.all(
-      ids.map((id) =>
-        withLoggedFallback(injector(id, data), false, "macro", `inject into target ${id}`)
-      )
-    );
-    ids.forEach((id, i) => {
-      if (!results[i]) drop(id);
-    });
-    return live.length > 0;
-  };
-
-  return { inject, live: () => [...live], dropped: () => [...dropped] };
 }
 
 /** Inputs to {@link describeMacroFanoutOutcome}. */
@@ -110,12 +107,10 @@ export function describeMacroFanoutOutcome(
 
   if (o.status === "cancelled") {
     return {
-      kind: "info",
+      // A dropped terminal is a failure and stays visible as one.
+      kind: o.dropped > 0 ? "error" : "info",
       message: `Playback of "${macroName}" canceled`,
-      description: [
-        `Stopped after ${o.stepsPlayed} of ${o.totalSteps} steps on ${plural(o.delivered, "terminal")}`,
-        detail,
-      ]
+      description: [`Finished on ${o.delivered} of ${plural(o.requested, "terminal")}`, detail]
         .filter(Boolean)
         .join(" · "),
     };

@@ -256,7 +256,7 @@ class FolderCreateDriver:
         self._settled = settled_id
         self._settle_after = settle_after
         self._reads = 0
-        self._present = {ConnectionsUi.FOLDER_NAME_INPUT, ConnectionsUi.NEW_FOLDER}
+        self._present = {ConnectionsUi.FOLDER_NAME_INPUT, ConnectionsUi.NEW_CONNECTION_FOLDER}
         self.clicks: list[str] = []
         self.typed: dict[str, str] = {}
 

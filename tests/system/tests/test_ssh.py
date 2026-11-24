@@ -30,6 +30,8 @@ from termihub_harness import (
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
     SSH_X11_PORT,
+    SettingsUi,
+    SidebarUi,
     ssh_server_control,
     SystemTest,
     TabsUi,
@@ -216,13 +218,25 @@ class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTe
 
 @pytest.mark.usefixtures("ssh_fixtures")
 @pytest.mark.native_sshd
-class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, MonitoringUi, SystemTest):
+class TestSshMonitoring(
+    TerminalUi,
+    TabsUi,
+    ConnectionsUi,
+    PasswordPromptUi,
+    MonitoringUi,
+    SettingsUi,
+    SidebarUi,
+    SystemTest,
+):
     """SSH-08: monitoring follows the active tab between an SSH and a local tab.
 
-    Since the local-machine monitoring provider (PROD-0022, 1267a2419) a local
-    shell tab is monitored too, so switching to it no longer hides monitoring;
-    it re-targets the status bar at the local machine (labelled by the tab).
+    A local shell tab is monitored only once the user turns on Settings ▸
+    Monitoring ▸ "Monitor local shells" (#5754). Until then switching to it hides
+    the chips; with it on, the status bar re-targets the local machine (labelled
+    by the tab).
     """
+
+    MONITOR_LOCAL_SHELLS = "toggle-monitor-local-shells"
 
     def monitored_host(self) -> str:
         """The monitoring host chip's label, or ``""`` while it is absent."""
@@ -230,7 +244,23 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
             return ""
         return self.driver.get_text("monitoring-host").strip()
 
+    def set_monitor_local_shells(self, on: bool) -> None:
+        """Set "Monitor local shells" through Settings, waiting until it is saved."""
+
+        def saved() -> bool:
+            return bool(self.persisted_settings().get("monitorLocalShells", False))
+
+        if saved() == on:
+            return
+        self.open_settings_category("monitoring")
+        self.wait(
+            lambda: self.driver.exists(self.MONITOR_LOCAL_SHELLS), what="Monitor local shells"
+        )
+        self.driver.click(self.MONITOR_LOCAL_SHELLS)
+        self.wait(lambda: saved() == on, what=f"Monitor local shells to be {on}")
+
     def test_monitoring_tracks_the_active_tab(self):
+        self.set_monitor_local_shells(False)
         ssh_name = unique_name("ssh-mon")
         self.create_ssh_connection(
             ssh_name,
@@ -251,13 +281,13 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
             what="monitoring to target the SSH host",
         )
 
-        # Open a local shell tab — it becomes active and monitoring re-targets
-        # the local machine.
+        # Open a local shell tab — it becomes active, and by default it is not
+        # monitored: every monitoring chip goes away.
         self.driver.click("terminal-view-new-terminal")
         self.wait(self.has_terminal, what="the local terminal")
         self.wait(
-            lambda: (lambda h: h != "" and HOST not in h)(self.monitored_host()),
-            what="monitoring to follow the local tab",
+            lambda: not self.monitoring_visible(),
+            what="monitoring to leave the local tab",
         )
 
         # Switch back to the SSH tab — monitoring targets the SSH host again.
@@ -265,6 +295,22 @@ class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Mon
         self.wait(
             lambda: HOST in self.monitored_host(),
             what="monitoring to return to the SSH host",
+        )
+
+        # Opted in, a local shell tab re-targets monitoring at the local machine.
+        self.set_monitor_local_shells(True)
+        self.driver.click("terminal-view-new-terminal")
+        self.wait(self.has_terminal, what="the second local terminal")
+        self.wait(
+            lambda: (lambda h: h != "" and HOST not in h)(self.monitored_host()),
+            what="monitoring to follow the local tab",
+        )
+
+        # And the SSH tab gets it back.
+        self.switch_to_tab(ssh_tab["id"])
+        self.wait(
+            lambda: HOST in self.monitored_host(),
+            what="monitoring to return to the SSH host once more",
         )
 
 

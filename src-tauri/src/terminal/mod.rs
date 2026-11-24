@@ -8,6 +8,7 @@ pub mod agent_install;
 pub mod agent_ki_prompt;
 pub mod agent_manager;
 pub mod agent_setup;
+mod agent_setup_outcome;
 pub mod agent_update_auth;
 pub mod backend;
 pub mod jsonrpc;

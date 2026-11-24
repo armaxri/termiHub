@@ -14,6 +14,10 @@ use crate::session::manager::SessionManager;
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install;
+use crate::terminal::agent_setup_outcome::{
+    check_host, sha256_hex, windows_setup_outcome, SessionEndWatch, CHECK_TIMEOUT,
+    SHELL_END_CEILING,
+};
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
@@ -142,6 +146,9 @@ pub struct AgentSetupProgress {
     pub agent_id: String,
     pub step: String,
     pub message: String,
+    /// The setup's terminal session, on a step that must only reach that run's
+    /// tab (a Windows run's `sent` and its outcome, #5992).
+    pub session_id: Option<String>,
 }
 
 /// Result returned to the frontend after initiating setup.
@@ -275,10 +282,14 @@ fn run_setup_background(
         return;
     }
 
+    let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
     inject_commands(
         session_manager,
         session_id,
-        "echo 'Preparing termiHub agent setup, please wait...'\n",
+        &format!(
+            "echo 'Preparing termiHub agent setup, please wait...'{}",
+            enter_key(is_windows)
+        ),
         rt_handle,
     );
 
@@ -332,7 +343,6 @@ fn run_setup_background(
     // injected directly into the terminal (no POSIX `sh` setup script). POSIX
     // hosts upload into a fresh private dir, never a shared `/tmp` name
     // (AGT2-002, #4287).
-    let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
     let upload_dir = if is_windows {
         None
     } else {
@@ -408,6 +418,7 @@ fn run_setup_background(
             agent_id,
             session_id,
             &sftp_session,
+            &binary_path,
             app_handle,
             session_manager,
             rt_handle,
@@ -523,14 +534,15 @@ fn rollback_uploaded_binary(sftp_session: &SshSession, upload_path: &str) {
 
 /// Install the uploaded agent on a Windows host by injecting the
 /// platform-appropriate `cmd.exe`/PowerShell install + verify commands into the
-/// visible terminal ([`windows_setup_lines`]). They end the tab's shell with
-/// the install's status, so the setup tab learns the outcome from the session's
-/// exit code (#5946). No systemd service is installed (Phase 1 uses on-demand
-/// `--stdio` launch).
+/// visible terminal ([`windows_setup_lines`]). They end the tab's shell; its
+/// exit code does not say how the install went on Windows, so the outcome is
+/// then checked on the host itself ([`windows_setup_outcome`], #5992). No
+/// systemd service is installed (Phase 1 uses on-demand `--stdio` launch).
 fn run_windows_install(
     agent_id: &str,
     session_id: &str,
     sftp_session: &SshSession,
+    binary_path: &str,
     app_handle: &AppHandle,
     session_manager: &SessionManager,
     rt_handle: &tokio::runtime::Handle,
@@ -564,10 +576,10 @@ fn run_windows_install(
         "install",
         "Installing agent binary...",
     );
-    // The last line exits the tab's shell with the install's status, so the
-    // session's exit code says installed or failed, as on POSIX (#5946).
-    for line in windows_setup_lines(shell) {
-        inject_commands(session_manager, session_id, &format!("{line}\n"), rt_handle);
+    // Watch before typing: the last line ends the tab's shell.
+    let watch = SessionEndWatch::start(app_handle, session_id);
+    for line in windows_setup_input(shell) {
+        inject_commands(session_manager, session_id, &line, rt_handle);
     }
 
     // The install lands at the managed Windows location, not the POSIX default
@@ -578,13 +590,48 @@ fn run_windows_install(
         agent_install::resolve_windows_install_path(sftp_session, shell),
     );
 
-    emit_progress(
+    // From here on nothing can be cancelled: the commands are typed.
+    emit_session_progress(
         app_handle,
         agent_id,
-        "done",
-        "Setup commands sent to terminal",
+        session_id,
+        "sent",
+        "Install commands sent, waiting for the result...",
     );
     info!("Agent setup: Windows install commands sent for agent {agent_id}");
+
+    let end = watch.wait(SHELL_END_CEILING, || {
+        rt_handle
+            .block_on(session_manager.list_sessions())
+            .iter()
+            .any(|s| s.id == session_id)
+    });
+    let check = std::fs::read(binary_path)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))
+        .and_then(|bytes| check_host(sftp_session, &sha256_hex(&bytes), CHECK_TIMEOUT));
+    let outcome = windows_setup_outcome(end, &check);
+    info!("Agent setup: Windows shell end {end:?}, host check {check:?}: {outcome:?}");
+    let (step, message) = outcome.progress();
+    emit_session_progress(app_handle, agent_id, session_id, step, message);
+}
+
+/// What Enter sends to the setup tab's shell. A Windows PTY shell takes CR:
+/// PSReadLine reads LF as Ctrl+Enter and leaves the line unfinished, so a
+/// setup typed with LF never ran there (#5992).
+fn enter_key(is_windows: bool) -> &'static str {
+    if is_windows {
+        "\r"
+    } else {
+        "\n"
+    }
+}
+
+/// [`windows_setup_lines`] as typed into the tab, each ended with Enter.
+pub(crate) fn windows_setup_input(shell: agent_install::WindowsDeployShell) -> Vec<String> {
+    windows_setup_lines(shell)
+        .into_iter()
+        .map(|line| line + enter_key(true))
+        .collect()
 }
 
 /// The `cmd.exe` variable holding a Windows setup's status (0 installed).
@@ -598,7 +645,8 @@ const WINDOWS_SETUP_FAILED: &str = "Agent setup failed: see the output above.";
 
 /// The PowerShell lines of a Windows setup (install, verify, stale cleanup),
 /// ending in `exit` with the setup's status: 0 when the install and the
-/// agent's `--version` check succeeded, 1 otherwise (#5946).
+/// agent's `--version` check succeeded, 1 otherwise (#5946). Windows does not
+/// reliably report that status, so it is not the outcome ([`windows_setup_outcome`]).
 ///
 /// The install and verify run in a child scope with `$ErrorActionPreference =
 /// 'Stop'`, so a failed `Move-Item` or a missing exe is caught, and a non-zero
@@ -646,10 +694,10 @@ fn cmd_setup_lines(plan: &agent_install::InstallPlan) -> Vec<String> {
 }
 
 /// The lines a Windows setup types into its tab for `shell` (#5946). Each one
-/// is a single command line; the last ends the tab's shell with the setup's
-/// status (0 installed, non-zero failed), so the session's exit code tells the
-/// setup tab the outcome, as `exec sh setup.sh` does on POSIX
-/// ([`setup_exec_command`]). No output is ever read to decide it.
+/// is a single command line; the last ends the tab's shell, which starts the
+/// check on the host ([`windows_setup_outcome`], #5992). Win32-OpenSSH reports
+/// the PTY's console host, not this shell's status, so a 0 says nothing.
+/// No output of the tab is ever read to decide the outcome.
 ///
 /// A login shell that is neither `cmd.exe` nor PowerShell gets the PowerShell
 /// lines as one encoded `powershell.exe` script, and then exits with its
@@ -716,7 +764,7 @@ fn inject_setup_error(
         inject_commands(
             session_manager,
             session_id,
-            &format!("echo Agent setup failed: {safe}\n"),
+            &format!("echo Agent setup failed: {safe}{}", enter_key(true)),
             rt_handle,
         );
     } else {
@@ -1144,10 +1192,32 @@ fn generate_error_script(message: &str) -> String {
 
 /// Emit a setup progress event to the frontend.
 fn emit_progress(app_handle: &AppHandle, agent_id: &str, step: &str, message: &str) {
+    emit_event(app_handle, agent_id, None, step, message);
+}
+
+/// [`emit_progress`] for the run of `session_id` only.
+fn emit_session_progress(
+    app_handle: &AppHandle,
+    agent_id: &str,
+    session_id: &str,
+    step: &str,
+    message: &str,
+) {
+    emit_event(app_handle, agent_id, Some(session_id), step, message);
+}
+
+fn emit_event(
+    app_handle: &AppHandle,
+    agent_id: &str,
+    session_id: Option<&str>,
+    step: &str,
+    message: &str,
+) {
     let event = AgentSetupProgress {
         agent_id: agent_id.to_string(),
         step: step.to_string(),
         message: message.to_string(),
+        session_id: session_id.map(str::to_string),
     };
     if let Err(e) = app_handle.emit("agent-setup-progress", &event) {
         error!("Agent setup: failed to emit progress: {}", e);

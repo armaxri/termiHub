@@ -26,12 +26,12 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import type { LeafPanel, PanelNode, TerminalTab } from "@/types/terminal";
-import type { MacroPlaybackDialogProps } from "./MacroPlaybackDialog";
+import type { RunTargetsDialogProps } from "@/components/Automations/RunTargetsDialog";
 import type { MacroRecordSaveDialogProps } from "./MacroRecordSaveDialog";
 import type { BroadcastScopeDialogProps } from "./BroadcastScopeDialog";
 
 const probes = vi.hoisted(() => ({
-  playback: null as MacroPlaybackDialogProps | null,
+  playback: null as RunTargetsDialogProps | null,
   save: null as MacroRecordSaveDialogProps | null,
   scope: null as BroadcastScopeDialogProps | null,
 }));
@@ -55,8 +55,8 @@ vi.mock("./MacroRecordSaveDialog", () => ({
     return null;
   },
 }));
-vi.mock("./MacroPlaybackDialog", () => ({
-  MacroPlaybackDialog: (p: MacroPlaybackDialogProps) => {
+vi.mock("@/components/Automations/RunTargetsDialog", () => ({
+  RunTargetsDialog: (p: RunTargetsDialogProps) => {
     probes.playback = p;
     return null;
   },
@@ -275,8 +275,8 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     click("terminal-view-play-macro");
     expect(probes.playback?.open).toBe(true);
 
-    act(() => probes.playback!.onPlay("m1", "fixed", ["t1"]));
-    expect(playMacro).toHaveBeenCalledWith("m1", { timingMode: "fixed", targetTabIds: ["t1"] });
+    act(() => probes.playback!.onRun("m1", ["t1"], { parallel: false }));
+    expect(playMacro).toHaveBeenCalledWith("m1", { targetTabIds: ["t1"], parallel: false });
     act(() => probes.playback!.onOpenChange(false));
     expect(probes.playback?.open).toBe(false);
   });
