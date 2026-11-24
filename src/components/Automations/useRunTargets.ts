@@ -42,7 +42,10 @@ export function useRunTargets(): RunTargetOptions {
   const lifecycle = useProjectedSessionLifecycleMaps();
 
   return useMemo(() => {
-    const state = useAppStore.getState();
+    // `filterConnectedTerminalTabIds` reads the session view `lifecycle`
+    // mirrors; naming it here re-derives the live markers when it changes.
+    void lifecycle;
+    const state = { ...useAppStore.getState(), terminalSpawnErrors: spawnErrors };
     const groupTrees = tabGroups.map((g) => (g.id === activeTabGroupId ? rootPanel : g.rootPanel));
     const tabs: TerminalTab[] = (groupTrees.length > 0 ? groupTrees : [rootPanel])
       .flatMap((tree) => getAllLeaves(tree))
@@ -75,9 +78,6 @@ export function useRunTargets(): RunTargetOptions {
         tabIds: onlyLive(resolveBroadcastGroup(tabs, group).tabIds),
       })),
     };
-    // `lifecycle` and `spawnErrors` are read through the store getter above;
-    // listing them re-derives the live markers when a session changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     rootPanel,
     tabGroups,

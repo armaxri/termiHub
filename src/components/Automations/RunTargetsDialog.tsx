@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   Modal,
@@ -117,6 +117,10 @@ export function RunTargetsDialog({
   onRun,
 }: RunTargetsDialogProps) {
   const options = useRunTargets();
+  // Read at open time only: `options` changes as sessions connect, which must
+  // not reset what the user is choosing.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const [automationId, setAutomationId] = useState<string | undefined>(undefined);
   const [choice, setChoice] = useState<RunTargetChoice>(() =>
     initialRunTargetChoice(rememberedRunTargetChoice(), options)
@@ -128,12 +132,9 @@ export function RunTargetsDialog({
   useEffect(() => {
     if (!open) return;
     setAutomationId(automations[0]?.id);
-    setChoice(initialRunTargetChoice(rememberedRunTargetChoice(), options));
+    setChoice(initialRunTargetChoice(rememberedRunTargetChoice(), optionsRef.current));
     setConfirming(false);
     setMoreOpen(false);
-    // Only on open: `options` changes as sessions connect, which must not
-    // reset what the user is choosing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, automations]);
 
   const radioOptions = useMemo(() => targetOptions(options), [options]);
