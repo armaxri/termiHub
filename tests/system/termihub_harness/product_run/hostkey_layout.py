@@ -6,7 +6,9 @@ results, so the grade runs without an app in the per-PR lane
 prompt / rejected-key screen in the product run's SSH phase.
 
 - :func:`fingerprint_layout_problems` — a fingerprint row must not break
-  mid-string (R-102) and keeps a visible gap before its copy button.
+  mid-string (R-102) and keeps a visible gap before its copy button. Since
+  #5862 a long piece renders as groups of four; a line break between two
+  groups (anywhere but after a ``:``) is a mid-string break too.
 - :func:`rejected_screen_problems` — the rejected-key screen says "rejected"
   once (R-103): the heading, not a red error box and a paragraph repeating it.
 """
@@ -48,6 +50,12 @@ def fingerprint_layout_problems(
     for c in chunks:
         if line > 0 and float(c["rect"]["height"]) > line * WRAPPED_LINE_RATIO:
             problems.append(f"fingerprint piece {c['text']!r} breaks mid-string")
+    # Pieces come in document order; one that starts a new line must follow a
+    # piece ending in ":" (the only allowed break), else a group was split off.
+    for prev, cur in zip(chunks, chunks[1:]):
+        new_line = float(cur["rect"]["y"]) >= float(prev["rect"]["y"]) + line / 2
+        if line > 0 and new_line and not str(prev["text"]).endswith(":"):
+            problems.append(f"fingerprint breaks mid-string between {prev['text']!r} and {cur['text']!r}")
     copy = [b for b in buttons if b.get("visible")]
     if not copy:
         problems.append("no visible copy button beside the fingerprint")
