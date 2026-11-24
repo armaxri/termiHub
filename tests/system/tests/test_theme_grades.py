@@ -294,10 +294,8 @@ class TestThemeGrades(
         self.set_theme("dark")
         dark_accent, dark_grid = self.root_color("--accent-color"), self.root_color("--border-primary")
         # Settings stays in this panel; the chart gets its own panel, so the
-        # theme switch never hides (and unmounts) it. Turn experimental features
-        # on (the Network Tools gate) *before* the split: on a fresh app that
-        # visits Settings, which re-activates the Settings panel, and Ping then
-        # opened beside Settings — a first-attempt failure on every OS (#5167).
+        # theme switch never hides (and unmounts) it. Open Network Tools *before*
+        # the split (#5167); it no longer needs the experimental toggle (#5858).
         self.open_network_tools_sidebar()
         self.driver.click(SPLIT_H)
         self.wait(lambda: self.leaf_count() == 2, what="a second panel for the chart")

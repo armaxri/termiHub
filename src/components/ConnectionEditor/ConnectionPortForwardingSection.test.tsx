@@ -248,7 +248,7 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
     expect(deleteTunnel).toHaveBeenCalledWith("t1", { undoable: true });
   });
 
-  describe("hint copy follows the experimental gate (#5363)", () => {
+  describe("hint copy no longer depends on the experimental gate (#5363, #5858)", () => {
     function emitExperimental(enabled: boolean) {
       act(() =>
         __emitSettingsViewForTest(
@@ -264,26 +264,16 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
       );
     }
 
-    it("with experimental features off, does not name the hidden sidebar as visible and links to the toggle", async () => {
-      emitExperimental(false);
-      seed([]);
-      await render("conn-1");
-      const hint = byTestId("connection-port-forwarding-hint")!;
-      expect(hint.textContent).not.toContain("listed in the SSH Tunnels sidebar");
-      expect(hint.textContent).toContain(
-        "turn on Settings ▸ General ▸ Allow experimental features"
-      );
-      await click(byTestId("connection-port-forwarding-experimental-link"));
-      expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
-    });
-
-    it("with experimental features on, names the SSH Tunnels sidebar and shows no toggle link", async () => {
-      emitExperimental(true);
-      seed([]);
-      await render("conn-1");
-      const hint = byTestId("connection-port-forwarding-hint")!;
-      expect(hint.textContent).toContain("same tunnels listed in the SSH Tunnels sidebar");
-      expect(byTestId("connection-port-forwarding-experimental-link")).toBeNull();
-    });
+    it.each([false, true])(
+      "names the SSH Tunnels sidebar and shows no toggle link (experimental %s, #5858)",
+      async (enabled) => {
+        emitExperimental(enabled);
+        seed([]);
+        await render("conn-1");
+        const hint = byTestId("connection-port-forwarding-hint")!;
+        expect(hint.textContent).toContain("same tunnels listed in the SSH Tunnels sidebar");
+        expect(byTestId("connection-port-forwarding-experimental-link")).toBeNull();
+      }
+    );
   });
 });

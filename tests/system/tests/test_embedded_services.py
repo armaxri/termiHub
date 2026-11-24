@@ -1,7 +1,7 @@
 """Embedded Services suite (SVC-01..13) on the Python bridge harness (issue #947).
 
 Ports ``tests/e2e/embedded-services.test.js`` — the local HTTP/FTP/TFTP servers
-gated behind experimental features — onto the bridge harness (part of #803 /
+(formerly gated behind experimental features, always on since #5858) — onto the bridge harness (part of #803 /
 epic #799). Each WebdriverIO ``data-testid`` interaction becomes a bridge step
 and each assertion a check; server *state* is read from the Zustand store
 (``embeddedServers`` / ``embeddedServerStates``) rather than scraped from the
@@ -209,10 +209,6 @@ class TestEmbeddedServices(
         default unprivileged port (HTTP 8080 / FTP 2121 / TFTP 6969). Returns the
         started server's store config.
         """
-        # The Share-via menu items are gated behind experimental features
-        # (#4498), so enable them first — this case must not rely on an
-        # earlier test having opened the Services sidebar.
-        self.enable_experimental_features()
         # A local terminal gives the file browser a directory to share.
         self.ensure_terminal()
         self.open_file_browser()

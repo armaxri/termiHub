@@ -54,7 +54,7 @@ class SettingsUi(HarnessMixin):
         )
 
     def enable_experimental_features(self) -> None:
-        """Turn on experimental features (reveals the Tunnels/Services views)."""
+        """Turn on experimental features (reveals Workflows, remote agents, RDP/VNC)."""
         if self._experimental_enabled():
             return
         self.open_settings_category("general")

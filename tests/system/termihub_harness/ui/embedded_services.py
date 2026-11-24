@@ -1,7 +1,7 @@
 """Embedded-services (HTTP/FTP/TFTP) sidebar helpers (issue #947).
 
-Drives the **Services** sidebar — the local HTTP/FTP/TFTP servers gated behind
-experimental features. Mirrors :class:`NetworkToolsUi`: an idempotent sidebar
+Drives the **Services** sidebar — the local HTTP/FTP/TFTP servers (always on since
+#5858). Mirrors :class:`NetworkToolsUi`: an idempotent sidebar
 opener plus CRUD/lifecycle helpers that prefer the Zustand store
 (``embeddedServers`` / ``embeddedServerStates``) over DOM scraping for state, and
 the live ``data-testid``s for interactions.
@@ -40,14 +40,12 @@ class EmbeddedServicesUi(HarnessMixin):
 
     if TYPE_CHECKING:  # supplied by SettingsUi / SidebarUi when the suite combines them
 
-        def enable_experimental_features(self) -> None: ...
         def _ensure_sidebar(self, view: str, test_id: str) -> None: ...
         def switch_to_connections_sidebar(self) -> None: ...
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     def open_services_sidebar(self) -> None:
-        """Reveal and show the Services sidebar (idempotent)."""
-        self.enable_experimental_features()
+        """Show the Services sidebar (idempotent; no experimental toggle, #5858)."""
         self._ensure_sidebar("services", self.ACTIVITY)
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
 
