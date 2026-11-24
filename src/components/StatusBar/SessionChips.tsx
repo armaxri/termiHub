@@ -22,6 +22,15 @@ import {
 import { t } from "@/i18n/catalog";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { useTabSshHostKeyTrust } from "@/store/sshHostKeyTrustBridge";
+import { useAgentSetupStatus } from "@/store/agentSetupStatus";
+import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
+
+/** Whether `tabId` is an agent setup tab whose session has ended (#5980). */
+function useSetupTabEnded(tabId: string | undefined): boolean {
+  const isSetupTab = useAgentSetupStatus((s) => (tabId ? tabId in s.tabs : false));
+  const { terminalExitedTabs } = useProjectedSessionLifecycleMaps();
+  return isSetupTab && !!tabId && !!terminalExitedTabs[tabId];
+}
 
 /** The chip icon per trust level: a check once the key is remembered. */
 const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
@@ -35,15 +44,18 @@ const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
  * tab, with ` via hop:port` when it jumps. A shield shows the host key's trust
  * and that the session is encrypted (#5839); clicking opens a popover with the
  * host, encryption, sign-in method and host key, plus a link to manage
- * trusted keys. The tooltip (#5669) stays for hover. Hidden for non-SSH tabs.
+ * trusted keys. The tooltip (#5669) stays for hover. Hidden for non-SSH tabs,
+ * and for an agent setup tab once its setup ended (#5980): the setup's SSH
+ * session is over, and nothing in that tab reconnects it.
  */
 export function SshStatus() {
   const config = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const tabId = useAppStore((s) => getActiveTab(s)?.id);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const hostKeys = useTabSshHostKeyTrust(tabId);
+  const setupEnded = useSetupTabEnded(tabId);
   const chip = sshSecurityChip(config, hostKeys);
-  if (!chip) return null;
+  if (!chip || setupEnded) return null;
   const TrustIcon = TRUST_ICON[chip.trust];
   return (
     <DropdownMenuRoot>
