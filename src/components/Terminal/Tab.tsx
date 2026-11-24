@@ -30,6 +30,7 @@ import {
   ArrowRight,
   CircleDashed,
   CheckCircle2,
+  CircleHelp,
   CircleStop,
   SquareSplitHorizontal,
 } from "lucide-react";
@@ -70,6 +71,8 @@ const STATUS_LABELS: Record<TabStatus, string> = {
   exited: "Process exited",
   evicted: "Taken over by another desktop",
   finished: "Finished",
+  checking: "Checking the agent…",
+  unknown: "Agent setup outcome unknown",
 };
 
 /**
@@ -90,6 +93,8 @@ const STATUS_ICON: Record<TabStatus, LucideIcon> = {
   exited: CircleStop,
   evicted: MonitorX,
   finished: CheckCircle2,
+  checking: CircleDashed,
+  unknown: CircleHelp,
 };
 
 interface TabProps {

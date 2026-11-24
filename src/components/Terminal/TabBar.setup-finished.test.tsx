@@ -156,6 +156,20 @@ describe("TabBar — finished agent setup tab (#5980)", () => {
     expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");
   });
 
+  it.each([
+    [{ kind: "running" }, "checking", "Checking the agent…"],
+    [{ kind: "unknown", message: "?" }, "unknown", "Agent setup outcome unknown"],
+    [{ kind: "failed", message: "no" }, "disconnected", "Disconnected"],
+    [{ kind: "installed" }, "finished", "Finished"],
+  ] as const)("a Windows exit 0 with %o shows %s (#5992)", async (progress, status, label) => {
+    registerSetupTab("t1", { reportsExit: false, progress });
+    harness.transport.setSession("t1", withExit(disconnected("unexpected"), exitInfo(0)));
+    await render([makeTerminalTab("t1", true)]);
+    await flushSessionRegion();
+    expect(dotFor("t1")?.className).toBe(`tab__state-dot tab__state-dot--${status}`);
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe(label);
+  });
+
   it("keeps the neutral stop sign (#5955) for an ordinary tab that exited 0", async () => {
     harness.transport.setSession("t1", withExit(disconnected("unexpected"), exitInfo(0)));
     await render([makeTerminalTab("t1", true)]);

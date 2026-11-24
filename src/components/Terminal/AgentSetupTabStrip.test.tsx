@@ -41,30 +41,49 @@ const exit = (code: number | null): TerminalExitInfo => ({
   reason: code === null ? "dropped" : "clean",
 });
 
-describe("withSetupOutcome (#5980)", () => {
-  it.each(["disconnected", "exited"] as const)(
-    "reads a %s setup that exited 0 as finished",
-    (s) => {
-      expect(withSetupOutcome(s, setupTab(), exit(0))).toBe("finished");
-      // Also after the user closed the strip.
-      expect(withSetupOutcome(s, setupTab({ dismissed: true }), exit(0))).toBe("finished");
-    }
-  );
+describe("withSetupOutcome (#5980, #5992)", () => {
+  const windows = (progress: AgentSetupTab["progress"] = { kind: "running" }) =>
+    setupTab({ reportsExit: false, progress });
+  const ended = ["disconnected", "exited"] as const;
 
-  it.each(["disconnected", "exited"] as const)(
-    "keeps the red plug for a %s setup that did not",
-    (s) => {
-      const cancelled = setupTab({ progress: { kind: "cancelled" } });
-      const failed = setupTab({ progress: { kind: "failed", message: "no" } });
-      expect(withSetupOutcome(s, setupTab(), exit(2))).toBe("disconnected");
-      expect(withSetupOutcome(s, cancelled, exit(0))).toBe("disconnected");
+  it.each(ended)("POSIX, %s: exit 0 is finished, any other code the red plug", (s) => {
+    expect(withSetupOutcome(s, setupTab(), exit(0))).toBe("finished");
+    // Also after the user closed the strip.
+    expect(withSetupOutcome(s, setupTab({ dismissed: true }), exit(0))).toBe("finished");
+    expect(withSetupOutcome(s, setupTab(), exit(2))).toBe("disconnected");
+  });
+
+  it.each(ended)("a %s setup that failed or was cancelled keeps the red plug", (s) => {
+    for (const reportsExit of [true, false]) {
+      const failed = setupTab({ reportsExit, progress: { kind: "failed", message: "no" } });
+      const cancelled = setupTab({ reportsExit, progress: { kind: "cancelled" } });
       expect(withSetupOutcome(s, failed, exit(0))).toBe("disconnected");
+      expect(withSetupOutcome(s, cancelled, exit(0))).toBe("disconnected");
     }
-  );
+  });
 
-  it("keeps the status of a dropped link, a live setup and other tabs", () => {
+  it.each(ended)("Windows, %s: exit 0 alone is being checked, never finished", (s) => {
+    expect(withSetupOutcome(s, windows(), exit(0))).toBe("checking");
+    expect(withSetupOutcome(s, windows(), exit(null))).toBe("checking");
+  });
+
+  it.each(ended)("Windows, %s: the checked outcome decides, whatever the exit code", (s) => {
+    for (const code of [0, 5, null]) {
+      const unknown = windows({ kind: "unknown", message: "?" });
+      expect(withSetupOutcome(s, windows({ kind: "installed" }), exit(code))).toBe("finished");
+      expect(withSetupOutcome(s, unknown, exit(code))).toBe("unknown");
+      expect(withSetupOutcome(s, windows({ kind: "failed", message: "" }), exit(code))).toBe(
+        "disconnected"
+      );
+    }
+  });
+
+  it("keeps the status of a dropped POSIX link, a live setup and other tabs", () => {
     expect(withSetupOutcome("disconnected", setupTab(), exit(null))).toBe("disconnected");
     expect(withSetupOutcome("connected", setupTab(), undefined)).toBe("connected");
+    expect(withSetupOutcome("connected", windows({ kind: "installed" }), undefined)).toBe(
+      "connected"
+    );
     expect(withSetupOutcome("exited", undefined, exit(0))).toBe("exited");
     expect(withSetupOutcome("disconnected", undefined, exit(0))).toBe("disconnected");
   });

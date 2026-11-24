@@ -241,10 +241,16 @@
   color: var(--state-disconnected);
 }
 
-/* A setup tab whose setup exited 0 (#5980): its work is done, so a calm
+/* A setup tab whose agent was installed (#5980): its work is done, so a calm
    success check instead of the red unplugged disconnect. */
 .tab__state-dot--finished {
   color: var(--color-success);
+}
+
+/* A setup still being checked, or with an unknown outcome (#5992): neutral. */
+.tab__state-dot--checking,
+.tab__state-dot--unknown {
+  color: var(--text-secondary);
 }
 
 /* The process exited on its own (#5955): a calm neutral stop sign, not the red

@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { useAgentSetupStatus } from "@/store/agentSetupStatus";
+import { useAgentSetupStatus, type AgentSetupTab } from "@/store/agentSetupStatus";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalTab } from "@/types/terminal";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
@@ -56,7 +56,7 @@ function setActiveSshTab() {
   });
 }
 
-function registerSetupTab() {
+function registerSetupTab(overrides: Partial<AgentSetupTab> = {}) {
   useAgentSetupStatus.setState({
     tabs: {
       "tab-1": {
@@ -65,6 +65,7 @@ function registerSetupTab() {
         reportsExit: true,
         progress: { kind: "running" },
         dismissed: false,
+        ...overrides,
       },
     },
   });
@@ -107,6 +108,38 @@ describe("StatusBar — SSH chip on an ended setup tab (#5980)", () => {
     );
     await render();
     expect(sshChip()).toBeNull();
+  });
+
+  it.each([
+    { kind: "running" },
+    { kind: "installed" },
+    { kind: "unknown", message: "?" },
+    { kind: "failed", message: "no" },
+  ] as const)("hides the chip for a Windows exit 0 with outcome %o (#5992)", async (progress) => {
+    registerSetupTab({ reportsExit: false, progress });
+    harness.transport.setSession(
+      "tab-1",
+      withExit(disconnected("unexpected"), { code: 0, reason: "clean" })
+    );
+    await render();
+    expect(sshChip()).toBeNull();
+  });
+
+  it("keeps the greyed chip when a setup's link dropped without an outcome", async () => {
+    registerSetupTab();
+    harness.transport.setSession(
+      "tab-1",
+      withExit(disconnected("unexpected"), { code: null, reason: "dropped" })
+    );
+    await render();
+    expect(sshChip()?.getAttribute("data-down")).toBe("true");
+  });
+
+  it("keeps the chip while a setup that already failed is still connected", async () => {
+    registerSetupTab({ progress: { kind: "failed", message: "SFTP" } });
+    harness.transport.setSession("tab-1", connected());
+    await render();
+    expect(sshChip()).not.toBeNull();
   });
 
   it("keeps the chip while the setup still runs", async () => {

@@ -82,7 +82,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     }
     return map;
   }, [terminalEnds, terminalExitedTabs]);
-  // A finished agent setup tab shows a success check, not a stop sign (#5980).
+  // An ended agent setup tab shows its outcome (#5980, #5992).
   const setupTabs = useAgentSetupStatus((s) => s.tabs);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   // Broadcast participation (#1957): the badge shows on every tab in the target
