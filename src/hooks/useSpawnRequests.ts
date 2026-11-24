@@ -1,3 +1,4 @@
+import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui";
@@ -132,8 +133,10 @@ export async function resolveSpawnSecret(
   if (secret.status === "canceled") return null;
   if (secret.status === "none") return spawn;
   if (secret.source === "prompt" && saved && secret.shouldSave) {
-    await storeCredential(saved.id, secret.credentialType, secret.secret, sourceFile).catch(
-      (err: unknown) => frontendLog("spawn", `Failed to store credential: ${errorMessage(err)}`)
+    await saveAfterStorageChoice(() =>
+      storeCredential(saved.id, secret.credentialType, secret.secret, sourceFile)
+    ).catch((err: unknown) =>
+      frontendLog("spawn", `Failed to store credential: ${errorMessage(err)}`)
     );
   }
   return { ...spawn, settings: { ...spawn.settings, [secret.passwordKey]: secret.secret } };

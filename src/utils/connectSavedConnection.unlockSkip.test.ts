@@ -26,7 +26,8 @@ import { toast } from "@/components/ui";
 import { createTerminal, resolveCredential, storeCredential } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import type { SavedConnection } from "@/types/connection";
-import { CONNECT_CANCELED_MESSAGE, connectSavedConnection } from "./connectSavedConnection";
+import { connectSavedConnection } from "./connectSavedConnection";
+import type { ToastOptions } from "@/components/ui/Toast/toast";
 
 let addTabSpy: ReturnType<typeof vi.fn>;
 let infoSpy: ReturnType<typeof vi.spyOn>;
@@ -146,7 +147,7 @@ describe("connectSavedConnection — locked vault (#5188)", () => {
     expect(vi.mocked(storeCredential)).not.toHaveBeenCalled();
   });
 
-  it("dismissing the unlock dialog (Escape/×) cancels with the shared toast", async () => {
+  it("dismissing the unlock dialog names the connect and offers a typed password", async () => {
     const pending = connectSavedConnection(sshPassword());
     await flush();
 
@@ -155,12 +156,32 @@ describe("connectSavedConnection — locked vault (#5188)", () => {
     const result = await pending;
 
     expect(result).toEqual({ status: "canceled" });
-    expect(infoSpy).toHaveBeenCalledWith(CONNECT_CANCELED_MESSAGE);
-    expect(CONNECT_CANCELED_MESSAGE).toBe("Connect canceled");
+    // #5838: the toast names the connection and says what to do next.
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    const [text, opts] = infoSpy.mock.calls[0] as [string, ToastOptions];
+    expect(text).toBe('Connect to "web-1" canceled. Its saved password stays locked.');
+    expect(opts.action?.label).toBe("Type password instead");
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
     expect(addTabSpy).not.toHaveBeenCalled();
     expect(vi.mocked(resolveCredential)).not.toHaveBeenCalled();
     expect(vi.mocked(storeCredential)).not.toHaveBeenCalled();
+
+    // The action connects again without the vault: no unlock, a password prompt.
+    const unlockOpens = vi.fn();
+    const unsubscribe = useAppStore.subscribe((s) => {
+      if (s.unlockDialogOpen) unlockOpens();
+    });
+    opts.action!.onClick();
+    await flush();
+    unsubscribe();
+    expect(unlockOpens).not.toHaveBeenCalled();
+    const state = useAppStore.getState();
+    expect(state.passwordPromptOpen).toBe(true);
+    expect(state.passwordPromptAllowSave).toBe(false);
+    state.submitPassword("typed");
+    await flush();
+    expect(addTabSpy).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(resolveCredential)).not.toHaveBeenCalled();
   });
 
   it("dismissing the password prompt after the fall-through also toasts the shared cancel", async () => {
@@ -173,7 +194,9 @@ describe("connectSavedConnection — locked vault (#5188)", () => {
     const result = await pending;
 
     expect(result).toEqual({ status: "canceled" });
-    expect(infoSpy).toHaveBeenCalledWith(CONNECT_CANCELED_MESSAGE);
+    const [text, opts] = infoSpy.mock.calls[0] as [string, ToastOptions];
+    expect(text).toBe('Connect to "web-1" canceled.');
+    expect(opts.action?.label).toBe("Retry");
     expect(addTabSpy).not.toHaveBeenCalled();
   });
 });

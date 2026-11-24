@@ -188,7 +188,7 @@ describe("UnlockDialog", () => {
 
   // --- #5188: a waiting connect can go on without the vault ---
 
-  it("offers 'Connect without saved password' instead of Skip when a connect waits", async () => {
+  it("offers 'Type password instead' beside a Cancel when a connect waits", async () => {
     const onOpenChange = vi.fn();
     const onConnectWithoutSaved = vi.fn();
     await act(async () => {
@@ -203,9 +203,15 @@ describe("UnlockDialog", () => {
     });
 
     const btn = query("unlock-dialog-connect-without-saved") as HTMLButtonElement;
-    expect(btn.textContent).toBe("Connect without saved password");
+    expect(btn.textContent).toBe("Type password instead");
+    expect(btn.className).toContain("ui-btn--secondary");
     expect(document.body.textContent).not.toMatch(/\bSkip\b/);
-    expect(query("unlock-dialog-cancel")).toBeNull();
+    // #5838: Cancel stays, first in the row; Unlock is the one primary.
+    const cancel = query("unlock-dialog-cancel") as HTMLButtonElement;
+    expect(cancel).not.toBeNull();
+    const actions = cancel.parentElement!;
+    expect(actions.firstElementChild).toBe(cancel);
+    expect(actions.querySelectorAll(".ui-btn--primary").length).toBe(1);
     act(() => btn.click());
 
     expect(onConnectWithoutSaved).toHaveBeenCalledTimes(1);
@@ -338,6 +344,36 @@ describe("UnlockDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  // --- #5838: a plain field and a short reset link ---
+
+  it("labels the field once, with no placeholder repeating the label", async () => {
+    await act(async () => {
+      root.render(<UnlockDialog open={true} onOpenChange={vi.fn()} />);
+    });
+    const input = query("unlock-dialog-input") as HTMLInputElement;
+    expect(input.getAttribute("placeholder")).toBeNull();
+    expect(query("unlock-dialog-field")?.textContent).toContain("Master password");
+    expect(query("unlock-dialog-forgot")?.textContent).toBe("Forgot master password?");
+  });
+
+  it("Cancel closes the dialog while a connect waits, without the fallback", async () => {
+    const onOpenChange = vi.fn();
+    const onConnectWithoutSaved = vi.fn();
+    await act(async () => {
+      root.render(
+        <UnlockDialog
+          open={true}
+          onOpenChange={onOpenChange}
+          connectFallback={true}
+          onConnectWithoutSaved={onConnectWithoutSaved}
+        />
+      );
+    });
+    act(() => (query("unlock-dialog-cancel") as HTMLButtonElement).click());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onConnectWithoutSaved).not.toHaveBeenCalled();
+  });
+
   // --- #1360: forgot-password recovery path (always available, guarded) ---
 
   it("always offers a forgot-password reset affordance, even without corruption", async () => {
@@ -361,6 +397,11 @@ describe("UnlockDialog", () => {
     // A confirm dialog appears warning that the reset is irreversible.
     expect(query("unlock-dialog-reset-confirm")).not.toBeNull();
     expect(document.body.textContent).toMatch(/permanently|cannot be undone/i);
+    // #5838: the confirm says it deletes every saved password, on its button too.
+    expect(query("unlock-dialog-reset-confirm")!.textContent).toContain(
+      "permanently deletes all saved passwords"
+    );
+    expect(query("confirm-dialog-confirm")?.textContent).toBe("Delete all saved passwords");
     // The store is NOT reset until the user confirms.
     expect(mockedReset).not.toHaveBeenCalled();
   });

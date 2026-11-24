@@ -25,9 +25,25 @@ export const CREDENTIAL_STORAGE_CHOOSE_TEXT =
   "Turning this on asks once where termiHub should keep passwords — the OS Keychain " +
   "is recommended. You can change it later under Settings ▸ Security.";
 
-/** Under a live save box before any storage choice exists (#5187). */
+/**
+ * Under a connect-time prompt's save box before any storage choice exists
+ * (#5187). The box ticks locally; the chooser opens only after the connect
+ * succeeds, never over the prompt (#5867).
+ */
 export const CREDENTIAL_STORAGE_CHOOSE_HINT =
-  "Ticking this asks where to keep passwords. It is saved once the connection succeeds.";
+  "Saved once the connection succeeds. termiHub then asks once where to keep passwords.";
+
+/**
+ * The one line a connect-time prompt shows while credential storage is off by
+ * choice (#5838), followed by {@link TURN_ON_SAVING_LABEL} as a link. It
+ * replaces a disabled box, a sentence and a separate action.
+ */
+export function storageOffPromptText(secretNoun: "password" | "passphrase"): string {
+  return secretNoun === "passphrase" ? "Passphrases aren't saved." : "Passwords aren't saved.";
+}
+
+/** The link after {@link storageOffPromptText}: opens the storage setting. */
+export const TURN_ON_SAVING_LABEL = "Turn on saving…";
 
 /** Label of the action that leads a user in None mode to the storage setting. */
 export const ENABLE_CREDENTIAL_STORAGE_LABEL = "Enable credential storage…";

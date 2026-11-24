@@ -609,7 +609,11 @@ describe("useConnectSavedConnection", () => {
       useAppStore.getState().dismissPasswordPrompt();
       await connectPromise;
     });
-    expect(infoToastSpy).toHaveBeenCalledWith("Connect canceled");
+    // #5838: it names the connection and offers to try again.
+    expect(infoToastSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/^Connect to ".+" canceled\.$/),
+      expect.objectContaining({ action: expect.objectContaining({ label: "Retry" }) })
+    );
     expect(addTabSpy).not.toHaveBeenCalled();
   });
 

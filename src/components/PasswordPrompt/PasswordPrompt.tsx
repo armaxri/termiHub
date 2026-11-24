@@ -6,16 +6,13 @@ import { Modal, Button, Checkbox } from "@/components/ui";
 import "./PasswordPrompt.css";
 import { isImeComposing } from "@/utils/imeComposition";
 import { t, tf } from "@/i18n/catalog";
-import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
+import { openCredentialStorageSetup } from "@/components/CredentialStorage/openCredentialStorageSetup";
 import {
   CREDENTIAL_STORAGE_CHOOSE_HINT,
-  CREDENTIAL_STORAGE_OFF_TEXT,
-  credentialStorageChosenText,
+  TURN_ON_SAVING_LABEL,
+  storageOffPromptText,
 } from "@/utils/credentialStorageCopy";
-import {
-  chooseCredentialStorageForSave,
-  credentialStorageNeedsChoice,
-} from "@/utils/credentialStorageChoice";
+import { credentialStorageNeedsChoice } from "@/utils/credentialStorageChoice";
 import { isUnencryptedTransport } from "@/utils/unencryptedSession";
 
 /**
@@ -27,12 +24,13 @@ import { isUnencryptedTransport } from "@/utils/unencryptedSession";
  * persists the secret (Test Connection, #3316) opts out via
  * `requestPassword(..., { allowSave: false })`, which hides the checkbox.
  *
- * Before any storage choice exists (#5187) the box is live but unticked:
- * ticking it opens the one-time storage chooser, and once a store is set up
- * the box turns on. With credential storage off by choice (#5186), the row
- * still shows, disabled, with an "Enable credential storage…" action: it
- * closes the prompt (the connect is cancelled) and opens the storage setting,
- * so saving stays discoverable.
+ * Before any storage choice exists (#5187) the box is live but unticked.
+ * Ticking it only ticks it (#5867): the one-time storage chooser never opens
+ * over this prompt mid-connect. The save path asks where to keep the secret
+ * once the connect has succeeded (`saveAfterStorageChoice`). With credential
+ * storage off by choice (#5186, #5838) one line says so — "Passwords aren't
+ * saved. Turn on saving…" — and the link closes the prompt (the connect is
+ * cancelled) and opens the storage setting, so saving stays discoverable.
  *
  * Saving happens only after the connect succeeds (#5156): a ticked box asks the
  * caller to persist the secret once the session is established, so a typo is
@@ -52,8 +50,21 @@ import { isUnencryptedTransport } from "@/utils/unencryptedSession";
  * A schema field secret is titled after its own field (#5656): "Proxy
  * password", "Jump host password" — never the connection's "SSH password".
  * A telnet login password adds "Telnet sends this password unencrypted."
- * (#5749).
+ * (#5749), and its description says termiHub answers the server's login
+ * prompt, so the user does not type it again in the terminal (#5838).
+ *
+ * A key passphrase prompt names the key by its file name, with the full path
+ * in a tooltip (#5838): a long absolute path no longer wraps over three lines
+ * above the field.
  */
+/** The file name of a key path (either separator), or `""` for none. */
+function keyFileName(keyPath: string | null | undefined): string {
+  const trimmed = (keyPath ?? "").trim();
+  if (!trimmed) return "";
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? trimmed;
+}
+
 export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
   const host = useAppStore((s) => s.passwordPromptHost);
@@ -97,11 +108,14 @@ export function PasswordPrompt() {
   const title = isPassphrase ? t("passwordPrompt.title.keyPassphrase") : secretName;
   const waitingText = `${waiting} more password ${waiting === 1 ? "prompt" : "prompts"} waiting`;
   const target = `${username}@${host}`;
+  const keyName = keyFileName(keyPath);
   const description = isPassphrase
-    ? keyPath
-      ? tf("passwordPrompt.description.keyPassphraseWithPath", { keyPath, target })
+    ? keyName
+      ? tf("passwordPrompt.description.keyPassphraseWithPath", { keyName, target })
       : tf("passwordPrompt.description.keyPassphrase", { target })
-    : tf("passwordPrompt.description.password", { target });
+    : unencrypted
+      ? tf("passwordPrompt.description.telnet", { target })
+      : tf("passwordPrompt.description.password", { target });
   const inputPlaceholder = isPassphrase ? "Passphrase" : "Password";
   const inputAriaLabel = isPassphrase
     ? t("passwordPrompt.input.keyPassphrase")
@@ -117,9 +131,8 @@ export function PasswordPrompt() {
   const [savePassword, setSavePassword] = useState(showSave);
   const [shownRequestId, setShownRequestId] = useState<number | null>(null);
   const [shownShowSave, setShownShowSave] = useState(showSave);
-  // The store the chooser just set up from this prompt's save box (#5825),
-  // named under the box in place of a toast.
-  const [storageChosenNote, setStorageChosenNote] = useState<string | null>(null);
+  // A live box: an active store, or none chosen yet (asked after connecting, #5867).
+  const saveable = showSave || showChoose;
 
   // Reset the fields whenever a new request is shown (the dialog opening, or
   // the queue advancing to the next request, #4312), and default "save" to on
@@ -134,7 +147,6 @@ export function PasswordPrompt() {
     if (requestId !== null) {
       setPassword("");
       setSavePassword(showSave);
-      setStorageChosenNote(null);
     }
   } else if (showSave !== shownShowSave) {
     setShownShowSave(showSave);
@@ -142,8 +154,8 @@ export function PasswordPrompt() {
   }
 
   const handleSubmit = useCallback(() => {
-    submitPassword(password, showSave && savePassword);
-  }, [password, showSave, savePassword, submitPassword]);
+    submitPassword(password, saveable && savePassword);
+  }, [password, saveable, savePassword, submitPassword]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -192,7 +204,11 @@ export function PasswordPrompt() {
             {notice}
           </p>
         )}
-        <p className="password-prompt__description" data-testid="password-prompt-description">
+        <p
+          className="password-prompt__description"
+          title={isPassphrase && keyName ? keyPath : undefined}
+          data-testid="password-prompt-description"
+        >
           {description}
         </p>
         {unencrypted && (
@@ -216,7 +232,7 @@ export function PasswordPrompt() {
           autoFocus
           data-testid="password-prompt-input"
         />
-        {showSave && (
+        {saveable && (
           <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
             <Checkbox
               checked={savePassword}
@@ -228,74 +244,6 @@ export function PasswordPrompt() {
             <span>{saveLabel}</span>
           </label>
         )}
-        {showSave && savePassword && storageChosenNote && (
-          <p
-            className="password-prompt__save-hint"
-            role="status"
-            data-testid="password-prompt-storage-chosen"
-          >
-            {storageChosenNote}
-          </p>
-        )}
-        {showChoose && (
-          <>
-            <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
-              <Checkbox
-                checked={false}
-                onCheckedChange={(checked) => {
-                  // Nothing is saved here: the chooser sets a store up, and the
-                  // box turns on (default for an active store) once it has one.
-                  if (!checked) return;
-                  void chooseCredentialStorageForSave().then(({ chosen }) => {
-                    setStorageChosenNote(chosen ? credentialStorageChosenText(chosen) : null);
-                  });
-                }}
-                aria-label={saveLabel}
-                aria-describedby={saveHintId}
-                data-testid="password-prompt-save-checkbox"
-              />
-              <span>{saveLabel}</span>
-            </label>
-            <p
-              id={saveHintId}
-              className="password-prompt__save-hint"
-              data-testid="password-prompt-save-choose-hint"
-            >
-              {CREDENTIAL_STORAGE_CHOOSE_HINT}
-            </p>
-          </>
-        )}
-        {showStorageOff && (
-          <>
-            <label
-              className="password-prompt__save-label password-prompt__save-label--disabled"
-              data-testid="password-prompt-save-label"
-            >
-              <Checkbox
-                checked={false}
-                onCheckedChange={() => {}}
-                disabled
-                aria-label={saveLabel}
-                aria-describedby={saveHintId}
-                data-testid="password-prompt-save-checkbox"
-              />
-              <span>{saveLabel}</span>
-            </label>
-            <div className="password-prompt__storage-off">
-              <p
-                id={saveHintId}
-                className="password-prompt__save-hint"
-                data-testid="password-prompt-storage-off"
-              >
-                {CREDENTIAL_STORAGE_OFF_TEXT}
-              </p>
-              <EnableCredentialStorageButton
-                onBeforeOpen={dismissPasswordPrompt}
-                data-testid="password-prompt-enable-storage"
-              />
-            </div>
-          </>
-        )}
         {showSave && (
           <p
             id={saveHintId}
@@ -303,6 +251,31 @@ export function PasswordPrompt() {
             data-testid="password-prompt-save-hint"
           >
             {saveHint}
+          </p>
+        )}
+        {showChoose && (
+          <p
+            id={saveHintId}
+            className="password-prompt__save-hint"
+            data-testid="password-prompt-save-choose-hint"
+          >
+            {CREDENTIAL_STORAGE_CHOOSE_HINT}
+          </p>
+        )}
+        {showStorageOff && (
+          <p className="password-prompt__storage-off" data-testid="password-prompt-storage-off">
+            {storageOffPromptText(secretNoun)}{" "}
+            <button
+              type="button"
+              className="password-prompt__link"
+              onClick={() => {
+                dismissPasswordPrompt();
+                openCredentialStorageSetup();
+              }}
+              data-testid="password-prompt-enable-storage"
+            >
+              {TURN_ON_SAVING_LABEL}
+            </button>
           </p>
         )}
       </div>
