@@ -1966,6 +1966,9 @@ pub(crate) mod tests {
     /// The attach intent is read off the loop, and a slow one is honoured (#3928).
     mod attach_intent_tests;
 
+    /// Input right after a re-attach reaches the session (#5990).
+    mod reattach_input_tests;
+
     /// The loser of a takeover race reads a typed eviction, never a torn
     /// handshake (#4409).
     mod takeover_race_tests;
