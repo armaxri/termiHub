@@ -124,11 +124,14 @@ class CredsPhaseUi(HarnessMixin):
         self.open_settings_category("security")
         self.wait(lambda: self.driver.exists(testid), what="the storage-mode options")
         self.driver.click(testid)
+        # Nothing saved: the switch runs at once, without asking (#5837).
         self.wait(
-            lambda: self.driver.exists("confirm-switch-confirm-btn"), what="the switch confirm dialog"
+            lambda: self.driver.exists("confirm-switch-confirm-btn") or self.store_mode() == mode,
+            what="the switch confirm dialog (or the switch itself)",
         )
-        self.shot(label="confirm-switch")
-        self.driver.click("confirm-switch-confirm-btn")
+        if self.driver.exists("confirm-switch-confirm-btn"):
+            self.shot(label="confirm-switch")
+            self.driver.click("confirm-switch-confirm-btn")
 
         def switched() -> bool:
             return self.store_mode() == mode

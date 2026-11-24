@@ -2913,6 +2913,15 @@ export async function getCredentialStoreStatus(): Promise<CredentialStoreStatusI
   return await invoke<CredentialStoreStatusInfo>("get_credential_store_status");
 }
 
+/**
+ * Count the credentials recorded in the current store, without reading any
+ * secret (#5837). Rejects while a master-password store is locked. An OS
+ * Keychain count comes from termiHub's key index and can miss older items.
+ */
+export async function countSavedCredentials(): Promise<number> {
+  return await invoke<number>("count_saved_credentials");
+}
+
 /** Unlock the master password credential store. */
 export async function unlockCredentialStore(password: string): Promise<void> {
   await invoke("unlock_credential_store", { password });

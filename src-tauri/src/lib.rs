@@ -961,6 +961,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::embedded_servers::list_network_interfaces,
             // Credentials
             commands::credential::get_credential_store_status,
+            commands::credential::count_saved_credentials,
             commands::credential::unlock_credential_store,
             commands::credential::reset_credential_store,
             commands::credential::lock_credential_store,

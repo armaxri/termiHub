@@ -392,6 +392,21 @@
   margin: 0;
 }
 
+/* A clean switch result fades out after a few seconds (#5837). */
+.settings-panel__migration-result {
+  transition: opacity var(--transition-slow);
+}
+
+.settings-panel__migration-result--fading {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel__migration-result {
+    transition: none;
+  }
+}
+
 .settings-panel__migration-warnings {
   margin: var(--spacing-xs) 0 0;
   padding-left: var(--spacing-md);

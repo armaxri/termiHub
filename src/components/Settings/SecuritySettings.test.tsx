@@ -28,6 +28,28 @@ import { toast } from "@/components/ui";
 const mockedInvoke = vi.mocked(invoke);
 const mockedToast = vi.mocked(toast);
 
+/** A clean switch result that moved and removed nothing. */
+const SWITCH_OK = {
+  status: "success",
+  migratedCount: 0,
+  failedCount: 0,
+  warnings: [],
+  removedCount: 0,
+  remaining: [],
+  rolledBack: false,
+};
+
+/** Answers the switch with {@link SWITCH_OK} and the count with `count`. */
+function mockSwitchBackend(count: number | Error = 0) {
+  mockedInvoke.mockImplementation((cmd) => {
+    if (cmd === "switch_credential_store") return Promise.resolve(SWITCH_OK);
+    if (cmd === "count_saved_credentials") {
+      return count instanceof Error ? Promise.reject(count) : Promise.resolve(count);
+    }
+    return Promise.resolve(undefined);
+  });
+}
+
 /** Sets a controlled input's value the way the harness does (React-friendly). */
 function setInputValue(input: HTMLInputElement, value: string) {
   input.focus();
@@ -110,15 +132,10 @@ describe("SecuritySettings", () => {
       option.click();
     });
 
-    // No master-password setup dialog for the OS keychain mode.
+    // No master-password setup dialog for the OS keychain mode, and no
+    // confirmation: nothing is saved without storage, so nothing moves (#5837).
     expect(query("master-password-setup")).toBeNull();
-
-    // A confirm dialog appears; confirm the switch.
-    const confirmBtn = query("confirm-switch-confirm-btn") as HTMLElement;
-    expect(confirmBtn).not.toBeNull();
-    await act(async () => {
-      confirmBtn.click();
-    });
+    expect(query("confirm-switch-dialog")).toBeNull();
 
     const switchCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "switch_credential_store");
     expect(switchCalls.length).toBeGreaterThan(0);
@@ -295,7 +312,7 @@ describe("SecuritySettings", () => {
     });
 
     expect(query("migration-result")).not.toBeNull();
-    expect(container.textContent?.match(/Switched to/g)).toHaveLength(1);
+    expect(container.textContent?.match(/Stopped saving passwords/g)).toHaveLength(1);
     expect(mockedToast.success).not.toHaveBeenCalled();
     expect(mockedToast.info).not.toHaveBeenCalled();
   });
@@ -623,28 +640,30 @@ describe("SecuritySettings", () => {
       await openSwitch("master_password", "storage-mode-os-keychain");
       const dialog = query("confirm-switch-dialog") as HTMLElement;
       const title = dialog.querySelector("h4")!.textContent;
-      expect(title).toBe("Move saved credentials to OS Keychain?");
+      expect(title).toBe("Move saved passwords to the OS Keychain?");
       expect(query("confirm-switch-confirm-btn")!.textContent).toBe("Move to OS Keychain");
-      expect(dialog.textContent).toMatch(/master-password vault stays on this computer/);
+      expect(dialog.textContent).toMatch(/Your vault stays on this computer/);
       // One name for the target: never "OS credential store".
       expect(dialog.textContent).not.toMatch(/credential store/i);
       expect(dialog.textContent).not.toMatch(/\bConfirm\b/);
     });
 
-    it("says nothing is moved when no storage was used before", async () => {
+    it("switches at once when no storage was used before: nothing is moved (#5837)", async () => {
+      mockSwitchBackend();
       await openSwitch("none", "storage-mode-os-keychain");
-      const dialog = query("confirm-switch-dialog") as HTMLElement;
-      expect(dialog.querySelector("h4")!.textContent).toBe("Use OS Keychain?");
-      expect(query("confirm-switch-confirm-btn")!.textContent).toBe("Use OS Keychain");
-      expect(dialog.textContent).toMatch(/nothing is moved/i);
+      expect(query("confirm-switch-dialog")).toBeNull();
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "switch_credential_store",
+        expect.objectContaining({ newMode: "os_keychain" })
+      );
     });
 
     it("names the delete when turning storage off, as a danger action", async () => {
       await openSwitch("os_keychain", "storage-mode-none");
       const dialog = query("confirm-switch-dialog") as HTMLElement;
-      expect(dialog.querySelector("h4")!.textContent).toBe("Delete saved credentials?");
+      expect(dialog.querySelector("h4")!.textContent).toBe("Stop saving passwords?");
       const btn = query("confirm-switch-confirm-btn")!;
-      expect(btn.textContent).toBe("Delete saved credentials");
+      expect(btn.textContent).toBe("Delete saved passwords");
       expect(btn.classList.contains("ui-btn--danger")).toBe(true);
       expect(dialog.textContent).toMatch(/saved in the OS Keychain/);
     });
@@ -653,7 +672,7 @@ describe("SecuritySettings", () => {
       await openSwitch("os_keychain", "storage-mode-master-password");
       const form = query("master-password-setup") as HTMLElement;
       expect(form.querySelector("h4")!.textContent).toBe(
-        "Move saved credentials to a master-password vault"
+        "Move saved passwords to a master-password vault"
       );
       expect(form.textContent).toMatch(/copies in the OS Keychain are left in place/);
       expect(query("master-password-confirm-btn")!.textContent).toBe("Move to Master password");
@@ -700,7 +719,9 @@ describe("SecuritySettings", () => {
 
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("success");
-      expect(panel.textContent).toContain("3 credentials migrated");
+      expect(panel.textContent).toBe(
+        "Moved 3 saved passwords to the OS Keychain. Your master-password vault is kept."
+      );
       expect(query("migration-warnings")).toBeNull();
       expect(mockedToast.success).not.toHaveBeenCalled();
       expect(mockedToast.info).not.toHaveBeenCalled();
@@ -718,9 +739,9 @@ describe("SecuritySettings", () => {
 
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("partial");
-      expect(panel.textContent).toContain("Switched to OS Keychain");
-      expect(panel.textContent).toContain("2 of 3 credentials migrated");
-      expect(panel.textContent).toContain("1 credential could not be moved");
+      expect(panel.textContent).toContain("Moved 2 of 3 saved passwords to the OS Keychain");
+      expect(panel.textContent).toContain("1 saved password could not be moved");
+      expect(panel.textContent).toContain("stay in your master-password vault");
       expect(panel.textContent).not.toContain("successfully");
       expect(query("migration-warnings")?.textContent).toContain("conn-1:password");
       expect(mockedToast.info).not.toHaveBeenCalled();
@@ -741,10 +762,10 @@ describe("SecuritySettings", () => {
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("failed");
       expect(panel.getAttribute("role")).toBe("alert");
-      expect(panel.textContent).toContain("Switch failed, nothing changed");
-      expect(panel.textContent).toContain("none of your 2 credentials could be moved");
-      expect(panel.textContent).toContain("Master password is still active");
-      expect(panel.textContent).not.toContain("Switched to");
+      expect(panel.textContent).toContain("Nothing changed");
+      expect(panel.textContent).toContain("none of your 2 saved passwords could be moved");
+      expect(panel.textContent).toContain("They stay in your master-password vault");
+      expect(panel.textContent).not.toContain("Moved");
       expect(query("migration-warnings")?.querySelectorAll("li")).toHaveLength(2);
       expect(mockedToast.error).not.toHaveBeenCalled();
       expect(mockedToast.success).not.toHaveBeenCalled();
@@ -779,10 +800,10 @@ describe("SecuritySettings", () => {
 
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("success");
-      expect(panel.textContent).toContain("3 credentials removed");
-      expect(panel.textContent).not.toContain("migrated");
+      expect(panel.textContent).not.toContain("Moved");
       expect(query("migration-remaining")).toBeNull();
-      expect(panel.textContent).toContain("Switched to None — 3 credentials removed.");
+      expect(panel.textContent).toBe("Stopped saving passwords. 3 saved passwords removed.");
+      expect(panel.textContent).not.toContain("None");
       expect(mockedToast.success).not.toHaveBeenCalled();
     });
 
@@ -799,9 +820,11 @@ describe("SecuritySettings", () => {
 
       const panel = query("migration-result") as HTMLElement;
       expect(panel.dataset.status).toBe("partial");
-      expect(panel.textContent).toContain("2 of 3 credentials removed");
-      expect(panel.textContent).toContain("1 credential could not be removed from Master password");
-      expect(panel.textContent).toContain("Still stored in Master password:");
+      expect(panel.textContent).toContain("2 of 3 saved passwords removed");
+      expect(panel.textContent).toContain(
+        "1 saved password could not be removed from your master-password vault"
+      );
+      expect(panel.textContent).toContain("Still saved in your master-password vault:");
       const remaining = query("migration-remaining");
       expect(remaining?.querySelectorAll("li")).toHaveLength(1);
       expect(remaining?.textContent).toContain("conn-9:password");
@@ -821,8 +844,8 @@ describe("SecuritySettings", () => {
       });
 
       const panel = query("migration-result") as HTMLElement;
-      expect(panel.textContent).toContain("Switch failed, nothing changed");
-      expect(panel.textContent).toContain("none of your 1 credential could be removed");
+      expect(panel.textContent).toContain("Nothing changed");
+      expect(panel.textContent).toContain("none of your 1 saved password could be removed");
       expect(query("migration-remaining")?.textContent).toContain("conn-9:password");
       expect(mockedToast.error).not.toHaveBeenCalled();
     });
@@ -888,14 +911,18 @@ describe("SecuritySettings", () => {
     });
 
     it("starts the switch flow for the option reached with an arrow key", async () => {
+      mockSwitchBackend();
       await render();
       // Shared order (#5553): OS Keychain, Master password, None.
       const masterPassword = query("storage-mode-master-password") as HTMLElement;
       act(() => masterPassword.focus());
       await pressRadioArrow(masterPassword, "ArrowUp");
       expect(document.activeElement).toBe(query("storage-mode-os-keychain"));
-      // The switch still needs confirmation; the confirm step is shown.
-      expect(query("confirm-switch-confirm-btn")).not.toBeNull();
+      // Nothing is saved without storage, so the switch starts at once (#5837).
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        "switch_credential_store",
+        expect.objectContaining({ newMode: "os_keychain" })
+      );
     });
 
     it("has no a11y violations", async () => {

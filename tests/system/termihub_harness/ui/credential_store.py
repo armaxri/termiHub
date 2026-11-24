@@ -59,6 +59,24 @@ class CredentialStoreUi(HarnessMixin):
         """Whether the store is in master-password mode and currently locked."""
         return self._is_master_password("locked")
 
+    def confirm_store_switch(self, mode: str) -> bool:
+        """Confirm a storage switch to ``mode`` the Security cards just started.
+
+        A switch that moves or deletes saved passwords asks first; one with
+        nothing saved switches at once (#5837). Waits for whichever happens,
+        clicks the confirmation if it is shown and returns whether it was.
+        """
+        def asked_or_done() -> bool:
+            if self.driver.exists("confirm-switch-confirm-btn"):
+                return True
+            return (self.credential_store_status() or {}).get("mode") == mode
+
+        self.wait(asked_or_done, what=f"the switch to {mode} to ask or finish")
+        if not self.driver.exists("confirm-switch-confirm-btn"):
+            return False
+        self.driver.click("confirm-switch-confirm-btn")
+        return True
+
     # -- setup / lock / unlock ---------------------------------------------------
     def setup_master_password_store(self, password: str) -> None:
         """Ensure the store is an unlocked master-password store with ``password``.
@@ -203,11 +221,7 @@ class CredentialStoreUi(HarnessMixin):
             what="the credential storage-mode options",
         )
         self.driver.click("storage-mode-none")
-        self.wait(
-            lambda: self.driver.exists("confirm-switch-confirm-btn"),
-            what="the switch-to-no-storage confirm dialog",
-        )
-        self.driver.click("confirm-switch-confirm-btn")
+        self.confirm_store_switch("none")
         # The panel reports a migration result, and the store mode flips to none.
         self.wait(
             lambda: self.driver.exists("migration-result"), what="the migration result"
