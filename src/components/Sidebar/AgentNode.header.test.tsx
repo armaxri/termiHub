@@ -4,10 +4,10 @@
  *  1. The connection state dot tracks the real `connectionState` — a
  *     disconnected / reconnecting / connecting agent never shows the green
  *     "connected" dot (regression guard for the stale-green bug).
- *  2. The header stacks into two rows: the agent name lives on row 1 alongside
- *     the state bubble + version badge (inside the toggle), while the action
- *     buttons live in a *sibling* container (row 2) so they can never crowd the
- *     name off the row.
+ *  2. The agent name lives in the toggle with the state bubble + compact
+ *     markers; the actions are icon buttons in a *sibling* container at the end
+ *     of the same row, so they can never squeeze the name (#5851). A connected
+ *     agent shows only "+" and one "…" menu, not four bare icons (R-013).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -196,7 +196,7 @@ describe("AgentNode — header presentation (#2524)", () => {
       expect(header()?.className).toContain("connection-list__group-header--agent");
     });
 
-    it("keeps the name + state dot on row 1 (the toggle) and buttons in a sibling row", () => {
+    it("keeps the name + state dot in the toggle and the buttons in a sibling", () => {
       renderAgent(makeAgent());
 
       const toggle = container.querySelector<HTMLElement>(".connection-list__group-toggle");
@@ -211,10 +211,10 @@ describe("AgentNode — header presentation (#2524)", () => {
       expect(toggle!.contains(stateDot())).toBe(true);
       expect(toggle!.contains(title)).toBe(true);
 
-      // Row 2: the action buttons are a *sibling* of the toggle, never nested
-      // inside it — so they can never crowd the name off its row.
+      // The action buttons are a *sibling* of the toggle, never nested inside
+      // it — so they can never crowd the name off its row.
       expect(toggle!.contains(actions)).toBe(false);
-      expect(actions!.parentElement).toBe(header());
+      expect(actions!.parentElement).toBe(toggle!.parentElement);
     });
   });
 
@@ -251,14 +251,38 @@ describe("AgentNode — header presentation (#2524)", () => {
       expect(secondRowActions()).toBeNull();
     });
 
-    it("keeps a connected agent's several actions on row 2", () => {
+    it("folds a connected agent's actions into '+' and one '…' menu on row 1 (#5851)", () => {
       renderAgent(makeAgent({ connectionState: "connected" }));
 
-      expect(row1()).not.toBeNull();
-      const actions = secondRowActions();
+      expect(secondRowActions()).toBeNull();
+      const actions = row1()!.querySelector<HTMLElement>(".connection-list__group-actions");
       expect(actions).not.toBeNull();
-      expect(actions!.querySelector(`[data-testid="agent-disconnect-${AGENT_ID}"]`)).not.toBeNull();
-      expect(row1()!.querySelector(".connection-list__group-actions")).toBeNull();
+      const buttons = [...actions!.querySelectorAll("button")].map((b) =>
+        b.getAttribute("aria-label")
+      );
+      expect(buttons).toEqual(["New connection", "More actions for Production Box"]);
+      // Detach / shutdown are menu entries now, not bare header icons.
+      expect(container.querySelector(`[data-testid="agent-disconnect-${AGENT_ID}"]`)).toBeNull();
+    });
+
+    it("shows Connect and Reconnect as icon buttons, so the name keeps the width", () => {
+      renderAgent(makeAgent({ connectionState: "disconnected" }));
+      const connect = container.querySelector(`[data-testid="agent-connect-${AGENT_ID}"]`);
+      expect(connect?.textContent).toBe("");
+      expect(connect?.getAttribute("aria-label")).toBe("Connect");
+      renderAgent(makeAgent({ connectionState: "disconnected", lastError: "boom" }));
+      const reconnect = container.querySelector(`[data-testid="agent-reconnect-${AGENT_ID}"]`);
+      expect(reconnect?.textContent).toBe("");
+      expect(reconnect?.getAttribute("title")).toBe("Reconnect — boom");
+    });
+
+    it("puts the description in the name's text column (R-047, #5851)", () => {
+      renderAgent(makeAgent({ connectionState: "disconnected", description: "Lab bench" }));
+      const title = container.querySelector(`[data-testid="agent-name-${AGENT_ID}"]`);
+      const desc = container.querySelector(`[data-testid="agent-description-${AGENT_ID}"]`);
+      expect(desc?.textContent).toBe("Lab bench");
+      expect(desc?.parentElement).toBe(title?.parentElement);
+      expect(title?.parentElement?.className).toBe("connection-list__group-text");
     });
   });
 });

@@ -21,6 +21,12 @@ vi.mock("sonner", () => ({
   },
 }));
 
+/**
+ * Matches the sonner id toast `id` shows under: `id` itself, or `id~<n>` once
+ * the id was dismissed and moved to a fresh sonner id (#5904).
+ */
+const sonnerId = (id: string) => expect.stringMatching(new RegExp(`^${id}(~\\d+)?$`));
+
 // Import after the mock is registered.
 import {
   dismissModalStaleToasts,
@@ -266,8 +272,29 @@ describe("toast API", () => {
 
       vi.runAllTimers();
       setTransientDeferred(false);
-      expect(success).toHaveBeenCalledWith("Ran workflow", expect.objectContaining({ id: "ran" }));
-      expect(info).toHaveBeenCalledWith("Copied", expect.objectContaining({ id: noteId }));
+      expect(success).toHaveBeenCalledWith(
+        "Ran workflow",
+        expect.objectContaining({ id: sonnerId("ran") })
+      );
+      expect(info).toHaveBeenCalledWith(
+        "Copied",
+        expect.objectContaining({ id: sonnerId(String(noteId)) })
+      );
+    });
+
+    it("never holds back an undo offer (a toast with a button, #5904)", () => {
+      const undo = { label: "Reopen", onClick: () => {} };
+      toast.success("Closed “up”", { id: "undo-shown", action: undo });
+      vi.clearAllMocks();
+      setTransientDeferred(true);
+      expect(dismiss).not.toHaveBeenCalled();
+
+      toast.success("Closed “web”", { id: "undo-new", action: undo });
+      expect(success).toHaveBeenCalledWith(
+        "Closed “web”",
+        expect.objectContaining({ id: sonnerId("undo-new") })
+      );
+      expect(toast.isActive("undo-new")).toBe(true);
     });
 
     it("keeps errors and loading toasts visible while deferring", () => {
@@ -291,7 +318,10 @@ describe("toast API", () => {
       vi.runAllTimers();
       vi.clearAllMocks();
       setTransientDeferred(false);
-      expect(success).toHaveBeenCalledWith("Connected", expect.objectContaining({ id: "up" }));
+      expect(success).toHaveBeenCalledWith(
+        "Connected",
+        expect.objectContaining({ id: sonnerId("up") })
+      );
       // The repeat dismiss scheduled when it was taken down is cancelled.
       vi.runAllTimers();
       expect(dismiss).not.toHaveBeenCalledWith("up");
@@ -337,7 +367,7 @@ describe("toast API", () => {
 
       setTransientDeferred(false);
       expect(success).toHaveBeenCalledTimes(1);
-      expect(success).toHaveBeenCalledWith("E", expect.objectContaining({ id: "e" }));
+      expect(success).toHaveBeenCalledWith("E", expect.objectContaining({ id: sonnerId("e") }));
     });
 
     it("resolves a promise's loading toast into a deferred success", async () => {
@@ -348,7 +378,10 @@ describe("toast API", () => {
 
       vi.runAllTimers();
       setTransientDeferred(false);
-      expect(success).toHaveBeenCalledWith("Done", expect.objectContaining({ id: "toast-id" }));
+      expect(success).toHaveBeenCalledWith(
+        "Done",
+        expect.objectContaining({ id: sonnerId("toast-id") })
+      );
     });
   });
   describe("isActive (#5828)", () => {

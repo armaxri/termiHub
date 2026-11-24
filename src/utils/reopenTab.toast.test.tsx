@@ -89,3 +89,67 @@ describe("reopen toast in the toast host (#5828)", () => {
     await waitFor(() => reopenToasts().length === 0);
   });
 });
+
+/**
+ * #5904: closing an exited terminal tab showed no reopen toast. The exited
+ * session's notice is a keep-clear zone; while it covered the pane the stack
+ * docked and deferred success toasts. Closing the tab removed the notice in the
+ * same moment the toast was raised, so the toast was queued (and its id
+ * dismissed) and re-shown a frame later, and the dismiss still in flight inside
+ * sonner then took the re-shown toast down again.
+ */
+describe("reopen toast when the closed tab's keep-clear notice goes with it (#5904)", () => {
+  const original = { width: window.innerWidth, height: window.innerHeight };
+  let notice: HTMLDivElement;
+
+  beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { value: 800, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 600, configurable: true });
+    // A keep-clear box over the whole terminal pane: no room above or beside
+    // it, so the stack docks.
+    notice = document.createElement("div");
+    notice.setAttribute("data-toast-avoid", "");
+    notice.getBoundingClientRect = () =>
+      ({ left: 200, top: 40, right: 800, bottom: 576, width: 600, height: 536 }) as DOMRect;
+    document.body.appendChild(notice);
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    addTab.mockClear();
+    resetReopenToastBatch();
+    act(() => root.render(<ToastProvider />));
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+    notice.remove();
+    Object.defineProperty(window, "innerWidth", { value: original.width, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: original.height, configurable: true });
+  });
+
+  it("shows the toast and keeps it once the stack undocks", async () => {
+    expect(document.documentElement.classList.contains("th-toast-docked")).toBe(true);
+    act(() => {
+      notice.remove();
+      showReopenToast(payload("exited-1"));
+    });
+    await waitFor(() => reopenToasts().length === 1);
+    // Let every pending mount and dismiss inside sonner settle.
+    for (let i = 0; i < 10; i++) await tick();
+    expect(reopenToasts()).toHaveLength(1);
+    expect(reopenToasts()[0].textContent).toContain("Closed “exited-1”");
+  });
+
+  it("shows the coalesced toast while a keep-clear box still docks the stack", async () => {
+    act(() => showReopenToast(payload("a")));
+    await tick();
+    act(() => showReopenToast(payload("b")));
+    await tick();
+    act(() => showReopenToast(payload("c")));
+    await waitFor(() => (reopenToasts()[0]?.textContent ?? "").includes("Closed 3 tabs"));
+    expect(document.documentElement.classList.contains("th-toast-docked")).toBe(true);
+    expect(reopenToasts()).toHaveLength(1);
+  });
+});

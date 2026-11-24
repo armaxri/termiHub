@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import { flushSync } from "react-dom";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealedErrors } from "@/hooks/useRevealedErrors";
 import { useCarriedFormDraft, useFormDraftProvider } from "@/hooks/useFormDraftHandoff";
 import { clearDraftSecrets } from "@/utils/formDraftSecrets";
 import { Monitor, Server, AlertTriangle, Link2 } from "lucide-react";
@@ -224,7 +226,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const {
     form: { control, getValues, setValue, reset },
     draft: form,
-    errors: formErrors,
+    errors: allFormErrors,
     canSave,
   } = useZodEditorForm<TunnelFormState>({
     schema: tunnelFormSchema,
@@ -252,6 +254,15 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       reconnectOnDisconnect: existingTunnel?.reconnectOnDisconnect ?? false,
     },
   });
+
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5909) — a new tunnel does not open with "Name is required." in red.
+  // `canSave` still reads every error.
+  const {
+    shown: formErrors,
+    revealProps,
+    revealAll: revealAllErrors,
+  } = useRevealedErrors(allFormErrors, form);
 
   // Sync if the tunnel ID changes (reload the working copy from the store).
   // Keyed on the id, not the object: a republish of the tunnels list (a status
@@ -391,6 +402,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     // Save stays keyboard-reachable while invalid (aria-disabled, not
     // disabled): activating it then points at the problem instead of saving.
     if (!canSave) {
+      // Render every error first: the focus target is the first `aria-invalid`.
+      flushSync(revealAllErrors);
       focusFirstInvalidField();
       return;
     }
@@ -604,6 +617,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         className="tunnel-editor__form"
         ref={formRef}
         data-testid="tunnel-editor-form"
+        {...revealProps}
         {...TOAST_AVOID_FORM_PROPS}
       >
         <Controller
