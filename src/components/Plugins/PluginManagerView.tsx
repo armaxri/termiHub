@@ -8,11 +8,13 @@ import { rowTooltipDescription } from "@/components/SidebarListItem/rowTooltip";
 import { useListFilter, type ListFilterFields } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
 import {
+  pluginDotLabel,
   pluginDotState,
   pluginDotTone,
   pluginRowMarker,
   pluginRowTooltip,
   pluginTypeIcon,
+  pluginTypeName,
 } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { reviewDownloadedPackage, type DownloadedPackageReview } from "./pluginDownloadReview";
@@ -37,7 +39,8 @@ const pluginNameFields: ListFilterFields<InstalledPlugin> = (plugin) => [
  * The Plugins sidebar view (#1997): a search box, the installed-plugin list, and
  * a footer "Install from file…" button. Each plugin is a row with a state dot
  * (green enabled / grey disabled / red error), a type icon, its name, and
- * version. Selecting a row opens the plugin's detail panel in the main area.
+ * description. The dot and the icon name themselves in a tooltip and as their
+ * accessible names (#5931). Selecting a row opens the plugin's detail panel in the main area.
  *
  * The list and all mutations are driven by the plugin store slice (#1993); this
  * component only projects it and dispatches the native file-picker → validate →
@@ -133,6 +136,8 @@ export function PluginManagerView() {
             const { manifest, state } = plugin;
             const dot = pluginDotState(state);
             const TypeIcon = pluginTypeIcon(manifest.extensions);
+            const typeName = pluginTypeName(manifest.extensions);
+            const dotLabel = pluginDotLabel(state);
             const isSelected = manifest.id === selectedPluginId;
             const marker = pluginRowMarker(state);
             const tooltip = pluginRowTooltip(manifest);
@@ -161,12 +166,23 @@ export function PluginManagerView() {
                   aria-description={rowTooltipDescription(tooltip)}
                   data-testid={`plugin-row-${manifest.id}`}
                 >
+                  {/* #5931: the dot and the type icon say what they mean on
+                      hover and to a screen reader. */}
                   <StatusDot
                     tone={pluginDotTone(dot)}
+                    label={dotLabel}
+                    title={dotLabel}
                     testId={`plugin-state-dot-${manifest.id}`}
-                    ariaHidden
                   />
-                  <TypeIcon className="plugin-row__icon" aria-hidden="true" />
+                  <span
+                    className="plugin-row__icon"
+                    role="img"
+                    aria-label={typeName}
+                    title={typeName}
+                    data-testid={`plugin-type-icon-${manifest.id}`}
+                  >
+                    <TypeIcon aria-hidden="true" />
+                  </span>
                   <span className="plugin-row__text">
                     <span className="plugin-row__name">{manifest.name}</span>
                     {description && (

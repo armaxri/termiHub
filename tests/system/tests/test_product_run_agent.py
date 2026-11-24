@@ -50,7 +50,9 @@ from termihub_harness.product_run.agent_deploy import (
     agent_binary,
     reap_agents_under,
 )
+from termihub_harness.product_run.agent_setup_tab import setup_tab_problems
 from termihub_harness.product_run.grades import setup_output_problems
+from termihub_harness.product_run.session_end_strip import strip_layout_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.product_run.tab_names import agent_tab_name_problems
 from termihub_harness.ui.theme import ThemeUi
@@ -204,6 +206,54 @@ class TestProductRunAgent(
         except AssertionError as exc:
             raise AssertionError(f"setup tab {tab_id}: {'; '.join(last)}") from exc
         self.evidence(f"setup tab {tab_id}: plain output ending in the installed line")
+
+    def test_06_setup_tab_finished(self):
+        with self.step(
+            "agent.setup.tab-finished",
+            "The setup tab says the agent was installed and offers Close tab, in a strip "
+            "above the output (#5865)",
+            expect="the setup tab with a strip across its top: a green check, 'Agent installed', "
+            "'Connect \"<agent>\" from the sidebar.', Close tab; the install output "
+            "('Agent installed (v…) at …') fully readable below the strip",
+        ):
+            self.require("agent.deploy")
+            tab_id = self.tab_id_of(f"Setup: {self.name}")
+            self.switch_to_tab(tab_id)
+            self.wait(
+                lambda: self.driver.exists("agent-setup-tab-strip"),
+                timeout=60.0,
+                what="the setup tab's finished strip",
+            )
+            strip = self.driver.measure_element("terminal-disconnect-overlay")
+            body = self.driver.measure_element("agent-setup-tab-strip", "buttons")
+            pane = self.driver.measure_element(f"terminal-context-trigger-{tab_id}")["rect"]
+            terminal = self.driver.measure_element(f"terminal-renderer-{tab_id}")["rect"]
+            variant = self.driver.get_attribute("terminal-disconnect-overlay", "data-variant")
+            text = self.driver.get_text("agent-setup-tab-strip")
+            buttons = [
+                (b.get("text") or "").strip() for b in body["items"] if b.get("visible", True)
+            ]
+            self.shot(label="finished", expect="agent-setup-tab-strip")
+            self.evidence(
+                f"strip {strip['rect']} variant {variant!r}: {text!r}; buttons {buttons}; "
+                f"pane {pane}; terminal {terminal}"
+            )
+            problems = setup_tab_problems(variant=variant, text=text, buttons=buttons)
+            problems += strip_layout_problems(strip=strip["rect"], pane=pane, terminal=terminal)
+            assert not problems, problems
+        with self.step(
+            "agent.setup.tab-close",
+            "Close tab closes the finished setup tab (#5865)",
+            expect="the setup tab gone from the tab strip",
+        ):
+            self.require("agent.setup.tab-finished")
+            self.driver.click("agent-setup-tab-close-btn")
+            self.wait(
+                lambda: self.find_tab(f"Setup: {self.name}") is None,
+                timeout=15.0,
+                what="the setup tab to close",
+            )
+            self.evidence("Close tab closed the setup tab")
 
     # ── live connection ──────────────────────────────────────────────────────
     def test_10_connect_and_shell(self):

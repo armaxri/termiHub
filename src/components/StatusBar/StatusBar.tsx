@@ -46,6 +46,7 @@ import {
 import { connectionConfigFields, readConfigString } from "@/utils/connectionConfigFields";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
+import { pluginsIndicatorCopy } from "@/components/Plugins/pluginPresentation";
 import {
   Tooltip,
   Spinner,
@@ -435,9 +436,10 @@ function ServicesIndicator() {
 /**
  * Installed-plugin count in the status bar (#1997).
  *
- * Shows "N plugins · M enabled", reflecting the store's installed-plugin list
- * (enabled = state `active`). Clicking opens the Plugins sidebar view. Renders
- * nothing when no plugins are installed, keeping the bar uncluttered.
+ * Reads "1 plugin" / "3 plugins" (#5931), counting the store's installed-plugin
+ * list; the tooltip adds the enabled count (state `active`) and says a click
+ * opens the Plugins sidebar view. Renders nothing when no plugins are
+ * installed, keeping the bar uncluttered.
  */
 function PluginsIndicator() {
   const plugins = useAppStore((s) => s.plugins);
@@ -447,7 +449,7 @@ function PluginsIndicator() {
   if (total === 0) return null;
 
   const enabled = plugins.filter((p) => p.state === "active").length;
-  const label = `${total} plugin${total !== 1 ? "s" : ""} · ${enabled} enabled — click to open Plugins`;
+  const { text, label } = pluginsIndicatorCopy(total, enabled);
 
   return (
     <Tooltip content={label} side="top">
@@ -457,8 +459,8 @@ function PluginsIndicator() {
         data-testid="plugins-indicator"
         onClick={() => setSidebarView("plugins")}
       >
-        <Puzzle size={12} />
-        {total} · {enabled}
+        <Puzzle size={12} aria-hidden="true" />
+        {text}
       </button>
     </Tooltip>
   );

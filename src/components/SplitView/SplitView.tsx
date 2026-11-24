@@ -60,6 +60,8 @@ import {
   TerminalDisconnectOverlay,
 } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { consumeTerminalRefocusPending } from "@/components/Terminal/terminalRefocus";
+import { AgentSetupTabStrip, agentSetupTabNotice } from "@/components/Terminal/AgentSetupTabStrip";
+import { useAgentSetupStatus } from "@/store/agentSetupStatus";
 import { isFocusUnclaimed } from "@/utils/focusGuard";
 import { TerminalFilesOnlyPanel } from "@/components/Terminal/TerminalFilesOnlyPanel";
 import {
@@ -1080,8 +1082,16 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
     };
   }, [tabId, getElement, onRegister, fitTerminal, parkingRef]);
 
+  // An agent setup tab says when its setup is over (#5865); while it does, its
+  // strip stands in for the plain session-end strip.
+  const setupTab = useAgentSetupStatus((s) => s.tabs[tabId]);
+  const setupNotice = isEvicted
+    ? null
+    : agentSetupTabNotice(setupTab, isExited ? lifecycle.exitInfo : undefined);
   const showDisconnectOverlay =
-    !isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode));
+    !isEvicted &&
+    setupNotice === null &&
+    (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode));
   // Read through a ref so the focus effect below keeps firing only on activation.
   // Overlays that move focus to their own primary action when this tab is
   // visible (#4331, #4514): the disconnect overlay, the "Taken over" overlays
@@ -1092,7 +1102,10 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   // scrolled, selected and copied while the attempts run.
   const reconnectStripShown = isReconnecting || isAutoReconnectWaiting;
   const overlayOwnsFocus =
-    (showDisconnectOverlay && !reconnectStripShown) || isEvicted || lifecycle.filesOnly;
+    (showDisconnectOverlay && !reconnectStripShown) ||
+    (setupNotice !== null && isExited) ||
+    isEvicted ||
+    lifecycle.filesOnly;
   const overlayOwnsFocusRef = useRef(overlayOwnsFocus);
   overlayOwnsFocusRef.current = overlayOwnsFocus;
 
@@ -1161,6 +1174,14 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
         <TerminalWindowEvictedOverlay
           sessionId={windowEvictedSessionId}
           controllingWindowName={windowEviction.name}
+          isActive={isVisible}
+        />
+      )}
+      {setupNotice && (
+        <AgentSetupTabStrip
+          tabId={tabId}
+          notice={setupNotice}
+          exited={isExited}
           isActive={isVisible}
         />
       )}
