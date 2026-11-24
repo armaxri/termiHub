@@ -12,6 +12,9 @@ Now the lock is an outlined button named with its state and action
 trust shield whose name says "encrypted" and the host key's trust, opening a
 popover with the host, encryption, sign-in method, host key and a link to
 manage trusted keys; and a local shell shows a chip with the shell's name.
+Opening the popover also names the negotiated cipher, the MAC (for a non-AEAD
+cipher), the key exchange and the host-key algorithm in plain words (#5896),
+never on the chip itself.
 
 The ``test_grade_*`` functions grade fixed readings without an app and run in
 the normal lane.
@@ -46,6 +49,10 @@ SSH_MANAGE = "status-bar-ssh-manage-trust"
 SSH_DETAILS_TITLE = "status-bar-ssh-details-title"
 LOCAL_CHIP = "status-bar-local-shell"
 DETAIL_ROWS = ("endpoint", "encryption", "auth", "hostKey")
+#: Rows the popover adds once the negotiated algorithms are known (#5896).
+ALGORITHM_ROWS = ("integrity", "keyExchange", "hostKeyAlgorithm")
+#: The encryption row while the algorithms are unknown.
+ENCRYPTED_FALLBACK = "Encrypted (SSH)"
 TRUST_LEVELS = ("trusted", "once", "pending")
 #: A test constant for the run's own store, not a real secret.
 MASTER_PASSWORD = "pr-status-bar-master-pw"
@@ -112,8 +119,9 @@ def ssh_details_problems(
 ) -> list[str]:
     """Problems with the SSH details popover (rows by id, the manage link)."""
     problems = [f"the popover has no {r!r} row" for r in DETAIL_ROWS if not rows.get(r)]
-    if rows.get("encryption") and "encrypted" not in rows["encryption"].lower():
-        problems.append(f"the encryption row reads {rows['encryption']!r}")
+    encryption = rows.get("encryption", "")
+    if encryption and encryption != ENCRYPTED_FALLBACK and not _plain_algorithm(encryption):
+        problems.append(f"the encryption row reads {encryption!r}")
     host_key = rows.get("hostKey", "")
     if fingerprint and fingerprint not in host_key:
         problems.append(f"the host key row {host_key!r} lacks the fingerprint {fingerprint!r}")
@@ -121,6 +129,41 @@ def ssh_details_problems(
         problems.append(f"the host key row {host_key!r} shows no fingerprint")
     if not manage:
         problems.append("the popover has no link to manage trusted host keys")
+    return problems
+
+
+def _plain_algorithm(name: str) -> bool:
+    """An SSH algorithm in plain words: one token, no vendor ``@…`` suffix."""
+    name = name.strip()
+    return bool(name) and name != "none" and "@" not in name and " " not in name
+
+
+def _is_aead(cipher: str) -> bool:
+    return "poly1305" in cipher.lower() or "-gcm" in cipher.lower()
+
+
+def ssh_algorithm_problems(rows: dict[str, str], chip_text: str) -> list[str]:
+    """Problems with the negotiated-algorithm rows of a live session (#5896).
+
+    A live direct SSH session names its cipher, key exchange and host-key
+    algorithm in plain words, the MAC only for a cipher that needs one, and
+    the chip itself names none of them.
+    """
+    cipher = rows.get("encryption", "").strip()
+    if cipher == ENCRYPTED_FALLBACK or not cipher:
+        return [f"the encryption row reads {cipher!r}, not the negotiated cipher"]
+    problems = []
+    for row, value in (("encryption", cipher), ("keyExchange", rows.get("keyExchange", "")),
+                       ("hostKeyAlgorithm", rows.get("hostKeyAlgorithm", ""))):
+        if not _plain_algorithm(value):
+            problems.append(f"the {row!r} row reads {value!r}, not a plain algorithm name")
+    mac = rows.get("integrity", "").strip()
+    if _is_aead(cipher) and mac:
+        problems.append(f"the AEAD cipher {cipher!r} shows an unused MAC {mac!r}")
+    elif not _is_aead(cipher) and not _plain_algorithm(mac):
+        problems.append(f"the cipher {cipher!r} needs a MAC, the integrity row reads {mac!r}")
+    if cipher.lower() in chip_text.lower():
+        problems.append(f"the chip {chip_text!r} names the cipher; only the popover may")
     return problems
 
 
@@ -207,6 +250,43 @@ def test_grade_ssh_details_pass_and_fail():
     assert wrong_fp and "lacks the fingerprint" in wrong_fp[0]
 
 
+GOOD_ALGORITHM_ROWS = {
+    **GOOD_ROWS,
+    "encryption": "chacha20-poly1305",
+    "keyExchange": "curve25519-sha256",
+    "hostKeyAlgorithm": "ssh-ed25519",
+}
+
+
+def test_grade_ssh_algorithms_pass():
+    assert ssh_details_problems(GOOD_ALGORITHM_ROWS, True) == []
+    assert ssh_algorithm_problems(GOOD_ALGORITHM_ROWS, GOOD_CHIP["text"]) == []
+    with_mac = {**GOOD_ALGORITHM_ROWS, "encryption": "aes256-ctr",
+                "integrity": "hmac-sha2-256-etm"}
+    assert ssh_algorithm_problems(with_mac, GOOD_CHIP["text"]) == []
+
+
+def test_grade_ssh_algorithms_fail():
+    # The fallback is fine for the details grade but not for a live session.
+    assert ssh_algorithm_problems(GOOD_ROWS, GOOD_CHIP["text"]) == [
+        "the encryption row reads 'Encrypted (SSH)', not the negotiated cipher"
+    ]
+    wire = {**GOOD_ALGORITHM_ROWS, "encryption": "chacha20-poly1305@openssh.com"}
+    assert any("not a plain algorithm name" in p
+               for p in ssh_algorithm_problems(wire, GOOD_CHIP["text"]))
+    assert ssh_details_problems(wire, True) == [
+        "the encryption row reads 'chacha20-poly1305@openssh.com'"
+    ]
+    no_kex = {**GOOD_ALGORITHM_ROWS, "keyExchange": ""}
+    assert any("'keyExchange'" in p for p in ssh_algorithm_problems(no_kex, GOOD_CHIP["text"]))
+    unused_mac = {**GOOD_ALGORITHM_ROWS, "integrity": "hmac-sha2-256"}
+    assert any("unused MAC" in p for p in ssh_algorithm_problems(unused_mac, GOOD_CHIP["text"]))
+    missing_mac = {**GOOD_ALGORITHM_ROWS, "encryption": "aes256-ctr"}
+    assert any("needs a MAC" in p for p in ssh_algorithm_problems(missing_mac, GOOD_CHIP["text"]))
+    on_chip = ssh_algorithm_problems(GOOD_ALGORITHM_ROWS, "SSH: arne@h:22 chacha20-poly1305")
+    assert any("names the cipher" in p for p in on_chip)
+
+
 def test_grade_local_chip():
     assert local_chip_problems({"text": "Zsh", "title": "Local shell: Zsh"}) == []
     assert local_chip_problems({"text": "", "title": ""})[0].startswith(
@@ -279,8 +359,9 @@ class TestProductRunStatusBarChips(
             "and the host key (#5839)",
             expect="#5839 complaint: the 'SSH: user@127.0.0.1:<port>' chip with a green "
             "shield; above it a 'Connection security' popover listing Host, Encryption "
-            "'Encrypted (SSH)', Signed in with 'key …', Host key '… SHA256:…' and "
-            "'Manage trusted host keys'",
+            "the negotiated cipher (e.g. 'chacha20-poly1305'), Key exchange (e.g. "
+            "'curve25519-sha256'), Signed in with 'key …', Host key '… SHA256:…', Host key "
+            "algorithm and 'Manage trusted host keys' (#5896)",
         ):
             native = self.need_native()
             self.switch_to_connections_sidebar()
@@ -307,10 +388,15 @@ class TestProductRunStatusBarChips(
             self.driver.click(SSH_CHIP)
             self.wait(lambda: self.driver.exists(SSH_DETAILS), timeout=5.0,
                       what="the SSH details popover")
-            rows = {r: self._text(f"status-bar-ssh-details-{r}") for r in DETAIL_ROWS}
+            # The popover asks for the negotiated algorithms when it opens (#5896).
+            self.wait(lambda: self.driver.exists("status-bar-ssh-details-keyExchange"),
+                      timeout=10.0, what="the negotiated key-exchange row")
+            rows = {r: self._text(f"status-bar-ssh-details-{r}")
+                    for r in DETAIL_ROWS + ALGORITHM_ROWS}
             self.shot(label="details")
             self.evidence(f"details: {rows}")
             problems += ssh_details_problems(rows, self.driver.exists(SSH_MANAGE))
+            problems += ssh_algorithm_problems(rows, chip["text"])
             # Sentence-case title, key file name with the full path on hover (#5956).
             title_text = self._text(SSH_DETAILS_TITLE)
             transform = self.driver.get_computed_style("text-transform", SSH_DETAILS_TITLE)
