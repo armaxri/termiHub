@@ -19,7 +19,7 @@
 //!    writes only `automations.json` (slice 4, marked by `legacyFrozenAt`)
 //!    follows the deletions the old UI made in the legacy files while they
 //!    were still the live stores (slices 2–3). See
-//!    [`follow_transition_deletions`]. From then on a legacy-side deletion can
+//!    `follow_transition_deletions`. From then on a legacy-side deletion can
 //!    only come from an older build and is not followed.
 //!
 //! The legacy files are never written. A newer or corrupt `automations.json`
