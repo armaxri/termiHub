@@ -105,9 +105,15 @@ describe("reconnect strip (#5179)", () => {
     expect(cs.backdropFilter ?? "").toBe("");
   });
 
-  it("guards the control: a terminal failure still uses the full overlay", async () => {
+  it("a terminal failure is a top strip too, never a full-inset cover (#5908)", async () => {
     await renderWith(failed("all attempts exhausted"));
-    expect(fullInsetCovers()).toContain(host.querySelector(".terminal-disconnect-overlay"));
+    const strip = byTestId("terminal-disconnect-overlay") as HTMLElement;
+    expect(strip.dataset.variant).toBe("failed");
+    expect(strip.classList).toContain("terminal-disconnect-strip");
+    expect(fullInsetCovers()).toEqual([]);
+    const cs = getComputedStyle(strip);
+    expect(cs.top).toBe("0px");
+    expect(cs.bottom).not.toBe("0px");
   });
 
   it("keeps the scrollback selectable underneath while retrying", async () => {

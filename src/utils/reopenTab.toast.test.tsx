@@ -210,3 +210,82 @@ describe("reopen toast across a dialog (#5914)", () => {
     expect(addTab.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
   });
 });
+
+/**
+ * #5919: a close made while the reopen toast is still on offer joins it, even
+ * more than the 6 s coalesce window after the previous close: the toast can
+ * outlive that window hidden behind a slow confirm dialog, or paused under the
+ * pointer. Only `Date` is faked, so sonner's own timers still run.
+ */
+describe("reopen toast still on offer past the coalesce window (#5919)", () => {
+  let dialog: HTMLDivElement | null = null;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-24T10:00:00Z"));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    addTab.mockClear();
+    resetReopenToastBatch();
+    act(() => root.render(<ToastProvider />));
+  });
+
+  afterEach(() => {
+    toast.dismiss();
+    act(() => root.unmount());
+    container.remove();
+    dialog?.remove();
+    dialog = null;
+    vi.useRealTimers();
+  });
+
+  /** Press the toast's action and return the titles of the tabs it reopened. */
+  function pressReopenAll(): unknown[] {
+    const label = document.querySelector<HTMLElement>(
+      `[data-testid="${REOPEN_TOAST_ACTION_TEST_ID}"]`
+    );
+    expect(label?.textContent).toBe("Reopen all");
+    act(() => label!.click());
+    return addTab.mock.calls.map((c) => c[0]);
+  }
+
+  it("a close confirmed in a slow dialog joins the hidden toast", async () => {
+    act(() => showReopenToast(payload("a")));
+    await waitFor(() => reopenToasts().length === 1);
+
+    // A live tab's confirm dialog, left open longer than the window.
+    await act(async () => {
+      dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      dialog.setAttribute("aria-modal", "true");
+      document.body.appendChild(dialog);
+    });
+    await waitFor(() => reopenToasts().length === 0);
+    vi.setSystemTime(Date.now() + 20_000);
+    act(() => showReopenToast(payload("b")));
+    act(() => dialog!.remove());
+
+    await waitFor(() => (reopenToasts()[0]?.textContent ?? "").includes("Closed 2 tabs"));
+    expect(reopenToasts()).toHaveLength(1);
+    expect(pressReopenAll()).toEqual(["a", "b"]);
+  });
+
+  it("a close while the pointer holds the toast open joins it", async () => {
+    act(() => showReopenToast(payload("a")));
+    await waitFor(() => reopenToasts().length === 1);
+
+    // Hovering the stack pauses sonner's timer, so the toast outlives 6 s.
+    const list = document.querySelector<HTMLElement>("[data-sonner-toaster]");
+    act(() => {
+      list!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      list!.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    vi.setSystemTime(Date.now() + 20_000);
+    act(() => showReopenToast(payload("b")));
+
+    await waitFor(() => (reopenToasts()[0]?.textContent ?? "").includes("Closed 2 tabs"));
+    expect(reopenToasts()).toHaveLength(1);
+    expect(pressReopenAll()).toEqual(["a", "b"]);
+  });
+});

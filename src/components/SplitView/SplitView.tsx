@@ -56,7 +56,7 @@ import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import {
-  disconnectCauseLineForTab,
+  sessionEndNoticeForTab,
   TerminalDisconnectOverlay,
 } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { consumeTerminalRefocusPending } from "@/components/Terminal/terminalRefocus";
@@ -1175,7 +1175,7 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
         <>
           <TerminalViewModeBanner
             tabId={tabId}
-            cause={disconnectCauseLineForTab(tabId, lifecycle.exitInfo, lifecycle.endCause)}
+            notice={sessionEndNoticeForTab(tabId, lifecycle.exitInfo, lifecycle.endCause)}
           />
           {isReconnectPromptVisible && <TerminalReconnectPrompt tabId={tabId} />}
         </>

@@ -376,6 +376,15 @@ const en = {
   "drop.cause.device": "The device {device} was disconnected.",
   "drop.cause.deviceUnknown": "The device was disconnected.",
   "drop.cause.lost": "The connection was lost.",
+  // ── Session-end notice headings and actions (#5910) ────────────────────
+  // A process that exits is not a lost connection: only a dropped link says
+  // "disconnected", and a local process is restarted, not reconnected.
+  "drop.end.exited": "Process exited (code {code})",
+  "drop.end.ended": "Session ended",
+  "drop.end.device": "Device disconnected",
+  "drop.end.disconnected": "Session disconnected",
+  "drop.end.restart": "Restart",
+  "drop.end.reconnect": "Reconnect",
   "drop.heading.server": "Server closed the connection — reconnecting…",
   "drop.heading.timeout": "Connection timed out — reconnecting…",
   "drop.autoReconnectOff":

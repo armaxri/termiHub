@@ -18,6 +18,7 @@ import {
 } from "./inlineImages";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
+import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
 import { applyCombineEmoji } from "./unicodeWidth";
 import { waitForUsableDimensions } from "./waitForUsableDimensions";
 import { createHscrollProbe, syncHscrollBar, horizontalScrollElementWidth } from "./hscrollBar";
@@ -1483,6 +1484,11 @@ export function Terminal({
     const el = document.createElement("div");
     el.style.position = "absolute";
     el.style.inset = "0";
+    // A notice pinned to the top of the slot (the session-end strip, the
+    // reconnect strip, the view-mode banner) pushes the terminal down instead
+    // of covering its first rows (#5908): the slot publishes the notice's
+    // height as this inset, 0px when none. The ResizeObserver re-fits.
+    el.style.top = `var(${TOP_NOTICE_INSET_VAR})`;
     el.style.overflow = "hidden";
     // Expose which renderer is live for diagnostics (#2078). A renderer
     // regression shows up as a blank/garbled terminal, so surfacing whether the

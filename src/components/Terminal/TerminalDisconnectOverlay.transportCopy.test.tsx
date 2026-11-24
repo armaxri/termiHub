@@ -113,11 +113,11 @@ describe("TerminalDisconnectOverlay — transport-specific wording", () => {
     expect(text).not.toContain("preserved below");
   });
 
-  it("attaches the dismiss control to the overlay card", async () => {
+  it("attaches the dismiss control to the strip", async () => {
     seedTab({ type: "telnet", config: { host: "router" } });
     await renderWith(withExit(disconnected("unexpected"), { code: null, reason: "dropped" }));
     const dismiss = container.querySelector("[data-testid='terminal-disconnect-dismiss-btn']");
-    const card = dismiss?.closest(".terminal-disconnect-overlay__card");
+    const card = dismiss?.closest(".terminal-disconnect-strip");
     expect(card).not.toBeNull();
     expect(card?.querySelector(".ui-content-overlay__heading")?.textContent).toBe(
       "Session disconnected"

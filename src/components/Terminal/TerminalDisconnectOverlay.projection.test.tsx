@@ -14,6 +14,9 @@ import {
 
 // Stub lucide-react icons used in the overlay.
 vi.mock("lucide-react", () => ({
+  RotateCcw: () => null,
+  SquareTerminal: () => null,
+  Usb: () => null,
   WifiOff: () => null,
   RefreshCw: () => null,
   X: () => null,

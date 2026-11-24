@@ -14,6 +14,9 @@ import {
 // Stub lucide-react icons used in the overlay (incl. the session-lost variant's
 // Unplug + Plus).
 vi.mock("lucide-react", () => ({
+  RotateCcw: () => null,
+  SquareTerminal: () => null,
+  Usb: () => null,
   WifiOff: () => null,
   RefreshCw: () => null,
   X: () => null,
