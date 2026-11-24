@@ -35,15 +35,14 @@ function hopLabel(hop: JumpHostConfig): string {
 }
 
 /**
- * Full-path tooltip for the hop chain, e.g.
- * `Via: edge-gateway → internal-bastion → db-server`. The target name is
- * appended when provided.
+ * Tooltip and accessible name of the sidebar's jump-host marker (#5850), e.g.
+ * `Connects via bastion` or, for a chain, `Connects via edge → bastion`. The
+ * row already shows the target's name, so only the gateways are listed.
+ * Returns an empty string when no jump host is configured.
  */
-export function jumpHostTooltip(hops: JumpHostConfig[], targetName?: string): string {
+export function jumpHostTooltip(hops: JumpHostConfig[]): string {
   if (hops.length === 0) return "";
-  const parts = hops.map(hopLabel);
-  if (targetName) parts.push(targetName);
-  return `Via: ${parts.join(" → ")}`;
+  return `Connects via ${hops.map(hopLabel).join(" → ")}`;
 }
 
 /**

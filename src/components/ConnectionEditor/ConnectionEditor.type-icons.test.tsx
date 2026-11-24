@@ -107,7 +107,7 @@ describe("ConnectionEditor — type picker glyphs (#5622)", () => {
         ?.getAttribute("data-icon");
 
     expect(iconOf("local")).toBe("terminal");
-    expect(iconOf("ssh")).toBe("key-round");
+    expect(iconOf("ssh")).toBe("square-terminal");
     expect(iconOf("serial")).toBe("cable");
   });
 });

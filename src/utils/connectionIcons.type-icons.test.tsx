@@ -43,14 +43,14 @@ describe("connection type icons (#5622)", () => {
 
   it("uses a dedicated SSH glyph, never a Wi-Fi/connectivity glyph", () => {
     const { id } = getConnectionTypeIconInfo("ssh");
-    expect(id).toBe("key-round");
+    expect(id).toBe("square-terminal");
     expect(id).not.toMatch(/wifi/);
   });
 
   it("uses remote-desktop glyphs for VNC and RDP, never the local-shell glyph", () => {
     const local = getConnectionTypeIconInfo("local").id;
     expect(getConnectionTypeIconInfo("vnc").id).toBe("screen-share");
-    expect(getConnectionTypeIconInfo("rdp").id).toBe("monitor");
+    expect(getConnectionTypeIconInfo("rdp").id).toBe("monitor-cog");
     expect(getConnectionTypeIconInfo("vnc").id).not.toBe(local);
     expect(getConnectionTypeIconInfo("rdp").id).not.toBe(local);
   });
@@ -61,11 +61,11 @@ describe("connection type icons (#5622)", () => {
 
   it.each([
     ["local", { type: "local", config: {} }, "terminal"],
-    ["ssh", { type: "ssh", config: { host: "h", username: "u" } }, "key-round"],
+    ["ssh", { type: "ssh", config: { host: "h", username: "u" } }, "square-terminal"],
     ["vnc", { type: "vnc", config: { host: "h" } }, "screen-share"],
-    ["rdp", { type: "rdp", config: { host: "h" } }, "monitor"],
+    ["rdp", { type: "rdp", config: { host: "h" } }, "monitor-cog"],
     ["serial", { type: "serial", config: {} }, "cable"],
-    ["telnet", { type: "telnet", config: {} }, "globe"],
+    ["telnet", { type: "telnet", config: {} }, "network"],
     ["docker", { type: "docker", config: {} }, "container"],
   ])("ConnectionIcon renders data-icon for %s", (_type, config, expected) => {
     const { container } = render(<ConnectionIcon config={config as ConnectionConfig} />);
@@ -103,5 +103,50 @@ describe("connection type icons (#5622)", () => {
   it.each(BUILTIN_TYPES)("ConnectionTypeIcon matches the type map for %s", (type) => {
     const { container } = render(<ConnectionTypeIcon type={type} />);
     expect(iconIdOf(container)).toBe(getConnectionTypeIconInfo(type).id);
+  });
+});
+
+/**
+ * #5850: the key glyph means saved credentials (the status bar's Keychain
+ * indicator, the credential chooser), the globe means the web, and VNC/RDP
+ * share the monitor family with distinct marks.
+ */
+describe("connection type icons don't borrow other meanings (#5850)", () => {
+  const ALL_TYPES = [...BUILTIN_TYPES, "remote"];
+
+  it("no connection type uses the credential key glyph", () => {
+    for (const type of ALL_TYPES) {
+      expect(getConnectionTypeIconInfo(type).id, type).not.toMatch(/key/);
+    }
+  });
+
+  it("the Keychain indicator's key glyph matches no connection type glyph", async () => {
+    const { useAppStore } = await import("@/store/appStore");
+    const { CredentialStoreIndicator } =
+      await import("@/components/CredentialStoreIndicator/CredentialStoreIndicator");
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "os_keychain", status: "unlocked" },
+    } as never);
+    const { container } = render(<CredentialStoreIndicator />);
+    const keychain = iconIdOf(container);
+    expect(keychain).toBe("key-round");
+    const typeIds = ALL_TYPES.map((t) => getConnectionTypeIconInfo(t).id);
+    expect(typeIds).not.toContain(keychain);
+  });
+
+  it("telnet is a network glyph, not the web globe", () => {
+    expect(getConnectionTypeIconInfo("telnet").id).toBe("network");
+  });
+
+  it("VNC and RDP are both monitor-family glyphs with different marks", () => {
+    const vnc = getConnectionTypeIconInfo("vnc").id;
+    const rdp = getConnectionTypeIconInfo("rdp").id;
+    expect(vnc).not.toBe(rdp);
+    expect(rdp).toMatch(/^monitor-/);
+    expect(vnc).toBe("screen-share");
+  });
+
+  it("SSH is not the local-shell glyph", () => {
+    expect(getConnectionTypeIconInfo("ssh").id).not.toBe(getConnectionTypeIconInfo("local").id);
   });
 });

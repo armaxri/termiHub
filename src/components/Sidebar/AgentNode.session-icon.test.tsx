@@ -134,7 +134,7 @@ describe("AgentNode — active session type icons (#5622)", () => {
   });
 
   it.each([
-    ["ssh", "key-round"],
+    ["ssh", "square-terminal"],
     ["serial", "cable"],
     ["shell", "terminal"],
   ])("renders the %s session row with the %s glyph", (type, expected) => {

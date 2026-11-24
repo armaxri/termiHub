@@ -68,6 +68,7 @@ export function InlineFolderInput({
         className="connection-tree__folder connection-tree__folder--editing"
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
+        <span className="connection-tree__chevron-spacer" aria-hidden />
         <Folder size={16} />
         <Input
           className="connection-tree__inline-input"
@@ -123,7 +124,7 @@ export function InlineFolderInput({
           id={errorId}
           role="alert"
           className="connection-tree__inline-error"
-          style={{ paddingLeft: `${depth * 16 + 8 + 20}px` }}
+          style={{ paddingLeft: `${depth * 16 + 8 + 40}px` }}
           data-testid="inline-folder-error"
         >
           {error}
