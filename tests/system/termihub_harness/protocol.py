@@ -59,6 +59,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "measureTerminal",
         "osInputProbe",
         "pressKey",
+        "terminalKey",
         "projectionDispatch",
         "projectionDropNext",
         "projectionResync",

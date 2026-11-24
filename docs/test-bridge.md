@@ -223,6 +223,7 @@ unmount.
 | `contextMenu`              | Open an element's right-click menu (`contextmenu` event)       |
 | `resizeWindow`             | Resize the app window (Tauri `setSize` → xterm fit → PTY size) |
 | `pressKey`                 | Dispatch a key + optional modifiers (`Ctrl+S`, `ArrowDown`)    |
+| `terminalKey`              | Press a key in a terminal through xterm's input (see below)    |
 | `editorCursor`             | Move the file editor's caret via Monaco's cursor command API   |
 | `terminalInput`            | Send a command into a terminal **session** (see below)         |
 | `scrollTerminal`           | Scroll a terminal's viewport by lines / to the bottom          |
@@ -574,6 +575,23 @@ keybinding** (`Cmd+S`/`Ctrl+S` clears the dirty flag).
 
 ```ts
 await driver.pressKey("s", "editor-input", { meta: true }); // Cmd+S → save
+```
+
+### Keys into a terminal (`terminalKey`)
+
+xterm reads keys from its hidden input textarea, so a `pressKey` aimed at a
+terminal's wrapper never reaches xterm's key handler or the app's key routing
+behind it (`attachCustomKeyEventHandler`, `terminalInputRouting.ts`).
+`{ action: "terminalKey", key, tabId?, ctrl?, meta?, shift?, alt? }` focuses
+that textarea in `tabId` (the active tab) and dispatches what a browser does for
+a real keystroke: `keydown`, then `keypress` for a printable key or Enter when
+the keydown was not cancelled, then `keyup`, each with a real legacy `keyCode`.
+Use it to grade key behaviour of the terminal itself, e.g. Enter in an ended
+terminal running the session-end strip's Restart / Reconnect (#5966). To send a
+command into the session, `terminalInput` stays the right verb.
+
+```python
+driver.terminal_key("Enter", tab_id)  # ended terminal: Restart / Reconnect
 ```
 
 ### Moving the editor caret (`editorCursor`)
