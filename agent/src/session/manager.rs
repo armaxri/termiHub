@@ -32,6 +32,7 @@ use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{
     ConnectionType, ConnectionTypeRegistry, OutputReceiver, SessionEndCause,
+    SshNegotiatedAlgorithms,
 };
 use termihub_core::errors::SessionError;
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
@@ -220,6 +221,20 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         &self,
         _session_id: &str,
     ) -> Result<Arc<dyn FileBrowser + Send + Sync>, SessionProcessError> {
+        Err(SessionProcessError::Unknown)
+    }
+
+    /// The algorithms the SSH transport of a session this worker holds
+    /// negotiated (#5896): `Ok(None)` for a non-SSH session or one started by
+    /// an older agent's daemon. Refused, with the same reasons as
+    /// [`session_process_manager`](Self::session_process_manager), unless the
+    /// session exists, is running and is held by this worker.
+    ///
+    /// The default knows no sessions.
+    async fn session_ssh_algorithms(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<SshNegotiatedAlgorithms>, SessionProcessError> {
         Err(SessionProcessError::Unknown)
     }
 
@@ -1629,6 +1644,27 @@ impl SessionManager {
         }
     }
 
+    /// See [`SessionManagerApi::session_ssh_algorithms`] (#5896).
+    ///
+    /// An in-process backend is cloned out under the `sessions` lock and asked
+    /// after it is released.
+    pub async fn session_ssh_algorithms(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SshNegotiatedAlgorithms>, SessionProcessError> {
+        let connection = {
+            let mut sessions = self.sessions.lock().await;
+            let info = held_session(&mut sessions, session_id)?;
+            match &info.backend {
+                SessionBackend::Daemon(client) => return Ok(client.ssh_algorithms()),
+                SessionBackend::InProcess { connection, .. } => connection.clone(),
+                #[cfg(test)]
+                SessionBackend::Stub { .. } => return Ok(None),
+            }
+        };
+        Ok(connection.ssh_algorithms().await)
+    }
+
     /// See [`SessionManagerApi::session_monitoring`] (#3871).
     ///
     /// Like [`session_process_manager`](Self::session_process_manager), the
@@ -2995,6 +3031,13 @@ impl SessionManagerApi for SessionManager {
         session_id: &str,
     ) -> Result<Arc<dyn MonitoringProvider + Send + Sync>, SessionProcessError> {
         SessionManager::session_monitoring(self, session_id).await
+    }
+
+    async fn session_ssh_algorithms(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SshNegotiatedAlgorithms>, SessionProcessError> {
+        SessionManager::session_ssh_algorithms(self, session_id).await
     }
 
     async fn session_file_browser(

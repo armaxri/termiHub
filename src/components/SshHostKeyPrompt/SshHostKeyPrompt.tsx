@@ -34,7 +34,9 @@ import { hostKeyChanges } from "@/utils/hostKeyChanges";
  * The prompt names its connect (`owner`); while it is open, that tab's
  * client-side connect deadline is paused, and it resumes once the prompt is
  * decided or closed (#5243). The owning tab also names the connection the
- * user clicked, shown above the host (#5862, R-111).
+ * user clicked, shown above the host (#5862, R-111). A prompt with no owning
+ * tab (tunnel, SFTP browser, agent, Test) shows the connection name the
+ * backend connect put on the event instead (#5943).
  *
  * On a changed key the old and the new fingerprint are grouped in aligned
  * four-character pieces, each with a block glyph drawn from it, and the dialog
@@ -43,11 +45,14 @@ import { hostKeyChanges } from "@/utils/hostKeyChanges";
 export function SshHostKeyPrompt() {
   const [queue, setQueue] = useState<SshHostKeyPromptPayload[]>([]);
   const current = queue[0] ?? null;
-  // The connection behind the prompt, from the terminal tab that raised it
-  // (#5862). A string selector, so the dialog only re-renders when it changes.
-  const connectionName = useAppStore((s) =>
+  // The connection behind the prompt: the terminal tab that raised it first
+  // (#5862), else the name the backend connect gave it — a tunnel, SFTP
+  // browser, agent or Test has no tab (#5943). A string selector, so the
+  // dialog only re-renders when it changes.
+  const tabConnectionName = useAppStore((s) =>
     promptConnectionName(current?.owner, collectLiveTabs(s))
   );
+  const connectionName = tabConnectionName ?? (current?.connection_name?.trim() || undefined);
 
   useEffect(() => {
     const unlisteners: (() => void)[] = [];

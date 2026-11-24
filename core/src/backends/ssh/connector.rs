@@ -88,6 +88,8 @@ pub struct SshShellHandle {
     /// Why X11 is not active or fell back (#5601); `None` when it is off
     /// or the server forwards it.
     pub x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
+    /// The algorithms the transport negotiated (#5896); `None` when unknown.
+    pub algorithms: Option<crate::connection::SshNegotiatedAlgorithms>,
     /// Why the shell channel ended on its own (#5696): the server closed it,
     /// or the transport failed. Recorded before the reader sees EOF.
     pub end_cause: EndCauseSlot,
@@ -1090,6 +1092,7 @@ impl SshConnector for RusshSshConnector {
             integration_typed,
             x11_forwarding,
             x11_forwarding_reason: x11_reason,
+            algorithms: liveness.algorithms(),
         })
     }
 }

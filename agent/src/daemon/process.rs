@@ -502,6 +502,13 @@ async fn daemon_loop_with_reopen(
     let files_only_settled = wait_files_only(connection.files_only_watch());
     tokio::pin!(files_only_settled);
 
+    // The algorithms the session's SSH transport negotiated (#5896), known
+    // once connected. Told to every worker right after Ready.
+    let ssh_algorithms = connection
+        .ssh_algorithms()
+        .await
+        .and_then(|algorithms| serde_json::to_vec(&algorithms).ok());
+
     let capability_flags = capability_flags(
         process_manager.is_some(),
         monitor_cmd_tx.is_some(),
@@ -986,6 +993,12 @@ async fn daemon_loop_with_reopen(
         // pre-#4081 one logs and skips the unknown frame.
         if files_only {
             sink.send(MSG_FILES_ONLY, &[]);
+        }
+
+        // An SSH session tells every worker its negotiated algorithms (#5896),
+        // after Ready like files-only, so a worker of any version can skip it.
+        if let Some(algorithms) = &ssh_algorithms {
+            sink.send(MSG_SSH_ALGORITHMS, algorithms);
         }
 
         // A worker attaching mid-reopen learns where the loop stands (#5396).
@@ -1931,6 +1944,9 @@ pub(crate) mod tests {
 
     /// A files-only session reaches the desktop, end to end (#4081).
     mod files_only_e2e;
+
+    /// An SSH session's negotiated algorithms reach the worker, end to end (#5896).
+    mod ssh_algorithms_e2e;
 
     /// A reopening backend's reconnect steps reach the desktop, end to end (#5396).
     mod reconnect_e2e;

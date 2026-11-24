@@ -32,6 +32,7 @@ use crate::protocol::methods::{
 };
 use crate::session::output_budget::OutputBudget;
 use crate::transport::{charged, to_params};
+use termihub_core::connection::SshNegotiatedAlgorithms;
 
 /// How long to wait for the Ready frame after connecting.
 ///
@@ -245,6 +246,9 @@ pub(crate) struct FeatureChannels {
     /// The session's output flow: the desktop's pause plus the byte budget of
     /// output queued on the transport (#4439). Outlives reconnects.
     pub output_budget: OutputBudget,
+    /// The algorithms the session's SSH transport negotiated, as the daemon
+    /// reported them in [`MSG_SSH_ALGORITHMS`] (#5896).
+    pub ssh_algorithms: Arc<std::sync::Mutex<Option<SshNegotiatedAlgorithms>>>,
 }
 
 impl FeatureChannels {
@@ -262,6 +266,8 @@ impl FeatureChannels {
         self.files.fail_all();
         self.output_flow.store(false, Ordering::SeqCst);
         self.output_credit.store(false, Ordering::SeqCst);
+        // The daemon repeats them after Ready on every attach (#5896).
+        self.set_ssh_algorithms(None);
         // The desktop's pause belonged to the previous connection; a newly
         // attached worker starts flowing (#4416). A budget pause stays until
         // the output already queued has been written (#4439).
@@ -287,6 +293,14 @@ impl FeatureChannels {
             .store(flags & CAP_OUTPUT_FLOW != 0, Ordering::SeqCst);
         self.output_credit
             .store(flags & CAP_OUTPUT_CREDIT != 0, Ordering::SeqCst);
+    }
+
+    /// Record the daemon's [`MSG_SSH_ALGORITHMS`] (#5896).
+    fn set_ssh_algorithms(&self, algorithms: Option<SshNegotiatedAlgorithms>) {
+        *self
+            .ssh_algorithms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = algorithms;
     }
 
     /// The connection ended: nothing sent over it will be answered.
@@ -687,6 +701,17 @@ impl DaemonClient {
             self.writer.clone(),
             self.features.files.clone(),
         )))
+    }
+
+    /// The algorithms the session's SSH transport negotiated (#5896), as the
+    /// daemon reported them on this attach — `None` for a non-SSH session or
+    /// a daemon started by an agent that predates the report.
+    pub fn ssh_algorithms(&self) -> Option<SshNegotiatedAlgorithms> {
+        self.features
+            .ssh_algorithms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get the transport endpoint (socket path on unix, pipe name on windows).
@@ -1562,6 +1587,18 @@ async fn read_frames(
                     // shows the "no shell" panel instead of an empty terminal.
                     info!("Session {session_id} is files-only (shell refused, SFTP works)");
                     let _ = notification_tx.send(files_only_notification(session_id));
+                }
+                MSG_SSH_ALGORITHMS => {
+                    // #5896: what the session's SSH transport negotiated, for
+                    // the desktop's security popover (`connection.sshAlgorithms`).
+                    match serde_json::from_slice::<SshNegotiatedAlgorithms>(&frame.payload) {
+                        Ok(algorithms) => {
+                            if let Some(features) = features {
+                                features.set_ssh_algorithms(Some(algorithms));
+                            }
+                        }
+                        Err(e) => warn!("Malformed SSH algorithms for session {session_id}: {e}"),
+                    }
                 }
                 MSG_RECONNECT => {
                     // #5396: the session's backend is reopening in place (a

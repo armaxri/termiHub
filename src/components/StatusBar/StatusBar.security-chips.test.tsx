@@ -21,6 +21,12 @@ vi.mock("@/components/CredentialStoreIndicator", () => ({
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
 vi.mock("./UpdateIndicator", () => ({ UpdateIndicator: () => null }));
 
+const getSshAlgorithms = vi.hoisted(() => vi.fn());
+vi.mock("@/services/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/api")>()),
+  getSshAlgorithms,
+}));
+
 const SSH: ConnectionConfig = {
   type: "ssh",
   config: { host: "127.0.0.1", port: 22400, username: "arne", authMethod: "key", keyPath: "~/k" },
@@ -58,6 +64,8 @@ describe("StatusBar — security chips (#5839)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     useSshHostKeyTrustStore.setState({ byTab: {} });
+    getSshAlgorithms.mockReset();
+    getSshAlgorithms.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -134,6 +142,44 @@ describe("StatusBar — security chips (#5839)", () => {
       manage.click();
     });
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "security" });
+  });
+
+  it("asks for the negotiated algorithms on open and names them in the popover (#5896)", async () => {
+    setActiveTab(SSH);
+    getSshAlgorithms.mockResolvedValue({
+      kex: "curve25519-sha256",
+      hostKey: "ssh-ed25519",
+      cipher: "chacha20-poly1305@openssh.com",
+      mac: null,
+    });
+    await render();
+    expect(getSshAlgorithms).not.toHaveBeenCalled();
+    const chipText = q("status-bar-ssh")!.textContent;
+
+    await openSshDetails();
+    await flushAsync();
+
+    expect(getSshAlgorithms).toHaveBeenCalledWith("s1");
+    const encryption = q("status-bar-ssh-details-encryption")!;
+    expect(encryption.textContent).toBe("chacha20-poly1305");
+    expect(encryption.getAttribute("title")).toBe("chacha20-poly1305@openssh.com");
+    expect(q("status-bar-ssh-details-keyExchange")!.textContent).toBe("curve25519-sha256");
+    expect(q("status-bar-ssh-details-hostKeyAlgorithm")!.textContent).toBe("ssh-ed25519");
+    expect(q("status-bar-ssh-details-integrity")).toBeNull();
+    // The chip itself never names them.
+    expect(q("status-bar-ssh")!.textContent).toBe(chipText);
+  });
+
+  it("keeps 'Encrypted (SSH)' when the backend cannot say (#5896)", async () => {
+    setActiveTab(SSH);
+    getSshAlgorithms.mockRejectedValue(new Error("no such session"));
+    await render();
+    await openSshDetails();
+    await flushAsync();
+
+    expect(getSshAlgorithms).toHaveBeenCalledTimes(1);
+    expect(q("status-bar-ssh-details-encryption")!.textContent).toBe("Encrypted (SSH)");
+    expect(q("status-bar-ssh-details-keyExchange")).toBeNull();
   });
 
   it("shows a pending shield before the connect reports the host key", async () => {

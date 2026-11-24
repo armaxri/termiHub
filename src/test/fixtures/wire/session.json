@@ -21,5 +21,20 @@
       "message": "Failed to spawn terminal: Spawn failed: pty closed"
     }
   },
-  "createConnection": "3f2b8c1e-5a4d-4e7b-9c0a-1d2e3f4a5b6c"
+  "createConnection": "3f2b8c1e-5a4d-4e7b-9c0a-1d2e3f4a5b6c",
+  "sshAlgorithms": {
+    "aead": {
+      "cipher": "chacha20-poly1305@openssh.com",
+      "hostKey": "rsa-sha2-512",
+      "kex": "curve25519-sha256",
+      "mac": null
+    },
+    "none": null,
+    "withMac": {
+      "cipher": "aes256-ctr",
+      "hostKey": "rsa-sha2-512",
+      "kex": "curve25519-sha256",
+      "mac": "hmac-sha2-256-etm@openssh.com"
+    }
+  }
 }

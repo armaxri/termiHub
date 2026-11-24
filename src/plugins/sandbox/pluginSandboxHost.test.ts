@@ -16,6 +16,7 @@ import {
   sandboxHasParsers,
   sandboxSessionPending,
   enqueueSandboxTransform,
+  enqueueSandboxPassthrough,
   discardSandboxSession,
   __setSandboxWorkerFactory,
   __resetSandboxHost,
@@ -152,6 +153,24 @@ describe("ordered transform pipeline", () => {
     // Resolve A: now A then B drain together, in order.
     fake.emit({ t: "transformResult", seq: reqA.seq, changed: true, bytes: enc("a") });
     expect(out).toEqual(["a", "b"]);
+  });
+
+  it("queues a pass-through line behind the in-flight transforms (#5965)", () => {
+    const out: string[] = [];
+    enqueueSandboxTransform("s1", enc("last line"), (b) => out.push(dec(b)));
+    const [req] = fake.postsOfType("transform");
+    // The exit line waits for the chunk the parser still holds.
+    expect(enqueueSandboxPassthrough("s1", enc("[exit]"))).toBe(true);
+    expect(out).toEqual([]);
+    expect(fake.postsOfType("transform")).toHaveLength(1); // never parsed
+    fake.emit({ t: "transformResult", seq: req.seq, changed: true, bytes: enc("LAST LINE") });
+    expect(out).toEqual(["LAST LINE", "[exit]"]);
+    expect(sandboxSessionPending("s1")).toBe(false);
+  });
+
+  it("leaves a pass-through line to the caller when nothing is in flight (#5965)", () => {
+    expect(enqueueSandboxPassthrough("s1", enc("[exit]"))).toBe(false);
+    expect(sandboxSessionPending("s1")).toBe(false);
   });
 
   it("keeps two sessions independent", () => {

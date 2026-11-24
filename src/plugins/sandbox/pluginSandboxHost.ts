@@ -575,6 +575,21 @@ export function enqueueSandboxTransform(
   rearmWatchdog();
 }
 
+/**
+ * Queue `bytes` behind a session's in-flight transforms, untouched by the
+ * parsers (#5965): they reach the session's sink once every earlier chunk has,
+ * so a line termiHub writes itself (the exit line) never lands above output
+ * the parsers have not returned yet. Returns `false` when nothing is in flight
+ * — the caller then writes the bytes itself, as no output can overtake them.
+ */
+export function enqueueSandboxPassthrough(sessionId: string, bytes: Uint8Array): boolean {
+  const q = sessions.get(sessionId);
+  if (!q || q.slots.length === 0) return false;
+  q.slots.push({ seq: seqCounter++, done: true, original: bytes, out: bytes });
+  drain(sessionId);
+  return true;
+}
+
 /** Notify the sandbox that a terminal session started (parser lifecycle hook). */
 export function sandboxNotifySessionStart(sessionId: string): void {
   if (!worker) return;
