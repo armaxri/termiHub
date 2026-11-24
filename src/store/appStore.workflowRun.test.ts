@@ -2096,6 +2096,9 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       }
       expect(injected).toEqual([]);
       expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+      // The attempt says why; the run history must not claim that anything ran.
+      expect(useAppStore.getState().automationRuns).toEqual([]);
+      expect(recordedRuns).toEqual([]);
     });
 
     it("is refused before a missing target is connected", async () => {
@@ -2279,6 +2282,55 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     );
     const recorded = recordedMacroRuns.find((r) => r.id === report.runIds?.[0]);
     expect(recorded).toMatchObject({ origin: "scheduled", targetLabels: ["tab-a"] });
+  });
+
+  describe("a typed automation on several terminals (#5818)", () => {
+    const both = {
+      targets: { kind: "connections" as const, connectionIds: ["conn-a", "conn-b"] },
+      action: { kind: "automation" as const, automationId: "t1" },
+    };
+    beforeEach(() => {
+      recordedMacroRuns.length = 0;
+      useAppStore.setState(
+        automationLibraryState([
+          {
+            id: "t1",
+            name: "Typed",
+            tags: [],
+            steps: [
+              { kind: "type-keys", chunks: [{ data: "id\n", delayMs: 0 }], timing: "instant" },
+            ],
+            triggers: [],
+            createdAt: "",
+            updatedAt: "",
+          },
+        ])
+      );
+    });
+
+    it("links every terminal's record, not just the first", async () => {
+      const report = await executeScheduledRun(fire(both), store);
+      expect(report).toMatchObject({ outcome: "completed", targetsRun: 2 });
+      await vi.waitFor(() => expect(recordedMacroRuns).toHaveLength(2));
+      expect([...report.runIds!].sort()).toEqual(recordedMacroRuns.map((r) => r.id).sort());
+      expect(recordedMacroRuns.map((r) => r.origin)).toEqual(["scheduled", "scheduled"]);
+    });
+
+    it("fails the attempt when one terminal drops, still linking both records", async () => {
+      registerTerminalInputInjector(async (tabId) => tabId !== "tab-b");
+      const report = await executeScheduledRun(fire(both), store);
+      expect(report).toMatchObject({ outcome: "failed", targetsRun: 2 });
+      expect(report.runIds).toHaveLength(2);
+      await vi.waitFor(() => expect(recordedMacroRuns).toHaveLength(2));
+      expect(recordedMacroRuns.map((r) => r.status).sort()).toEqual(["completed", "error"]);
+    });
+
+    it("links no record when the playback did not start", async () => {
+      useAppStore.setState({ playMacro: () => Promise.resolve(null) });
+      const report = await executeScheduledRun(fire(both), store);
+      expect(report).toMatchObject({ outcome: "skipped", targetsRun: 0 });
+      expect(report.runIds).toBeUndefined();
+    });
   });
 
   describe("a target whose session disconnected (#4012)", () => {

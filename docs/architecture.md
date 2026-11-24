@@ -2128,7 +2128,7 @@ sequenceDiagram
 - **Attempt history** (`history.rs`, schema v2, #3528) — every settled attempt (a fired run or a
   skipped slot with its reason) becomes `lastResult` and the newest entry of the schedule's
   `history`, capped at the last 20. A fired run records its start time, duration and the ids of
-  automation run-history records it produced (`runIds`); a paused slot records nothing. The log stays in
+  automation run-history records it produced (`runIds`, one per terminal); a paused slot records nothing. The log stays in
   `schedules.json` (a few KiB per schedule); the v1 → v2 migration seeds it from `lastResult`,
   and the version bump keeps an older build from overwriting it.
 - **Schema v3** (`migrate.rs`, #5818 slice 10) — the boot migration rewrites a v1/v2 file right
