@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
-import { TooltipProvider } from "@/components/ui";
+import { TooltipProvider, toast } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { resolveCredential } from "@/services/api";
@@ -199,6 +199,33 @@ describe("AgentNode — VNC/RDP connections tunnelled through the agent (#3241)"
       label: "Build server",
     });
     expect(addTab).not.toHaveBeenCalled();
+  });
+
+  it("names the connection on cancel and offers Retry, which prompts again (#5881)", async () => {
+    vi.mocked(resolveCredential).mockResolvedValue(null);
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
+    const addTab = vi.fn();
+    const requestPassword = vi.fn(() => Promise.resolve(null));
+    useAppStore.setState({ addTab, requestPassword });
+
+    renderAndOpen("Build server");
+    await flush();
+
+    expect(info).toHaveBeenCalledTimes(1);
+    const [message, options] = info.mock.calls[0] as [
+      string,
+      { action: { label: string; onClick: () => void } },
+    ];
+    // Not the bare "Connect canceled", and an info toast, not a success.
+    expect(message).toBe('Connect to "Build server" canceled.');
+    expect(options.action.label).toBe("Retry");
+
+    await act(async () => options.action.onClick());
+    await flush();
+    expect(requestPassword).toHaveBeenCalledTimes(2);
+    expect(addTab).not.toHaveBeenCalled();
+    info.mockRestore();
+    vi.mocked(resolveCredential).mockImplementation(() => Promise.resolve("stored-pw"));
   });
 
   it("connects with the prompted password", async () => {

@@ -52,8 +52,11 @@ export type ConnectSecretResult =
        */
       shouldSave: boolean;
     }
-  /** The user dismissed the unlock dialog or the password prompt. */
-  | { status: "canceled" };
+  /**
+   * The user dismissed the unlock dialog (`at: "unlock"`) or the password
+   * prompt (`at: "prompt"`), so a caller can offer the right next step (#5881).
+   */
+  | { status: "canceled"; at: "unlock" | "prompt" };
 
 export interface ResolveConnectSecretOptions {
   /** The schema driving the form (connection type's schema, or the agent schema). */
@@ -90,6 +93,12 @@ export interface ResolveConnectSecretOptions {
    * titled after the real transport (#5617). Omitted keeps the SSH title.
    */
   transport?: string;
+  /**
+   * Skip the stored credential and prompt for it, leaving a locked store
+   * locked (#5881): the "Type password instead" action after a canceled
+   * unlock. Same as choosing "Type password instead" in the unlock dialog.
+   */
+  skipStoredCredential?: boolean;
 }
 
 /**
@@ -105,6 +114,7 @@ export async function resolveConnectSecret({
   allowSave = true,
   label,
   transport,
+  skipStoredCredential = false,
 }: ResolveConnectSecretOptions): Promise<ConnectSecretResult> {
   if (!schema) return { status: "none" };
 
@@ -135,8 +145,8 @@ export async function resolveConnectSecret({
       : undefined;
   // "Connect without saved password" on the unlock dialog (#5188): the store
   // stays locked, so the stored secret is skipped and the prompt offers no Save.
-  let storeStaysLocked = false;
-  if (authMethod && (connectionId || credentialRef)) {
+  let storeStaysLocked = skipStoredCredential;
+  if (authMethod && (connectionId || credentialRef) && !skipStoredCredential) {
     const savePassword = settings.savePassword as boolean | undefined;
     // Unlock gate (G3, #1144): a locked master-password store must be unlocked
     // before the stored credential can be read.
@@ -146,7 +156,7 @@ export async function resolveConnectSecret({
       credentialRef,
       ...(label ? { waitingConnection: { name: label, transport } } : {}),
     });
-    if (unlock === "canceled") return { status: "canceled" };
+    if (unlock === "canceled") return { status: "canceled", at: "unlock" };
     storeStaysLocked = unlock === "skipped";
 
     const resolution = storeStaysLocked
@@ -184,7 +194,7 @@ export async function resolveConnectSecret({
     Object.keys(options).length === 0
       ? await requestPassword(host, username, "", credentialType)
       : await requestPassword(host, username, "", credentialType, options);
-  if (answer === null) return { status: "canceled" };
+  if (answer === null) return { status: "canceled", at: "prompt" };
   return {
     status: "resolved",
     passwordKey: promptInfo.passwordKey,

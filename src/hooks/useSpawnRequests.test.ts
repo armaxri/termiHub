@@ -677,12 +677,49 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
       expect(storeCredential).not.toHaveBeenCalled();
     });
 
-    it("opens no tab when the prompt is dismissed", async () => {
-      resolveConnectSecret.mockResolvedValue({ status: "canceled" });
+    type CanceledToast = [
+      string,
+      { action: { label: string; onClick: () => void }; testId: string },
+    ];
+    const canceledToast = (): CanceledToast =>
+      vi.mocked(toast.info).mock.calls.at(-1) as unknown as CanceledToast;
+
+    it("opens no tab when the prompt is dismissed, naming the target with Retry (#5881)", async () => {
+      resolveConnectSecret.mockResolvedValue({ status: "canceled", at: "prompt" });
       await spawnSsh();
 
       expect(allTabs().some((t) => t.spawned)).toBe(false);
-      expect(vi.mocked(toast.info)).toHaveBeenCalledWith("Connect canceled");
+      expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+      const [message, options] = canceledToast();
+      // No saved connection matched `conn-1`: the request's own reference names it.
+      expect(message).toBe('Connect to "conn-1" canceled.');
+      expect(options.testId).toBe("connect-canceled-toast");
+      expect(options.action.label).toBe("Retry");
+
+      // Retry spawns it again, through the same secret step.
+      resolveConnectSecret.mockResolvedValue({ status: "none" });
+      await act(async () => {
+        options.action.onClick();
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+      });
+      expect(resolveShellSpawn).toHaveBeenCalledTimes(2);
+      expect(allTabs().some((t) => t.spawned)).toBe(true);
+    });
+
+    it("after a canceled unlock offers 'Type password instead', which skips the store (#5881)", async () => {
+      resolveConnectSecret.mockResolvedValue({ status: "canceled", at: "unlock" });
+      await spawnSsh();
+
+      const [message, options] = canceledToast();
+      expect(message).toBe('Connect to "conn-1" canceled. Its saved password stays locked.');
+      expect(options.action.label).toBe("Type password instead");
+
+      await act(async () => {
+        options.action.onClick();
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+      });
+      expect(resolveConnectSecret).toHaveBeenCalledTimes(2);
+      expect(resolveConnectSecret.mock.calls[1][0]).toMatchObject({ skipStoredCredential: true });
     });
 
     it("opens the tab unchanged when no secret is needed", async () => {
@@ -729,6 +766,13 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
           label: "App server",
         });
         expect(storeCredential).toHaveBeenCalledWith("conn-1", "password", "s3cret", null);
+      });
+
+      it("names the saved connection when its prompt is dismissed (#5881)", async () => {
+        resolveConnectSecret.mockResolvedValue({ status: "canceled", at: "prompt" });
+        const result = await resolveSpawnSecret(PASSWORD_SPAWN, "conn-1");
+
+        expect(result).toEqual({ canceled: "prompt", name: "App server" });
       });
 
       it("stores nothing when that prompt's Save box was left unticked (#4474)", async () => {

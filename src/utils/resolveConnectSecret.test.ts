@@ -191,7 +191,7 @@ describe("resolveConnectSecret", () => {
       connectionId: "c1",
       requestPassword,
     });
-    expect(r).toEqual({ status: "canceled" });
+    expect(r).toEqual({ status: "canceled", at: "unlock" });
     expect(requestPassword).not.toHaveBeenCalled();
   });
 
@@ -211,6 +211,23 @@ describe("resolveConnectSecret", () => {
     expect(r).toMatchObject({ status: "resolved", source: "prompt", secret: "typed" });
   });
 
+  it("skipStoredCredential: prompts without Save, never opening the unlock gate (#5881)", async () => {
+    requestPassword.mockResolvedValue({ password: "typed", shouldSave: false });
+    const r = await resolveConnectSecret({
+      schema: SCHEMA,
+      settings: PASSWORD_SETTINGS,
+      connectionId: "c1",
+      requestPassword,
+      skipStoredCredential: true,
+    });
+    expect(mockedUnlock).not.toHaveBeenCalled();
+    expect(mockedResolve).not.toHaveBeenCalled();
+    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password", {
+      allowSave: false,
+    });
+    expect(r).toMatchObject({ status: "resolved", source: "prompt", secret: "typed" });
+  });
+
   it("returns canceled when the password prompt is dismissed", async () => {
     requestPassword.mockResolvedValue(null);
     const r = await resolveConnectSecret({
@@ -219,7 +236,7 @@ describe("resolveConnectSecret", () => {
       connectionId: "c1",
       requestPassword,
     });
-    expect(r).toEqual({ status: "canceled" });
+    expect(r).toEqual({ status: "canceled", at: "prompt" });
   });
 
   it("asks the prompt to hide its Save control when allowSave is false (#3316)", async () => {
