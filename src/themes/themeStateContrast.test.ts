@@ -26,6 +26,9 @@ import type { ThemeDefinition } from "./types";
  *   surfaces links sit on.
  * - R-146: switches told on from off mainly by colour. The knob reaches 3:1 on
  *   its track in both states, and the on knob carries a check glyph.
+ *
+ * Also the terminal's OSC 133 command marks (#5563, #5854 R-078): both marks
+ * reach 3:1 on the terminal background, and failure differs by shape too.
  */
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -223,5 +226,43 @@ describe("switches show on/off without relying on colour (#5853 R-146)", () => {
     expect(glyph).toMatch(/content:\s*""/);
     expect(glyph).toMatch(/border-color:\s*var\(--accent-color\)/);
     expect(ruleBody(ui, ".ui-toggle__thumb")).toMatch(/position:\s*relative/);
+  });
+});
+
+describe("command marks read on the terminal in every theme (#5563, #5854 R-078)", () => {
+  // The success/failure gutter mark is a non-text indicator on the terminal
+  // background (WCAG 2.2 SC 1.4.11). #5563 dropped its 75% opacity, which took
+  // Dark's failure red to ~3.7:1; #5854 widened it and notched the failure
+  // bar, whose thin spine paints the same full-strength token.
+  for (const theme of BUILT_IN_THEMES) {
+    const bg = theme.colors.terminalBg;
+    for (const token of ["colorSuccess", "colorError"] as const) {
+      const fg = theme.colors[token];
+      it(`${theme.id}: ${token} (${fg}) reaches 3:1 on terminalBg (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+      });
+    }
+  }
+
+  it("the engine writes the status and terminal tokens the marks paint", () => {
+    const root = document.documentElement;
+    for (const theme of BUILT_IN_THEMES) {
+      applyTheme(theme.id);
+      expect(root.style.getPropertyValue("--color-success")).toBe(theme.colors.colorSuccess);
+      expect(root.style.getPropertyValue("--color-error")).toBe(theme.colors.colorError);
+      expect(root.style.getPropertyValue("--terminal-bg")).toBe(theme.colors.terminalBg);
+    }
+  });
+
+  it("both marks paint the full-strength token with no opacity", () => {
+    const terminal = css("components/Terminal/Terminal.css");
+    const mark = ".terminal-container .xterm-decoration.terminal-command-mark";
+    expect(ruleBody(terminal, mark)).not.toMatch(/opacity/);
+    expect(ruleBody(terminal, `${mark}--success`)).toMatch(
+      /background-color:\s*var\(--color-success\);/
+    );
+    expect(ruleBody(terminal, `${mark}--failure`)).toMatch(
+      /background-color:\s*var\(--color-error\);/
+    );
   });
 });

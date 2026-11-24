@@ -73,8 +73,9 @@
      a readable line length; short numeric inputs (port, timeout) stay narrow. */
   --form-max-width: 560px;
   --form-input-narrow-width: 160px;
-  /* OSC 133 command-mark gutter bar width (#5563). */
-  --terminal-command-mark-width: 3px;
+  /* OSC 133 command-mark gutter bar width (#5563; 5px since #5854 — at 3px the
+     marks were too thin to see and to hover). */
+  --terminal-command-mark-width: 5px;
   /* Command-mark geometry (#5640): the bar sits --terminal-command-mark-inset
      from the terminal's left edge, then a gutter keeps it off the prompt text.
      The .xterm left padding holds all three, so FitAddon counts columns right. */
@@ -84,9 +85,13 @@
     var(--terminal-command-mark-inset) + var(--terminal-command-mark-width) +
       var(--terminal-command-mark-gutter)
   );
-  /* Dash pattern that tells a failure mark from a success mark by shape (#5640). */
-  --terminal-command-mark-dash: 4px;
-  --terminal-command-mark-dash-gap: 2px;
+  /* Failure-mark notch (#5854, was a dash pattern #5640): the middle of the
+     failure bar is cut back to a thin spine, so failure differs from the solid
+     success bar by shape, not only colour. */
+  --terminal-command-mark-notch-height: 40%;
+  --terminal-command-mark-spine: 2px;
+  /* The mark's hover area: the whole left padding, and at least this tall. */
+  --terminal-command-mark-hit-min-height: 24px;
 
   /* Text colors */
   --text-primary: #dde1ec;
