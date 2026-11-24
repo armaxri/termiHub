@@ -134,7 +134,7 @@ export interface MacroTargetsHooks {
 export interface MacroTargetsPlayback {
   /** Resolves once every started target's run has ended, in target order. */
   done: Promise<MacroTargetOutcome[]>;
-  /** Stop one target's run; the others keep going. */
+  /** Stop one target's run, also one still queued; the others keep going. */
   cancel: (tabId: string) => void;
   /** Stop every target and start no queued one. */
   cancelAll: () => void;
@@ -162,11 +162,15 @@ export function playAutomationKeysOnTargets(
   };
   const total = macro.steps.length;
   const played = targets.map(() => 0);
+  // Targets stopped before their run started; they must never type.
+  const stopped = new Set<number>();
+  const started = new Set<number>();
   const handle = runAutomationOnTargets(
     automation,
     targets,
     (tabId, index) => ({
       send: async (data) => {
+        if (stopped.has(index)) return false;
         const ok = await inject(tabId, data);
         if (ok) {
           played[index] += 1;
@@ -178,6 +182,10 @@ export function playAutomationKeysOnTargets(
     }),
     {
       parallel: options.parallel,
+      onTargetStart: (index) => {
+        started.add(index);
+        if (stopped.has(index)) handle.cancel(index);
+      },
       onTargetEnd: (index) => hooks.onTargetEnd?.(targets[index]),
     }
   );
@@ -186,13 +194,25 @@ export function playAutomationKeysOnTargets(
       results.map((result, index) => ({
         tabId: targets[index],
         status:
-          result === undefined ? undefined : result.status === "failed" ? "error" : result.status,
+          result === undefined
+            ? undefined
+            : stopped.has(index)
+              ? "cancelled"
+              : result.status === "failed"
+                ? "error"
+                : result.status,
         stepsPlayed: played[index],
       }))
     ),
     cancel: (tabId) => {
       const index = targets.indexOf(tabId);
-      if (index >= 0) handle.cancel(index);
+      if (index < 0) return;
+      if (started.has(index)) {
+        handle.cancel(index);
+      } else if (!stopped.has(index)) {
+        stopped.add(index);
+        hooks.onTargetEnd?.(tabId);
+      }
     },
     cancelAll: handle.cancelAll,
   };

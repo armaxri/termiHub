@@ -99,8 +99,12 @@ let activePlayback:
   | { kind: "targets"; handle: MacroTargetsPlayback }
   | null = null;
 
+/** Identity of the multi-terminal run that owns the shared playback state. */
+let currentTargetsRun: object | null = null;
+
 /** Stop the in-flight playback, if any, so a fresh one takes over. */
 function stopActivePlayback(): void {
+  currentTargetsRun = null;
   if (!activePlayback) return;
   if (activePlayback.kind === "single") activePlayback.handle.cancel();
   else activePlayback.handle.cancelAll();
@@ -267,9 +271,12 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     });
     frontendLog("macro_playback", `fan-out macro=${macro.id} targets=${targets.length}`);
 
-    // Only this run may change the shared playback state.
-    const isCurrent = (s: AppState) =>
-      s.macroPlayback?.macroId === macro.id && s.macroPlayback.tabId === firstTab;
+    // Only the current run may change the shared playback state and its toast:
+    // a superseded run of the same macro on the same tabs still reports its
+    // targets ending, and must not clear the new run's badges.
+    const run = {};
+    currentTargetsRun = run;
+    const isCurrent = () => currentTargetsRun === run;
     const handle = playAutomationKeysOnTargets(
       get(),
       macro,
@@ -281,10 +288,11 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       },
       {
         onProgress: (tabId, played) => {
+          if (!isCurrent()) return;
           progress[tabId] = played;
           const furthest = Math.max(...Object.values(progress));
           set((s) =>
-            isCurrent(s) && s.macroPlayback
+            isCurrent() && s.macroPlayback
               ? {
                   macroPlayback: {
                     ...s.macroPlayback,
@@ -303,7 +311,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         // tab-strip "running automation" badge at once (#3446).
         onTargetEnd: (tabId) => {
           set((s) =>
-            isCurrent(s) && s.macroPlayback
+            isCurrent() && s.macroPlayback
               ? {
                   macroPlayback: {
                     ...s.macroPlayback,
@@ -319,6 +327,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     const outcomes = await handle.done;
     if (activePlayback?.kind === "targets" && activePlayback.handle === handle) {
       activePlayback = null;
+      currentTargetsRun = null;
       set({ macroPlayback: null });
     }
 

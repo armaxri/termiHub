@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   Modal,
@@ -117,29 +118,34 @@ export function RunTargetsDialog({
   onRun,
 }: RunTargetsDialogProps) {
   const options = useRunTargets();
-  // Read at open time only: `options` changes as sessions connect, which must
+  // Read at open time only: sessions connecting or the library reloading must
   // not reset what the user is choosing.
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
+  const atOpen = useRef({ options, automations });
+  atOpen.current = { options, automations };
   const [automationId, setAutomationId] = useState<string | undefined>(undefined);
   const [choice, setChoice] = useState<RunTargetChoice>(() =>
     initialRunTargetChoice(rememberedRunTargetChoice(), options)
   );
   const [moreOpen, setMoreOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  // The terminals the confirmation names. Frozen when it opens, so a terminal
+  // that connects meanwhile never joins a run the user did not confirm.
+  const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
+  const confirming = confirmIds !== null;
 
   // Re-seed on every open: the first automation and the remembered choice.
   useEffect(() => {
     if (!open) return;
-    setAutomationId(automations[0]?.id);
-    setChoice(initialRunTargetChoice(rememberedRunTargetChoice(), optionsRef.current));
-    setConfirming(false);
+    setAutomationId(atOpen.current.automations[0]?.id);
+    setChoice(initialRunTargetChoice(rememberedRunTargetChoice(), atOpen.current.options));
+    setConfirmIds(null);
     setMoreOpen(false);
-  }, [open, automations]);
+  }, [open]);
 
   const radioOptions = useMemo(() => targetOptions(options), [options]);
   const selected = automations.find((a) => a.id === automationId) ?? null;
-  const tabIds = resolveRunTargetChoice(choice, options);
+  const tabIds = confirmIds
+    ? options.terminals.filter((t) => t.live && confirmIds.includes(t.id)).map((t) => t.id)
+    : resolveRunTargetChoice(choice, options);
   const count = tabIds.length;
   const titleOf = new Map(options.terminals.map((t) => [t.id, t.title]));
   const canRun = selected !== null && selected.stepCount > 0 && count > 0;
@@ -155,7 +161,7 @@ export function RunTargetsDialog({
   const handleRun = () => {
     if (!canRun) return;
     if (needsConfirm && !confirming) {
-      setConfirming(true);
+      setConfirmIds(tabIds);
       return;
     }
     run();
@@ -175,6 +181,21 @@ export function RunTargetsDialog({
     if (checked) picked.add(id);
     else picked.delete(id);
     setChoice({ ...choice, picked: [...picked] });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter") return;
+    // The multi-terminal confirmation ignores Enter entirely, including a held
+    // Enter on the focused Run button: typing into many hosts needs a click.
+    if (confirming) {
+      e.preventDefault();
+      return;
+    }
+    // A focused button, select or checkbox handles its own Enter. Only the
+    // target radios (which ignore Enter themselves) and the dialog run.
+    const target = e.target as HTMLElement;
+    if (target !== e.currentTarget && target.getAttribute("role") !== "radio") return;
+    if (!e.repeat) handleRun();
   };
 
   const runLabel = needsConfirm
@@ -303,26 +324,24 @@ export function RunTargetsDialog({
       onOpenChange={onOpenChange}
       title={selected ? `Run "${selected.name}"` : "Run automation"}
       description="Choose the terminals it runs on."
-      onKeyDown={(e) => {
-        // Enter that a focused control already consumed (opening a Select,
-        // ticking a box) must not also run. The multi-terminal confirmation
-        // ignores Enter entirely: typing into many hosts needs a click.
-        if (e.defaultPrevented) return;
-        if (e.key === "Enter" && canRun && !confirming) handleRun();
-      }}
+      onKeyDown={handleKeyDown}
       data-testid="run-targets-dialog"
       footer={
         <>
           <Button
             variant="secondary"
-            onClick={() => (confirming ? setConfirming(false) : onOpenChange(false))}
+            onClick={() => (confirming ? setConfirmIds(null) : onOpenChange(false))}
             data-testid="run-targets-cancel"
           >
             {confirming ? "Back" : "Cancel"}
           </Button>
           <Button
             variant={confirming ? "danger" : "primary"}
-            onClick={handleRun}
+            onClick={(e) => {
+              // The second half of a double click must not pass the confirmation.
+              if (confirming && e.detail > 1) return;
+              handleRun();
+            }}
             disabled={!canRun}
             data-testid="run-targets-run"
           >

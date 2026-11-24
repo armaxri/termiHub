@@ -107,12 +107,10 @@ export function describeMacroFanoutOutcome(
 
   if (o.status === "cancelled") {
     return {
-      kind: "info",
+      // A dropped terminal is a failure and stays visible as one.
+      kind: o.dropped > 0 ? "error" : "info",
       message: `Playback of "${macroName}" canceled`,
-      description: [
-        `Stopped after ${o.stepsPlayed} of ${o.totalSteps} steps on ${plural(o.delivered, "terminal")}`,
-        detail,
-      ]
+      description: [`Finished on ${o.delivered} of ${plural(o.requested, "terminal")}`, detail]
         .filter(Boolean)
         .join(" · "),
     };
