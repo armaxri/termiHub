@@ -14,6 +14,8 @@
  * playbacks always record it, migrated macro runs too) and to the Workflows
  * history otherwise.
  */
+import { newId } from "@/services/transport/ids";
+import type { WorkflowNestedRunEvent } from "@/services/workflowRunner";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
@@ -314,5 +316,34 @@ export function workflowRunToAutomationRun(run: WorkflowRun): AutomationRun {
   if (run.continuedFailures !== undefined) record.continuedFailures = run.continuedFailures;
   if (run.tabId) record.tabId = run.tabId;
   if (run.targetLabel) record.targetLabel = run.targetLabel;
+  return record;
+}
+
+/**
+ * The history record of an automation a `run-automation` step ran (#5818,
+ * slice 9): its own run, started by another automation, on the caller's
+ * terminal. Pure apart from the generated default `runId`.
+ */
+export function nestedRunRecord(
+  event: WorkflowNestedRunEvent,
+  tabId: string,
+  targetLabel: string | undefined,
+  runId: string = newId("workflow-run")
+): AutomationRun {
+  const record: AutomationRun = {
+    id: runId,
+    automationId: event.automation.id,
+    automationName: event.automation.name,
+    startedAt: event.startedAt.toISOString(),
+    endedAt: event.endedAt.toISOString(),
+    status: event.status,
+    stepsCompleted: event.stepsCompleted,
+    total: event.automation.steps.length,
+    tabId,
+    origin: "run-by-automation",
+  };
+  if (event.failedStepIndex !== undefined) record.failedStepIndex = event.failedStepIndex;
+  if (event.error) record.error = event.error;
+  if (targetLabel) record.targetLabel = targetLabel;
   return record;
 }

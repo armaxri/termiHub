@@ -55,7 +55,11 @@ import {
   setWorkflowOutputProcessResult,
 } from "../workflowRunBridge";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
-import { workflowRunToAutomationRun, workflowToAutomation } from "./automationViews";
+import {
+  nestedRunRecord,
+  workflowRunToAutomationRun,
+  workflowToAutomation,
+} from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 
 /**
@@ -534,6 +538,11 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
           id: toastId,
           description: retryNote,
         });
+      },
+      // A `run-automation` step's callee gets its own history record, labeled
+      // "Run by another automation", on the same terminal (#5818, slice 9).
+      onNestedRunFinished: (event) => {
+        recordAutomationRun(set, nestedRunRecord(event, targetTabId, targetLabel), "workflow");
       },
       onStepContinued: (event) => {
         frontendLog(

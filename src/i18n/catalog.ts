@@ -419,16 +419,23 @@ const en = {
   "serialPrefixes.offLinux.hide": "Hide Linux prefixes",
 
   // ── Macro rows and run history (#5680) ──────────────────────────────────
-  // Sentence case; one empty-state wording across the macro and workflow
-  // run histories (R-081).
+  // Sentence case; one empty-state wording for the run history (R-081).
   "macro.play.target": "Play in: {target}",
   "macro.play.noTarget": "Play: no active terminal",
-  "macro.run.origin.manual": "Manual",
-  "macro.run.origin.palette": "Palette",
-  "macro.run.origin.workflowStep": "Workflow step",
-  "macro.run.origin.scheduled": "Scheduled",
   "runHistory.empty": "No runs yet.",
-  "macroHistory.empty.filtered": "No runs of this macro yet.",
+
+  // ── Automation history: one panel, unified origin labels (#5818) ────────
+  "automationHistory.empty.filtered": "No runs of this automation yet.",
+  "automationHistory.origin.you": "Run by you",
+  "automationHistory.origin.hotkey": "Run by hotkey",
+  "automationHistory.origin.trigger": "Run by trigger",
+  "automationHistory.origin.schedule": "Run by schedule",
+  "automationHistory.origin.automation": "Run by another automation",
+  "automationHistory.via.palette": "From the command palette",
+  "automationHistory.via.onConnect": "When the connection opened",
+  "automationHistory.via.onDisconnect": "When the connection closed",
+  "automationHistory.via.onOutputMatch": "When the terminal output matched",
+  "automationHistory.filter.all": "All automations",
 
   // ── List rows: names on the row, settings in the tooltip (#5757) ────────
   "row.tooltip.tags": "Tags: {tags}",

@@ -1,0 +1,117 @@
+/* The one Automation history panel (#5818, slice 9). */
+.automation-history {
+  display: flex;
+  flex-direction: column;
+  max-height: 40%;
+  border-top: 1px solid var(--border-primary);
+}
+
+/* The filter sits on its own row, apart from the header's destructive Clear. */
+.automation-history__filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  padding: 0 var(--spacing-md) var(--spacing-xs);
+}
+
+.automation-history__filter-bar > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The destructive action reads as such on hover/focus without shouting at rest. */
+.automation-history__clear:hover:not([disabled]),
+.automation-history__clear:focus-visible {
+  color: var(--color-error);
+}
+
+.automation-history__list {
+  overflow-y: auto;
+  padding: var(--spacing-xxs) 0;
+}
+
+/* A row is one disclosure button: chevron, status dot, name, time. */
+.automation-history__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  padding: var(--spacing-xxs) var(--spacing-md);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.automation-history__row:hover {
+  --text-secondary: var(--text-secondary-on-selection);
+  background: var(--bg-hover);
+}
+
+.automation-history__row:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.automation-history__chevron {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform var(--transition-fast);
+}
+
+.automation-history__chevron--open {
+  transform: rotate(90deg);
+}
+
+.automation-history__name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.automation-history__time {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* The disclosed details: a compact label/value grid under the row. */
+.automation-history__details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--spacing-xxs) var(--spacing-sm);
+  margin: 0;
+  padding: var(--spacing-xxs) var(--spacing-md) var(--spacing-xs) var(--spacing-xl);
+  font-size: var(--font-size-xs);
+}
+
+.automation-history__details dt {
+  color: var(--text-secondary);
+}
+
+.automation-history__details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.automation-history__via {
+  color: var(--text-secondary);
+}
+
+.automation-history__error {
+  color: var(--color-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .automation-history__chevron {
+    transition: none;
+  }
+}

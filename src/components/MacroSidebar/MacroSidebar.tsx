@@ -12,7 +12,7 @@ import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeMacros } from "@/services/macroIo";
 import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
-import { MacroHistorySection } from "./MacroHistorySection";
+import { HistorySection } from "@/components/AutomationSidebar";
 import { latestMacroRuns } from "./macroRunFormat";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
 import { newId } from "@/services/transport/ids";
@@ -56,9 +56,8 @@ export function MacroSidebar() {
   const lastRuns = useMemo(() => latestMacroRuns(macroRuns), [macroRuns]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  // The macro the run-history panel is narrowed to (#3543); null = every macro.
+  // The automation the one history panel is narrowed to (#5818); null = every run.
   const [historyMacroId, setHistoryMacroId] = useState<string | null>(null);
-  const handleShowAllHistory = useCallback(() => setHistoryMacroId(null), []);
   // Authoring a brand-new macro by hand (PROD-039): opens the editor blank.
   const [creating, setCreating] = useState(false);
   const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsFields);
@@ -325,7 +324,7 @@ export function MacroSidebar() {
           })}
         </div>
       )}
-      <MacroHistorySection macroId={historyMacroId} onShowAll={handleShowAllHistory} />
+      <HistorySection automationId={historyMacroId} onFilterChange={setHistoryMacroId} />
       <MacroEditorDialog
         open={creating || editingMacro !== null}
         macro={creating ? null : editingMacro}
