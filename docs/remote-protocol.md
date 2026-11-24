@@ -1959,7 +1959,7 @@ ambiguous) build-version record. A debug agent tolerates an _unknown_ version wi
 
 ### `agent.request_deferred_update`
 
-Request a **deferred agent update** (#1352). The agent records a pending update in `state.json` and applies it **only** when it has zero active sessions — so active sessions are never interrupted. When the agent is already idle it applies immediately (this is the "Apply now" path); otherwise the update is deferred until the last session disconnects (the agent also emits an `agent.update_available` notification when it stages a self-update, which drives the desktop's "Apply now" banner).
+Request a **deferred agent update** (#1352). The agent records a pending update in `state.json` and applies it **only** when it has zero active sessions — so active sessions are never interrupted. When the agent is already idle it applies immediately (this is the "Restart agent and update" path); otherwise the update is deferred until the last session disconnects (the agent also emits an `agent.update_available` notification when it stages a self-update, which drives the desktop's update strip under the agent row, #5821).
 
 Applying swaps the on-disk agent binary with the staged one and re-execs it (Unix only). The detached-daemon model means persistent sessions survive the swap and are recovered on the next connect, which reports the new version. Because the agent re-execs on a successful immediate apply, the current connection is torn down — the desktop should treat a subsequent disconnect as expected and reconnect.
 
