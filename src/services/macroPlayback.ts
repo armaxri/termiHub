@@ -40,6 +40,12 @@ export interface MacroPlaybackOptions {
   fixedDelayMs?: number;
   /** Clamp for any single computed delay. Defaults to {@link MAX_STEP_DELAY_MS}. */
   maxDelayMs?: number;
+  /**
+   * Timer seam the inter-step delays sleep through (#5818). Absent → a real
+   * `setTimeout`. Injected by the automation runner so its fake clock drives
+   * `type-keys` timing; a cancel still ends the wait at once.
+   */
+  sleep?: (ms: number) => Promise<void> | void;
 }
 
 /** Terminal outcome of a playback run. */
@@ -136,6 +142,13 @@ export function runMacroPlayback(
         return;
       }
       wake = resolve;
+      if (options.sleep) {
+        void Promise.resolve(options.sleep(ms)).then(() => {
+          if (wake === resolve) wake = null;
+          resolve();
+        });
+        return;
+      }
       activeTimer = setTimeout(() => {
         activeTimer = null;
         wake = null;

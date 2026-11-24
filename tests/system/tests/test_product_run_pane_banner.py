@@ -7,7 +7,8 @@ Reconnect …" banner cut off at the bottom of the terminal, with its Reconnect
 button under a "Saved …" toast: the one recovery action on screen was covered.
 
 The banner now sits at the top of the pane, full width, like the reconnect
-strip; it reads a short heading ("Agent disconnected." / "Session ended.") and
+strip; it reads a short heading ("Agent disconnected." / "Process exited (code
+0)." — the strip's heading, #5955) and
 a hint that wraps instead of clipping; it is a toast keep-clear zone. The grade
 shrinks the window to the 800x600 minimum, ends a local shell, dismisses the
 disconnect overlay into view mode, raises a toast (closing another exited tab
@@ -41,7 +42,8 @@ from termihub_harness.product_run.pane_banner import pane_banner_problems
 TOAST_REGION = "toast-region"
 BANNER = "terminal-view-mode-banner"
 RECONNECT = "terminal-view-mode-reconnect-btn"
-VIEW_SCROLLBACK = "terminal-disconnect-view-btn"
+#: The strip's one dismiss control (#5955: "View scrollback" is gone).
+DISMISS = "terminal-disconnect-dismiss-btn"
 #: The minimum supported window, where the old banner text was cut off.
 NARROW_WINDOW = (800, 600)
 #: The product run's normal window, restored afterwards.
@@ -76,6 +78,9 @@ def test_grade_top_banner_with_clear_toast_passes():
     toast = {"text": "Saved", "rect": _rect(444, 500, 340, 64), "visible": True}
     assert _grade(toasts=[toast]) == []
     assert _grade(banner_text="Session ended. Press Enter to reconnect.") == []
+    # #5955: the banner keeps the strip's heading.
+    assert _grade(banner_text="Session disconnected. Press Enter to reconnect.") == []
+    assert _grade(banner_text="Process exited (code 0). Press Enter to restart.") == []
 
 
 def test_grade_bottom_banner_fails():
@@ -173,10 +178,10 @@ class TestProductRunPaneBanner(
     def test_10_banner_on_top_clear_of_toasts(self):
         with self.step(
             "terminal.view-mode-banner",
-            "At 800x600 the 'Session ended.' banner sits at the top of the pane, uncut, and "
-            "its Reconnect works with a toast on screen (#5823)",
-            expect="an 800x600 window: a full-width 'Session ended. Press Enter to reconnect.' "
-            "strip at the TOP of the terminal with a Reconnect button at its right end, no "
+            "At 800x600 the 'Process exited (code 0).' banner sits at the top of the pane, "
+            "uncut, and its Restart works with a toast on screen (#5823, #5955)",
+            expect="an 800x600 window: a full-width 'Process exited (code 0). Press Enter to "
+            "restart.' strip at the TOP of the terminal with a Restart button at its right end, no "
             "text cut off; a 'Closed …' · Reopen toast at the bottom right that covers "
             "neither the strip nor Reconnect",
         ):
@@ -190,8 +195,8 @@ class TestProductRunPaneBanner(
                 # the bridge clicks the first match in the DOM.
                 self.close_tab(other)
                 self.wait(lambda: self._toast_items() or None, timeout=5.0, what="a toast")
-                self.wait(lambda: self.driver.exists(VIEW_SCROLLBACK), what="the end strip")
-                self.driver.click(VIEW_SCROLLBACK)
+                self.wait(lambda: self.driver.exists(DISMISS), what="the end strip")
+                self.driver.click(DISMISS)
                 self.wait(lambda: self.driver.exists(BANNER), what="the view-mode banner")
                 time.sleep(0.3)  # let the stack lay out around keep-clear zones
                 banner = self.driver.measure_element(BANNER, "buttons")

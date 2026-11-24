@@ -109,13 +109,27 @@ describe("session-end strip (#5908, #5910)", () => {
     expect(strip.classList).toContain("terminal-disconnect-strip--neutral");
   });
 
-  it("a local shell that ended normally reads 'Session ended' with Restart", async () => {
+  it("a local shell that ended normally reads 'Process exited (code 0)' with Restart", async () => {
+    // #5955: one pattern for every local exit, with the process icon.
     seedTab(LOCAL);
     const strip = await renderWith(cleanExit());
     expect(strip.dataset.cause).toBe("ended");
-    expect(heading()).toBe("Session ended");
-    expect(strip.textContent).toContain("The session ended normally (exit code 0).");
+    expect(heading()).toBe("Process exited (code 0)");
+    expect(strip.textContent).not.toContain("Session ended");
+    expect(host.querySelector("[data-testid='terminal-disconnect-icon-exited']")).not.toBeNull();
+    expect(strip.textContent).toContain("Press Enter to restart.");
     expect(primary()?.textContent).toBe("Restart");
+  });
+
+  it("every strip has one dismiss control and no 'View scrollback' (#5955)", async () => {
+    seedTab(SSH);
+    const strip = await renderWith(dropped());
+    expect(strip.textContent).not.toContain("View scrollback");
+    expect(host.querySelector("[data-testid='terminal-disconnect-view-btn']")).toBeNull();
+    expect(host.querySelectorAll("[data-testid='terminal-disconnect-dismiss-btn']")).toHaveLength(
+      1
+    );
+    expect(strip.textContent).toContain("Press Enter to reconnect.");
   });
 
   it("an SSH session that ended keeps Reconnect: starting it again reconnects", async () => {
@@ -199,11 +213,11 @@ describe("TerminalViewModeBanner — process exits restart (#5910)", () => {
     expect(container.querySelector("[data-testid='terminal-view-mode-cause']")).toBeNull();
   });
 
-  it("a dropped SSH link keeps 'Session ended.' with Reconnect and its cause", () => {
+  it("a dropped SSH link says 'Session disconnected.' like its strip (#5955)", () => {
     seedTab(SSH);
     const notice = sessionEndNoticeForTab(TAB, { code: null, reason: "dropped" }, "io_error");
     act(() => root.render(<TerminalViewModeBanner tabId={TAB} notice={notice} />));
-    expect(label()).toBe("Session ended. Press Enter to reconnect.");
+    expect(label()).toBe("Session disconnected. Press Enter to reconnect.");
     expect(button()).toBe("Reconnect");
     expect(container.querySelector("[data-testid='terminal-view-mode-cause']")?.textContent).toBe(
       "The network connection was lost."
@@ -220,7 +234,15 @@ describe("sessionEndNoticeFor (#5910)", () => {
       action: "restart",
     });
     expect(sessionEndNoticeFor("exited", { transport: "ssh", code: 2 }).action).toBe("reconnect");
-    expect(sessionEndNoticeFor("ended", { transport: "other", code: 0 }).heading).toBe(
+    // #5955: a local process that ended normally reads like any other exit.
+    expect(sessionEndNoticeFor("ended", { transport: "other", code: 0 })).toEqual({
+      kind: "exited",
+      heading: "Process exited (code 0)",
+      causeLine: undefined,
+      action: "restart",
+    });
+    expect(sessionEndNoticeFor("ended", { transport: "other" }).heading).toBe("Process exited");
+    expect(sessionEndNoticeFor("ended", { transport: "ssh", code: 0 }).heading).toBe(
       "Session ended"
     );
     expect(sessionEndNoticeFor("user", { transport: "other" }).heading).toBe("Session ended");

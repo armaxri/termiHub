@@ -22,6 +22,8 @@ import { continueTabClose, requestTabClose } from "@/utils/tabCloseFlow";
 import { ConfirmDialog } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
+import { sessionEndNoticeForTab } from "./TerminalDisconnectOverlay";
+import { isProcessEnd } from "./dropCopy";
 import { ColorPickerDialog } from "./ColorPickerDialog";
 import { RenameDialog } from "./RenameDialog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -63,7 +65,20 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     // #2625: exited tabs sourced purely from the region (the per-client
     // `appStore.terminalExitedTabs` slice was deleted).
     terminalExitedTabs,
+    terminalEnds,
   } = useProjectedSessionLifecycleMaps();
+  // A process that exited shows a neutral stop marker, not the network-drop
+  // plug (#5955): the same kind of end the session-end strip names.
+  const terminalProcessExited = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const [tabId, end] of Object.entries(terminalEnds)) {
+      if (!terminalExitedTabs[tabId]) continue;
+      if (isProcessEnd(sessionEndNoticeForTab(tabId, end.exit, end.endCause).kind)) {
+        map[tabId] = true;
+      }
+    }
+    return map;
+  }, [terminalEnds, terminalExitedTabs]);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   // Broadcast participation (#1957): the badge shows on every tab in the target
   // set, active or not, so participation is visible at a glance. Sourced from the
@@ -286,6 +301,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
                         terminalSessionLost,
                         terminalEvicted,
                         terminalAwaitingFirstPrompt,
+                        terminalProcessExited,
                       },
                       tab.id
                     )

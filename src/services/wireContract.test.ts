@@ -151,7 +151,7 @@ describe("wire contract: SSH algorithms (#5896)", () => {
     respondWith(fixtures.withMac);
     const withMac = await getSshAlgorithms("s-1");
     expect(mockedInvoke).toHaveBeenLastCalledWith("get_ssh_algorithms", { sessionId: "s-1" });
-    const rows = sshSecurityChip(config, [], withMac)!.rows;
+    const rows = sshSecurityChip(config, [], false, withMac)!.rows;
     expect(rows.find((r) => r.id === "encryption")!.value).toBe("aes256-ctr");
     expect(rows.find((r) => r.id === "integrity")!.value).toBe("hmac-sha2-256-etm");
     expect(rows.find((r) => r.id === "keyExchange")!.value).toBe("curve25519-sha256");
@@ -160,14 +160,14 @@ describe("wire contract: SSH algorithms (#5896)", () => {
     respondWith(fixtures.aead);
     const aead = await getSshAlgorithms("s-1");
     expect(aead!.mac).toBeNull();
-    const aeadRows = sshSecurityChip(config, [], aead)!.rows;
+    const aeadRows = sshSecurityChip(config, [], false, aead)!.rows;
     expect(aeadRows.find((r) => r.id === "encryption")!.value).toBe("chacha20-poly1305");
     expect(aeadRows.find((r) => r.id === "integrity")).toBeUndefined();
 
     respondWith(fixtures.none);
     const none = await getSshAlgorithms("s-1");
     expect(none).toBeNull();
-    const fallback = sshSecurityChip(config, [], none)!.rows;
+    const fallback = sshSecurityChip(config, [], false, none)!.rows;
     expect(fallback.find((r) => r.id === "encryption")!.value).toBe("Encrypted (SSH)");
   });
 });

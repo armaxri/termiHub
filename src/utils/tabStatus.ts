@@ -11,6 +11,7 @@ export type TabStatus =
   | "connected"
   | "failed"
   | "disconnected"
+  | "exited"
   | "evicted";
 
 /**
@@ -51,6 +52,13 @@ export interface TabStatusMaps {
    * so a starting shell still receives input.
    */
   terminalAwaitingFirstPrompt?: Record<string, boolean>;
+  /**
+   * True when a tab's session ended because its process exited (#5955), not
+   * because a link dropped or the user disconnected it: the tab shows a neutral
+   * "exited" marker instead of the network-drop plug. Optional: only the tab
+   * strip tells the two apart.
+   */
+  terminalProcessExited?: Record<string, boolean>;
 }
 
 /**
@@ -65,7 +73,8 @@ export interface TabStatusMaps {
  *     this is terminal, so it wins over a lingering in-flight connect flag.
  *  2. `connecting`   — a connect or reconnect attempt is in flight.
  *  3. `failed`       — a spawn or reconnect attempt errored out.
- *  4. `disconnected` — the session exited without a recorded error.
+ *  4. `exited`       — the session's process exited on its own (#5955).
+ *     `disconnected` — the session ended otherwise, without a recorded error.
  *  5. `starting`     — live, but shell integration is on and the shell has not
  *     reached its first prompt yet (#5891); a neutral dot, not green.
  *  6. `connected`    — no lifecycle flags set (the live, healthy state).
@@ -90,7 +99,7 @@ export function deriveTabStatus(maps: TabStatusMaps, tabId: string): TabStatus {
     return "failed";
   }
   if (maps.terminalExitedTabs[tabId]) {
-    return "disconnected";
+    return maps.terminalProcessExited?.[tabId] ? "exited" : "disconnected";
   }
   if (maps.terminalAwaitingFirstPrompt?.[tabId]) {
     return "starting";

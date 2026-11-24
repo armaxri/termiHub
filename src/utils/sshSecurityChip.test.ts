@@ -121,7 +121,7 @@ describe("negotiated algorithms in the popover (#5896)", () => {
   };
 
   function rows(algorithms?: SshNegotiatedAlgorithms | null) {
-    return sshSecurityChip(SSH, [key("remembered")], algorithms)!.rows;
+    return sshSecurityChip(SSH, [key("remembered")], false, algorithms)!.rows;
   }
 
   it("drops the vendor suffix of a wire name", () => {
@@ -172,7 +172,7 @@ describe("negotiated algorithms in the popover (#5896)", () => {
 
   it("never names the algorithms on the chip itself", () => {
     const plain = sshSecurityChip(SSH, [key("remembered")])!;
-    const known = sshSecurityChip(SSH, [key("remembered")], WITH_MAC)!;
+    const known = sshSecurityChip(SSH, [key("remembered")], false, WITH_MAC)!;
     expect(known.label).toBe(plain.label);
     expect(known.ariaLabel).toBe(plain.ariaLabel);
     expect(known.tooltip).toBe(plain.tooltip);

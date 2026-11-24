@@ -10,8 +10,9 @@ R-004, R-021).
 
 The strip now spans the top of the pane and pushes the terminal down below it,
 so every output line stays readable and selectable. A process exit reads
-"Process exited (code N)" with a process icon and Restart; a normal end reads
-"Session ended" with Restart; only a dropped link says "Session disconnected".
+"Process exited (code N)" with a process icon and Restart — a local exit with
+code 0 too (#5955); a remote session's normal end reads "Session ended" with
+Reconnect; only a dropped link says "Session disconnected".
 The live grade uses no servers: a local shell exits with code 3, another with 0.
 
 The plugin crash notice (#5916) is the same strip; its grade
@@ -80,11 +81,9 @@ def test_grade_a_full_width_strip_that_still_covers_the_first_lines_fails():
 
 
 def test_grade_a_process_exit_says_so_and_restarts():
-    text = "Process exited (code 3) Scrollback is kept. Restart View scrollback"
+    text = "Process exited (code 3) Scrollback is kept. Press Enter to restart. Restart"
     assert (
-        end_copy_problems(
-            text=text, cause="exited", buttons=["Restart", "View scrollback"], local=True, code=3
-        )
+        end_copy_problems(text=text, cause="exited", buttons=["Restart"], local=True, code=3)
         == []
     )
 
@@ -93,7 +92,7 @@ def test_grade_the_old_process_exit_wording_fails():
     # The R-004 shape: a local exit 3 read as a lost connection with Reconnect.
     old = "Session disconnected The process exited with code 3. Scrollback is kept."
     problems = end_copy_problems(
-        text=old, cause="exited", buttons=["Reconnect", "View scrollback"], local=True, code=3
+        text=old, cause="exited", buttons=["Reconnect"], local=True, code=3
     )
     assert any("'Process exited (code 3)'" in p for p in problems)
     assert any("no lost connection" in p for p in problems)
@@ -102,11 +101,19 @@ def test_grade_the_old_process_exit_wording_fails():
 
 
 def test_grade_a_clean_exit_restarts_locally_and_reconnects_remotely():
-    text = "Session ended The session ended normally (exit code 0). Scrollback is kept."
-    assert end_copy_problems(text=text, cause="ended", buttons=["Restart"], local=True) == []
-    assert end_copy_problems(text=text, cause="ended", buttons=["Reconnect"], local=False) == []
+    local = "Process exited (code 0) Scrollback is kept. Press Enter to restart."
+    assert (
+        end_copy_problems(text=local, cause="ended", buttons=["Restart"], local=True, code=0)
+        == []
+    )
+    remote = "Session ended The session ended normally (exit code 0). Scrollback is kept."
+    assert end_copy_problems(text=remote, cause="ended", buttons=["Reconnect"], local=False) == []
     # The R-021 shape: a local exit 0 offering Reconnect.
-    assert end_copy_problems(text=text, cause="ended", buttons=["Reconnect"], local=True)
+    assert end_copy_problems(text=local, cause="ended", buttons=["Reconnect"], local=True, code=0)
+    # The #5955 shape: a local exit 0 with its own name.
+    old = "Session ended The session ended normally (exit code 0). Scrollback is kept."
+    problems = end_copy_problems(text=old, cause="ended", buttons=["Restart"], local=True, code=0)
+    assert any("'Process exited (code 0)'" in p for p in problems)
 
 
 def test_grade_a_dropped_link_keeps_the_network_wording():
@@ -204,9 +211,9 @@ class TestProductRunSessionEndStrip(
             "A local shell that exits with code 3 shows a full-width strip above the output "
             "that says the process exited and offers Restart (#5908, #5910)",
             expect="a strip across the top of the terminal: a process icon, 'Process exited "
-            "(code 3)', 'Scrollback is kept.', Restart and View scrollback; the terminal "
-            "starts below the strip, 'first-line-must-stay-visible' and '[Process exited with "
-            "code 3]' fully readable, nothing covered",
+            "(code 3)', 'Scrollback is kept. Press Enter to restart.', Restart and an x; the "
+            "terminal starts below the strip, 'first-line-must-stay-visible' and '[Process "
+            "exited with code 3]' fully readable, nothing covered",
         ):
             tab = self._ended_local_tab(unique_name("pr-end-exit"), "exit 3")
             self._grade(tab, code=3)
@@ -226,14 +233,15 @@ class TestProductRunSessionEndStrip(
             self.evidence("Restart started a new shell")
         self.close_all_tabs()
 
-    def test_20_clean_exit_reads_session_ended(self):
+    def test_20_clean_exit_reads_process_exited(self):
         with self.step(
             "terminal.end-strip-clean-exit",
-            "A local shell that ends normally reads 'Session ended' with Restart, above the "
-            "output (#5908, #5910)",
-            expect="a strip across the top of the terminal: a check icon, 'Session ended', 'The "
-            "session ended normally (exit code 0). Scrollback is kept.', Restart and View "
-            "scrollback; no wifi icon and no 'Reconnect'; all output readable below the strip",
+            "A local shell that ends normally reads 'Process exited (code 0)' with Restart, "
+            "above the output, like any other exit (#5908, #5910, #5955)",
+            expect="a strip across the top of the terminal: a process icon, 'Process exited "
+            "(code 0)', 'Scrollback is kept. Press Enter to restart.', Restart and an x; no "
+            "wifi icon, no 'Session ended' and no 'Reconnect'; all output readable below the "
+            "strip",
         ):
             tab = self._ended_local_tab(unique_name("pr-end-clean"), "exit")
             self._grade(tab, code=0)

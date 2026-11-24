@@ -116,6 +116,8 @@ export interface SshSecurityChip {
   /** Accessible name of the chip button: label, encryption, trust, action. */
   ariaLabel: string;
   rows: SshDetailRow[];
+  /** The session is down (#5955): the chip greys and says so. */
+  down: boolean;
 }
 
 /** The trust level of the target's accepted host key, `pending` when none. */
@@ -133,6 +135,9 @@ export function sshTrustLevel(event: SshHostKeyTrustedEvent | undefined): SshTru
 export function sshSecurityChip(
   config: ConnectionConfig | undefined | null,
   hostKeys: readonly SshHostKeyTrustedEvent[] = [],
+  /** The tab's session is down (ended, failed or reconnecting, #5955). */
+  down = false,
+  /** The session's negotiated algorithms, once asked (#5896). */
   algorithms?: SshNegotiatedAlgorithms | null
 ): SshSecurityChip | null {
   const chip = sshStatusChip(config, hostKeys);
@@ -160,12 +165,16 @@ export function sshSecurityChip(
       algorithmRow("hostKeyAlgorithm", t("statusBar.ssh.row.hostKeyAlgorithm"), algorithms.hostKey)
     );
   }
+  const ariaLabel = tf("statusBar.ssh.ariaLabel", { label: chip.label, trust: trustLabel });
+  // A down session is not a live secure one (#5955): the chip says so first.
+  const downNote = t("statusBar.ssh.down");
   return {
     label: chip.label,
-    tooltip: chip.tooltip,
+    tooltip: down ? `${downNote}\n${chip.tooltip}` : chip.tooltip,
     trust,
     trustLabel,
-    ariaLabel: tf("statusBar.ssh.ariaLabel", { label: chip.label, trust: trustLabel }),
+    ariaLabel: down ? `${downNote}. ${ariaLabel}` : ariaLabel,
     rows,
+    down,
   };
 }

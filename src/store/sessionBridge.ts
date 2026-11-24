@@ -1133,6 +1133,25 @@ export function regionExited(projected: ProjectedSessionLifecycle | undefined): 
 }
 
 /**
+ * Whether a projected session shows the plain session-end strip (#5955): it
+ * ended with a recorded exit, and no reconnect runs, failed or loops, it was
+ * not lost or taken over and its plugin did not crash. Enter in its terminal
+ * then runs the strip's Restart / Reconnect, as the strip's hint says.
+ */
+export function sessionEndStripUp(projected: ProjectedSessionLifecycle | undefined): boolean {
+  if (!projected || projected.exit === undefined) return false;
+  return (
+    !effectiveConnecting(projected) &&
+    !effectiveReconnecting(projected) &&
+    effectiveDisconnectError(projected) === undefined &&
+    projected.status !== "sessionLost" &&
+    !effectiveEvicted(projected) &&
+    effectivePluginExit(projected) === undefined &&
+    effectiveAutoReconnect(projected, 0) === undefined
+  );
+}
+
+/**
  * Effective `terminalExitedTabs[tabId]` for the overlay/view-mode **mount** gate
  * (#2625): the region-derived {@link regionExited} predicate, sourced purely from
  * the region now the per-client `terminalExitedTabs` slice is deleted. The
