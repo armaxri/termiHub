@@ -224,8 +224,14 @@ def surface_steps(run_dir: Path, surfaces: Iterable[str]) -> dict[str, list[str]
 def scan_test_steps(system_dir: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
     """From the product-run test sources: step id -> pytest node id, and node id ->
     the step ids its ``self.require(...)`` calls need (literal ids only)."""
+    step_node, requires, _order = _scan(system_dir)
+    return step_node, requires
+
+
+def _scan(system_dir: Path) -> tuple[dict[str, str], dict[str, list[str]], dict[str, int]]:
     step_node: dict[str, str] = {}
     requires: dict[str, list[str]] = {}
+    source_order: dict[str, int] = {}
     for path in sorted(Path(system_dir).glob(TEST_GLOB)):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -239,6 +245,7 @@ def scan_test_steps(system_dir: Path) -> tuple[dict[str, str], dict[str, list[st
                 if not fn.name.startswith("test"):
                     continue
                 node = f"{rel}::{cls.name}::{fn.name}"
+                source_order.setdefault(node, len(source_order))
                 for call in (c for c in ast.walk(fn) if isinstance(c, ast.Call)):
                     func = call.func
                     if not isinstance(func, ast.Attribute):
@@ -254,7 +261,7 @@ def scan_test_steps(system_dir: Path) -> tuple[dict[str, str], dict[str, list[st
                         step_node.setdefault(literals[0], node)
                     elif func.attr == "require":
                         requires.setdefault(node, []).extend(literals)
-    return step_node, requires
+    return step_node, requires, source_order
 
 
 def _node_of_record(step: dict[str, Any]) -> Optional[str]:
@@ -266,7 +273,10 @@ def select_nodes(
     run_dir: Path, step_ids: Iterable[str], system_dir: Path
 ) -> tuple[list[str], list[str]]:
     """The pytest node ids that re-run ``step_ids`` (plus the tests holding the
-    steps they ``require``), in run order; and the steps no node was found for.
+    steps they ``require``); and the steps no node was found for.
+
+    Files keep the run's order; inside a file the tests keep their source
+    order, so a required test runs before the one that needs it.
 
     The node a step ran in is recorded with the step (``node``); for older runs
     the test sources are scanned for the literal step id.
@@ -274,7 +284,7 @@ def select_nodes(
     record = _read_json(Path(run_dir) / "results.json") or _read_json(Path(run_dir) / "status.json")
     steps = [s for s in (record or {}).get("steps", []) if isinstance(s, dict) and "id" in s]
     recorded = {s["id"]: _node_of_record(s) for s in steps}
-    scanned, requires = scan_test_steps(system_dir)
+    scanned, requires, source_order = _scan(system_dir)
     order = {s["id"]: n for n, s in enumerate(steps)}
 
     def node_of(step_id: str) -> Optional[str]:
@@ -296,7 +306,16 @@ def select_nodes(
         rank = order.get(step_id, len(order))
         nodes[node] = min(rank, nodes.get(node, rank))
         pending.extend(r for r in requires.get(node, []) if r not in seen)
-    return sorted(nodes, key=lambda n: (nodes[n], n)), unresolved
+    file_rank: dict[str, int] = {}
+    for node, rank in nodes.items():
+        path = node.split("::", 1)[0]
+        file_rank[path] = min(rank, file_rank.get(path, rank))
+
+    def key(node: str) -> tuple[int, int, int, str]:
+        path = node.split("::", 1)[0]
+        return (file_rank[path], source_order.get(node, len(source_order)), nodes[node], node)
+
+    return sorted(nodes, key=key), unresolved
 
 
 # ── surface -> files -> PRs ───────────────────────────────────────────────────
