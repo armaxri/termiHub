@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildMetricBlocks, hasSamples, latestValue, networkMax } from "./monitoringHistoryModel";
+import {
+  alignBlockStarts,
+  buildMetricBlocks,
+  hasSamples,
+  latestValue,
+  networkMax,
+  type MetricBlock,
+} from "./monitoringHistoryModel";
 import { emptyMonitorHistories, type MonitorHistories } from "@/store/useMonitorHistory";
 
 function histories(overrides: Partial<MonitorHistories>): MonitorHistories {
@@ -66,5 +73,47 @@ describe("buildMetricBlocks", () => {
     // Shared network ceiling: max(5000*1.2, 1024) = 6000 for both directions.
     expect(rx?.max).toBe(6000);
     expect(tx?.max).toBe(6000);
+  });
+});
+
+describe("alignBlockStarts (#5840)", () => {
+  function block(key: MetricBlock["key"], values: (number | null)[]): MetricBlock {
+    return {
+      key,
+      label: key,
+      unit: "percent",
+      values,
+      min: 0,
+      max: 100,
+      hasData: hasSamples(values),
+    };
+  }
+
+  it("starts every sparkline at the latest first sample", () => {
+    const aligned = alignBlockStarts([
+      block("cpu", [null, 5, 6, 7]),
+      block("memory", [40, 41, 42, 43]),
+      block("netRx", [null, 1, 2, 3]),
+    ]);
+    expect(aligned.map((b) => b.values)).toEqual([
+      [5, 6, 7],
+      [41, 42, 43],
+      [1, 2, 3],
+    ]);
+  });
+
+  it("leaves aligned series and data-less blocks untouched", () => {
+    const blocks = [block("memory", [1, 2]), block("disk", [3, 4])];
+    expect(alignBlockStarts(blocks)).toBe(blocks);
+    const withEmpty = [block("cpu", [null, 2]), block("swap", [null, null])];
+    expect(alignBlockStarts(withEmpty).map((b) => b.values)).toEqual([[2], [null, null]]);
+  });
+
+  it("never trims more than a priming gap", () => {
+    const aligned = alignBlockStarts([
+      block("memory", [1, 2, 3, 4, 5, 6]),
+      block("disk", [null, null, null, null, 9, 9]),
+    ]);
+    expect(aligned[0].values).toEqual([3, 4, 5, 6]);
   });
 });
