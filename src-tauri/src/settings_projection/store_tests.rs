@@ -21,13 +21,13 @@ fn a_fresh_store_snapshots_the_default_document() {
     assert_eq!(snap["externalConnectionFiles"], json!([]));
     assert_eq!(snap["powerMonitoringEnabled"], json!(true));
     assert_eq!(snap["fileBrowserEnabled"], json!(true));
-    assert_eq!(snap["confirmCloseTabOnShortcut"], json!(true));
-    assert_eq!(snap["confirmCloseLiveSession"], json!(true));
+    // #5844: the close-confirm choice is unset, i.e. the default "always".
+    assert!(snap.get("closeLiveSessionConfirm").is_none());
     assert_eq!(snap["confirmCloseAttachedTab"], json!(true));
     assert_eq!(snap["askOpenSavedFileInTab"], json!(true));
     assert_eq!(snap["warnLargePortScan"], json!(true));
     assert_eq!(snap["warnLargePingSweep"], json!(true));
-    assert_eq!(store.len(), 10);
+    assert_eq!(store.len(), 8);
 }
 
 #[test]
@@ -75,14 +75,14 @@ fn patch_with_a_null_value_sets_the_key_to_null_not_delete() {
     // Mirrors the JS `{ ...current, theme: null }` spread, which sets the key to
     // null rather than removing it.
     let store = SettingsStore::new();
-    store.patch(object(json!({ "confirmCloseLiveSession": null })));
-    assert_eq!(store.get("confirmCloseLiveSession"), Some(Value::Null));
+    store.patch(object(json!({ "closeLiveSessionConfirm": null })));
+    assert_eq!(store.get("closeLiveSessionConfirm"), Some(Value::Null));
     assert!(
         store
             .snapshot()
             .as_object()
             .unwrap()
-            .contains_key("confirmCloseLiveSession"),
+            .contains_key("closeLiveSessionConfirm"),
         "the key is present-but-null, not removed"
     );
 }
@@ -103,7 +103,7 @@ fn reset_restores_the_default_document_after_edits() {
 
     store.reset();
     let snap = store.snapshot();
-    assert_eq!(store.len(), 10, "back to the default key set");
+    assert_eq!(store.len(), 8, "back to the default key set");
     assert_eq!(snap["powerMonitoringEnabled"], json!(true));
     assert!(
         snap.get("theme").is_none(),

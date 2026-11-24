@@ -41,8 +41,6 @@ fn default_settings_document() -> Map<String, Value> {
     );
     doc.insert("powerMonitoringEnabled".to_string(), Value::Bool(true));
     doc.insert("fileBrowserEnabled".to_string(), Value::Bool(true));
-    doc.insert("confirmCloseTabOnShortcut".to_string(), Value::Bool(true));
-    doc.insert("confirmCloseLiveSession".to_string(), Value::Bool(true));
     doc.insert("confirmCloseAttachedTab".to_string(), Value::Bool(true));
     doc.insert("askOpenSavedFileInTab".to_string(), Value::Bool(true));
     doc.insert("warnLargePortScan".to_string(), Value::Bool(true));
