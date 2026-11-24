@@ -55,8 +55,8 @@ class AgentUi(HarnessMixin):
     CTX_REFRESH = "context-agent-refresh"
     CTX_NEW_SHELL = "context-agent-new-shell"
     CTX_NEW_CONNECTION = "context-agent-new-connection"
-    CTX_EDIT = "context-agent-edit"
-    CTX_DELETE = "context-agent-delete"
+    CTX_AGENT_EDIT = "context-agent-edit"
+    CTX_AGENT_DELETE = "context-agent-delete"
 
     # Agent-definition editor (opened as a tab via "New Connection"): a saved
     # shell/serial connection under a connected agent, optionally persistent.
