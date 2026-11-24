@@ -18,10 +18,6 @@ message?: string,
  */
 targetsRun: number, 
 /**
- * Workflow run-history record ids the run produced in that window.
+ * Automation run-history record ids the run produced in that window.
  */
-workflowRunIds?: Array<string>, 
-/**
- * Macro run-history record ids the run produced in that window (#3543).
- */
-macroRunIds?: Array<string>, };
+runIds?: Array<string>, };

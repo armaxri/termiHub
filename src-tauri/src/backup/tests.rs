@@ -69,7 +69,7 @@ fn macros_doc(items: &[(&str, &str)]) -> Value {
 
 fn schedule_doc(id: &str, name: &str) -> Value {
     json!({"id": id, "name": name,
-           "action": {"kind": "workflow", "workflowId": "wf1"},
+           "action": {"kind": "automation", "automationId": "wf1"},
            "targets": {"kind": "connections", "connectionIds": ["c1"]},
            "rule": {"kind": "daily", "time": "09:00"},
            "missedRuns": "skip", "enabled": false, "createdAt": "", "updatedAt": ""})
@@ -1166,7 +1166,7 @@ fn schedules_are_a_backup_section_that_merges_by_id() {
 fn a_newer_schedules_backup_is_refused() {
     let spec = sections::spec("schedules").unwrap();
     let err = spec
-        .normalize(json!({"version": "3", "schedules": []}))
+        .normalize(json!({"version": "4", "schedules": []}))
         .unwrap_err();
     assert!(matches!(
         err,

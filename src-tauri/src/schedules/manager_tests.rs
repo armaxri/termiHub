@@ -35,8 +35,8 @@ pub(super) fn input(id: &str, rule: ScheduleRule) -> ScheduleInput {
         id: id.to_string(),
         name: "Health check".to_string(),
         description: None,
-        action: ScheduleAction::Workflow {
-            workflow_id: "wf-1".to_string(),
+        action: ScheduleAction::Automation {
+ automation_id: "wf-1".to_string(),
         },
         targets: ScheduleTargets::Connections {
             connection_ids: vec!["conn-a".to_string(), "conn-b".to_string()],
@@ -56,8 +56,7 @@ pub(super) fn completed(n: u32) -> WindowRunReport {
         outcome: ScheduleRunOutcome::Completed,
         message: None,
         targets_run: n,
-        workflow_run_ids: Vec::new(),
-        macro_run_ids: Vec::new(),
+        run_ids: Vec::new(),
     }
 }
 
@@ -66,8 +65,7 @@ pub(super) fn skip_report(msg: &str) -> WindowRunReport {
         outcome: ScheduleRunOutcome::Skipped,
         message: Some(msg.to_string()),
         targets_run: 0,
-        workflow_run_ids: Vec::new(),
-        macro_run_ids: Vec::new(),
+        run_ids: Vec::new(),
     }
 }
 
@@ -138,8 +136,8 @@ fn changing_targets_or_action_disables_and_drops_confirmation() {
     let m2dir = TempDir::new().unwrap();
     let m2 = enabled_manager(&m2dir, MissedRunPolicy::Skip);
     let mut i = input("s1", every(10));
-    i.action = ScheduleAction::Macro {
-        macro_id: "mac".to_string(),
+    i.action = ScheduleAction::Automation {
+ automation_id: "mac".to_string(),
     };
     assert!(!m2.save(i, t(10, 1), &Utc).unwrap().schedule.enabled);
 }
@@ -179,8 +177,8 @@ fn save_refuses_invalid_input() {
     };
     assert!(m.save(no_group, t(0, 0), &Utc).is_err());
     let mut no_wf = input("s", every(5));
-    no_wf.action = ScheduleAction::Workflow {
-        workflow_id: String::new(),
+    no_wf.action = ScheduleAction::Automation {
+ automation_id: String::new(),
     };
     assert!(m.save(no_wf, t(0, 0), &Utc).is_err());
     let weekly_no_days = ScheduleRule::Weekly {
@@ -237,8 +235,8 @@ fn fires_when_due_and_not_before() {
     assert!(!fire.catch_up);
     assert_eq!(
         fire.action,
-        ScheduleAction::Workflow {
-            workflow_id: "wf-1".into()
+        ScheduleAction::Automation {
+ automation_id: "wf-1".into()
         }
     );
     let view = &m.state(t(10, 10), &Utc).unwrap().schedules[0];
@@ -330,8 +328,7 @@ fn a_failure_in_any_window_marks_the_run_failed() {
         outcome: ScheduleRunOutcome::Failed,
         message: Some("step 2 failed".into()),
         targets_run: 1,
-        workflow_run_ids: Vec::new(),
-        macro_run_ids: Vec::new(),
+        run_ids: Vec::new(),
     };
     m.report(&token, "win-1", failed, t(10, 11)).unwrap();
     let res = last_result(&m);

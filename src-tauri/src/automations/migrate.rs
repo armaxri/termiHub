@@ -514,15 +514,25 @@ pub struct BootReport {
     pub library: LibraryReport,
     /// The run-history (`automation-runs.json`) half.
     pub runs: super::migrate_runs::RunsReport,
+    /// The `schedules.json` v2 → v3 half (slice 10).
+    pub schedules: crate::schedules::migrate::SchedulesReport,
 }
 
-/// Run the library and the run-history migration over the config directory
-/// `dir`. Call before any automation, macro or workflow manager loads.
+/// Run the library, the run-history and the schedules migration over the
+/// config directory `dir`. Call before any automation, macro, workflow or
+/// schedule manager loads.
 pub fn run_boot_migration(dir: &Path, now: chrono::DateTime<chrono::Utc>) -> Result<BootReport> {
     let library = migrate_library(dir).context("Failed to migrate macros and workflows")?;
     let runs = super::migrate_runs::migrate_runs(dir, &library.macro_ids, now)
         .context("Failed to migrate macro and workflow run history")?;
-    Ok(BootReport { library, runs })
+    // After the library, so the schedule actions follow its id changes.
+    let schedules = crate::schedules::migrate::migrate_schedules(dir)
+        .context("Failed to migrate schedules to automations")?;
+    Ok(BootReport {
+        library,
+        runs,
+        schedules,
+    })
 }
 
 /// The recovery warning that reports merged-back changes, or `None` when

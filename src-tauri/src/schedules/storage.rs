@@ -127,10 +127,10 @@ mod tests {
         );
     }
 
-    /// #3528: a v1 file (only `lastResult`) migrates to v2 on load, seeding each
-    /// schedule's history, and is rewritten on disk as v2 once.
+    /// #3528: a v1 file (only `lastResult`) migrates on load, seeding each
+    /// schedule's history, and is rewritten on disk at the current version once.
     #[test]
-    fn v1_file_migrates_to_v2_and_is_persisted() {
+    fn v1_file_migrates_to_current_and_is_persisted() {
         let dir = TempDir::new().unwrap();
         let storage = ScheduleStorage::new_test(dir.path());
         let raw = r#"{"version":"1","paused":true,"schedules":[
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(loaded.data.schedules[0].history.len(), 1);
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.path().join(FILE_NAME)).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], "2");
+        assert_eq!(on_disk["version"], "3");
         assert_eq!(
             on_disk["schedules"][0]["history"][0]["outcome"],
             "completed"
@@ -163,7 +163,7 @@ mod tests {
         storage.save(&store).unwrap();
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.path().join(FILE_NAME)).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], "2");
+        assert_eq!(on_disk["version"], "3");
     }
 
     /// #3528 downgrade safety: a build that only knows v1 must refuse to
@@ -215,7 +215,7 @@ mod tests {
         );
         let on_disk: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.path().join(FILE_NAME)).unwrap()).unwrap();
-        assert_eq!(on_disk["version"], "2");
+        assert_eq!(on_disk["version"], "3");
         assert_eq!(
             on_disk["schedules"][0]["history"][0]["outcome"],
             "completed"

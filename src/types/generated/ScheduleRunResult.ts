@@ -21,15 +21,11 @@ startedAt?: string,
  */
 durationMs?: number, 
 /**
- * Ids of the workflow run-history records this attempt produced (one per
- * terminal a workflow ran on). Empty for macros and skips.
+ * Ids of the automation run-history records this attempt produced (one
+ * per terminal or window the automation ran in). Empty for skips. Schema
+ * v3 merges the v2 `workflowRunIds` / `macroRunIds` into this list.
  */
-workflowRunIds?: Array<string>, 
-/**
- * Ids of the macro run-history records this attempt produced (one per
- * window a macro played in, #3543). Empty for workflows and skips.
- */
-macroRunIds?: Array<string>, 
+runIds?: Array<string>, 
 /**
  * How it ended.
  */
