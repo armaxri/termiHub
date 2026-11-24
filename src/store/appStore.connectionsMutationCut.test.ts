@@ -198,6 +198,16 @@ describe("connections lifecycle — every action lands through its persist comma
     expect(view.connections[1].name).toBe("Copy of Conn a");
   });
 
+  it("duplicateConnection starts the copy as never used (#5940)", async () => {
+    await startWith({ connections: [{ ...makeConnection("a"), lastUsedAt: 1_000 }] });
+    useAppStore.getState().duplicateConnection("a");
+
+    await expectSettledParity();
+    const view = currentConnectionsView();
+    expect(view.connections[0].lastUsedAt).toBe(1_000);
+    expect(view.connections[1].lastUsedAt).toBeUndefined();
+  });
+
   it("addFolder appends the folder", async () => {
     useAppStore.getState().addFolder(makeFolder("work"));
     expect(currentConnectionsView().folders[0].id).toBe("work");
