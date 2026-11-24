@@ -1,0 +1,358 @@
+{
+  "automations": [
+    {
+      "createdAt": "2026-07-19T08:00:00Z",
+      "description": "Answer the sudo prompt",
+      "id": "macro-01JDREC0000000000000000001",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Sudo password",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "sudo -v\r",
+              "delayMs": 0
+            },
+            {
+              "data": "hunter2",
+              "delayMs": 1200
+            },
+            {
+              "data": "\r",
+              "delayMs": 180
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [
+        "ops",
+        "prod"
+      ],
+      "triggers": [],
+      "updatedAt": "2026-07-20T09:30:00Z"
+    },
+    {
+      "createdAt": "2026-08-01T12:00:00Z",
+      "id": "macro-01JDREC0000000000000000002",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Quit vim",
+      "steps": [
+        {
+          "chunks": [
+            {
+              "data": "\u001b",
+              "delayMs": 0
+            },
+            {
+              "data": ":wq!\r",
+              "delayMs": 7000
+            },
+            {
+              "data": "\u0003",
+              "delayMs": 40
+            },
+            {
+              "data": "echo ${HOME} \\x41\t\n",
+              "delayMs": 5
+            },
+            {
+              "data": "G2JbMzFtcmVkG1swbQ==",
+              "delayMs": 0
+            },
+            {
+              "data": "grüße ✓ 🚀\r",
+              "delayMs": 25
+            }
+          ],
+          "kind": "type-keys",
+          "recorded": true,
+          "timing": "recorded"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": "2026-08-01T12:00:00Z"
+    },
+    {
+      "createdAt": "2026-08-02T12:00:00Z",
+      "id": "macro-01JDREC0000000000000000003",
+      "legacy": {
+        "from": "macro",
+        "version": 1
+      },
+      "name": "Empty draft",
+      "steps": [],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": "2026-08-02T12:00:00Z"
+    },
+    {
+      "createdAt": "2026-09-01T10:00:00Z",
+      "description": "Pull, build and restart the web tier",
+      "id": "workflow-01JDWF00000000000000000001",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Deploy prep",
+      "parameters": [
+        {
+          "default": "web",
+          "label": "Application",
+          "name": "app",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "default": "dev",
+          "name": "env",
+          "options": [
+            "dev",
+            "prod"
+          ],
+          "type": "enum"
+        },
+        {
+          "default": 2,
+          "name": "replicas",
+          "type": "number"
+        },
+        {
+          "default": false,
+          "name": "dryRun",
+          "type": "boolean"
+        }
+      ],
+      "steps": [
+        {
+          "command": "cd /srv/${app}",
+          "kind": "send-command"
+        },
+        {
+          "kind": "run-script",
+          "perLineDelayMs": 50,
+          "retry": {
+            "backoff": "exponential",
+            "count": 3,
+            "delayMs": 500
+          },
+          "script": "git pull\nmake build ENV=${env}",
+          "sourcePath": "/home/ops/deploy.sh"
+        },
+        {
+          "automationId": "macro-01JDREC0000000000000000001",
+          "continueOnError": true,
+          "kind": "run-automation"
+        },
+        {
+          "delayMs": 500,
+          "kind": "wait"
+        },
+        {
+          "isRegex": true,
+          "kind": "wait-for-output",
+          "pattern": "Build (OK|DONE)",
+          "retry": {
+            "count": 1
+          },
+          "timeoutMs": 60000
+        },
+        {
+          "kind": "wait-for-output",
+          "pattern": "$ "
+        },
+        {
+          "args": [
+            "deployed",
+            "${app}"
+          ],
+          "kind": "run-local-process",
+          "program": "notify-send"
+        },
+        {
+          "condition": {
+            "left": "${env}",
+            "op": "eq",
+            "right": "prod"
+          },
+          "else": [
+            {
+              "command": "echo skipped",
+              "kind": "send-command"
+            }
+          ],
+          "kind": "conditional",
+          "then": [
+            {
+              "automationId": "macro-01JDREC0000000000000000002",
+              "kind": "run-automation"
+            },
+            {
+              "body": [
+                {
+                  "command": "curl -fsS localhost/health #${iteration}",
+                  "kind": "send-command"
+                },
+                {
+                  "automationId": "macro-01JDREC0000000000000000001",
+                  "kind": "run-automation"
+                }
+              ],
+              "kind": "loop",
+              "loop": {
+                "count": 3,
+                "kind": "count"
+              }
+            }
+          ]
+        },
+        {
+          "body": [
+            {
+              "condition": {
+                "left": "${app}",
+                "op": "contains",
+                "right": "web"
+              },
+              "kind": "conditional",
+              "then": [
+                {
+                  "delayMs": 100,
+                  "kind": "wait"
+                }
+              ]
+            }
+          ],
+          "continueOnError": true,
+          "kind": "loop",
+          "loop": {
+            "condition": {
+              "left": "${iteration}",
+              "op": "lt",
+              "right": "5"
+            },
+            "kind": "while"
+          }
+        }
+      ],
+      "tags": [
+        "deploy"
+      ],
+      "triggers": [
+        {
+          "binding": "Ctrl+Alt+D",
+          "kind": "hotkey"
+        }
+      ],
+      "updatedAt": "2026-11-20T16:45:00Z"
+    },
+    {
+      "createdAt": "2026-09-02T10:00:00Z",
+      "id": "workflow-01JDWF00000000000000000002",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Answer on match",
+      "steps": [
+        {
+          "command": "yes",
+          "kind": "send-command"
+        }
+      ],
+      "tags": [],
+      "triggers": [
+        {
+          "connectionIds": [
+            "conn-db-1"
+          ],
+          "cooldownMs": 5000,
+          "kind": "on-output-match",
+          "maxFiresPerSession": 3,
+          "pattern": "Continue? [y/N]"
+        },
+        {
+          "connectionIds": [],
+          "isRegex": true,
+          "kind": "on-output-match",
+          "pattern": "ERROR \\d+"
+        }
+      ],
+      "triggersEnabled": false,
+      "updatedAt": "2026-09-02T10:00:00Z"
+    },
+    {
+      "createdAt": "2026-09-03T10:00:00Z",
+      "id": "workflow-01JDWF00000000000000000003",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Session hooks",
+      "steps": [
+        {
+          "command": "uptime",
+          "kind": "send-command"
+        }
+      ],
+      "tags": [],
+      "triggers": [
+        {
+          "connectionIds": [
+            "conn-web-1",
+            "folder/conn-web-2"
+          ],
+          "kind": "on-connect"
+        },
+        {
+          "connectionIds": [
+            "conn-web-1"
+          ],
+          "kind": "on-disconnect"
+        },
+        {
+          "connectionIds": [
+            "conn-web-2"
+          ],
+          "kind": "on-disconnect",
+          "when": "user-close"
+        },
+        {
+          "connectionIds": [],
+          "kind": "on-disconnect",
+          "when": "any"
+        }
+      ],
+      "updatedAt": "2026-09-03T10:00:00Z"
+    },
+    {
+      "createdAt": "2026-09-04T10:00:00Z",
+      "id": "workflow-01JDWF00000000000000000004",
+      "legacy": {
+        "from": "workflow",
+        "version": 3
+      },
+      "name": "Manual only",
+      "steps": [
+        {
+          "automationId": "macro-deleted-long-ago",
+          "kind": "run-automation"
+        }
+      ],
+      "tags": [],
+      "triggers": [],
+      "updatedAt": "2026-09-04T10:00:00Z"
+    }
+  ],
+  "remapped": [],
+  "unresolvedMacroRefs": []
+}

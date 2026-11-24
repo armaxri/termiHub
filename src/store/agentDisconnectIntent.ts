@@ -32,6 +32,15 @@ export function clearAgentDisconnectIntent(agentId: string): void {
 }
 
 /**
+ * Whether the user is disconnecting `agentId` right now, without consuming
+ * the record (#5959): a hosted session that closes before the "disconnected"
+ * event lands is the user's end, not a lost link.
+ */
+export function hasAgentDisconnectIntent(agentId: string): boolean {
+  return pending.has(agentId);
+}
+
+/**
  * Whether the user asked to disconnect `agentId`, clearing the record so it
  * applies to exactly one "disconnected" event.
  */

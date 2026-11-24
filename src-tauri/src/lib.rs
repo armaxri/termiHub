@@ -20,6 +20,9 @@ mod agents_projection;
 /// held in managed state, so long-lived background tasks are cancelled and
 /// awaited (bounded) at teardown instead of outliving it — see [`app_tasks`].
 mod app_tasks;
+/// The merged macro + workflow model, its store, run history and the boot
+/// migration from the legacy macro and workflow files (#5818).
+pub mod automations;
 mod backup;
 /// Ordered application boot phases (ARCH-002 / TAURI-009): the wiring the
 /// Tauri `setup()` callback runs, extracted from the former god-closure into
@@ -721,6 +724,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::detach_persistent_tab,
             commands::session::get_agent_session_buffer,
             commands::session::take_resumed_agent_session,
+            commands::session::agent_session_ids,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
@@ -906,6 +910,14 @@ pub fn run() -> anyhow::Result<()> {
             commands::workflows::list_workflow_runs,
             commands::workflows::record_workflow_run,
             commands::workflows::clear_workflow_run_history,
+            // Automations (#5818): the merged macro + workflow store
+            commands::automations::list_automations,
+            commands::automations::get_automation,
+            commands::automations::save_automation,
+            commands::automations::delete_automation,
+            commands::automations::list_automation_runs,
+            commands::automations::record_automation_run,
+            commands::automations::clear_automation_run_history,
             // Scheduled runs (PROD-043)
             commands::schedules::list_schedules,
             commands::schedules::save_schedule,

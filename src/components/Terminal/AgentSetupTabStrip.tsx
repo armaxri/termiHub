@@ -12,11 +12,11 @@ import "./TerminalDisconnectOverlay.css";
 
 /**
  * How a setup tab's run ended, as its strip says it (#5865):
- * - `installed` — the setup script exited 0 (POSIX);
- * - `failed` — the backend reported an error, or the script exited non-zero;
+ * - `installed` — the setup exited 0 (POSIX script, Windows commands, #5946);
+ * - `failed` — the backend reported an error, or the setup exited non-zero;
  * - `cancelled` — the user cancelled the setup;
- * - `sent` — the Windows install commands were typed into the tab, which
- *   cannot report their result.
+ * - `sent` — the install commands were typed into a tab registered as not
+ *   reporting its exit (no setup does that since #5946).
  */
 export type AgentSetupTabNotice =
   | { kind: "installed" }
@@ -30,9 +30,9 @@ export type AgentSetupTabNotice =
  * tab's session exit, when its session ended.
  *
  * The outcome comes from signals, never from reading the output: the
- * backend's progress events (failed, cancelled, Windows commands sent) and,
- * for a POSIX setup, the exit code of the shell the setup script ends
- * (`exec sh setup.sh`). An exit without a code (a dropped link) says nothing
+ * backend's progress events (failed, cancelled) and the exit code of the
+ * shell the setup ends (`exec sh setup.sh` on POSIX, a final `exit` with the
+ * install's status on Windows, #5946). An exit without a code (a dropped link) says nothing
  * about the setup, so the plain session-end strip handles it.
  */
 export function agentSetupTabNotice(
@@ -167,7 +167,7 @@ export function AgentSetupTabStrip({
         announce={notice.kind === "failed" ? "assertive" : "polite"}
         announcement={reason ? `${heading}. ${reason}` : undefined}
         describedBy={reason ? reasonId : undefined}
-        // A live shell (a Windows run, a failure before the script) keeps its
+        // A live shell (a failure before the setup ran) keeps its
         // focus: the user may be typing in it.
         autoFocusPrimaryAction={isActive && exited}
         actions={

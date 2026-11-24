@@ -20,6 +20,12 @@ it: one session is listed, the tab shows its earlier output and a
 to start, the "new remote shell" line SSH uses), and the update strip counts
 and names the same sessions the list shows.
 
+#5959 / #5960 (same run): the Disconnect wrote "— connection lost —" into the
+tab although the user ended it, and the list could not say which session an
+open tab shows. Now the tab reads "— disconnected by you hh:mm:ss —", and the
+row an open tab shows carries an "Open in a tab" marker; clicking it focuses
+that tab.
+
 The ``test_grade_*`` functions grade fixed observations without an app and run
 in the normal lane.
 """
@@ -58,6 +64,33 @@ RESUMED = "session resumed"
 NEW_SHELL = "new remote shell; running programs were lost"
 #: "Waits for 2 sessions (a, b) to close." — the update strip's note.
 WAITS_FOR = re.compile(r"Waits for (?P<n>\d+) sessions? \((?P<names>.*)\) to close\.")
+
+
+#: The line a user end leaves, and the one it must not (#5959).
+USER_END = re.compile(r"— disconnected by you \d{2}:\d{2}:\d{2} —")
+LOST = "— connection lost"
+
+
+def user_end_problems(ended_buffer: str) -> list[str]:
+    """What is wrong with the tab right after the user's agent Disconnect (#5959)."""
+    problems: list[str] = []
+    if LOST in ended_buffer:
+        problems.append("the tab says the connection was lost although the user disconnected")
+    if not USER_END.search(ended_buffer):
+        problems.append("no '— disconnected by you hh:mm:ss —' line after the Disconnect")
+    return problems
+
+
+def open_marker_problems(markers: dict[str, bool], open_labels: list[str]) -> list[str]:
+    """Whether exactly the rows open tabs show carry the open marker (#5960).
+
+    ``markers`` maps each "Active sessions" label to whether its row is marked.
+    """
+    problems = [f"{label!r} shows in a tab but is not marked" for label in open_labels
+                if not markers.get(label)]
+    problems += [f"{label!r} is marked but no tab shows it" for label, marked in markers.items()
+                 if marked and label not in open_labels]
+    return problems
 
 
 def reconnect_session_problems(
@@ -193,6 +226,25 @@ def test_grade_numbered_sessions_pass():
     ) == []
 
 
+def test_grade_user_end_line_passes():
+    assert user_end_problems("PR_RESUME_BEFORE\r\n— disconnected by you 13:30:35 —\r\n") == []
+
+
+def test_grade_connection_lost_after_a_user_disconnect_fails():
+    # The run-20261124 tab (agent.disconnect.png).
+    problems = user_end_problems("PR_RESUME_BEFORE\r\n— connection lost 13:30:35 —\r\n")
+    assert any("connection was lost" in p for p in problems)
+    assert any("disconnected by you" in p for p in problems)
+
+
+def test_grade_open_marker():
+    assert open_marker_problems({"box · bash": True, "Logs": False}, ["box · bash"]) == []
+    assert open_marker_problems({"box · bash": False}, ["box · bash"]) == [
+        "'box · bash' shows in a tab but is not marked"
+    ]
+    assert open_marker_problems({"Logs": True}, []) == ["'Logs' is marked but no tab shows it"]
+
+
 # ── live grade ────────────────────────────────────────────────────────────
 @pytest.mark.product_run
 @pytest.mark.integration
@@ -226,6 +278,21 @@ class TestProductRunAgentReconnectSession(
             )
         yield
 
+    def _end_line_written(self, tab: str) -> str | None:
+        """The tab's text once a line follows the last echo, else None."""
+        text = self.driver.read_terminal(tab)
+        return text if "— " in text.rsplit(BEFORE, 1)[-1] else None
+
+    def _label_of(self, session: dict[str, Any]) -> str:
+        return self.driver.get_text(f"agent-session-label-{session.get('sessionId')}").strip()
+
+    def _open_markers(self, agent_id: str) -> dict[str, bool]:
+        """Each "Active sessions" label → whether its row carries the open marker."""
+        return {
+            self._label_of(s): self.driver.exists(f"agent-session-open-{s.get('sessionId')}")
+            for s in self.agent_sessions(agent_id)
+        }
+
     def _session_labels(self, agent_id: str) -> list[str]:
         """The agent's "Active sessions" rows as the sidebar labels them."""
         return [
@@ -238,11 +305,12 @@ class TestProductRunAgentReconnectSession(
             "agent.reconnect-session",
             "After Disconnect and Connect, the agent tab's Reconnect resumes its own "
             "session: one session listed, the earlier output kept, a reconnected line, "
-            "and the update strip naming the same sessions (#5953)",
+            "the update strip naming the same sessions (#5953), 'disconnected by you' after "
+            "the Disconnect (#5959) and the open-tab marker (#5960)",
             expect="the agent tab with its PR_RESUME_BEFORE output, a grey '— reconnected "
             "hh:mm:ss — session resumed —' line and PR_RESUME_AFTER below it; 'Active "
-            "sessions' with one '<agent> · bash' row; the update strip 'Waits for 1 session "
-            "(<agent> · bash) to close.'",
+            "sessions' with one '<agent> · bash' row and an 'Open in a tab' icon on it; the "
+            "update strip 'Waits for 1 session (<agent> · bash) to close.'",
         ):
             agent = self.deploy_and_connect_agent(self.name, install_dir=INSTALL_DIR)
             agent_id = agent["id"]
@@ -256,6 +324,10 @@ class TestProductRunAgentReconnectSession(
             self.disconnect_agent(self.name)
             self.wait(lambda: self.agent_connection_state(self.name) != "connected",
                       timeout=30.0, what="the agent to disconnect")
+            ended = self.wait(
+                lambda: self._end_line_written(tab), timeout=15.0, what="the tab's end line"
+            )
+            self.evidence(f"after Disconnect: {ended[-200:]!r}")
             self.connect_agent(self.name)
             self.wait_agent_connected(self.name, timeout=90.0)
 
@@ -270,12 +342,25 @@ class TestProductRunAgentReconnectSession(
             self.wait_agent_update_banner(agent_id)
             note = self.driver.get_text(f"{self.UPDATE_BANNER_NOTE}-{agent_id}").strip()
             labels = self._session_labels(agent_id)
+            markers = self._open_markers(agent_id)
             self.shot(label="after-reconnect")
             self.evidence(f"sessions {labels}; update note {note!r}")
             self.evidence(f"tab tail: {buffer[-400:]!r}")
             problems = reconnect_session_problems(
                 session_labels=labels, open_tabs=1, buffer=buffer, update_note=note
             )
+            problems += user_end_problems(ended)
+            problems += open_marker_problems(markers, labels[:1] if len(labels) == 1 else [])
+            # Clicking the marked row brings its tab forward (#5960).
+            others = sorted(set(self.tab_ids()) - {tab})
+            open_rows = [s for s in self.agent_sessions(agent_id)
+                         if markers.get(self._label_of(s))]
+            if others and open_rows:
+                self.switch_to_tab(others[0])
+                self.driver.click(f"agent-session-label-{open_rows[0].get('sessionId')}")
+                self.wait(lambda: (self.active_tab() or {}).get("id") == tab or None,
+                          timeout=10.0, what="the marked row to focus its tab")
+                self.evidence("the marked row focused its tab")
             self.dismiss_agent_update_banner(agent_id)
             assert not problems, problems
         self.close_all_tabs()

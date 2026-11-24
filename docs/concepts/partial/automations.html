@@ -1,0 +1,1761 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Automations (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Concept-only helpers built from theme vars (not app classes). */
+      pre.wireframe {
+        overflow-x: auto;
+        padding: 10px 12px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        line-height: 1.35;
+      }
+      .automation-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 6px 8px 4px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .automation-row__name {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .automation-row__name small {
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+      .automation-row__marker {
+        color: var(--text-secondary);
+        font-size: 11px;
+        margin-right: 6px;
+      }
+      .automation-section {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-top: 1px solid var(--border-secondary);
+        color: var(--text-secondary);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-list-video" viewBox="0 0 24 24">
+        <path d="M21 5H3" />
+        <path d="M10 12H3" />
+        <path d="M10 19H3" />
+        <path
+          d="M15 12.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997a1 1 0 0 1-1.517-.86z"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-circle-dot" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <circle cx="12" cy="12" r="1" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path
+          d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"
+        />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-square-pen" viewBox="0 0 24 24">
+        <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+        <path
+          d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"
+        />
+      </symbol>
+      <symbol id="i-chevron-up" viewBox="0 0 24 24">
+        <path d="m18 15-6-6-6 6" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <header class="concept-header">
+        <h1>Automations: one type for macros and workflows</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Partial · slice 1 of 12 implemented</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a></span
+          >
+          <span><code>docs/concepts/partial/automations.html</code></span>
+        </div>
+      </header>
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#0-summary">0. Summary</a></li>
+          <li><a href="#1-inventory-from-code">1. Inventory (from code)</a></li>
+          <li><a href="#2-usability-today">2. Usability today</a></li>
+          <li><a href="#3-the-merged-design">3. The merged design</a></li>
+          <li><a href="#mockup">Mockup: the Automations sidebar</a></li>
+          <li><a href="#behavior">States &amp; sequences</a></li>
+          <li><a href="#4-migration">4. Migration</a></li>
+          <li><a href="#5-implementation-plan">5. Implementation plan</a></li>
+          <li>
+            <a href="#6-open-questions-for-the-maintainer">6. Open questions for the maintainer</a>
+          </li>
+          <li><a href="#maintainer-decisions-2026-11-23">Maintainer decisions (2026-11-23)</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+      <section>
+        <p>
+          Status: partially implemented. The maintainer decided the open questions on 2026-11-23
+          (see the end). Slice 1 (the Rust model and the pure converters) has landed; slices 2–12
+          are open. Umbrella issue:
+          <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>. Originally written
+          against <code>develop</code> in November 2026.
+        </p>
+        <p>
+          Everything below cites code as it was on <code>develop</code> when the concept was
+          written. Paths are relative to the repo root.
+        </p>
+      </section>
+      <section>
+        <h2 id="0-summary">0. Summary <a class="anchor" href="#0-summary">#</a></h2>
+        <ul>
+          <li>
+            termiHub has two automation types today. <strong>Macros</strong> type recorded or
+            hand-written input into a terminal and are always visible.
+            <strong>Workflows</strong> are typed step lists with triggers, parameters, branching and
+            error policies, and sit behind the experimental flag. Each has its own sidebar, editor,
+            history file, palette entry kind, IPC set and import format. Schedules can run either
+            one.
+          </li>
+          <li>
+            A macro is a workflow with one kind of step and no trigger. The gap is mostly in how the
+            two are presented. The engines differ on only three points: per-step recorded timing,
+            lock-step multi-terminal delivery, and raw bytes with no added newline.
+          </li>
+          <li>
+            Proposal: one type called <strong>Automation</strong>. A macro becomes an automation
+            with one <strong>Type keys</strong> step that holds the recorded chunks byte for byte.
+            <strong>Record</strong> becomes an editor and toolbar action that produces such a step.
+            Triggers are optional, and none means "run it yourself". The product has one sidebar,
+            one editor, one history, one palette entry kind and one schedule action.
+          </li>
+          <li>
+            Migration copies <code>macros.json</code> and <code>workflows.json</code> into a new
+            <code>automations.json</code>. Ids are kept, so schedules, history, palette keys and
+            <code>run-macro</code> steps still resolve. The old files are left in place as a frozen
+            snapshot that an older build can still read. A reconcile pass pulls in changes an older
+            build makes to them.
+          </li>
+          <li>
+            12 slices. Each one can merge on its own and each adds a product-run grade in a new
+            file.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="1-inventory-from-code">
+          1. Inventory (from code) <a class="anchor" href="#1-inventory-from-code">#</a>
+        </h2>
+        <h3 id="1-1-data-model-and-persistence">1.1 Data model and persistence</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Aspect</th>
+                <th>Macros</th>
+                <th>Workflows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Model</td>
+                <td>
+                  <code
+                    >Macro {id, name, description?, tags, steps: MacroStep[], createdAt,
+                    updatedAt}</code
+                  >. <code>src-tauri/src/macros/config.rs</code>
+                </td>
+                <td>
+                  <code
+                    >Workflow {id, name, description?, tags, steps: WorkflowStep[], triggers,
+                    parameters, triggersEnabled, createdAt, updatedAt}</code
+                  >. <code>src-tauri/src/workflows/config.rs</code>. The doc comment says it
+                  "mirrors the shipped Macro shape"
+                </td>
+              </tr>
+              <tr>
+                <td>Step</td>
+                <td>
+                  <code>MacroStep {data, delayMs}</code>: an opaque chunk of input (UTF-8 or
+                  base64). No newline is added
+                </td>
+                <td>
+                  A discriminated union on <code>kind</code>: <code>send-command</code> (adds a
+                  newline), <code>run-script</code> (line by line, <code>perLineDelayMs</code>,
+                  <code>sourcePath</code>), <code>run-macro</code> (by <code>macroId</code>),
+                  <code>wait</code>, <code>run-local-process</code> (<code>program</code>,
+                  <code>args</code>),
+                  <code>conditional</code> (<code>then</code>/<code>else</code>),
+                  <code>loop</code> (count or while, capped at
+                  <code>MAX_LOOP_ITERATIONS = 1000</code>),
+                  <code>wait-for-output</code> (<code>pattern</code>, <code>isRegex</code>,
+                  <code>timeoutMs</code>, default 30 s)
+                </td>
+              </tr>
+              <tr>
+                <td>Error policy</td>
+                <td>None. A target that stops accepting input ends with <code>error</code></td>
+                <td>
+                  Per step <code>continueOnError</code> and
+                  <code>retry {count, delayMs, backoff: fixed or exponential}</code>. The runner
+                  clamps these (<code>MAX_STEP_RETRIES = 10</code>,
+                  <code>MAX_RETRY_DELAY_MS = 60 s</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Parameters</td>
+                <td>None</td>
+                <td>
+                  <code
+                    >parameters[] {name, label?, type: string/number/boolean/enum, default?,
+                    required?, options?}</code
+                  >. <code>${name}</code> is substituted in <code>send-command</code>,
+                  <code>run-script</code> and <code>run-local-process</code>. Conditions also accept
+                  <code>${iteration}</code>
+                </td>
+              </tr>
+              <tr>
+                <td>Triggers</td>
+                <td>None</td>
+                <td>
+                  <code>manual</code>, <code>hotkey {binding}</code>,
+                  <code>on-connect {connectionIds}</code>,
+                  <code>on-disconnect {connectionIds, when: drop/user-close/any}</code>,
+                  <code
+                    >on-output-match {connectionIds, pattern, isRegex, cooldownMs,
+                    maxFiresPerSession}</code
+                  >. <code>triggersEnabled</code> is the arm/disarm switch (<a
+                    href="https://github.com/armaxri/termiHub/issues/5674"
+                    >#5674</a
+                  >)
+                </td>
+              </tr>
+              <tr>
+                <td>Timing</td>
+                <td>
+                  Picked at play time: <code>real-time</code> (recorded delays clamped to 5 s),
+                  <code>fixed</code> (40 ms) or <code>instant</code>.
+                  <code>src/services/macroPlayback.ts</code>. Not stored on the macro
+                </td>
+                <td>Explicit <code>wait</code> steps and <code>perLineDelayMs</code></td>
+              </tr>
+              <tr>
+                <td>File</td>
+                <td>
+                  <code>macros.json</code> v1 in the app config dir. Versioned gate, per-entry
+                  salvage, unknown keys kept
+                </td>
+                <td>
+                  <code>workflows.json</code> v3 (v2 added disconnect and output triggers, v3 added
+                  <code>triggersEnabled</code>). Same gate, atomic write
+                </td>
+              </tr>
+              <tr>
+                <td>Run history</td>
+                <td>
+                  <code>macro-runs.json</code> v1.
+                  <code
+                    >MacroRun {macroId, macroName, startedAt, endedAt, status:
+                    completed/cancelled/error, stepsPlayed, totalSteps, targetCount, targetLabels,
+                    origin: manual/palette/workflow-step/scheduled, error}</code
+                  >. Newest 200, 90 days. <code>src-tauri/src/macros/history*.rs</code>
+                </td>
+                <td>
+                  <code>runs.json</code> v1 (a generic name).
+                  <code
+                    >WorkflowRun {workflowId, workflowName, startedAt, endedAt, status:
+                    completed/cancelled/failed, stepsCompleted, total, failedStepIndex, error,
+                    continuedFailures, tabId, targetLabel, triggeredBy:
+                    manual/on-connect/hotkey/scheduled/on-disconnect/on-output-match}</code
+                  >. Newest 200, no age limit. One record per terminal
+                </td>
+              </tr>
+              <tr>
+                <td>Backup</td>
+                <td><code>macros</code> section (<code>src-tauri/src/backup/sections.rs</code>)</td>
+                <td>
+                  <code>workflows</code> section. Run histories are deliberately not backed up
+                </td>
+              </tr>
+              <tr>
+                <td>Connection id changes</td>
+                <td>n/a</td>
+                <td>
+                  <code>on-*</code> trigger connection ids are re-pointed on rename or move.
+                  <code>src-tauri/src/boot/connection_id_changes.rs</code>,
+                  <code>WorkflowManager::follow_connection_id_changes</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 id="1-2-ipc">1.2 IPC</h3>
+        <ul>
+          <li>
+            Macros: <code>list_macros</code>, <code>save_macro</code>, <code>delete_macro</code>,
+            <code>list_macro_runs</code>, <code>record_macro_run</code>,
+            <code>clear_macro_run_history</code>. <code>src-tauri/src/commands/macros.rs</code>.
+            Error code <code>macro_error</code>.
+          </li>
+          <li>
+            Workflows: <code>list_workflows</code>, <code>save_workflow</code>,
+            <code>delete_workflow</code>, <code>list_workflow_runs</code>,
+            <code>record_workflow_run</code>, <code>clear_workflow_run_history</code>.
+            <code>src-tauri/src/commands/workflows.rs</code>. Error code
+            <code>workflow_error</code>. In-flight run state is a backend projection region,
+            <code>workflow-run@&lt;clientId&gt;</code>
+            (<code>src-tauri/src/workflow_projection/</code>). It is authoritative.
+          </li>
+          <li>
+            Macro playback state stays in the frontend store (<code>macroPlayback</code> in
+            <code>src/store/slices/macrosSlice.ts</code>). It has no projection.
+          </li>
+          <li>
+            Schedules: <code>list_schedules</code>, <code>save_schedule</code>,
+            <code>delete_schedule</code>, <code>set_schedule_enabled</code>,
+            <code>set_schedules_paused</code>, <code>report_schedule_run</code>,
+            <code>register_schedule_window</code>, <code>ack_schedule_run</code>,
+            <code>schedule_run_coverage</code>.
+          </li>
+        </ul>
+        <h3 id="1-3-execution">1.3 Execution</h3>
+        <ul>
+          <li>
+            Both inject input through one seam: <code>sendInputToTerminal</code> →
+            <code>send_input</code>, registered via <code>registerTerminalInputInjector</code> in
+            <code>macroPlayback.ts</code>. Both therefore work the same on local, SSH, serial,
+            telnet and <strong>agent-hosted</strong> sessions. Neither has any agent-side code. The
+            agent only sees terminal input. <code>run-local-process</code> always runs on the
+            desktop, behind a master opt-in, a confirmation on first run and a machine-local
+            allowlist (<code>LocalProcessAuthDialog.tsx</code>,
+            <code>workflowRunner.ts</code> around line 270). Its output goes to the inline
+            <code>WorkflowRunOutput</code> panel.
+          </li>
+          <li>
+            <strong>Multiple terminals, macros.</strong> <code>PROD-042</code>,
+            <code>src/store/slices/macroFanout.ts</code>. Delivery is lock-step: each step reaches
+            every live target before the next one. A target that drops is removed and the run
+            continues. Target choices are the active terminal, the live broadcast set, all
+            terminals, the current panel or a saved broadcast group, followed by a confirmation that
+            names every terminal (<code>MacroPlaybackDialog.tsx</code>,
+            <code>useMacroPlaybackTargets.ts</code>). Receiving tabs get a violet badge (<a
+              href="https://github.com/armaxri/termiHub/issues/3446"
+              >#3446</a
+            >).
+          </li>
+          <li>
+            <strong>Multiple terminals, workflows.</strong> "Run on…"
+            (<code>WorkflowRunTargetsDialog.tsx</code>,
+            <a href="https://github.com/armaxri/termiHub/issues/3418">#3418</a>) starts independent
+            concurrent runs, at most 8 at once (<code>WORKFLOW_FANOUT_CONCURRENCY</code>). A "Run in
+            parallel" toggle switches to sequential. Each terminal gets its own Stop button and a
+            "Stop all" covers them. Parameters are asked once. The palette offers "Run workflow on
+            broadcast group" (<a href="https://github.com/armaxri/termiHub/issues/3430">#3430</a>).
+          </li>
+          <li>
+            A workflow's <code>run-macro</code> step replays a macro with
+            <code>real-time</code> timing
+            (<code>src/store/slices/workflowRunOnTarget.ts:239</code>).
+          </li>
+          <li>
+            Concurrency limits: one macro playback per window. Workflows allow several runs.
+            On-output-match never fires while another workflow is running. A schedule never fires
+            while another run or playback is active in that window
+            (<code>src/store/scheduledRuns.ts</code>).
+          </li>
+        </ul>
+        <h3 id="1-4-authoring-and-recording">1.4 Authoring and recording</h3>
+        <ul>
+          <li>
+            <strong>Recording</strong> (<a href="https://github.com/armaxri/termiHub/issues/1674"
+              >#1674</a
+            >) works only for macros. The terminal toolbar's "…" menu has Record/Stop with an
+            indicator (<code>TerminalToolbarMore.tsx</code>), and <code>macrosSlice</code> captures
+            each input chunk with the delay since the previous one. Stopping opens
+            <code>MacroRecordSaveDialog</code> (name, description, tags). Palette and keybinding
+            action: <code>toggle-macro-recording</code>, unbound by default.
+          </li>
+          <li>
+            <strong>Writing a macro by hand</strong> (<a
+              href="https://github.com/armaxri/termiHub/issues/3440"
+              >#3440</a
+            >): <code>MacroEditorDialog.tsx</code>. Each step is a text field in escape notation
+            (<code>\r</code>, <code>\n</code>, <code>\t</code>, <code>\e</code>, <code>\xHH</code>,
+            <code>\\</code>) with an "add Enter" button and a per-step delay. Steps can be reordered
+            and deleted, and untouched steps are saved back byte for byte.
+          </li>
+          <li>
+            <strong>Workflow editor</strong>: <code>WorkflowEditorDialog.tsx</code>. It covers name,
+            description and tags; a typed "Add step…" menu (<code>workflowStepMeta.tsx</code>: Send
+            command, Run script, Run macro, Wait, Run local process, Condition, Loop, Wait for
+            output); per-step editors (<code>WorkflowStepRow.tsx</code>, 772 lines); error handling
+            (<code>WorkflowStepErrorHandlingEditor.tsx</code>); parameters
+            (<code>WorkflowParametersEditor.tsx</code>); and triggers as on/off chips
+            (<code>WorkflowTriggersEditor.tsx</code>).
+          </li>
+          <li>
+            <strong>Promote a macro</strong>: the Workflows "New" menu turns a macro into a one-step
+            workflow with a <code>run-macro</code> step (<code>WorkflowSidebar.tsx:124</code>,
+            377–384). This is the code's own admission that the two overlap.
+          </li>
+        </ul>
+        <h3 id="1-5-finding-and-running">1.5 Finding and running</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Surface</th>
+                <th>Macros</th>
+                <th>Workflows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Activity bar</td>
+                <td>"Macros", Clapperboard icon, always shown</td>
+                <td>
+                  "Workflows", <code>experimental: true</code> (<code>ActivityBar.tsx:58,63</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Sidebar</td>
+                <td>
+                  <code>MacroSidebar</code>. Toolbar: New macro, Record (dot), Export all, Import.
+                  Rows: name, then a Play button always visible (<a
+                    href="https://github.com/armaxri/termiHub/issues/5636"
+                    >#5636</a
+                  >), then Edit, Schedule, Recent runs, Duplicate, Export and Delete on hover.
+                  History panel at the bottom
+                </td>
+                <td>
+                  <code>WorkflowSidebar</code>. Toolbar: New (Blank, or Promote a macro), Import,
+                  Export. Rows: name, Run or Stop, "Run on…", Edit, Schedule, Duplicate, Export,
+                  Delete, an Armed/Off switch and a running-terminals list. Below the list:
+                  <strong>Schedules section</strong>, History, run output
+                </td>
+              </tr>
+              <tr>
+                <td>Terminal</td>
+                <td>"…" menu: Record and Play macro… (picker with timing and target)</td>
+                <td>none</td>
+              </tr>
+              <tr>
+                <td>Palette</td>
+                <td><code>Run macro: &lt;name&gt;</code> (always real-time)</td>
+                <td>
+                  <code>Run workflow: &lt;name&gt;</code>, plus "Run workflow on broadcast group (N
+                  terminals)…" while broadcasting (<code>CommandPalette.tsx:196–225</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Keybindings</td>
+                <td>
+                  <code>toggle-macro-recording</code> and <code>play-macro</code>, unbound
+                  (<code>keybindings.ts:210,232</code>)
+                </td>
+                <td>
+                  per-workflow <code>hotkey</code> trigger, stored in the workflow and not in the
+                  keybinding registry. App shortcuts win (<code>useKeyboardShortcuts.ts:66</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Schedules</td>
+                <td>Row action "Schedule"</td>
+                <td>
+                  Row action "Schedule". The schedule editor shows the Workflow action only when
+                  experimental is on (<a href="https://github.com/armaxri/termiHub/issues/4629"
+                    >#4629</a
+                  >). The always-on list is in Settings → Schedules (<a
+                    href="https://github.com/armaxri/termiHub/issues/4623"
+                    >#4623</a
+                  >)
+                </td>
+              </tr>
+              <tr>
+                <td>Import/export</td>
+                <td>
+                  <code>{version: 1, macros: [...]}</code> (<code>macroIo.ts</code>). Fresh ids on
+                  import, "(imported)" suffix on name clash
+                </td>
+                <td>
+                  <code>{version: 1, workflows: [...]}</code> (<code>workflowIo.ts</code>).
+                  Validates every step kind, strips <code>sourcePath</code>, summarizes
+                  local-process steps before import. Both share <code>importEnvelope.ts</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 id="1-6-schedules-5612-prod-043">
+          1.6 Schedules (<a href="https://github.com/armaxri/termiHub/issues/5612">#5612</a>,
+          PROD-043)
+        </h3>
+        <p>
+          <code>schedules.json</code> v2, <code>src-tauri/src/schedules/config.rs</code>. A schedule
+          has <code>action: {kind: "workflow", workflowId} | {kind: "macro", macroId}</code>,
+          <code>targets</code> (connections or a broadcast group, never the active tab),
+          <code>rule</code> (interval, daily or weekly), <code>missedRuns</code>,
+          <code>connectIfNeeded</code>, backend-owned <code>enabled</code> and
+          <code>confirmedAt</code> (changing the action or targets disables the schedule), and an
+          attempt <code>history</code> of 20 entries that links to <code>workflowRunIds</code> /
+          <code>macroRunIds</code>. Execution is frontend-side in
+          <code>src/store/scheduledRuns.ts</code>, which skips with "The macro no longer exists" /
+          "The workflow no longer exists".
+        </p>
+        <h3 id="1-7-tests-and-grades-that-cover-them-today">
+          1.7 Tests and grades that cover them today
+        </h3>
+        <ul>
+          <li>
+            Product run: <code>tests/system/tests/test_product_run_automations.py</code> (<a
+              href="https://github.com/armaxri/termiHub/issues/5536"
+              >#5536</a
+            >). It covers creating, editing and playing a macro on a local and an SSH terminal;
+            creating, editing and running a workflow with "Run on…" on both; an on-output-match
+            trigger; both histories; the palette; and a 1-minute schedule. Also
+            <code>test_product_run_workflow_disarm.py</code> (<a
+              href="https://github.com/armaxri/termiHub/issues/5674"
+              >#5674</a
+            >) and <code>test_product_run_rows_names.py</code> (the macro and workflow rows rule).
+          </li>
+          <li>
+            System tests: <code>test_workflow_automation.py</code>,
+            <code>test_workflow_artifact_names.py</code>, <code>test_schedules.py</code>. Harness:
+            <code>termihub_harness.WorkflowUi</code> and
+            <code>termihub_harness/product_run/automation_steps.py</code>
+            (<code>MACRO_EDITOR</code>, <code>AutomationPhaseUi</code>).
+          </li>
+          <li>
+            Unit: <code>macroPlayback.test.ts</code>, <code>macroIo.test.ts</code>,
+            <code>workflowRunner*.test.ts</code>, <code>workflowIo*.test.ts</code>,
+            <code>workflowTriggers.test.ts</code>, <code>workflowOutputTriggers.test.ts</code>,
+            <code>appStore.macro*.test.ts</code>, <code>macroFanout.test.ts</code>,
+            <code>workflowFanout.test.ts</code>, the component tests under both sidebar directories,
+            and the Rust <code>manager</code> and <code>history_manager</code> tests plus
+            <code>schedules/*_tests.rs</code>.
+          </li>
+        </ul>
+        <h3 id="1-8-overlap-and-what-is-unique">1.8 Overlap and what is unique</h3>
+        <ul>
+          <li>
+            <strong>Same in both:</strong> id, name, description and tags; a step list; run into a
+            terminal through one injector; a history of 200 metadata-only records; import and export
+            through one envelope helper; a palette entry; schedulable; backed up; row actions (Edit,
+            Schedule, Duplicate, Export, Delete).
+          </li>
+          <li>
+            <strong>Only macros:</strong> recording; raw byte chunks without an added newline;
+            per-chunk recorded delays and a timing mode chosen at play time; lock-step fan-out with
+            a confirmation that names every terminal, plus targets for the current panel and all
+            terminals; the violet tab badge; a 90-day history limit.
+          </li>
+          <li>
+            <strong>Only workflows:</strong> typed steps; control flow; wait-for-output; local
+            processes; parameters; retry and continue; five trigger kinds plus arm/disarm;
+            concurrent "Run on…"; the run output panel; a backend run projection; connection id
+            re-pointing; the Schedules section in the sidebar.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="2-usability-today">
+          2. Usability today <a class="anchor" href="#2-usability-today">#</a>
+        </h2>
+        <ol>
+          <li>
+            <strong>Two names for one idea.</strong> A user who wants "type this into the terminal
+            when I connect" has to know that macros cannot be triggered (audit PROD-041
+            "macros-no-triggers"). Then they have to find an experimental view, then "promote" the
+            macro. Nothing in the Macros sidebar points there.
+          </li>
+          <li>
+            <strong>Two sidebars and two homes for schedules.</strong> Schedules are listed in the
+            Workflows sidebar (experimental) and in Settings → Schedules. With experimental off, a
+            scheduled macro can be created from its row but never seen beside its macro.
+          </li>
+          <li>
+            <strong>Two histories with different words and rules.</strong> Macros say
+            <code>error</code> and workflows say <code>failed</code>. Macros record one entry per
+            playback with a list of tabs, workflows one per terminal. Macro history expires after 90
+            days and workflow history never does. A workflow that runs a macro writes into both
+            histories.
+          </li>
+          <li>
+            <strong>Two multi-terminal pickers.</strong> "Play on N terminals…" (with a confirmation
+            step, panel targets and all-terminal targets) and "Run on…" (with parallel and
+            sequential modes) do the same job with different options, labels and confirmation rules.
+          </li>
+          <li>
+            <strong>Timing is hidden and inconsistent.</strong> A macro's timing is picked each time
+            in the terminal picker. The sidebar's Play and the palette always use real-time, and so
+            does a workflow's <code>run-macro</code> step. The choice is never saved, so the same
+            macro behaves differently depending on where it is started.
+          </li>
+          <li>
+            <strong>The "Manual" trigger chip does nothing.</strong> Turning it off does not stop
+            palette, sidebar or button runs (<code>workflowsSlice.ts:414</code> defaults to
+            <code>manual</code>, and nothing checks for the chip). It looks like a setting and has
+            no effect.
+          </li>
+          <li>
+            <strong>Experimental leaks.</strong> Workflow hotkeys and palette entries are dispatched
+            without checking the experimental flag (<code>useKeyboardShortcuts.ts:71</code>,
+            <code>CommandPalette.tsx:203</code>). A user who turns experimental off still has
+            workflows running, but no view to manage them.
+          </li>
+          <li>
+            <strong>Duplicate concepts in the editor.</strong> "Send command" versus a macro step.
+            "Run macro" versus just putting the steps in. "Run script" versus a multi-line send.
+          </li>
+          <li>
+            <strong>Nothing to steer the first choice.</strong> A new user who opens Macros and
+            wants a conditional or a trigger has no path forward. A new user who opens Workflows and
+            wants to record keystrokes has no Record button.
+          </li>
+        </ol>
+      </section>
+      <section>
+        <h2 id="3-the-merged-design">
+          3. The merged design <a class="anchor" href="#3-the-merged-design">#</a>
+        </h2>
+        <h3 id="3-1-name">3.1 Name</h3>
+        <ul>
+          <li>
+            <strong>Recommended: "Automations".</strong> One automation, run an automation, record
+            an automation. The word covers keystroke playback and triggered multi-step jobs without
+            suggesting either "toy" or "heavyweight". The product run already calls this phase
+            "automations" (<code>test_product_run_automations.py</code>). It reads in sentence case
+            and is not taken by another feature.
+          </li>
+          <li>
+            <strong>Alternative: keep "Macros"</strong> as the single name, as Keyboard Maestro
+            does, where a macro can have triggers and conditions. The upside is that the
+            always-visible name stays the same. The downside is that "macro" suggests recorded
+            keystrokes only, and on-disconnect jobs with retries are a stretch under that name.
+          </li>
+          <li>
+            In the UI: the sidebar is "Automations". A "Type keys" step uses the word "recorded" for
+            recorded input. The word "macro" survives only as a search alias, so existing muscle
+            memory ("Run macro: …") still finds things.
+          </li>
+        </ul>
+        <h3 id="3-2-model">3.2 Model</h3>
+        <pre class="wireframe">
+Automation {
+  id, name, description?, tags[],               // unchanged fields
+  steps: Step[],
+  triggers: Trigger[],                          // [] = run it yourself; "manual" removed
+  parameters: Parameter[],                      // omitted when empty
+  triggersEnabled: bool,                        // armed switch, omitted when true
+  createdAt, updatedAt,
+  legacy?: { from: "macro" | "workflow", version: n }   // provenance, for reconcile/export
+}
+
+Step = everything WorkflowStep has today, plus:
+  type-keys {
+    chunks: [{ data, delayMs }],                // = MacroStep[], byte-identical
+    timing?: "recorded" | "fixed" | "instant",  // default "recorded"; fixedDelayMs? for "fixed"
+    recorded?: bool                             // true when produced by recording
+  }
+  run-automation { automationId }               // replaces run-macro; run-macro stays readable</pre
+        >
+        <ul>
+          <li>
+            **A macro is <code>{steps: [type-keys{chunks: macro.steps}], triggers: []}</code>.** One
+            step and not N. A 40-keystroke recording is one row in the editor, "Type
+            <code>ls -la⏎</code>, 12 keys, recorded". It expands into the chunk list that
+            <code>MacroEditorDialog</code> already edits today.
+          </li>
+          <li>
+            <code>type-keys</code> adds no newline and does not substitute <code>${param}</code>.
+            That keeps recorded bytes exact, so a recorded <code>${</code> stays literal. For typed
+            text with parameters, <code>send-command</code> ("Run command") stays the friendly kind.
+          </li>
+          <li>
+            Timing moves from a choice made at play time to a property of the step. The default is
+            "recorded", which is what the palette, the sidebar and <code>run-macro</code> already
+            use, so behavior does not change for those entry points.
+          </li>
+          <li>
+            <strong>Multiple terminals:</strong> a single engine, <code>workflowRunner</code>. A
+            <code>type-keys</code> step runs the existing <code>runMacroPlayback</code> scheduler
+            against each target's injector. Runs on several terminals use the workflow model:
+            independent, at most 8 at once, with a parallel toggle. Lock-step delivery goes away
+            (see 5.R3). For pure typing, the two look the same to the user.
+          </li>
+        </ul>
+        <h3 id="3-3-sidebar-one-list">3.3 Sidebar (one list)</h3>
+        <p>
+          Rows follow <code>docs/copy-style.md</code> "List rows: names, not settings": the name, an
+          optional description, and state markers only.
+        </p>
+        <pre class="wireframe">
+┌ AUTOMATIONS ───────────────────────── [New]  ● ⤓ ⤒ ┐   New = primary text; ● Record,
+│ 🔍 Search automations                               │   Import, Export all = icon buttons
+├─────────────────────────────────────────────────────┤
+│ Deploy prep                                  ▶      │   Play always visible (#5636)
+│   Pull, build and restart the web tier              │   muted description, if written
+│ Answer on match              ⚡ Armed [on]   ▶      │   marker + switch only when it has
+│ Nightly cleanup                     ◷ Off   ▶      │     an automatic trigger
+│ Sudo password                              ▶ ⋯     │   hover: Run on…, Edit, Schedule,
+│ Health check                  ⟳ Running 2  ■       │     Duplicate, Export, Delete
+│ Rotate logs                        ⚠ Failed  ▶      │   last automatic/scheduled run failed
+├ ▸ Schedules (2)  ───────────────────────────────────┤   collapsible, no longer experimental
+├ ▸ History ──────────────────────────────────────────┤   one history for everything
+└ (run output panel appears here while a process runs)┘</pre
+        >
+        <ul>
+          <li>
+            The tooltip on the name holds the trigger and its targets, a preview of the first step,
+            the last run and where it went, and the tags. It does not show "macro" or "workflow".
+          </li>
+          <li>
+            Empty state: "No automations yet. Record what you type in a terminal, or create one step
+            by step." It offers two buttons: <strong>Record</strong> and <strong>New</strong>.
+          </li>
+          <li>
+            Palette: one entry kind, "Run automation: &lt;name&gt;", with "Run macro: &lt;name&gt;"
+            and "Run workflow: &lt;name&gt;" kept as hidden search aliases. While broadcasting, the
+            palette offers "Run automation on broadcast group…".
+          </li>
+          <li>Terminal "…" menu: "Record automation" / "Stop recording" and "Run automation…".</li>
+        </ul>
+        <h3 id="3-4-editor-one-dialog-progressive-disclosure">
+          3.4 Editor (one dialog, progressive disclosure)
+        </h3>
+        <pre class="wireframe">
+┌ Edit automation ──────────────────────────────────────────────────┐
+│ Name        [Deploy prep                                  ]       │
+│ Description [Pull, build and restart the web tier         ]  0/80 │
+│                                                                   │
+│ Steps                                            [● Record steps] │
+│  ⋮⋮ 1  ⌨ Type keys    git pull⏎  (6 keys, recorded)        ⋯  ▾   │
+│  ⋮⋮ 2  ▷ Run command  make build ENV=${env}                ⋯  ▾   │
+│  ⋮⋮ 3  ⏱ Wait for output  "Build OK"  · 30 s                ⋯  ▾   │
+│  ⋮⋮ 4  ⏸ Wait  500 ms                                       ⋯      │
+│  [+ Add step ▾]                                                   │
+│      Type keys · Run command · Wait · Wait for output             │
+│      ─ More ─  Condition · Loop · Run script · Run automation ·   │
+│                Run local process                                  │
+│                                                                   │
+│ When it runs                                                      │
+│  ◉ When I run it (sidebar, palette, terminal menu)                │
+│  [+ Add trigger ▾]  Hotkey · On connect · On disconnect ·         │
+│                     On output match · On a schedule…              │
+│                                                                   │
+│ ▸ Ask for values when it runs (parameters)            (collapsed) │
+│ ▸ Tags                                                (collapsed) │
+├───────────────────────────────────────────────────────────────────┤
+│                                     Cancel  ·  Save  ·  [Save and run] │
+└───────────────────────────────────────────────────────────────────┘</pre
+        >
+        <ul>
+          <li>
+            Each step's "⋯" opens per-step options: "If this step fails" (stop, continue, or retry N
+            times with backoff), "Typing speed" for Type keys (as recorded, fixed delay, or
+            instant), Duplicate and Delete. The "▾" button expands the step's detail editor. For
+            Type keys that is the chunk list in escape notation, with "Add Enter", per-chunk delay,
+            reordering and the inline validation from
+            <a href="https://github.com/armaxri/termiHub/issues/3440">#3440</a>.
+          </li>
+          <li>
+            "When I run it" always applies and cannot be turned off. This replaces the "Manual"
+            chip, which had no effect (2.6). Adding an automatic trigger shows the Armed switch in
+            the editor and on the row.
+          </li>
+          <li>
+            "On a schedule…" opens the existing <code>ScheduleEditorDialog</code> with this
+            automation selected. Once saved, the schedule shows as a link here ("Every day 09:10 on
+            db-1 · Edit"). Schedules stay separate entities, because they carry targets, the
+            confirmation and history.
+          </li>
+          <li>
+            One primary button in the footer: <strong>Save</strong> when editing an existing
+            automation, <strong>Save and run</strong> when it is new (as with connections,
+            <a href="https://github.com/armaxri/termiHub/issues/5755">#5755</a>). Copy-style rules
+            apply.
+          </li>
+        </ul>
+        <h3 id="3-5-recording">3.5 Recording</h3>
+        <pre class="wireframe">
+Terminal "…" → Record automation         ─▶  tab shows ● Recording · [Stop] [Cancel]
+Stop ─▶ ┌ Save recording ────────────────────────────────┐
+        │ Recorded 14 keys (3.2 s): git pull⏎make⏎       │
+        │ ◉ New automation   Name [            ]         │
+        │ ○ Add to  [Deploy prep          ▾] at the end  │
+        │                       Cancel · [Save]          │
+        └────────────────────────────────────────────────┘
+Editor "● Record steps" ─▶ the editor collapses to a bar above the target terminal
+        ("Recording into 'Deploy prep' · Stop"); Stop inserts a Type keys step
+        at the selected position and reopens the editor, with the draft kept.</pre
+        >
+        <ul>
+          <li>
+            Recording still captures what is typed into the active terminal and nothing else. The
+            dismissal fix from
+            <a href="https://github.com/armaxri/termiHub/issues/5201">#5201</a> (dismissing the
+            dialog keeps the recording) carries over.
+          </li>
+        </ul>
+        <h3 id="3-6-run-picker-one-dialog-for-one-or-more-terminals">
+          3.6 Run picker (one dialog for one or more terminals)
+        </h3>
+        <pre class="wireframe">
+┌ Run "Deploy prep" ─────────────────────────────┐
+│ On  ◉ This terminal (prod-web)                 │
+│     ○ Broadcast set (3)   ○ This panel (2)     │
+│     ○ All terminals (5)   ○ Group [ops ▾]      │
+│     ○ Pick terminals…                          │
+│ ▸ More: ☑ Run in parallel                      │
+│ (parameters prompt follows, once)              │
+│                         Cancel · [Run]         │
+└────────────────────────────────────────────────┘</pre
+        >
+        <p>
+          A target with more than one terminal turns the button into "Run on N terminals…" and adds
+          the confirmation that names every terminal, as macros do today. Enter is ignored on that
+          step. Every receiving tab gets one "Running automation "&lt;name&gt;" (n/m)" badge. The
+          macro badge's violet color is reused.
+        </p>
+        <h3 id="3-7-history-one">3.7 History (one)</h3>
+        <pre class="wireframe">
+History                           [Deploy prep ×]  Clear…
+ ✓ Deploy prep    prod-web   Manual          2 min ago  4/4
+ ✗ Rotate logs    db-1       Scheduled       09:10      2/5 · step 3: timed out
+ ⊘ Sudo password  prod-web   Palette         yesterday  1/1 · canceled</pre
+        >
+        <p>
+          The record is the workflow record plus the fields only macros have:
+          <code>targetCount</code> and <code>targetLabels</code>. Status is <code>completed</code>,
+          <code>cancelled</code> or <code>failed</code>. The wire values are kept as they are today,
+          and the UI shows "Canceled". Origin is one of manual, palette, hotkey, on-connect,
+          on-disconnect, on-output-match, scheduled or "run by automation". One record per terminal.
+          Retention is the newest 200 records and 90 days.
+        </p>
+        <h3 id="3-8-what-stays-the-same">3.8 What stays the same</h3>
+        <p>
+          Agents need no protocol change, because the injector is the same. The safety rules for
+          schedules stay as they are: confirmation on first enable, disabled again when the action
+          or targets change, never prompts, <code>connectIfNeeded</code>. The local-process opt-in
+          and allowlist stay. So do the output-trigger limits and connection id re-pointing.
+        </p>
+      </section>
+      <section>
+        <h2 id="mockup">Mockup: the Automations sidebar <a class="anchor" href="#mockup">#</a></h2>
+        <div class="mockup-section">
+          <div class="mockup-note">
+            One <strong>Automations</strong> entry in the Activity Bar
+            <span class="callout">A</span> replaces Macros and Workflows. The toolbar
+            <span class="callout">B</span> has New as the primary action and Record and Import as
+            icon buttons. Rows <span class="callout">C</span> show the name, a muted description and
+            state markers only; Play is always visible. Schedules and History
+            <span class="callout">D</span> are collapsible sections under the list.
+          </div>
+          <div class="app">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                  <button class="activity-bar__item activity-bar__item--active" title="Automations">
+                    <svg class="li"><use href="#i-list-video" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header">
+                  <span class="sidebar__title">Automations</span>
+                  <div class="sidebar__header-actions">
+                    <button class="sidebar__header-btn" title="New">
+                      <svg class="li"><use href="#i-plus" /></svg>
+                    </button>
+                    <button class="sidebar__header-btn" title="Record">
+                      <svg class="li"><use href="#i-circle-dot" /></svg>
+                    </button>
+                    <button class="sidebar__header-btn" title="Import">
+                      <svg class="li"><use href="#i-download" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="automation-search">
+                  <svg class="li"><use href="#i-search" /></svg> Search automations
+                </div>
+                <div class="sidebar__content">
+                  <div
+                    class="connection-tree__item connection-tree__item--selected"
+                    style="height: auto"
+                  >
+                    <span class="automation-row__name"
+                      >Deploy prep<small>Pull, build and restart the web tier</small></span
+                    >
+                    <svg class="li"><use href="#i-play" /></svg>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="automation-row__name">Answer on match</span>
+                    <span class="automation-row__marker">Armed</span>
+                    <svg class="li"><use href="#i-play" /></svg>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="automation-row__name">Nightly cleanup</span>
+                    <span class="automation-row__marker">Off</span>
+                    <svg class="li"><use href="#i-play" /></svg>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="automation-row__name">Sudo password</span>
+                    <svg class="li"><use href="#i-play" /></svg>
+                  </div>
+                  <div class="automation-section">
+                    <svg class="li"><use href="#i-chevron-right" /></svg> Schedules (2)
+                  </div>
+                  <div class="automation-section">
+                    <svg class="li"><use href="#i-chevron-right" /></svg> History
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="tab-bar">
+                      <div class="tab tab--active">
+                        <svg class="li"><use href="#i-network" /></svg>
+                        <span class="state-dot state-dot--connected"></span>
+                        <span class="tab__title">prod-web</span>
+                        <button class="tab__close">
+                          <svg class="li"><use href="#i-x" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="terminal">
+                      <span class="prompt">prod-web $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">ready</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Automations Activity Bar item; the Macros and
+                Workflows items go away (slice 6).
+              </li>
+              <li>
+                <span class="callout">B</span> New, Record and Import; Export all lives in the
+                overflow.
+              </li>
+              <li>
+                <span class="callout">C</span> Rows follow the copy-style rule "List rows: names,
+                not settings". Armed/Off appears only on rows with an automatic trigger.
+              </li>
+              <li>
+                <span class="callout">D</span> Schedules stay separate entries (decision 4) and are
+                listed here; History is one list for everything.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+      <section>
+        <h2 id="behavior">States &amp; sequences <a class="anchor" href="#behavior">#</a></h2>
+        <div class="diagram">
+          <span class="diagram__caption">Boot migration and reconcile (slice 2)</span>
+          <pre class="mermaid">
+flowchart TD
+    A[Boot] --> B{automations.json exists?}
+    B -- no --> C[Read macros.json and workflows.json through their versioned gates]
+    C --> D[convert_library: from_macro, from_workflow, collision re-iding]
+    D --> E[Write automations.json atomically with source hashes]
+    E --> F[Copy legacy files to .pre-automations.bak once]
+    F --> G[Leave legacy files untouched]
+    B -- yes --> H{Legacy hash changed?}
+    H -- no --> Z[Load automations]
+    H -- yes --> I[Merge by id: new ids added, newer updatedAt wins, conflicts kept as copies]
+    I --> J[Update hashes and report the merge in recovery warnings]
+    G --> Z
+    J --> Z
+  </pre
+          >
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Converting one legacy entry (slice 1)</span>
+          <pre class="mermaid">
+flowchart LR
+    M[Macro] -->|steps become chunks, byte for byte| TK[one type-keys step, timing recorded]
+    W[Workflow] -->|manual triggers dropped| AT[automatic triggers only]
+    W -->|run-macro, recursively| RA[run-automation]
+    TK --> AU[Automation with legacy provenance]
+    AT --> AU
+    RA --> AU
+  </pre
+          >
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Slice order</span>
+          <pre class="mermaid">
+flowchart LR
+    S1[1 Model] --> S2[2 Store and migration]
+    S1 --> S3[3 Runner]
+    S2 --> S4[4 Frontend store]
+    S3 --> S4
+    S4 --> S5[5 Run picker]
+    S4 --> S9[9 History]
+    S4 --> S10[10 Schedules v3]
+    S5 --> S6[6 Sidebar]
+    S9 --> S6
+    S10 --> S6
+    S6 --> S7[7 Editor]
+    S7 --> S8[8 Recording]
+    S8 --> S11[11 Palette and IO]
+    S11 --> S12[12 Cleanup]
+  </pre
+          >
+        </div>
+      </section>
+      <section>
+        <h2 id="4-migration">4. Migration <a class="anchor" href="#4-migration">#</a></h2>
+        <h3 id="4-1-files">4.1 Files</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Old</th>
+                <th>New</th>
+                <th>Mapping</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>macros.json</code> v1</td>
+                <td><code>automations.json</code> v1</td>
+                <td>
+                  <code>Macro{…steps}</code> →
+                  <code
+                    >Automation{…, steps:[type-keys{chunks: steps, timing:"recorded",
+                    recorded:true}], triggers:[], legacy:{from:"macro",version:1}}</code
+                  >. An empty macro becomes <code>steps: []</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>workflows.json</code> v1–v3</td>
+                <td><code>automations.json</code> v1</td>
+                <td>
+                  Unchanged, plus <code>legacy:{from:"workflow"}</code>.
+                  <code>{kind:"manual"}</code> triggers are dropped (they had no effect).
+                  <code>run-macro{macroId}</code> →
+                  <code>run-automation{automationId: macroId}</code>, recursively in
+                  <code>then</code>/<code>else</code>/<code>body</code>
+                </td>
+              </tr>
+              <tr>
+                <td><code>macro-runs.json</code> + <code>runs.json</code></td>
+                <td><code>automation-runs.json</code> v1</td>
+                <td>
+                  Union. <code>macroId</code>/<code>workflowId</code> → <code>automationId</code>.
+                  <code>error</code> → <code>failed</code>. <code>workflow-step</code> →
+                  <code>run-by-automation</code>. Stable merge by <code>startedAt</code>, then the
+                  cap is applied
+                </td>
+              </tr>
+              <tr>
+                <td><code>schedules.json</code> v2</td>
+                <td><code>schedules.json</code> v3</td>
+                <td>
+                  <code>action {macro, macroId}</code> and <code>{workflow, workflowId}</code> →
+                  <code>{automation, automationId}</code>. The id is unchanged.
+                  <code>macroRunIds</code>/<code>workflowRunIds</code> merge into
+                  <code>runIds</code>, with the old keys kept on read
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  settings <code>hiddenActivityBarViews</code> ∋
+                  <code>macros</code>/<code>workflows</code>, last sidebar view
+                </td>
+                <td><code>automations</code></td>
+                <td>Hidden only when <strong>both</strong> old views were hidden</td>
+              </tr>
+              <tr>
+                <td>
+                  keybinding actions <code>toggle-macro-recording</code>, <code>play-macro</code>
+                </td>
+                <td>same ids, new labels</td>
+                <td>
+                  Ids are kept, so a user's <code>keybindings.json</code> keeps working. Labels:
+                  "Record automation (start/stop)", "Run automation…"
+                </td>
+              </tr>
+              <tr>
+                <td>export envelopes <code>{macros}</code> / <code>{workflows}</code></td>
+                <td><code>{version:1, automations}</code></td>
+                <td>The importer accepts all three</td>
+              </tr>
+              <tr>
+                <td>backup sections <code>macros</code>, <code>workflows</code></td>
+                <td>new <code>automations</code> section</td>
+                <td>Restoring an old backup runs the same converter</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>
+            <strong>Ids are kept as they are.</strong> <code>macro-&lt;ulid&gt;</code> and
+            <code>workflow-&lt;ulid&gt;</code> cannot collide by construction. The converter still
+            checks for collisions, because imported or older ids can be arbitrary. The rules are
+            deterministic, so a rerun of the migration (and the reconcile pass) always produces the
+            same ids:
+            <ul>
+              <li>
+                Workflows claim their ids first, then macros, each in file order. The first entry
+                with an id keeps it.
+              </li>
+              <li>
+                A later entry with a taken id gets <code>automation-&lt;old id&gt;</code>, or
+                <code>automation-&lt;old id&gt;-2</code>, <code>-3</code> and so on when that is
+                taken too. A new id never equals any id in either legacy file, so re-iding one entry
+                cannot push another one off its id.
+              </li>
+              <li>
+                Every reference is rewritten in the same pass: <code>run-macro</code> steps now,
+                schedule actions and history from the returned id map (slices 2 and 10).
+              </li>
+              <li>
+                A <code>run-macro</code> step that names no macro at all, but whose id now belongs
+                to a converted workflow, is pointed at <code>missing-macro-&lt;id&gt;</code>. It
+                keeps failing as it does today instead of silently running the workflow.
+              </li>
+            </ul>
+          </li>
+          <li>
+            Because ids are kept, palette keys, the schedule-to-run links and the history filter
+            chip all keep resolving.
+          </li>
+        </ul>
+        <h3 id="4-2-procedure-backend-at-boot-before-any-manager-loads">
+          4.2 Procedure (backend, at boot, before any manager loads)
+        </h3>
+        <ol>
+          <li>
+            If <code>automations.json</code> exists, skip to step 5. Otherwise read both legacy
+            stores through their existing <code>VersionedStore</code> gates. A newer or corrupt file
+            is salvaged or refused as it is today.
+          </li>
+          <li>
+            Convert both, write <code>automations.json</code> atomically, and record a provenance
+            block:
+            <code
+              >migratedFrom: {"macros.json": {version, sha256}, "workflows.json": {version,
+              sha256}}</code
+            >.
+          </li>
+          <li>Copy each legacy file to <code>&lt;name&gt;.pre-automations.bak</code>, once.</li>
+          <li>
+            <strong>Leave the legacy files where they are.</strong> The new build never writes them
+            again.
+          </li>
+          <li>
+            <strong>Reconcile (the round trip).</strong> On every boot, if a legacy file's hash
+            differs from the provenance block, an older build has edited it. Merge entries by id:
+            new ids are added, and for changed ids the newer <code>updatedAt</code> wins. When both
+            sides changed, keep both and name the copy "&lt;name&gt; (from older version)". Then
+            update the hashes and report "Automations: merged N changes made by an older termiHub
+            version" in the recovery warnings.
+          </li>
+          <li>
+            Migrate schedules v2 → v3 under the same lock. The PER-004 gate already stops a v2 build
+            from overwriting a v3 file.
+          </li>
+        </ol>
+        <h3 id="4-3-what-older-builds-see">4.3 What older builds see</h3>
+        <ul>
+          <li>
+            A build from before the merge ignores <code>automations.json</code> and
+            <code>automation-runs.json</code>. It reads the frozen <code>macros.json</code> and
+            <code>workflows.json</code> and sees the library as it was when the migration ran.
+            Anything it edits there is merged back on the next upgrade (4.2 step 5).
+          </li>
+          <li>
+            Automations created after the merge are invisible to older builds. This loses nothing,
+            because they live in <code>automations.json</code>.
+          </li>
+          <li>
+            <code>schedules.json</code> v3 is refused for overwrite by a v2 build, as already
+            happens with any newer version. A v2 build therefore shows its own schedules as
+            unreadable instead of discarding them. This is the accepted behavior for every versioned
+            store.
+          </li>
+          <li>
+            A backup from a new build restored into an older build: the older build skips the
+            unknown <code>automations</code> section ("not known to this version",
+            <code>backup/restore.rs:319</code>). During the transition the new build also includes
+            the frozen legacy files as <code>macros</code> and <code>workflows</code> sections, so
+            an older build still restores something useful.
+          </li>
+          <li>
+            Reversibility: deleting <code>automations.json</code> (or restoring
+            <code>.pre-automations.bak</code>) puts things back exactly as they were before. A later
+            explicit "Export as legacy macros and workflows…" is possible but not planned, since
+            everything is pre-v0.1.0.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="5-implementation-plan">
+          5. Implementation plan <a class="anchor" href="#5-implementation-plan">#</a>
+        </h2>
+        <p>
+          Each slice is one agent and one PR into <code>develop</code>, and each has its own change
+          fragment under <code>docs/changes/</code>. Every slice that changes UI or behavior adds a
+          product-run grade in a <strong>new</strong> file,
+          <code>tests/system/tests/test_product_run_automation_&lt;topic&gt;.py</code>, built on
+          <code>AutomationPhaseUi</code>. Existing grades are updated where their selectors change.
+          No feature flag is needed: slices 1–4 are invisible, and the views switch in slice 6. The
+          exception is that the experimental scope follows the maintainer's answer to question 2.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Slice</th>
+                <th>Main files</th>
+                <th>Tests and grade</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>
+                  <strong>Model and converters (Rust, pure). Done.</strong> <code>Automation</code>,
+                  the <code>type-keys</code> and <code>run-automation</code> steps,
+                  <code>run-macro</code> as a read alias, the pure functions
+                  <code>from_macro</code>, <code>from_workflow</code> and
+                  <code>convert_library</code>, and collision re-iding. (<code>merge_runs</code>
+                  moved to slice 2, which owns the run-history model)
+                </td>
+                <td>
+                  new <code>src-tauri/src/automations/{mod,config,convert}.rs</code>, ts-rs output
+                  in <code>src/types/generated/</code>
+                </td>
+                <td>
+                  Golden-file round trips: every step kind, nested <code>run-macro</code> rewrite,
+                  <code>manual</code> dropped, byte-identical chunks, id collision. No grade
+                  (invisible)
+                </td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>
+                  <strong>Store, IPC and boot migration.</strong> Storage, manager, the
+                  <code>AutomationRun</code> model and <code>merge_runs</code>, run-history manager;
+                  commands <code>list/save/delete_automation(s)</code> and
+                  <code>list/record/clear_automation_runs</code>; boot migration with provenance,
+                  <code>.bak</code> and reconcile; the <code>automations</code> backup section (plus
+                  the frozen legacy sections); <code>automation_error</code>
+                </td>
+                <td>
+                  <code>src-tauri/src/automations/{storage,manager,history*,migrate}.rs</code>,
+                  <code>commands/automations.rs</code>, <code>lib.rs</code> registration,
+                  <code>backup/sections.rs</code>
+                </td>
+                <td>
+                  Migration tests over a temp dir: first run, idempotent rerun, legacy edited then
+                  reconciled, conflict copy, newer-file refusal. Grade <code>…_migration.py</code>:
+                  seed legacy files into the profile, launch, check
+                  <code>automations.json</code> and that the legacy files are unchanged
+                </td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>
+                  **Runner: run <code>type-keys</code> and <code>run-automation</code>.** Seam into
+                  <code>runMacroPlayback</code> with step timing; cycle and depth cap (reuse
+                  <code>MAX_CONDITIONAL_DEPTH</code>)
+                </td>
+                <td>
+                  <code>src/services/workflowRunner.ts</code>, <code>workflowSchema.ts</code>,
+                  <code>store/slices/workflowRunOnTarget.ts</code>
+                </td>
+                <td>
+                  Unit tests: timing modes, cancel mid-chunk, a recursion cycle rejected, a
+                  disconnected target fails the step. No grade (no UI). Can run in parallel with
+                  slice 2
+                </td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  <strong>Frontend switch to the single store.</strong>
+                  <code>automationsSlice</code> and <code>automationApi</code> replace the libraries
+                  in <code>macrosSlice</code> and <code>workflowsSlice</code>.
+                  <code>playMacro</code> and <code>runWorkflow</code> become
+                  <code>runAutomation</code>. The
+                  <strong>two existing sidebars render through thin adapters</strong>: automations
+                  with only <code>type-keys</code> steps and no triggers show under Macros, the rest
+                  under Workflows
+                </td>
+                <td>
+                  <code>src/store/slices/*</code>, <code>src/services/automationApi.ts</code>,
+                  adapters in both sidebar directories, <code>appStore.ts</code> import block
+                </td>
+                <td>
+                  All <code>appStore.macro*</code> and workflow store tests ported. Grade
+                  <code>…_store_switch.py</code>: the existing automations phase passes unchanged on
+                  the new store
+                </td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>
+                  <strong>One run picker and one tab badge.</strong> Merge
+                  <code>MacroPlaybackDialog</code> targets and
+                  <code>WorkflowRunTargetsDialog</code>. The macro fan-out becomes per-target runs
+                </td>
+                <td>
+                  new <code>src/components/Automations/RunTargetsDialog.tsx</code>,
+                  <code>useMacroPlaybackTargets.ts</code> → <code>useRunTargets.ts</code>,
+                  <code>TabBar</code> badge
+                </td>
+                <td>
+                  Component tests: each target kind, the multi-terminal confirmation, parallel
+                  toggle. Grade <code>…_run_targets.py</code>: a typed automation on 2 terminals,
+                  both show <code>$HOME</code> lines
+                </td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>
+                  <strong>Automations sidebar.</strong> One list, the rows from 3.3, the toolbar,
+                  collapsible Schedules and History and the run output panel. Activity bar
+                  <code>automations</code> replaces <code>macros</code> and <code>workflows</code>,
+                  with the settings view-id migration. Removes <code>MacroSidebar</code> and
+                  <code>WorkflowSidebar</code> (the editors stay)
+                </td>
+                <td>
+                  new <code>src/components/AutomationSidebar/*</code>, <code>ActivityBar.tsx</code>,
+                  settings migration
+                </td>
+                <td>
+                  Rows grade added to <code>test_product_run_rows_names.py</code> (selectors
+                  updated). New grade <code>…_sidebar.py</code>: one list holds a recorded, a
+                  triggered and a scheduled automation, with no "macro" or "workflow" copy
+                </td>
+              </tr>
+              <tr>
+                <td>7</td>
+                <td>
+                  <strong>Unified editor.</strong> The 3.4 layout, the grouped Add step menu, a Type
+                  keys step editor (reusing the escape-notation rows from
+                  <code>MacroEditorDialog</code>), "When it runs" with no Manual chip, parameters
+                  and tags collapsed, "Save and run"
+                </td>
+                <td>
+                  new <code>src/components/AutomationEditor/*</code>, built from
+                  <code>WorkflowEditorDialog</code> / <code>WorkflowStepRow</code> /
+                  <code>MacroEditorDialog</code> parts
+                </td>
+                <td>
+                  Dirty-dismiss, layout and validation tests ported. Grade <code>…_editor.py</code>:
+                  write a Type keys step with <code>\x03</code>, add a trigger, save, run
+                </td>
+              </tr>
+              <tr>
+                <td>8</td>
+                <td>
+                  <strong>Recording into the model.</strong> Toolbar Record, the Save recording
+                  dialog (new or add to existing), the editor's "Record steps" bar, keybinding
+                  labels
+                </td>
+                <td>
+                  <code>TerminalToolbarMore.tsx</code>, <code>MacroRecordSaveDialog</code> →
+                  <code>RecordingSaveDialog</code>, <code>keybindings.ts</code> labels
+                </td>
+                <td>
+                  Unit tests: insert position, cancel keeps the draft. Grade
+                  <code>…_record.py</code>: record on the local shell, add to an existing
+                  automation, play it, check the output
+                </td>
+              </tr>
+              <tr>
+                <td>9</td>
+                <td>
+                  <strong>One history panel.</strong> Migrated records, the origin labels from 3.7,
+                  filter chip, "Clear…" confirmation (<a
+                    href="https://github.com/armaxri/termiHub/issues/5719"
+                    >#5719</a
+                  >)
+                </td>
+                <td>
+                  <code>AutomationSidebar/HistorySection.tsx</code>, delete both old history
+                  sections
+                </td>
+                <td>
+                  Grade <code>…_history.py</code>: a manual run, a palette run and a nested
+                  <code>run-automation</code> run each produce one correctly labeled record
+                </td>
+              </tr>
+              <tr>
+                <td>10</td>
+                <td>
+                  <strong>Schedules v3.</strong> Action <code>automation</code>, the v2 → v3
+                  migration, <code>runIds</code>, a single picker in the schedule editor, Settings →
+                  Schedules labels, <code>scheduledRuns.ts</code> resolves automations
+                </td>
+                <td>
+                  <code>src-tauri/src/schedules/{config,history,manager}.rs</code>,
+                  <code>ScheduleEditorDialog.tsx</code>, <code>useScheduleLabels.ts</code>,
+                  <code>scheduledRuns.ts</code>
+                </td>
+                <td>
+                  Rust migration tests (a v2 file with both action kinds). Grade
+                  <code>…_schedule.py</code>: a 1-minute schedule on a recorded automation fires and
+                  links its history record
+                </td>
+              </tr>
+              <tr>
+                <td>11</td>
+                <td>
+                  <strong>Palette, hotkeys, import and export.</strong> One palette entry kind plus
+                  aliases, "Run automation on broadcast group…", the
+                  <code>{automations}</code> envelope, the importer accepts legacy envelopes,
+                  local-process summary and <code>sourcePath</code> stripping kept. Honor the
+                  experimental scope in hotkeys and palette (fixes 2.7)
+                </td>
+                <td>
+                  <code>CommandPalette.tsx</code>, <code>automationIo.ts</code> (from
+                  <code>macroIo</code> + <code>workflowIo</code>), <code>importEnvelope.ts</code>,
+                  <code>useKeyboardShortcuts.ts</code>
+                </td>
+                <td>
+                  Import tests for all three envelopes. Grade <code>…_palette_io.py</code>: "Run
+                  macro: X" still finds X; an exported automation re-imports with a fresh id
+                </td>
+              </tr>
+              <tr>
+                <td>12</td>
+                <td>
+                  <strong>Cleanup and docs.</strong> Remove the <code>macros</code> and
+                  <code>workflows</code> IPC and managers (keep only the read path the migration
+                  needs), the old error codes and the promote-a-macro code. Update the user docs,
+                  <code>architecture.md</code> and a concept HTML under
+                  <code>docs/concepts/implemented/</code> that replaces
+                  <code>macro-recording.html</code> and <code>workflow-automation.html</code>
+                </td>
+                <td>
+                  <code>src-tauri/src/{macros,workflows}/</code> (reduced to legacy readers), docs
+                </td>
+                <td>
+                  knip and lint clean; the full system suite. Grade: the existing automations phase,
+                  renamed, still passes
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Order: 1 → (2 ∥ 3) → 4 → (5 ∥ 9 ∥ 10) → 6 → 7 → 8 → 11 → 12. Slices 6, 7 and 8 all touch
+          the sidebar and editor directories, so they go one after another. Slice 4 touches the
+          <code>appStore.ts</code> import block, so pair it with a backend slice and not with
+          another frontend slice. Slice 2 touches <code>lib.rs</code> registration.
+        </p>
+        <h3 id="risky-parts">Risky parts</h3>
+        <ul>
+          <li>
+            <strong>R1: migration correctness.</strong> This is user-authored data. The safeguards
+            are golden fixtures from real files, byte-identical <code>type-keys</code> chunks,
+            provenance hashes, <code>.bak</code>, and never writing the legacy files. Slice 2 must
+            include an "edited by an older build" test.
+          </li>
+          <li>
+            <strong>R2: reconcile conflicts.</strong> "Keep both" is safe but can produce
+            duplicates. Do not try to merge step lists.
+          </li>
+          <li>
+            <strong>R3: losing lock-step fan-out.</strong> Today a macro on 5 terminals advances
+            them in lock-step. Per-target runs can drift by a few milliseconds, and a slow target no
+            longer holds the others back. That is a behavior change, but no test or grade depends on
+            lock-step. If it matters, a hidden <code>lockStep</code> engine mode for automations
+            that contain only <code>type-keys</code> steps can be added later without changing the
+            model.
+          </li>
+          <li>
+            <strong>R4: the experimental boundary.</strong> Today's always-visible Macros view
+            becomes a view that contains formerly experimental features. Question 2 decides what
+            stays gated. Slice 11 closes the existing leaks (2.7).
+          </li>
+          <li>
+            <strong>R5: the 90-day limit now applies to former workflow history.</strong> Old
+            workflow runs older than 90 days are dropped at migration. Either log it or exempt
+            migrated records; the recommendation is to apply the limit, since it is metadata only.
+          </li>
+          <li>
+            <strong>R6: the projection.</strong> Macro playback state moves into the
+            <code>workflow-run@&lt;clientId&gt;</code> region, which can be renamed later. The
+            region becomes the single source for "running" markers. Watch the stateless-UI
+            faithful-mirror tests.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="6-open-questions-for-the-maintainer">
+          6. Open questions for the maintainer
+          <a class="anchor" href="#6-open-questions-for-the-maintainer">#</a>
+        </h2>
+        <ol>
+          <li>
+            <strong>Name.</strong> Recommended: <strong>"Automations"</strong>. It covers both
+            typing and triggered jobs, and the product run already uses it. The alternative is to
+            keep "Macros" as the single name, so the always-visible name stays the same.
+          </li>
+          <li>
+            <strong>Experimental scope after the merge.</strong> Recommended: the merged Automations
+            view is always visible, with typing, commands, waits, conditions, loops, parameters,
+            triggers and schedules all graduated. Only the <strong>Run local process</strong> step
+            stays behind "Allow experimental features", because it is security-sensitive. The
+            alternative is to keep triggers experimental too.
+          </li>
+          <li>
+            <strong>Timing of typed input.</strong> Recommended: make typing speed (as recorded,
+            fixed, instant) a saved property of each Type keys step, set in the editor, so an
+            automation behaves the same from every entry point. The run picker then drops the
+            per-run timing choice that the terminal's Play dialog has today. The alternative is to
+            keep a per-run override under "More".
+          </li>
+          <li>
+            <strong>Where schedules live.</strong> Recommended: keep schedules as their own entries
+            (they carry targets, the confirmation and history), listed in the Automations sidebar
+            and in Settings → Schedules, and also shown as "On a schedule" links in the editor's
+            "When it runs" section. The alternative is to make a schedule a kind of trigger stored
+            inside the automation, which is more uniform but would mean rewriting the schedule
+            safety model.
+          </li>
+        </ol>
+      </section>
+      <section>
+        <h2 id="maintainer-decisions-2026-11-23">
+          Maintainer decisions (2026-11-23)
+          <a class="anchor" href="#maintainer-decisions-2026-11-23">#</a>
+        </h2>
+        <ol>
+          <li>
+            Name: <strong>Automations</strong>. The palette keeps "Run macro:" / "Run workflow:" as
+            search aliases.
+          </li>
+          <li>
+            Experimental: only the <strong>Run local process</strong> step stays behind the
+            experimental switch. Everything else graduates.
+          </li>
+          <li>
+            Typing speed: <strong>saved per Type keys step</strong>. The play dialog no longer asks.
+          </li>
+          <li>
+            Schedules: stay <strong>separate entries</strong>, listed in the sidebar and Settings,
+            and linked from "When it runs".
+          </li>
+        </ol>
+      </section>
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Slice</th>
+                <th>State</th>
+                <th>Where</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1 Model and converters</td>
+                <td>Done. Not wired into the app; no user-visible change</td>
+                <td>
+                  <code>src-tauri/src/automations/{config,convert}.rs</code>, golden files in
+                  <code>src-tauri/src/automations/testdata/</code>, ts-rs types in
+                  <code>src/types/generated/</code> (<code>Automation</code>,
+                  <code>AutomationStep</code>, <code>AutomationTrigger</code>,
+                  <code>TypeKeysChunk</code>, <code>TypingSpeed</code>,
+                  <code>AutomationLegacy</code>, <code>LegacySource</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>2–12</td>
+                <td>Open</td>
+                <td>
+                  Tracked in <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Model notes from slice 1:</p>
+        <ul>
+          <li>
+            The leaf types that did not change (error handling, condition, loop mode, parameter,
+            disconnect cause) are reused from the workflow model, so their JSON and TypeScript names
+            stay <code>Workflow*</code> until slice 12 moves them.
+          </li>
+          <li>
+            <code>type-keys</code> always writes its <code>timing</code>;
+            <code>fixedDelayMs</code> is optional and defaults to 40 ms
+            (<code>DEFAULT_FIXED_DELAY_MS</code>), the macro player's fixed mode.
+          </li>
+          <li>
+            A converted macro is marked <code>recorded: true</code> even when it was written by
+            hand, because the legacy file does not say which it was.
+          </li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept automations</code>. The concept is the source of
+            truth.
+          </p>
+        </blockquote>
+        <p><strong>Last synced:</strong> 2026-11-24, slice 1 · <strong>Status:</strong> partial</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Model 3.2 and converters 4.1</td>
+                <td>Implemented in <code>src-tauri/src/automations/</code></td>
+                <td>In sync</td>
+                <td>None</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Store, migration, runner, UI (slices 2–12)</td>
+                <td>Not implemented</td>
+                <td>Missing</td>
+                <td>Implement per slice, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
