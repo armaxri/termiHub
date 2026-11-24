@@ -521,13 +521,15 @@ export const terminalDispatcher = new TerminalOutputDispatcher();
 
 /**
  * Subscribe to agent setup progress events. The payload is the generated
- * `AgentSetupProgress` (camelCase `agentId` on the wire).
+ * `AgentSetupProgress` (camelCase `agentId` on the wire). `sessionId` names the
+ * setup's terminal session on a step meant for that run's tab only (#5992).
  */
 export async function onAgentSetupProgress(
-  callback: (agentId: string, step: string, message: string) => void
+  callback: (agentId: string, step: string, message: string, sessionId: string | null) => void
 ): Promise<UnlistenFn> {
   return await listen<AgentSetupProgress>(TAURI_EVENT.agentSetupProgress, (event) => {
-    callback(event.payload.agentId, event.payload.step, event.payload.message);
+    const { agentId, step, message, sessionId } = event.payload;
+    callback(agentId, step, message, sessionId);
   });
 }
 

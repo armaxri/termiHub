@@ -243,11 +243,20 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       // upload + script injection run in the background and stream steps here.
       stopProgressListener();
       const held = await progressListener.attach(() =>
-        onAgentSetupProgress((agentId, step, message) => {
+        onAgentSetupProgress((agentId, step, message, sessionId) => {
           if (agentId !== agent.id) return;
           // The agent row follows the setup (#5906); the app-wide listener
           // does the same once this dialog is closed.
-          useAgentSetupStatus.getState().applyProgress(agentId, step, message);
+          useAgentSetupStatus.getState().applyProgress(agentId, step, message, sessionId);
+
+          if (step === "sent") {
+            // Windows: the commands run in the setup tab, and the app-wide
+            // listener reports the checked outcome (#5992). Nothing is deployed yet.
+            toast.dismiss(progressToastIdRef.current ?? undefined);
+            stopProgressListener();
+            onOpenChange(false);
+            return;
+          }
 
           if (step === "done") {
             // toast-policy: background — the deploy runs on after its dialog closed
@@ -313,14 +322,15 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         },
         { contentType: "terminal", sessionId: result.sessionId }
       );
-      // The tab says when the setup is over (#5865). Every setup ends the
-      // tab's shell with its exit status: the POSIX script runs with `exec`,
-      // the Windows commands end with `exit` (#5946).
+      // The tab says when the setup is over (#5865): on POSIX through the exit
+      // code of the shell its script replaced, on Windows (whose exit code says
+      // nothing) through the backend's check of the host (#5992).
       if (setupTabId) {
         useAgentSetupStatus.getState().registerSetupTab(setupTabId, {
           agentId: agent.id,
           agentName: agent.name,
-          reportsExit: true,
+          sessionId: result.sessionId,
+          reportsExit: !isWindowsSuffix(selectedArch),
         });
       }
 

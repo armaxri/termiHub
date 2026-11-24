@@ -3,4 +3,9 @@
 /**
  * Progress event emitted during agent setup.
  */
-export type AgentSetupProgress = { agentId: string, step: string, message: string, };
+export type AgentSetupProgress = { agentId: string, step: string, message: string, 
+/**
+ * The setup's terminal session, on a step that must only reach that run's
+ * tab (a Windows run's `sent` and its outcome, #5992).
+ */
+sessionId: string | null, };
