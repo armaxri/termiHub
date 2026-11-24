@@ -57,6 +57,30 @@ def schedule_file_problems(doc: Any, schedule_id: str, automation_id: str) -> li
     return problems
 
 
+#: What an edit may change besides the fields the user touched.
+EDIT_STAMPS = ("updatedAt",)
+
+
+def edit_problems(before: Any, after: Any, changed: dict[str, Any]) -> list[str]:
+    """An edit changed exactly ``changed`` of the stored schedule (#5983).
+
+    ``before`` and ``after`` are the schedule as ``schedules.json`` holds it.
+    Every other key, also one this build does not know, must be as it was: the
+    description, "Connect if not connected", the targets, the confirmation, the
+    missed-run policy and the links to runs.
+    """
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return [f"the schedule is not in {SCHEDULES_FILE}"]
+    problems: list[str] = []
+    for key in sorted(set(before) | set(after) | set(changed)):
+        if key in EDIT_STAMPS:
+            continue
+        expected = changed[key] if key in changed else before.get(key)
+        if after.get(key) != expected:
+            problems.append(f"{key} is {after.get(key)!r}, not {expected!r}")
+    return problems
+
+
 def linked_run_problems(attempt: Any, stored_runs: Any, automation_id: str) -> list[str]:
     """A fired attempt links its records in the single automation run history.
 

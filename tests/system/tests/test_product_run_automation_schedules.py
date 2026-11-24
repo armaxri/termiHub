@@ -38,6 +38,7 @@ from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.automation_schedules import (
     AUTOMATION_RUNS_FILE,
     SCHEDULES_FILE,
+    edit_problems,
     linked_run_problems,
     schedule_file_problems,
 )
@@ -105,6 +106,40 @@ def test_grade_unlinked_or_mislabelled_runs_fail():
         "run r1 has origin 'manual', not 'scheduled'",
         f"run r2 is not in {AUTOMATION_RUNS_FILE}",
     ]
+
+
+def _edited(**over: Any) -> dict[str, Any]:
+    return {
+        "id": "s1", "name": "Nightly", "description": "Checks the hosts",
+        "action": {"kind": "automation", "automationId": "a1", "legacySource": "macro"},
+        "targets": {"kind": "connections", "connectionIds": ["c2", "c1"]},
+        "missedRuns": "run-once", "connectIfNeeded": True, "enabled": True,
+        "confirmedAt": "t", "history": [{"runIds": ["r1", "r2"]}],
+        "updatedAt": "u", "futureFlag": 1, **over,
+    }
+
+
+def test_grade_rename_that_keeps_everything_passes():
+    after = _edited(name="Renamed", updatedAt="later")
+    assert edit_problems(_edited(), after, {"name": "Renamed"}) == []
+
+
+def test_grade_each_lost_field_fails():
+    for key in _edited():
+        if key in ("id", "name", "updatedAt"):
+            continue
+        after = _edited(name="Renamed")
+        del after[key]
+        problems = edit_problems(_edited(), after, {"name": "Renamed"})
+        assert len(problems) == 1 and problems[0].startswith(f"{key} is None"), (key, problems)
+
+
+def test_grade_edit_that_did_not_take_or_lost_the_schedule_fails():
+    assert edit_problems(_edited(), _edited(), {"name": "Renamed"}) == [
+        "name is 'Nightly', not 'Renamed'"
+    ]
+    assert edit_problems(_edited(), None, {}) == [f"the schedule is not in {SCHEDULES_FILE}"]
+    assert edit_problems(_edited(), _edited(new=1), {}) == ["new is 1, not None"]
 
 
 # ── live grade ────────────────────────────────────────────────────────────

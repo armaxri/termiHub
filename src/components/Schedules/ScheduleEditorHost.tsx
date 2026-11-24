@@ -24,14 +24,18 @@ export function ScheduleEditorHost() {
   const input: ScheduleInput | null = useMemo(
     () =>
       existing
-        ? {
+        ? // Every editable field (#5983): one the editor is not given is lost on
+          // save. The type names them all, so a new field fails to compile here.
+          ({
             id: existing.id,
             name: existing.name,
+            description: existing.description,
             action: existing.action,
             targets: existing.targets,
             rule: existing.rule,
             missedRuns: existing.missedRuns,
-          }
+            connectIfNeeded: existing.connectIfNeeded,
+          } satisfies { [K in keyof Required<ScheduleInput>]: ScheduleInput[K] })
         : null,
     [existing]
   );
