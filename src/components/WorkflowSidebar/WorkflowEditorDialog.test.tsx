@@ -7,6 +7,7 @@ import type { Workflow } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import type { SavedConnection } from "@/types/connection";
 import { flushAsync } from "@/test/flushAsync";
+import { leaveField } from "@/test/leaveField";
 import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({
@@ -305,15 +306,21 @@ describe("WorkflowEditorDialog", () => {
   it("disables Save when the name is emptied", () => {
     render();
     setInput("workflow-editor-name", "   ");
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("re-enables Save once a valid name is restored", () => {
     render();
     setInput("workflow-editor-name", "");
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     setInput("workflow-editor-name", "Valid again");
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("enables Save and saves a trimmed payload when the form and step list are valid", async () => {
@@ -321,7 +328,9 @@ describe("WorkflowEditorDialog", () => {
     render({ onSave });
 
     // A valid form (non-empty name) plus a non-empty step list => Save enabled.
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
 
     setInput("workflow-editor-name", "  Trim me  ");
     setInput("workflow-editor-description", "  spaced desc  ");
@@ -355,7 +364,9 @@ describe("WorkflowEditorDialog", () => {
     // proving the gate ANDs form validity with the step-list condition.
     setInput("workflow-editor-name", "   ");
     expect(query("workflow-editor-steps")).not.toBeNull();
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("populates the form fields from the workflow in edit mode", () => {
@@ -373,7 +384,9 @@ describe("WorkflowEditorDialog", () => {
     act(() => (query("workflow-editor-step-delete-1") as HTMLButtonElement).click());
     act(() => (query("workflow-editor-step-delete-0") as HTMLButtonElement).click());
     expect(query("workflow-editor-no-steps")).not.toBeNull();
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("saves an on-connect trigger with a renamed connection's new id (#3603)", async () => {
@@ -402,20 +415,57 @@ describe("WorkflowEditorDialog", () => {
     ]);
   });
 
+  describe("validation timing (#5917)", () => {
+    const blank: Workflow = { ...workflow, name: "", description: "", tags: [], steps: [] };
+    const nameError = () => document.getElementById("workflow-editor-name-error");
+    const save = () => query("workflow-editor-save") as HTMLButtonElement;
+
+    it("opens a new workflow without a Name error, Save reachable but blocked", () => {
+      render({ workflow: blank, isNew: true });
+      expect(nameError()).toBeNull();
+      expect(query("workflow-editor-name")?.getAttribute("aria-invalid")).toBeNull();
+      expect(save().getAttribute("aria-disabled")).toBe("true");
+      expect(save().disabled).toBe(false);
+    });
+
+    it("a Save attempt saves nothing, shows the Name error and focuses Name", async () => {
+      const onSave = vi.fn();
+      render({ workflow: blank, isNew: true, onSave });
+      act(() => save().focus());
+      act(() => save().click());
+      await flush();
+      expect(onSave).not.toHaveBeenCalled();
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(document.activeElement).toBe(query("workflow-editor-name"));
+    });
+
+    it("a Save attempt with only the steps missing focuses Add step", async () => {
+      const onSave = vi.fn();
+      render({ workflow: { ...blank, name: "Named" }, isNew: true, onSave });
+      act(() => save().focus());
+      act(() => save().click());
+      await flush();
+      expect(onSave).not.toHaveBeenCalled();
+      expect(query("workflow-editor-no-steps")).not.toBeNull();
+      expect(document.activeElement).toBe(query("workflow-editor-add-step"));
+    });
+  });
+
   it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
     render();
     const nameError = () => document.getElementById("workflow-editor-name-error");
     const save = () => query("workflow-editor-save") as HTMLButtonElement;
     expect(nameError()).toBeNull();
-    expect(save().disabled).toBe(false);
+    expect(save().getAttribute("aria-disabled")).toBe("false");
 
     setInput("workflow-editor-name", "");
+    leaveField(query("workflow-editor-name"));
     expect(nameError()?.textContent).toBe("Name is required.");
     expect(query("workflow-editor-name")?.getAttribute("aria-invalid")).toBe("true");
-    expect(save().disabled).toBe(true);
+    expect(save().getAttribute("aria-disabled")).toBe("true");
 
     setInput("workflow-editor-name", "Prod login");
     expect(nameError()).toBeNull();
-    expect(save().disabled).toBe(false);
+    expect(save().getAttribute("aria-disabled")).toBe("false");
   });
 });

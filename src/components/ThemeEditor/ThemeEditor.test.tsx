@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ThemeEditor } from "./ThemeEditor";
+import { leaveField } from "@/test/leaveField";
 import { createCustomTheme, previewTheme } from "@/themes";
 import { darkTheme } from "@/themes/dark";
 import type { ThemeDefinition } from "@/themes/types";
@@ -64,21 +65,29 @@ describe("ThemeEditor", () => {
 
   it("keeps Save enabled for a valid theme", () => {
     render(createCustomTheme("dark", "Valid"));
-    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((q("theme-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("disables Save when the name is blank", () => {
     render(createCustomTheme("dark", "X"));
     setValue(q<HTMLInputElement>("theme-editor-name"), "   ");
-    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((q("theme-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("re-enables Save once a required name is restored", () => {
     render(createCustomTheme("dark", "Recover"));
     setValue(q<HTMLInputElement>("theme-editor-name"), "");
-    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((q("theme-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     setValue(q<HTMLInputElement>("theme-editor-name"), "Named Again");
-    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((q("theme-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("saves the edited colors with a trimmed name", () => {
@@ -143,17 +152,39 @@ describe("ThemeEditor", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("a Save attempt on a blank name saves nothing, shows why and focuses Name (#5917)", () => {
+    const onSave = vi.fn();
+    render(createCustomTheme("dark", "Named"), onSave);
+    setValue(q<HTMLInputElement>("theme-editor-name"), "");
+    const save = q<HTMLButtonElement>("theme-editor-save");
+    expect(save.disabled).toBe(false);
+    act(() => save.focus());
+    act(() => save.click());
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.getElementById("theme-editor-name-error")?.textContent).toBe(
+      "Name is required."
+    );
+    expect(document.activeElement).toBe(q("theme-editor-name"));
+  });
+
   it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
     render(createCustomTheme("dark", "Named"));
     const nameError = () => document.getElementById("theme-editor-name-error");
     expect(nameError()).toBeNull();
 
     setValue(q<HTMLInputElement>("theme-editor-name"), "  ");
+    // Held back while typing; shown once the field is left (#5917).
+    expect(nameError()).toBeNull();
+    leaveField(q("theme-editor-name"));
     expect(nameError()?.textContent).toBe("Name is required.");
-    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((q("theme-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
 
     setValue(q<HTMLInputElement>("theme-editor-name"), "Named");
     expect(nameError()).toBeNull();
-    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((q("theme-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 });

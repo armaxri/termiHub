@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
+import { leaveField } from "@/test/leaveField";
 
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() =>
@@ -83,7 +84,7 @@ describe("EmbeddedServerDialog", () => {
     const saveBtn = document.querySelector(
       '[data-testid="server-dialog-save"]'
     ) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
+    expect(saveBtn.getAttribute("aria-disabled")).toBe("true");
 
     typeInto(
       document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
@@ -94,7 +95,7 @@ describe("EmbeddedServerDialog", () => {
       "/srv/fw"
     );
 
-    expect(saveBtn.disabled).toBe(false);
+    expect(saveBtn.getAttribute("aria-disabled")).toBe("false");
     await act(async () => {
       saveBtn.click();
       await Promise.resolve();
@@ -216,14 +217,14 @@ describe("EmbeddedServerDialog", () => {
     const saveBtn = document.querySelector(
       '[data-testid="server-dialog-save"]'
     ) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(false);
+    expect(saveBtn.getAttribute("aria-disabled")).toBe("false");
 
     const port = document.querySelector('[data-testid="server-dialog-port"]') as HTMLInputElement;
     typeInto(port, "");
     // The cleared field stays blank rather than snapping back to the old port,
     // and the invalid (missing) port blocks Save.
     expect(port.value).toBe("");
-    expect(saveBtn.disabled).toBe(true);
+    expect(saveBtn.getAttribute("aria-disabled")).toBe("true");
   });
 
   describe("open effect (#4370)", () => {
@@ -279,8 +280,10 @@ describe("EmbeddedServerDialog", () => {
     ).toBe("8888");
     // Editing an existing (already-valid) config leaves Save enabled immediately.
     expect(
-      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).disabled
-    ).toBe(false);
+      (
+        document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement
+      ).getAttribute("aria-disabled")
+    ).toBe("false");
   });
 
   it("HTTP auth is off by default, so the saved config carries no httpAuth (PROD-0035)", async () => {
@@ -430,8 +433,10 @@ describe("EmbeddedServerDialog", () => {
       "/srv/fw"
     );
     expect(
-      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).disabled
-    ).toBe(true);
+      (
+        document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement
+      ).getAttribute("aria-disabled")
+    ).toBe("true");
   });
 
   it("preserves the other fields (bind host, toggles) in the saved payload", async () => {
@@ -474,34 +479,45 @@ describe("EmbeddedServerDialog", () => {
     const errorFor = (inputId: string) => document.getElementById(`${inputId}-error`);
     const save = () => byTestId("server-dialog-save") as unknown as HTMLButtonElement;
 
-    it("shows the name and root-directory errors until both are filled in", async () => {
-      await render(<EmbeddedServerDialog {...baseProps} />);
+    it("opens without errors; a Save attempt shows them and focuses Name (#5917)", async () => {
+      const onSave = vi.fn().mockResolvedValue(true);
+      await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+      expect(errorFor("server-dialog-name-input")).toBeNull();
+      expect(errorFor("server-dialog-root-input")).toBeNull();
+      expect(save().getAttribute("aria-disabled")).toBe("true");
+      expect(save().disabled).toBe(false);
+
+      // Name is autofocused; start from Save so the focus move is observable.
+      act(() => save().focus());
+      act(() => save().click());
+      expect(onSave).not.toHaveBeenCalled();
       expect(errorFor("server-dialog-name-input")?.textContent).toBe("Name is required.");
       expect(errorFor("server-dialog-root-input")?.textContent).toBe("Root directory is required.");
-      expect(save().disabled).toBe(true);
+      expect(document.activeElement).toBe(byTestId("server-dialog-name"));
 
       typeInto(byTestId("server-dialog-name"), "Firmware");
       expect(errorFor("server-dialog-name-input")).toBeNull();
-      expect(save().disabled).toBe(true);
+      expect(save().getAttribute("aria-disabled")).toBe("true");
 
       typeInto(byTestId("server-dialog-root"), "/srv/fw");
       expect(errorFor("server-dialog-root-input")).toBeNull();
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
     });
 
     it("shows 'Port is required.' for a cleared port and blocks Save", async () => {
       await render(<EmbeddedServerDialog {...baseProps} />);
       typeInto(byTestId("server-dialog-name"), "Firmware");
       typeInto(byTestId("server-dialog-root"), "/srv/fw");
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
 
       typeInto(byTestId("server-dialog-port"), "");
+      leaveField(byTestId("server-dialog-port"));
       expect(errorFor("server-dialog-port-input")?.textContent).toBe("Port is required.");
-      expect(save().disabled).toBe(true);
+      expect(save().getAttribute("aria-disabled")).toBe("true");
 
       typeInto(byTestId("server-dialog-port"), "8081");
       expect(errorFor("server-dialog-port-input")).toBeNull();
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
     });
   });
 });

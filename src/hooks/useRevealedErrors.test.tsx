@@ -111,4 +111,14 @@ describe("useRevealedErrors (#5909)", () => {
     blur();
     expect(api.shown).toEqual({});
   });
+
+  it("rebaseline(values) keeps the first edit after an unchanged reset (#5917)", () => {
+    render(EMPTY);
+    // A dialog reopening resets to the same values: nothing re-renders the
+    // values, so only an explicit baseline lets the next edit count.
+    act(() => api.rebaseline(EMPTY));
+    act(() => setValues({ ...EMPTY, name: " " }));
+    blur();
+    expect(api.shown).toEqual({ name: "Name is required." });
+  });
 });

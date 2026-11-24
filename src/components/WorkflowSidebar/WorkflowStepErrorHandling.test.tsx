@@ -156,18 +156,24 @@ describe("WorkflowEditorDialog — step error handling (PROD-045)", () => {
     act(() => query("workflow-editor-step-retry-0")?.click());
     setInput("workflow-editor-step-retry-count-0", String(MAX_STEP_RETRIES + 1));
 
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     expect(document.body.textContent).toContain(`from 1 to ${MAX_STEP_RETRIES}`);
 
     setInput("workflow-editor-step-retry-count-0", "2");
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("blocks Save for an over-cap retry delay", () => {
     render();
     act(() => query("workflow-editor-step-retry-0")?.click());
     setInput("workflow-editor-step-retry-delay-0", String(MAX_RETRY_DELAY_MS + 1));
-    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("offers the controls on nested conditional sub-steps", async () => {
