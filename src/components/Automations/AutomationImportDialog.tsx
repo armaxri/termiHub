@@ -32,7 +32,7 @@ function importNotes(result: AutomationImport): Note[] {
     notes.push({
       id: "disarmed",
       Icon: ZapOff,
-      text: "Switched off: they have a trigger or a hotkey and start by themselves only once you turn them on.",
+      text: "Switched off. Their triggers and hotkeys do nothing until you turn them on in the list.",
       lines: result.disarmed,
     });
   }
@@ -40,7 +40,7 @@ function importNotes(result: AutomationImport): Note[] {
     notes.push({
       id: "local-process",
       Icon: SquareTerminal,
-      text: `Runs programs on this computer: they do not run until you turn on ${EXPERIMENTAL_SETTING_PATH} and allow the program.`,
+      text: `Run programs on this computer. They do not run until you turn on ${EXPERIMENTAL_SETTING_PATH} and allow the program.`,
       lines: result.localProcess,
     });
   }
@@ -48,7 +48,7 @@ function importNotes(result: AutomationImport): Note[] {
     notes.push({
       id: "script-paths",
       Icon: FileX2,
-      text: "Read a script from a file: the file's path was removed, and the script text in the step is used. Choose the file again in the step to read it.",
+      text: "Read a script from a file. The path was removed, so the script text in the step is used. Choose the file again in the step to read it.",
       lines: result.removedScriptPaths.map(({ name, path }) => `${name}: ${path}`),
     });
   }
@@ -56,7 +56,7 @@ function importNotes(result: AutomationImport): Note[] {
     notes.push({
       id: "outside",
       Icon: Link2Off,
-      text: "Runs an automation that is not in the file:",
+      text: "Run an automation that is not in the file.",
       lines: result.outside.map(({ name, runs }) =>
         runs === null
           ? `${name}: choose one in its “Run automation” step, or that step fails`

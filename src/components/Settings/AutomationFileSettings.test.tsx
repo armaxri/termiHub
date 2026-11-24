@@ -89,7 +89,7 @@ describe("import", () => {
         automation({ name: "Caller", steps: [{ kind: "run-automation", automationId: "gone" }] }),
       ],
     });
-    expect(note("disarmed")).toMatch(/Switched off: .*hotkey.*Hot$/);
+    expect(note("disarmed")).toMatch(/Switched off\. .*hotkeys.*Hot$/);
     expect(note("local-process")).toMatch(/Allow experimental features.*Local$/);
     expect(note("script-paths")).toContain("Script: /home/u/.ssh/id");
     expect(note("outside")).toContain(

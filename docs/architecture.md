@@ -2239,6 +2239,12 @@ sequenceDiagram
   window acknowledges the fire with the target connections it runs on itself, and the connect
   window asks `schedule_run_coverage` (waiting briefly until every other window acknowledged)
   and skips those, so each target runs once per fire, in the window that holds it.
+- **Files** (`src/services/automationFileIo.ts`, #5818) — an export is `{ version, automations }`;
+  an import also reads the `macros` / `workflows` lists of older builds. Every entry is validated
+  (`workflowSchema.ts`) and its unknown keys are put back, which is safe because an automation
+  carries no trust decision: an import gets fresh ids, arrives with its triggers and hotkeys
+  switched off, and loses any script file reference (#4310). `run-automation` steps are pointed at
+  the imported copies by id, never by name; what the file does not hold is reported.
 - **Recording** (`src/store/slices/recordingSlice.ts`, `src/services/inputRecorder.ts`, #1674,
   #5818) — one terminal of a window at a time. It taps what that tab sends on behalf of the user:
   xterm's user input (`xtermUserInput.ts` drops the focus reports and query replies that share
