@@ -1,8 +1,9 @@
 import { useCallback, useRef } from "react";
-import { WifiOff, RefreshCw } from "lucide-react";
+import { WifiOff, RefreshCw, RotateCcw, SquareTerminal, CheckCircle2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, LiveRegion, TOAST_AVOID_PROPS } from "@/components/ui";
 import { useTopNoticeInset } from "./topNoticeInset";
+import { sessionEndActionLabel, type SessionEndNotice } from "./dropCopy";
 import "./TerminalViewModeBanner.css";
 
 interface TerminalViewModeBannerProps {
@@ -13,10 +14,19 @@ interface TerminalViewModeBannerProps {
    * session.". Shown under the heading; omitted when unknown.
    */
   cause?: string;
+  /**
+   * The session-end notice (#5910): a process exit reads "Process exited (code
+   * N)." with Restart, a dropped link "Session ended." with Reconnect. Its
+   * cause line is used when `cause` is not given.
+   */
+  notice?: SessionEndNotice;
 }
 
 /** The short hint after the banner's heading (#5823). */
 export const VIEW_MODE_ENTER_HINT = "Press Enter to reconnect.";
+
+/** The hint when Enter starts a local process again (#5910). */
+export const VIEW_MODE_RESTART_HINT = "Press Enter to restart.";
 
 /**
  * Thin non-blocking banner pinned to the top of the terminal slot when the
@@ -30,7 +40,7 @@ export const VIEW_MODE_ENTER_HINT = "Press Enter to reconnect.";
  * that wraps instead of clipping, keeps Reconnect from shrinking, and is a
  * toast keep-clear zone so the toast stack never covers it.
  */
-export function TerminalViewModeBanner({ tabId, cause }: TerminalViewModeBannerProps) {
+export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewModeBannerProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   // The user disconnected or shut down this tab's agent (#4309): say so, since
   // Reconnect will bring the agent back before starting a new session.
@@ -44,16 +54,32 @@ export function TerminalViewModeBanner({ tabId, cause }: TerminalViewModeBannerP
     reconnectTerminal(tabId);
   }, [tabId, reconnectTerminal]);
 
-  const heading = agentDisconnected ? "Agent disconnected." : "Session ended.";
+  // A process exit is not a lost connection (#5910): it says so and restarts.
+  // Only the process kinds change the heading; any other end keeps the short
+  // "Session ended." of #5823.
+  const processEnd = !agentDisconnected && notice?.kind === "exited";
+  const restart = !agentDisconnected && notice?.action === "restart";
+  const heading = agentDisconnected
+    ? "Agent disconnected."
+    : processEnd
+      ? `${notice.heading}.`
+      : "Session ended.";
+  const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
+  const hint = restart ? VIEW_MODE_RESTART_HINT : VIEW_MODE_ENTER_HINT;
   const reconnectTitle = agentDisconnected
     ? "Reconnect the agent and start a new session (Enter)"
-    : "Start a new session (Enter)";
+    : restart
+      ? "Start the process again (Enter)"
+      : "Start a new session (Enter)";
   // The agent heading already says what happened; every other end states its
   // cause (#5831).
-  const causeLine = agentDisconnected ? undefined : cause;
+  const causeLine = agentDisconnected ? undefined : (cause ?? notice?.causeLine);
   const announcement = agentDisconnected
     ? "Agent disconnected. Press Enter or click Reconnect to reconnect it and start a new session."
-    : `Session ended.${causeLine ? ` ${causeLine}` : ""} Press Enter or click Reconnect to start a new session.`;
+    : `${heading}${causeLine ? ` ${causeLine}` : ""} Press Enter or click ${actionLabel} to ${
+        restart ? "start it again" : "start a new session"
+      }.`;
+  const Icon = processEnd ? SquareTerminal : notice?.kind === "ended" ? CheckCircle2 : WifiOff;
 
   return (
     <div
@@ -65,11 +91,11 @@ export function TerminalViewModeBanner({ tabId, cause }: TerminalViewModeBannerP
       {/* The banner can appear without the disconnect overlay (the user ended
           the agent, #4309), so announce its state politely (#4331). */}
       <LiveRegion message={announcement} />
-      <WifiOff size={12} className="terminal-view-mode-banner__icon" aria-hidden />
+      <Icon size={12} className="terminal-view-mode-banner__icon" aria-hidden />
       <span className="terminal-view-mode-banner__text">
         <span className="terminal-view-mode-banner__label">
           <span className="terminal-view-mode-banner__heading">{heading}</span>{" "}
-          <span className="terminal-view-mode-banner__hint">{VIEW_MODE_ENTER_HINT}</span>
+          <span className="terminal-view-mode-banner__hint">{hint}</span>
         </span>
         {causeLine && (
           <span className="terminal-view-mode-banner__cause" data-testid="terminal-view-mode-cause">
@@ -80,12 +106,12 @@ export function TerminalViewModeBanner({ tabId, cause }: TerminalViewModeBannerP
       <Button
         variant="primary"
         size="sm"
-        icon={<RefreshCw size={11} />}
+        icon={restart ? <RotateCcw size={11} /> : <RefreshCw size={11} />}
         onClick={handleReconnect}
         title={reconnectTitle}
         data-testid="terminal-view-mode-reconnect-btn"
       >
-        Reconnect
+        {actionLabel}
       </Button>
     </div>
   );
