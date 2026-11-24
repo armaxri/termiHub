@@ -64,6 +64,11 @@ describe("ConnectionsEmptyState", () => {
     expect(link).not.toBeNull();
     // Names the toggle exactly as its Settings label reads (#5363).
     expect(link?.textContent).toBe("Settings ▸ General ▸ Allow experimental features");
+    // SSH tunnels, services and network tools graduated (#5858): only the
+    // features still behind the switch are named.
+    const hint = query("connections-empty-experimental-hint")!;
+    expect(hint.textContent).toContain("Workflows");
+    expect(hint.textContent).not.toMatch(/tunnels|services|network tools/i);
     act(() => link?.click());
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
   });

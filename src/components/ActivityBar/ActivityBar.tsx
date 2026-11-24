@@ -57,9 +57,9 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "recent-sessions", icon: History, label: "Recent sessions" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
   { view: "macros", icon: Clapperboard, label: "Macros" },
-  { view: "tunnels", icon: ArrowLeftRight, label: "SSH tunnels", experimental: true },
-  { view: "services", icon: Server, label: "Services", experimental: true },
-  { view: "network-tools", icon: Stethoscope, label: "Network tools", experimental: true },
+  { view: "tunnels", icon: ArrowLeftRight, label: "SSH tunnels" },
+  { view: "services", icon: Server, label: "Services" },
+  { view: "network-tools", icon: Stethoscope, label: "Network tools" },
   { view: "workflows", icon: Workflow, label: "Workflows", experimental: true },
   { view: "plugins", icon: Puzzle, label: "Plugins" },
 ];
