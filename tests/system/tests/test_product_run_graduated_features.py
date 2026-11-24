@@ -27,12 +27,10 @@ from termihub_harness.product_run.graduated_features import (
     GRADUATED_VIEWS,
     STILL_EXPERIMENTAL_VIEWS,
     activity_bar_problems,
-    empty_hint_problems,
     experimental_hint_problems,
 )
 
 TOGGLE = "settings-experimental-features"
-EMPTY_HINT = "connections-empty-experimental-hint"
 SETTINGS_CONTENT = "settings-panel-content"
 #: Text that starts the switch's hint (``EXPERIMENTAL_SETTING_HINT``).
 HINT_START = "Turns on features still under active development"
@@ -66,18 +64,6 @@ def test_grade_user_hidden_view_must_stay_hidden():
     assert activity_bar_problems(present, experimental=False, hidden_views={"tunnels"}) == []
     problems = activity_bar_problems(ALL_GRADUATED, experimental=False, hidden_views={"tunnels"})
     assert problems == ["tunnels: the user hid it, but the activity bar shows it"]
-
-
-def test_grade_empty_hint_names_only_what_is_still_gated():
-    ok = "Workflows are behind Settings ▸ General ▸ Allow experimental features"
-    assert empty_hint_problems(ok) == []
-    old = (
-        "SSH tunnels, services, network tools and workflows are behind "
-        "Settings ▸ General ▸ Allow experimental features"
-    )
-    problems = empty_hint_problems(old)
-    assert {p.split("'")[1] for p in problems} == {"tunnel", "services", "network tools"}
-    assert empty_hint_problems(None) == ["no experimental signpost on the empty Connections sidebar"]
 
 
 def test_grade_switch_hint_matches_the_app():
@@ -209,19 +195,3 @@ class TestProductRunGraduatedFeatures(ProductRunUi, SettingsUi, SidebarUi, TabsU
             assert not problems, problems
             self.close_all_tabs()
             self.switch_to_connections_sidebar()
-
-    def test_50_empty_sidebar_signpost(self):
-        self._set_experimental(False)
-        self.switch_to_connections_sidebar()
-        if not self.driver.exists(EMPTY_HINT):
-            pytest.skip("the run already has saved connections; no empty-state signpost")
-        with self.step(
-            "graduated.empty-signpost",
-            "The empty Connections sidebar points only at what is still experimental (#5858)",
-            expect="the empty Connections card's small hint names workflows only",
-        ):
-            hint = self.driver.get_text(EMPTY_HINT)
-            self.evidence(f"signpost {hint!r}")
-            self.shot(label="empty-signpost")
-            problems = empty_hint_problems(hint)
-            assert not problems, problems

@@ -5,6 +5,35 @@
   overflow: hidden;
 }
 
+/* The experimental note (#5954): shown only while workflows are switched off.
+   One sentence and one secondary button that opens Settings ▸ General. */
+.workflow-sidebar__experimental {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.workflow-sidebar__experimental-text {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.workflow-sidebar__experimental-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.workflow-sidebar__experimental-action {
+  white-space: nowrap;
+}
+
 .workflow-sidebar__search {
   display: flex;
   align-items: center;
