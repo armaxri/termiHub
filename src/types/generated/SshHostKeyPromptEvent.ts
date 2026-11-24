@@ -23,4 +23,14 @@ export type SshHostKeyPromptEvent = { prompt_id: string, host: string, port: num
  * that tab's own connect deadline while the prompt is open. `null` for a
  * prompt with no owning connect.
  */
-owner: string | null, };
+owner: string | null, 
+/**
+ * The name of the connection the connect runs for — a saved connection
+ * (also on its session's own later SFTP, monitoring and process logins),
+ * a tunnel, an agent or the editor's Test — when the connect named it
+ * (#5943). The dialog shows it so a prompt with no owning terminal tab
+ * still says which connection asks; a terminal tab's own title wins over
+ * it. Absent when unknown, so the wire shape of an unnamed prompt is
+ * unchanged.
+ */
+connection_name?: string, };

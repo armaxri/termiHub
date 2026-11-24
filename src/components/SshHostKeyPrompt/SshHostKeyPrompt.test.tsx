@@ -405,6 +405,39 @@ describe("SshHostKeyPrompt — connection name and comparison aid (#5862)", () =
     expect(q("ssh-hostkey-host")).not.toBeNull();
   });
 
+  it("names the connection the backend gave a prompt with no owning tab (#5943)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...unknownPrompt, connection_name: "web-db (tunnel)" });
+    expect(q("ssh-hostkey-connection")?.textContent).toBe("web-db (tunnel)");
+    expect(q("ssh-hostkey-connection")!.compareDocumentPosition(q("ssh-hostkey-host")!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+  });
+
+  it("names the backend's connection on a changed-key prompt too (#5943)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...changedWithPriorPrompt, connection_name: "build box (agent)" });
+    expect(q("ssh-hostkey-connection")?.textContent).toBe("build box (agent)");
+  });
+
+  it("prefers the owning tab's title over the backend's name (#5943)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...unknownPrompt, owner: `${tabId}:0`, connection_name: "saved name" });
+    expect(q("ssh-hostkey-connection")?.textContent).toBe("prod web");
+  });
+
+  it("falls back to the backend's name when the owner is not a live tab (#5943)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...unknownPrompt, owner: "test:abc", connection_name: "draft web" });
+    expect(q("ssh-hostkey-connection")?.textContent).toBe("draft web");
+  });
+
+  it("shows no connection line for a blank backend name (#5943)", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...unknownPrompt, connection_name: "   " });
+    expect(q("ssh-hostkey-connection")).toBeNull();
+  });
+
   it("draws distinct glyphs, says what changed and offers to copy the new fingerprint", async () => {
     render(<SshHostKeyPrompt />);
     await fire(changedWithPriorPrompt);
