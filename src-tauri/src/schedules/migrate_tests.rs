@@ -344,3 +344,52 @@ fn a_store_without_provenance_falls_back_to_the_id_remaps() {
     assert_eq!(ids.resolve(LegacySource::Macro, "x"), "automation-x");
     assert_eq!(ids.resolve(LegacySource::Workflow, "x"), "x");
 }
+
+/// Without an id map the manager's own load rewrites the file as v3: it keeps
+/// the pre-v3 copy too, once, and refuses the rewrite when it cannot.
+#[test]
+fn the_degraded_load_keeps_the_one_time_backup() {
+    let dir = TempDir::new().unwrap();
+    let bak = dir.path().join("schedules.json.pre-automations.bak");
+    write(
+        &dir,
+        SCHEDULES_FILE,
+        &json!({"version": "2", "schedules": [schedule("s", macro_action("m"))]}),
+    );
+    let original = fs::read_to_string(dir.path().join(SCHEDULES_FILE)).unwrap();
+
+    let store = load(&dir);
+    assert_eq!(store.schedules.len(), 1);
+    assert_eq!(read(&dir, SCHEDULES_FILE)["version"], "3");
+    assert_eq!(fs::read_to_string(&bak).unwrap(), original);
+
+    // A v3 load neither rewrites nor refreshes it.
+    load(&dir);
+    assert_eq!(fs::read_to_string(&bak).unwrap(), original);
+}
+
+/// A copy that cannot be made leaves the pre-v3 file untouched.
+#[cfg(unix)]
+#[test]
+fn a_failed_backup_leaves_the_old_file_in_place() {
+    let dir = TempDir::new().unwrap();
+    write(
+        &dir,
+        SCHEDULES_FILE,
+        &json!({"version": "2", "schedules": []}),
+    );
+    let original = fs::read_to_string(dir.path().join(SCHEDULES_FILE)).unwrap();
+    // A dangling link: `exists()` is false, and the copy through it fails.
+    std::os::unix::fs::symlink(
+        dir.path().join("no-such-dir/bak"),
+        dir.path().join("schedules.json.pre-automations.bak"),
+    )
+    .unwrap();
+    assert!(ScheduleStorage::new_test(dir.path())
+        .load_with_recovery()
+        .is_err());
+    assert_eq!(
+        fs::read_to_string(dir.path().join(SCHEDULES_FILE)).unwrap(),
+        original
+    );
+}

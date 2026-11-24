@@ -38,6 +38,7 @@ impl ScheduleStorage {
     /// is left untouched and reported as a warning (never reset — PER-004), and
     /// only a genuinely unparseable file is backed up to `.bak` and reset.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<ScheduleStore>> {
+        super::migrate::backup_before_load(&self.file_path)?;
         load_store_with_recovery::<ScheduleStore>(&self.file_path, FILE_NAME)
     }
 

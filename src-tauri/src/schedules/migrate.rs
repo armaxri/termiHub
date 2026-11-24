@@ -279,7 +279,7 @@ pub fn migrate_schedules(dir: &Path) -> Result<SchedulesReport> {
         }
         return Ok(SchedulesReport::default());
     }
-    backup_once(dir, &[SCHEDULES_FILE])?;
+    backup_before_v3(dir, version)?;
     let value = if version < 2 {
         crate::schedules::history::migrate_v1_to_v2(value)
     } else {
@@ -290,6 +290,32 @@ pub fn migrate_schedules(dir: &Path) -> Result<SchedulesReport> {
         migrated_from: Some(version),
         error: None,
     })
+}
+
+/// Copy a pre-v3 file to its one-time `.pre-automations.bak`.
+fn backup_before_v3(dir: &Path, version: u32) -> Result<()> {
+    if version < 3 {
+        backup_once(dir, &[SCHEDULES_FILE])?;
+    }
+    Ok(())
+}
+
+/// [`backup_before_v3`] for the manager's load: the in-memory migration is
+/// written back too, so on the degraded path (no id map) this is the only
+/// moment the pre-v3 file can be kept. A failed copy fails the load, so the
+/// file is never rewritten without it. An unparseable file is left to the
+/// store's own corrupt-file backup.
+pub(super) fn backup_before_load(path: &Path) -> Result<()> {
+    let Some(dir) = path.parent().filter(|_| path.exists()) else {
+        return Ok(());
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Ok(());
+    };
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(value) => backup_before_v3(dir, read_version(&value).unwrap_or(ASSUMED_VERSION)),
+        Err(_) => Ok(()),
+    }
 }
 
 /// Write the document atomically.
