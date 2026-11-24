@@ -353,9 +353,6 @@ export const ENTER_TO_RECONNECT_HINT = t("drop.end.enterReconnect");
 /** "Press Enter to restart." when Enter starts a local process again (#5910). */
 export const ENTER_TO_RESTART_HINT = t("drop.end.enterRestart");
 
-/** "Press Enter to resume." after the user disconnected the tab's agent (#5980). */
-export const ENTER_TO_RESUME_HINT = t("drop.end.enterResume");
-
 /**
  * The "Press Enter to …" hint every session-end notice shows (#5955): the
  * strip and the view-mode banner say the same for the same action.

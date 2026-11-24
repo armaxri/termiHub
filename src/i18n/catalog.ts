@@ -403,7 +403,6 @@ const en = {
   // One Enter hint for the strip and the view-mode banner (#5955).
   "drop.end.enterReconnect": "Press Enter to reconnect.",
   "drop.end.enterRestart": "Press Enter to restart.",
-  "drop.end.enterResume": "Press Enter to resume.",
   "drop.heading.server": "Server closed the connection — reconnecting…",
   "drop.heading.timeout": "Connection timed out — reconnecting…",
   "drop.autoReconnectOff":

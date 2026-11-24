@@ -6,7 +6,6 @@ import { useTopNoticeInset } from "./topNoticeInset";
 import {
   ENTER_TO_RECONNECT_HINT,
   ENTER_TO_RESTART_HINT,
-  ENTER_TO_RESUME_HINT,
   sessionEndActionLabel,
   type SessionEndNotice,
 } from "./dropCopy";
@@ -36,14 +35,6 @@ export const VIEW_MODE_ENTER_HINT = ENTER_TO_RECONNECT_HINT;
 export const VIEW_MODE_RESTART_HINT = ENTER_TO_RESTART_HINT;
 
 /**
- * The hint after the user disconnected the tab's agent (#5980): Reconnect
- * brings the agent back and resumes the tab's own session, which kept running
- * on the agent host (#5953). Only when the agent no longer runs it does a new
- * session start, and the tab's marker then says so.
- */
-export const VIEW_MODE_RESUME_HINT = ENTER_TO_RESUME_HINT;
-
-/**
  * Thin non-blocking banner pinned to the top of the terminal slot when the
  * disconnect overlay has been dismissed and the user is browsing the scrollback.
  * Keeps the terminal fully interactive for selection and copy while clearly
@@ -57,8 +48,10 @@ export const VIEW_MODE_RESUME_HINT = ENTER_TO_RESUME_HINT;
  */
 export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewModeBannerProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
-  // The user disconnected or shut down this tab's agent (#4309): say so, since
-  // Reconnect will bring the agent back and resume the session (#5953).
+  // The user disconnected or shut down this tab's agent (#4309): say so.
+  // Reconnect brings the agent back and resumes the session if the agent still
+  // runs it (#5953). Only the reconnect finds that out, so no text here promises
+  // a resume or a new session (#5989); the tab's marker then says which it was.
   const agentDisconnected = useAppStore((s) => s.terminalAgentDisconnected[tabId] ?? false);
 
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -80,13 +73,9 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
       ? `${notice.heading}.`
       : "Session ended.";
   const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
-  const hint = agentDisconnected
-    ? VIEW_MODE_RESUME_HINT
-    : restart
-      ? VIEW_MODE_RESTART_HINT
-      : VIEW_MODE_ENTER_HINT;
+  const hint = restart ? VIEW_MODE_RESTART_HINT : VIEW_MODE_ENTER_HINT;
   const reconnectTitle = agentDisconnected
-    ? "Reconnect the agent and resume the session (Enter)"
+    ? "Reconnect the agent (Enter)"
     : restart
       ? "Start the process again (Enter)"
       : "Start a new session (Enter)";
@@ -94,8 +83,7 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
   // cause (#5831).
   const causeLine = agentDisconnected ? undefined : (cause ?? notice?.causeLine);
   // One string for the eye and the screen reader (#5980): the announcement is
-  // the banner's own visible text. It used to promise "a new session" while
-  // Reconnect resumed the agent's session.
+  // the banner's own visible text.
   const announcement = [heading, hint, causeLine].filter(Boolean).join(" ");
   // The same icon as the strip for the same end (#5955); the user disconnecting
   // the agent is a user end.

@@ -10,7 +10,7 @@ import { createRoot, Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { TerminalViewModeBanner, VIEW_MODE_RESUME_HINT } from "./TerminalViewModeBanner";
+import { TerminalViewModeBanner, VIEW_MODE_ENTER_HINT } from "./TerminalViewModeBanner";
 import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
 import { computeToastLayout, type Box } from "@/components/ui/Toast/toastAvoid";
 
@@ -122,7 +122,7 @@ describe("TerminalViewModeBanner layout (#5823)", () => {
     render("tab-a");
     const label = q("terminal-view-mode-banner").querySelector(".terminal-view-mode-banner__label");
     // The R-003 sentence was 92 characters; heading + hint now fit one line.
-    expect(label?.textContent).toBe(`Agent disconnected. ${VIEW_MODE_RESUME_HINT}`);
+    expect(label?.textContent).toBe(`Agent disconnected. ${VIEW_MODE_ENTER_HINT}`);
     expect(label!.textContent!.length).toBeLessThanOrEqual(48);
     // The full instruction stays in the tooltip; the announcement is the
     // visible text itself (#5980).

@@ -93,16 +93,16 @@ describe("TerminalViewModeBanner", () => {
   });
 
   describe("one string for the eye and the screen reader (#5980)", () => {
-    it("tells the user Reconnect resumes the agent session, never 'a new session'", () => {
+    it("promises neither a resume nor a new session after an agent disconnect (#5989)", () => {
       agentDisconnected["tab-9"] = true;
       render("tab-9");
       const region = container.querySelector("[role='status']");
-      expect(region?.textContent).toBe("Agent disconnected. Press Enter to resume.");
-      expect(region?.textContent).not.toContain("new session");
+      expect(region?.textContent).toBe("Agent disconnected. Press Enter to reconnect.");
+      expect(region?.textContent).not.toMatch(/resume|new session/);
       const label = container.querySelector(".terminal-view-mode-banner__label");
       expect(region?.textContent).toBe(label?.textContent);
       expect(query("terminal-view-mode-reconnect-btn")?.getAttribute("title")).toBe(
-        "Reconnect the agent and resume the session (Enter)"
+        "Reconnect the agent (Enter)"
       );
     });
 
