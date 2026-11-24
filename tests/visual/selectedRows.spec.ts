@@ -2,7 +2,8 @@
  * Selected rows look the same in every selectable list (#5591), checked in the
  * rendered app: a selected file-browser row (sidebar) and a selected transfer
  * pane row (on the `--bg-secondary` pane) paint the shared `--selected-row-*`
- * surfaces and the 2px indicator bar, in Dark (accent tint, no bar) and both
+ * surfaces and the 2px indicator bar, in Dark and Light (accent tint plus an
+ * accent bar, #5888) and both
  * Solarized themes (palette surface + bar). In Solarized Light the pane is
  * base2, so its rows step up to base3; sidebar rows use the theme's active
  * tone (#5639). Both Solarized themes also outline the row at >=3:1 against
@@ -19,6 +20,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { VisualScenario } from "./harness/mockBackend";
 import type { VisualHandle } from "./harness/visualHandle";
 import { SCREENS } from "./surfaces";
+import { darkTheme } from "../../src/themes/dark";
+import { lightTheme } from "../../src/themes/light";
 import { solarizedLightTheme } from "../../src/themes/solarized-light";
 
 declare global {
@@ -39,7 +42,21 @@ const SOL_LIGHT = solarizedLightTheme;
 
 /** Per theme: the expected opaque surfaces, or `null` for the accent tint. */
 const THEMES = [
-  { theme: "dark", sidebar: null, pane: null, bar: null, outline: null },
+  // #5888: the tint alone is ~1.2:1 on the sidebar; the accent bar carries the cue.
+  {
+    theme: "dark",
+    sidebar: null,
+    pane: null,
+    bar: rgb(darkTheme.colors.accentColor),
+    outline: null,
+  },
+  {
+    theme: "light",
+    sidebar: null,
+    pane: null,
+    bar: rgb(lightTheme.colors.accentColor),
+    outline: null,
+  },
   {
     theme: "solarized-light",
     // #5639: the active tone on base3; base3 on the base2 pane.
@@ -99,13 +116,14 @@ function expectSelected(
   // Every list paints the shared token, whatever the theme.
   expect(got.bg).toBe(got.tokenBg);
   expect(got.shadow).toContain("inset");
+  if (bar) expect(got.shadow).toContain(bar);
   if (surface && bar) {
     expect(got.bg).toBe(surface.row);
     expect(got.under).toBe(surface.under);
     expect(got.shadow).toContain(bar);
     if (outline) expect(got.shadow).toContain(outline);
   } else {
-    // The accent tint: translucent, no bar.
+    // The accent tint: translucent, with the accent bar and no outline.
     expect(got.bg).not.toBe(got.under);
     expect(got.shadow).toContain("rgba(0, 0, 0, 0)");
   }
