@@ -52,6 +52,8 @@ HINTS: dict[str, tuple[str, ...]] = {
         "settings-file-browser-hint",
         "settings-file-log-level-hint",
         "settings-copy-debug-info-hint",
+        "settings-show-crash-report-notice-hint",
+        "settings-export-diagnostics-hint",
     ),
     "terminal": (
         "settings-scrollback-buffer-hint",
@@ -62,6 +64,24 @@ HINTS: dict[str, tuple[str, ...]] = {
         "settings-ask-open-saved-file-in-tab-hint",
         "settings-terminal-command-decorations-hint",
         "settings-default-shell-integration-hint",
+        "settings-syntax-highlighting-enabled-hint",
+    ),
+    # The remaining pages of #5900.
+    "accessibility": ("settings-screen-reader-mode-hint",),
+    "safety-prompts": (
+        "settings-close-live-session-confirm-hint",
+        "settings-confirm-close-attached-tab-hint",
+        "settings-confirm-undoable-delete-hint",
+        "settings-warn-large-port-scan-hint",
+        "settings-warn-large-ping-sweep-hint",
+    ),
+    "monitoring": (
+        "settings-monitor-local-shells-hint",
+        "settings-status-bar-metrics-hint",
+    ),
+    "plugins": (
+        "settings-frontend-plugins-enabled-hint",
+        "settings-native-plugins-enabled-hint",
     ),
     "updates": ("update-auto-check-hint",),
     "sessions": (

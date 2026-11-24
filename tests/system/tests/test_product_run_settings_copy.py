@@ -192,6 +192,14 @@ def test_the_graded_hints_cover_the_touched_pages():
     assert "update-auto-check-hint" in HINTS["updates"]
 
 
+def test_the_graded_hints_cover_the_remaining_pages():
+    """#5900: every page whose long hints moved behind the "?" is graded."""
+    assert "settings-show-crash-report-notice-hint" in HINTS["general"]
+    assert "settings-syntax-highlighting-enabled-hint" in HINTS["terminal"]
+    for category in ("accessibility", "safety-prompts", "monitoring", "plugins"):
+        assert HINTS[category], category
+
+
 def test_the_plain_copy_passes():
     assert settings_copy_problems(_good()) == []
 
