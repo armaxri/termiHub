@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+import termihub_harness
 from termihub_harness import (
     ConnectionsUi,
     JumpHostUi,
@@ -153,3 +154,34 @@ def test_fill_jump_host_does_not_retoggle_the_section_for_a_later_hop():
     ui.fill_jump_host(host="10.0.0.2", port=22, key_path="/k", index=1)
     assert ("click", "jump-host-enabled") not in ui.driver.calls
     assert ui.driver.calls[0] == ("type", "jump-host-host-1", "10.0.0.2")
+
+
+def _harness_mixins() -> list[type]:
+    """Every ``*Ui`` mixin the harness package exports, each once."""
+    return sorted(
+        {
+            base
+            for exported in vars(termihub_harness).values()
+            if isinstance(exported, type) and exported.__name__.endswith("Ui")
+            for base in exported.__mro__
+            if base.__module__.startswith("termihub_harness.ui")
+        },
+        key=lambda cls: cls.__qualname__,
+    )
+
+
+def test_no_two_mixins_give_one_constant_two_values():
+    """A suite mixes many ``*Ui`` classes, so the first one's constant wins.
+
+    ``FilesUi.NEW_MENU`` and ``ConnectionsUi.NEW_MENU`` named two different
+    menus: every suite with both, ``FilesUi`` first, clicked a menu that was not
+    there and never opened the connection editor.
+    """
+    values: dict[str, dict[str, list[str]]] = {}
+    for mixin in _harness_mixins():
+        for name, value in vars(mixin).items():
+            if name.isupper() and isinstance(value, str):
+                values.setdefault(name, {}).setdefault(value, []).append(mixin.__qualname__)
+    assert "NEW_MENU" in values, "the mixins were not found"
+    clashes = {name: by_value for name, by_value in values.items() if len(by_value) > 1}
+    assert not clashes, f"rename the constant in one of the mixins: {clashes}"

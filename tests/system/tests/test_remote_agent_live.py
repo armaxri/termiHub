@@ -228,8 +228,8 @@ class TestRemoteAgentLive(
             self.CTX_REFRESH,
             self.CTX_NEW_SHELL,
             self.CTX_NEW_CONNECTION,
-            self.CTX_EDIT,
-            self.CTX_DELETE,
+            self.CTX_AGENT_EDIT,
+            self.CTX_AGENT_DELETE,
         ):
             assert self.driver.exists(item), f"connected agent menu missing {item}"
         assert not self.driver.exists(self.CTX_CONNECT)
@@ -243,6 +243,6 @@ class TestRemoteAgentLive(
             what=f"agent {name!r} to disconnect",
         )
         self.open_agent_menu(name, sentinel=self.CTX_CONNECT)
-        for item in (self.CTX_CONNECT, self.CTX_SETUP, self.CTX_EDIT, self.CTX_DELETE):
+        for item in (self.CTX_CONNECT, self.CTX_SETUP, self.CTX_AGENT_EDIT, self.CTX_AGENT_DELETE):
             assert self.driver.exists(item), f"disconnected agent menu missing {item}"
         assert not self.driver.exists(self.CTX_DISCONNECT)
