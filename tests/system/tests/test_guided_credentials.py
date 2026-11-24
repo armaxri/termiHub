@@ -73,11 +73,7 @@ class TestGuidedCredentials(
             what="the storage-mode options",
         )
         self.driver.click("storage-mode-os-keychain")
-        self.wait(
-            lambda: self.driver.exists("confirm-switch-confirm-btn"),
-            what="the switch confirm dialog",
-        )
-        self.driver.click("confirm-switch-confirm-btn")
+        self.confirm_store_switch("os_keychain")
         self.wait(lambda: self._store_mode() == "os_keychain", what="the OS keychain mode")
 
     def _save_ssh_password(self, label: str) -> str:

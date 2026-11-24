@@ -64,8 +64,8 @@ class TestProductRunCredentialFeedback(
         with self.step(
             "cred-feedback.switch-once",
             "Switching to a master password confirms it once, inline, not also as a toast (#5629)",
-            expect="#5629: Settings ▸ Security with one 'Switched to Master password.' banner "
-            "and no toast saying the same",
+            expect="#5629/#5837: Settings ▸ Security with one 'Passwords are now saved in your "
+            "master-password vault.' line and no toast saying the same",
         ):
             status = self.wait(self.credential_store_status, what="the credential store status")
             if status.get("mode") != "none":
@@ -85,8 +85,8 @@ class TestProductRunCredentialFeedback(
             banner = self.driver.get_text("migration-result")
             toasts = self.driver.get_text(TOAST_REGION) if self.driver.exists(TOAST_REGION) else ""
             self.evidence(f"banner {banner!r}; toasts {toasts!r}")
-            assert "Switched to" in banner, banner
-            assert "Switched to" not in toasts, f"the switch is confirmed twice: {toasts!r}"
+            assert "now saved in your master-password vault" in banner, banner
+            assert "now saved in" not in toasts, f"the switch is confirmed twice: {toasts!r}"
 
     def test_20_wrong_password_error_state(self):
         with self.step(
@@ -117,11 +117,22 @@ class TestProductRunCredentialFeedback(
         with self.step(
             "cred-feedback.keychain.confirm",
             "The switch to the OS Keychain names the move and says what happens to the vault",
-            expect="#5629: 'Move saved credentials to OS Keychain?' with a 'Move to OS Keychain' "
-            "button and a line saying the master-password vault is kept",
+            expect="#5629/#5837: 'Move 1 saved password to the OS Keychain?' with a 'Move to OS "
+            "Keychain' button and a line saying the master-password vault is kept",
         ):
             self.require("cred-feedback.switch-once")
             self.wait(self.credential_store_unlocked_master_password, what="the unlocked store")
+            # An empty vault switches at once (#5837): save one password so the
+            # switch moves something and asks first. Never connected.
+            self.switch_to_connections_sidebar()
+            self.create_ssh_connection(
+                unique_name("pr-feedback-move"),
+                host="127.0.0.1",
+                port=1,
+                username="nobody",
+                password="product-run-feedback-secret",
+                save_password=True,
+            )
             self.open_settings_category("security")
             self.wait(lambda: self.driver.exists("storage-mode-os-keychain"), what="options")
             self.driver.click("storage-mode-os-keychain")

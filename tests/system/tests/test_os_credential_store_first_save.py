@@ -154,11 +154,7 @@ class TestOsKeychainFirstSave(
             what="the storage-mode options",
         )
         self.driver.click("storage-mode-os-keychain")
-        self.wait(
-            lambda: self.driver.exists("confirm-switch-confirm-btn"),
-            what="the switch confirm dialog",
-        )
-        self.driver.click("confirm-switch-confirm-btn")
+        self.confirm_store_switch("os_keychain")
         self.wait(lambda: self._mode() == "os_keychain", what="the OS keychain mode")
         self.switch_to_connections_sidebar()
 
