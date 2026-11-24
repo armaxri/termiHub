@@ -137,7 +137,10 @@ pub fn migrate_v2_to_v3(mut value: Value, ids: &AutomationIdMap) -> Value {
             if let Some(action) = schedule.get_mut("action").and_then(Value::as_object_mut) {
                 migrate_action(action, ids);
             }
-            if let Some(last) = schedule.get_mut("lastResult").and_then(Value::as_object_mut) {
+            if let Some(last) = schedule
+                .get_mut("lastResult")
+                .and_then(Value::as_object_mut)
+            {
                 merge_run_ids(last);
             }
             if let Some(history) = schedule.get_mut("history").and_then(Value::as_array_mut) {

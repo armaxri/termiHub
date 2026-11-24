@@ -36,7 +36,7 @@ pub(super) fn input(id: &str, rule: ScheduleRule) -> ScheduleInput {
         name: "Health check".to_string(),
         description: None,
         action: ScheduleAction::Automation {
- automation_id: "wf-1".to_string(),
+            automation_id: "wf-1".to_string(),
         },
         targets: ScheduleTargets::Connections {
             connection_ids: vec!["conn-a".to_string(), "conn-b".to_string()],
@@ -137,7 +137,7 @@ fn changing_targets_or_action_disables_and_drops_confirmation() {
     let m2 = enabled_manager(&m2dir, MissedRunPolicy::Skip);
     let mut i = input("s1", every(10));
     i.action = ScheduleAction::Automation {
- automation_id: "mac".to_string(),
+        automation_id: "mac".to_string(),
     };
     assert!(!m2.save(i, t(10, 1), &Utc).unwrap().schedule.enabled);
 }
@@ -178,7 +178,7 @@ fn save_refuses_invalid_input() {
     assert!(m.save(no_group, t(0, 0), &Utc).is_err());
     let mut no_wf = input("s", every(5));
     no_wf.action = ScheduleAction::Automation {
- automation_id: String::new(),
+        automation_id: String::new(),
     };
     assert!(m.save(no_wf, t(0, 0), &Utc).is_err());
     let weekly_no_days = ScheduleRule::Weekly {
@@ -236,7 +236,7 @@ fn fires_when_due_and_not_before() {
     assert_eq!(
         fire.action,
         ScheduleAction::Automation {
- automation_id: "wf-1".into()
+            automation_id: "wf-1".into()
         }
     );
     let view = &m.state(t(10, 10), &Utc).unwrap().schedules[0];

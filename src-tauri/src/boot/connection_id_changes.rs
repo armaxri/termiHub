@@ -373,7 +373,7 @@ mod tests {
                     name: "s".to_string(),
                     description: None,
                     action: ScheduleAction::Automation {
- automation_id: "wf".to_string(),
+                        automation_id: "wf".to_string(),
                     },
                     targets: ScheduleTargets::Connections {
                         connection_ids: vec!["Work/x".to_string()],

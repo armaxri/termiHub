@@ -51,7 +51,11 @@ fn legacy_dir(macros: &[&str], workflows: &[&str], schedules: Vec<Value>) -> Tem
     let dir = TempDir::new().unwrap();
     let macros: Vec<Value> = macros.iter().map(|id| macro_entry(id)).collect();
     let workflows: Vec<Value> = workflows.iter().map(|id| workflow_entry(id)).collect();
-    write(&dir, "macros.json", &json!({"version": "1", "macros": macros}));
+    write(
+        &dir,
+        "macros.json",
+        &json!({"version": "1", "macros": macros}),
+    );
     write(
         &dir,
         "workflows.json",
@@ -129,7 +133,11 @@ fn a_macro_whose_id_a_workflow_took_follows_its_new_id() {
 
 #[test]
 fn a_duplicate_macro_id_keeps_resolving_to_the_first_macro() {
-    let dir = legacy_dir(&["dup", "dup"], &[], vec![schedule("s", macro_action("dup"))]);
+    let dir = legacy_dir(
+        &["dup", "dup"],
+        &[],
+        vec![schedule("s", macro_action("dup"))],
+    );
     run_boot_migration(dir.path(), chrono::Utc::now()).unwrap();
     assert_eq!(automation_id_of(&load(&dir), "s"), "dup");
 }
@@ -241,7 +249,10 @@ fn newer_and_corrupt_schedule_files_are_left_alone() {
             fs::read_to_string(dir.path().join(SCHEDULES_FILE)).unwrap(),
             raw
         );
-        assert!(!dir.path().join("schedules.json.pre-automations.bak").exists());
+        assert!(!dir
+            .path()
+            .join("schedules.json.pre-automations.bak")
+            .exists());
     }
 }
 

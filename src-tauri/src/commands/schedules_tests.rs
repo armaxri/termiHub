@@ -97,7 +97,7 @@ fn input() -> ScheduleInput {
         name: "Health check".to_string(),
         description: None,
         action: ScheduleAction::Automation {
- automation_id: "wf-1".to_string(),
+            automation_id: "wf-1".to_string(),
         },
         targets: ScheduleTargets::Connections {
             connection_ids: vec!["conn-a".to_string()],
