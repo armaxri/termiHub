@@ -29,6 +29,14 @@ export const VIEW_MODE_ENTER_HINT = "Press Enter to reconnect.";
 export const VIEW_MODE_RESTART_HINT = "Press Enter to restart.";
 
 /**
+ * The hint after the user disconnected the tab's agent (#5980): Reconnect
+ * brings the agent back and resumes the tab's own session, which kept running
+ * on the agent host (#5953). Only when the agent no longer runs it does a new
+ * session start, and the tab's marker then says so.
+ */
+export const VIEW_MODE_RESUME_HINT = "Press Enter to resume.";
+
+/**
  * Thin non-blocking banner pinned to the top of the terminal slot when the
  * disconnect overlay has been dismissed and the user is browsing the scrollback.
  * Keeps the terminal fully interactive for selection and copy while clearly
@@ -43,7 +51,7 @@ export const VIEW_MODE_RESTART_HINT = "Press Enter to restart.";
 export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewModeBannerProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   // The user disconnected or shut down this tab's agent (#4309): say so, since
-  // Reconnect will bring the agent back before starting a new session.
+  // Reconnect will bring the agent back and resume the session (#5953).
   const agentDisconnected = useAppStore((s) => s.terminalAgentDisconnected[tabId] ?? false);
 
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -65,20 +73,23 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
       ? `${notice.heading}.`
       : "Session ended.";
   const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
-  const hint = restart ? VIEW_MODE_RESTART_HINT : VIEW_MODE_ENTER_HINT;
+  const hint = agentDisconnected
+    ? VIEW_MODE_RESUME_HINT
+    : restart
+      ? VIEW_MODE_RESTART_HINT
+      : VIEW_MODE_ENTER_HINT;
   const reconnectTitle = agentDisconnected
-    ? "Reconnect the agent and start a new session (Enter)"
+    ? "Reconnect the agent and resume the session (Enter)"
     : restart
       ? "Start the process again (Enter)"
       : "Start a new session (Enter)";
   // The agent heading already says what happened; every other end states its
   // cause (#5831).
   const causeLine = agentDisconnected ? undefined : (cause ?? notice?.causeLine);
-  const announcement = agentDisconnected
-    ? "Agent disconnected. Press Enter or click Reconnect to reconnect it and start a new session."
-    : `${heading}${causeLine ? ` ${causeLine}` : ""} Press Enter or click ${actionLabel} to ${
-        restart ? "start it again" : "start a new session"
-      }.`;
+  // One string for the eye and the screen reader (#5980): the announcement is
+  // the banner's own visible text. It used to promise "a new session" while
+  // Reconnect resumed the agent's session.
+  const announcement = [heading, hint, causeLine].filter(Boolean).join(" ");
   const Icon = processEnd ? SquareTerminal : notice?.kind === "ended" ? CheckCircle2 : WifiOff;
 
   return (
