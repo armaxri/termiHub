@@ -322,14 +322,14 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
   });
 
   it("opens a new local terminal from the toolbar", async () => {
-    const addTab = vi.fn();
-    useAppStore.setState({ addTab });
+    const addLocalShellTab = vi.fn();
+    useAppStore.setState({ addLocalShellTab });
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
 
     click("terminal-view-new-terminal");
 
-    expect(addTab).toHaveBeenCalledWith("Terminal", "local");
+    expect(addLocalShellTab).toHaveBeenCalledWith();
   });
 });
 

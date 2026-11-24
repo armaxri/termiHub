@@ -3,6 +3,7 @@ import { StateCreator } from "zustand";
 import type { AddTabOptions, AppState } from "../appStore";
 import { bestEffortOwnership } from "../windowHelpers";
 import {
+  collectLiveTabs,
   createTab,
   currentLayoutSnapshot,
   generateGroupId,
@@ -58,6 +59,7 @@ import {
 import { mirrorSessionIntent, mirrorSessionLive } from "@/store/sessionBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { createLayoutCommit } from "./layoutCommit";
+import { numberedTabTitle, shellTabName } from "@/utils/defaultTabTitle";
 import { prunedSessionState, prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
 
 /**
@@ -126,6 +128,13 @@ export interface LayoutSlice {
     config?: ConnectionConfig,
     options?: AddTabOptions
   ) => string;
+
+  /**
+   * Open a local shell tab with the default shell, named after the shell and
+   * numbered when that name is taken (`zsh`, `zsh 2`, #5829).
+   * @returns The id of the created tab.
+   */
+  addLocalShellTab: (options?: AddTabOptions) => string;
 
   editorDirtyTabs: Record<string, boolean>;
 
@@ -502,8 +511,15 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
         spawned,
         initialCommand,
         besideSibling,
+        numberTitle,
       } = options ?? {};
       const prev = get();
+      const tabTitle = numberTitle
+        ? numberedTabTitle(
+            title,
+            collectLiveTabs(prev).map((t) => t.title)
+          )
+        : title;
       const pre = currentLayoutSnapshot(prev);
       let createdTabId = "";
       let addedPanelId = "";
@@ -519,7 +535,7 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
           config: { shell: state.defaultShell },
         };
         const baseTab = createTab(
-          title,
+          tabTitle,
           connectionType,
           defaultConfig,
           targetPanelId,
@@ -598,6 +614,12 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
       get().refreshBroadcastMembership();
       return createdTabId;
     },
+
+    addLocalShellTab: (options) =>
+      get().addTab(shellTabName(get().defaultShell), "local", undefined, {
+        ...options,
+        numberTitle: true,
+      }),
 
     editorDirtyTabs: {},
 

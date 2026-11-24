@@ -110,13 +110,13 @@ describe("FileBrowser — empty states (#5299)", () => {
   });
 
   it("opens a local terminal from the New Terminal action", async () => {
-    const addTab = vi.fn(() => "tab-1");
-    useAppStore.setState({ addTab });
+    const addLocalShellTab = vi.fn(() => "tab-1");
+    useAppStore.setState({ addLocalShellTab });
     await renderBrowser();
     await act(async () => {
       q("file-browser-placeholder-new-terminal")?.click();
     });
-    expect(addTab).toHaveBeenCalledWith("Terminal", "local");
+    expect(addLocalShellTab).toHaveBeenCalledWith();
   });
 
   it("names an unsupported connection type and offers no action", async () => {

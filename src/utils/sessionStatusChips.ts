@@ -46,7 +46,7 @@ function hopEndpoint(hop: JumpHostConfig): string {
 }
 
 /** How an SSH config authenticates, for the chip tooltip. */
-function authDescription(method: string | undefined, keyPath: string | undefined): string {
+export function authDescription(method: string | undefined, keyPath: string | undefined): string {
   switch (method) {
     case "password":
       return "password";
@@ -60,7 +60,7 @@ function authDescription(method: string | undefined, keyPath: string | undefined
 }
 
 /** How a host key was trusted, for the chip tooltip (#5669). */
-const TRUST_WORDING: Record<SshHostKeyTrust, string> = {
+export const TRUST_WORDING: Record<SshHostKeyTrust, string> = {
   knownHosts: "trusted via ~/.ssh/known_hosts",
   remembered: "trusted",
   firstSeenRemembered: "first seen, accepted and remembered",

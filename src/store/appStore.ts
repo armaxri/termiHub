@@ -153,6 +153,12 @@ export interface AddTabOptions {
    * one connection sit side by side. Needs `connectionId`; defaults to `false`.
    */
   besideSibling?: boolean;
+  /**
+   * The title is a default name, not one the user chose (#5829): when another
+   * open tab already carries it, the new tab is numbered (`zsh 2`, `zsh 3`).
+   * Defaults to `false`; open tabs are never renamed.
+   */
+  numberTitle?: boolean;
 }
 
 /**
