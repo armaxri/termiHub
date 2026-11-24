@@ -2082,9 +2082,17 @@ mod tests {
                 Some(CloseLiveSessionConfirm::Shortcut),
             ),
             (None, Some(false), Some(CloseLiveSessionConfirm::Shortcut)),
-            (Some(false), Some(true), Some(CloseLiveSessionConfirm::Pointer)),
+            (
+                Some(false),
+                Some(true),
+                Some(CloseLiveSessionConfirm::Pointer),
+            ),
             (Some(false), None, Some(CloseLiveSessionConfirm::Pointer)),
-            (Some(false), Some(false), Some(CloseLiveSessionConfirm::Never)),
+            (
+                Some(false),
+                Some(false),
+                Some(CloseLiveSessionConfirm::Never),
+            ),
         ];
         for (shortcut, pointer, expected) in cases {
             let mut doc = serde_json::json!({"version": "2", "externalConnectionFiles": []});
@@ -2395,7 +2403,8 @@ mod tests {
         // is key order: an unknown key sorting *before* a promoted key
         // (`aFutureKey` < `broadcastGroups`) is now written after it.
         let (settings, saved) = load_and_resave(LEGACY_UNKNOWN_KEYS);
-        let before: serde_json::Value = serde_json::from_str(&as_current(LEGACY_UNKNOWN_KEYS)).unwrap();
+        let before: serde_json::Value =
+            serde_json::from_str(&as_current(LEGACY_UNKNOWN_KEYS)).unwrap();
         let after: serde_json::Value = serde_json::from_str(&saved).unwrap();
         assert_eq!(before, after);
         assert_eq!(
