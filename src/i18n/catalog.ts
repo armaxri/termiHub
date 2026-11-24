@@ -386,11 +386,15 @@ const en = {
   // A process that exits is not a lost connection: only a dropped link says
   // "disconnected", and a local process is restarted, not reconnected.
   "drop.end.exited": "Process exited (code {code})",
+  "drop.end.exitedNoCode": "Process exited",
   "drop.end.ended": "Session ended",
   "drop.end.device": "Device disconnected",
   "drop.end.disconnected": "Session disconnected",
   "drop.end.restart": "Restart",
   "drop.end.reconnect": "Reconnect",
+  // One Enter hint for the strip and the view-mode banner (#5955).
+  "drop.end.enterReconnect": "Press Enter to reconnect.",
+  "drop.end.enterRestart": "Press Enter to restart.",
   "drop.heading.server": "Server closed the connection — reconnecting…",
   "drop.heading.timeout": "Connection timed out — reconnecting…",
   "drop.autoReconnectOff":
