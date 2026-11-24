@@ -391,6 +391,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     const { values, conflicts } = mergeMovedDraft(local, restoreDraftSecrets(moved, base), base);
     handleSettingsChange(values);
     if (conflicts.length > 0) {
+      // toast-policy: explains-outcome — says which values were kept against the moved Settings
       toast.info(
         `Kept this window's unsaved ${conflicts.length === 1 ? "value" : "values"} for ` +
           `${conflicts.join(", ")}; the moved Settings changed ` +

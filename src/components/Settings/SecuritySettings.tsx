@@ -276,6 +276,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     try {
       await changeMasterPassword(currentPasswordInput, changeNewPassword);
       resetChangePasswordDialog();
+      // toast-policy: no-in-place-surface — a changed password has no on-screen state
       toast.success("Master password changed");
     } catch (err) {
       setChangePasswordError(errorMessage(err));
@@ -315,11 +316,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const handleToggleLocalProcess = useCallback(
     (enabled: boolean) => {
       void updateSettings({ ...settings, workflowLocalProcessEnabled: enabled });
-      toast.success(
-        enabled
-          ? "Workflow local process execution enabled"
-          : "Workflow local process execution disabled"
-      );
     },
     [settings, updateSettings]
   );
@@ -328,7 +324,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     (program: string) => {
       const next = localProcessAllowlist.filter((p) => p !== program);
       void updateSettings({ ...settings, workflowLocalProcessAllowlist: next });
-      toast.success(`Removed ${program} from the allowlist`);
     },
     [settings, updateSettings, localProcessAllowlist]
   );

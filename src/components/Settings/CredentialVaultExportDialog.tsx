@@ -91,10 +91,12 @@ export function CredentialVaultExportDialog({
         filters: [{ name: "termiHub credential vault", extensions: ["json"] }],
       });
       if (!filePath) {
+        // toast-policy: explains-outcome — no file was written, and this says so
         toast.info("Export canceled — no file was written.");
         return;
       }
       await writeTextFile(filePath, json);
+      // toast-policy: no-in-place-surface — the export is a file on disk
       toast.success("Credential vault exported.");
       onOpenChange(false);
     } catch (err) {

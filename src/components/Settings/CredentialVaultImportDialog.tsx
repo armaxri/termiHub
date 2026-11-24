@@ -119,6 +119,7 @@ export function CredentialVaultImportDialog({
     setError("");
     try {
       const result = await importCredentialVault(fileContent, passphrase, strategy);
+      // toast-policy: off-screen — says how many credentials were imported; they are not listed here
       toast.success(importSummary(result));
       onOpenChange(false);
     } catch (err) {

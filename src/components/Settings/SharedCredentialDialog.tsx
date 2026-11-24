@@ -90,12 +90,11 @@ export function SharedCredentialDialog({ mode, onClose }: SharedCredentialDialog
     try {
       if (mode.kind === "create") {
         await createNamedCredential(name.trim(), kind, secret);
-        toast.success(`Shared credential "${name.trim()}" created.`);
       } else if (mode.kind === "rename") {
         await renameNamedCredential(mode.credential.id, name.trim());
-        toast.success("Shared credential renamed.");
       } else {
         await rotateNamedCredential(mode.credential.id, secret);
+        // toast-policy: no-in-place-surface — a rotated secret has no on-screen state
         toast.success(`"${mode.credential.name}" updated for every connection that uses it.`);
       }
       onClose();

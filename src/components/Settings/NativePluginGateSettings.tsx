@@ -89,7 +89,6 @@ export function NativePluginGateSettings() {
       try {
         await setNativePluginsEnabled(checked);
         await load();
-        toast.success(checked ? "Native plugins enabled" : "Native plugins disabled");
       } catch (err) {
         toast.error(`Failed to update native plugins: ${errorMessage(err)}`);
         throw err;
@@ -124,13 +123,12 @@ export function NativePluginGateSettings() {
     async (
       plugin: InstalledPlugin,
       options: { acceptUnverifiedToolchain: boolean; acceptReducedIsolation?: boolean },
-      success: string,
       failure: string
     ) => {
       try {
         await acknowledgeNativePlugin(plugin.manifest.id, plugin.trustSnapshot, options);
+        // The plugin's row shows it trusted and loaded (#5859).
         await load();
-        toast.success(success);
       } catch (err) {
         if (isTrustBindingRefusal(err)) {
           frontendLog(
@@ -151,12 +149,7 @@ export function NativePluginGateSettings() {
   const handleTrust = useCallback(
     (plugin: InstalledPlugin, acceptUnverifiedToolchain: boolean) => {
       const name = plugin.manifest.name;
-      return acknowledge(
-        plugin,
-        { acceptUnverifiedToolchain },
-        `Trusted and loaded ${name}`,
-        `Failed to trust ${name}`
-      );
+      return acknowledge(plugin, { acceptUnverifiedToolchain }, `Failed to trust ${name}`);
     },
     [acknowledge]
   );
@@ -167,7 +160,6 @@ export function NativePluginGateSettings() {
       return acknowledge(
         plugin,
         { acceptUnverifiedToolchain, acceptReducedIsolation: true },
-        `Loaded ${name} with reduced isolation`,
         `Failed to load ${name}`
       );
     },
@@ -182,6 +174,7 @@ export function NativePluginGateSettings() {
         // disabled after crashes gets a fresh crash budget.
         await enablePlugin(plugin.manifest.id);
         await load();
+        // toast-policy: no-in-place-surface — a restart leaves the plugin's row unchanged
         toast.success(reenable ? `Re-enabled ${name}` : `Restarted ${name}`);
       } catch (err) {
         toast.error(
@@ -199,7 +192,6 @@ export function NativePluginGateSettings() {
       try {
         await revokeNativePluginTrust(plugin.manifest.id);
         await load();
-        toast.success(`Revoked trust for ${name}`);
       } catch (err) {
         toast.error(`Failed to revoke ${name}: ${errorMessage(err)}`);
         throw err;

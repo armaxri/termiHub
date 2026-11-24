@@ -50,7 +50,6 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
           )
           .filter((h) => h.fingerprints.length > 0)
       );
-      toast.success(`Revoked host key for ${host}`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to revoke host key: ${message}`);
@@ -62,7 +61,6 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
     try {
       await sshTrustForget(host);
       setHosts((prev) => prev.filter((h) => h.host !== host));
-      toast.success(`Forgot all remembered host keys for ${host}`);
     } catch (err) {
       const message = errorMessage(err);
       toast.error(`Failed to forget host: ${message}`);
