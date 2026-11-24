@@ -195,7 +195,10 @@ describe("AgentUpdateBanner", () => {
       expect(session?.getAttribute("title")).toBe(name);
       const rule = cssRule(".agent-update-banner__session");
       expect(rule["white-space"]).toBe("nowrap");
-      expect(rule["max-width"]).toBe("100%");
+      expect(rule.overflow).toBe("hidden");
+      expect(cssRule(".agent-update-banner__session-part")["max-width"]).toBe("100%");
+      // The parentheses stay with the name.
+      expect(session?.parentElement?.textContent).toBe(`(${name})`);
     });
   });
 

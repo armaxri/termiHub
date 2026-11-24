@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useState, type ReactNode } from "react";
 import { ArrowUpCircle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -49,16 +49,20 @@ function namedSessions(names: readonly string[]): string {
 function waitingNote(names: readonly string[]): ReactNode {
   return (
     <>
-      Waits for {sessionCount(names.length)} (
+      Waits for {sessionCount(names.length)}{" "}
       {names.map((name, i) => (
-        <span key={`${i}-${name}`}>
-          {i > 0 && ", "}
-          <span className="agent-update-banner__session" title={name}>
-            {name}
-          </span>
-        </span>
+        <Fragment key={`${i}-${name}`}>
+          {/* The parenthesis or comma stays with its name, never alone on a line. */}
+          <span className="agent-update-banner__session-part">
+            {i === 0 && "("}
+            <span className="agent-update-banner__session" title={name}>
+              {name}
+            </span>
+            {i === names.length - 1 ? ")" : ","}
+          </span>{" "}
+        </Fragment>
       ))}
-      ) to close.
+      to close.
     </>
   );
 }

@@ -57,7 +57,7 @@ INSTALL_DIR = "agent-polish-agent"
 VERSION = "99.0.0"
 BANNER = "terminal-view-mode-banner"
 ANNOUNCEMENT = "terminal-view-mode-announcement"
-VIEW_SCROLLBACK = "terminal-disconnect-view-btn"
+LABEL = "terminal-view-mode-label"
 
 
 # ── app-free grade tests ──────────────────────────────────────────────────
@@ -273,6 +273,8 @@ class TestProductRunAgentPolish(
             dismiss=dismiss, consequence=consequence, open_sessions=len(sessions),
             name_boxes=names, line_height=line_height,
         )
+        if len(names) != len(sessions):
+            problems.append(f"measured {len(names)} session names, the agent lists {sessions}")
         self.dismiss_agent_update_banner(agent_id)
         return problems
 
@@ -282,14 +284,10 @@ class TestProductRunAgentPolish(
         self.wait(lambda: self.agent_connection_state(self.name) != "connected",
                   timeout=30.0, what="the agent to disconnect")
         self.switch_to_tab(tab)
-
-        def banner() -> bool:
-            if self.driver.exists(VIEW_SCROLLBACK):
-                self.driver.click(VIEW_SCROLLBACK)
-            return self.driver.exists(BANNER)
-
-        self.wait(banner, timeout=20.0, what="the disconnected banner")
-        visible = self.driver.get_text(BANNER).replace("Reconnect", "").strip()
+        # A user agent Disconnect puts the tab straight on the banner (#4309).
+        self.wait(lambda: self.driver.exists(BANNER), timeout=20.0, what="the disconnected banner")
+        # The label only: the banner's own text also holds its live region.
+        visible = self.driver.get_text(LABEL).strip()
         spoken = self.wait(lambda: self.driver.get_text(ANNOUNCEMENT).strip() or None,
                            timeout=5.0, what="the banner's announcement")
         self.shot(label="banner")

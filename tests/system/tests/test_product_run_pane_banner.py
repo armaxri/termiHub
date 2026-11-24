@@ -63,7 +63,7 @@ BUTTON = {"rect": _rect(700, 72, 88, 22), "visible": True, "overflows": False}
 def _grade(**overrides: Any) -> list[str]:
     args: dict[str, Any] = {
         "banner": TOP_BANNER,
-        "banner_text": "Agent disconnected. Press Enter to reconnect. Reconnect",
+        "banner_text": "Agent disconnected. Press Enter to resume. Reconnect",
         "pane": PANE,
         "reconnect": BUTTON,
         "text_items": [],

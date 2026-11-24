@@ -8,7 +8,8 @@
   session, while it resumes the session (#5980).
 - Tabs grow up to 360px before their title is shortened, so an agent tab
   ("<agent> · bash") and its "Setup: <agent>" tab show their full name while the strip has
-  room. The tooltip always shows the full title (#5980).
+  room. A setup tab too narrow for its name is shortened from the end, like an agent tab. The
+  tooltip always shows the full title (#5980).
 - A setup tab whose setup finished shows a "Finished" check instead of the red disconnected
   plug, and the status bar no longer shows its SSH chip. A failed setup keeps the red plug
   (#5980).
