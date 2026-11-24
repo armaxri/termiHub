@@ -2251,6 +2251,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       {/* The form keeps the toast stack off its fields (#5830). */}
       <div
         className={`connection-editor__body ${isCompact ? "connection-editor__body--compact" : ""}`}
+        data-testid="connection-editor-body"
         {...TOAST_AVOID_FORM_PROPS}
       >
         <SettingsNav

@@ -63,9 +63,10 @@ describe("useDismissOnModalOpen (#5665)", () => {
   let host: HTMLDivElement;
   let root: Root;
 
-  beforeEach(() => {
-    dismiss.mockClear();
+  beforeEach(async () => {
     toast.dismiss();
+    // Let the repeat dismisses (#4812) an earlier test scheduled run out.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     dismiss.mockClear();
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -93,6 +94,17 @@ describe("useDismissOnModalOpen (#5665)", () => {
     document.body.appendChild(dialog);
     await settle();
     expect(dismissedIds()).toEqual(["closed-1"]);
+  });
+
+  it("dismisses lingering success/info toasts when a dialog opens (#5830)", async () => {
+    toast.success("Played macro", { id: "played" });
+    toast.info("Disabled schedule", { id: "disabled" });
+    toast.error("Sync failed", { id: "err" });
+    const dialog = document.createElement("div");
+    dialog.setAttribute("aria-modal", "true");
+    document.body.appendChild(dialog);
+    await settle();
+    expect(dismissedIds().sort()).toEqual(["disabled", "played"]);
   });
 
   it("leaves the toast alone while no dialog opens", async () => {

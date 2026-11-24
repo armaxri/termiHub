@@ -22,7 +22,14 @@ vi.mock("sonner", () => ({
 }));
 
 // Import after the mock is registered.
-import { dismissModalStaleToasts, setTransientDeferred, toast } from "./toast";
+import {
+  dismissModalStaleToasts,
+  INLINE_STATUS_DURATION,
+  registerInlineStatusSink,
+  setTransientDeferred,
+  toast,
+  type InlineStatus,
+} from "./toast";
 
 describe("toast API", () => {
   beforeEach(() => {
@@ -394,5 +401,70 @@ describe("toast API", () => {
       setTransientDeferred(false);
       expect(toast.isActive("reopen")).toBe(true);
     });
+  });
+});
+
+describe("inline dialog status (#5830)", () => {
+  let lines: Array<InlineStatus | null>;
+  let unregister: () => void;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    toast.dismiss();
+    lines = [];
+    unregister = registerInlineStatusSink((status) => lines.push(status));
+  });
+
+  afterEach(() => {
+    unregister();
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  });
+
+  it("routes success/info to the open dialog's status line, not sonner", () => {
+    toast.success("Copied", { id: "c" });
+    expect(success).not.toHaveBeenCalled();
+    expect(lines.at(-1)).toMatchObject({ id: "c", kind: "success", message: "Copied" });
+    expect(toast.isActive("c")).toBe(true);
+  });
+
+  it("keeps toasts with a button and errors in the stack", () => {
+    toast.success("Closed", { action: { label: "Reopen", onClick: () => {} } });
+    toast.error("Failed");
+    expect(success).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(lines).toEqual([]);
+  });
+
+  it("clears the line after its duration, on dismiss and when the dialog closes", () => {
+    toast.info("One", { id: "a" });
+    vi.advanceTimersByTime(INLINE_STATUS_DURATION);
+    expect(lines.at(-1)).toBeNull();
+    expect(toast.isActive("a")).toBe(false);
+    toast.info("Two", { id: "b" });
+    toast.dismiss("b");
+    expect(lines.at(-1)).toBeNull();
+    toast.info("Three", { id: "d" });
+    unregister();
+    expect(lines.at(-1)).toBeNull();
+    expect(toast.isActive("d")).toBe(false);
+  });
+
+  it("resolves a promise's loading toast into the status line", async () => {
+    await toast.promise(Promise.resolve(1), { loading: "Saving…", success: "Saved", error: "x" });
+    await Promise.resolve();
+    expect(dismiss).toHaveBeenCalledWith("toast-id");
+    expect(lines.at(-1)).toMatchObject({ id: "toast-id", message: "Saved" });
+  });
+
+  it("feeds the innermost dialog while dialogs are nested", () => {
+    const inner: Array<InlineStatus | null> = [];
+    const off = registerInlineStatusSink((status) => inner.push(status));
+    toast.success("Inner");
+    off();
+    toast.success("Outer");
+    expect(inner[0]).toMatchObject({ message: "Inner" });
+    expect(lines.at(-1)).toMatchObject({ message: "Outer" });
   });
 });
