@@ -24,10 +24,6 @@ export function reopenPayloadForTab(
  */
 export const REOPEN_TOAST_ID = "th-reopen-closed-tabs";
 
-/** `data-testid` on the reopen toast and on its action's label. */
-export const REOPEN_TOAST_TEST_ID = "reopen-tab-toast";
-export const REOPEN_TOAST_ACTION_TEST_ID = "reopen-tab-toast-action";
-
 /**
  * How long the reopen toast stays up, and how close together closes must come
  * to join one toast (#5828): a close within this long of the previous one adds
@@ -98,14 +94,14 @@ export function showReopenToast(payload: ReopenTabPayload | null): void {
     id: REOPEN_TOAST_ID,
     description: reopenToastDescription(closed),
     duration: REOPEN_COALESCE_MS,
-    testId: REOPEN_TOAST_TEST_ID,
+    testId: "reopen-tab-toast",
     // The undo belongs to the moment of closing: a dialog opened afterwards
     // (a settings confirm, an unlock) dismisses it rather than sitting beside
     // it (#5665).
     dismissOnModal: true,
     action: {
       label: closed.length === 1 ? "Reopen" : "Reopen all",
-      testId: REOPEN_TOAST_ACTION_TEST_ID,
+      testId: "reopen-tab-toast-action",
       onClick: () => {
         // Only this toast's tabs: a later close starts a new batch.
         if (closedBatch === closed) resetReopenToastBatch();

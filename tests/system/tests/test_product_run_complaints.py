@@ -16,8 +16,9 @@ fails until its fix lands; the grade is never weakened to pass.
    field show the leaf folder in full (not ellipsized), let no rendered
    segment spill past the field, fold the middle into "…" and carry the
    full path in the tooltip, at the normal and at the minimum sidebar width.
-4. **Toast stack** (#5618): two toasts raised while the connection editor is
-   open stack without overlapping each other and stay clear of the editor's
+4. **Toast stack** (#5618, #5828): closing two tabs while the connection
+   editor is open leaves one "Closed 2 tabs" toast (the closes coalesce,
+   #5828), no toasts overlapping each other, all clear of the editor's
    Save / Cancel footer.
 5. **File list** (#5623): a long file / folder name ends in an ellipsis inside
    the list (no hard cut, no horizontal scrollbar), the Modified / Size headers
@@ -491,17 +492,25 @@ class TestProductRunComplaints(
         return items
 
     def _closed_toast_titles(self) -> list[dict[str, Any]] | None:
-        """The 'Closed …' toast titles once at least two show, else ``None``."""
+        """The 'Closed …' toast titles once the two closes show, else ``None``.
+
+        The two closes share one "Closed 2 tabs" toast since #5828; a second
+        'Closed …' title (the old stacking) also ends the wait, so the overlap
+        and count checks below grade it.
+        """
         titles = [i for i in self._toast_items() if i["text"].startswith("Closed")]
-        return titles if len(titles) >= 2 else None
+        if len(titles) >= 2 or any(t["text"] == "Closed 2 tabs" for t in titles):
+            return titles
+        return None
 
     def test_30_toast_stack(self):
         with self.step(
             "complaints.toasts.stack",
-            "Two toasts over the connection editor: no overlap, editor footer clear (#5618)",
-            expect="#5618 complaint: the two 'Closed …' toasts sit one above the other with a "
-            "gap (no text showing through), and neither covers the editor's Save / Cancel "
-            "buttons",
+            "Two tab closes over the connection editor: one toast, editor footer clear "
+            "(#5618, #5828)",
+            expect="#5618/#5828 complaint: ONE 'Closed 2 tabs' toast (not one per tab), no "
+            "toasts overlapping (no text showing through), and none covering the editor's "
+            "Save / Cancel buttons",
         ):
             self.switch_to_connections_sidebar()
             terminals: list[str] = []
@@ -514,15 +523,18 @@ class TestProductRunComplaints(
                 # End the shell first: closing a live session raises its confirm
                 # dialog, and a dialog opening dismisses the earlier tab's
                 # "Closed … / Reopen" toast (#5665). An exited tab closes at
-                # once, so both toasts stay up together.
+                # once, so both closes join one toast (#5828).
                 self.run_command("exit")
                 self.wait(lambda t=tab: self.terminal_session_exited(t), what="the shell to exit")
                 terminals.append(tab)
             self.open_new_connection_editor()
             for tab in terminals:
                 self.close_tab(tab)
-            texts = self.wait(self._closed_toast_titles, what="both 'Closed' toasts", timeout=3.0)
+            texts = self.wait(self._closed_toast_titles, what="the 'Closed' toast", timeout=3.0)
             self.evidence(f"toast titles {[(t['text'], t['rect']) for t in texts]}")
+            assert len(texts) == 1, (
+                f"{len(texts)} 'Closed …' toasts stack for two closes: {[t['text'] for t in texts]}"
+            )
             for i, a in enumerate(texts):
                 for b in texts[i + 1:]:
                     assert not _intersects(a["rect"], b["rect"]), (

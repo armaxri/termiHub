@@ -350,7 +350,8 @@ describe("toast API", () => {
       onAutoClose?: () => void;
       action?: { onClick: () => void };
     };
-    const lastSuccessOpts = () => success.mock.calls.at(-1)?.[1] as unknown as SonnerOpts;
+    const lastSuccessOpts = () =>
+      success.mock.calls[success.mock.calls.length - 1]?.[1] as unknown as SonnerOpts;
 
     beforeEach(() => {
       setTransientDeferred(false);

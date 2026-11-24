@@ -4,7 +4,7 @@
  * restores all three tabs in order.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider, toast } from "@/components/ui";
 import type { ReopenTabPayload } from "@/types/terminal";
@@ -14,12 +14,10 @@ vi.mock("@/store/appStore", () => ({
   useAppStore: { getState: () => ({ addTab }) },
 }));
 
-import {
-  REOPEN_TOAST_ACTION_TEST_ID,
-  REOPEN_TOAST_TEST_ID,
-  resetReopenToastBatch,
-  showReopenToast,
-} from "./reopenTab";
+import { resetReopenToastBatch, showReopenToast } from "./reopenTab";
+
+const REOPEN_TOAST_TEST_ID = "reopen-tab-toast";
+const REOPEN_TOAST_ACTION_TEST_ID = "reopen-tab-toast-action";
 
 let container: HTMLDivElement;
 let root: Root;
