@@ -37,14 +37,23 @@
 }
 
 /*
- * Per-tab "receiving macro" badge (#3446): marks every terminal a multi-target
- * macro is typing into while the run is in flight. Distinct icon and colour from
- * the broadcast Radio badge so the two are never confused when both are on.
+ * Per-tab "running automation" badge (#5818, slice 5; was the multi-target
+ * "receiving macro" badge of #3446): marks every terminal an automation is
+ * typing into, with its progress there. Distinct icon and colour from the
+ * broadcast Radio badge so the two are never confused when both are on. A
+ * click stops the run on that terminal.
  */
-.tab__macro-badge {
+.tab__automation-badge {
   display: inline-flex;
   align-items: center;
+  gap: var(--spacing-xs);
   color: var(--macro-accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.tab__automation-progress {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Status-bar pill: orange while healthy. */
