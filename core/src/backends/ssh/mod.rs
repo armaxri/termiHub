@@ -2727,7 +2727,11 @@ mod tests {
             ..MockSshConnector::new()
         };
         let mut ssh = Ssh::with_connector(Box::new(connector));
-        assert_eq!(ssh.ssh_algorithms().await, None, "nothing before the connect");
+        assert_eq!(
+            ssh.ssh_algorithms().await,
+            None,
+            "nothing before the connect"
+        );
         ssh.connect(mock_settings()).await.unwrap();
         assert_eq!(ssh.ssh_algorithms().await, Some(algorithms));
         ssh.disconnect().await.unwrap();

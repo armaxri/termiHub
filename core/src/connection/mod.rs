@@ -87,8 +87,8 @@ pub use registry::{
 };
 pub use save_password::{normalize_save_password, LEGACY_SAVE_TO_STORE_KEY, SAVE_PASSWORD_KEY};
 pub use schema::*;
-pub use validation::{validate_settings, ValidationError};
 pub use ssh_algorithms::SshNegotiatedAlgorithms;
+pub use validation::{validate_settings, ValidationError};
 pub use x11_forwarding::{X11ForwardingMode, X11ForwardingReason};
 
 use std::sync::Arc;
