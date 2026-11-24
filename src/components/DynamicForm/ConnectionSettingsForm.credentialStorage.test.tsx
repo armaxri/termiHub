@@ -92,8 +92,8 @@ describe("ConnectionSettingsForm credential storage modes (#5186)", () => {
     expect(query("field-savePassword-enable-storage")?.textContent).toBe(
       "Enable credential storage…"
     );
-    // The password itself is still never pre-filled in None mode.
-    expect(query("dynamic-field-password")).toBeNull();
+    // The password field stays beside its save toggle (#5835), empty.
+    expect((query("field-password") as HTMLInputElement | null)?.value).toBe("");
   });
 
   it("opens Settings ▸ Security from the enable action", () => {
