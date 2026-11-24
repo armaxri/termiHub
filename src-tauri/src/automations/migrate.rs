@@ -266,6 +266,8 @@ fn reconcile(
     workflows: &LegacyRead<WorkflowStore>,
 ) -> LibraryReport {
     let mut report = LibraryReport::default();
+    // Ids of automations this build cannot read (#6009): never handed out.
+    let reserved: Vec<String> = store.unreadable.iter().map(|u| u.id.clone()).collect();
     let mut provenance = store.migrated_from.clone().unwrap_or_default();
     // A store without any provenance (restored from a backup) adopts the
     // legacy files as they are now instead of merging them.
@@ -286,6 +288,7 @@ fn reconcile(
     });
     provenance.macros = reconcile_file(
         &mut store.automations,
+        &reserved,
         provenance.macros.take(),
         macros,
         macro_entries,
@@ -315,6 +318,7 @@ fn reconcile(
     });
     provenance.workflows = reconcile_file(
         &mut store.automations,
+        &reserved,
         provenance.workflows.take(),
         workflows,
         workflow_entries,
@@ -355,6 +359,7 @@ fn legacy_entries<T>(
 /// Reconcile one legacy file; returns its new provenance record.
 fn reconcile_file<T>(
     automations: &mut Vec<Automation>,
+    reserved: &[String],
     record: Option<LegacyFileRecord>,
     read: &LegacyRead<T>,
     entries: Vec<LegacyEntry>,
@@ -377,7 +382,11 @@ fn reconcile_file<T>(
         }
     }
     let previous = record.map(|r| r.entries).unwrap_or_default();
-    let mut taken: HashSet<String> = automations.iter().map(|a| a.id.clone()).collect();
+    let mut taken: HashSet<String> = automations
+        .iter()
+        .map(|a| a.id.clone())
+        .chain(reserved.iter().cloned())
+        .collect();
     let mut records = Vec::with_capacity(entries.len());
     for entry in entries {
         let prev = previous

@@ -16,54 +16,10 @@ use crate::backup::sections;
 
 const FILE: &str = "automations.json";
 
-/// Every known step kind with unknown keys on it and in what it holds, and a
-/// step of a kind this build does not know, also nested.
-fn steps() -> Value {
-    let future = json!({"kind": "future-step", "payload": {"deep": [1, {"x": true}]},
-        "continueOnError": true});
-    let condition = json!({"left": "a", "op": "eq", "right": "b", "fCondition": 1});
-    json!([
-        {"kind": "type-keys", "timing": "fixed", "fixedDelayMs": 5, "recorded": true, "fStep": 1,
-         "chunks": [{"data": "ls\r", "delayMs": 3, "fChunk": "c"}]},
-        {"kind": "send-command", "command": "ls", "fStep": {"a": 1},
-         "retry": {"count": 2, "delayMs": 10, "backoff": "fixed", "fRetry": true}},
-        {"kind": "run-script", "script": "a\nb", "perLineDelayMs": 1, "sourcePath": "/x", "fStep": 2},
-        {"kind": "run-automation", "automationId": "other", "fStep": 3},
-        {"kind": "wait", "delayMs": 4, "fStep": null},
-        {"kind": "run-local-process", "program": "p", "args": ["q"], "fStep": [1]},
-        {"kind": "conditional", "condition": condition, "fStep": 6,
-         "then": [{"kind": "wait", "delayMs": 1, "fNested": 1}, future],
-         "else": [{"kind": "send-command", "command": "x", "fNested": 2}]},
-        {"kind": "loop", "loop": {"kind": "count", "count": 2, "fLoop": 1}, "fStep": 7,
-         "body": [future, {"kind": "wait", "delayMs": 2, "fNested": 3}]},
-        {"kind": "loop", "loop": {"kind": "while", "condition": condition, "fLoop": 2}, "body": []},
-        {"kind": "wait-for-output", "pattern": "p", "isRegex": true, "timeoutMs": 9, "fStep": 8},
-        future
-    ])
-}
-
-fn triggers() -> Value {
-    json!([
-        {"kind": "on-connect", "connectionIds": ["c1"], "fTrigger": 1},
-        {"kind": "hotkey", "binding": "Ctrl+H", "fTrigger": 2},
-        {"kind": "on-disconnect", "connectionIds": ["c1"], "when": "any", "fTrigger": 3},
-        {"kind": "on-output-match", "connectionIds": ["c2"], "pattern": "p", "isRegex": false,
-         "cooldownMs": 1, "maxFiresPerSession": 2, "fTrigger": 4},
-        {"kind": "future-trigger", "connectionIds": ["c1", "c2"], "more": {"z": 1}}
-    ])
-}
-
-/// An automation with unknown keys at every level.
+/// An automation with unknown keys at every level, and steps and a trigger of
+/// kinds this build does not know. The frontend's round trip reads it too.
 fn newer() -> Value {
-    json!({
-        "id": "newer", "name": "Newer", "description": "d", "tags": ["t"],
-        "steps": steps(), "triggers": triggers(),
-        "parameters": [{"name": "p", "type": "string", "default": 1, "fParam": {"k": 1}}],
-        "triggersEnabled": false,
-        "createdAt": "2026-01-01T00:00:00+00:00", "updatedAt": "2026-01-02T00:00:00+00:00",
-        "legacy": {"from": "workflow", "version": 3, "fLegacy": true},
-        "fAutomation": {"nested": [1, 2, {"a": null}]}, "fFlag": true
-    })
+    serde_json::from_str(include_str!("testdata/newer.json")).unwrap()
 }
 
 /// An automation with a value this build cannot read (a new typing speed).

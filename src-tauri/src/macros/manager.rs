@@ -128,9 +128,11 @@ mod tests {
             steps: vec![MacroStep {
                 data: "echo hi\r".to_string(),
                 delay_ms: 50,
+                extra: Default::default(),
             }],
             created_at: String::new(),
             updated_at: String::new(),
+            extra: Default::default(),
         }
     }
 

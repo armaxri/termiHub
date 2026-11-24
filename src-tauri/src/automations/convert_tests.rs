@@ -163,7 +163,8 @@ fn manual_triggers_are_dropped_and_others_kept_in_order() {
     assert_eq!(
         deploy.triggers,
         vec![AutomationTrigger::Hotkey {
-            binding: "Ctrl+Alt+D".to_string()
+            binding: "Ctrl+Alt+D".to_string(),
+            extra: Default::default()
         }]
     );
     let manual_only = from_workflow(&workflows[3]);

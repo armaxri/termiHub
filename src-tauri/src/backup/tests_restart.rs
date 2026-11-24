@@ -116,6 +116,7 @@ fn populate_source(dir: &Path) -> (Arc<CredentialManager>, String) {
         steps: Vec::new(),
         created_at: created_at(),
         updated_at: created_at(),
+        extra: Default::default(),
     };
     MacroStorage::new_test(dir)
         .save(&MacroStore {

@@ -71,6 +71,7 @@ pub fn from_macro(source: &Macro) -> Automation {
                 .map(|step| TypeKeysChunk {
                     data: step.data.clone(),
                     delay_ms: step.delay_ms,
+                    extra: step.extra.clone(),
                 })
                 .collect(),
             timing: TypingSpeed::Recorded,
@@ -92,7 +93,9 @@ pub fn from_macro(source: &Macro) -> Automation {
         legacy: Some(AutomationLegacy {
             from: LegacySource::Macro,
             version: MacroStore::CURRENT_VERSION,
+            extra: Default::default(),
         }),
+        extra: automation_extra(&source.extra),
     }
 }
 
@@ -113,24 +116,43 @@ pub fn from_workflow(source: &Workflow) -> Automation {
         legacy: Some(AutomationLegacy {
             from: LegacySource::Workflow,
             version: WorkflowStore::CURRENT_VERSION,
+            extra: Default::default(),
         }),
+        extra: automation_extra(&source.extra),
     }
+}
+
+/// The unknown keys of a legacy entry that an automation can carry: one that is
+/// an automation's own field by now would clash with it.
+fn automation_extra(
+    extra: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    const FIELDS: &[&str] = &["triggers", "parameters", "triggersEnabled", "legacy"];
+    let mut extra = extra.clone();
+    extra.retain(|key, _| !FIELDS.contains(&key.as_str()));
+    extra
 }
 
 /// Convert one workflow trigger; `manual` has no automation equivalent.
 pub fn convert_trigger(trigger: &WorkflowTrigger) -> Option<AutomationTrigger> {
     Some(match trigger.clone() {
         WorkflowTrigger::Manual => return None,
-        WorkflowTrigger::OnConnect { connection_ids } => {
-            AutomationTrigger::OnConnect { connection_ids }
-        }
-        WorkflowTrigger::Hotkey { binding } => AutomationTrigger::Hotkey { binding },
+        WorkflowTrigger::OnConnect {
+            connection_ids,
+            extra,
+        } => AutomationTrigger::OnConnect {
+            connection_ids,
+            extra,
+        },
+        WorkflowTrigger::Hotkey { binding, extra } => AutomationTrigger::Hotkey { binding, extra },
         WorkflowTrigger::OnDisconnect {
             connection_ids,
             when,
+            extra,
         } => AutomationTrigger::OnDisconnect {
             connection_ids,
             when,
+            extra,
         },
         WorkflowTrigger::OnOutputMatch {
             connection_ids,
@@ -138,12 +160,14 @@ pub fn convert_trigger(trigger: &WorkflowTrigger) -> Option<AutomationTrigger> {
             is_regex,
             cooldown_ms,
             max_fires_per_session,
+            extra,
         } => AutomationTrigger::OnOutputMatch {
             connection_ids,
             pattern,
             is_regex,
             cooldown_ms,
             max_fires_per_session,
+            extra,
         },
     })
 }
@@ -170,12 +194,16 @@ pub fn convert_step(step: &WorkflowStep) -> AutomationStep {
             source_path,
         },
         WorkflowStep::RunMacro {
-            error_handling,
+            mut error_handling,
             macro_id,
-        } => AutomationStep::RunAutomation {
-            error_handling,
-            automation_id: macro_id,
-        },
+        } => {
+            // A known field of the step it becomes.
+            error_handling.extra.remove("automationId");
+            AutomationStep::RunAutomation {
+                error_handling,
+                automation_id: macro_id,
+            }
+        }
         WorkflowStep::Wait {
             error_handling,
             delay_ms,

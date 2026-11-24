@@ -17,6 +17,10 @@ pub struct MacroStep {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "number"))]
     pub delay_ms: u64,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A named, stored sequence of recorded terminal input.
@@ -45,6 +49,10 @@ pub struct Macro {
     /// RFC 3339 timestamp of the macro's last update.
     #[serde(default)]
     pub updated_at: String,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Top-level schema for the macros JSON file.
@@ -110,9 +118,11 @@ mod tests {
             steps: vec![MacroStep {
                 data: "ls\r".to_string(),
                 delay_ms: 250,
+                extra: Default::default(),
             }],
             created_at: "2026-07-19T00:00:00Z".to_string(),
             updated_at: "2026-07-19T00:00:00Z".to_string(),
+            extra: Default::default(),
         };
 
         let json = serde_json::to_string(&m).unwrap();

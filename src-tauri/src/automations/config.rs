@@ -37,6 +37,10 @@ pub struct TypeKeysChunk {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "number"))]
     pub delay_ms: u64,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// How fast a `type-keys` step types its chunks. Saved on the step, so an
@@ -79,6 +83,10 @@ pub struct AutomationLegacy {
     pub from: LegacySource,
     /// The schema version of that store at conversion time.
     pub version: u32,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A single, typed step of an automation. Every workflow step kind carries
@@ -230,6 +238,77 @@ pub enum AutomationStep {
         #[cfg_attr(test, ts(optional, type = "number"))]
         timeout_ms: Option<u64>,
     },
+
+    /// A step of a kind this build does not know, kept verbatim (#6009).
+    /// The runner refuses every automation that can reach one.
+    #[serde(untagged)]
+    #[cfg_attr(test, ts(skip))]
+    Unknown(UnknownStep),
+}
+
+/// The step kinds this build knows, with the legacy spelling it reads.
+pub const KNOWN_STEP_KINDS: &[&str] = &[
+    "type-keys",
+    "send-command",
+    "run-script",
+    "run-automation",
+    "run-macro",
+    "wait",
+    "run-local-process",
+    "conditional",
+    "loop",
+    "wait-for-output",
+];
+
+/// The trigger kinds that never read as unknown: the ones this build knows, and
+/// `manual`, which an automation has no place for (a retired kind, not a new one).
+pub const KNOWN_TRIGGER_KINDS: &[&str] = &[
+    "on-connect",
+    "hotkey",
+    "on-disconnect",
+    "on-output-match",
+    "manual",
+];
+
+/// The raw JSON object of a step of an unknown kind.
+///
+/// Only a kind that is really unknown reads as one: a known kind with a missing
+/// or unreadable field is an error, so it can never pass as "unknown" and be
+/// shown or run with that field missing.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(transparent)]
+pub struct UnknownStep(pub serde_json::Map<String, serde_json::Value>);
+
+/// The raw JSON object of a trigger of an unknown kind (see [`UnknownStep`]).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(transparent)]
+pub struct UnknownTrigger(pub serde_json::Map<String, serde_json::Value>);
+
+impl<'de> Deserialize<'de> for UnknownStep {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        unknown_kind(deserializer, KNOWN_STEP_KINDS).map(Self)
+    }
+}
+
+impl<'de> Deserialize<'de> for UnknownTrigger {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        unknown_kind(deserializer, KNOWN_TRIGGER_KINDS).map(Self)
+    }
+}
+
+/// An object whose `kind` is a string that is not in `known`.
+fn unknown_kind<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+    known: &[&str],
+) -> Result<serde_json::Map<String, serde_json::Value>, D::Error> {
+    let map = serde_json::Map::deserialize(deserializer)?;
+    match map.get("kind").and_then(serde_json::Value::as_str) {
+        Some(kind) if known.contains(&kind) => Err(serde::de::Error::custom(format!(
+            "a \"{kind}\" entry has a missing or unreadable field"
+        ))),
+        Some(_) => Ok(map),
+        None => Err(serde::de::Error::missing_field("kind")),
+    }
 }
 
 /// An automatic trigger. There is no `manual` kind: every automation can be
@@ -245,6 +324,10 @@ pub enum AutomationTrigger {
         /// Connection ids this trigger is bound to.
         #[serde(default)]
         connection_ids: Vec<String>,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Fires when a keybinding is pressed while a session is focused.
@@ -252,6 +335,10 @@ pub enum AutomationTrigger {
     Hotkey {
         /// The keybinding string (e.g. `Ctrl+Alt+H`).
         binding: String,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Fires once when a session for one of the named connections ends.
@@ -264,6 +351,10 @@ pub enum AutomationTrigger {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         when: Option<WorkflowDisconnectCause>,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
 
     /// Fires when a session for one of the named connections prints output
@@ -287,7 +378,17 @@ pub enum AutomationTrigger {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(test, ts(optional))]
         max_fires_per_session: Option<u32>,
+        /// Keys this build does not know, kept verbatim (#6009).
+        #[serde(flatten, default)]
+        #[cfg_attr(test, ts(skip))]
+        extra: serde_json::Map<String, serde_json::Value>,
     },
+
+    /// A trigger of a kind this build does not know, kept verbatim (#6009).
+    /// It never fires.
+    #[serde(untagged)]
+    #[cfg_attr(test, ts(skip))]
+    Unknown(UnknownTrigger),
 }
 
 impl AutomationTrigger {
@@ -295,10 +396,10 @@ impl AutomationTrigger {
     /// them when a connection's id changes; `None` for a hotkey trigger.
     pub fn connection_ids_mut(&mut self) -> Option<&mut Vec<String>> {
         match self {
-            AutomationTrigger::OnConnect { connection_ids }
+            AutomationTrigger::OnConnect { connection_ids, .. }
             | AutomationTrigger::OnDisconnect { connection_ids, .. }
             | AutomationTrigger::OnOutputMatch { connection_ids, .. } => Some(connection_ids),
-            AutomationTrigger::Hotkey { .. } => None,
+            AutomationTrigger::Hotkey { .. } | AutomationTrigger::Unknown(_) => None,
         }
     }
 }
@@ -346,6 +447,10 @@ pub struct Automation {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub legacy: Option<AutomationLegacy>,
+    /// Keys this build does not know, kept verbatim (#6009).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Serde default for [`Automation::triggers_enabled`]: armed.
