@@ -577,6 +577,25 @@
   white-space: nowrap;
 }
 
+/* A label with a muted description line under it (#5840). */
+.ui-menu__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+}
+
+.ui-menu__title {
+  display: block;
+}
+
+.ui-menu__description {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: normal;
+}
+
 /* A hint followed by a shortcut: only the first trailing slot pushes right. */
 .ui-menu__hint + .ui-menu__shortcut {
   margin-left: 0;

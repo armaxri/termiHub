@@ -180,6 +180,12 @@ interface MenuRowExtras {
   shortcut?: React.ReactNode;
   /** Trailing secondary text (e.g. "current", "— Experimental"); nothing renders when empty. */
   hint?: React.ReactNode;
+  /**
+   * Muted second line under the label that says what the action does, for
+   * actions whose difference a label alone cannot carry (e.g. Pause vs Stop,
+   * #5840); nothing renders when empty.
+   */
+  description?: React.ReactNode;
 }
 
 /** Renders a row's icon, label and trailing decorations. */
@@ -188,11 +194,21 @@ function RowBody({
   children,
   hint,
   shortcut,
-}: Pick<MenuRowExtras, "icon" | "hint" | "shortcut"> & { children?: React.ReactNode }) {
+  description,
+}: Pick<MenuRowExtras, "icon" | "hint" | "shortcut" | "description"> & {
+  children?: React.ReactNode;
+}) {
   return (
     <>
       {icon}
-      {children}
+      {description ? (
+        <span className="ui-menu__text">
+          <span className="ui-menu__title">{children}</span>
+          <span className="ui-menu__description">{description}</span>
+        </span>
+      ) : (
+        children
+      )}
       {hint ? <span className="ui-menu__hint">{hint}</span> : null}
       {shortcut ? <span className="ui-menu__shortcut">{shortcut}</span> : null}
     </>
@@ -205,7 +221,7 @@ export type MenuItemProps = React.ComponentPropsWithoutRef<typeof RadixDropdownM
 
 /** A selectable menu row. Fires `onSelect` and closes the menu (unless prevented). */
 export const MenuItem = React.forwardRef<HTMLDivElement, MenuItemProps>(function MenuItem(
-  { className, danger, icon, shortcut, hint, children, onPointerUp, ...rest },
+  { className, danger, icon, shortcut, hint, description, children, onPointerUp, ...rest },
   ref
 ) {
   const kind = useMenuKind("MenuItem");
@@ -218,7 +234,7 @@ export const MenuItem = React.forwardRef<HTMLDivElement, MenuItemProps>(function
       onPointerUp={guardedPointerUp}
       {...rest}
     >
-      <RowBody icon={icon} hint={hint} shortcut={shortcut}>
+      <RowBody icon={icon} hint={hint} shortcut={shortcut} description={description}>
         {children}
       </RowBody>
     </Item>
