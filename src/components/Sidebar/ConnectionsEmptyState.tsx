@@ -3,6 +3,9 @@ import { Button, EmptyState } from "@/components/ui";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { ExperimentalSettingLink } from "@/components/Settings/ExperimentalSettingLink";
 
+/** The compact line, which points at the header's "New" menu (#5848). */
+export const COMPACT_EMPTY_TEXT = "No saved connections. Add one with “New” above.";
+
 /**
  * Props for {@link ConnectionsEmptyState}.
  */
@@ -27,7 +30,8 @@ export interface ConnectionsEmptyStateProps {
  * tunnels, services and network tools graduated and are always shown (#5858).
  *
  * When the sidebar already shows other content (remote agents), the card
- * collapses to one line with a link, so it stops dominating the column.
+ * collapses to one line, so it stops dominating the column. That line carries
+ * no link of its own: the header's "New ▾" menu sits right above it (#5848).
  */
 export function ConnectionsEmptyState({
   onNewConnection,
@@ -41,19 +45,9 @@ export function ConnectionsEmptyState({
         role={null}
         className="connections-empty--compact"
         data-testid="connections-empty-state"
-        title={
-          <>
-            No saved connections.{" "}
-            <button
-              type="button"
-              className="connections-empty__link"
-              onClick={onNewConnection}
-              data-testid="connections-empty-new-connection"
-            >
-              New connection
-            </button>
-          </>
-        }
+        // No second "New connection" here (#5848, R-096): the header's
+        // "New ▾" menu right above is the one place to create from.
+        title={COMPACT_EMPTY_TEXT}
       />
     );
   }

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isWindows, isMac, getPlatform, fileManagerActionLabel } from "./platform";
+import {
+  isWindows,
+  isMac,
+  getPlatform,
+  fileManagerActionLabel,
+  fileManagerPlace,
+} from "./platform";
 
 describe("isWindows", () => {
   it("returns false on non-Windows user agents", () => {
@@ -37,5 +43,13 @@ describe("fileManagerActionLabel", () => {
 
   it("defaults to the detected platform (linux under jsdom)", () => {
     expect(fileManagerActionLabel()).toBe("Open in File Manager");
+  });
+});
+
+describe("fileManagerPlace (#5845)", () => {
+  it("names each platform's file manager", () => {
+    expect(fileManagerPlace("macos")).toBe("Finder");
+    expect(fileManagerPlace("windows")).toBe("File Explorer");
+    expect(fileManagerPlace("linux")).toBe("your file manager");
   });
 });

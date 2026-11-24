@@ -122,7 +122,7 @@ function diffLists(what, readme, code, source) {
  */
 export function parseActivityBarItems(source) {
   const re =
-    /\{\s*view:\s*"[^"]+",\s*icon:\s*\w+,\s*label:\s*"([^"]+)"(,\s*experimental:\s*true)?/g;
+    /\{\s*view:\s*"[^"]+",\s*icon:\s*\w+,\s*(?:iconName:\s*"[^"]+",\s*)?label:\s*"([^"]+)"(,\s*experimental:\s*true)?/g;
   return [...source.matchAll(re)].map((m) => ({ label: m[1], experimental: Boolean(m[2]) }));
 }
 

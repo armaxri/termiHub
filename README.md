@@ -229,7 +229,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 ### Managing Connections
 
-1. Click **Connections** in the Activity Bar, then **+** to create a new connection
+1. Click **Connections** in the Activity Bar, then **New** → **New connection**
 2. Fill in Name, Folder, Type (Local shell / SSH / Serial / Telnet / Docker / WSL / FTP / remote agent, plus RDP / VNC when experimental features are enabled), and type-specific settings
 3. Click **Save**
 
@@ -465,7 +465,7 @@ To attach logs to a bug report, use the gear menu at the bottom of the Activity 
 
 ### The in-app Log Viewer
 
-Click the **Log viewer** icon (the scroll icon at the bottom of the Activity Bar) to open a live log tab. From there you can:
+Click the **Log viewer** icon (the text-file icon at the bottom of the Activity Bar) to open a live log tab. From there you can:
 
 - **Filter** by level (Error / Warning / Info / Debug) and **search** the messages.
 - **Copy** a single entry or all visible entries to the clipboard.

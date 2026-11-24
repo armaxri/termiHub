@@ -95,7 +95,7 @@ describe("ConnectionList — per-connection icon colour and emoji (#5008)", () =
     ]);
     const icon = (id: string) =>
       container.querySelector(`[data-testid="connection-icon-${id}"]`)?.getAttribute("data-icon");
-    expect(icon("ssh-row")).toBe("key-round");
+    expect(icon("ssh-row")).toBe("square-terminal");
     expect(icon("vnc-row")).toBe("screen-share");
     expect(icon("local-row")).toBe("terminal");
   });

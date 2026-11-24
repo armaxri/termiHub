@@ -275,14 +275,18 @@ describe("settingsRegistry", () => {
   });
 
   describe("file manager integration category (#5616)", () => {
-    it("is named for the file manager, not OSC 133 shell integration", () => {
-      expect(CATEGORIES.find((c) => c.id === "shell-integration")?.label).toBe(
-        "File manager integration"
-      );
+    it("is named for the menu entry it adds, not OSC 133 shell integration (#5845)", () => {
+      expect(CATEGORIES.find((c) => c.id === "shell-integration")?.label).toBe("Open in termiHub");
     });
 
-    it("is found by both its new and its old name", () => {
-      for (const query of ["file manager integration", "shell integration"]) {
+    it("is found by its name and its earlier names", () => {
+      for (const query of [
+        "open in termihub",
+        "file manager integration",
+        "shell integration",
+        "finder",
+        "explorer",
+      ]) {
         expect(getMatchingCategories(query).has("shell-integration")).toBe(true);
       }
     });

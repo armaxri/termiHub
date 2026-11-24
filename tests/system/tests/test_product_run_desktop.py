@@ -66,6 +66,10 @@ from termihub_harness.product_run.keyboard_shortcuts import (
     keyboard_shortcut_problems,
     measure_keyboard_editing,
 )
+from termihub_harness.product_run.file_manager_settings import (
+    file_manager_page_problems,
+    measure_file_manager_page,
+)
 from termihub_harness.product_run.settings_dependencies import (
     PROVIDE,
     measure_safety_prompts,
@@ -689,45 +693,34 @@ class TestProductRunSettingsThemes(
             assert not problems, "; ".join(problems)
 
     def test_05_file_manager_integration_actions(self):
-        """Settings ▸ File manager integration: the actions follow the state (#5616).
+        """Settings ▸ Open in termiHub: one vocabulary, actions follow the state (#5616, #5845).
 
-        Read-only: it never installs or removes the integration.
+        The nav item and title say "Open in termiHub" (with its icon, not a
+        dot), the status and its button name the same place ("Not added to
+        Finder" / "Add to Finder"), "Update" + "Remove from …" show only once it
+        is added, the reorder hint waits for two entries, and the no-match
+        setting reads "When opening a folder". Read-only: it never adds or
+        removes the entry.
         """
         with self.step(
             "settings.file-manager-integration.actions",
-            "File manager integration offers Install when not registered and Reinstall / "
-            "update + Uninstall only when registered (#5616)",
-            expect="Settings ▸ File manager integration with a status matching its buttons",
+            "Open in termiHub names one place in its status and buttons, shows its nav icon, "
+            "and offers Update + Remove only once added (#5616, #5845)",
+            expect="Settings ▸ Open in termiHub with a 16px folder icon in the nav, a status "
+            "like 'Not added to Finder' beside 'Add to Finder', no reorder hint on an empty "
+            "list, and 'When opening a folder' instead of 'Fallback'",
         ):
             self.open_settings_category("shell-integration")
             self.wait(
                 lambda: self.driver.exists("shell-integration-reinstall"),
-                what="the file manager integration actions",
+                what="the Open in termiHub actions",
             )
             time.sleep(0.5)  # let the registration status load
-            title = self.driver.get_text("settings-nav-shell-integration").strip()
-            state = self.driver.get_text("shell-integration-status-text").strip()
-            primary = self.driver.get_text("shell-integration-reinstall").strip()
-            has_uninstall = self.driver.exists("shell-integration-uninstall")
-            self.evidence(
-                f"nav {title!r}; status {state!r}; primary {primary!r}; uninstall shown "
-                f"{has_uninstall}"
-            )
-            problems = []
-            if title != "File manager integration":
-                problems.append(f"category reads {title!r}, want 'File manager integration'")
-            if state == "Not registered":
-                if primary != "Install":
-                    problems.append(f"not registered but the primary button reads {primary!r}")
-                if has_uninstall:
-                    problems.append("not registered but Uninstall is offered")
-            elif state == "Registered":
-                if primary != "Reinstall / update":
-                    problems.append(f"registered but the primary button reads {primary!r}")
-                if not has_uninstall:
-                    problems.append("registered but Uninstall is missing")
-            else:
-                problems.append(f"unexpected status {state!r}")
+            si = self.persisted_settings().get("shellIntegration") or {}
+            entries = len(si.get("entries") or []) if isinstance(si, dict) else 0
+            measured = measure_file_manager_page(self.driver, entries)
+            self.evidence(f"measured {measured}")
+            problems = file_manager_page_problems(measured)
             assert not problems, "; ".join(problems)
 
     def test_06_numeric_effective_value_contrast(self):

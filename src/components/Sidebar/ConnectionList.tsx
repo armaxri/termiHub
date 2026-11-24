@@ -22,9 +22,7 @@ import {
   Copy,
   Activity,
   Server,
-  ArrowLeftRight,
   Route,
-  FileInput,
   Link,
   Square,
   Puzzle,
@@ -102,8 +100,9 @@ import {
   useConnectionFolderRename,
   type ConnectionFolderRenameActions,
 } from "./useConnectionFolderRename";
-import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
+import { TreeFolderRow, TreeItemRow, treeItemPaddingLeft, treeRowPaddingLeft } from "./TreeRow";
 import { SidebarGroupHeader } from "./SidebarGroupHeader";
+import { ConnectionsNewMenu } from "./ConnectionsNewMenu";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 import { isImeComposing } from "@/utils/imeComposition";
@@ -549,7 +548,7 @@ function ConnectionItem({
           <div className="connection-tree__item-row" role="none">
             <TreeItemRow
               buttonRef={setRowNode}
-              indentPx={treeRowPaddingLeft(depth)}
+              indentPx={treeItemPaddingLeft(depth)}
               ariaLevel={depth + 1}
               tabIndex={rowIndex === activeIndex ? 0 : -1}
               ariaSelected={isSelected}
@@ -608,16 +607,23 @@ function ConnectionItem({
                 </Tooltip>
               )}
               {jumpHosts.length > 0 && (
-                <span
-                  className="connection-tree__jump-badge"
-                  title={jumpHostTooltip(jumpHosts, connection.name)}
-                  data-testid={`connection-jump-badge-${connection.id}`}
-                >
-                  <ArrowLeftRight size={12} />
-                  {jumpHosts.length > 1 && (
-                    <span className="connection-tree__jump-count">{jumpHosts.length}</span>
-                  )}
-                </span>
+                // #5850: a route glyph (not a bare '⇆') named in a tooltip and
+                // to assistive tech: "Connects via <bastion>".
+                <Tooltip content={jumpHostTooltip(jumpHosts)} side="top">
+                  <span
+                    className="connection-tree__jump-badge"
+                    role="img"
+                    aria-label={jumpHostTooltip(jumpHosts)}
+                    data-testid={`connection-jump-badge-${connection.id}`}
+                  >
+                    <Route size={12} aria-hidden="true" data-icon="route" />
+                    {jumpHosts.length > 1 && (
+                      <span className="connection-tree__jump-count" aria-hidden="true">
+                        {jumpHosts.length}
+                      </span>
+                    )}
+                  </span>
+                </Tooltip>
               )}
               {/* Persistence surfacing (#2099): normal desktop-local
                   connections (ssh/docker/wsl/serial/local) are multi-instance
@@ -1727,37 +1733,16 @@ export function ConnectionList() {
             onToggle={() => setLocalCollapsed((v) => !v)}
             headerTestId="sidebar-group-header-connections"
             toggleTestId="connection-list-group-toggle"
-            actionsLabel="Connection actions"
-            actions={[
-              {
-                id: "new-folder",
-                label: "New folder",
-                icon: <FolderPlus size={16} />,
-                onClick: () => {
+            actions={
+              <ConnectionsNewMenu
+                onNewConnection={handleNewConnection}
+                onNewFolder={() => {
                   setLocalCollapsed(false);
                   setCreatingFolder(true);
-                },
-                iconOnly: true,
-                testId: "connection-list-new-folder",
-              },
-              {
-                id: "new-connection",
-                label: "New connection",
-                icon: <Plus size={16} />,
-                onClick: handleNewConnection,
-                iconOnly: true,
-                primary: true,
-                testId: "connection-list-new-connection",
-              },
-              {
-                id: "import",
-                label: "Import connections…",
-                icon: <FileInput size={16} />,
-                onClick: handleOpenImportSettings,
-                iconOnly: true,
-                testId: "connection-list-open-import-settings",
-              },
-            ]}
+                }}
+                onImport={handleOpenImportSettings}
+              />
+            }
           />
           {!localCollapsed && (
             <div className="connection-list__filter">

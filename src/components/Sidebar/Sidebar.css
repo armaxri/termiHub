@@ -20,8 +20,7 @@
 .sidebar__title {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-label);
+  /* Sentence case, as the copy style asks (#5848, R-088). */
   color: var(--text-secondary);
 }
 

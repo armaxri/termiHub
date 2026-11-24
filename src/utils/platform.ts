@@ -33,3 +33,21 @@ export function fileManagerActionLabel(platform: Platform = getPlatform()): stri
       return "Open in File Manager";
   }
 }
+
+/**
+ * The platform's file manager as the "Open in termiHub" copy names it (#5845):
+ * "Finder", "File Explorer", or "your file manager" on Linux (which has
+ * several). It fills `{place}` in the `fileManagerIntegration.*` messages, so
+ * the status, its button and the offer all name the same place. Pure so the
+ * wording is unit-testable on any CI platform.
+ */
+export function fileManagerPlace(platform: Platform = getPlatform()): string {
+  switch (platform) {
+    case "macos":
+      return "Finder";
+    case "windows":
+      return "File Explorer";
+    default:
+      return "your file manager";
+  }
+}

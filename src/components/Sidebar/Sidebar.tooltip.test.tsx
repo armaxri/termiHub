@@ -145,22 +145,19 @@ describe("Sidebar ConnectionList group actions — tooltip adoption (#1159)", ()
     });
   }
 
-  it("exposes aria-label and drops the bare title on New Folder / New Connection", () => {
+  it("exposes aria-label and drops the bare title on the New menu trigger", () => {
     renderList();
 
     expectAccessibleIconButton(
-      container.querySelector<HTMLButtonElement>('[data-testid="connection-list-new-folder"]')
-    );
-    expectAccessibleIconButton(
-      container.querySelector<HTMLButtonElement>('[data-testid="connection-list-new-connection"]')
+      container.querySelector<HTMLButtonElement>('[data-testid="connection-list-new-menu"]')
     );
   });
 
-  it("wires aria-describedby on the New Connection button when focused", () => {
+  it("wires aria-describedby on the New menu trigger when focused", () => {
     renderList();
 
     const btn = container.querySelector<HTMLButtonElement>(
-      '[data-testid="connection-list-new-connection"]'
+      '[data-testid="connection-list-new-menu"]'
     )!;
     act(() => {
       btn.focus();

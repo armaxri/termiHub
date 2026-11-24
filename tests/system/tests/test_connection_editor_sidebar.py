@@ -26,12 +26,14 @@ class _Conn(ConnectionsUi):
 
 
 class _SidebarDriver:
-    """The New Connection button exists only in the ``connections`` sidebar view."""
+    """The "New ▾" menu exists only in the ``connections`` sidebar view; its
+    New connection entry only while the menu is open (#5848)."""
 
     def __init__(self, view: str = "files") -> None:
         self.view = view
         self.clicks: list[str] = []
         self.editor_open = False
+        self.menu_open = False
 
     def get_state(self, path: Optional[str] = None) -> Any:
         if path == "sidebarView":
@@ -41,8 +43,10 @@ class _SidebarDriver:
     def exists(self, test_id: str) -> bool:
         if test_id == "connection-editor-name-input":
             return self.editor_open
-        if test_id == "connection-list-new-connection":
+        if test_id == "connection-list-new-menu":
             return self.view == "connections"
+        if test_id == "connection-list-new-connection":
+            return self.view == "connections" and self.menu_open
         if test_id == "activity-bar-connections":
             return True
         return False
@@ -51,7 +55,10 @@ class _SidebarDriver:
         self.clicks.append(test_id)
         if test_id == "activity-bar-connections":
             self.view = "connections"
-        elif test_id == "connection-list-new-connection":
+        elif test_id == "connection-list-new-menu":
+            self.menu_open = True
+        elif test_id == "connection-list-new-connection" and self.menu_open:
+            self.menu_open = False
             self.editor_open = True
 
 
@@ -59,8 +66,12 @@ def test_switches_from_files_view_then_opens_editor():
     driver = _SidebarDriver(view="files")
     _Conn(driver).open_new_connection_editor()
     assert driver.editor_open
-    # It must switch to the connections view *before* clicking New Connection.
+    # It must switch to the connections view *before* clicking New Connection,
+    # and open the "New ▾" menu that holds it (#5848).
     assert "activity-bar-connections" in driver.clicks
+    assert driver.clicks.index("connection-list-new-menu") < driver.clicks.index(
+        "connection-list-new-connection"
+    )
     assert driver.clicks.index("activity-bar-connections") < driver.clicks.index(
         "connection-list-new-connection"
     )

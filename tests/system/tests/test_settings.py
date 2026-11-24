@@ -48,10 +48,10 @@ class TestSettings(TerminalUi, TabsUi, LayoutUi, SettingsUi, SystemTest):
 
     def test_connection_list_toolbar_has_no_import_export(self):
         self.set_sidebar_visible(True)
-        # New Folder sits in the header's "…" overflow menu when the sidebar is
-        # too narrow for every action (#4824); open it if so, then inspect.
+        # The header's entries sit in its one "New ▾" menu (#5848); open it,
+        # then inspect.
         menu_open = self.reveal_toolbar_action(
-            "connection-list-new-folder", overflow="sidebar-group-header-connections-overflow"
+            "connection-list-new-folder", overflow="connection-list-new-menu"
         )
         try:
             assert self.driver.exists("connection-list-new-connection")

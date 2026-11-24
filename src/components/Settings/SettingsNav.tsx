@@ -92,7 +92,8 @@ export function SettingsNav<T extends string = string>({
         data-nav-group={group?.id}
         data-group-collapsed={group?.collapsed ? "true" : undefined}
       >
-        <Icon size={16} />
+        {/* Test hook: the product run checks the icon keeps its size (#5845). */}
+        <Icon size={16} aria-hidden="true" data-testid={`settings-category-icon-${cat.id}`} />
         <span className="settings-nav__label">{cat.label}</span>
       </button>
     );

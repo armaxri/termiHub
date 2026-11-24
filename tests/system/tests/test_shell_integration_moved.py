@@ -54,9 +54,15 @@ class TestMovedInstalledBinary(SettingsUi, SystemTest):
         return block if isinstance(block, dict) else {}
 
     def status_text(self) -> str:
+        """"Registered" / "Not registered", from the status line's state.
+
+        The visible wording names the platform's file manager ("Added to
+        Finder", #5845), so the state comes from ``data-registered``.
+        """
         if not self.driver.exists("shell-integration-status-text"):
             return ""
-        return self.driver.get_text("shell-integration-status-text")
+        state = self.driver.get_attribute("shell-integration-status-text", "data-registered")
+        return "Registered" if state == "true" else "Not registered"
 
     def test_moved_binary_shows_stale_banner_and_reinstall_clears_it(self):
         reason = moved_binary.real_registration_skip_reason()

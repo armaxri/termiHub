@@ -2,20 +2,23 @@
 
 Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 ``--product-run``). Maintainer decision 2026-11-13: the "Open in termiHub"
-file-manager offer is shown **once**, as a toast with *Install* and *Not now*
-(closing it counts as *Not now*); it stays available in Settings › File manager
-integration (#5616) and never shows in a session with the crash banner. The
-docked bottom bar it replaced (#5638) is gone.
+file-manager offer is shown **once**, as a toast with *Not now* and the primary
+*Add to Finder* side by side (#5845; the place follows the platform), closing it
+counts as *Not now*, and *Not now* says where it lives: Settings ▸ Open in
+termiHub (#5616). It never shows in a session with the crash banner. The docked
+bottom bar it replaced (#5638) is gone.
 
 The grade:
 
-1. A fresh, crash-free profile shows the offer as a toast with Install and
-   Not now (no docked bar), and records at once that it was shown.
-2. *Not now* closes it; after a relaunch it does not come back.
+1. A fresh, crash-free profile shows the offer as a toast with Not now and the
+   primary Add to … next to it (no docked bar), using "▸" like the rest of the
+   app, and records at once that it was shown.
+2. *Not now* closes it and leaves a note pointing at Settings ▸ Open in
+   termiHub; after a relaunch the offer does not come back.
 3. A profile that has not had the offer yet but starts with a crash report shows
    the crash banner and no offer, not even after the banner is closed.
 
-Nothing is installed: the grade never presses *Install*, so the user's real
+Nothing is installed: the grade never presses *Add to …*, so the user's real
 file-manager registration is never touched.
 
 Every other suite's fresh profile counts the offer as already shown (the
@@ -29,17 +32,21 @@ import time
 import pytest
 
 from termihub_harness import CrashReportUi, SettingsUi, SystemTest
+from termihub_harness.product_run.file_manager_settings import (
+    OFFER_LATER,
+    later_note_problems,
+    measure_offer,
+    offer_problems,
+)
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.ui.diagnostics import CRASH_NOTICE, CRASH_NOTICE_DISMISS, crash_report_name
 
 pytestmark = [pytest.mark.product_run, pytest.mark.integration]
 
 OFFER = "file-manager-offer"
-OFFER_INSTALL = "file-manager-offer-install"
 OFFER_NOT_NOW = "file-manager-offer-not-now"
 #: The docked bar the toast replaced (#5638); it must never render again.
 OLD_BANNER = "shell-integration-banner"
-OFFER_TITLE = "Add “Open in termiHub” to your file manager?"
 #: How long the offer must stay away where it must not show.
 QUIET_SECONDS = 6.0
 
@@ -76,16 +83,15 @@ class TestProductRunFileManagerOffer(ProductRunUi, CrashReportUi, SettingsUi, Sy
             "fm-offer.toast",
             "A crash-free first launch offers 'Open in termiHub' once, as a toast (#5753)",
             expect="the main window with one toast at the bottom right: 'Add “Open in termiHub” "
-            "to your file manager?', a Not now and an Install button; no docked bar at the "
-            "bottom of the window",
+            "to Finder?' (File Explorer / your file manager elsewhere), Not now and a filled "
+            "'Add to Finder' button side by side at the right; no docked bar at the bottom",
         ):
             self.wait(lambda: self.driver.exists(OFFER), what="the file-manager offer toast")
-            text = self.driver.get_text(OFFER)
-            self.evidence(f"toast text: {text!r}")
-            assert OFFER_TITLE in text, text
-            assert "Settings › File manager integration" in text, text
-            assert self.driver.get_text(OFFER_INSTALL).strip() == "Install"
-            assert self.driver.get_text(OFFER_NOT_NOW).strip() == "Not now"
+            time.sleep(0.4)  # let the toast finish sliding in before measuring
+            measured = measure_offer(self.driver)
+            self.evidence(f"measured {measured}")
+            problems = offer_problems(measured)
+            assert not problems, "; ".join(problems)
             assert not self.driver.exists(OLD_BANNER), "the docked file-manager bar still shows"
             assert not self.driver.exists(CRASH_NOTICE), "a crash banner shows beside the offer"
             self.wait(
@@ -96,12 +102,19 @@ class TestProductRunFileManagerOffer(ProductRunUi, CrashReportUi, SettingsUi, Sy
     def test_20_not_now_and_never_again(self):
         with self.step(
             "fm-offer.not-now",
-            "Not now closes the offer, and it does not come back after a relaunch (#5753)",
+            "Not now closes the offer and says where to find it; it does not come back after a "
+            "relaunch (#5753, #5845)",
             expect="the relaunched main window without the file-manager offer toast",
         ):
             self.require("fm-offer.toast")
             self.driver.click(OFFER_NOT_NOW)
             self.wait(lambda: not self.driver.exists(OFFER), what="the offer toast to close")
+            self.wait(lambda: self.driver.exists(OFFER_LATER), what="the where-to-find-it note")
+            note = self.driver.get_text(OFFER_LATER)
+            self.evidence(f"Not now note: {note!r}")
+            self.shot(label="not-now-note", expect=OFFER_LATER)
+            problems = later_note_problems(note)
+            assert not problems, "; ".join(problems)
             self.restart_app()
             self._assert_no_offer_for(QUIET_SECONDS)
             self.evidence(f"no offer within {QUIET_SECONDS:.0f}s of the relaunch")

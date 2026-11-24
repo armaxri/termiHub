@@ -13,14 +13,14 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { frontendLog } from "@/utils/frontendLog";
-import { getPlatform } from "@/utils/platform";
+import { fileManagerPlace, getPlatform } from "@/utils/platform";
 import type {
   DetectedFileManager,
   ShellEntry,
   ShellIntegrationSettings as ShellIntegrationSettingsType,
   ShellIntegrationStatus,
 } from "@/types/connection";
-import { Button, Field, Select, StatusDot, Toggle, Tooltip, toast } from "@/components/ui";
+import { Button, Select, StatusDot, Toggle, Tooltip, toast } from "@/components/ui";
 import type { ToastPromiseMessages } from "@/components/ui";
 import {
   getShellIntegrationStatus,
@@ -35,12 +35,13 @@ import {
   reorderEntries,
   updateEntry,
 } from "./shellIntegrationEntries";
-import { INSTALL_TOAST, UNINSTALL_TOAST, syncRegistrationFacts } from "./shellIntegrationStore";
+import { installToast, syncRegistrationFacts, uninstallToast } from "./shellIntegrationStore";
 import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
 import { errorMessage } from "@/utils/errorMessage";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import "./ShellIntegrationSettings.css";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
+import { SettingsField } from "./SettingsField";
 
 /** The Linux file managers rendered as install toggles, with their detection id. */
 const LINUX_MANAGERS: {
@@ -54,12 +55,13 @@ const LINUX_MANAGERS: {
 ];
 
 /**
- * Settings section for the file manager integration ("Open in termiHub" in the
- * right-click menu; not the OSC 133 terminal shell integration): registration
- * status with actions that follow it (Install when not registered, Reinstall /
- * update + Uninstall once registered, #5616), a draggable Quick-Access entry list, the
- * no-match fallback, the new-window behaviour, and Linux per-file-manager
- * install toggles.
+ * Settings section for "Open in termiHub", the entry in the file manager's
+ * right-click menu (not the OSC 133 terminal shell integration): its status
+ * with actions that follow it ("Add to Finder" when it is not added, "Update" +
+ * "Remove from Finder" once it is, #5616), a draggable quick-access entry
+ * list, what opens when no entry matches, the new-window behaviour, and Linux
+ * per-file-manager install toggles. The status, buttons and the one-time offer
+ * name the same place (`fileManagerPlace`, #5845).
  */
 export function ShellIntegrationSettings() {
   const storedSi = useProjectedSettings().shellIntegration;
@@ -83,6 +85,7 @@ export function ShellIntegrationSettings() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const platform = getPlatform();
+  const place = fileManagerPlace(platform);
 
   useEffect(() => {
     getShellIntegrationStatus()
@@ -99,7 +102,7 @@ export function ShellIntegrationSettings() {
         setStatus(await updateShellIntegration(nextSi));
       } catch (e) {
         frontendLog("shell_integration", `save failed: ${errorMessage(e)}`);
-        toast.error("Failed to save file manager integration settings", {
+        toast.error("Could not save the “Open in termiHub” settings", {
           description: errorMessage(e),
         });
       }
@@ -124,13 +127,13 @@ export function ShellIntegrationSettings() {
   const registered = status?.registered === true;
 
   const handleReinstall = useCallback(
-    () => runRegistration(installShellIntegration, INSTALL_TOAST),
-    [runRegistration]
+    () => runRegistration(installShellIntegration, installToast(place)),
+    [runRegistration, place]
   );
 
   const handleUninstall = useCallback(
-    () => runRegistration(uninstallShellIntegration, UNINSTALL_TOAST),
-    [runRegistration]
+    () => runRegistration(uninstallShellIntegration, uninstallToast(place)),
+    [runRegistration, place]
   );
 
   const openAddEntry = useCallback(() => {
@@ -195,34 +198,37 @@ export function ShellIntegrationSettings() {
         <SettingsSectionHeading>{t("fileManagerIntegration.title")}</SettingsSectionHeading>
       </div>
       <p className="settings-panel__description" data-testid="shell-integration-description">
-        {t("fileManagerIntegration.description")}
+        {tf("fileManagerIntegration.description", { place })}
       </p>
 
       {/* Registration status + actions */}
       <div className="shell-integration__card" data-testid="shell-integration-status-card">
         <div className="shell-integration__status-line">
           <StatusDot tone={registered ? "success" : "disabled"} size="lg" ariaHidden />
-          <span data-testid="shell-integration-status-text">
+          <span
+            data-testid="shell-integration-status-text"
+            data-registered={registered ? "true" : "false"}
+          >
             {registered
-              ? t("fileManagerIntegration.status.registered")
-              : t("fileManagerIntegration.status.notRegistered")}
+              ? tf("fileManagerIntegration.status.registered", { place })
+              : tf("fileManagerIntegration.status.notRegistered", { place })}
           </span>
           {status?.stale && !status.portable && (
             <span className="shell-integration__stale" data-testid="shell-integration-stale-badge">
-              Executable moved — reinstall to update
+              termiHub moved — update the menu entry
             </span>
           )}
         </div>
         {status?.stale && !status.portable && (
           <p className="settings-panel__description" data-testid="shell-integration-stale-banner">
-            The file manager integration points to <code>{status.registeredExePath}</code>, but
-            termiHub now runs from <code>{status.currentExePath}</code>. Reinstall to update the
-            context-menu entries.
+            “Open in termiHub” points to <code>{status.registeredExePath}</code>, but termiHub now
+            runs from <code>{status.currentExePath}</code>. Press “Update” to point it at the new
+            location.
           </p>
         )}
         <div className="shell-integration__actions">
           {/* The actions follow the state (#5616): nothing to update or remove
-              until it is installed. The testid stays stable across both labels. */}
+              until it is added. The testid stays stable across both labels. */}
           <Button
             variant="primary"
             onClick={handleReinstall}
@@ -231,7 +237,7 @@ export function ShellIntegrationSettings() {
           >
             {registered
               ? t("fileManagerIntegration.action.reinstall")
-              : t("fileManagerIntegration.action.install")}
+              : tf("fileManagerIntegration.action.install", { place })}
           </Button>
           {registered && (
             <Button
@@ -239,7 +245,7 @@ export function ShellIntegrationSettings() {
               onClick={handleUninstall}
               data-testid="shell-integration-uninstall"
             >
-              {t("fileManagerIntegration.action.uninstall")}
+              {tf("fileManagerIntegration.action.uninstall", { place })}
             </Button>
           )}
         </div>
@@ -261,7 +267,7 @@ export function ShellIntegrationSettings() {
 
       {si.entries.length === 0 ? (
         <p className="settings-panel__description" data-testid="shell-integration-entries-empty">
-          No quick-access entries yet. Add one to show it in your file manager's right-click menu.
+          No quick-access entries yet. Add one to show it in the right-click menu in {place}.
         </p>
       ) : (
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
@@ -291,26 +297,38 @@ export function ShellIntegrationSettings() {
           </SortableContext>
         </DndContext>
       )}
-      <p className="settings-panel__description">
-        Drag the handle or use the arrow buttons to reorder. The first “Always” entry is the
-        default.
-      </p>
+      {/* How to reorder only once there is something to reorder (#5845). */}
+      {si.entries.length > 0 && (
+        <p className="settings-panel__description" data-testid="shell-integration-entries-hint">
+          {si.entries.length > 1 && "Drag the handle or use the arrow buttons to reorder. "}
+          The first “Always” entry is the default.
+        </p>
+      )}
 
-      {/* Fallback + window behaviour */}
-      <Field label="Fallback when no entry matches" htmlFor="shell-integration-fallback">
+      {/* What opens when no entry matches + window behaviour */}
+      <SettingsField
+        label={t("fileManagerIntegration.fallback.label")}
+        htmlFor="shell-integration-fallback"
+        help={t("fileManagerIntegration.fallback.hint")}
+        helpTestId="shell-integration-fallback-help"
+      >
         <Select
+          id="shell-integration-fallback"
           value={si.fallback}
           onChange={(value) =>
             void persist({ ...si, fallback: value as ShellIntegrationSettingsType["fallback"] })
           }
           options={[
-            { value: "picker", label: "Show session picker" },
-            { value: "systemDefaultShell", label: "Use system default shell" },
+            { value: "picker", label: t("fileManagerIntegration.fallback.picker") },
+            {
+              value: "systemDefaultShell",
+              label: t("fileManagerIntegration.fallback.systemDefaultShell"),
+            },
           ]}
-          aria-label="Fallback when no entry matches"
+          aria-label={t("fileManagerIntegration.fallback.label")}
           data-testid="shell-integration-fallback"
         />
-      </Field>
+      </SettingsField>
 
       <label className="shell-integration__toggle-row">
         <Toggle

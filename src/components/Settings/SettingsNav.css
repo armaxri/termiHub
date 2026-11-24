@@ -29,6 +29,18 @@
   width: calc(100% - 8px);
 }
 
+/* The icon keeps its size: as a flex item it would otherwise shrink to a dot
+   beside a label too long for the column (#5845). A long label ellipsizes. */
+.settings-nav__item > svg {
+  flex-shrink: 0;
+}
+
+.settings-nav__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .settings-nav__item:hover {
   color: var(--text-primary);
   background-color: var(--bg-hover);

@@ -8,7 +8,7 @@ import type { ToolbarAction } from "@/components/ui";
  *
  * The Connections and Remote Agents section headers in `ConnectionList` were
  * near-identical markup: a `connection-list__group-header` row holding a
- * `connection-list__group-toggle` button (chevron + uppercased title, with
+ * `connection-list__group-toggle` button (chevron + sentence-case title, with
  * `aria-expanded`) and a trailing `connection-list__group-actions` slot of ghost
  * buttons. This component owns that shell so the two headers stop hand-rolling
  * the same DOM; the caller passes the title, the expanded state, the toggle
@@ -19,7 +19,7 @@ import type { ToolbarAction } from "@/components/ui";
  * to the previous inline markup.
  */
 export interface SidebarGroupHeaderProps {
-  /** Section label (rendered uppercased via CSS). */
+  /** Section label (sentence case, #5848). */
   title: React.ReactNode;
   /** Whether the group is expanded — drives the chevron and `aria-expanded`. */
   expanded: boolean;
@@ -65,7 +65,12 @@ export function SidebarGroupHeader({
       aria-expanded={expanded}
       data-testid={toggleTestId}
     >
-      <Chevron size={16} className="connection-tree__chevron" />
+      <Chevron
+        size={16}
+        className="connection-tree__chevron"
+        aria-hidden
+        data-testid={toggleTestId ? `${toggleTestId}-chevron` : undefined}
+      />
       <span className="connection-list__group-title">{title}</span>
     </button>
   );
