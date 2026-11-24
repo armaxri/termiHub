@@ -681,8 +681,10 @@ describe("useSpawnRequests — WSL/SSH backend wiring (#1511)", () => {
       string,
       { action: { label: string; onClick: () => void }; testId: string },
     ];
-    const canceledToast = (): CanceledToast =>
-      vi.mocked(toast.info).mock.calls.at(-1) as unknown as CanceledToast;
+    const canceledToast = (): CanceledToast => {
+      const calls = vi.mocked(toast.info).mock.calls;
+      return calls[calls.length - 1] as unknown as CanceledToast;
+    };
 
     it("opens no tab when the prompt is dismissed, naming the target with Retry (#5881)", async () => {
       resolveConnectSecret.mockResolvedValue({ status: "canceled", at: "prompt" });
