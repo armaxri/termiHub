@@ -1270,15 +1270,27 @@ function MonitoringDetailDropdown({
             Each lifecycle item says what it does (#5840), so Pause and Stop are
             never two names for the same thing.
           */}
-          <MenuItem
-            onSelect={() => onSetPaused(!paused)}
-            disabled={!monitorKey}
-            icon={paused ? <Play size={14} /> : <Pause size={14} />}
-            description={paused ? RESUME_DESCRIPTION : PAUSE_DESCRIPTION}
-            data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
-          >
-            {paused ? "Resume monitoring" : "Pause monitoring"}
-          </MenuItem>
+          {paused ? (
+            <MenuItem
+              onSelect={() => onSetPaused(false)}
+              disabled={!monitorKey}
+              icon={<Play size={14} />}
+              description={RESUME_DESCRIPTION}
+              data-testid="monitoring-resume-btn"
+            >
+              Resume monitoring
+            </MenuItem>
+          ) : (
+            <MenuItem
+              onSelect={() => onSetPaused(true)}
+              disabled={!monitorKey}
+              icon={<Pause size={14} />}
+              description={PAUSE_DESCRIPTION}
+              data-testid="monitoring-pause-btn"
+            >
+              Pause monitoring
+            </MenuItem>
+          )}
 
           {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
           {isConnecting && (
@@ -1320,7 +1332,7 @@ function MonitoringDetailDropdown({
           {/* Only the readings stop, never the session (#5750), so not "Disconnect". */}
           <MenuItem
             onSelect={onStop}
-            icon={<CircleStop size={14} />}
+            icon={<CircleStop size={14} data-testid="monitoring-stop-icon" />}
             description={STOP_DESCRIPTION}
             data-testid="monitoring-stop"
           >
