@@ -126,9 +126,12 @@ def reconnect_wording_problems(text: str, *, serial: bool = False) -> list[str]:
 OCTAL_ESCAPE = re.compile(r"\\[0-7]{3}")
 #: The setup script's one summary line after a successful install (#5822).
 SETUP_INSTALLED_LINE = re.compile(
-    # A dev build's version carries its branch: "v0.1.0 (branch: develop)".
-    r"^Agent installed \(v[^()\s]+(?: \([^()]*\))?\) at \S.*\. You can close this tab\.$"
+    # A dev build names its branch, flat: "Agent v0.1.0 (develop) installed at
+    # ~/.local/bin/termihub-agent." (#5956), never "(v0.1.0 (branch: develop))".
+    r"^Agent v[^()\s]+(?: \([^()\s]+\))? installed at \S.*\. You can close this tab\.$"
 )
+#: What the summary-line problem calls the line it wanted.
+SETUP_INSTALLED_WANT = "no 'Agent v<x> installed at <path>.' summary line"
 #: Shell cleanup commands that must not be the visible setup output (#5822).
 _SETUP_NOISE = re.compile(r"(^|[;&|]\s*)(rm -f|rmdir)\s")
 
@@ -138,7 +141,7 @@ def setup_output_problems(buffer: str, *, expect_success: bool = True) -> list[s
 
     The output must carry no raw octal escapes (``\\360\\237…``, R-002), no
     ``rm -f``/``rmdir`` cleanup commands as content (R-057), and end in one
-    plain summary line: ``Agent installed (v<x>) at <path>. You can close
+    plain summary line: ``Agent v<x> installed at <path>. You can close
     this tab.`` on success, ``Agent setup failed: <reason>`` on failure.
     Empty when it is right.
     """
@@ -154,7 +157,7 @@ def setup_output_problems(buffer: str, *, expect_success: bool = True) -> list[s
     failed = [line for line in lines if line.startswith("Agent setup failed: ")]
     if expect_success:
         if not installed:
-            problems.append("no 'Agent installed (v<x>) at <path>.' summary line")
+            problems.append(SETUP_INSTALLED_WANT)
         if failed:
             problems.append(f"the setup reports a failure: {failed[0]!r}")
     elif not failed:

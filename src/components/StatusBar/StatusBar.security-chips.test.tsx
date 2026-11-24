@@ -118,7 +118,13 @@ describe("StatusBar — security chips (#5839)", () => {
 
     expect(q("status-bar-ssh-details")).not.toBeNull();
     expect(q("status-bar-ssh-details-encryption")!.textContent).toBe("Encrypted (SSH)");
-    expect(q("status-bar-ssh-details-auth")!.textContent).toBe("key ~/k");
+    // The key's file name, with the full path on hover (#5956).
+    expect(q("status-bar-ssh-details-auth")!.textContent).toBe("key k");
+    expect(q("status-bar-ssh-details-auth")!.getAttribute("title")).toBe("~/k");
+    // A sentence-case title, not an uppercase menu group label (#5956).
+    const title = q("status-bar-ssh-details-title")!;
+    expect(title.textContent).toBe("Connection security");
+    expect(title.classList.contains("status-bar__ssh-title")).toBe(true);
     expect(q("status-bar-ssh-details-hostKey")!.textContent).toBe(
       "first seen, trusted once (this session only) · ssh-ed25519 SHA256:abc"
     );

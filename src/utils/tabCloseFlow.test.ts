@@ -17,12 +17,12 @@ import {
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { continueTabClose, requestTabClose, type TabCloseTrigger } from "./tabCloseFlow";
 
-const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
   return {
     ...actual,
-    toast: { ...actual.toast, success: (m: string, o?: unknown) => toastSuccess(m, o) },
+    toast: { ...actual.toast, info: (m: string, o?: unknown) => toastInfo(m, o) },
   };
 });
 
@@ -38,7 +38,7 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   closeTab = vi.fn<(tabId: string, panelId: string) => void>();
   useAppStore.setState({ closeTab });
-  toastSuccess.mockClear();
+  toastInfo.mockClear();
 });
 
 function terminal(id: string, extra: Partial<TerminalTab> = {}): TerminalTab {
@@ -68,9 +68,9 @@ function pending() {
   };
 }
 
-/** The Reopen action label of the last success toast, if any. */
+/** The Reopen action label of the last undo toast, if any. */
 function lastToastAction(): string | undefined {
-  const opts = toastSuccess.mock.calls[toastSuccess.mock.calls.length - 1]?.[1] as
+  const opts = toastInfo.mock.calls[toastInfo.mock.calls.length - 1]?.[1] as
     | { action?: { label: string } }
     | undefined;
   return opts?.action?.label;
@@ -101,7 +101,7 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
   it("the Reopen toast is not dismissed by a dialog opening (#5914)", () => {
     useAppStore.setState({ terminalSpawnErrors: { failed: "boom" } });
     requestTabClose(terminal("failed"), PANEL, trigger);
-    const opts = toastSuccess.mock.calls[toastSuccess.mock.calls.length - 1]?.[1] as
+    const opts = toastInfo.mock.calls[toastInfo.mock.calls.length - 1]?.[1] as
       | { dismissOnModal?: boolean }
       | undefined;
     // A dialog only hides it until it closes, so the undo is never lost.
@@ -121,7 +121,7 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
     expect(closeTab).toHaveBeenCalledWith("settings", PANEL);
     expect(pending()).toEqual({ session: null, detach: null, shortcut: null });
     // Nothing reconnectable to offer.
-    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
   });
 
   it("a persistent session gets the background notice, never the live-session warning", () => {
@@ -137,7 +137,7 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
     expect(closeTab).toHaveBeenCalledWith("bg", PANEL);
     expect(pending().detach).toBeNull();
     // Closing only detaches — there is nothing to reopen.
-    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
   });
 
   it("a dirty self-prompting editor defers to its own unsaved prompt", () => {

@@ -16,7 +16,7 @@ import { currentSettingsView } from "@/store/settingsBridge";
 import { UNDO_WINDOW_MS } from "@/utils/undoableDelete";
 import { KeyboardSettings } from "./KeyboardSettings";
 
-const toastSuccess = vi.fn((_message: string, _opts?: ToastOptions) => "toast-id");
+const toastInfo = vi.fn((_message: string, _opts?: ToastOptions) => "toast-id");
 const { openDialog, readTextFile } = vi.hoisted(() => ({
   openDialog: vi.fn(),
   readTextFile: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock("@/themes", () => ({
 vi.mock("@/components/ui", async (orig) => ({
   ...(await orig<typeof import("@/components/ui")>()),
   toast: {
-    success: (message: string, opts?: ToastOptions) => toastSuccess(message, opts),
+    info: (message: string, opts?: ToastOptions) => toastInfo(message, opts),
     error: vi.fn(),
     loading: vi.fn(),
   },
@@ -69,9 +69,9 @@ async function click(id: string) {
   });
 }
 
-/** Run the Undo action of the last success toast. */
+/** Run the Undo action of the last undo toast. */
 async function undoLastToast() {
-  const calls = toastSuccess.mock.calls;
+  const calls = toastInfo.mock.calls;
   const opts = calls[calls.length - 1]?.[1];
   expect(opts?.action?.label).toBe("Undo");
   await act(async () => {
@@ -86,7 +86,7 @@ setupSettingsRegion();
 
 describe("KeyboardSettings — confirmed reset / import with undo (#5375)", () => {
   beforeEach(() => {
-    toastSuccess.mockClear();
+    toastInfo.mockClear();
     openDialog.mockReset();
     readTextFile.mockReset();
     setOverrides(CUSTOM);
@@ -117,7 +117,7 @@ describe("KeyboardSettings — confirmed reset / import with undo (#5375)", () =
 
       expect(getOverrides()).toEqual([]);
       expect(persisted()).toEqual([]);
-      expect(toastSuccess).toHaveBeenCalledWith(
+      expect(toastInfo).toHaveBeenCalledWith(
         "Keyboard shortcuts reset to safer defaults",
         expect.objectContaining({ duration: UNDO_WINDOW_MS, testId: "keybinding-undo-toast" })
       );
@@ -131,7 +131,7 @@ describe("KeyboardSettings — confirmed reset / import with undo (#5375)", () =
       expect(getOverrides()).toEqual(CUSTOM);
       expect(persisted()).toEqual(CUSTOM);
       expect(byTestId("confirm-keybinding-replace-dialog")).toBeNull();
-      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(toastInfo).not.toHaveBeenCalled();
     });
 
     it("Undo restores exactly the previous bindings", async () => {
@@ -181,7 +181,7 @@ describe("KeyboardSettings — confirmed reset / import with undo (#5375)", () =
 
       expect(getOverrides()).toEqual(IMPORTED);
       expect(persisted()).toEqual(IMPORTED);
-      expect(toastSuccess).toHaveBeenCalledWith(
+      expect(toastInfo).toHaveBeenCalledWith(
         "Imported 1 keyboard shortcut",
         expect.objectContaining({ testId: "keybinding-undo-toast" })
       );

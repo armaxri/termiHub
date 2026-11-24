@@ -6,12 +6,12 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { ConfirmSessionCloseDialog } from "./ConfirmSessionCloseDialog";
 import { layoutState } from "@/test/layoutState";
 
-const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
   return {
     ...actual,
-    toast: { ...actual.toast, success: (m: string, o?: unknown) => toastSuccess(m, o) },
+    toast: { ...actual.toast, info: (m: string, o?: unknown) => toastInfo(m, o) },
   };
 });
 
@@ -33,7 +33,7 @@ describe("ConfirmSessionCloseDialog", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    toastSuccess.mockClear();
+    toastInfo.mockClear();
   });
 
   afterEach(() => {
@@ -69,9 +69,9 @@ describe("ConfirmSessionCloseDialog", () => {
 
     expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
-    expect(toastSuccess).toHaveBeenCalled();
+    expect(toastInfo).toHaveBeenCalled();
     // The toast carries a Reopen action.
-    expect(toastSuccess.mock.calls[0][1]).toMatchObject({ action: { label: "Reopen" } });
+    expect(toastInfo.mock.calls[0][1]).toMatchObject({ action: { label: "Reopen" } });
   });
 
   it("tab kind: cancel leaves the tab open and shows no toast", () => {
@@ -93,7 +93,7 @@ describe("ConfirmSessionCloseDialog", () => {
 
     expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
-    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
   });
 
   it("panel kind: shows a count-aware message and removes the panel on confirm", () => {
