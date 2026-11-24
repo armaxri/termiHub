@@ -68,7 +68,7 @@ function disconnectCopyFor(
 }
 
 /** A tab's disconnect cause and what its cause line needs (#5831). */
-export interface TabDisconnectCause {
+interface TabDisconnectCause {
   transport: DropTransport;
   cause: DisconnectCause | undefined;
   /** The serial port path, for a serial tab. */
@@ -80,7 +80,7 @@ export interface TabDisconnectCause {
  * the region's exit and the link's end cause. Shared by the overlay and the
  * view-mode banner so both say the same.
  */
-export function disconnectCauseForTab(
+function disconnectCauseForTab(
   tabId: string,
   exit: TerminalExitInfo | undefined,
   endCause: SessionEndCause | undefined

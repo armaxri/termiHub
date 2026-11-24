@@ -69,7 +69,7 @@ export function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
  * persistent tabs (they reconnect through their own machinery) and for types
  * without the setting.
  */
-export function isAutoReconnectOffTab(tab: TerminalTab | undefined): boolean {
+function isAutoReconnectOffTab(tab: TerminalTab | undefined): boolean {
   if (!tab || tab.contentType !== "terminal" || tab.persistentConnectionId) return false;
   const cfg = tab.config?.config as Record<string, unknown> | undefined;
   if (!cfg || cfg.agentId) return false;
