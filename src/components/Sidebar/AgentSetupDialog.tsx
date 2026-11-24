@@ -247,7 +247,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
           if (agentId !== agent.id) return;
           // The agent row follows the setup (#5906); the app-wide listener
           // does the same once this dialog is closed.
-          useAgentSetupStatus.getState().applyProgress(agentId, step);
+          useAgentSetupStatus.getState().applyProgress(agentId, step, message);
 
           if (step === "done") {
             // toast-policy: background — the deploy runs on after its dialog closed
@@ -296,7 +296,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       // The SSH terminal session now exists — surface it immediately so the user
       // watches the setup, then enter the running phase to track background steps.
       const cfg = configRef.current;
-      addTab(
+      const setupTabId = addTab(
         `Setup: ${agent.name}`,
         "ssh",
         {
@@ -313,6 +313,15 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         },
         { contentType: "terminal", sessionId: result.sessionId }
       );
+      // The tab says when the setup is over (#5865). A POSIX setup ends the
+      // tab's shell with the script's exit code; a Windows one cannot report.
+      if (setupTabId) {
+        useAgentSetupStatus.getState().registerSetupTab(setupTabId, {
+          agentId: agent.id,
+          agentName: agent.name,
+          reportsExit: !isWindowsSuffix(selectedArch),
+        });
+      }
 
       setPhase({ kind: "running", step: "connect", message: "Setup started…" });
     } catch (err) {
