@@ -76,6 +76,7 @@ export function OnOutputMatchTriggerDetail({
       <Field
         label={t("workflow.trigger.onOutputMatch.isRegex")}
         htmlFor={`automation-trigger-regex-${index}`}
+        layout="checkbox"
       >
         <Toggle
           id={`automation-trigger-regex-${index}`}
@@ -84,36 +85,38 @@ export function OnOutputMatchTriggerDetail({
           data-testid={`automation-trigger-regex-${index}`}
         />
       </Field>
-      <Field
-        label={t("workflow.trigger.onOutputMatch.cooldown")}
-        htmlFor={`automation-trigger-cooldown-${index}`}
-        hint={t("workflow.trigger.onOutputMatch.cooldownHint")}
-        error={errors.cooldownMs}
-      >
-        <NumberInput
-          id={`automation-trigger-cooldown-${index}`}
-          value={cooldownSeconds}
-          min={1}
-          onValueChange={(v) =>
-            setOptional("cooldownMs", v === "" ? undefined : Math.round(v * MS_PER_SECOND))
-          }
-          data-testid={`automation-trigger-cooldown-${index}`}
-        />
-      </Field>
-      <Field
-        label={t("workflow.trigger.onOutputMatch.maxFires")}
-        htmlFor={`automation-trigger-max-fires-${index}`}
-        hint={t("workflow.trigger.onOutputMatch.maxFiresHint")}
-        error={errors.maxFiresPerSession}
-      >
-        <NumberInput
-          id={`automation-trigger-max-fires-${index}`}
-          value={trigger.maxFiresPerSession ?? ""}
-          min={1}
-          onValueChange={(v) => setOptional("maxFiresPerSession", v === "" ? undefined : v)}
-          data-testid={`automation-trigger-max-fires-${index}`}
-        />
-      </Field>
+      <div className="automation-triggers__limits">
+        <Field
+          label={t("workflow.trigger.onOutputMatch.cooldown")}
+          htmlFor={`automation-trigger-cooldown-${index}`}
+          hint={t("workflow.trigger.onOutputMatch.cooldownHint")}
+          error={errors.cooldownMs}
+        >
+          <NumberInput
+            id={`automation-trigger-cooldown-${index}`}
+            value={cooldownSeconds}
+            min={1}
+            onValueChange={(v) =>
+              setOptional("cooldownMs", v === "" ? undefined : Math.round(v * MS_PER_SECOND))
+            }
+            data-testid={`automation-trigger-cooldown-${index}`}
+          />
+        </Field>
+        <Field
+          label={t("workflow.trigger.onOutputMatch.maxFires")}
+          htmlFor={`automation-trigger-max-fires-${index}`}
+          hint={t("workflow.trigger.onOutputMatch.maxFiresHint")}
+          error={errors.maxFiresPerSession}
+        >
+          <NumberInput
+            id={`automation-trigger-max-fires-${index}`}
+            value={trigger.maxFiresPerSession ?? ""}
+            min={1}
+            onValueChange={(v) => setOptional("maxFiresPerSession", v === "" ? undefined : v)}
+            data-testid={`automation-trigger-max-fires-${index}`}
+          />
+        </Field>
+      </div>
     </>
   );
 }

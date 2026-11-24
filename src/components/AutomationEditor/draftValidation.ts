@@ -36,17 +36,22 @@ const PATTERN_ERROR: Record<OutputPatternError, MessageId> = {
 
 function stepErrors(draft: StepDraft, out: ZodFieldErrors): void {
   const base = `steps.${draft.uid}`;
-  // Only the recorded speed uses the delays (and shows them).
+  // Only the recorded speed uses the delays, and never the first (nor are they shown).
   const delays =
     draft.step.kind === "type-keys" && (draft.step.timing ?? "recorded") === "recorded";
-  for (const key of draft.keys ?? []) {
+  for (const [index, key] of (draft.keys ?? []).entries()) {
     if (key.text === "") {
       out[`${base}.keys.${key.uid}.text`] = "Enter the keys to type.";
     } else {
       const parsed = parseMacroStepText(key.text);
       if (!parsed.ok) out[`${base}.keys.${key.uid}.text`] = parsed.error;
     }
-    if (delays && key.delayMs !== "" && (!Number.isFinite(key.delayMs) || key.delayMs < 0)) {
+    if (
+      delays &&
+      index > 0 &&
+      key.delayMs !== "" &&
+      (!Number.isFinite(key.delayMs) || key.delayMs < 0)
+    ) {
       out[`${base}.keys.${key.uid}.delayMs`] = "Delay must be 0 or more.";
     }
   }

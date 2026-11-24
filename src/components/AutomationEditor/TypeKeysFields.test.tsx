@@ -117,6 +117,12 @@ describe("the keys", () => {
     expect((query("automation-editor-keys-delete-0-0") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("shows no delay before the first keys: they are typed at once", async () => {
+    await open();
+    expect(query("automation-editor-keys-delay-0-0")).toBeNull();
+    expect(query("automation-editor-keys-delay-0-1")).not.toBeNull();
+  });
+
   it("saves an edited delay", async () => {
     await open();
     typeText("automation-editor-keys-delay-0-1", "50");
@@ -173,7 +179,7 @@ describe("typing speed (#5820)", () => {
     await open();
     expect(query("automation-editor-step-speed-0")?.textContent).toContain("As recorded");
     await pick("automation-editor-step-speed-0", "Instant");
-    expect(query("automation-editor-keys-delay-0-0")).toBeNull();
+    expect(query("automation-editor-keys-delay-0-1")).toBeNull();
     const saved = keysOf(await editor.save());
     expect(saved).toEqual({ ...recorded, timing: "instant" });
   });

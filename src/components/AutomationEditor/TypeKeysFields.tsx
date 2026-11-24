@@ -35,7 +35,8 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
   const keys = draft.keys ?? [];
   const errorBase = `steps.${draft.uid}.keys`;
   const speed: TypingSpeed = step.timing ?? "recorded";
-  // A delay only counts at the recorded speed.
+  // A delay only counts at the recorded speed, and not before the first keys:
+  // those are always typed at once.
   const showDelays = speed === "recorded";
   // A row with an error to show is never hidden.
   const lastError = keys.reduce(
@@ -96,7 +97,7 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
             number={i + 1}
             stepNumber={stepNumber}
             last={i === keys.length - 1}
-            showDelay={showDelays}
+            showDelay={showDelays && i > 0}
             hintId={`automation-step-keys-hint-${path}`}
             error={
               errors[`${errorBase}.${key.uid}.text`] ?? errors[`${errorBase}.${key.uid}.delayMs`]
@@ -260,6 +261,7 @@ function KeyRow({
         {showDelay && (
           <span className="type-keys__delay">
             <NumberInput
+              size="sm"
               value={draft.delayMs}
               min={0}
               step={10}
