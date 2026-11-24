@@ -98,6 +98,7 @@ fn input() -> ScheduleInput {
         description: None,
         action: ScheduleAction::Automation {
             automation_id: "wf-1".to_string(),
+            legacy_source: None,
         },
         targets: ScheduleTargets::Connections {
             connection_ids: vec!["conn-a".to_string()],

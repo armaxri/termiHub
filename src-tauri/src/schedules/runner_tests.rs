@@ -105,6 +105,7 @@ fn start(every_minutes: u32, policy: MissedRunPolicy) -> Harness {
                 description: None,
                 action: ScheduleAction::Automation {
                     automation_id: "wf".into(),
+                    legacy_source: None,
                 },
                 targets: ScheduleTargets::Connections {
                     connection_ids: vec!["c1".into()],

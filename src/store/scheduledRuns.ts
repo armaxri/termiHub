@@ -283,7 +283,12 @@ async function runAction(
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
   const automation = await store.getState().fetchAutomationForRun(fire.action.automationId);
-  if (!automation) return skip("The automation no longer exists");
+  // An action whose legacy id is not resolved yet (`legacySource`) must never
+  // run an automation of the other kind that happens to have the same id.
+  const { legacySource } = fire.action;
+  if (!automation || (legacySource && automation.legacy?.from !== legacySource)) {
+    return skip("The automation no longer exists");
+  }
   if (isMacroShaped(automation)) return await runScheduledMacro(automation, tabIds, store);
   return await runScheduledWorkflow(fire, automationToWorkflow(automation), tabIds, store);
 }

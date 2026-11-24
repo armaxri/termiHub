@@ -68,16 +68,6 @@ const MISSED_OPTIONS = [
 ];
 
 /**
- * Create/edit a schedule (PROD-043): which automation to run (one picker,
- * #5818), on which saved connections (or broadcast group), and when (every N
- * minutes, daily, or on chosen weekdays at a local time). New schedules are
- * saved **disabled**; they are enabled from the schedules list, which asks for
- * confirmation of the target hosts first.
- *
- * A schedule whose automation was deleted keeps its id: the picker shows it
- * as "Deleted automation" so saving never rewrites the action silently.
- */
-/**
  * The picker's options: every automation by name, plus the stored id when it
  * no longer resolves, so an edit keeps (and shows) a deleted automation.
  */
@@ -92,6 +82,16 @@ function automationOptions(
   return options;
 }
 
+/**
+ * Create/edit a schedule (PROD-043): which automation to run (one picker,
+ * #5818), on which saved connections (or broadcast group), and when (every N
+ * minutes, daily, or on chosen weekdays at a local time). New schedules are
+ * saved **disabled**; they are enabled from the schedules list, which asks for
+ * confirmation of the target hosts first.
+ *
+ * A schedule whose automation was deleted keeps its id: the picker shows it
+ * as "Deleted automation" so saving never rewrites the action silently.
+ */
 export function ScheduleEditorDialog({
   open,
   scheduleId,

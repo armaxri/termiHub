@@ -2140,7 +2140,10 @@ sequenceDiagram
   automation of the other kind it becomes `missing-macro-<id>` / `missing-workflow-<id>`, so a
   deleted macro's schedule never runs a workflow. The v2 file is copied once to
   `schedules.json.pre-automations.bak`, and a v2 build refuses to overwrite the v3 file (PER-004).
-  The versioned-store gate's own v2 → v3 step (a restored backup) keeps every id.
+  A restored backup (or a boot
+  whose automation migration failed) is migrated without the id map: its actions keep the legacy
+  kind in `legacySource` until the next boot migration resolves them, and a run is skipped while
+  the automation's provenance does not match.
 - **Timing** — `timing.rs` is pure and generic over `chrono::TimeZone` (production uses
   `chrono::Local`). Intervals count absolute minutes from when the schedule was enabled; a local
   time that does not exist (spring-forward) fires at the first valid minute after the gap, and a

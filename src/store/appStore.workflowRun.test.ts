@@ -2055,6 +2055,32 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     expect(injected.map((i) => i.data)).toEqual(["df -h\n", "id\n"]);
   });
 
+  it("skips an unresolved macro action whose id is a workflow's now (#5818)", async () => {
+    useAppStore.setState(
+      automationLibraryState([
+        {
+          id: "shared",
+          name: "Wipe",
+          tags: [],
+          steps: [{ kind: "send-command", command: "reboot" }],
+          triggers: [],
+          createdAt: "",
+          updatedAt: "",
+          legacy: { from: "workflow", version: 3 },
+        },
+      ])
+    );
+    const report = await executeScheduledRun(
+      fire({ action: { kind: "automation", automationId: "shared", legacySource: "macro" } }),
+      store
+    );
+    expect(report).toMatchObject({
+      outcome: "skipped",
+      message: "The automation no longer exists",
+    });
+    expect(injected).toEqual([]);
+  });
+
   it("plays a scheduled macro into the target terminals", async () => {
     const macro: Macro = {
       id: "m1",

@@ -268,26 +268,52 @@ fn without_a_readable_automation_store_the_file_waits() {
     assert_eq!(read(&dir, SCHEDULES_FILE)["version"], "2");
 }
 
-#[test]
-fn the_in_memory_migration_keeps_every_id() {
-    // A restored backup goes through the versioned-store gate only.
-    let raw = json!({"version": "2", "schedules": [
-        schedule("a", macro_action("m")),
-        schedule("b", workflow_action("w"))]})
-    .to_string();
-    let crate::utils::migrate::LoadOutcome::Loaded { data, .. } =
-        crate::utils::migrate::load_versioned::<ScheduleStore>(&raw)
-    else {
+/// What the versioned-store gate makes of a v2 document (no id map).
+fn in_memory(doc: Value) -> ScheduleStore {
+    let LoadOutcome::Loaded { data, .. } = load_versioned::<ScheduleStore>(&doc.to_string()) else {
         panic!("a v2 file loads");
     };
-    assert_eq!(data.version, "3");
+    data
+}
+
+#[test]
+fn the_in_memory_migration_marks_every_action_pending() {
+    let store = in_memory(json!({"version": "2", "schedules": [
+        schedule("a", macro_action("m")),
+        schedule("b", workflow_action("w"))]}));
+    assert_eq!(store.version, "3");
+    let pending = |id: &str, source| ScheduleAction::Automation {
+        automation_id: id.into(),
+        legacy_source: Some(source),
+    };
+    assert_eq!(store.schedules[0].action, pending("m", LegacySource::Macro));
     assert_eq!(
-        data.schedules[0].action,
-        ScheduleAction::Automation {
-            automation_id: "m".into()
-        }
+        store.schedules[1].action,
+        pending("w", LegacySource::Workflow)
     );
-    assert_eq!(data.schedules[1].action.automation_id(), "w");
+}
+
+/// The in-memory path (a restored backup, or a boot whose automation
+/// migration failed) must not make a macro schedule run the workflow that
+/// took its id: the next boot migration follows the id change.
+#[test]
+fn a_pending_action_is_resolved_on_the_next_boot() {
+    let dir = legacy_dir(&["shared"], &["shared"], Vec::new());
+    let store = in_memory(json!({"version": "2", "schedules": [
+        schedule("s-macro", macro_action("shared")),
+        schedule("s-workflow", workflow_action("shared")),
+        schedule("s-gone", workflow_action("deleted"))]}));
+    ScheduleStorage::new_test(dir.path()).save(&store).unwrap();
+
+    run_boot_migration(dir.path(), chrono::Utc::now()).unwrap();
+
+    let new_id = read(&dir, "automations.json")["idRemaps"][0]["newId"].clone();
+    let store = load(&dir);
+    assert_eq!(automation_id_of(&store, "s-macro"), new_id);
+    assert_eq!(automation_id_of(&store, "s-workflow"), "shared");
+    assert_eq!(automation_id_of(&store, "s-gone"), "deleted");
+    let raw = fs::read_to_string(dir.path().join(SCHEDULES_FILE)).unwrap();
+    assert!(!raw.contains("legacySource"));
 }
 
 #[test]

@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::automations::config::LegacySource;
+
 /// A weekday, serialised as a lowercase three-letter string (`mon` … `sun`).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -89,6 +91,15 @@ pub enum ScheduleAction {
     Automation {
         /// The automation's id.
         automation_id: String,
+        /// Set only while the migration from a v2 action could not yet check
+        /// the id against `automations.json` (a restored backup, or a boot
+        /// whose automation migration failed): the legacy kind it named. The
+        /// next boot resolves and removes it; until then a run is skipped
+        /// unless the automation came from that kind, so a macro schedule
+        /// never runs a workflow that has the same id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        legacy_source: Option<LegacySource>,
     },
 }
 
@@ -96,7 +107,7 @@ impl ScheduleAction {
     /// The id of the automation this action runs.
     pub fn automation_id(&self) -> &str {
         match self {
-            ScheduleAction::Automation { automation_id } => automation_id,
+            ScheduleAction::Automation { automation_id, .. } => automation_id,
         }
     }
 }
@@ -305,7 +316,8 @@ impl crate::utils::migrate::VersionedStore for ScheduleStore {
     /// build refuses to overwrite a v3 file the same way. The boot migration
     /// (`super::migrate::migrate_schedules`) does this step with the id map of
     /// `automations.json`; this in-memory path (a restored backup, or a boot
-    /// whose automation migration failed) keeps every id as it is.
+    /// whose automation migration failed) keeps the id and marks the action
+    /// with its `legacySource`, for the boot migration to resolve.
     const CURRENT_VERSION: u32 = 3;
 
     fn migrate(
@@ -316,10 +328,7 @@ impl crate::utils::migrate::VersionedStore for ScheduleStore {
             value = crate::schedules::history::migrate_v1_to_v2(value);
         }
         if from_version < 3 {
-            value = crate::schedules::migrate::migrate_v2_to_v3(
-                value,
-                &crate::schedules::migrate::AutomationIdMap::default(),
-            );
+            value = crate::schedules::migrate::migrate_v2_to_v3(value, None);
         }
         Ok(value)
     }

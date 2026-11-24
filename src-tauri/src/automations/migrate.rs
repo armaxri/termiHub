@@ -526,8 +526,15 @@ pub fn run_boot_migration(dir: &Path, now: chrono::DateTime<chrono::Utc>) -> Res
     let runs = super::migrate_runs::migrate_runs(dir, &library.macro_ids, now)
         .context("Failed to migrate macro and workflow run history")?;
     // After the library, so the schedule actions follow its id changes.
-    let schedules = crate::schedules::migrate::migrate_schedules(dir)
-        .context("Failed to migrate schedules to automations")?;
+    // A failure is reported on its own: the library above is migrated, and the
+    // unresolved schedules stay pending (or v2) until the next start.
+    let schedules = crate::schedules::migrate::migrate_schedules(dir).unwrap_or_else(|e| {
+        tracing::error!("Schedules migration failed: {e:#}");
+        crate::schedules::migrate::SchedulesReport {
+            error: Some(format!("{e:#}")),
+            ..Default::default()
+        }
+    });
     Ok(BootReport {
         library,
         runs,
