@@ -111,7 +111,8 @@ fn windows_and_cancel_feedback_stay_plain() {
     // Static guard over the inline commands typed into the terminal.
     let source = include_str!("agent_setup.rs");
     assert!(source.contains("\"printf '%s\\\\n' 'Agent setup cancelled.'\\n\""));
-    assert!(source.contains("echo Agent setup failed: {safe}"));
+    assert!(source.contains("windows_echo_input(\"Agent setup cancelled.\")"));
+    assert!(source.contains("windows_echo_input(&format!(\"Agent setup failed: {message}\"))"));
 }
 
 /// Executes the generated scripts under each available POSIX shell.

@@ -38,7 +38,7 @@
 #    Every DefaultShell first runs the setup-outcome test of
 #    windows_ssh_host_tests/setup_outcome.rs (#5992): the setup tab's lines are
 #    typed into a real PTY shell, and a failed setup is reported failed although
-#    the server sends exit code 0 for it.
+#    the server sends exit code 0 for it, with the OLD agent still running (#5996).
 # 6. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
 #    (#5109): with the opt-in hook on, a cd is reported, no setup text is
 #    left on screen and nothing of it is in the console's command history --
