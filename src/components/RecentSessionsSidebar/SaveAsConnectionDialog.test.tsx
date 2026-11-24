@@ -29,7 +29,10 @@ vi.mock("@/store/appStore", () => ({
 const { ensureStorageMock } = vi.hoisted(() => ({ ensureStorageMock: vi.fn() }));
 vi.mock("@/utils/credentialStorageChoice", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/utils/credentialStorageChoice")>()),
-  ensureCredentialStorageForSave: ensureStorageMock,
+  chooseCredentialStorageForSave: async () => {
+    const active = (await ensureStorageMock()) as boolean;
+    return { active, chosen: active ? "os_keychain" : null };
+  },
 }));
 
 let container: HTMLDivElement;
@@ -252,6 +255,10 @@ describe("SaveAsConnectionDialog", () => {
       });
       expect(ensureStorageMock).toHaveBeenCalledTimes(1);
       render({ onSave }); // the store status changed: re-render from it
+      // The chosen store is named in place, under the box (#5825).
+      expect(query("save-as-connection-storage-chosen")?.textContent).toBe(
+        "Passwords will be stored in the OS Keychain."
+      );
       typeInto(query("save-as-connection-password") as HTMLInputElement, "s3cret");
       await clickSave();
 
@@ -270,6 +277,7 @@ describe("SaveAsConnectionDialog", () => {
         await Promise.resolve();
       });
       expect(query("save-as-connection-password")).toBeNull();
+      expect(query("save-as-connection-storage-chosen")).toBeNull();
       await clickSave();
 
       expect(storeCredentialMock).not.toHaveBeenCalled();

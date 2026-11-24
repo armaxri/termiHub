@@ -14,9 +14,10 @@ The checklist (supersedes the hand-run kit and #5516):
    ``test_product_run_file_manager_offer.py``).
 2. First-save credential chooser (#5409, #5484): OS Keychain pre-selected with
    *Recommended* and the change-later hint; master-password footers
-   Cancel·Continue → Cancel·Back·Create vault; Back; OS Keychain + Continue
-   closes it with Save credentials still on (and in view, #5630); it is shown
-   only once. Before that, #5630 grades one emphasised card, a disabled Create
+   Don't save this password·Continue → Back … Don't save this password·Create
+   vault (#5825); Back; OS Keychain + Continue closes it with Save credentials
+   still on (and in view, #5630), named in place with no toast (#5825); it is
+   shown only once. Before that, #5630 grades one emphasised card, a disabled Create
    vault on empty fields and the vault step's spacing, then cancels.
 3. Startup question in zsh (#5456/#5458): ``read -q`` before the first prompt
    stays unanswered for 5 s; ``y`` lets startup and the initial command run;
@@ -465,13 +466,14 @@ class TestProductRunChecklist(
             assert hint == want, f"hint reads {hint!r}"
         with self.step(
             "checklist.chooser.master-password",
-            "Master password: Cancel·Continue, then Cancel·Back·Create vault",
-            expect="the 'Set a master password' step with Cancel, Back and Create vault",
+            "Master password: dismiss·Continue, then Back … dismiss·Create vault (#5825)",
+            expect="the 'Set a master password' step with Back on the left, 'Don't save this "
+            "password' and Create vault on the right",
         ):
             self.require("checklist.chooser.opens")
             self.driver.click(CHOOSER_OPTION + "master_password")
             self.wait(lambda: self._option_checked("master_password"), what="Master password")
-            assert self.driver.exists(CHOOSER_CANCEL), "no Cancel on the choose step"
+            assert self.driver.exists(CHOOSER_CANCEL), "no dismiss action on the choose step"
             assert not self.driver.exists(CHOOSER_BACK), "Back shows on the choose step"
             assert self.driver.get_text(CHOOSER_CONTINUE).strip() == "Continue"
             self.shot(label="choose-step")
@@ -480,10 +482,11 @@ class TestProductRunChecklist(
                 lambda: "Set a master password" in self.driver.get_text(CHOOSER),
                 what="the master-password step",
             )
-            labels = [self.driver.get_text(t).strip() for t in (CHOOSER_CANCEL, CHOOSER_BACK)]
-            labels.append(self.driver.get_text(CHOOSER_CONTINUE).strip())
+            labels = [
+                self.driver.get_text(t).strip() for t in (CHOOSER_BACK, CHOOSER_CANCEL, CHOOSER_CONTINUE)
+            ]
             self.evidence(f"footer: {' · '.join(labels)}")
-            assert labels == ["Cancel", "Back", "Create vault"], labels
+            assert labels == ["Back", "Don't save this password", "Create vault"], labels
         with self.step(
             "checklist.chooser.back",
             "Back returns to the storage choice",
@@ -520,8 +523,8 @@ class TestProductRunChecklist(
             "checklist.chooser.save-in-view",
             "After the chooser, Save credentials is still in view (#5630)",
             expect=(
-                "the SSH editor scrolled to Save credentials, "
-                "a 'stored in the OS Keychain' toast"
+                "the SSH editor scrolled to Save credentials, 'Passwords will be stored in "
+                "the OS Keychain.' under it and no toast (#5825)"
             ),
         ):
             self.require("checklist.chooser.os-keychain")

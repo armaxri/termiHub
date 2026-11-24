@@ -103,6 +103,29 @@ export const MASTER_PASSWORD_NOT_RECOVERABLE_TEXT =
 /** Title of the first-use credential-storage chooser (#5187). */
 export const CREDENTIAL_STORAGE_CHOOSER_TITLE = "Where should termiHub keep passwords?";
 
+/**
+ * The chooser's dismiss action when ticking a save control opened it (#5825):
+ * it names what dismissing does — this secret is not saved and the tick goes
+ * back off — instead of a bare "Cancel".
+ */
+export const CREDENTIAL_STORAGE_DISMISS_SAVE_LABEL = "Don't save this password";
+
+/**
+ * The line a save control shows in place, under itself, once the chooser set
+ * a store up from it (#5825). Shown inline instead of a toast: the result is
+ * visible where the user acted (toast policy #5859).
+ */
+export function credentialStorageChosenText(mode: CredentialStorageMode): string | null {
+  switch (mode) {
+    case "os_keychain":
+      return "Passwords will be stored in the OS Keychain.";
+    case "master_password":
+      return "Passwords will be stored in your master-password vault.";
+    default:
+      return null;
+  }
+}
+
 /** Where the choice can be changed later — the same setting the chooser writes. */
 export const CREDENTIAL_STORAGE_CHANGE_LATER_TEXT =
   "You can change this any time under Settings ▸ Security ▸ Credential storage.";

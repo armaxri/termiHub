@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  chooseCredentialStorageForSave,
   credentialStorageNeedsChoice,
-  ensureCredentialStorageForSave,
 } from "@/utils/credentialStorageChoice";
+import { credentialStorageChosenText } from "@/utils/credentialStorageCopy";
 import { Button, Checkbox, Field, Input, Modal, NumberInput, Select, toast } from "@/components/ui";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { IconPickerDialog } from "@/components/ConnectionEditor/IconPickerDialog";
@@ -86,6 +87,9 @@ export function SaveAsConnectionDialog({
   const [folderId, setFolderId] = useState(NO_FOLDER);
   const [icon, setIcon] = useState<string | undefined>(undefined);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  // The store the chooser just set up from the save box (#5825), named under
+  // it in place of a toast.
+  const [storageChosenNote, setStorageChosenNote] = useState<string | null>(null);
   const [host, setHost] = useState("");
   const [port, setPort] = useState<number | "">("");
   const [username, setUsername] = useState("");
@@ -277,8 +281,9 @@ export function SaveAsConnectionDialog({
               if (credentialStoreActive) {
                 setSavePassword(checked);
               } else if (checked && needsStorageChoice) {
-                void ensureCredentialStorageForSave().then((active) => {
+                void chooseCredentialStorageForSave().then(({ active, chosen }) => {
                   if (active) setSavePassword(true);
+                  setStorageChosenNote(chosen ? credentialStorageChosenText(chosen) : null);
                 });
               }
             }}
@@ -287,6 +292,15 @@ export function SaveAsConnectionDialog({
           />
           <span>Save password to credential store</span>
         </label>
+        {savePassword && credentialStoreActive && storageChosenNote && (
+          <span
+            className="recent-sessions__save-password-hint"
+            role="status"
+            data-testid="save-as-connection-storage-chosen"
+          >
+            {storageChosenNote}
+          </span>
+        )}
         {savePassword && credentialStoreActive && (
           <Field label="Password" htmlFor="save-as-connection-password">
             <PasswordInput

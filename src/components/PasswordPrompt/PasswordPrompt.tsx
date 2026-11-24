@@ -10,10 +10,11 @@ import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
 import {
   CREDENTIAL_STORAGE_CHOOSE_HINT,
   CREDENTIAL_STORAGE_OFF_TEXT,
+  credentialStorageChosenText,
 } from "@/utils/credentialStorageCopy";
 import {
+  chooseCredentialStorageForSave,
   credentialStorageNeedsChoice,
-  ensureCredentialStorageForSave,
 } from "@/utils/credentialStorageChoice";
 import { isUnencryptedTransport } from "@/utils/unencryptedSession";
 
@@ -116,6 +117,9 @@ export function PasswordPrompt() {
   const [savePassword, setSavePassword] = useState(showSave);
   const [shownRequestId, setShownRequestId] = useState<number | null>(null);
   const [shownShowSave, setShownShowSave] = useState(showSave);
+  // The store the chooser just set up from this prompt's save box (#5825),
+  // named under the box in place of a toast.
+  const [storageChosenNote, setStorageChosenNote] = useState<string | null>(null);
 
   // Reset the fields whenever a new request is shown (the dialog opening, or
   // the queue advancing to the next request, #4312), and default "save" to on
@@ -130,6 +134,7 @@ export function PasswordPrompt() {
     if (requestId !== null) {
       setPassword("");
       setSavePassword(showSave);
+      setStorageChosenNote(null);
     }
   } else if (showSave !== shownShowSave) {
     setShownShowSave(showSave);
@@ -223,6 +228,15 @@ export function PasswordPrompt() {
             <span>{saveLabel}</span>
           </label>
         )}
+        {showSave && savePassword && storageChosenNote && (
+          <p
+            className="password-prompt__save-hint"
+            role="status"
+            data-testid="password-prompt-storage-chosen"
+          >
+            {storageChosenNote}
+          </p>
+        )}
         {showChoose && (
           <>
             <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
@@ -231,7 +245,10 @@ export function PasswordPrompt() {
                 onCheckedChange={(checked) => {
                   // Nothing is saved here: the chooser sets a store up, and the
                   // box turns on (default for an active store) once it has one.
-                  if (checked) void ensureCredentialStorageForSave();
+                  if (!checked) return;
+                  void chooseCredentialStorageForSave().then(({ chosen }) => {
+                    setStorageChosenNote(chosen ? credentialStorageChosenText(chosen) : null);
+                  });
                 }}
                 aria-label={saveLabel}
                 aria-describedby={saveHintId}

@@ -11,10 +11,11 @@ import {
   type CredentialReentryTarget,
 } from "@/utils/credentialReentry";
 import {
+  chooseCredentialStorageForSave,
   credentialStoreActive,
   credentialStorageNeedsChoice,
-  ensureCredentialStorageForSave,
 } from "@/utils/credentialStorageChoice";
+import { credentialStorageChosenText } from "@/utils/credentialStorageCopy";
 import "./CredentialReentry.css";
 
 /**
@@ -72,6 +73,9 @@ function CredentialReentryForm({
   const [keyPath, setKeyPath] = useState(target.keyPath);
   const canSave = (storeActive || needsStorageChoice) && target.credentialId !== null;
   const [save, setSave] = useState(target.saveDefault);
+  // The store the chooser just set up from the save box (#5825), named under
+  // it in place of a toast.
+  const [storageChosenNote, setStorageChosenNote] = useState<string | null>(null);
   const baseId = useId();
   const isKey = target.authMethod === "key";
 
@@ -98,8 +102,9 @@ function CredentialReentryForm({
       }
       // No store chosen yet: ask where first, and tick only once one is set up.
       if (checked) {
-        void ensureCredentialStorageForSave().then((active) => {
+        void chooseCredentialStorageForSave().then(({ active, chosen }) => {
           if (active) setSave(true);
+          setStorageChosenNote(chosen ? credentialStorageChosenText(chosen) : null);
         });
       }
     },
@@ -170,6 +175,15 @@ function CredentialReentryForm({
           />
           <span>{saveLabel}</span>
         </label>
+      )}
+      {canSave && storeActive && save && storageChosenNote && (
+        <p
+          className="credential-reentry__storage-chosen"
+          role="status"
+          data-testid="terminal-credential-reentry-storage-chosen"
+        >
+          {storageChosenNote}
+        </p>
       )}
       <div className="credential-reentry__actions">
         <Button

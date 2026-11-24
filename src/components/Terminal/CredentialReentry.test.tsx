@@ -487,6 +487,10 @@ describe("credential re-entry first-use storage chooser (#5187)", () => {
       useAppStore.getState().resolveStorageChoice("os_keychain");
     });
     expect(q("terminal-credential-reentry-save")?.getAttribute("data-state")).toBe("checked");
+    // The chosen store is named under the box, in place of a toast (#5825).
+    expect(q("terminal-credential-reentry-storage-chosen")?.textContent).toBe(
+      "Passwords will be stored in the OS Keychain."
+    );
 
     await reconnect(tabId);
     expect(storeCredentialMock).toHaveBeenCalledWith("conn-1", "password", "n3w-pw", null);
@@ -499,6 +503,7 @@ describe("credential re-entry first-use storage chooser (#5187)", () => {
       useAppStore.getState().resolveStorageChoice("canceled");
     });
     expect(q("terminal-credential-reentry-save")?.getAttribute("data-state")).toBe("unchecked");
+    expect(q("terminal-credential-reentry-storage-chosen")).toBeNull();
 
     await reconnect(tabId);
     expect(storeCredentialMock).not.toHaveBeenCalled();

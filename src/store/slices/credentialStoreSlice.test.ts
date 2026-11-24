@@ -175,6 +175,19 @@ describe("credentialStoreSlice — connect fall-through (#5188)", () => {
       expect(store.getState().storageChooserResolvers).toEqual([]);
     });
 
+    it("records why it opened; a waiting save keeps the save wording (#5825)", () => {
+      expect(store.getState().storageChooserPurpose).toBe("setup");
+      void store.getState().requestStorageChoice("save");
+      expect(store.getState().storageChooserPurpose).toBe("save");
+      // A setup request joining an open save chooser does not reword it.
+      void store.getState().requestStorageChoice();
+      expect(store.getState().storageChooserPurpose).toBe("save");
+      store.getState().resolveStorageChoice("canceled");
+      // A fresh request sets its own purpose.
+      void store.getState().requestStorageChoice("setup");
+      expect(store.getState().storageChooserPurpose).toBe("setup");
+    });
+
     it("settles a cancel as canceled and ignores a second settle", async () => {
       const pending = store.getState().requestStorageChoice();
       store.getState().resolveStorageChoice("canceled");

@@ -129,6 +129,10 @@ describe("PasswordPrompt first-use storage chooser (#5187)", () => {
 
     expect(query("credential-storage-chooser")).toBeNull();
     expect(query("password-prompt-save-checkbox")?.getAttribute("aria-checked")).toBe("true");
+    // The chosen store is named under the box, in place of a toast (#5825).
+    expect(query("password-prompt-storage-chosen")?.textContent).toBe(
+      "Passwords will be stored in the OS Keychain."
+    );
     await click("password-prompt-connect");
     expect(answer()).toEqual({ password: "s3cret", shouldSave: true });
     expect(useAppStore.getState().credentialStoreStatus?.mode).toBe("os_keychain");
@@ -138,9 +142,14 @@ describe("PasswordPrompt first-use storage chooser (#5187)", () => {
     const answer = await prompt();
 
     await click("password-prompt-save-checkbox");
+    // The dismiss action says what it does to this save (#5825).
+    expect(query("credential-storage-chooser-cancel")?.textContent).toBe(
+      "Don't save this password"
+    );
     await click("credential-storage-chooser-cancel");
 
     expect(query("password-prompt-save-checkbox")?.getAttribute("aria-checked")).toBe("false");
+    expect(query("password-prompt-storage-chosen")).toBeNull();
     await click("password-prompt-connect");
     expect(answer()).toEqual({ password: "s3cret", shouldSave: false });
     expect(mockedInvoke.mock.calls.some((c) => c[0] === "switch_credential_store")).toBe(false);
