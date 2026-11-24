@@ -349,6 +349,7 @@ describe("live lane path filters (#4618)", () => {
       "src-tauri/src/terminal/agent_install.rs",
       "src-tauri/src/terminal/agent_setup.rs",
       "src-tauri/src/terminal/agent_setup_outcome.rs",
+      "src-tauri/src/terminal/agent_setup_windows.rs",
       "src-tauri/src/terminal/agent_binary.rs",
       "src-tauri/src/terminal/backend.rs",
       "src-tauri/src/terminal/jsonrpc.rs",

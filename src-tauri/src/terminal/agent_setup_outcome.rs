@@ -21,11 +21,13 @@ use std::time::Duration;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, EventId, Listener, Runtime};
 use termihub_core::backends::ssh::handler::SshSession;
+use tracing::warn;
 
 use crate::terminal::agent_install::{
     is_termihub_agent_version_output, powershell_encoded_command, powershell_single_quote,
     WINDOWS_AGENT_EXE, WINDOWS_INSTALL_SUBDIR,
 };
+use crate::terminal::agent_setup_windows::{windows_recover_command, RECOVER_BUSY};
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::run_remote_command_with_timeout;
 
@@ -83,12 +85,16 @@ pub(super) enum HostCheck {
     Installed,
     /// There is no file at the install path.
     Absent,
-    /// The file there is not the uploaded binary (an older agent, say).
+    /// The file there is another agent, which runs: the previous one.
+    PreviousRuns,
+    /// The file there is neither the uploaded binary nor a running agent.
     OtherBinary,
     /// The uploaded binary is there but does not run as an agent.
     DoesNotRun,
     /// The check ran but its answer says nothing usable.
     Unreadable,
+    /// A setup is still running on the host.
+    Busy,
 }
 
 /// Lower-case hex SHA-256 of `bytes`.
@@ -143,21 +149,44 @@ pub(super) fn parse_check(output: &str, uploaded_sha256: &str) -> HostCheck {
     if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return HostCheck::Unreadable;
     }
-    if !sha.eq_ignore_ascii_case(uploaded_sha256) {
-        return HostCheck::OtherBinary;
+    let uploaded = sha.eq_ignore_ascii_case(uploaded_sha256);
+    let runs = if version == "version-error" {
+        false
+    } else {
+        let parsed = version.strip_prefix("version ").and_then(|rest| {
+            let (code, text) = rest.split_once(' ').unwrap_or((rest, ""));
+            Some((code.parse::<i64>().ok()?, text))
+        });
+        match parsed {
+            Some((code, text)) => code == 0 && is_termihub_agent_version_output(text),
+            None => return HostCheck::Unreadable,
+        }
+    };
+    match (uploaded, runs) {
+        (true, true) => HostCheck::Installed,
+        (true, false) => HostCheck::DoesNotRun,
+        (false, true) => HostCheck::PreviousRuns,
+        (false, false) => HostCheck::OtherBinary,
     }
-    if version == "version-error" {
-        return HostCheck::DoesNotRun;
+}
+
+/// Put the previous agent back if the setup did not get to it (#5996), then
+/// check the host. A recovery that cannot run changes nothing, so the check
+/// still tells what is there; only a frozen server skips it.
+pub(super) fn recover_and_check_host(
+    session: &SshSession,
+    uploaded_sha256: &str,
+    timeout: Duration,
+) -> Result<HostCheck, TerminalError> {
+    match run_remote_command_with_timeout(session, &windows_recover_command(), timeout) {
+        Ok(output) if output.lines().any(|line| line.trim() == RECOVER_BUSY) => {
+            return Ok(HostCheck::Busy);
+        }
+        Ok(_) => {}
+        Err(e) if e.is_timeout() => return Err(e),
+        Err(e) => warn!("Agent setup: the host could not be cleaned up: {e}"),
     }
-    let parsed = version.strip_prefix("version ").and_then(|rest| {
-        let (code, text) = rest.split_once(' ').unwrap_or((rest, ""));
-        Some((code.parse::<i64>().ok()?, text))
-    });
-    match parsed {
-        Some((0, text)) if is_termihub_agent_version_output(text) => HostCheck::Installed,
-        Some(_) => HostCheck::DoesNotRun,
-        None => HostCheck::Unreadable,
-    }
+    check_host(session, uploaded_sha256, timeout)
 }
 
 /// Run the check over `session`, the setup's own SSH connection.
@@ -203,9 +232,16 @@ pub(super) fn windows_setup_outcome(
             "The agent was copied to the host but does not start there.".to_string(),
         ),
         Ok(HostCheck::Absent) => not_installed("There is no agent at the install path."),
-        Ok(HostCheck::OtherBinary) => not_installed(
-            "The agent at the install path is not the uploaded one (an older agent is still there).",
+        Ok(HostCheck::PreviousRuns) => not_installed(
+            "The new agent was not installed. The previous agent is still in place and starts.",
         ),
+        Ok(HostCheck::OtherBinary) => not_installed(
+            "The new agent was not installed, and the file at the install path does not start \
+             as an agent.",
+        ),
+        Ok(HostCheck::Busy) => {
+            unchecked("An agent setup is still running on the host.".to_string())
+        }
         Ok(HostCheck::Unreadable) => {
             unchecked("The installed agent could not be checked.".to_string())
         }

@@ -35,7 +35,10 @@ fn only_the_uploaded_binary_that_runs_counts_as_installed() {
         HostCheck::Installed
     );
     // An older agent, even one of the very same version.
-    assert_eq!(parse_check(&answer(OTHER, ok), SHA), HostCheck::OtherBinary);
+    assert_eq!(
+        parse_check(&answer(OTHER, ok), SHA),
+        HostCheck::PreviousRuns
+    );
     assert_eq!(parse_check("termihub-check absent", SHA), HostCheck::Absent);
     for rest in [
         "version 3 termihub-agent 1.2.3",
@@ -47,6 +50,11 @@ fn only_the_uploaded_binary_that_runs_counts_as_installed() {
         assert_eq!(
             parse_check(&answer(SHA, rest), SHA),
             HostCheck::DoesNotRun,
+            "{rest}"
+        );
+        assert_eq!(
+            parse_check(&answer(OTHER, rest), SHA),
+            HostCheck::OtherBinary,
             "{rest}"
         );
     }
@@ -103,9 +111,12 @@ fn exit_code_0_is_never_success_on_its_own() {
         end,
         &Ok(HostCheck::Absent)
     )));
-    assert!(is_failed(&windows_setup_outcome(
+    for other in [HostCheck::OtherBinary, HostCheck::PreviousRuns] {
+        assert!(is_failed(&windows_setup_outcome(end, &Ok(other))));
+    }
+    assert!(is_unknown(&windows_setup_outcome(
         end,
-        &Ok(HostCheck::OtherBinary)
+        &Ok(HostCheck::Busy)
     )));
     assert!(is_failed(&windows_setup_outcome(
         end,
@@ -147,7 +158,11 @@ fn a_verified_agent_is_installed_however_the_shell_ended() {
 
 #[test]
 fn a_missing_or_old_agent_is_a_failure_only_once_the_shell_really_ended() {
-    for check in [HostCheck::Absent, HostCheck::OtherBinary] {
+    for check in [
+        HostCheck::Absent,
+        HostCheck::OtherBinary,
+        HostCheck::PreviousRuns,
+    ] {
         assert!(is_failed(&windows_setup_outcome(
             ShellEnd::Exited(1),
             &Ok(check)
@@ -157,6 +172,33 @@ fn a_missing_or_old_agent_is_a_failure_only_once_the_shell_really_ended() {
                 is_unknown(&windows_setup_outcome(end, &Ok(check))),
                 "{end:?} {check:?}"
             );
+        }
+    }
+}
+
+#[test]
+fn every_outcome_says_whether_the_previous_agent_is_still_there() {
+    let says = |end, check| match windows_setup_outcome(end, &Ok(check)) {
+        SetupOutcome::Failed(why) | SetupOutcome::Unknown(why) => {
+            why.contains("previous agent is still in place")
+        }
+        SetupOutcome::Installed => panic!("{check:?} is not installed"),
+    };
+    for end in [
+        ShellEnd::Exited(0),
+        ShellEnd::Exited(1),
+        ShellEnd::NoStatus,
+        ShellEnd::StillOpen,
+    ] {
+        assert!(says(end, HostCheck::PreviousRuns), "{end:?}");
+        for check in [
+            HostCheck::Absent,
+            HostCheck::OtherBinary,
+            HostCheck::DoesNotRun,
+            HostCheck::Busy,
+            HostCheck::Unreadable,
+        ] {
+            assert!(!says(end, check), "{end:?} {check:?}");
         }
     }
 }
@@ -203,7 +245,7 @@ async fn check(
 ) -> Result<HostCheck, TerminalError> {
     let (session, state) = fake_host::connect(&[]).await;
     state.lock().unwrap().faults.powershell = powershell;
-    tokio::task::spawn_blocking(move || check_host(&session, SHA, CHECK_TIMEOUT))
+    tokio::task::spawn_blocking(move || recover_and_check_host(&session, SHA, CHECK_TIMEOUT))
         .await
         .unwrap()
 }
@@ -214,7 +256,10 @@ async fn the_check_runs_over_its_own_exec_channel() {
     let good = answer(SHA, "version 0 termihub-agent 1.2.3");
     let old = answer(OTHER, "version 0 termihub-agent 1.2.3");
     assert_eq!(check(reply(good)).await.unwrap(), HostCheck::Installed);
-    assert_eq!(check(reply(old)).await.unwrap(), HostCheck::OtherBinary);
+    assert_eq!(check(reply(old)).await.unwrap(), HostCheck::PreviousRuns);
+    // A recovery that meets a running setup ends there.
+    let busy = Some(vec![("Lock-Setup", RECOVER_BUSY.to_string())]);
+    assert_eq!(check(busy).await.unwrap(), HostCheck::Busy);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -233,10 +278,11 @@ async fn a_check_that_cannot_run_is_unknown() {
 async fn a_check_that_times_out_is_unknown() {
     let (session, state) = fake_host::connect(&[]).await;
     state.lock().unwrap().faults.hang_powershell = true;
-    let found =
-        tokio::task::spawn_blocking(move || check_host(&session, SHA, Duration::from_millis(200)))
-            .await
-            .unwrap();
+    let found = tokio::task::spawn_blocking(move || {
+        recover_and_check_host(&session, SHA, Duration::from_millis(200))
+    })
+    .await
+    .unwrap();
     assert!(found.as_ref().is_err_and(|e| e.is_timeout()), "{found:?}");
     assert!(is_unknown(&windows_setup_outcome(
         ShellEnd::Exited(0),
@@ -251,10 +297,11 @@ async fn a_check_over_a_gone_connection_is_unknown() {
         .disconnect(russh::Disconnect::ByApplication, "", "")
         .await
         .unwrap();
-    let found =
-        tokio::task::spawn_blocking(move || check_host(&session, SHA, Duration::from_secs(5)))
-            .await
-            .unwrap();
+    let found = tokio::task::spawn_blocking(move || {
+        recover_and_check_host(&session, SHA, Duration::from_secs(5))
+    })
+    .await
+    .unwrap();
     assert!(found.is_err(), "{found:?}");
     assert!(is_unknown(&windows_setup_outcome(
         ShellEnd::Exited(0),

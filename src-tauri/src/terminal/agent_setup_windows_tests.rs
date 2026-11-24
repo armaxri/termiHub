@@ -1,156 +1,119 @@
-//! The lines a Windows agent setup types into its tab (#5946, #5992).
+//! The Windows setup script never loses a working agent (#5996).
 //!
-//! They end with `exit`, so the tab's shell ends when the setup does; the host
-//! check of `agent_setup_outcome` then decides how it went (Windows does not
-//! report the shell's own status reliably). These tests pin the lines for every
-//! Windows login shell and, when `pwsh` is installed, execute the PowerShell
-//! lines, their encoded form through `sh` (as Git Bash runs it) and the host
-//! check in a scratch dir with a scratch `HOME`, never the user's profile or
-//! history.
+//! Static checks for the typed lines of every login shell, and, when `pwsh` is
+//! installed, real runs of the script, the recovery and the host check in a
+//! scratch dir with a scratch `HOME` (never the user's profile or history). The
+//! script is made to fail, and is killed, before every single step. What only
+//! Windows can show (a running image, ConPTY, Windows PowerShell 5.1) is graded
+//! by `windows_ssh_host_tests/setup_outcome.rs`.
 
 use super::*;
-use crate::terminal::agent_install::{
-    powershell_encoded_command, windows_install_plan, WindowsDeployShell, WindowsShell,
-};
 
 const CMD: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::Cmd);
 const POWERSHELL: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::PowerShell);
 const ENCODED: WindowsDeployShell = WindowsDeployShell::EncodedPowerShell;
 
-/// Decode the script of a `powershell.exe … -EncodedCommand <base64>` line.
-fn decode_encoded(line: &str) -> String {
-    use base64::Engine;
-    let b64 = line
-        .split("-EncodedCommand ")
-        .nth(1)
-        .and_then(|rest| rest.split(';').next())
-        .expect("an -EncodedCommand line");
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .unwrap();
-    let utf16: Vec<u16> = bytes
-        .chunks(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
-    String::from_utf16(&utf16).unwrap()
-}
-
 #[test]
-fn every_windows_setup_ends_by_exiting_with_its_status() {
-    let powershell = windows_setup_lines(POWERSHELL);
-    assert!(powershell
-        .last()
-        .unwrap()
-        .ends_with("; exit $termihubSetupStatus"));
-    let cmd = windows_setup_lines(CMD);
-    assert_eq!(cmd.last().unwrap(), "exit %TERMIHUB_SETUP_STATUS%");
-    let encoded = windows_setup_lines(ENCODED);
-    assert!(encoded.last().unwrap().ends_with("; exit $?"));
-}
-
-#[test]
-fn every_line_is_typed_with_the_enter_key_of_a_windows_console() {
-    // LF is Ctrl+Enter for PSReadLine: the line would never run (#5992).
-    for shell in [CMD, POWERSHELL, ENCODED] {
-        let typed = windows_setup_input(shell);
-        assert_eq!(typed.len(), windows_setup_lines(shell).len());
-        for line in typed {
-            assert!(line.ends_with('\r') && !line.contains('\n'), "{line:?}");
-        }
-    }
-}
-
-#[test]
-fn every_line_is_one_plain_ascii_command_line() {
-    for shell in [CMD, POWERSHELL, ENCODED] {
-        for line in windows_setup_lines(shell) {
-            assert!(!line.contains(['\r', '\n']), "{shell:?}: {line:?}");
-            assert!(line.is_ascii(), "{shell:?}: {line:?}");
-        }
-    }
-}
-
-#[test]
-fn the_status_starts_failed_and_only_a_verified_install_clears_it() {
-    let plan = windows_install_plan(WindowsShell::PowerShell);
-    let lines = windows_setup_lines(POWERSHELL);
-    let body = &lines[1];
-    assert!(body.starts_with("$global:termihubSetupStatus = 1; "));
-    let install = body.find(&plan.install_command).expect("install");
-    let verify = body.find(&plan.verify_command).expect("verify");
-    let cleared = body
-        .find("$global:termihubSetupStatus = 0")
-        .expect("cleared");
-    assert!(install < verify && verify < cleared);
-    assert!(body.contains("$ErrorActionPreference = 'Stop'"));
-    assert!(body.contains("if ($LASTEXITCODE -ne 0) { throw"));
-
-    let plan = windows_install_plan(WindowsShell::Cmd);
-    let lines = windows_setup_lines(CMD);
-    assert_eq!(lines[1], "set \"TERMIHUB_SETUP_STATUS=1\"");
-    // Grouped: `&` inside the install chain binds looser than `&&`.
-    assert_eq!(
-        lines[2],
+fn every_shell_types_one_line_that_runs_the_script_and_ends_the_shell() {
+    let run = |profile: &str| {
         format!(
-            "({}) && ({}) && set \"TERMIHUB_SETUP_STATUS=0\"",
-            plan.install_command, plan.verify_command
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+             -File \"{profile}\\termihub-agent-setup.ps1\""
         )
-    );
-}
-
-#[test]
-fn the_stale_cleanup_runs_before_the_exit_and_never_sets_the_status() {
-    for (shell, kind) in [
-        (POWERSHELL, WindowsShell::PowerShell),
-        (CMD, WindowsShell::Cmd),
+    };
+    for (shell, want) in [
+        (CMD, format!("{} & exit", run("%USERPROFILE%"))),
+        (
+            POWERSHELL,
+            format!("{}; exit $LASTEXITCODE", run("$env:USERPROFILE")),
+        ),
+        (ENCODED, format!("{}; exit $?", run("$USERPROFILE"))),
     ] {
-        let cleanup = windows_install_plan(kind).cleanup_stale_command.unwrap();
-        let lines = windows_setup_lines(shell);
-        let at = lines
-            .iter()
-            .position(|l| *l == cleanup)
-            .expect("cleanup line");
-        assert_eq!(at, lines.len() - 2 - usize::from(shell == CMD), "{shell:?}");
-        assert!(!cleanup.contains("TERMIHUB_SETUP_STATUS") && !cleanup.contains("termihubSetup"));
+        assert_eq!(windows_setup_lines(shell), std::slice::from_ref(&want));
+        // CR is Enter: LF leaves the line unfinished in PSReadLine (#5992).
+        assert_eq!(windows_setup_input(shell), [format!("{want}\r")]);
     }
 }
 
 #[test]
-fn the_encoded_form_carries_the_powershell_lines_as_one_script() {
-    let lines = windows_setup_lines(ENCODED);
-    assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0], "echo === termiHub Agent Setup ===");
-    let script = windows_setup_lines(POWERSHELL).join("\n");
-    assert_eq!(
-        lines[1],
-        format!("{}; exit $?", powershell_encoded_command(&script))
-    );
-    assert_eq!(decode_encoded(&lines[1]), script);
-}
-
-#[test]
-fn no_line_reads_the_output_to_decide_the_outcome() {
-    // The outcome is the status of the commands, never a scrape of their text.
-    for shell in [CMD, POWERSHELL] {
-        for line in windows_setup_lines(shell) {
-            for scrape in ["Select-String", "findstr", "-match", "-like", "find \""] {
-                assert!(!line.contains(scrape), "{shell:?}: {line}");
-            }
+fn nothing_typed_or_uploaded_is_posix_or_overwrites_a_file() {
+    let script = windows_setup_script();
+    for text in [script.clone(), recover_script()] {
+        assert!(text.is_ascii() && !text.contains("__"), "{text}");
+        for line in text.lines().filter(|l| l.contains("Move-Item")) {
+            assert!(!line.contains("Move-Item -Force"), "{line}");
         }
+        assert!(!text.contains("Copy-Item"));
+    }
+    // Windows PowerShell 5.1 has none of these.
+    for newer in ["&&", "||", "??", "?."] {
+        assert!(!script.contains(newer), "{newer}");
     }
 }
 
-/// Runs the PowerShell lines under a local `pwsh` with a scratch profile.
+#[test]
+fn the_new_agent_is_proven_before_the_installed_one_is_touched() {
+    let at = |part: &str| {
+        INSTALL_STEPS
+            .iter()
+            .position(|s| s.contains(part))
+            .unwrap_or_else(|| panic!("no step {part}"))
+    };
+    let proven = at("Test-Agent $new");
+    let away = at("Move-Item -LiteralPath $dst -Destination $bak");
+    let swapped = at("Move-Item -LiteralPath $new -Destination $dst");
+    assert!(proven < away);
+    // Nothing between the two renames.
+    assert_eq!(swapped, away + 1);
+}
+
+#[test]
+fn the_recovery_fits_the_command_line_of_cmd() {
+    let len = windows_recover_command().len();
+    assert!(len < 8000, "{len}");
+}
+
+#[test]
+fn a_message_typed_into_a_windows_tab_cannot_run_anything() {
+    assert_eq!(
+        windows_echo_input("Agent setup failed: C:/x not found, retry."),
+        "echo 'Agent setup failed: C:/x not found, retry.'\r"
+    );
+    let hostile = "a'; & calc | b\r\ncalc $(id) `id` %PATH% ^ \"x\" <y >z !q \u{2019}; rm";
+    let typed = windows_echo_input(hostile);
+    let text = typed
+        .strip_prefix("echo '")
+        .and_then(|t| t.strip_suffix("'\r"))
+        .expect("one echo line");
+    assert!(
+        text.chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".,:_-/ ".contains(c)),
+        "{typed:?}"
+    );
+}
+
+/// Runs under a local `pwsh` with a scratch profile.
 #[cfg(unix)]
 mod executed {
     use super::*;
-    use crate::terminal::agent_setup_outcome::{parse_check, windows_check_command, HostCheck};
+    use crate::terminal::agent_setup_outcome::{
+        parse_check, sha256_hex, windows_check_command, HostCheck,
+    };
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    const OLD: &str = "#!/bin/sh\necho termihub-agent 1.0.0\n";
+    const NEW: &str = "#!/bin/sh\necho termihub-agent 2.0.0\n";
+    const BROKEN: &str = "#!/bin/sh\necho termihub-agent 2.0.0\nexit 3\n";
+    /// Starts under the staged name only: the verify after the install fails.
+    const FAILS_INSTALLED: &str =
+        "#!/bin/sh\necho termihub-agent 2.0.0\ncase \"$0\" in *.new.exe) ;; *) exit 3 ;; esac\n";
+    const THROW: &str = "throw 'injected'";
+    const KILL: &str = "[Diagnostics.Process]::GetCurrentProcess().Kill()";
+
     fn pwsh() -> Option<PathBuf> {
-        [
+        let found = [
             "/usr/local/bin/pwsh",
             "/opt/homebrew/bin/pwsh",
             "/usr/bin/pwsh",
@@ -158,65 +121,11 @@ mod executed {
         ]
         .into_iter()
         .map(PathBuf::from)
-        .find(|p| p.exists())
-    }
-
-    struct Host {
-        dir: tempfile::TempDir,
-    }
-
-    impl Host {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            for sub in [
-                "home",
-                "localappdata",
-                "xdg/data",
-                "xdg/config",
-                "xdg/cache",
-                "bin",
-            ] {
-                std::fs::create_dir_all(dir.path().join(sub)).unwrap();
-            }
-            Self { dir }
+        .find(|p| p.exists());
+        if found.is_none() {
+            eprintln!("pwsh not installed: skipping");
         }
-        fn path(&self, rel: &str) -> PathBuf {
-            self.dir.path().join(rel)
-        }
-        fn upload(&self) -> PathBuf {
-            self.path("home").join(agent_install::WINDOWS_UPLOAD_NAME)
-        }
-        fn installed(&self) -> PathBuf {
-            self.path("localappdata/termiHub/agent")
-                .join(agent_install::WINDOWS_AGENT_EXE)
-        }
-        /// Stage an uploaded "agent" whose `--version` exits with `code`.
-        fn stage_upload(&self, code: i32) {
-            write_exec(
-                &self.upload(),
-                &format!("#!/bin/sh\necho termihub-agent 1.2.3\nexit {code}\n"),
-            );
-        }
-        fn command(&self, program: &Path) -> Command {
-            let mut cmd = Command::new(program);
-            cmd.env_clear()
-                .env(
-                    "PATH",
-                    format!("{}:/usr/bin:/bin", self.path("bin").display()),
-                )
-                .env("HOME", self.path("home"))
-                .env("USERPROFILE", self.path("home"))
-                .env("LOCALAPPDATA", self.path("localappdata"))
-                .env("XDG_DATA_HOME", self.path("xdg/data"))
-                .env("XDG_CONFIG_HOME", self.path("xdg/config"))
-                .env("XDG_CACHE_HOME", self.path("xdg/cache"))
-                .env("HISTFILE", self.path("home/.history"))
-                .env("POWERSHELL_TELEMETRY_OPTOUT", "1")
-                .env("POWERSHELL_UPDATECHECK", "Off")
-                .env("LANG", "C")
-                .current_dir(self.path("home"));
-            cmd
-        }
+        found
     }
 
     fn write_exec(path: &Path, body: &str) {
@@ -224,157 +133,350 @@ mod executed {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    struct Run {
-        status: i32,
-        stdout: String,
+    /// A fake Windows host whose `powershell.exe` is the local `pwsh`.
+    struct Host {
+        dir: tempfile::TempDir,
     }
 
-    /// Run the native PowerShell setup lines as one script file.
-    fn run_powershell(pwsh: &Path, host: &Host) -> Run {
-        let script = host.path("setup.ps1");
-        std::fs::write(&script, windows_setup_lines(POWERSHELL).join("\n")).unwrap();
-        let out = host
-            .command(pwsh)
-            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-File"])
-            .arg(&script)
-            .output()
-            .unwrap();
-        Run {
-            status: out.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+    impl Host {
+        fn new(pwsh: &Path) -> Self {
+            let host = Self {
+                dir: tempfile::tempdir().unwrap(),
+            };
+            for sub in [
+                "home",
+                "lad/termiHub/agent",
+                "xdg/data",
+                "xdg/config",
+                "xdg/cache",
+                "bin",
+            ] {
+                std::fs::create_dir_all(host.path(sub)).unwrap();
+            }
+            std::os::unix::fs::symlink(pwsh, host.path("bin/powershell.exe")).unwrap();
+            host
         }
-    }
 
-    fn last_line(text: &str) -> &str {
-        text.lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("")
-    }
+        /// A host with `OLD` installed and `upload` staged.
+        fn update(pwsh: &Path, upload: &str) -> Self {
+            let host = Self::new(pwsh);
+            host.put("termihub-agent.exe", OLD);
+            host.stage(upload);
+            host
+        }
 
-    #[test]
-    fn a_verified_install_exits_0() {
-        let Some(pwsh) = pwsh() else {
-            eprintln!("pwsh not installed: skipping");
-            return;
-        };
-        let host = Host::new();
-        host.stage_upload(0);
-        let run = run_powershell(&pwsh, &host);
-        assert_eq!(run.status, 0, "{}", run.stdout);
-        assert!(
-            run.stdout.contains("termihub-agent 1.2.3"),
-            "{}",
-            run.stdout
-        );
-        assert_eq!(last_line(&run.stdout), WINDOWS_SETUP_DONE);
-        assert!(host.installed().exists());
-        assert!(!host.upload().exists());
-    }
+        fn path(&self, rel: &str) -> PathBuf {
+            self.dir.path().join(rel)
+        }
 
-    #[test]
-    fn a_missing_upload_exits_1() {
-        let Some(pwsh) = pwsh() else {
-            eprintln!("pwsh not installed: skipping");
-            return;
-        };
-        let host = Host::new();
-        let run = run_powershell(&pwsh, &host);
-        assert_eq!(run.status, 1, "{}", run.stdout);
-        assert!(run.stdout.contains("[error] "), "{}", run.stdout);
-        assert_eq!(last_line(&run.stdout), WINDOWS_SETUP_FAILED);
-    }
+        /// A file in the install dir.
+        fn file(&self, name: &str) -> PathBuf {
+            self.path("lad/termiHub/agent").join(name)
+        }
 
-    #[test]
-    fn a_failing_version_check_exits_1() {
-        let Some(pwsh) = pwsh() else {
-            eprintln!("pwsh not installed: skipping");
-            return;
-        };
-        let host = Host::new();
-        host.stage_upload(3);
-        let run = run_powershell(&pwsh, &host);
-        assert_eq!(run.status, 1, "{}", run.stdout);
-        assert!(
-            run.stdout.contains("version check exited with code 3"),
-            "{}",
-            run.stdout
-        );
-        assert_eq!(last_line(&run.stdout), WINDOWS_SETUP_FAILED);
-    }
+        fn put(&self, name: &str, body: &str) {
+            write_exec(&self.file(name), body);
+        }
 
-    /// The encoded line, run by `sh` as Git Bash would, with `powershell.exe`
-    /// standing for the local `pwsh`: the shell exits with the script's status.
-    #[test]
-    fn the_encoded_line_exits_its_shell_with_the_setup_status() {
-        let Some(pwsh) = pwsh() else {
-            eprintln!("pwsh not installed: skipping");
-            return;
-        };
-        for (code, want) in [(0, 0), (5, 1)] {
-            let host = Host::new();
-            std::os::unix::fs::symlink(&pwsh, host.path("bin/powershell.exe")).unwrap();
-            host.stage_upload(code);
-            let line = windows_setup_lines(ENCODED).join("\n");
-            let out = host
-                .command(Path::new("/bin/sh"))
+        fn read(&self, name: &str) -> Option<String> {
+            std::fs::read_to_string(self.file(name)).ok()
+        }
+
+        fn stage(&self, body: &str) {
+            write_exec(&self.path("home").join(WINDOWS_UPLOAD_NAME), body);
+        }
+
+        /// Run one command line as the host's login shell does.
+        fn sh(&self, line: &str) -> (Option<i32>, String) {
+            let out = Command::new("/bin/sh")
                 .arg("-c")
-                .arg(format!("{line}\necho not-reached"))
+                .arg(line)
+                .env_clear()
+                .env(
+                    "PATH",
+                    format!("{}:/usr/bin:/bin", self.path("bin").display()),
+                )
+                .env("HOME", self.path("home"))
+                .env("USERPROFILE", self.path("home"))
+                .env("LOCALAPPDATA", self.path("lad"))
+                .env("XDG_DATA_HOME", self.path("xdg/data"))
+                .env("XDG_CONFIG_HOME", self.path("xdg/config"))
+                .env("XDG_CACHE_HOME", self.path("xdg/cache"))
+                .env("HISTFILE", self.path("home/.history"))
+                .env("POWERSHELL_TELEMETRY_OPTOUT", "1")
+                .env("POWERSHELL_UPDATECHECK", "Off")
+                .env("LANG", "C")
+                .current_dir(self.path("home"))
                 .output()
                 .unwrap();
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            assert_eq!(out.status.code(), Some(want), "{stdout}");
-            assert!(!stdout.contains("not-reached"), "{stdout}");
+            let text = [out.stdout, out.stderr].concat();
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&text).into_owned(),
+            )
+        }
+
+        /// Upload `script` and run it.
+        fn setup(&self, script: &str) -> (Option<i32>, String) {
+            let path = self.path("home").join(WINDOWS_SETUP_SCRIPT_NAME);
+            std::fs::write(&path, script).unwrap();
+            self.sh(&format!(
+                "exec powershell.exe -NoLogo -NoProfile -NonInteractive -File '{}'",
+                path.display()
+            ))
+        }
+
+        fn recover(&self) -> String {
+            self.sh(&windows_recover_command()).1
+        }
+
+        fn check(&self, uploaded: &str) -> HostCheck {
+            parse_check(
+                &self.sh(&windows_check_command()).1,
+                &sha256_hex(uploaded.as_bytes()),
+            )
+        }
+
+        /// The installed agent is `body`, nothing else is left behind.
+        fn assert_only(&self, body: &str, what: &str) {
+            assert_eq!(
+                self.read("termihub-agent.exe").as_deref(),
+                Some(body),
+                "{what}"
+            );
+            let mut left: Vec<String> = std::fs::read_dir(self.path("lad/termiHub/agent"))
+                .unwrap()
+                .chain(std::fs::read_dir(self.path("home")).unwrap())
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .filter(|n| n.starts_with("termihub-agent"))
+                .collect();
+            left.sort();
+            assert_eq!(
+                left,
+                ["termihub-agent.exe", "termihub-agent.lock"],
+                "{what}"
+            );
         }
     }
 
-    /// Run the host check as `sh` would run its command line, with
-    /// `powershell.exe` standing for the local `pwsh`.
-    fn run_check(pwsh: &Path, host: &Host, uploaded: &[u8]) -> HostCheck {
-        std::os::unix::fs::symlink(pwsh, host.path("bin/powershell.exe")).unwrap();
-        let out = host
-            .command(Path::new("/bin/sh"))
-            .arg("-c")
-            .arg(windows_check_command())
-            .output()
-            .unwrap();
-        parse_check(&String::from_utf8_lossy(&out.stdout), &sha256_hex(uploaded))
+    /// The setup script with `fault` before step `at`.
+    fn faulty(at: usize, fault: &str) -> String {
+        let mut steps = INSTALL_STEPS.to_vec();
+        steps.insert(at, fault);
+        setup_script_of(&steps)
     }
 
-    fn install(host: &Host, body: &str) {
-        std::fs::create_dir_all(host.installed().parent().unwrap()).unwrap();
-        write_exec(&host.installed(), body);
+    /// What must be installed when the setup stopped before step `at`.
+    fn survivor(at: usize) -> &'static str {
+        let swapped = INSTALL_STEPS
+            .iter()
+            .position(|s| s.contains("Move-Item -LiteralPath $new -Destination $dst"))
+            .unwrap();
+        if at <= swapped {
+            OLD
+        } else {
+            NEW
+        }
+    }
+
+    #[test]
+    fn a_working_update_replaces_the_agent_and_leaves_no_copies() {
+        let Some(pwsh) = pwsh() else { return };
+        let host = Host::update(&pwsh, NEW);
+        let (status, out) = host.setup(&windows_setup_script());
+        assert_eq!(status, Some(0), "{out}");
+        assert!(out.contains("Agent installed."), "{out}");
+        host.assert_only(NEW, &out);
+        assert_eq!(host.check(NEW), HostCheck::Installed);
+        // Also as the first install, into a profile without the folder.
+        let host = Host::new(&pwsh);
+        std::fs::remove_dir_all(host.path("lad/termiHub")).unwrap();
+        host.stage(NEW);
+        let (status, out) = host.setup(&windows_setup_script());
+        assert_eq!(status, Some(0), "{out}");
+        host.assert_only(NEW, &out);
+    }
+
+    #[test]
+    fn an_update_that_cannot_work_keeps_the_previous_agent() {
+        let Some(pwsh) = pwsh() else { return };
+        for (upload, error) in [
+            (Some(BROKEN), "does not start on this host"),
+            (
+                Some("#!/nonexistent/interpreter\n"),
+                "does not start on this host",
+            ),
+            (Some(FAILS_INSTALLED), "The installed agent does not start"),
+            (None, "[error]"),
+        ] {
+            let host = Host::update(&pwsh, upload.unwrap_or_default());
+            if upload.is_none() {
+                std::fs::remove_file(host.path("home").join(WINDOWS_UPLOAD_NAME)).unwrap();
+            }
+            let (status, out) = host.setup(&windows_setup_script());
+            assert_eq!(status, Some(1), "{upload:?}: {out}");
+            assert!(out.contains(error), "{upload:?}: {out}");
+            assert!(
+                out.contains("previously installed agent is still in place"),
+                "{out}"
+            );
+            host.assert_only(OLD, &out);
+            assert_eq!(host.check(upload.unwrap_or("x")), HostCheck::PreviousRuns);
+        }
+    }
+
+    #[test]
+    fn a_failure_before_any_step_keeps_a_working_agent() {
+        let Some(pwsh) = pwsh() else { return };
+        for at in 0..=INSTALL_STEPS.len() {
+            let host = Host::update(&pwsh, NEW);
+            let (status, out) = host.setup(&faulty(at, THROW));
+            assert_eq!(status, Some(1), "step {at}: {out}");
+            host.assert_only(survivor(at), &format!("step {at}: {out}"));
+        }
+    }
+
+    #[test]
+    fn a_setup_killed_before_any_step_is_recovered() {
+        let Some(pwsh) = pwsh() else { return };
+        let mut without_agent = Vec::new();
+        for at in 0..=INSTALL_STEPS.len() {
+            let host = Host::update(&pwsh, NEW);
+            let (status, out) = host.setup(&faulty(at, KILL));
+            assert_eq!(status, None, "step {at} must die by a signal: {out}");
+            if host.read("termihub-agent.exe").is_none() {
+                without_agent.push(at);
+                // What the next deploy restores too (#5207).
+                assert_eq!(
+                    host.read("termihub-agent.previous.exe").as_deref(),
+                    Some(OLD)
+                );
+            }
+            let out = host.recover();
+            host.assert_only(survivor(at), &format!("step {at}: {out}"));
+        }
+        assert_eq!(without_agent.len(), 1, "{without_agent:?}");
+    }
+
+    #[test]
+    fn the_next_setup_recovers_a_killed_one_even_when_it_fails_itself() {
+        let Some(pwsh) = pwsh() else { return };
+        for at in 0..=INSTALL_STEPS.len() {
+            let host = Host::update(&pwsh, NEW);
+            host.setup(&faulty(at, KILL));
+            if at % 2 == 0 {
+                host.stage(NEW);
+                let (status, out) = host.setup(&windows_setup_script());
+                assert_eq!(status, Some(0), "step {at}: {out}");
+                host.assert_only(NEW, &format!("step {at}: {out}"));
+            } else {
+                host.stage(BROKEN);
+                let (status, out) = host.setup(&windows_setup_script());
+                assert_eq!(status, Some(1), "step {at}: {out}");
+                host.assert_only(survivor(at), &format!("step {at}: {out}"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_setup_puts_a_leftover_agent_back_before_it_starts() {
+        let Some(pwsh) = pwsh() else { return };
+        // A broken install next to the last working agent, and an update that
+        // fails too: without the restore up front the copy would be moved away.
+        let host = Host::update(&pwsh, FAILS_INSTALLED);
+        host.put("termihub-agent.exe", BROKEN);
+        host.put("termihub-agent.previous.exe", OLD);
+        let (status, out) = host.setup(&windows_setup_script());
+        assert_eq!(status, Some(1), "{out}");
+        host.assert_only(OLD, &out);
+    }
+
+    #[test]
+    fn a_recovery_never_replaces_an_agent_that_starts() {
+        let Some(pwsh) = pwsh() else { return };
+        let host = Host::new(&pwsh);
+        host.put("termihub-agent.exe", NEW);
+        host.put("termihub-agent.previous.exe", OLD);
+        host.put("termihub-agent.stale-1.exe", OLD);
+        let out = host.recover();
+        host.assert_only(NEW, &out);
+        // Nothing installed at all: nothing to do, and no folder is made.
+        let host = Host::new(&pwsh);
+        std::fs::remove_dir_all(host.path("lad/termiHub")).unwrap();
+        host.recover();
+        assert!(!host.path("lad/termiHub").exists());
+    }
+
+    #[test]
+    fn leftover_copies_are_used_only_when_they_are_needed() {
+        let Some(pwsh) = pwsh() else { return };
+        // A broken install next to the previous agent.
+        let host = Host::new(&pwsh);
+        host.put("termihub-agent.exe", BROKEN);
+        host.put("termihub-agent.previous.exe", OLD);
+        let out = host.recover();
+        host.assert_only(OLD, &out);
+        // No install and only a stale copy: what an older setup left behind.
+        let host = Host::new(&pwsh);
+        host.put("termihub-agent.stale-1.exe", OLD);
+        let out = host.recover();
+        host.assert_only(OLD, &out);
+        // A stale copy never replaces an installed file, and is not deleted
+        // while that file does not start.
+        let host = Host::new(&pwsh);
+        host.put("termihub-agent.exe", BROKEN);
+        host.put("termihub-agent.stale-1.exe", OLD);
+        host.recover();
+        assert_eq!(host.read("termihub-agent.exe").as_deref(), Some(BROKEN));
+        assert_eq!(
+            host.read("termihub-agent.stale-1.exe").as_deref(),
+            Some(OLD)
+        );
+    }
+
+    #[test]
+    fn a_running_setup_keeps_every_other_one_out() {
+        let Some(pwsh) = pwsh() else { return };
+        let host = Host::update(&pwsh, NEW);
+        let lock = std::fs::File::create(host.file(WINDOWS_LOCK_NAME)).unwrap();
+        lock.lock().unwrap();
+        let recover = fill(&format!(
+            "{LIBRARY}{}",
+            RECOVER.replace("Lock-Setup 10", "Lock-Setup 0")
+        ));
+        let out = host.sh(&powershell_encoded_command(&recover)).1;
+        assert!(out.lines().any(|l| l.trim() == RECOVER_BUSY), "{out}");
+        let script = windows_setup_script().replace("Lock-Setup 30", "Lock-Setup 0");
+        let (status, out) = host.setup(&script);
+        assert_eq!(status, Some(1), "{out}");
+        assert!(out.contains("could not be locked"), "{out}");
+        assert_eq!(host.read("termihub-agent.exe").as_deref(), Some(OLD));
+        // Its upload is the other setup's: left alone.
+        assert!(host.path("home").join(WINDOWS_UPLOAD_NAME).exists());
+        drop(lock);
+        host.recover();
+        host.assert_only(OLD, "after the lock is free");
     }
 
     #[test]
     fn the_host_check_tells_the_uploaded_agent_from_every_other_state() {
-        let Some(pwsh) = pwsh() else {
-            eprintln!("pwsh not installed: skipping");
-            return;
-        };
-        let good = "#!/bin/sh\necho termihub-agent 1.2.3\n";
+        let Some(pwsh) = pwsh() else { return };
         // The same version, other bytes: what a failed update leaves in place.
-        let old = "#!/bin/sh\n# old build\necho termihub-agent 1.2.3\n";
-        let broken = "#!/bin/sh\necho termihub-agent 1.2.3\nexit 3\n";
+        let same_version = "#!/bin/sh\n# old build\necho termihub-agent 2.0.0\n";
         let alien = "#!/bin/sh\necho something else\n";
-        let unstartable = "#!/nonexistent/interpreter\n";
         for (installed, uploaded, want) in [
-            (Some(good), good, HostCheck::Installed),
-            (Some(old), good, HostCheck::OtherBinary),
-            (None, good, HostCheck::Absent),
-            (Some(broken), broken, HostCheck::DoesNotRun),
+            (Some(NEW), NEW, HostCheck::Installed),
+            (Some(same_version), NEW, HostCheck::PreviousRuns),
+            (Some(BROKEN), NEW, HostCheck::OtherBinary),
+            (None, NEW, HostCheck::Absent),
+            (Some(BROKEN), BROKEN, HostCheck::DoesNotRun),
             (Some(alien), alien, HostCheck::DoesNotRun),
-            (Some(unstartable), unstartable, HostCheck::DoesNotRun),
         ] {
-            let host = Host::new();
+            let host = Host::new(&pwsh);
             if let Some(body) = installed {
-                install(&host, body);
+                host.put("termihub-agent.exe", body);
             }
-            assert_eq!(
-                run_check(&pwsh, &host, uploaded.as_bytes()),
-                want,
-                "installed {installed:?}, uploaded {uploaded:?}"
-            );
+            assert_eq!(host.check(uploaded), want, "{installed:?} / {uploaded:?}");
         }
     }
 }
