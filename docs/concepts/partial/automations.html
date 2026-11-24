@@ -1681,6 +1681,20 @@ flowchart LR
                 </td>
               </tr>
               <tr>
+                <td>5 Run picker and tab badge</td>
+                <td>
+                  Done. One run picker for macros and workflows; a macro on several terminals runs
+                  per target (R3); one running-automation badge with Stop. The last choice is
+                  remembered for the app session only (no UI state in browser storage)
+                </td>
+                <td>
+                  <code>src/components/Automations/</code> (<code>RunTargetsDialog</code>,
+                  <code>useRunTargets</code>, <code>runTargetChoice</code>),
+                  <code>src/components/Terminal/TabAutomationBadge.tsx</code>,
+                  <code>src/utils/automationTabBadge.ts</code>
+                </td>
+              </tr>
+              <tr>
                 <td>2–12</td>
                 <td>Open</td>
                 <td>

@@ -114,15 +114,22 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         for key in ("host", "port", "username", "authMethod", "enableX11Forwarding"):
             assert self.field_visible(key), f"expected field-{key} to render for SSH"
 
-    def test_ssh_password_auth_has_no_password_field(self):
-        # PR #38: the SSH password is prompted at connect time, not stored in the
-        # editor. In the default ("none") credential-store mode the `password`
-        # field is filtered out of the schema entirely (schemaDefaults).
+    def test_ssh_password_auth_shows_the_password_beside_save_password(self):
+        # #5835: password auth shows the Password field in every storage mode,
+        # also the default "none" of this fresh profile, right beside its
+        # "Save password" row (which is off); key auth takes both away again.
         self.open_new_connection_editor()
         self.select_connection_type("ssh")
         self.wait(lambda: self.field_visible("authMethod"), what="the SSH fields")
         self.driver.select("field-authMethod", "password")
-        assert not self.field_visible("password")
+        self.wait(lambda: self.field_visible("password"), what="the Password field")
+        assert self.field_visible("savePassword")
+        assert self.driver.get_attribute("field-savePassword", "aria-checked") == "false"
+        self.driver.select("field-authMethod", "key")
+        self.wait(
+            lambda: not self.field_visible("password"),
+            what="the Password field to go away for key auth",
+        )
 
     # ── MT-SSH-08: agent auth surfaces the SSH-agent helper ────────────────────
     def test_ssh_agent_auth_shows_the_agent_section(self):
