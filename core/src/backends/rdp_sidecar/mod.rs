@@ -1429,6 +1429,7 @@ mod tests {
             vec![
                 "connection",
                 "sshTunnel",
+                "authentication",
                 "display",
                 "features",
                 "rdp",

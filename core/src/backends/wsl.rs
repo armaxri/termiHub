@@ -1037,7 +1037,7 @@ impl ConnectionType for Wsl {
                     SettingsField {
                         key: "distribution".to_string(),
                         label: "Distribution".to_string(),
-                        description: Some("WSL distribution to connect to".to_string()),
+                        description: None,
                         help_text: None,
                         field_type: FieldType::Select {
                             options: distro_options,

@@ -347,9 +347,7 @@ impl ConnectionType for Ssh {
                         SettingsField {
                             key: "host".to_string(),
                             label: "Host".to_string(),
-                            description: Some(
-                                "Hostname or IP address of the SSH server".to_string(),
-                            ),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::Text,
                             required: true,
@@ -362,7 +360,7 @@ impl ConnectionType for Ssh {
                         SettingsField {
                             key: "port".to_string(),
                             label: "Port".to_string(),
-                            description: Some("SSH port number".to_string()),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::Port,
                             required: true,
@@ -375,7 +373,7 @@ impl ConnectionType for Ssh {
                         SettingsField {
                             key: "username".to_string(),
                             label: "Username".to_string(),
-                            description: Some("SSH login username".to_string()),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::Text,
                             required: true,
@@ -395,7 +393,7 @@ impl ConnectionType for Ssh {
                         SettingsField {
                             key: "authMethod".to_string(),
                             label: "Method".to_string(),
-                            description: Some("Authentication method to use".to_string()),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::Select {
                                 options: vec![
@@ -447,7 +445,7 @@ impl ConnectionType for Ssh {
                         SettingsField {
                             key: "keyPath".to_string(),
                             label: "Key path".to_string(),
-                            description: Some("Path to SSH private key file".to_string()),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::FilePath {
                                 kind: FilePathKind::File,

@@ -244,10 +244,11 @@ function findFieldKey(schema: SettingsSchema, key: string): string | null {
  * Adapt credential-related fields (`password`, `savePassword`) to the active
  * credential storage mode.
  *
- * When the mode is `"none"`, passwords are always prompted at connect time —
- * pre-filling one in the editor is meaningless, so the `password` field is
- * removed. The `savePassword` field stays (#5186): the form renders it as a
- * disabled row with an "Enable credential storage…" action, so the user can
+ * Both fields stay in every mode. In `"none"` nothing can be stored, but a
+ * typed password is still used for Test and Save and connect (the backend never
+ * writes it to disk), and a "Save password" row without its password field
+ * reads as broken (#5835). The `savePassword` field renders as a disabled row
+ * with an "Enable credential storage…" action (#5186), so the user can
  * discover that saving exists and reach the setting.
  *
  * In every mode the `savePassword` help text gains the paragraph describing
@@ -268,9 +269,7 @@ export function filterCredentialFields(
   return {
     groups: schema.groups.map((group) => ({
       ...group,
-      fields: group.fields
-        .filter((f) => credentialMode !== "none" || f.key !== "password")
-        .map((f) => withModeAwareSaveHelp(f, credentialMode, needsChoice)),
+      fields: group.fields.map((f) => withModeAwareSaveHelp(f, credentialMode, needsChoice)),
     })),
   };
 }

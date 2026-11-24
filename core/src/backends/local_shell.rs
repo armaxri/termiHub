@@ -485,7 +485,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         SettingsField {
                             key: "shell".to_string(),
                             label: "Shell".to_string(),
-                            description: Some("Shell program to use".to_string()),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::Select {
                                 options: shell_options,
@@ -500,7 +500,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         SettingsField {
                             key: "customShellPath".to_string(),
                             label: "Shell executable path".to_string(),
-                            description: Some("Full path to the shell executable".to_string()),
+                            description: None,
                             help_text: None,
                             field_type: FieldType::Text,
                             required: false,

@@ -16,13 +16,15 @@ fn every_builtin_secret_field_is_classified() {
             // The SSH outbound-proxy password (#4867).
             "ssh" => &["password", "proxyPassword"],
             "telnet" | "ftp" | "mock-remote-desktop" => &["password"],
-            // The SSH Tunnel group's gateway password (VNC; RDP since #4865)
-            // and its outbound-proxy password (#4887); the direct
-            // outbound-proxy password (VNC #4897, RDP #4899).
+            // In schema order (#5835): the SSH Tunnel group, right after Host /
+            // Port, with its gateway password (VNC; RDP since #4865) and its
+            // outbound-proxy password (#4887); then the Authentication group's
+            // password; then the direct outbound-proxy password (VNC #4897,
+            // RDP #4899).
             "vnc" | "rdp" => &[
-                "password",
                 "sshPassword",
                 "sshProxyPassword",
+                "password",
                 "proxyPassword",
             ],
             _ => &[],

@@ -105,6 +105,12 @@ interface ConnectionSettingsFormProps {
    */
   afterField?: { key: string; node: React.ReactNode };
   /**
+   * A compact action rendered beside the label of the field with `key` — e.g.
+   * "Fill from ~/.ssh/config…" next to Host (#5835), so a helper does not push
+   * the first field down.
+   */
+  labelAction?: { key: string; node: React.ReactNode };
+  /**
    * A section-level note rendered as the first shown group's description,
    * inside its header (above the divider) — e.g. the `${VAR}` expansion hint,
    * which applies to the connection fields rather than to the editor's Type
@@ -137,6 +143,7 @@ export function ConnectionSettingsForm({
   onValidityChange,
   hiddenFieldKeys,
   afterField,
+  labelAction,
   leadNote,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
@@ -354,6 +361,12 @@ export function ConnectionSettingsForm({
     onValidityChange?.(validity.valid, validity.errors);
   }, [validity, onValidityChange]);
 
+  // While nothing can save it, the shown password field says so and offers
+  // "Turn on saving…" (#5835); its save toggle then drops its own copy of it.
+  const passwordNotSaved =
+    (credentialStorageOff || credentialStorageChoose) === true &&
+    schema.groups.some((g) => g.fields.some((f) => f.key === PASSWORD_KEY && isShown(f)));
+
   // The lead note goes to the first group that renders at all.
   let leadNoteShown = false;
   return (
@@ -403,6 +416,9 @@ export function ConnectionSettingsForm({
                             syncDisplayPort(field.key, value);
                           }}
                           onBlur={() => handleFieldBlur(field.key, rhfField.value)}
+                          labelAction={
+                            labelAction?.key === field.key ? labelAction.node : undefined
+                          }
                           error={fieldState.error?.message}
                           credentialSaved={
                             credentialSavedHint &&
@@ -416,6 +432,8 @@ export function ConnectionSettingsForm({
                           credentialStorageChoose={
                             credentialStorageChoose && field.key === SAVE_PASSWORD_KEY
                           }
+                          passwordNotSaved={passwordNotSaved && field.key === PASSWORD_KEY}
+                          hideStorageOffNote={passwordNotSaved}
                           storedSecret={
                             field.fieldType.type === "password" && field.key !== PASSWORD_KEY
                               ? storedSecretState(storedFieldSecrets, field.key, rhfField.value)

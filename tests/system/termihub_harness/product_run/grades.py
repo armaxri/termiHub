@@ -220,6 +220,101 @@ def editor_primary_problems(buttons: "list[dict]", *, editing: bool) -> list[str
     return _footer_primary_problems(buttons, expected, "editing" if editing else "a new connection")
 
 
+#: Words a hint may add to its label and still only restate it (#5835): the
+#: protocol, the generic nouns behind the label and filler. "SSH port number"
+#: under Port, "Hostname or IP address of the SSH server" under Host.
+_RESTATING_WORDS = frozenset(
+    "a an the of to or for and use used your this ssh telnet ftp vnc rdp wsl tcp server "
+    "hostname host ip address number login name method program path file connect "
+    "connection authentication auth shell executable full private key speed".split()
+)
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def hint_restates_label(label: str, hint: str) -> bool:
+    """Whether ``hint`` only says ``label`` again (#5835).
+
+    True when every word of the hint is a word of the label or one of the
+    restating words (protocol names, the generic nouns behind a label, filler).
+    A hint that adds a format, an example or a consequence has another word.
+    """
+    label_words = set(_WORD_RE.findall(label.lower()))
+    hint_words = _WORD_RE.findall(hint.lower())
+    return bool(hint_words) and all(w in label_words or w in _RESTATING_WORDS for w in hint_words)
+
+
+def _overlaps_vertically(a: dict, b: dict) -> bool:
+    return float(a["y"]) < _bottom(b) - _SLACK and float(b["y"]) < _bottom(a) - _SLACK
+
+
+def connection_editor_layout_problems(m: dict) -> list[str]:
+    """What is wrong with the connection editor's layout; empty when right (#5835).
+
+    ``m`` holds what the run measured, every key optional:
+
+    - ``type`` / ``name``: the Type select and Name input boxes. Type comes first.
+    - ``hints``: ``[{key, label, hint}]`` of the shown fields. No hint only
+      repeats its label (:func:`hint_restates_label`).
+    - ``host_label`` / ``ssh_import``: the Host label and the "Fill from
+      ~/.ssh/config" link boxes. The link sits on Host's label row.
+    - ``footer``: the footer buttons, each ``{testId, rect}``. Test is left of
+      Cancel and every button sits on one row.
+    - ``fields``: ``{key: rect}`` of a remote-desktop editor's shown fields.
+      Save password only shows with a password field; the password follows the
+      username directly; the SSH tunnel toggle sits after Port, before Username.
+    - ``terminal_page`` with ``terminal``: whether the editor offers a Terminal
+      page, and whether the type has a terminal. A terminal-less type has none.
+    """
+    problems: list[str] = []
+    if "type" in m and "name" in m and float(m["type"]["y"]) >= float(m["name"]["y"]) - _SLACK:
+        problems.append("Type is not above Name")
+    for hint in m.get("hints", []):
+        if hint_restates_label(hint["label"], hint["hint"]):
+            problems.append(f"{hint['key']}: the hint {hint['hint']!r} only repeats {hint['label']!r}")
+    if "ssh_import" in m and "host_label" in m and not _overlaps_vertically(m["ssh_import"], m["host_label"]):
+        problems.append("'Fill from ~/.ssh/config' is not on the Host label row")
+    problems += _footer_layout_problems(m.get("footer", []))
+    problems += _remote_desktop_order_problems(m.get("fields", {}))
+    if m.get("terminal_page") and m.get("terminal") is False:
+        problems.append("a type without a terminal offers a Terminal page")
+    return problems
+
+
+def _footer_layout_problems(buttons: "list[dict]") -> list[str]:
+    """Test left of Cancel, every footer button on one row (#5835)."""
+    if not buttons:
+        return []
+    problems: list[str] = []
+    by_id = {b["testId"]: b["rect"] for b in buttons}
+    test, cancel = by_id.get("connection-editor-test"), by_id.get("connection-editor-cancel")
+    if test is not None and cancel is not None and float(test["x"]) >= float(cancel["x"]):
+        problems.append("Test is not left of Cancel")
+    tops = [float(b["rect"]["y"]) for b in buttons]
+    if max(tops) - min(tops) > _SLACK:
+        problems.append("the footer buttons are not on one row")
+    return problems
+
+
+def _remote_desktop_order_problems(fields: dict) -> list[str]:
+    """Password beside Username; Save password only with a password; tunnel after Port."""
+    if not fields:
+        return []
+    problems: list[str] = []
+    y = {key: float(rect["y"]) for key, rect in fields.items()}
+    if "savePassword" in y and "password" not in y:
+        problems.append("Save password shows without a password field")
+    if "username" in y and "password" in y:
+        between = [k for k, v in y.items() if y["username"] < v < y["password"]]
+        if y["password"] <= y["username"] or between:
+            problems.append(f"Password does not follow Username directly (between: {between})")
+    if "useSshTunnel" in y:
+        if "port" in y and y["useSshTunnel"] <= y["port"]:
+            problems.append("the SSH tunnel toggle is above Port")
+        if "username" in y and y["useSshTunnel"] >= y["username"]:
+            problems.append("the SSH tunnel toggle is below Username, far from Host / Port")
+    return problems
+
+
 #: The tunnel editor's two save actions (#5810).
 TUNNEL_EDITOR_SAVE = "tunnel-editor-save"
 TUNNEL_EDITOR_SAVE_START = "tunnel-editor-save-start"

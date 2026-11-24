@@ -339,10 +339,11 @@ const CREDENTIAL_SCHEMA: SettingsSchema = {
 };
 
 describe("filterCredentialFields", () => {
-  it("removes the password field but keeps savePassword when mode is 'none' (#5186)", () => {
+  it("keeps the password beside savePassword when mode is 'none' (#5186, #5835)", () => {
     const result = filterCredentialFields(CREDENTIAL_SCHEMA, "none");
     const keys = result.groups[0].fields.map((f) => f.key);
-    expect(keys).not.toContain("password");
+    // A "Save password" row never shows without its password field (#5835).
+    expect(keys).toContain("password");
     // Kept so the form can show it disabled with an "Enable credential storage…" action.
     expect(keys).toContain("savePassword");
     expect(keys).toContain("authMethod");
