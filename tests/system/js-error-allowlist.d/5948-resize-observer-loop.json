@@ -1,0 +1,6 @@
+{
+  "pattern": "^error: ResizeObserver loop completed with undelivered notifications\\.",
+  "issue": 5948,
+  "reason": "the top-notice inset written from a ResizeObserver resizes the observed xterm element",
+  "nodeid": "test_product_run_(ssh|reconnect_model)\\.py"
+}
