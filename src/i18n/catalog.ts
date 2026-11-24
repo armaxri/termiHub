@@ -171,6 +171,7 @@ const en = {
   "statusBar.ssh.trust.pending": "host key not checked yet",
   "statusBar.ssh.ariaLabel": "SSH: {label}, encrypted, {trust}. Show connection security",
   "statusBar.ssh.encrypted": "Encrypted (SSH)",
+  "statusBar.ssh.down": "Not connected",
   "statusBar.ssh.hostKey.pending": "Not checked yet (still connecting)",
   "statusBar.ssh.row.endpoint": "Host",
   "statusBar.ssh.row.encryption": "Encryption",

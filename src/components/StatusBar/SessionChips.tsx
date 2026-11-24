@@ -22,6 +22,7 @@ import {
 import { t } from "@/i18n/catalog";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { useTabSshHostKeyTrust } from "@/store/sshHostKeyTrustBridge";
+import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 
 /** The chip icon per trust level: a check once the key is remembered. */
 const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
@@ -42,7 +43,11 @@ export function SshStatus() {
   const tabId = useAppStore((s) => getActiveTab(s)?.id);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const hostKeys = useTabSshHostKeyTrust(tabId);
-  const chip = sshSecurityChip(config, hostKeys);
+  // The chip greys while the tab's session is down (#5955), so a dropped
+  // session never reads as a live secure one.
+  const lifecycle = useProjectedSessionLifecycle(tabId ?? "");
+  const down = !!tabId && (lifecycle.exited || lifecycle.reconnecting);
+  const chip = sshSecurityChip(config, hostKeys, down);
   if (!chip) return null;
   const TrustIcon = TRUST_ICON[chip.trust];
   return (
@@ -50,9 +55,12 @@ export function SshStatus() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="status-bar__item status-bar__item--interactive status-bar__item--with-icon"
+          className={`status-bar__item status-bar__item--interactive status-bar__item--with-icon${
+            chip.down ? " status-bar__item--down" : ""
+          }`}
           data-testid="status-bar-ssh"
           data-trust={chip.trust}
+          data-down={chip.down ? "true" : undefined}
           aria-label={chip.ariaLabel}
           title={chip.tooltip}
         >
