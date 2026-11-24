@@ -530,3 +530,109 @@ fn a_corrupt_legacy_entry_is_salvaged_in_memory_only() {
     );
     assert!(!dir.path().join("macros.json.bak").exists());
 }
+
+/// Rewrite `automations.json` as a build from before the switch-over (slices
+/// 2–3) left it: no `legacyFrozenAt`.
+fn unfreeze(dir: &Path) {
+    let mut store = load(dir);
+    store.legacy_frozen_at = None;
+    StoreFile::<AutomationStore>::in_dir(dir)
+        .save(&store)
+        .unwrap();
+}
+
+#[test]
+fn the_first_migration_freezes_the_legacy_files() {
+    let dir = TempDir::new().unwrap();
+    seed(dir.path());
+    run_boot_migration(dir.path(), now()).unwrap();
+    assert!(load(dir.path()).legacy_frozen_at.is_some());
+}
+
+#[test]
+fn the_switch_over_follows_deletions_made_in_the_old_ui_once() {
+    let dir = TempDir::new().unwrap();
+    seed(dir.path());
+    run_boot_migration(dir.path(), now()).unwrap();
+    unfreeze(dir.path());
+
+    // During the transition the old UI deleted macro-1 and added macro-2.
+    write_macros(
+        dir.path(),
+        vec![macro_entry(
+            "macro-2",
+            "Top",
+            "top\r",
+            "2026-03-01T00:00:00Z",
+        )],
+    );
+
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    assert_eq!(report.library.followed_deletions, 1);
+    assert_eq!(report.library.merged, 1, "the added macro is merged");
+    let store = load(dir.path());
+    assert_eq!(names(&store), ["Deploy", "Top"]);
+    assert!(
+        store.legacy_frozen_at.is_some(),
+        "the switch-over is recorded"
+    );
+
+    // After the switch-over a legacy deletion comes from an older build and
+    // is not followed.
+    write_workflows(dir.path(), vec![]);
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    assert_eq!(report.library.followed_deletions, 0);
+    assert_eq!(names(&load(dir.path())), ["Deploy", "Top"]);
+}
+
+#[test]
+fn the_switch_over_keeps_automations_of_an_unreadable_or_missing_file() {
+    let dir = TempDir::new().unwrap();
+    seed(dir.path());
+    run_boot_migration(dir.path(), now()).unwrap();
+    unfreeze(dir.path());
+
+    fs::write(dir.path().join("macros.json"), "{ not json").unwrap();
+    fs::remove_file(dir.path().join("workflows.json")).unwrap();
+
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    assert_eq!(report.library.followed_deletions, 0);
+    assert_eq!(names(&load(dir.path())), ["Deploy", "List"]);
+}
+
+#[test]
+fn the_switch_over_keeps_automations_created_in_the_new_store() {
+    let dir = TempDir::new().unwrap();
+    seed(dir.path());
+    run_boot_migration(dir.path(), now()).unwrap();
+    let manager = AutomationManager::with_storage(StoreFile::in_dir(dir.path())).unwrap();
+    manager
+        .save(serde_json::from_value(json!({ "id": "new-1", "name": "Fresh" })).unwrap())
+        .unwrap();
+    unfreeze(dir.path());
+    write_macros(dir.path(), vec![]);
+
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    assert_eq!(report.library.followed_deletions, 1, "only macro-1 goes");
+    assert_eq!(names(&load(dir.path())), ["Deploy", "Fresh"]);
+}
+
+#[test]
+fn a_restored_store_without_provenance_follows_no_deletion() {
+    let dir = TempDir::new().unwrap();
+    seed(dir.path());
+    let mut restored = AutomationStore::default();
+    restored.automations = vec![serde_json::from_value(json!({
+        "id": "gone", "name": "Restored",
+        "legacy": { "from": "macro", "version": 1 }
+    }))
+    .unwrap()];
+    StoreFile::<AutomationStore>::in_dir(dir.path())
+        .save(&restored)
+        .unwrap();
+
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    assert_eq!(report.library.followed_deletions, 0);
+    assert_eq!(names(&load(dir.path())), ["Restored"]);
+    assert!(load(dir.path()).legacy_frozen_at.is_some());
+}

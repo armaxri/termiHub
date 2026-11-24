@@ -8,6 +8,7 @@ use tauri::{AppHandle, Runtime};
 use super::config::Automation;
 use super::storage::StoreFile;
 use super::store::AutomationStore;
+use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 
@@ -46,6 +47,31 @@ impl AutomationManager {
             .lock()
             .map(|mut w| std::mem::take(&mut *w))
             .unwrap_or_default()
+    }
+
+    /// Re-point the connection ids of every connection-bound trigger when
+    /// saved connections' ids change (#3596). Returns whether anything changed
+    /// (and was persisted). `updatedAt` is left alone: following a rename is
+    /// not an edit, so the reconcile pass still sees the automation as
+    /// unchanged.
+    pub fn follow_connection_id_changes(
+        &self,
+        remap: &ConnectionIdRemap,
+    ) -> Result<bool, TerminalError> {
+        let mut store = self.lock()?;
+        let mut next = store.clone();
+        let ids = next
+            .automations
+            .iter_mut()
+            .flat_map(|a| a.triggers.iter_mut())
+            .filter_map(|t| t.connection_ids_mut().map(|ids| ids.iter_mut()))
+            .flatten();
+        if !remap.apply_all(ids) {
+            return Ok(false);
+        }
+        self.persist(&next)?;
+        *store = next;
+        Ok(true)
     }
 
     /// List all stored automations.

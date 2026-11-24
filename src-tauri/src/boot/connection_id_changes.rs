@@ -15,7 +15,8 @@
 //!   * saved workspaces' and the stored last session's tab `connectionRef`s;
 //!   * SSH tunnels' `sshConnectionId` (the `tunnels` region is republished);
 //!   * schedules targeting connections (then `schedules-changed` is emitted);
-//!   * workflows' on-connect triggers;
+//!   * automations' connection-bound triggers (the legacy `workflows.json`
+//!     is frozen since #5818 slice 4 and never rewritten);
 //!   * jump-host references, broadcast groups and shell-integration entries,
 //!     which the [`ConnectionManager`] itself rewrites before it reports the
 //!     batch — the jump-host references of the file that changed in the very
@@ -46,13 +47,13 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+use crate::automations::manager::AutomationManager;
 use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::manager::{ConnectionIdChange, ConnectionManager};
 use crate::schedules::manager::ScheduleManager;
 use crate::schedules::runner::EVENT_SCHEDULES_CHANGED;
 use crate::session::manager::{EventEmitter, PersistentSessionStateEvent, SessionManager};
 use crate::tunnel::tunnel_manager::TunnelManager;
-use crate::workflows::manager::WorkflowManager;
 use crate::workspace::last_session::LastSessionManager;
 use crate::workspace::manager::WorkspaceManager;
 
@@ -104,10 +105,10 @@ fn follow_saved_references<R: Runtime>(app: &AppHandle<R>, changes: &[Connection
             last_session.follow_connection_id_changes(&remap),
         );
     }
-    if let Some(workflows) = app.try_state::<WorkflowManager>() {
+    if let Some(automations) = app.try_state::<AutomationManager>() {
         followed(
-            "workflow triggers",
-            workflows.follow_connection_id_changes(&remap),
+            "automation triggers",
+            automations.follow_connection_id_changes(&remap),
         );
     }
     if let Some(tunnels) = app.try_state::<Arc<TunnelManager>>() {
@@ -293,11 +294,12 @@ mod tests {
     /// connection in it, and each still resolves to the renamed connection.
     #[test]
     fn a_folder_rename_moves_saved_records_to_the_new_ids() {
+        use crate::automations::config::{Automation, AutomationTrigger};
+        use crate::automations::storage::StoreFile;
         use crate::schedules::config::{
             MissedRunPolicy, ScheduleAction, ScheduleRule, ScheduleTargets,
         };
         use crate::schedules::manager::ScheduleInput;
-        use crate::workflows::config::{Workflow, WorkflowTrigger};
         use crate::workspace::config::{
             WorkspaceDefinition, WorkspaceLayoutNode, WorkspaceTabDef, WorkspaceTabGroupDef,
         };
@@ -308,7 +310,7 @@ mod tests {
         app.manage(ConnectionManager::new_for_test(dir.path(), Arc::new(NullStore)).unwrap());
         app.manage(WorkspaceManager::new_for_test(dir.path()));
         app.manage(LastSessionManager::new_for_test(dir.path()));
-        app.manage(WorkflowManager::new_for_test(dir.path()));
+        app.manage(AutomationManager::with_storage(StoreFile::in_dir(dir.path())).unwrap());
         app.manage(Arc::new(ScheduleManager::new_test(dir.path())));
         follow_connection_id_changes(app.handle());
         let ids_changed = record(app.handle(), CONNECTION_IDS_CHANGED_EVENT);
@@ -356,22 +358,12 @@ mod tests {
                 extra: Default::default(),
             })
             .unwrap();
-        app.state::<WorkflowManager>()
-            .save_workflow(Workflow {
-                id: "wf".to_string(),
-                name: "wf".to_string(),
-                description: None,
-                tags: vec![],
-                steps: vec![],
-                triggers: vec![WorkflowTrigger::OnConnect {
-                    connection_ids: vec!["Work/x".to_string()],
-                }],
-                parameters: Vec::new(),
-                triggers_enabled: true,
-                created_at: String::new(),
-                updated_at: String::new(),
-            })
-            .unwrap();
+        let mut automation: Automation =
+            serde_json::from_value(serde_json::json!({ "id": "wf", "name": "wf" })).unwrap();
+        automation.triggers = vec![AutomationTrigger::OnConnect {
+            connection_ids: vec!["Work/x".to_string()],
+        }];
+        app.state::<AutomationManager>().save(automation).unwrap();
         let now = chrono::Utc::now();
         app.state::<Arc<ScheduleManager>>()
             .save(
@@ -417,10 +409,10 @@ mod tests {
         assert_eq!(tab_ref(&ws.tab_groups).as_deref(), Some("Job/x"));
         let session = app.state::<LastSessionManager>().load().unwrap().unwrap();
         assert_eq!(tab_ref(&session.tab_groups).as_deref(), Some("Job/x"));
-        let wf = app.state::<WorkflowManager>().get_workflow("wf").unwrap();
+        let wf = app.state::<AutomationManager>().get("wf").unwrap();
         assert_eq!(
             wf.triggers,
-            vec![WorkflowTrigger::OnConnect {
+            vec![AutomationTrigger::OnConnect {
                 connection_ids: vec!["Job/x".to_string()],
             }]
         );

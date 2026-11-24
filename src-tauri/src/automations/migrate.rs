@@ -15,6 +15,12 @@
 //!    automation alone, and is kept as a copy whose name ends in
 //!    [`CONFLICT_SUFFIX`] when both sides changed it. Deletions on the legacy side are
 //!    not followed (no step lists are merged and nothing is ever lost).
+//! 3. Once, at the switch-over (#5971): the first boot of a build whose UI
+//!    writes only `automations.json` (slice 4, marked by `legacyFrozenAt`)
+//!    follows the deletions the old UI made in the legacy files while they
+//!    were still the live stores (slices 2–3). See
+//!    [`follow_transition_deletions`]. From then on a legacy-side deletion can
+//!    only come from an older build and is not followed.
 //!
 //! The legacy files are never written. A newer or corrupt `automations.json`
 //! is left to the manager's own recovery and not touched here.
@@ -25,7 +31,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use super::config::{Automation, AutomationStep};
+use super::config::{Automation, AutomationStep, LegacySource};
 use super::convert::{convert_library, from_macro, from_workflow, ConvertedLibrary, REID_PREFIX};
 use super::legacy::{backup_once, entry_hash, read_legacy, LegacyRead};
 use super::storage::StoreFile;
@@ -57,6 +63,9 @@ pub struct LibraryReport {
     /// Legacy macro id → automation id, for every macro whose id changed.
     /// The run-history migration follows it.
     pub macro_ids: HashMap<String, String>,
+    /// Automations removed at the switch-over because the old UI had deleted
+    /// them from a legacy file during the transition (#5971).
+    pub followed_deletions: usize,
 }
 
 /// One legacy entry, converted, with its fingerprint.
@@ -74,9 +83,11 @@ pub fn migrate_library(dir: &Path) -> Result<LibraryReport> {
     let macros = read_legacy::<MacroStore>(&dir.join(MACROS_FILE))?;
     let workflows = read_legacy::<WorkflowStore>(&dir.join(WORKFLOWS_FILE))?;
 
+    let now = chrono::Utc::now().to_rfc3339();
     if !file.path().exists() {
         backup_once(dir, &[MACROS_FILE, WORKFLOWS_FILE])?;
-        let store = first_migration(&macros, &workflows);
+        let mut store = first_migration(&macros, &workflows);
+        store.legacy_frozen_at = Some(now);
         file.save(&store)?;
         return Ok(LibraryReport {
             created: true,
@@ -95,11 +106,66 @@ pub fn migrate_library(dir: &Path) -> Result<LibraryReport> {
     };
     let before = store.clone();
     let mut report = reconcile(&mut store, &macros, &workflows);
-    if store.migrated_from != before.migrated_from || store.automations != before.automations {
+    if store.legacy_frozen_at.is_none() {
+        // A store restored from a backup (no provenance) adopted the legacy
+        // files above instead of syncing with them: nothing to follow.
+        if before.migrated_from.is_some() {
+            report.followed_deletions = follow_transition_deletions(
+                &mut store,
+                matches!(macros, LegacyRead::Read { .. }),
+                matches!(workflows, LegacyRead::Read { .. }),
+            );
+        }
+        store.legacy_frozen_at = Some(now);
+    }
+    if store.migrated_from != before.migrated_from
+        || store.automations != before.automations
+        || store.legacy_frozen_at != before.legacy_frozen_at
+    {
         file.save(&store)?;
     }
     report.macro_ids = macro_id_map(&store);
     Ok(report)
+}
+
+/// Follow, once, the deletions the old UI made in the legacy files while they
+/// were the live stores (#5971). Returns how many automations it removed.
+///
+/// Until the switch-over the UI wrote only `macros.json` and `workflows.json`,
+/// and the reconcile pass carried every edit into `automations.json`, but no
+/// deletion. After the reconcile above, the provenance records name exactly
+/// the automations that still have a legacy entry. A converted automation
+/// (`legacy` set) whose source file was read cleanly and that no record
+/// names was deleted in the old UI, so it is removed here instead of
+/// reappearing. Nothing else wrote `automations.json` during the transition,
+/// so such an automation is unchanged since its last sync. Automations of a
+/// file that is absent or unreadable are kept: a missing file is not a
+/// deletion of everything in it.
+fn follow_transition_deletions(
+    store: &mut AutomationStore,
+    macros_read: bool,
+    workflows_read: bool,
+) -> usize {
+    let Some(provenance) = &store.migrated_from else {
+        return 0;
+    };
+    let mapped = |record: &Option<LegacyFileRecord>| -> Option<HashSet<String>> {
+        record
+            .as_ref()
+            .map(|r| r.entries.iter().map(|e| e.automation_id.clone()).collect())
+    };
+    let macro_ids = mapped(&provenance.macros).filter(|_| macros_read);
+    let workflow_ids = mapped(&provenance.workflows).filter(|_| workflows_read);
+    let before = store.automations.len();
+    store.automations.retain(|a| {
+        let ids = match a.legacy.as_ref().map(|l| l.from) {
+            Some(LegacySource::Macro) => macro_ids.as_ref(),
+            Some(LegacySource::Workflow) => workflow_ids.as_ref(),
+            None => None,
+        };
+        ids.is_none_or(|ids| ids.contains(&a.id))
+    });
+    before - store.automations.len()
 }
 
 /// Build `automations.json` from both legacy libraries.
