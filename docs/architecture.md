@@ -2141,6 +2141,25 @@ reads cleanly and only for a store that has provenance. After that, a legacy-sid
 from an older build. The reconcile pass merges it and reports it in the recovery warnings
 (`migrate::merge_warning`), but never follows a deletion (#5971).
 
+**What this build does not know (#6009).** A file a newer build wrote without a schema bump survives
+every write:
+
+- Unknown keys are kept verbatim on the file, an automation, a step (also nested), a chunk, a retry, a
+  condition, a loop mode, a trigger, a parameter and the provenance (`extra`, not in the TypeScript
+  types). They travel to the frontend and back. A save that does not send those of the automation
+  keeps the stored ones. Unknown keys of a legacy entry are carried over by the conversion.
+- A step or trigger of an unknown **kind** is kept as its raw object (`AutomationStep::Unknown`,
+  `AutomationTrigger::Unknown`). The editor lists such a step with its kind and can move or remove
+  it. An unknown trigger never fires. An automation that can reach an unknown step (nested, or
+  through `run-automation`) is refused as a whole before it types anything (`findUnknownStep`).
+  A known kind with a missing field is never treated as unknown.
+- An automation with a **value** this build cannot read (a new typing speed, say) stays in the file at
+  its place (`AutomationStore::unreadable`), is neither shown nor run, keeps its id reserved, and is
+  reported in the recovery warnings at every start. Only an entry that is no automation at all (no
+  object with an id) is removed by the salvage.
+- A connection rename also follows the `connectionIds` of unknown triggers and unreadable automations.
+- Duplicate copies unknown keys. An **import** strips them on purpose: the file is untrusted.
+
 #### Scheduled automations
 
 Scheduled runs (PROD-043, `src-tauri/src/schedules/`) are **backend-timed, frontend-executed**.

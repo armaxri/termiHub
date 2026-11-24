@@ -187,6 +187,12 @@ describe("kinds this build does not know", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("a kind named like something every object inherits is unknown too", async () => {
+    const { send, result } = await run(automation("a", [typed, { kind: "constructor" }]));
+    expect(result.status).toBe("failed");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("known kinds run as before, also through a cycle-free call", async () => {
     const { send, result } = await run(
       automation("a", [typed, { kind: "run-automation", automationId: "b" }]),

@@ -97,6 +97,64 @@ export function reachesLocalProcess(
   return false;
 }
 
+/** Every step kind the runner executes; one it misses fails to compile. */
+const RUNNABLE_KIND_MAP: Record<RunnableStep["kind"], true> = {
+  "type-keys": true,
+  "send-command": true,
+  "run-script": true,
+  "run-macro": true,
+  "run-automation": true,
+  wait: true,
+  "run-local-process": true,
+  conditional: true,
+  loop: true,
+  "wait-for-output": true,
+};
+/** A set: `in` would also find what every object inherits. */
+const RUNNABLE_KINDS: ReadonlySet<string> = new Set(Object.keys(RUNNABLE_KIND_MAP));
+
+/** A step of a kind this build does not know, found before a run starts. */
+export interface UnknownStepFound {
+  /** The unknown kind. */
+  kind: string;
+  /** The name of the automation that holds it. */
+  automation: string;
+  /** The 0-based index of the root automation's top-level step that leads to it. */
+  stepIndex: number;
+}
+
+/**
+ * Find a step of an unknown kind that running `root` could reach (#6009): a
+ * newer termiHub wrote it, and this one can neither run nor skip it. Nested
+ * steps and called automations count, whichever branch they sit in; each
+ * automation is visited once. A **pure** helper.
+ */
+export function findUnknownStep(
+  root: Automation,
+  resolve: (id: string) => Automation | undefined
+): UnknownStepFound | null {
+  for (const [stepIndex, top] of root.steps.entries()) {
+    const seen = new Set<string>([root.id]);
+    const queue: { name: string; steps: readonly RunnableStep[] }[] = [
+      { name: root.name, steps: [top] },
+    ];
+    for (let next = queue.pop(); next; next = queue.pop()) {
+      let kind: string | undefined;
+      visitSteps(next.steps, (step) => {
+        if (!RUNNABLE_KINDS.has(step.kind)) kind ??= step.kind;
+      });
+      if (kind !== undefined) return { kind, automation: next.name, stepIndex };
+      for (const id of referencedAutomations(next.steps)) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const called = resolve(id);
+        if (called) queue.push(called);
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Find a `run-automation` cycle reachable from `root` (#5818), or `null` when
  * there is none. Every reference counts, whichever conditional branch it sits
@@ -141,8 +199,8 @@ function failedHandle(result: WorkflowRunResult): WorkflowRunHandle {
 /**
  * Run one automation against the target `deps` is bound to (#5818). The
  * automation's own id seeds the call chain, so it cannot call itself. A
- * `run-automation` cycle anywhere below it fails the run before any step runs,
- * with `failedStepIndex` naming the top-level step that leads into it.
+ * `run-automation` cycle or a step of an unknown kind anywhere below it fails
+ * the run before any step runs, with `failedStepIndex` naming the top-level step that leads into it.
  */
 export function runAutomation(
   automation: Automation,
@@ -158,6 +216,17 @@ export function runAutomation(
       stepsCompleted: 0,
       failedStepIndex: cycle.stepIndex,
       error: `automation calls itself: ${describeAutomationCycle(cycle.path, deps)}`,
+    });
+  }
+  const unknown = findUnknownStep(automation, lookup);
+  if (unknown) {
+    return failedHandle({
+      status: "failed",
+      stepsCompleted: 0,
+      failedStepIndex: unknown.stepIndex,
+      error:
+        `"${unknown.automation}" has a step this version of termiHub does not know ` +
+        `("${unknown.kind}"), so nothing was run. Update termiHub to run it.`,
     });
   }
   return runWorkflow(automation.steps, deps, hooks, paramValues, {

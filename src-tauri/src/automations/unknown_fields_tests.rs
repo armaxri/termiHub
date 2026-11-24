@@ -7,7 +7,9 @@ use std::fs;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
-use super::config::Automation;
+use super::config::{
+    Automation, AutomationStep, AutomationTrigger, KNOWN_STEP_KINDS, KNOWN_TRIGGER_KINDS,
+};
 use super::manager::AutomationManager;
 use super::migrate::run_boot_migration;
 use super::storage::StoreFile;
@@ -293,4 +295,44 @@ fn legacy_entries_carry_their_unknown_fields_over() {
 fn a_store_round_trips_as_is() {
     let store: AutomationStore = serde_json::from_value(doc()).unwrap();
     assert_eq!(serde_json::to_value(&store).unwrap(), doc());
+}
+
+/// The lists of known kinds match the enums: a kind missing from a list would
+/// read as unknown when a field of it is malformed.
+#[test]
+fn the_known_kinds_are_exactly_the_enum_variants() {
+    let newer: Automation = serde_json::from_value(newer()).unwrap();
+    let kind = |v: Value| v["kind"].as_str().unwrap().to_string();
+    let mut steps: Vec<String> = newer
+        .steps
+        .iter()
+        .filter(|s| !matches!(s, AutomationStep::Unknown(_)))
+        .map(|s| kind(serde_json::to_value(s).unwrap()))
+        .collect();
+    steps.push("run-macro".to_string()); // the legacy spelling it reads
+    steps.sort();
+    steps.dedup();
+    let mut known = KNOWN_STEP_KINDS.to_vec();
+    known.sort_unstable();
+    assert_eq!(steps, known);
+    for kind in known {
+        assert!(
+            !matches!(
+                serde_json::from_value(json!({"kind": kind, "then": 5, "chunks": 5})),
+                Ok(AutomationStep::Unknown(_))
+            ),
+            "{kind}"
+        );
+    }
+    let mut triggers: Vec<String> = newer
+        .triggers
+        .iter()
+        .filter(|t| !matches!(t, AutomationTrigger::Unknown(_)))
+        .map(|t| kind(serde_json::to_value(t).unwrap()))
+        .collect();
+    triggers.push("manual".to_string()); // retired, never an unknown kind
+    triggers.sort();
+    let mut known = KNOWN_TRIGGER_KINDS.to_vec();
+    known.sort_unstable();
+    assert_eq!(triggers, known);
 }
