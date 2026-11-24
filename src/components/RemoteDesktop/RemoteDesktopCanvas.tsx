@@ -69,6 +69,11 @@ interface RemoteDesktopCanvasProps {
    * "Remote desktop: <label>". Absent, it is just "Remote desktop".
    */
   label?: string;
+  /**
+   * Notified when the canvas captures or releases the keyboard (#5836), so the
+   * toolbar can say where keystrokes go.
+   */
+  onCaptureChange?: (captured: boolean) => void;
 }
 
 /**
@@ -109,6 +114,7 @@ export function RemoteDesktopCanvas({
   onReleaseAll,
   viewport,
   label,
+  onCaptureChange,
 }: RemoteDesktopCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -550,14 +556,19 @@ export function RemoteDesktopCanvas({
     [viewOnly, releaseHeldKeys, onInput]
   );
 
+  const onCaptureChangeRef = useRef(onCaptureChange);
+  onCaptureChangeRef.current = onCaptureChange;
+
   const handleFocus = useCallback(() => {
     setCaptured(true);
+    onCaptureChangeRef.current?.(true);
     setAnnouncement(`Keyboard captured — press ${chord} to release`);
   }, [chord]);
 
   const handleBlur = useCallback(() => {
     releaseHeldKeys();
     setCaptured(false);
+    onCaptureChangeRef.current?.(false);
     setAnnouncement("Keyboard released to termiHub");
   }, [releaseHeldKeys]);
 
@@ -592,6 +603,17 @@ export function RemoteDesktopCanvas({
           data-testid="remote-desktop-capture-hint"
         >
           Keyboard captured · <kbd>{chord}</kbd> to release
+        </div>
+      )}
+      {!captured && !viewOnly && (
+        // Shown on hover (CSS): the keyboard still goes to termiHub, and a
+        // click hands it to the remote desktop (#5836).
+        <div
+          className="rd-canvas__hint rd-canvas__hint--idle"
+          aria-hidden="true"
+          data-testid="remote-desktop-idle-hint"
+        >
+          Click the desktop to type into it
         </div>
       )}
       <LiveRegion message={announcement} data-testid="remote-desktop-capture-announcer" />

@@ -83,6 +83,7 @@ function fakeSession(files: RemoteClipboardFile[], bound: number): RemoteDesktop
     reconnect: vi.fn(),
     cancelConnect: vi.fn(),
     cancelReconnect: vi.fn(),
+    disconnect: vi.fn(),
     awaitingFirstFrame: false,
     noteFirstFrame: vi.fn(),
   };

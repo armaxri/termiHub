@@ -126,18 +126,22 @@ export function RemoteDesktopOverlay({
         : via
           ? `Opening the SSH tunnel via ${via}`
           : "Establishing connection";
+    // The headline follows the stepper (#5836): signing in once the
+    // handshake is done, never "Connecting to …" past the Connect step.
+    const heading =
+      state === "authenticating" ? `Signing in to ${host}…` : `Connecting to ${host}…`;
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
         <ConnectProgress
           {...common}
           phase="connecting"
-          heading={`Connecting to ${host}…`}
+          heading={heading}
           stages={graphicalStages(
             state === "authenticating" ? "authenticate" : "connect",
             via !== null
           )}
           status={status}
-          announcement={`Connecting to ${host}… ${status}`}
+          announcement={`${heading} ${status}`}
           actions={
             <Button
               variant="secondary"

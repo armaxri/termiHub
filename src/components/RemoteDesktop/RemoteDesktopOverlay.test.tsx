@@ -95,6 +95,17 @@ describe("RemoteDesktopOverlay", () => {
     expect(el?.textContent).toContain("Authenticating");
   });
 
+  it("heads the overlay with the current step, not the finished one (#5836)", () => {
+    render("connecting");
+    expect(container.querySelector(".ui-content-overlay__heading")?.textContent).toBe(
+      "Connecting to rd-host…"
+    );
+    render("authenticating");
+    expect(container.querySelector(".ui-content-overlay__heading")?.textContent).toBe(
+      "Signing in to rd-host…"
+    );
+  });
+
   it.each(["connecting", "authenticating"] as const)(
     "offers Abort on the %s overlay that aborts the connect (#4298, #5068)",
     (state) => {
@@ -296,7 +307,7 @@ describe("RemoteDesktopOverlay", () => {
 
     it.each([
       ["connecting", {}, "Connecting to rd-host… Establishing connection"],
-      ["authenticating", {}, "Connecting to rd-host… Authenticating"],
+      ["authenticating", {}, "Signing in to rd-host… Authenticating"],
       ["reconnecting", { reconnectAttempt: 2 }, "Connection lost — reconnecting… Attempt 2 of 10"],
     ] as const)("%s", (state, overrides, expected) => {
       const records: MutationRecord[] = [];

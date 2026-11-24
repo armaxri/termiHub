@@ -49,6 +49,19 @@ interface RemoteDesktopToolbarProps {
   /** Whether the Files popover is open. */
   filesOpen?: boolean;
   onToggleFiles?: () => void;
+  /**
+   * Whether the canvas holds the keyboard (#5836): the toolbar then says that
+   * keystrokes go to the remote desktop and how to release them; otherwise
+   * that they go to termiHub until the desktop is clicked.
+   */
+  captured?: boolean;
+  /** The scale mode the scale button switches to next, named in its tooltip. */
+  nextScaleMode?: ScaleMode;
+  /**
+   * Show the toolbar without hover (#5836): briefly once the desktop first
+   * paints, so its actions are discoverable before it auto-hides.
+   */
+  revealed?: boolean;
 }
 
 /** The Files button's state. */
@@ -65,9 +78,11 @@ function viewportTitle(monitors: MonitorRect[], viewport: number | null): string
 
 /**
  * The one shared floating hover toolbar for graphical remote-desktop sessions
- * (#1680) — host badge, resolution, Ctrl+Alt+Del, clipboard, files (#4192), scaling, the
- * multi-monitor viewport selector (#3696), fullscreen, disconnect. Identical for every protocol; auto-hides via CSS when
- * the pointer leaves the surface. Icon actions compose from the shared `Button`
+ * (#1680) — host badge, where the keyboard goes (#5836), resolution, Ctrl+Alt+Del,
+ * clipboard, files (#4192), the scale mode by name (#5836), the multi-monitor viewport
+ * selector (#3696), fullscreen, disconnect. Identical for every protocol; shown briefly
+ * once the desktop first paints, then auto-hides via CSS when the pointer leaves the
+ * surface. Icon actions compose from the shared `Button`
  * primitive (icon-only ghost).
  */
 export function RemoteDesktopToolbar({
@@ -87,21 +102,46 @@ export function RemoteDesktopToolbar({
   filesTitle = "Files",
   filesOpen = false,
   onToggleFiles,
+  captured = false,
+  nextScaleMode,
+  revealed = false,
 }: RemoteDesktopToolbarProps) {
   const releaseChord = useReleaseChordLabel();
+  const scaleLabel = SCALE_MODE_LABELS[scaleMode];
+  const scaleTitle = nextScaleMode
+    ? `Scaling: ${scaleLabel} — click for ${SCALE_MODE_LABELS[nextScaleMode]}`
+    : `Scaling: ${scaleLabel}`;
   return (
-    <div className="rd-toolbar" data-testid="remote-desktop-toolbar">
+    <div
+      className={`rd-toolbar${revealed ? " rd-toolbar--revealed" : ""}`}
+      data-testid="remote-desktop-toolbar"
+      data-revealed={revealed ? "true" : undefined}
+    >
       <span className="rd-toolbar__host">
         <Monitor size={14} />
         {host}
       </span>
-      <span
-        className="rd-toolbar__hint"
-        title={`Press ${releaseChord} to return keyboard focus to termiHub`}
-        data-testid="remote-desktop-release-hint"
-      >
-        <kbd>{releaseChord}</kbd> release keyboard
-      </span>
+      {!viewOnly &&
+        (captured ? (
+          <span
+            className="rd-toolbar__hint rd-toolbar__hint--captured"
+            title={`Press ${releaseChord} to return keyboard focus to termiHub`}
+            data-testid="remote-desktop-release-hint"
+            data-state="captured"
+          >
+            <Keyboard size={14} aria-hidden />
+            Keyboard to remote · <kbd>{releaseChord}</kbd> release
+          </span>
+        ) : (
+          <span
+            className="rd-toolbar__hint"
+            title={`Click the remote desktop to type into it; press ${releaseChord} to release it again`}
+            data-testid="remote-desktop-release-hint"
+            data-state="released"
+          >
+            Keyboard to termiHub · click the desktop to type
+          </span>
+        ))}
       {resolution && (
         <span className="rd-toolbar__res">
           {resolution.width}×{resolution.height}
@@ -150,12 +190,15 @@ export function RemoteDesktopToolbar({
       <Button
         variant="ghost"
         size="sm"
-        iconOnly
         icon={<Scaling size={14} />}
-        title={`Scaling: ${SCALE_MODE_LABELS[scaleMode]}`}
+        title={scaleTitle}
+        aria-label={scaleTitle}
         onClick={onCycleScaleMode}
         data-testid="remote-desktop-scale"
-      />
+        data-scale-mode={scaleMode}
+      >
+        {scaleLabel}
+      </Button>
       {monitors.length >= 2 && onCycleViewport && (
         <Button
           variant="ghost"

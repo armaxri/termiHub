@@ -131,6 +131,12 @@ export interface RemoteDesktopSession {
    */
   cancelReconnect: () => void;
   /**
+   * End the session on the user's request (the toolbar's Disconnect, #5836):
+   * tears the session down without dialling again, and the tab rests on the
+   * "Disconnected" prompt with Reconnect and Close tab.
+   */
+  disconnect: () => void;
+  /**
    * True while a session adopted from another window (a cross-window tab move,
    * #1904) is waiting for its first repaint. The tab shows the "reconnecting
    * view…" placeholder over the still-blank destination canvas until then.
@@ -655,6 +661,19 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     }
   }, [tabId, setTabSessionId]);
 
+  const disconnect = useCallback(() => {
+    const id = sessionIdRef.current;
+    sessionIdRef.current = null;
+    setState("closed");
+    setAborted(false);
+    setReconnectAttempt(0);
+    setMessage(null);
+    if (id) {
+      fireAndForget(remoteDesktopDisconnect(id), `disconnect remote-desktop session ${id}`);
+      setTabSessionId(tabId, null);
+    }
+  }, [tabId, setTabSessionId]);
+
   const noteFirstFrame = useCallback(() => {
     // The destination canvas painted a frame after a cross-window adoption
     // (#1904): drop the "reconnecting view…" placeholder.
@@ -685,6 +704,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     reconnect,
     cancelConnect,
     cancelReconnect,
+    disconnect,
     awaitingFirstFrame,
     noteFirstFrame,
   };

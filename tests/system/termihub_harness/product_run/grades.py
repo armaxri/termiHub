@@ -358,3 +358,75 @@ def row_leftover_text(text: str, allowed: "list[str]") -> str:
             rest = rest.replace(piece, " ", 1)
     return " ".join(rest.split())
 
+
+
+# ── Remote desktop tab (#5836) ──────────────────────────────────────────────
+#: The first-frame overlay's headline: connect and sign-in are done (#5836).
+REMOTE_DESKTOP_WAITING_HEADING = "Waiting for the desktop…"
+#: The first-frame overlay's Abort action (#5836).
+REMOTE_DESKTOP_WAITING_ABORT = "remote-desktop-first-frame-abort"
+#: The toolbar actions every non-view-only remote desktop tab offers.
+REMOTE_DESKTOP_TOOLBAR_ACTIONS = (
+    "remote-desktop-cad",
+    "remote-desktop-clipboard-btn",
+    "remote-desktop-scale",
+    "remote-desktop-fullscreen",
+    "remote-desktop-disconnect",
+)
+#: The scale modes' visible names (``SCALE_MODE_LABELS`` in ``remoteDesktop.ts``).
+REMOTE_DESKTOP_SCALE_LABELS = {"fit": "Fit to tab", "pixel": "1:1 pixel", "match": "Match window"}
+
+
+def remote_desktop_waiting_problems(text: str, button_ids: "list[str]") -> list[str]:
+    """What is wrong with the waiting-for-the-first-frame overlay; empty when right (#5836).
+
+    ``text`` is the overlay's whole text, ``button_ids`` the test ids of its
+    buttons. The session is connected and signed in, so the headline names the
+    pending step ("Waiting for the desktop…"), never "Connecting to …", and the
+    overlay offers Abort.
+    """
+    problems: list[str] = []
+    if REMOTE_DESKTOP_WAITING_HEADING not in text:
+        problems.append(f"the headline is not {REMOTE_DESKTOP_WAITING_HEADING!r}: {text!r}")
+    if "Connecting to" in text:
+        problems.append("the overlay still says 'Connecting to …' after connect and sign-in")
+    if REMOTE_DESKTOP_WAITING_ABORT not in button_ids:
+        problems.append(f"no Abort on the waiting overlay (buttons: {button_ids})")
+    return problems
+
+
+def remote_desktop_toolbar_problems(toolbar: dict, *, captured: bool) -> list[str]:
+    """What is wrong with a live remote desktop tab's toolbar; empty when right (#5836).
+
+    ``toolbar`` is ``{"buttons": [test ids], "scaleMode": "fit"|…, "scaleText": str,
+    "keyboardState": "captured"|"released"|None, "keyboardText": str}`` and,
+    optionally, ``"opacity"`` (the computed opacity while it should be shown).
+    The toolbar carries the common actions, names the active scale mode as
+    text, and says where the keyboard goes: to the remote desktop (with the
+    release chord) while the canvas holds it, else to termiHub.
+    """
+    problems: list[str] = []
+    buttons = list(toolbar.get("buttons") or [])
+    missing = [a for a in REMOTE_DESKTOP_TOOLBAR_ACTIONS if a not in buttons]
+    if missing:
+        problems.append(f"the toolbar lacks {missing}")
+    mode = toolbar.get("scaleMode")
+    label = REMOTE_DESKTOP_SCALE_LABELS.get(str(mode))
+    scale_text = " ".join(str(toolbar.get("scaleText") or "").split())
+    if label is None:
+        problems.append(f"unknown scale mode {mode!r}")
+    elif scale_text != label:
+        problems.append(f"the scale button shows {scale_text!r}, not the mode's name {label!r}")
+    expected = "captured" if captured else "released"
+    state = toolbar.get("keyboardState")
+    text = str(toolbar.get("keyboardText") or "")
+    if state != expected:
+        problems.append(f"the keyboard state reads {state!r}, expected {expected!r}")
+    elif captured and "remote" not in text:
+        problems.append(f"a captured keyboard does not say it goes to the remote: {text!r}")
+    elif not captured and "termiHub" not in text:
+        problems.append(f"a released keyboard does not say it goes to termiHub: {text!r}")
+    opacity = toolbar.get("opacity")
+    if opacity is not None and float(opacity) < 0.99:
+        problems.append(f"the toolbar is not shown (opacity {opacity})")
+    return problems

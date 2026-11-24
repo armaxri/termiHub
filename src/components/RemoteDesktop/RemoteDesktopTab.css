@@ -65,6 +65,17 @@
   z-index: var(--z-raised);
 }
 
+/* "Click the desktop to type into it" (#5836): only while hovering a canvas
+   that does not hold the keyboard. */
+.rd-canvas__hint--idle {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.rd-canvas:hover .rd-canvas__hint--idle {
+  opacity: 1;
+}
+
 .rd-canvas__hint kbd,
 .rd-toolbar__hint kbd {
   font-family: var(--font-mono);
@@ -87,6 +98,7 @@
   align-items: center;
   gap: var(--spacing-xs);
   height: 30px;
+  max-width: calc(100% - var(--spacing-lg));
   padding: 0 var(--spacing-xs-sm);
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -102,9 +114,11 @@
     transform var(--transition-fast);
 }
 
-/* Auto-reveal on surface hover or when a toolbar control is focused. */
+/* Auto-reveal on surface hover or when a toolbar control is focused; briefly
+   revealed on its own once the desktop first paints (#5836). */
 .rd-surface:hover .rd-toolbar,
-.rd-toolbar:focus-within {
+.rd-toolbar:focus-within,
+.rd-toolbar--revealed {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(-50%) translateY(0);
@@ -119,9 +133,21 @@
 }
 
 .rd-toolbar__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
   padding: 0 var(--spacing-xs-sm);
   border-left: 1px solid var(--border-primary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The keyboard goes to the remote desktop (#5836): the same accent as the
+   canvas's focus ring, so the two read as one state. */
+.rd-toolbar__hint--captured {
+  color: var(--focus-border);
 }
 
 .rd-toolbar__res {
@@ -178,7 +204,8 @@
 @media (prefers-reduced-motion: reduce) {
   /* The connecting/reconnecting overlay's progress cue is the shared Spinner
      (#4699), which owns its rotation and reduced-motion handling. */
-  .rd-toolbar {
+  .rd-toolbar,
+  .rd-canvas__hint--idle {
     transition: none;
   }
 }

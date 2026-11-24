@@ -65,6 +65,7 @@ function fakeSession(fixedResolution: boolean, scaleMode: ScaleMode): RemoteDesk
     reconnect: vi.fn(),
     cancelConnect: vi.fn(),
     cancelReconnect: vi.fn(),
+    disconnect: vi.fn(),
     awaitingFirstFrame: false,
     noteFirstFrame: vi.fn(),
   };

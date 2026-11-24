@@ -728,6 +728,23 @@ describe("useRemoteDesktopSession", () => {
     expect(mockedDisconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("disconnects on request: tears the session down and rests on Disconnected (#5836)", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({ state: "active" });
+
+    act(() => h.get().disconnect());
+    await flush();
+
+    expect(mockedDisconnect).toHaveBeenCalledWith("rd-1");
+    expect(h.get().state).toBe("closed");
+    // A user disconnect is not an aborted connect: the tab says "Disconnected".
+    expect(h.get().aborted).toBe(false);
+    // It never dials again on its own.
+    expect(mockedConnect).toHaveBeenCalledTimes(1);
+  });
+
   // ── Cross-window tab move (#1904) ──
 
   it("adopts a moved-in session without opening a new connection", async () => {

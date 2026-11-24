@@ -77,6 +77,7 @@ interface RenderOptions {
   onReleaseAll: () => void;
   viewport: { x: number; y: number; width: number; height: number } | null;
   label: string;
+  onCaptureChange: (captured: boolean) => void;
 }
 
 let container: HTMLDivElement;
@@ -700,6 +701,30 @@ describe("RemoteDesktopCanvas", () => {
       act(() => canvasEl().blur());
       expect(canvasEl().classList.contains("rd-canvas__surface--captured")).toBe(false);
       expect(container.querySelector('[data-testid="remote-desktop-capture-hint"]')).toBeNull();
+    });
+
+    it("reports capture and release to the tab (#5836)", () => {
+      const onCaptureChange = vi.fn();
+      render({ onCaptureChange });
+      act(() => canvasEl().focus());
+      expect(onCaptureChange).toHaveBeenLastCalledWith(true);
+      act(() => canvasEl().blur());
+      expect(onCaptureChange).toHaveBeenLastCalledWith(false);
+    });
+
+    it("hints that a click hands the keyboard over while it is not captured (#5836)", () => {
+      render();
+      const idle = () => container.querySelector('[data-testid="remote-desktop-idle-hint"]');
+      expect(idle()?.textContent).toBe("Click the desktop to type into it");
+      act(() => canvasEl().focus());
+      expect(idle()).toBeNull();
+      act(() => canvasEl().blur());
+      expect(idle()).not.toBeNull();
+    });
+
+    it("offers no click-to-type hint on a view-only canvas (#5836)", () => {
+      render({ viewOnly: true });
+      expect(container.querySelector('[data-testid="remote-desktop-idle-hint"]')).toBeNull();
     });
 
     it("the chord returns focus to the app", () => {
