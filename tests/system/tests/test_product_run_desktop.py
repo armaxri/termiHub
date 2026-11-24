@@ -56,6 +56,10 @@ from termihub_harness.colors import contrast
 from termihub_harness.native_ssh import fixture_argv
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.editor_layout import measure_connection_editor, measure_editor_layout
+from termihub_harness.product_run.editor_mappings import (
+    editor_mappings_problems,
+    measure_editor_mappings,
+)
 from termihub_harness.product_run.grades import connection_editor_layout_problems, editor_layout_problems
 from termihub_harness.product_run.settings_layout import (
     measure_settings_page,
@@ -898,7 +902,8 @@ class TestProductRunSettingsThemes(
     def test_09_editor_builtin_defaults_table(self):
         """Settings ▸ Editor shows the built-in defaults as a dense table (#5713).
 
-        At the 800x600 minimum window: the defaults are a table whose pattern and
+        At the 800x600 minimum window, once unfolded (#5841): the defaults are a
+        table whose pattern and
         language columns line up row to row, the content column does not scroll
         sideways, and the mapped language reads at >= 4.5:1.
         """
@@ -912,6 +917,8 @@ class TestProductRunSettingsThemes(
             self.driver.resize_window(800, 600)
             try:
                 self.open_settings_category("editor")
+                if not self.driver.exists("file-type-builtin-table"):
+                    self.driver.click("file-type-builtin-disclosure")
                 self.wait(lambda: self.driver.exists("file-type-builtin-table"),
                           what="the built-in defaults table")
                 time.sleep(0.4)
@@ -1015,7 +1022,14 @@ class TestProductRunSettingsThemes(
         ):
             self.open_settings_category("editor")
             self.driver.type("file-type-pattern-input", pattern)
-            self.driver.type("file-type-language-input", "hcl")
+            # The language comes from a searchable list since #5841.
+            self.driver.click("file-type-language-select")
+            self.wait(lambda: self.driver.exists("file-type-language-search"),
+                      what="the language list")
+            self.driver.type("file-type-language-search", "hcl")
+            self.wait(lambda: self.driver.exists("file-type-language-option-hcl"),
+                      what="the hcl language option")
+            self.driver.click("file-type-language-option-hcl")
             self.driver.click("file-type-add-btn")
             row = f"file-type-custom-row-{pattern}"
             language = f"file-type-custom-language-{pattern}"
@@ -1064,3 +1078,34 @@ class TestProductRunSettingsThemes(
                 assert not problems, "; ".join(problems)
             finally:
                 self.driver.resize_window(1280, 800)
+
+    def test_13_editor_mappings_folded(self):
+        """Settings ▸ Editor puts the user's mappings first (#5841).
+
+        The built-in mappings fold behind "Show built-in mappings (N)" with a
+        filter, the add form sits above them, and the language is chosen from a
+        searchable list of known languages instead of free text.
+        """
+        with self.step(
+            "settings.editor.mappings-folded",
+            "Settings ▸ Editor shows the custom mapping form first, folds the built-in "
+            "mappings behind a counted disclosure with a filter, and picks the language "
+            "from a searchable list (#5841)",
+            expect="Settings ▸ Editor with the add form and a one-line 'Show built-in "
+            "mappings (N)' button; the language field is a list, not free text",
+        ):
+            self.open_settings_category("editor")
+            self.wait(lambda: self.driver.exists("file-type-builtin-disclosure"),
+                      what="the built-in mappings disclosure")
+            if self.driver.get_attribute(
+                    "file-type-builtin-disclosure", "aria-expanded") == "true":
+                self.driver.click("file-type-builtin-disclosure")
+            time.sleep(0.4)
+            self.shot(label="mappings-folded", expect="settings-editor")
+            measured = measure_editor_mappings(self.driver)
+            self.evidence(
+                f"disclosure {measured.get('disclosure')}; section {measured.get('section')}; "
+                f"expanded {measured.get('expanded')}; picker {measured.get('picker')}"
+            )
+            problems = editor_mappings_problems(measured)
+            assert not problems, "; ".join(problems)
