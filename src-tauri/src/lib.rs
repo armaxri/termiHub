@@ -20,6 +20,9 @@ mod agents_projection;
 /// held in managed state, so long-lived background tasks are cancelled and
 /// awaited (bounded) at teardown instead of outliving it — see [`app_tasks`].
 mod app_tasks;
+/// The merged macro + workflow model and its pure legacy converters (#5818).
+/// Public so the slice-1 model is not dead code before slice 2 wires it in.
+pub mod automations;
 mod backup;
 /// Ordered application boot phases (ARCH-002 / TAURI-009): the wiring the
 /// Tauri `setup()` callback runs, extracted from the former god-closure into
