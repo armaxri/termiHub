@@ -89,7 +89,7 @@ class AutomationPhaseUi(HarnessMixin):
             self.driver.type(field, data)
 
     def _save_macro(self) -> None:
-        self.wait(lambda: not self.is_disabled("macro-editor-save"), what="Save to enable")
+        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
         self.driver.click("macro-editor-save")
         self.wait(lambda: not self.driver.exists(MACRO_EDITOR), what="the macro editor to close")
 
@@ -200,7 +200,7 @@ class AutomationPhaseUi(HarnessMixin):
         self.wait(lambda: self.driver.exists(box), what="the target connection checkbox")
         self.driver.click(box)
         self.driver.type("schedule-editor-every", "1")
-        self.wait(lambda: not self.is_disabled("schedule-editor-save"), what="Save to enable")
+        self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
         self.driver.click("schedule-editor-save")
         self.wait(lambda: not self.driver.exists(SCHEDULE_EDITOR), what="the editor to close")
         found = self.wait(

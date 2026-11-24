@@ -131,7 +131,7 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
             lambda: self.driver.exists("macro-editor-step-data-0"), what="the first macro step"
         )
         self.driver.type("macro-editor-step-data-0", step_text)
-        self.wait(lambda: not self.is_disabled("macro-editor-save"), what="Save to enable")
+        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
         self.driver.click("macro-editor-save")
         self.wait(
             lambda: not self.driver.exists("macro-editor-dialog"), what="the macro editor to close"
@@ -154,7 +154,7 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
         self.wait(lambda: self.driver.exists(checkbox), what="the target connection checkbox")
         self.driver.click(checkbox)
         self.driver.type("schedule-editor-every", "1")
-        self.wait(lambda: not self.is_disabled("schedule-editor-save"), what="Save to enable")
+        self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
         self.driver.click("schedule-editor-save")
         self.wait(lambda: not self.driver.exists(EDITOR), what="the schedule editor to close")
         schedule = self.wait(
