@@ -48,6 +48,13 @@
   color: var(--text-primary);
 }
 
+/* #5849: a pressed toggle (the sidebar while it shows) reads as pressed by
+   more than colour: it sits on the active-row fill, like a selected chip. */
+.ui-btn.terminal-view__toolbar-action--active[aria-pressed="true"],
+.ui-btn.terminal-view__toolbar-action--active[aria-pressed="true"]:hover {
+  background-color: var(--bg-active);
+}
+
 /* #5756: a running "…"-menu action (broadcast, recording, playback, logging)
    stays visible as a labelled chip left of the layout icons; a click stops it. */
 .terminal-view__active-states {

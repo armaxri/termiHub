@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
+import { Plus, SquareSplitHorizontal, SquareSplitVertical, X, PanelLeft } from "lucide-react";
 import { useTauriListener } from "@/hooks/useTauriListener";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import {
@@ -249,7 +249,10 @@ export function TerminalView() {
           <TabGroupChips />
           {/* #5559 / #5756: the layout icons stay visible, each tooltip naming its
               shortcut; session and macro actions live in the "…" menu, and a
-              running one shows as a chip beside the icons. */}
+              running one shows as a chip beside the icons. #5849: "+" is the
+              only plus on the toolbar, the split icons are split-square glyphs
+              unlike the sidebar's panel glyph, and the sidebar toggle sits in
+              its own group behind a divider and reports its state (aria-pressed). */}
           <div
             className="terminal-view__toolbar-actions"
             data-testid="terminal-view-toolbar-actions"
@@ -268,6 +271,7 @@ export function TerminalView() {
                   icon={<Plus size={16} />}
                   onClick={handleNewTerminal}
                   aria-label={newTerminalTitle}
+                  data-icon="plus"
                   data-testid="terminal-view-new-terminal"
                 />
               </Tooltip>
@@ -276,9 +280,10 @@ export function TerminalView() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Columns2 size={16} />}
+                  icon={<SquareSplitHorizontal size={16} />}
                   onClick={handleSplitHorizontal}
                   aria-label={splitRightTitle}
+                  data-icon="split-right"
                   data-testid="terminal-view-split-horizontal"
                 />
               </Tooltip>
@@ -287,9 +292,10 @@ export function TerminalView() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  icon={<Rows2 size={16} />}
+                  icon={<SquareSplitVertical size={16} />}
                   onClick={handleSplitVertical}
                   aria-label={splitDownTitle}
+                  data-icon="split-down"
                   data-testid="terminal-view-split-vertical"
                 />
               </Tooltip>
@@ -302,25 +308,32 @@ export function TerminalView() {
                     icon={<X size={16} />}
                     onClick={handleClosePanel}
                     aria-label={closePanelTitle}
+                    data-icon="close-panel"
                     data-testid="terminal-view-close-panel"
                   />
                 </Tooltip>
               )}
-              <Tooltip content={sidebarToggleTitle} side="bottom">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className={
-                    !sidebarCollapsed ? "terminal-view__toolbar-action--active" : undefined
-                  }
-                  icon={<PanelLeft size={16} />}
-                  onClick={toggleSidebar}
-                  aria-label={sidebarToggleTitle}
-                  data-testid="terminal-view-toggle-sidebar"
-                />
-              </Tooltip>
             </div>
+            <span
+              className="terminal-view__toolbar-separator"
+              role="separator"
+              aria-orientation="vertical"
+              data-testid="terminal-view-toolbar-sidebar-separator"
+            />
+            <Tooltip content={sidebarToggleTitle} side="bottom">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={!sidebarCollapsed ? "terminal-view__toolbar-action--active" : undefined}
+                icon={<PanelLeft size={16} />}
+                onClick={toggleSidebar}
+                aria-label={sidebarToggleTitle}
+                aria-pressed={!sidebarCollapsed}
+                data-icon="sidebar"
+                data-testid="terminal-view-toggle-sidebar"
+              />
+            </Tooltip>
             <span
               className="terminal-view__toolbar-separator"
               role="separator"

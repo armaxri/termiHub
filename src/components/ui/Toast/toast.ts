@@ -117,16 +117,59 @@ function cancelRedismiss(id: string | number | undefined): void {
   pendingRedismiss.delete(id);
 }
 
+/**
+ * The sonner id a toast id shows under now, for ids that were dismissed
+ * (#5904). sonner applies a dismiss two animation frames after it is issued,
+ * to whatever toast then has that id. A toast shown again under the same id
+ * within those frames — a deferred success toast re-shown as the stack undocks,
+ * a loading toast replaced right after its dismiss — was taken down by the
+ * stale dismiss. So a dismissed id moves to a fresh sonner id: the stale
+ * dismiss only ever reaches the toast it was meant for. Updating a toast that
+ * is still showing keeps its sonner id, so it is replaced in place.
+ */
+const sonnerIds = new Map<string | number, string>();
+
+/** At most this many moved ids are remembered; the oldest are dropped. */
+const MAX_SONNER_IDS = 200;
+
+/** Counter making each moved sonner id unique. */
+let nextSonnerGeneration = 0;
+
+/** The sonner id the toast `id` shows under. */
+function sonnerIdOf(id: string | number): string | number;
+function sonnerIdOf(id: string | number | undefined): string | number | undefined;
+function sonnerIdOf(id: string | number | undefined): string | number | undefined {
+  return id === undefined ? undefined : (sonnerIds.get(id) ?? id);
+}
+
+/** Move `id` to a fresh sonner id, out of reach of the dismiss just issued. */
+function retireSonnerId(id: string | number): void {
+  sonnerIds.delete(id);
+  sonnerIds.set(id, `${String(id)}~${++nextSonnerGeneration}`);
+  if (sonnerIds.size > MAX_SONNER_IDS) {
+    const oldest = sonnerIds.keys().next().value;
+    if (oldest !== undefined) sonnerIds.delete(oldest);
+  }
+}
+
+/** `id`, a fresh id sonner just gave a toast, now shows under itself. */
+function adoptSonnerId(id: string | number): string | number {
+  sonnerIds.delete(id);
+  return id;
+}
+
 /** Dismiss `id` now and once more after any pending mount of it has landed. */
 function dismissById(id: string | number): void {
   cancelRedismiss(id);
   shownTransient.delete(id);
-  sonnerToast.dismiss(id);
+  const sonnerId = sonnerIdOf(id);
+  retireSonnerId(id);
+  sonnerToast.dismiss(sonnerId);
   pendingRedismiss.set(
     id,
     setTimeout(() => {
       pendingRedismiss.delete(id);
-      sonnerToast.dismiss(id);
+      sonnerToast.dismiss(sonnerId);
     }, 0)
   );
 }
@@ -254,10 +297,20 @@ export function registerInlineStatusSink(sink: InlineStatusSink): () => void {
   };
 }
 
+/**
+ * Whether `spec` offers a button (an undo such as "Closed … · Reopen"). Such a
+ * toast is an offer, not a confirmation of something already on screen: it is
+ * never moved to a dialog's status line nor held back while the stack is
+ * docked (#5904), since the offer is gone once its moment passes.
+ */
+function offersAction(spec: TransientSpec): boolean {
+  return Boolean(spec.opts.action || spec.opts.cancel);
+}
+
 /** Show `spec` in the innermost dialog's status line, if it can go there. */
 function showInline(spec: TransientSpec): boolean {
   const sink = inlineSinks[inlineSinks.length - 1];
-  if (!sink || spec.opts.action || spec.opts.cancel) return false;
+  if (!sink || offersAction(spec)) return false;
   const { id } = spec.opts;
   // Take down whatever shows under this id (a loading toast resolving here).
   dismissById(id);
@@ -284,7 +337,7 @@ function showTransient(spec: TransientSpec): string | number {
   trackTransient(id, true);
   trackModalStale(id, spec.opts.dismissOnModal);
   if (showInline(spec)) return id;
-  if (deferring) {
+  if (deferring && !offersAction(spec)) {
     deferredTransient.delete(id);
     deferredTransient.set(id, spec);
     if (deferredTransient.size > MAX_DEFERRED) {
@@ -302,7 +355,7 @@ function showTransient(spec: TransientSpec): string | number {
   };
   const show = spec.kind === "success" ? sonnerToast.success : sonnerToast.info;
   show(spec.message, {
-    id,
+    id: sonnerIdOf(id),
     description: spec.opts.description,
     duration: spec.opts.duration,
     // Pressing either button closes the toast without sonner's onDismiss, so
@@ -327,8 +380,8 @@ function forgetTransientSpec(id: string | number | undefined): void {
 /**
  * Defer success/info toasts while the toast stack is docked over a tall dialog
  * (#5715), and show them once it is not. Turning it on takes the success/info
- * toasts on screen down and queues them with the new ones; errors and loading
- * toasts stay visible throughout. Turning it off shows the queue, oldest
+ * toasts on screen down and queues them with the new ones; errors, loading
+ * toasts and toasts offering a button (an undo, #5904) stay visible throughout. Turning it off shows the queue, oldest
  * first. Called by the toast hub's layout hook.
  */
 export function setTransientDeferred(on: boolean): void {
@@ -336,6 +389,7 @@ export function setTransientDeferred(on: boolean): void {
   deferring = on;
   if (on) {
     for (const [id, spec] of Array.from(shownTransient)) {
+      if (offersAction(spec)) continue;
       deferredTransient.delete(id);
       deferredTransient.set(id, spec);
       dismissById(id);
@@ -368,7 +422,8 @@ export function dismissModalStaleToasts(): void {
  *
  * - `success` / `info` auto-dismiss. While a dialog is open they show in its
  *   inline status line (#5830) unless they carry a button; while the stack is
- *   docked over a tall dialog without one, they wait until it closes (#5715).
+ *   docked over a tall dialog, those without a button wait until it closes
+ *   (#5715) — an undo offer shows at once (#5904).
  *   Those still showing are dismissed when a dialog opens (#5830).
  * - `error` persists until dismissed.
  * - `loading` resolves in place into success/error via `loading().then(...)`
@@ -424,16 +479,18 @@ export const toast: ToastApi = {
   error(message, opts) {
     cancelRedismiss(opts?.id);
     forgetTransientSpec(opts?.id);
-    const id = sonnerToast.error(message, {
-      id: opts?.id,
+    const shown = sonnerToast.error(message, {
+      id: sonnerIdOf(opts?.id),
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
       cancel: sonnerAction(opts?.cancel),
       testId: opts?.testId,
     });
-    trackTransient(id ?? opts?.id, false);
-    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
+    // Callers keep using their own id; sonner's own only when they gave none.
+    const id = opts?.id ?? adoptSonnerId(shown);
+    trackTransient(id, false);
+    trackModalStale(id, opts?.dismissOnModal);
     return id;
   },
 
@@ -444,21 +501,23 @@ export const toast: ToastApi = {
   loading(message, opts) {
     cancelRedismiss(opts?.id);
     forgetTransientSpec(opts?.id);
-    const id = sonnerToast.loading(message, {
-      id: opts?.id,
+    const shown = sonnerToast.loading(message, {
+      id: sonnerIdOf(opts?.id),
       description: opts?.description,
       duration: opts?.duration ?? PERSIST_DURATION,
       action: sonnerAction(opts?.action),
       cancel: sonnerAction(opts?.cancel),
       testId: opts?.testId,
     });
-    trackTransient(id ?? opts?.id, false);
-    trackModalStale(id ?? opts?.id, opts?.dismissOnModal);
+    // Callers keep using their own id; sonner's own only when they gave none.
+    const id = opts?.id ?? adoptSonnerId(shown);
+    trackTransient(id, false);
+    trackModalStale(id, opts?.dismissOnModal);
     return id;
   },
 
   promise<T>(promise: Promise<T>, messages: ToastPromiseMessages<T>): Promise<T> {
-    const id = sonnerToast.loading(messages.loading);
+    const id = adoptSonnerId(sonnerToast.loading(messages.loading));
     promise.then(
       (value) => {
         const msg =
@@ -467,7 +526,7 @@ export const toast: ToastApi = {
       },
       (error: unknown) => {
         const msg = typeof messages.error === "function" ? messages.error(error) : messages.error;
-        sonnerToast.error(msg, { id, duration: PERSIST_DURATION });
+        sonnerToast.error(msg, { id: sonnerIdOf(id), duration: PERSIST_DURATION });
       }
     );
     return promise;

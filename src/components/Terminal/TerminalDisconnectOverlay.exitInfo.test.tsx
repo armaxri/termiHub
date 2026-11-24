@@ -118,4 +118,16 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
     expect(lost).not.toBeNull();
     expect(lost?.textContent).toContain("Session lost");
   });
+
+  // #5904: the overlay spans the whole pane, so marking it as a toast keep-clear
+  // zone docked the toast stack and held back every success toast (the tab's
+  // "Closed … · Reopen" undo among them) while an ended session showed. Only the
+  // notice card keeps the stack off.
+  it("marks only the notice card, not the pane-sized overlay, as a toast keep-clear zone", async () => {
+    const overlay = await renderWithExit({ reason: "clean", code: 0 });
+    expect(overlay?.hasAttribute("data-toast-avoid")).toBe(false);
+    const avoid = container.querySelectorAll("[data-toast-avoid]");
+    expect(avoid).toHaveLength(1);
+    expect(avoid[0].classList.contains("terminal-disconnect-overlay__card")).toBe(true);
+  });
 });

@@ -73,7 +73,10 @@ describe("TerminalView — macro record button (#1674)", () => {
     expect(useAppStore.getState().macroRecording).toBe(true);
     const btn = recordButton();
     expect(btn.getAttribute("data-active")).toBe("true");
-    expect(btn.textContent).toBe("Stop recording macro");
+    // #5849: a checkbox row — the label stays, the tick and aria-checked flip.
+    expect(btn.textContent).toBe("Record macro");
+    expect(btn.getAttribute("aria-checked")).toBe("true");
+    expect(btn.querySelector("[data-menu-tick]")).not.toBeNull();
     // #5756: the recording stays visible as a chip while the menu is closed.
     expect(
       document.querySelector('[data-testid="terminal-view-active-recording"]')?.textContent
