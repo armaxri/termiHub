@@ -99,7 +99,7 @@ describe("StatusBar — SSH chip while the session is down (#5955)", () => {
   });
 
   it("greys while a reconnect runs", async () => {
-    await renderWith(reconnecting());
+    await renderWith(reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
     expect(chip().dataset.down).toBe("true");
   });
 });
