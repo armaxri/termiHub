@@ -1,15 +1,19 @@
-"""The product run's host-key comparison + connection-name grades (#5862), without an app.
+"""The product run's host-key comparison + connection-name grades (#5862, #5943), without an app.
 
 Runs in the normal (per-PR) lane; the product run itself is hand-triggered.
 """
 
 from __future__ import annotations
 
+import pytest
+
 from termihub_harness.product_run.hostkey_compare import (
     NEW_COPY_LABEL,
     changed_compare_problems,
     connection_problems,
+    expected_connection_label,
     fingerprint_groups,
+    origin_connection_problems,
 )
 
 #: A grouped OpenSSH fingerprint as the UI renders it: the prefix, then fours.
@@ -100,3 +104,43 @@ def test_fingerprint_groups_skips_the_key_type_line_and_hidden_items():
         {"text": "", "visible": True},
     ]
     assert fingerprint_groups(items) == ["SHA256:", "47DE"]
+
+
+@pytest.mark.parametrize(
+    ("origin", "label"),
+    [
+        ("tab", "web"),
+        ("saved", "web"),
+        ("sftp", "web"),
+        ("test", "web"),
+        ("tunnel", "web (tunnel)"),
+        ("agent", "web (agent)"),
+    ],
+)
+def test_each_origin_labels_its_connection(origin, label):
+    assert expected_connection_label(origin, " web ") == label
+    assert origin_connection_problems(label, origin, "web") == []
+
+
+def test_an_unknown_origin_is_refused():
+    with pytest.raises(ValueError, match="unknown prompt origin 'vnc'"):
+        expected_connection_label("vnc", "web")
+
+
+def test_a_tunnel_prompt_with_only_the_host_is_named():
+    # Before #5943: a tunnel's prompt had no owning tab and no connection line.
+    assert origin_connection_problems(None, "tunnel", "web-db") == [
+        "the dialog does not name the connection"
+    ]
+
+
+def test_a_tunnel_prompt_labelled_as_a_plain_connection_is_named():
+    assert origin_connection_problems("web-db", "tunnel", "web-db") == [
+        "the dialog names 'web-db', want 'web-db (tunnel)'"
+    ]
+
+
+def test_an_agent_prompt_naming_another_agent_is_named():
+    assert origin_connection_problems("lab (agent)", "agent", "build box") == [
+        "the dialog names 'lab (agent)', want 'build box (agent)'"
+    ]

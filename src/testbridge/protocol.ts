@@ -397,6 +397,33 @@ export interface PressKeyCommand {
 }
 
 /**
+ * Press a key in a terminal the way a real keystroke reaches it (#5966).
+ *
+ * xterm reads keys from its hidden input textarea, not from the terminal's
+ * wrapper, so `pressKey` on a wrapper testId never reaches xterm's key handler
+ * (or the app's `attachCustomKeyEventHandler` routing behind it). This verb
+ * focuses the textarea of the terminal in `tabId` (the active tab when omitted)
+ * and dispatches `keydown`, then — as a browser does when the keydown was not
+ * cancelled — `keypress` for a printable key or Enter, then `keyup`, each with a
+ * real legacy `keyCode`. So Enter in an ended terminal runs the session-end
+ * strip's action, and a live terminal gets the key's bytes through xterm's
+ * `onData`, as for a real key. Modifier flags as for {@link PressKeyCommand}.
+ */
+export interface TerminalKeyCommand {
+  action: "terminalKey";
+  key: string;
+  tabId?: string;
+  /** Hold Ctrl during the press. */
+  ctrl?: boolean;
+  /** Hold Meta/Command during the press. */
+  meta?: boolean;
+  /** Hold Shift during the press. */
+  shift?: boolean;
+  /** Hold Alt/Option during the press. */
+  alt?: boolean;
+}
+
+/**
  * Move the active file editor's caret through Monaco's cursor **command API**.
  *
  * Monaco renders to a canvas, so `pressKey` can only reach it via a synthetic
@@ -1214,6 +1241,7 @@ export type BridgeCommand =
   | SelectCommand
   | ContextMenuCommand
   | PressKeyCommand
+  | TerminalKeyCommand
   | EditorCursorCommand
   | TerminalInputCommand
   | ExistsCommand

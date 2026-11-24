@@ -181,6 +181,9 @@ pub(crate) struct HandshakeContext {
     /// The owner of the connect (#5243): the trust prompt carries it so the
     /// frontend pauses that tab's own connect deadline while it is open.
     pub owner: Option<String>,
+    /// The name of the connection the connect runs for (#5943): the trust
+    /// prompt carries it so a prompt with no owning tab names its connection.
+    pub connection_name: Option<String>,
     /// Cancelled when the connecting task stops waiting for the handshake
     /// (abort, connect timeout): the open prompt is then dropped — dismissed.
     pub abandoned: CancellationToken,
@@ -285,7 +288,10 @@ impl TermiHubHandler {
         let ctx = &self.handshake;
         let decision = super::prompt_owner::with_prompt_owner(
             ctx.owner.as_deref(),
-            super::host_key::decide_host_key(info, ctx.verifier.clone()),
+            super::prompt_owner::with_prompt_connection_name(
+                ctx.connection_name.as_deref(),
+                super::host_key::decide_host_key(info, ctx.verifier.clone()),
+            ),
         );
         let bounded = ctx
             .clock

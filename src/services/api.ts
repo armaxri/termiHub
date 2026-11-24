@@ -268,14 +268,17 @@ async function testConnection(
   settings: Record<string, unknown>,
   agentId?: string,
   connectId?: string,
-  reviewCert = false
+  reviewCert = false,
+  connectionName?: string
 ): Promise<void> {
+  const name = connectionName?.trim();
   await invoke("test_connection", {
     typeId,
     settings,
     agentId: agentId ?? null,
     connectId: connectId ?? null,
     reviewCert,
+    ...(name ? { connectionName: name } : {}),
   });
 }
 
@@ -286,6 +289,11 @@ export interface TestTerminalOptions {
    * Requires a `connectId`; unattended callers leave it off.
    */
   reviewCert?: boolean;
+  /**
+   * The name the editor shows for the connection under test (#5943): an SSH
+   * host-key prompt the test raises names it. Sent only when set.
+   */
+  connectionName?: string;
 }
 
 /**
@@ -300,15 +308,23 @@ export async function testTerminal(
   options: TestTerminalOptions = {}
 ): Promise<void> {
   const reviewCert = options.reviewCert ?? false;
+  const { connectionName } = options;
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
       agentId: string;
       sessionType: string;
       [key: string]: unknown;
     };
-    return await testConnection(sessionType, rest, agentId, connectId, reviewCert);
+    return await testConnection(sessionType, rest, agentId, connectId, reviewCert, connectionName);
   }
-  return await testConnection(config.type, config.config, undefined, connectId, reviewCert);
+  return await testConnection(
+    config.type,
+    config.config,
+    undefined,
+    connectId,
+    reviewCert,
+    connectionName
+  );
 }
 
 /**
