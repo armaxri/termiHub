@@ -40,11 +40,12 @@ import "./toast.css";
  * (`data-toast-avoid-form`) sit where the stack would go, the stack is pinned
  * top-right instead, just above the form, one compact toast at a time.
  *
- * A toast raised with `dismissOnModal` (the "Closed … / Reopen" undo) is
- * dismissed when a dialog opens (#5665), so it never lingers beside one; so
- * are the success/info confirmations still showing (#5830). While a dialog is
- * open, its own success/info feedback shows in its inline status line instead
- * of a toast (see `Modal`).
+ * When a dialog opens, the success/info confirmations still showing are
+ * dismissed (#5830), and so is any toast raised with `dismissOnModal` (#5665).
+ * Undo offers (a toast with a button, such as "Closed … · Reopen") are only
+ * hidden: they come back with their remaining lifetime once the dialog closes
+ * (#5914). While a dialog is open, its own success/info feedback shows in its
+ * inline status line instead of a toast (see `Modal`).
  *
  * Toasts stack expanded (`expand`), each in its own slot with a gap, so a newer
  * toast is never drawn over an older one with both texts showing through
