@@ -208,12 +208,15 @@ describe("AgentNode — agent rows (#5851)", () => {
       expect(openEditor).toHaveBeenCalledWith(AGENT_ID, "new", null);
     });
 
-    it("a disconnected agent offers Connect as a link", async () => {
+    it("a disconnected agent offers one Connect: the row's action, no second link", async () => {
+      // #5980: the expanded row showed the play icon and a "Connect" link under it.
       const connect = vi.fn().mockResolvedValue(undefined);
       useAppStore.setState({ connectRemoteAgent: connect });
       renderAgent(makeAgent());
-      expect(q(`agent-empty-${AGENT_ID}`)?.textContent).toBe("Not connected. Connect");
-      await act(async () => q(`agent-empty-connect-${AGENT_ID}`)!.click());
+      expect(q(`agent-empty-${AGENT_ID}`)?.textContent).toBe("Not connected.");
+      expect(q(`agent-empty-connect-${AGENT_ID}`)).toBeNull();
+      expect(q(`agent-empty-${AGENT_ID}`)?.querySelector("button")).toBeNull();
+      await act(async () => q(`agent-connect-${AGENT_ID}`)!.click());
       await settle();
       expect(connect).toHaveBeenCalledWith(AGENT_ID, undefined);
     });
