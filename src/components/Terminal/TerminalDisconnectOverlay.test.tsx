@@ -25,6 +25,9 @@ const TAB = "tab-1";
 
 // Stub lucide-react icons used in the overlay
 vi.mock("lucide-react", () => ({
+  RotateCcw: () => null,
+  SquareTerminal: () => null,
+  Usb: () => null,
   WifiOff: () => null,
   RefreshCw: () => null,
   X: () => null,
@@ -193,8 +196,9 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     });
     await flushSessionRegion();
 
-    expect(container.textContent).toContain("Session disconnected");
-    expect(container.textContent).toContain("The process exited with code 137");
+    // #5910: a process exit is not a lost connection.
+    expect(container.textContent).toContain("Process exited (code 137)");
+    expect(container.textContent).not.toContain("Session disconnected");
     // A local shell's exit is not a lost link, nor necessarily remote (#5784).
     expect(container.textContent).not.toContain("connection was lost");
     expect(container.textContent).not.toContain("remote process");

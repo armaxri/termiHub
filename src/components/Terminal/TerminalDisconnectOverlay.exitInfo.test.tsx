@@ -16,6 +16,9 @@ import type { TerminalExitInfo } from "@/types/terminal";
 
 // Stub lucide-react icons used in the overlay.
 vi.mock("lucide-react", () => ({
+  RotateCcw: () => null,
+  SquareTerminal: () => null,
+  Usb: () => null,
   WifiOff: () => null,
   RefreshCw: () => null,
   X: () => null,
@@ -85,8 +88,9 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
 
   it("renders the dropped wording with a non-zero exit code from the region", async () => {
     const overlay = await renderWithExit({ reason: "dropped", code: 137 });
-    expect(overlay?.textContent).toContain("Session disconnected");
-    expect(overlay?.textContent).toContain("The process exited with code 137");
+    // #5910: a process exit is not a lost connection.
+    expect(overlay?.textContent).toContain("Process exited (code 137)");
+    expect(overlay?.textContent).not.toContain("Session disconnected");
   });
 
   it("renders the codeless dropped wording when the region carries no exit code", async () => {

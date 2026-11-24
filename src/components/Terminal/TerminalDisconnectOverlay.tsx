@@ -1,20 +1,34 @@
 import { useCallback, useId } from "react";
-import { WifiOff, RefreshCw, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
+import {
+  WifiOff,
+  RefreshCw,
+  AlertTriangle,
+  CheckCircle2,
+  Unplug,
+  Plus,
+  RotateCcw,
+  SquareTerminal,
+  Usb,
+} from "lucide-react";
 import { connectionIdentityForTabId, isAutoReconnectOffTabId, useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, ContentOverlay, TOAST_AVOID_PROPS } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import { t } from "@/i18n/catalog";
 import { CredentialReentry } from "./CredentialReentry";
-import { DisconnectOverlayCard } from "./DisconnectOverlayCard";
+import { DisconnectStrip, type DisconnectStripTone } from "./DisconnectStrip";
 import {
   disconnectCauseLine,
   disconnectCauseOf,
   dropTransportOf,
   isLinkDrop,
+  sessionEndActionLabel,
+  sessionEndNoticeFor,
   type DisconnectCause,
   type DropTransport,
+  type SessionEndKind,
+  type SessionEndNotice,
 } from "./dropCopy";
 import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
@@ -37,35 +51,23 @@ interface TerminalDisconnectOverlayProps {
  */
 const SCROLLBACK_KEPT = t("drop.overlay.scrollbackKept");
 
-/** Heading + subheading shown in the default (disconnected) overlay variant. */
-interface DisconnectCopy {
-  heading: string;
-  subheading: string;
-  /** When true, render the calmer clean-exit icon instead of the WifiOff icon. */
-  clean: boolean;
-}
+/** The strip icon per kind of end (#5910): only a dropped link shows WifiOff. */
+const END_ICONS: Record<SessionEndKind, typeof WifiOff> = {
+  exited: SquareTerminal,
+  ended: CheckCircle2,
+  user: Unplug,
+  device: Usb,
+  link: WifiOff,
+};
 
-/**
- * Derive the overlay's heading/subheading from why the session ended (#1121,
- * #5831): the cause line is the one the strip and the banner show too.
- */
-function disconnectCopyFor(
-  cause: DisconnectCause | undefined,
-  info: TerminalExitInfo | undefined,
-  device: string | undefined
-): DisconnectCopy {
-  const line = disconnectCauseLine(cause ?? "lost", { code: info?.code, device });
-  // Only a clean exit reads as "Session ended"; a non-zero exit keeps the
-  // disconnect heading and says its code in the cause line.
-  if (cause === "ended") {
-    return { heading: "Session ended", subheading: `${line} ${SCROLLBACK_KEPT}`, clean: true };
-  }
-  return {
-    heading: "Session disconnected",
-    subheading: `${line} ${SCROLLBACK_KEPT}`,
-    clean: false,
-  };
-}
+/** The strip tint per kind of end: a process end is calm, a drop a warning. */
+const END_TONES: Record<SessionEndKind, DisconnectStripTone> = {
+  exited: "neutral",
+  ended: "neutral",
+  user: "neutral",
+  device: "warning",
+  link: "warning",
+};
 
 /** A tab's disconnect cause and what its cause line needs (#5831). */
 interface TabDisconnectCause {
@@ -108,8 +110,22 @@ export function disconnectCauseLineForTab(
 }
 
 /**
- * Shown as an absolute overlay on top of the terminal content when the session
- * exits unexpectedly or while a reconnect is in progress.
+ * The session-end notice for a tab (#5910): its heading, cause line and
+ * whether its action restarts a process or reconnects a link. Shared by the
+ * strip and the view-mode banner so both say the same.
+ */
+export function sessionEndNoticeForTab(
+  tabId: string,
+  exit: TerminalExitInfo | undefined,
+  endCause: SessionEndCause | undefined
+): SessionEndNotice {
+  const { transport, cause, device } = disconnectCauseForTab(tabId, exit, endCause);
+  return sessionEndNoticeFor(cause, { transport, code: exit?.code, device });
+}
+
+/**
+ * Shown as a full-width strip at the top of the terminal slot when the session
+ * ends or while a reconnect is in progress.
  *
  * Variants (determined from store state, in priority order):
  *   - "session-lost"   — terminal: live agent session unrecoverable, "start new
@@ -121,11 +137,13 @@ export function disconnectCauseLineForTab(
  *                        agentless countdown + attempt n/N + Cancel (#1962), or
  *                        a spinner + Stop ({@link TerminalReconnectStrip})
  *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
- *   - "disconnected"   — standard disconnect, reconnect + view-scrollback buttons
+ *   - "disconnected"   — the session ended: "Process exited (code N)" + Restart
+ *                        for a process, "Session disconnected" + Reconnect for
+ *                        a dropped link (#5910), plus view-scrollback
  *
- * The scrollback buffer is always preserved: the overlay has no scrim and lets
- * pointer events through around its card (#5831), so the last lines stay
- * readable and selectable; while reconnecting it stays readable under the strip.
+ * The scrollback buffer is always preserved and fully visible: every variant is
+ * a strip that pushes the terminal down below it (#5908, {@link DisconnectStrip}),
+ * so no output line is covered and all of it stays selectable.
  */
 export function TerminalDisconnectOverlay({
   tabId,
@@ -190,63 +208,57 @@ export function TerminalDisconnectOverlay({
   // explicit "start new shell" rather than a reconnect — never a silent new shell.
   if (isSessionLost) {
     return (
-      <div
-        className="terminal-disconnect-overlay terminal-disconnect-overlay--clear terminal-disconnect-overlay--error"
-        data-testid="terminal-disconnect-overlay"
-        data-variant="session-lost"
-      >
-        <DisconnectOverlayCard onDismiss={handleDismiss}>
-          <ContentOverlay
-            className="terminal-disconnect-overlay__body"
-            data-testid="terminal-session-lost"
-            icon={
-              <Unplug
-                size={32}
-                className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
-              />
-            }
-            heading="Session lost"
-            subheading={`The connection was restored, but the live session could not be recovered. Its process has ended. ${SCROLLBACK_KEPT}`}
-            announce="assertive"
-            // Without a backend cause, the heading + subheading are announced.
-            announcement={sessionLostError ? `Session lost. ${sessionLostError}` : undefined}
-            describedBy={sessionLostError ? errorTextId : undefined}
-            autoFocusPrimaryAction={isActive}
-            actions={
-              <>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<Plus size={14} />}
-                  onClick={handleStartNewShell}
-                  data-testid="terminal-session-lost-new-shell-btn"
-                >
-                  Start new shell
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleDismiss}
-                  data-testid="terminal-disconnect-view-btn"
-                >
-                  View scrollback
-                </Button>
-              </>
-            }
-          >
-            {sessionLostError && (
-              <div
-                className="terminal-disconnect-overlay__error-box"
-                data-testid="terminal-session-lost-error-box"
+      <DisconnectStrip variant="session-lost" tone="error" onDismiss={handleDismiss}>
+        <ContentOverlay
+          className="terminal-disconnect-overlay__body"
+          data-testid="terminal-session-lost"
+          icon={
+            <Unplug
+              size={16}
+              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+            />
+          }
+          heading="Session lost"
+          subheading={`The connection was restored, but the live session could not be recovered. Its process has ended. ${SCROLLBACK_KEPT}`}
+          announce="assertive"
+          // Without a backend cause, the heading + subheading are announced.
+          announcement={sessionLostError ? `Session lost. ${sessionLostError}` : undefined}
+          describedBy={sessionLostError ? errorTextId : undefined}
+          autoFocusPrimaryAction={isActive}
+          actions={
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
+                onClick={handleStartNewShell}
+                data-testid="terminal-session-lost-new-shell-btn"
               >
-                <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
-                  {sessionLostError}
-                </span>
-              </div>
-            )}
-          </ContentOverlay>
-        </DisconnectOverlayCard>
-      </div>
+                Start new shell
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDismiss}
+                data-testid="terminal-disconnect-view-btn"
+              >
+                View scrollback
+              </Button>
+            </>
+          }
+        >
+          {sessionLostError && (
+            <div
+              className="terminal-disconnect-overlay__error-box"
+              data-testid="terminal-session-lost-error-box"
+            >
+              <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
+                {sessionLostError}
+              </span>
+            </div>
+          )}
+        </ContentOverlay>
+      </DisconnectStrip>
     );
   }
 
@@ -271,104 +283,31 @@ export function TerminalDisconnectOverlay({
   if (disconnectError) {
     const errorHeading = isAuthFailed ? "Authentication failed" : "Reconnect failed";
     return (
-      <div
-        className="terminal-disconnect-overlay terminal-disconnect-overlay--clear terminal-disconnect-overlay--error"
-        data-testid="terminal-disconnect-overlay"
-        data-variant="failed"
-        data-cause={cause}
-        {...TOAST_AVOID_PROPS}
-      >
-        <DisconnectOverlayCard onDismiss={handleDismiss}>
-          <ContentOverlay
-            className="terminal-disconnect-overlay__body"
-            icon={
-              <AlertTriangle
-                size={32}
-                className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
-              />
-            }
-            heading={errorHeading}
-            announce="assertive"
-            announcement={`${errorHeading}. ${disconnectError}`}
-            describedBy={errorTextId}
-            autoFocusPrimaryAction={isActive}
-            subheading={
-              isAuthFailed
-                ? `Check your credentials, then reconnect. ${SCROLLBACK_KEPT}`
-                : [
-                    isLinkDrop(cause) && cause ? disconnectCauseLine(cause, { device }) : null,
-                    "All reconnect attempts were exhausted.",
-                    SCROLLBACK_KEPT,
-                  ]
-                    .filter(Boolean)
-                    .join(" ")
-            }
-            actions={
-              <>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<RefreshCw size={14} />}
-                  onClick={handleReconnect}
-                  data-testid="terminal-disconnect-reconnect-btn"
-                >
-                  Try again
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleDismiss}
-                  data-testid="terminal-disconnect-view-btn"
-                >
-                  View scrollback
-                </Button>
-              </>
-            }
-          >
-            <div
-              className="terminal-disconnect-overlay__error-box"
-              data-testid="terminal-disconnect-error-box"
-            >
-              <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
-                {disconnectError}
-              </span>
-            </div>
-            {/* A rejected credential (SM-005): offer to enter a new one inline
-                rather than only re-sending the rejected one (#3089). */}
-            {isAuthFailed && <CredentialReentry tabId={tabId} />}
-          </ContentOverlay>
-        </DisconnectOverlayCard>
-      </div>
-    );
-  }
-
-  const copy = disconnectCopyFor(cause, exitInfo, device);
-
-  return (
-    <div
-      className="terminal-disconnect-overlay terminal-disconnect-overlay--clear"
-      data-testid="terminal-disconnect-overlay"
-      data-variant="disconnected"
-      data-cause={cause ?? "lost"}
-      {...TOAST_AVOID_PROPS}
-    >
-      <DisconnectOverlayCard
-        onDismiss={handleDismiss}
-        dismissLabel="Dismiss disconnect overlay and view scrollback"
-      >
+      <DisconnectStrip variant="failed" cause={cause} tone="error" onDismiss={handleDismiss}>
         <ContentOverlay
           className="terminal-disconnect-overlay__body"
           icon={
-            copy.clean ? (
-              <CheckCircle2 size={32} className="terminal-disconnect-overlay__icon" />
-            ) : (
-              <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
-            )
+            <AlertTriangle
+              size={16}
+              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+            />
           }
-          heading={copy.heading}
-          subheading={copy.subheading}
-          announce="polite"
+          heading={errorHeading}
+          announce="assertive"
+          announcement={`${errorHeading}. ${disconnectError}`}
+          describedBy={errorTextId}
           autoFocusPrimaryAction={isActive}
+          subheading={
+            isAuthFailed
+              ? `Check your credentials, then reconnect. ${SCROLLBACK_KEPT}`
+              : [
+                  isLinkDrop(cause) && cause ? disconnectCauseLine(cause, { device }) : null,
+                  "All reconnect attempts were exhausted.",
+                  SCROLLBACK_KEPT,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+          }
           actions={
             <>
               <Button
@@ -378,7 +317,7 @@ export function TerminalDisconnectOverlay({
                 onClick={handleReconnect}
                 data-testid="terminal-disconnect-reconnect-btn"
               >
-                Reconnect
+                Try again
               </Button>
               <Button
                 variant="secondary"
@@ -391,16 +330,82 @@ export function TerminalDisconnectOverlay({
             </>
           }
         >
-          {autoReconnectOff && (
-            <p
-              className="terminal-disconnect-overlay__note"
-              data-testid="terminal-disconnect-auto-reconnect-off"
-            >
-              {autoReconnectOffNote}
-            </p>
-          )}
+          <div
+            className="terminal-disconnect-overlay__error-box"
+            data-testid="terminal-disconnect-error-box"
+          >
+            <span id={errorTextId} className="terminal-disconnect-overlay__error-text">
+              {disconnectError}
+            </span>
+          </div>
+          {/* A rejected credential (SM-005): offer to enter a new one inline
+                rather than only re-sending the rejected one (#3089). */}
+          {isAuthFailed && <CredentialReentry tabId={tabId} />}
         </ContentOverlay>
-      </DisconnectOverlayCard>
-    </div>
+      </DisconnectStrip>
+    );
+  }
+
+  // A process that exits is not a lost connection (#5910): the heading, icon
+  // and action follow the kind of end.
+  const notice = sessionEndNoticeFor(cause, { transport, code: exitInfo?.code, device });
+  const EndIcon = END_ICONS[notice.kind];
+  const actionLabel = sessionEndActionLabel(notice.action);
+  const subheading = [notice.causeLine, SCROLLBACK_KEPT].filter(Boolean).join(" ");
+
+  return (
+    <DisconnectStrip
+      variant="disconnected"
+      cause={cause ?? "lost"}
+      tone={END_TONES[notice.kind]}
+      onDismiss={handleDismiss}
+      dismissLabel="Dismiss disconnect notice and view scrollback"
+    >
+      <ContentOverlay
+        className="terminal-disconnect-overlay__body"
+        icon={
+          <EndIcon
+            size={16}
+            className={`terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--${notice.kind}`}
+            data-testid={`terminal-disconnect-icon-${notice.kind}`}
+          />
+        }
+        heading={notice.heading}
+        subheading={subheading}
+        announce="polite"
+        autoFocusPrimaryAction={isActive}
+        actions={
+          <>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={notice.action === "restart" ? <RotateCcw size={14} /> : <RefreshCw size={14} />}
+              onClick={handleReconnect}
+              data-testid="terminal-disconnect-reconnect-btn"
+              data-action={notice.action}
+            >
+              {actionLabel}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleDismiss}
+              data-testid="terminal-disconnect-view-btn"
+            >
+              View scrollback
+            </Button>
+          </>
+        }
+      >
+        {autoReconnectOff && (
+          <p
+            className="terminal-disconnect-overlay__note"
+            data-testid="terminal-disconnect-auto-reconnect-off"
+          >
+            {autoReconnectOffNote}
+          </p>
+        )}
+      </ContentOverlay>
+    </DisconnectStrip>
   );
 }

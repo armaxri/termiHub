@@ -16,33 +16,96 @@
   font-size: var(--font-size-sm);
 }
 
-/* A session that ended keeps its scrollback readable around the notice (#5831,
-   R-028): no scrim or blur, the card sits at the top of the pane like the
-   reconnect strip and the view-mode banner, and pointer events reach the
-   terminal around it, so the last lines can be read, scrolled and selected
-   without dismissing the notice first. */
-.terminal-disconnect-overlay--clear {
-  justify-content: flex-start;
-  background: transparent;
-  backdrop-filter: none;
-  pointer-events: none;
-}
-
-.terminal-disconnect-overlay--clear .terminal-disconnect-overlay__card {
-  margin-top: var(--spacing-sm);
-  pointer-events: auto;
-}
-
-/* The notice card (#5619): holds the body and its dismiss control together, so
-   the "x" belongs to the notice instead of floating at the pane's corner. */
-.terminal-disconnect-overlay__card {
-  position: relative;
-  max-width: 460px;
-  margin: var(--spacing-lg);
+/* The session-end strip (#5908): a full-width notice pinned to the top of the
+   terminal slot, like the reconnect strip and the view-mode banner. It is not a
+   card over the output: it publishes its height as the slot's top-notice
+   inset, and the terminal starts below it, so no output line is covered and
+   every line stays readable and selectable. */
+.terminal-disconnect-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-float);
   background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+  border-bottom: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  /* UI typography, not the terminal's monospace (#5619): this is app chrome. */
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+}
+
+/* A dropped link or an unplugged device: the reconnect strip's warning tint. */
+.terminal-disconnect-strip--warning {
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--terminal-bg));
+  border-bottom-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+/* A failed reconnect or a lost session. */
+.terminal-disconnect-strip--error {
+  background: color-mix(in srgb, var(--color-error) 12%, var(--terminal-bg));
+  border-bottom-color: color-mix(in srgb, var(--color-error) 30%, transparent);
+}
+
+/* The shared ContentOverlay body laid out as a row: icon | heading, cause line
+   and extras | actions. Right padding keeps the text clear of the dismiss "x". */
+.terminal-disconnect-strip .ui-content-overlay {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--spacing-sm);
+  row-gap: 0;
+  max-width: none;
+  padding: var(--spacing-xs) calc(var(--spacing-md) + 24px) var(--spacing-xs) var(--spacing-md);
+  text-align: left;
+}
+
+.terminal-disconnect-strip .ui-content-overlay > * {
+  grid-column: 2;
+}
+
+.terminal-disconnect-strip .ui-content-overlay > .terminal-disconnect-overlay__icon {
+  grid-column: 1;
+  grid-row: 1;
+  margin-top: var(--spacing-xxs);
+}
+
+.terminal-disconnect-strip .ui-content-overlay > .ui-content-overlay__actions {
+  grid-column: 3;
+  grid-row: 1 / span 4;
+  align-self: center;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+.terminal-disconnect-strip .ui-content-overlay__heading {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+/* #5744: --text-secondary misses AA on the warning tint; the tint, border and
+   icon carry the cue. */
+.terminal-disconnect-strip .ui-content-overlay__subheading,
+.terminal-disconnect-strip .terminal-disconnect-overlay__note {
+  max-width: none;
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+}
+
+.terminal-disconnect-strip .terminal-disconnect-overlay__error-box {
+  margin-top: var(--spacing-xxs);
+}
+
+.terminal-disconnect-strip__dismiss {
+  top: var(--spacing-xxs);
+}
+
+/* A process end is calm, not a warning (#5910). */
+.terminal-disconnect-overlay__icon--exited,
+.terminal-disconnect-overlay__icon--ended,
+.terminal-disconnect-overlay__icon--user {
+  color: var(--text-secondary);
 }
 
 .terminal-disconnect-overlay__dismiss {

@@ -150,7 +150,8 @@ describe("TerminalDisconnectOverlay — the cause line (#5831)", () => {
       withExit(disconnected("unexpected"), { code: 3, reason: "dropped" })
     );
     expect(overlay.dataset.cause).toBe("exited");
-    expect(overlay.textContent).toContain("The process exited with code 3.");
+    // #5910: the heading says the process exited with its code.
+    expect(overlay.textContent).toContain("Process exited (code 3)");
     expect(container.querySelector("[data-testid='terminal-disconnect-auto-reconnect-off']")).toBe(
       null
     );
@@ -185,23 +186,22 @@ describe("TerminalDisconnectOverlay — the cause line (#5831)", () => {
     );
   });
 
-  it("has no scrim: the scrollback around the card stays readable and selectable", async () => {
+  it("has no scrim: it is a top strip that leaves the scrollback readable (#5908)", async () => {
     seedTab(SSH);
     const overlay = await renderWith(droppedWith("io_error"));
-    expect(overlay.classList).toContain("terminal-disconnect-overlay--clear");
+    expect(overlay.classList).toContain("terminal-disconnect-strip");
     expect(overlay.textContent).toContain("Scrollback is kept.");
     expect(overlay.textContent).not.toContain("choose View scrollback");
 
     const here = dirname(fileURLToPath(import.meta.url));
     const css = readFileSync(join(here, "TerminalDisconnectOverlay.css"), "utf8");
-    const rule = css.match(/\n\.terminal-disconnect-overlay--clear \{([^}]*)\}/)?.[1] ?? "";
-    expect(rule).toMatch(/background:\s*transparent/);
-    expect(rule).toMatch(/backdrop-filter:\s*none/);
-    expect(rule).toMatch(/pointer-events:\s*none/);
-    expect(rule).toMatch(/justify-content:\s*flex-start/);
-    expect(css).toMatch(
-      /\.terminal-disconnect-overlay--clear \.terminal-disconnect-overlay__card \{[^}]*pointer-events:\s*auto/
-    );
+    const rule = css.match(/\n\.terminal-disconnect-strip \{([^}]*)\}/)?.[1] ?? "";
+    // Pinned to the top edge across the full width; never stretched over the
+    // output and never a backdrop.
+    expect(rule).toMatch(/top:\s*0/);
+    expect(rule).toMatch(/left:\s*0/);
+    expect(rule).toMatch(/right:\s*0/);
+    expect(rule).not.toMatch(/(^|\s)(bottom|inset|backdrop-filter):/);
   });
 });
 
