@@ -18,6 +18,7 @@ import {
 } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
 import { newId } from "@/services/transport/ids";
+import { agentShellTabTitle, numberedTabTitle, shellTabName } from "@/utils/defaultTabTitle";
 
 /** Minimal agent state passed in during workspace launch to resolve agentRef tabs. */
 export interface AgentContext {
@@ -343,6 +344,11 @@ type ResolvedTab =
       workspaceAgentRef?: { agentId: string; definitionId: string };
       /** The tab opens the def's inline config (not a saved connection). */
       fromInlineConfig?: boolean;
+      /**
+       * Set when the def carries no title and the tab is a shell: the name the
+       * tab is numbered under once the whole layout is built (#5899).
+       */
+      defaultTitleBase?: string;
     }
   | {
       kind: "agent-error";
@@ -361,6 +367,38 @@ export function buildPanelTreeFromWorkspace(
   savedConnections: SavedConnection[],
   defaultShell: string,
   agentContext?: AgentContext
+): PanelNode {
+  const defaults = new Map<TerminalTab, string>();
+  const tree = buildPanelTree(layout, savedConnections, defaultShell, agentContext, defaults);
+  applyDefaultTitles([tree], defaults);
+  return tree;
+}
+
+/**
+ * Give every untitled shell tab of `trees` its default title (#5899): the
+ * shell's name, numbered like a tab opened by hand (`zsh`, `zsh 2`). Titles
+ * the layout already fixes (saved titles, connection names) are taken first,
+ * so a default name never duplicates one of them. Opening a workspace replaces
+ * every open tab, so only the layout's own tabs count.
+ */
+function applyDefaultTitles(trees: PanelNode[], defaults: Map<TerminalTab, string>): void {
+  if (defaults.size === 0) return;
+  const tabs = trees.flatMap((tree) => getAllWorkspaceLeafPanels(tree).flatMap((l) => l.tabs));
+  const taken = tabs.filter((tab) => !defaults.has(tab)).map((tab) => tab.title);
+  for (const tab of tabs) {
+    const base = defaults.get(tab);
+    if (base === undefined) continue;
+    tab.title = numberedTabTitle(base, taken);
+    taken.push(tab.title);
+  }
+}
+
+function buildPanelTree(
+  layout: WorkspaceLayoutNode,
+  savedConnections: SavedConnection[],
+  defaultShell: string,
+  agentContext: AgentContext | undefined,
+  defaults: Map<TerminalTab, string>
 ): PanelNode {
   if (layout.type === "leaf") {
     const panelId = generatePanelId();
@@ -383,7 +421,7 @@ export function buildPanelTreeFromWorkspace(
           ...importedTrustFields(tabDef, false),
         };
       }
-      return {
+      const tab: TerminalTab = {
         id: tabId,
         sessionId: null,
         title: resolved.title,
@@ -396,6 +434,8 @@ export function buildPanelTreeFromWorkspace(
         initialCommand: tabDef.initialCommand,
         ...importedTrustFields(tabDef, resolved.fromInlineConfig === true),
       };
+      if (resolved.defaultTitleBase !== undefined) defaults.set(tab, resolved.defaultTitleBase);
+      return tab;
     });
 
     // Mark first tab as active
@@ -416,7 +456,7 @@ export function buildPanelTreeFromWorkspace(
     id: generatePanelId(),
     direction: layout.direction,
     children: layout.children.map((child) =>
-      buildPanelTreeFromWorkspace(child, savedConnections, defaultShell, agentContext)
+      buildPanelTree(child, savedConnections, defaultShell, agentContext, defaults)
     ),
     ...(layout.sizes ? { sizes: [...layout.sizes] } : {}),
   };
@@ -538,22 +578,51 @@ function resolveTabConfig(
 
   // Fall back to inline config
   if (tabDef.inlineConfig) {
+    const config = tabDef.inlineConfig as ConnectionConfig;
+    const base = tabDef.title
+      ? undefined
+      : inlineShellTitleBase(config, defaultShell, agentContext);
     return {
       kind: "terminal",
-      config: tabDef.inlineConfig as ConnectionConfig,
-      title: tabDef.title ?? "Terminal",
-      connectionType: (tabDef.inlineConfig as ConnectionConfig).type ?? "local",
+      config,
+      title: tabDef.title ?? base ?? "Terminal",
+      connectionType: config.type ?? "local",
       fromInlineConfig: true,
+      ...(base !== undefined ? { defaultTitleBase: base } : {}),
     };
   }
 
   // Default: local shell
+  const base = tabDef.title ? undefined : shellTabName(defaultShell);
   return {
     kind: "terminal",
     config: { type: "local", config: { shell: defaultShell } },
-    title: tabDef.title ?? "Terminal",
+    title: tabDef.title ?? base ?? "Terminal",
     connectionType: "local",
+    ...(base !== undefined ? { defaultTitleBase: base } : {}),
   };
+}
+
+/**
+ * The default name of an untitled inline-config tab that opens a shell
+ * (#5899): a local shell reads its shell (`zsh`), a shell on a known agent
+ * `<agent> · <shell>` — the names #5829 gives such tabs when opened by hand.
+ * Any other inline config keeps no default name.
+ */
+function inlineShellTitleBase(
+  config: ConnectionConfig,
+  defaultShell: string,
+  agentContext: AgentContext | undefined
+): string | undefined {
+  const fields = (config.config ?? {}) as Record<string, unknown>;
+  const shell = typeof fields["shell"] === "string" ? fields["shell"] : undefined;
+  if (config.type === "local") return shellTabName(shell || defaultShell);
+  if (config.type === "remote-session" && (fields["sessionType"] ?? "shell") === "shell") {
+    const agentId = fields["agentId"];
+    const agent = agentContext?.agents.find((a) => a.id === agentId);
+    if (agent) return agentShellTabTitle(agent.name, shell);
+  }
+  return undefined;
 }
 
 /**
@@ -628,12 +697,14 @@ export function buildTabGroupsFromWorkspace(
   defaultShell: string,
   agentContext?: AgentContext
 ): TabGroup[] {
-  return tabGroupDefs.map((def) => {
-    const rootPanel = buildPanelTreeFromWorkspace(
+  const defaults = new Map<TerminalTab, string>();
+  const groups = tabGroupDefs.map((def) => {
+    const rootPanel = buildPanelTree(
       def.layout,
       savedConnections,
       defaultShell,
-      agentContext
+      agentContext,
+      defaults
     );
     const firstLeaf =
       rootPanel.type === "leaf" ? rootPanel : getAllWorkspaceLeafPanels(rootPanel)[0];
@@ -645,6 +716,11 @@ export function buildTabGroupsFromWorkspace(
       activePanelId: firstLeaf?.id ?? null,
     };
   });
+  applyDefaultTitles(
+    groups.map((g) => g.rootPanel),
+    defaults
+  );
+  return groups;
 }
 
 /** Collect all leaf panels from a PanelNode tree (used internally). */
