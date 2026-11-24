@@ -18,8 +18,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::config::{
-    Automation, AutomationLegacy, AutomationStep, AutomationTrigger, LegacySource,
-    TypeKeysChunk, TypingSpeed,
+    Automation, AutomationLegacy, AutomationStep, AutomationTrigger, LegacySource, TypeKeysChunk,
+    TypingSpeed,
 };
 use crate::macros::config::{Macro, MacroStore};
 use crate::utils::migrate::VersionedStore;

@@ -138,7 +138,10 @@ fn a_minimal_automation_has_no_triggers_and_is_armed() {
     assert!(a.legacy.is_none());
     let json = serde_json::to_value(&a).unwrap();
     for absent in ["triggersEnabled", "parameters", "legacy", "description"] {
-        assert!(json.get(absent).is_none(), "{absent} must be omitted: {json}");
+        assert!(
+            json.get(absent).is_none(),
+            "{absent} must be omitted: {json}"
+        );
     }
 }
 

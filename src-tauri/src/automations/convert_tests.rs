@@ -97,8 +97,7 @@ fn golden_output_reads_back_as_automations() {
         include_str!("testdata/collision.expected.json"),
     ] {
         let value: Value = serde_json::from_str(raw).unwrap();
-        let parsed: Vec<Automation> =
-            serde_json::from_value(value["automations"].clone()).unwrap();
+        let parsed: Vec<Automation> = serde_json::from_value(value["automations"].clone()).unwrap();
         assert_eq!(serde_json::to_value(&parsed).unwrap(), value["automations"]);
     }
 }
@@ -179,7 +178,10 @@ fn workflow_fields_carry_over() {
     assert_eq!(deploy.parameters, workflows[0].parameters);
     assert_eq!(deploy.description, workflows[0].description);
     assert_eq!(deploy.updated_at, workflows[0].updated_at);
-    assert!(!from_workflow(&workflows[1]).triggers_enabled, "disarmed stays disarmed");
+    assert!(
+        !from_workflow(&workflows[1]).triggers_enabled,
+        "disarmed stays disarmed"
+    );
     let legacy = deploy.legacy.unwrap();
     assert_eq!(legacy.from, LegacySource::Workflow);
     assert_eq!(legacy.version, WorkflowStore::CURRENT_VERSION);
