@@ -2153,6 +2153,22 @@ impl SessionManager {
     }
 
     /// Return the capabilities of an active session.
+    /// The algorithms an open session's SSH transport negotiated (#5896): a
+    /// direct SSH session's own, an agent-hosted one's asked of the agent.
+    /// `None` for an unknown or non-SSH session and an agent that predates it.
+    /// The connection is cloned out so the lookup never holds the lock while
+    /// the agent answers.
+    pub async fn ssh_algorithms(
+        &self,
+        session_id: &str,
+    ) -> Option<termihub_core::connection::SshNegotiatedAlgorithms> {
+        let connection = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(session_id)?.connection.clone()
+        };
+        connection.ssh_algorithms().await
+    }
+
     pub async fn session_capabilities(&self, session_id: &str) -> Option<Capabilities> {
         let sessions = self.sessions.lock().await;
         sessions

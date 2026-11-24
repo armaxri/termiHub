@@ -175,7 +175,26 @@ fn session_fixture() -> Value {
             &TerminalError::from_session_spawn(SessionError::classified(kind, message)),
         )
     };
+    // `get_ssh_algorithms` (#5896): a plain cipher with its MAC, an AEAD one
+    // whose MAC is an explicit `null`, and a session that reports none.
+    use termihub_core::connection::SshNegotiatedAlgorithms as Algorithms;
+    let ssh_algorithms = |name: &str, cipher: &str| {
+        wire(
+            name,
+            &Some(Algorithms::new(
+                "curve25519-sha256",
+                "rsa-sha2-512",
+                cipher,
+                "hmac-sha2-256-etm@openssh.com",
+            )),
+        )
+    };
     json!({
+        "sshAlgorithms": {
+            "withMac": ssh_algorithms("ssh algorithms", "aes256-ctr"),
+            "aead": ssh_algorithms("aead ssh algorithms", "chacha20-poly1305@openssh.com"),
+            "none": wire("no ssh algorithms", &None::<Algorithms>),
+        },
         "createConnection": wire("session id", &session_id),
         "connectFailures": {
             "refused": failure(
