@@ -151,6 +151,8 @@ struct ConnectedState {
     x11_forwarding: Option<crate::connection::X11ForwardingMode>,
     /// Why X11 is not active or fell back (#5601).
     x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
+    /// The algorithms the transport negotiated (#5896).
+    algorithms: Option<crate::connection::SshNegotiatedAlgorithms>,
     /// Why the shell channel ended on its own (#5696).
     end_cause: crate::connection::EndCauseSlot,
     /// The remote shell's exit status, when the server reported one (#5801).
@@ -990,6 +992,7 @@ impl ConnectionType for Ssh {
             prompt_settle,
             x11_forwarding: handle.x11_forwarding,
             x11_forwarding_reason: handle.x11_forwarding_reason,
+            algorithms: handle.algorithms,
             end_cause: handle.end_cause,
             exit_status: handle.exit_status,
         });
@@ -1119,6 +1122,10 @@ impl ConnectionType for Ssh {
     fn x11_forwarding_reason(&self) -> Option<crate::connection::X11ForwardingReason> {
         self.state.as_ref()?.x11_forwarding_reason
     }
+
+    async fn ssh_algorithms(&self) -> Option<crate::connection::SshNegotiatedAlgorithms> {
+        self.state.as_ref()?.algorithms.clone()
+    }
 }
 
 /// Drop the output sender so the session manager's pump sees EOF and ends the
@@ -1202,6 +1209,8 @@ mod tests {
         x11_forwarding: Option<crate::connection::X11ForwardingMode>,
         /// Reported as [`SshShellHandle::x11_forwarding_reason`] (#5601).
         x11_forwarding_reason: Option<crate::connection::X11ForwardingReason>,
+        /// Reported as [`SshShellHandle::algorithms`] (#5896).
+        algorithms: Option<crate::connection::SshNegotiatedAlgorithms>,
         /// Pre-recorded in [`SshShellHandle::end_cause`] (#5696).
         end_cause: Option<SessionEndCause>,
         /// Pre-recorded in [`SshShellHandle::exit_status`] (#5801).
@@ -1223,6 +1232,7 @@ mod tests {
                 script: None,
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
+                algorithms: None,
                 end_cause: None,
                 exit_status: None,
             }
@@ -1242,6 +1252,7 @@ mod tests {
                 script: None,
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
+                algorithms: None,
                 end_cause: None,
                 exit_status: None,
             }
@@ -1262,6 +1273,7 @@ mod tests {
                 script: None,
                 x11_forwarding: None,
                 x11_forwarding_reason: None,
+                algorithms: None,
                 end_cause: None,
                 exit_status: None,
             }
@@ -1365,6 +1377,7 @@ mod tests {
                 integration_typed: self.integration_typed,
                 x11_forwarding: self.x11_forwarding,
                 x11_forwarding_reason: self.x11_forwarding_reason,
+                algorithms: self.algorithms.clone(),
                 end_cause: {
                     let slot = crate::connection::EndCauseSlot::new();
                     if let Some(cause) = self.end_cause {
@@ -2701,6 +2714,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_negotiated_algorithms_are_reported_while_connected() {
+        use crate::connection::SshNegotiatedAlgorithms;
+        let algorithms = SshNegotiatedAlgorithms::new(
+            "curve25519-sha256",
+            "ssh-ed25519",
+            "chacha20-poly1305@openssh.com",
+            "hmac-sha2-256-etm@openssh.com",
+        );
+        let connector = MockSshConnector {
+            algorithms: Some(algorithms.clone()),
+            ..MockSshConnector::new()
+        };
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        assert_eq!(ssh.ssh_algorithms().await, None, "nothing before the connect");
+        ssh.connect(mock_settings()).await.unwrap();
+        assert_eq!(ssh.ssh_algorithms().await, Some(algorithms));
+        ssh.disconnect().await.unwrap();
+        assert_eq!(ssh.ssh_algorithms().await, None, "nothing after disconnect");
+    }
+
+    #[tokio::test]
     async fn no_x11_mode_without_x11_forwarding() {
         let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
         ssh.connect(mock_settings()).await.unwrap();
@@ -2988,6 +3022,7 @@ mod tests {
             prompt_settle: Arc::new(OutputSettle::new()),
             x11_forwarding: None,
             x11_forwarding_reason: None,
+            algorithms: None,
             end_cause: crate::connection::EndCauseSlot::new(),
             exit_status: shell_exit::ShellExitSlot::new(),
         }
