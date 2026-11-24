@@ -1,7 +1,7 @@
 /* Non-blocking reconnect strip (#5179): pinned to the top edge of the terminal
    slot instead of covering it, so the scrollback stays scrollable and selectable
-   while the reconnect runs. Sits beside the view-mode banner's look (which pins
-   to the bottom) so the two read as the same family of notices. */
+   while the reconnect runs. Shares the view-mode banner's look and edge (#5823)
+   so the two read as the same family of notices. */
 .terminal-reconnect-strip {
   position: absolute;
   top: 0;

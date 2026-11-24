@@ -1,6 +1,8 @@
 .terminal-search-bar {
   position: absolute;
-  top: 4px;
+  /* Below a top-of-slot notice (view-mode banner, reconnect strip) so it never
+     covers the notice's Reconnect / Cancel button (#5823). */
+  top: calc(4px + var(--terminal-top-notice-inset, 0px));
   right: 16px;
   z-index: var(--z-float);
   display: flex;
