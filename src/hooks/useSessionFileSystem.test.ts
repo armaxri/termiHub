@@ -1674,6 +1674,7 @@ describe("useSessionFileSystem — button + drop transfer contract (#3913)", () 
           direction: "download",
           name: "file.txt",
           path: "/remote/dir/file.txt",
+          localPath: "/local/save.txt",
         },
       });
       expect(vi.mocked(toast.dismiss)).toHaveBeenCalledWith("toast-1");
@@ -1980,6 +1981,7 @@ describe("useSessionFileSystem — folder in a Download selection (#3944)", () =
         direction: "download",
         name: "notes.txt",
         path: "/remote/dir/sub/notes.txt",
+        localPath: "/local/target/sub/notes.txt",
       },
     });
     expect(vi.mocked(toast.loading)).toHaveBeenCalledWith("Downloading sub…");
