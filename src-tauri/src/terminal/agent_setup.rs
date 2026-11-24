@@ -807,7 +807,8 @@ fn resolve_binary(
 /// binary installation, verification, and optional systemd service setup.
 /// It uses `set -e` for error handling and prints plain-ASCII progress
 /// markers (`[..]`, `[ok]`, `[error]`) via `printf '%s\n'` only, ending in one
-/// summary line: `Agent installed (v<x>) at <path>.` or
+/// summary line: `Agent v<x> installed at <path>.` (a branch build reads
+/// `v<x> (<branch>)`, a path under `$HOME` is shown as `~/…`, #5956) or
 /// `Agent setup failed: <reason>` (#5822).
 /// `binary_src` is where the agent binary was uploaded — inside a private
 /// upload dir validated by [`agent_install::parse_prepared_upload_dir`].
@@ -932,6 +933,14 @@ fi
 VERSION_LINE=$(printf '%s\n' "$VERSION_OUT" | head -n 1)
 VERSION=${VERSION_LINE#termihub-agent }
 VERSION=${VERSION#v}
+# A branch build reports "0.1.0 (branch: develop)": show it as "v0.1.0 (develop)".
+case "$VERSION" in
+    *" (branch: "*")")
+        BUILD_BRANCH=${VERSION#* (branch: }
+        VERSION_LABEL="v${VERSION%% *} (${BUILD_BRANCH%)})"
+        ;;
+    *) VERSION_LABEL="v$VERSION" ;;
+esac
 say "[ok] $VERSION_LINE"
 
 # --- Step 7: Optional systemd service ---
@@ -947,8 +956,15 @@ if [ "$INSTALL_SERVICE" = true ]; then
     say "[ok] Service started"
 fi
 
+# The summary names the path home-relative; the full one is printed above.
+SHOWN_PATH=$INSTALL_PATH
+if [ -n "$HOME" ] && [ "$HOME" != / ]; then
+    case "$INSTALL_PATH" in
+        "$HOME"/*) SHOWN_PATH="~${INSTALL_PATH#"$HOME"}" ;;
+    esac
+fi
 say ""
-say "Agent installed (v$VERSION) at $INSTALL_PATH. You can close this tab."
+say "Agent $VERSION_LABEL installed at $SHOWN_PATH. You can close this tab."
 "#;
 
 /// Inject commands into the visible terminal session via the SessionManager.
@@ -1136,7 +1152,7 @@ mod tests {
         assert!(script.contains("--version"));
         assert!(script.contains("=== termiHub Agent Setup ==="));
         assert!(script
-            .contains("Agent installed (v$VERSION) at $INSTALL_PATH. You can close this tab."));
+            .contains("Agent $VERSION_LABEL installed at $SHOWN_PATH. You can close this tab."));
         assert!(script.contains("Agent setup failed: $1"));
         assert!(script.contains("INSTALL_SERVICE=false"));
     }
