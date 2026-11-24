@@ -1527,6 +1527,44 @@ No slice imports `appStore.ts` at runtime, which `sliceImportCycle.test.ts` enfo
 that needs the live store reads it through `appStoreHandle.ts`, which `appStore.ts` binds right
 after `create`.
 
+### Scrollback replay and live output
+
+A tab that shows a session it did not create itself (a re-opened persistent session, a resumed
+agent session, a tab moved to another window, a window that regains a session) repaints the
+session's scrollback and then goes on with live output. The two are joined by **position**, never
+by comparing text, because output may repeat (#5990):
+
+```mermaid
+sequenceDiagram
+    participant A as Agent / backend
+    participant C as OutputCapture (per session)
+    participant D as terminalDispatcher
+    participant T as Terminal tab
+    T->>D: holdOutput (collect everything from here)
+    A->>C: output
+    C->>D: terminal-output {data, epoch, offset}
+    T->>C: scrollback (after it caught up with the agent's buffer)
+    C-->>T: {data, epoch, endOffset}
+    T->>T: repaint
+    T->>D: drain the hold, then subscribe
+    D->>T: chunks, skipping what lies before endOffset
+```
+
+- `OutputCapture` (`src-tauri/src/session/output_capture.rs`) numbers every byte a session emits and
+  keeps the last 1 MiB. A chunk's `offset` and a snapshot's `endOffset` are taken under its lock.
+- `epoch` grows with every new stream, so positions of a session created again under the same id are
+  never compared with those of the one before.
+- Every attach of a daemon-backed session makes the agent send the whole buffer again. Its first
+  chunk names the replay (`replay_id`, see [`connection.output`](remote-protocol.md#connectionoutput));
+  the I/O task records where it lands (`src-tauri/src/terminal/output_route.rs`) and the capture
+  starts the session's history over there, whichever action attached the session.
+- `session.getBuffer` says where the agent's buffer ends in what it sent since that replay. The
+  repaint waits (at most 2 s) until the capture is that far, so it does not end in the middle of a
+  buffer that is still arriving, and takes what came before the capture from a buffer configured
+  larger than it. An agent that does not say (before 0.45.0) gets the capture alone.
+- A resumed tab keeps its own scrollback until something replaces it, and sends what was typed while
+  it read the buffer once it is wired to the session.
+
 ### Terminal Rendering
 
 - **xterm.js** renders to `<canvas>`, not DOM elements

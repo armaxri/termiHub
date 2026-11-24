@@ -23,4 +23,16 @@ export type TerminalOutputEvent = { session_id: string,
  * (`src/services/events.ts`), so the generated type is overridden to
  * `string` to match the wire form rather than serde's default byte array.
  */
-data: string, };
+data: string, 
+/**
+ * Where `data` starts in the session's output stream (#5990): how many
+ * bytes this desktop received from the session before it. A tab that
+ * repainted a [`ScrollbackReplay`](super::output_capture::ScrollbackReplay)
+ * skips the part the replay already holds.
+ */
+offset: number, 
+/**
+ * Which output stream of the session `offset` is in: a session created
+ * again under the same id starts a new one at 0, with a larger epoch.
+ */
+epoch: number, };

@@ -6,6 +6,7 @@ import { currentSessionView } from "@/store/sessionBridge";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { resumedMarker } from "./dropCopy";
+import { NO_REPLAY, type ReplayEnd } from "./scrollbackReplay";
 
 /**
  * Who repaints an agent tab's scrollback after a reconnect (#5953).
@@ -26,6 +27,24 @@ export function backendRedriveSuppliesScrollback(tabId: string): boolean {
   return currentSessionView()[tabId]?.status === "reconnecting";
 }
 
+/** What {@link repaintIfResumed} did. */
+export interface ResumedRepaint {
+  /** Whether the backend resumed the tab's own session. */
+  resumed: boolean;
+  /** Where the repaint ends in the session's output stream (#5990). */
+  replayEnd: ReplayEnd;
+  /**
+   * What the user typed while the session's buffer was read. The tab is not
+   * wired to the session yet, so the caller sends it once it is.
+   */
+  typed: string[];
+  /**
+   * Set when the buffer has not arrived here yet and comes as live output: run
+   * it right before the first of that output, which replaces the scrollback.
+   */
+  beforeFirstOutput: (() => void) | null;
+}
+
 /**
  * After an agent tab's client reconnect, whether the backend resumed the tab's
  * own session instead of starting a new one (#5953) — and if so, repaint the
@@ -33,36 +52,61 @@ export function backendRedriveSuppliesScrollback(tabId: string): boolean {
  * mark the resume below it.
  *
  * The session daemon also re-forwards that buffer as live output on the
- * attach; the caller discards it before subscribing (`clearPendingOutput`), as
- * a persistent re-attach does. Returns whether the session was resumed.
+ * attach; the caller skips what the repaint holds (`replayEnd`), as a
+ * persistent re-attach does.
+ *
+ * The tab's own scrollback stays until something replaces it: a session that
+ * keeps no buffer, ended meanwhile, or whose buffer could not be read leaves it
+ * alone (#5990).
  */
 export async function repaintIfResumed(
   xterm: XTerm,
   sessionId: string,
   resetCommandMarks: () => void,
   isCanceled: () => boolean
-): Promise<boolean> {
-  let resumed = false;
+): Promise<ResumedRepaint> {
+  const repaint: ResumedRepaint = {
+    resumed: false,
+    replayEnd: NO_REPLAY,
+    typed: [],
+    beforeFirstOutput: null,
+  };
   try {
-    resumed = await takeResumedAgentSession(sessionId);
+    repaint.resumed = await takeResumedAgentSession(sessionId);
   } catch (err) {
     frontendLog("terminal", `resume check failed for ${sessionId}: ${errorMessage(err)}`);
-    return false;
+    return repaint;
   }
-  if (!resumed || isCanceled()) return resumed;
+  if (!repaint.resumed || isCanceled()) return repaint;
+  const marker = `\r\n\x1b[90m${resumedMarker(new Date())}\x1b[0m`;
+  // The raw buffer carries the OSC 133 marks: rebuild them, not duplicate.
+  const clear = () => {
+    resetCommandMarks();
+    xterm.reset();
+  };
+  // Only while the buffer is read: xterm also answers the queries in the buffer
+  // as data, and those must not reach the session as typed input.
+  const typing = xterm.onData((data) => repaint.typed.push(data));
   try {
-    const buffer = await getAgentSessionBuffer(sessionId);
-    if (isCanceled()) return resumed;
-    if (buffer.length > 0) {
-      // The raw buffer carries the OSC 133 marks: rebuild them, not duplicate.
-      resetCommandMarks();
-      xterm.reset();
-      await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+    const { data, coming, ...end } = await getAgentSessionBuffer(sessionId);
+    typing.dispose();
+    if (isCanceled()) return repaint;
+    if (data.length > 0) {
+      clear();
+      await new Promise<void>((resolve) => xterm.write(data, resolve));
+      repaint.replayEnd = end;
+    } else if (coming) {
+      repaint.beforeFirstOutput = () => {
+        clear();
+        xterm.writeln(marker);
+      };
     }
   } catch (err) {
     // The tab keeps its own scrollback; only the detached output is missing.
     frontendLog("terminal", `resumed-session buffer failed: ${errorMessage(err)}`);
+  } finally {
+    typing.dispose();
   }
-  xterm.writeln(`\r\n\x1b[90m${resumedMarker(new Date())}\x1b[0m`);
-  return resumed;
+  xterm.writeln(marker);
+  return repaint;
 }

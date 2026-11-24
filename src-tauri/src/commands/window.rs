@@ -390,19 +390,19 @@ pub(crate) fn send_handoff_to_window_for(
 /// Replay a session's ring-buffered scrollback so a freshly-created xterm in a
 /// destination window can repaint history after a re-parent.
 ///
-/// Returns the buffered bytes as a base64 (standard alphabet, padded) string
-/// (empty string when nothing has been captured yet or the session is unknown);
-/// the frontend decodes them in `src/services/api.ts`. base64 avoids the ~4–6x
-/// JSON number-array bloat on a buffer that can reach the 1 MiB ring-buffer
-/// ceiling (PERF-009). The backend session is never touched — this is a pure
+/// Returns the buffered bytes (empty when nothing has been captured yet or the
+/// session is unknown) and where they end in the session's output stream
+/// (#5990). The bytes cross IPC as a base64 (standard alphabet, padded) string,
+/// which the frontend decodes in `src/services/api.ts`: the ~4–6x JSON
+/// number-array bloat on a buffer that can reach the 1 MiB ring-buffer ceiling
+/// is avoided (PERF-009). The backend session is never touched — this is a pure
 /// read of the capture buffer.
 #[tauri::command]
 pub async fn replay_session_scrollback(
     session_id: String,
     manager: State<'_, SessionManager>,
-) -> Result<String, TerminalError> {
-    let bytes = manager.replay_scrollback(&session_id).await;
-    Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
+) -> Result<crate::session::output_capture::ScrollbackReplay, TerminalError> {
+    Ok(manager.replay_scrollback(&session_id).await)
 }
 
 /// The **calling** window agrees to a pending explicit quit (#4296): it had

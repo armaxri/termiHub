@@ -54,7 +54,9 @@ vi.mock("@/themes", () => ({
 }));
 
 const mockCreateTerminal = vi.fn();
-const mockGetAgentSessionBuffer = vi.fn().mockResolvedValue(new Uint8Array());
+const mockGetAgentSessionBuffer = vi
+  .fn()
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
 const mockCloseTerminal = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@/services/api", () => ({
@@ -76,7 +78,7 @@ vi.mock("@/services/events", () => ({
     subscribeOutput: (...args: unknown[]) => mockSubscribeOutput(...(args as [])),
     subscribeExit: (...args: unknown[]) => mockSubscribeExit(...(args as [])),
     clearPendingExit: vi.fn(),
-    clearPendingOutput: vi.fn(),
+    holdOutput: () => ({ drain: () => [], release: vi.fn() }),
   },
 }));
 

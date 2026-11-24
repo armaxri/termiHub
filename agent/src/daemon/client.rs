@@ -7,7 +7,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -220,13 +220,84 @@ pub struct DaemonClient {
     /// Notification channel to the transport loop.
     notification_tx: NotificationSender,
     /// Pending oneshot channel for a query_buffer response.
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
     /// Hook the reader runs when this session's backend exits on its own,
     /// installed via [`set_exit_hook`](Self::set_exit_hook) (#2381).
     on_exit: ExitHookSlot,
     /// Process list / kill (#3210) and monitoring (#3871) requests to the
     /// daemon, and whether the daemon serves them.
     features: FeatureChannels,
+}
+
+/// Gives a session's buffer to a [`BufferQuery`].
+type BufferReplySender = tokio::sync::oneshot::Sender<SessionBuffer>;
+
+/// A session's buffered output.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionBuffer {
+    pub data: Vec<u8>,
+    /// Where `data` ends in what was sent of the session; `None` for a session
+    /// without a buffer.
+    pub end: Option<BufferEnd>,
+}
+
+/// Where a buffer ends in the output sent to the desktop (#5990).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferEnd {
+    /// The replay the position counts from, `None` when the daemon had nothing
+    /// to send again on this attach.
+    pub replay_id: Option<u64>,
+    /// Bytes sent since.
+    pub position: u64,
+}
+
+/// The id of the next replay of this process.
+static NEXT_REPLAY_ID: AtomicU64 = AtomicU64::new(1);
+
+/// What was sent of a session's output on the current daemon connection
+/// (#5990). Only the connection's reader writes it, in the order it sends.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SentOutput(Arc<std::sync::Mutex<Sent>>);
+
+#[derive(Debug, Default)]
+struct Sent {
+    replay_id: Option<u64>,
+    bytes: u64,
+}
+
+impl SentOutput {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Sent> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A new connection sends from the start.
+    fn reset(&self) {
+        *self.lock() = Sent::default();
+    }
+
+    /// Live output of `len` bytes goes out.
+    fn live(&self, len: usize) {
+        self.lock().bytes += len as u64;
+    }
+
+    /// A replay of `len` bytes goes out; returns its id.
+    fn replay(&self, len: usize) -> u64 {
+        let id = NEXT_REPLAY_ID.fetch_add(1, Ordering::SeqCst);
+        *self.lock() = Sent {
+            replay_id: Some(id),
+            bytes: len as u64,
+        };
+        id
+    }
+
+    /// Where a buffer ends that the daemon sent after everything so far.
+    fn end(&self) -> BufferEnd {
+        let sent = self.lock();
+        BufferEnd {
+            replay_id: sent.replay_id,
+            position: sent.bytes,
+        }
+    }
 }
 
 /// The request channels of the daemon's optional features, shared between a
@@ -246,6 +317,8 @@ pub(crate) struct FeatureChannels {
     /// The session's output flow: the desktop's pause plus the byte budget of
     /// output queued on the transport (#4439). Outlives reconnects.
     pub output_budget: OutputBudget,
+    /// What was sent of the session's output on this connection (#5990).
+    pub sent: SentOutput,
     /// The algorithms the session's SSH transport negotiated, as the daemon
     /// reported them in [`MSG_SSH_ALGORITHMS`] (#5896).
     pub ssh_algorithms: Arc<std::sync::Mutex<Option<SshNegotiatedAlgorithms>>>,
@@ -255,6 +328,7 @@ impl FeatureChannels {
     /// Forget what the previous connection's daemon served and fail every
     /// request sent over it — none of them will be answered.
     fn reset(&self) {
+        self.sent.reset();
         self.processes.set_supported(false);
         self.processes.fail_all();
         self.monitoring.set_supported(false);
@@ -378,7 +452,7 @@ impl DaemonClient {
         notification_tx: NotificationSender,
         for_recovery: bool,
     ) -> Result<Self, anyhow::Error> {
-        let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
+        let pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>> =
             Arc::new(Mutex::new(None));
         let on_exit: ExitHookSlot = Arc::new(OnceLock::new());
         let writer: DaemonWriterHandle = Arc::new(Mutex::new(None));
@@ -439,7 +513,7 @@ impl DaemonClient {
     /// The session manager runs a [`buffer_query`](Self::buffer_query) instead,
     /// outside its lock (#4286).
     #[cfg(test)]
-    pub async fn query_buffer(&self) -> Result<Vec<u8>, anyhow::Error> {
+    pub async fn query_buffer(&self) -> Result<SessionBuffer, anyhow::Error> {
         self.buffer_query().run().await
     }
 
@@ -734,7 +808,7 @@ impl DaemonClient {
 /// [`DaemonClient::buffer_query`]), runnable without borrowing the client.
 pub struct BufferQuery {
     writer: DaemonWriterHandle,
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
 }
 
 /// Longest [`BufferQuery::run`] waits for the daemon's `MSG_BUFFER_REPLAY`.
@@ -746,7 +820,7 @@ impl BufferQuery {
     ///
     /// The client has a single reply slot, so queries of one session must not
     /// overlap; the session manager runs them one at a time per session.
-    pub async fn run(self) -> Result<Vec<u8>, anyhow::Error> {
+    pub async fn run(self) -> Result<SessionBuffer, anyhow::Error> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             *self.pending_buffer_reply.lock().await = Some(tx);
@@ -823,7 +897,7 @@ pub struct ReconnectJob {
     endpoint: String,
     session_id: String,
     notification_tx: NotificationSender,
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
     on_exit: ExitHookSlot,
     writer: DaemonWriterHandle,
     evicted: Arc<AtomicBool>,
@@ -1117,7 +1191,7 @@ async fn connect_and_start_reader(
     endpoint: &str,
     session_id: &str,
     notification_tx: NotificationSender,
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
     on_exit: ExitHookSlot,
     mode: ConnectMode,
     eviction: EvictionSink,
@@ -1169,10 +1243,11 @@ async fn connect_and_start_reader(
                 MSG_BUFFER_REPLAY => {
                     // Send as connection.output if non-empty
                     if !frame.payload.is_empty() {
-                        send_output_notification(
+                        send_replay_notification(
                             &notification_tx,
                             session_id,
                             &frame.payload,
+                            features.sent.replay(frame.payload.len()),
                             Some(&features.output_budget),
                         );
                     }
@@ -1351,7 +1426,7 @@ async fn reader_loop(
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
     on_exit: ExitHookSlot,
 ) {
     reader_loop_inner(
@@ -1436,7 +1511,7 @@ async fn reader_loop_inner(
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
     on_exit: ExitHookSlot,
     eviction: Option<&EvictionSink>,
     features: Option<&FeatureChannels>,
@@ -1466,7 +1541,7 @@ async fn read_frames(
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
-    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>>,
     on_exit: ExitHookSlot,
     eviction: Option<&EvictionSink>,
     features: Option<&FeatureChannels>,
@@ -1488,6 +1563,9 @@ async fn read_frames(
         match next {
             Ok(Some(frame)) => match frame.msg_type {
                 MSG_OUTPUT => {
+                    if let Some(features) = features {
+                        features.sent.live(frame.payload.len());
+                    }
                     send_output_notification(
                         notification_tx,
                         session_id,
@@ -1503,12 +1581,18 @@ async fn read_frames(
                         guard.take()
                     };
                     if let Some(sender) = pending {
-                        let _ = sender.send(frame.payload);
+                        // The daemon answered after everything read so far.
+                        let _ = sender.send(SessionBuffer {
+                            data: frame.payload,
+                            end: features.map(|f| f.sent.end()),
+                        });
                     } else if !frame.payload.is_empty() {
-                        send_output_notification(
+                        let sent = features.map(|f| f.sent.clone()).unwrap_or_default();
+                        send_replay_notification(
                             notification_tx,
                             session_id,
                             &frame.payload,
+                            sent.replay(frame.payload.len()),
                             features.map(|f| &f.output_budget),
                         );
                     }
@@ -1662,8 +1746,30 @@ pub(crate) fn send_output_notification(
     data: &[u8],
     budget: Option<&OutputBudget>,
 ) {
+    send_output_chunks(tx, session_id, data, budget, None);
+}
+
+/// [`send_output_notification`] for the session's whole buffer, sent again on
+/// an attach: its first chunk carries the replay's id (#5990).
+fn send_replay_notification(
+    tx: &NotificationSender,
+    session_id: &str,
+    data: &[u8],
+    replay_id: u64,
+    budget: Option<&OutputBudget>,
+) {
+    send_output_chunks(tx, session_id, data, budget, Some(replay_id));
+}
+
+fn send_output_chunks(
+    tx: &NotificationSender,
+    session_id: &str,
+    data: &[u8],
+    budget: Option<&OutputBudget>,
+    replay_id: Option<u64>,
+) {
     let b64 = base64::engine::general_purpose::STANDARD;
-    for chunk in data.chunks(65536) {
+    for (i, chunk) in data.chunks(65536).enumerate() {
         // `into_params` moves the encoded chunk into the params object, so
         // this builds no more than the old `json!` did (#3759).
         let notification = charged(
@@ -1672,6 +1778,7 @@ pub(crate) fn send_output_notification(
                 ConnectionOutputNotification {
                     session_id: session_id.to_owned(),
                     data: b64.encode(chunk),
+                    replay_id: replay_id.filter(|_| i == 0),
                 }
                 .into_params(),
             ),
@@ -1799,7 +1906,7 @@ mod tests {
                 .unwrap();
         });
 
-        let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
+        let pending_buffer_reply: Arc<Mutex<Option<BufferReplySender>>> =
             Arc::new(Mutex::new(None));
         let notification_tx = make_notification_tx();
 
@@ -1837,7 +1944,7 @@ mod tests {
         let writer_arc: Arc<Mutex<Option<BoxedWriter>>> = Arc::new(Mutex::new(Some(writer)));
 
         // Set up a pending reply channel manually
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<SessionBuffer>();
         *pending_buffer_reply.lock().await = Some(reply_tx);
 
         // Send MSG_QUERY_BUFFER via the writer
@@ -1856,7 +1963,7 @@ mod tests {
             .await
             .expect("reply timed out")
             .expect("channel closed");
-        assert_eq!(reply, b"buffered output");
+        assert_eq!(reply.data, b"buffered output");
 
         reader_task.abort();
     }
@@ -2456,6 +2563,45 @@ mod tests {
 
     fn legacy_wire(method: &str, params: serde_json::Value) -> String {
         wire(&JsonRpcNotification::new(method, params))
+    }
+
+    /// #5990: where a buffer ends counts from the last replay of this connection.
+    #[test]
+    fn a_buffer_end_counts_from_the_last_replay_of_the_connection() {
+        let features = FeatureChannels::default();
+        let end = |features: &FeatureChannels| {
+            let BufferEnd {
+                replay_id,
+                position,
+            } = features.sent.end();
+            (replay_id, position)
+        };
+        features.sent.live(5);
+        assert_eq!(end(&features), (None, 5));
+        let first = features.sent.replay(7);
+        features.sent.live(3);
+        assert_eq!(end(&features), (Some(first), 10));
+        let second = features.sent.replay(4);
+        assert!(second > first);
+        assert_eq!(end(&features), (Some(second), 4));
+        // A new connection that has nothing to send again counts from its start.
+        features.reset();
+        features.sent.live(2);
+        assert_eq!(end(&features), (None, 2));
+    }
+
+    /// #5990: only the first chunk of a replay is marked, and live output never.
+    #[test]
+    fn a_replay_is_marked_on_its_first_chunk_only() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let big = vec![b'x'; 150_000];
+        send_replay_notification(&tx, "s", &big, 9, None);
+        send_output_notification(&tx, "s", &big, None);
+        let mut marks = Vec::new();
+        while let Ok(n) = rx.try_recv() {
+            marks.push(n.params.get("replay_id").and_then(|id| id.as_u64()));
+        }
+        assert_eq!(marks, [Some(9), None, None, None, None, None]);
     }
 
     #[test]

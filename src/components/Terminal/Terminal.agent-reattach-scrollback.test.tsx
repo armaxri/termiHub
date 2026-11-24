@@ -77,7 +77,9 @@ vi.mock("@/themes", () => ({
 }));
 
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
-const mockGetAgentSessionBuffer = vi.fn().mockResolvedValue(new Uint8Array());
+const mockGetAgentSessionBuffer = vi
+  .fn()
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
 vi.mock("@/services/api", () => ({
   createTerminal: (...a: unknown[]) => mockCreateTerminal(...a),
   cancelConnecting: vi.fn().mockResolvedValue(undefined),
@@ -87,7 +89,9 @@ vi.mock("@/services/api", () => ({
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: (...a: unknown[]) => mockGetAgentSessionBuffer(...a),
-  replaySessionScrollback: vi.fn().mockResolvedValue(new Uint8Array()),
+  replaySessionScrollback: vi
+    .fn()
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false }),
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
 }));
 
@@ -99,14 +103,13 @@ const mockSubscribeOutput = vi.fn((sid: string, cb: (data: Uint8Array) => void) 
   return vi.fn();
 });
 const mockSubscribeExit = vi.fn(() => vi.fn());
-const mockClearPendingOutput = vi.fn();
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
     subscribeOutput: (...a: unknown[]) => mockSubscribeOutput(...(a as [string, () => void])),
     subscribeExit: (...a: unknown[]) => mockSubscribeExit(...(a as [])),
     clearPendingExit: vi.fn(),
-    clearPendingOutput: (...a: unknown[]) => mockClearPendingOutput(...(a as [])),
+    holdOutput: () => ({ drain: () => [], release: vi.fn() }),
   },
 }));
 vi.mock("@/services/keybindings", () => ({
@@ -136,7 +139,6 @@ beforeEach(() => {
   mockGetAgentSessionBuffer.mockClear();
   mockSubscribeOutput.mockClear();
   mockSubscribeExit.mockClear();
-  mockClearPendingOutput.mockClear();
   for (const key of Object.keys(outputCallbacks)) delete outputCallbacks[key];
   xtermInstances.length = 0;
   transport = new FakeSessionTransport();

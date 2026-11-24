@@ -42,7 +42,7 @@ use termihub_core::session::registry::{Reservations, Sessions};
 
 use crate::daemon::client::{
     evicted_notification, DaemonClient, DaemonWriterHandle, DetachJob, ExitHook, ExitHookFuture,
-    OwnedByLivePeer, ProbeOutcome, EVICTED_REASON_HELD_BY_PEER,
+    OwnedByLivePeer, ProbeOutcome, SessionBuffer, EVICTED_REASON_HELD_BY_PEER,
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::session::orphan_sweep::{self, OrphanSweepConfig, OrphanSweepReport};
@@ -285,7 +285,7 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     }
 
     /// Return the current scrollback buffer for a session (daemon-backed only).
-    async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String>;
+    async fn get_buffer(&self, session_id: &str) -> Result<SessionBuffer, String>;
 
     /// Update the ring-buffer size used for future daemon spawns.
     async fn set_persistent_buffer_size_bytes(&self, bytes: usize);
@@ -1335,14 +1335,14 @@ impl SessionManager {
     ///
     /// The daemon round trip runs outside the sessions lock (#4286), in this
     /// session's turn, so a daemon slow to answer holds up only this session.
-    pub async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
+    pub async fn get_buffer(&self, session_id: &str) -> Result<SessionBuffer, String> {
         let turn = self.take_turn(session_id).await.ok_or_else(not_found)?;
         let query = {
             let mut sessions = self.sessions.lock().await;
             let info = turn_entry(&mut sessions, session_id, &turn).ok_or_else(not_found)?;
             match &info.backend {
                 SessionBackend::Daemon(client) => client.buffer_query(),
-                _ => return Ok(Vec::new()),
+                _ => return Ok(SessionBuffer::default()),
             }
         };
         query.run().await.map_err(|e| e.to_string())
@@ -3194,7 +3194,7 @@ impl SessionManagerApi for SessionManager {
         Ok(())
     }
 
-    async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
+    async fn get_buffer(&self, session_id: &str) -> Result<SessionBuffer, String> {
         SessionManager::get_buffer(self, session_id).await
     }
 
@@ -5159,7 +5159,7 @@ mod tests {
         // Stub sessions return empty buffer
         let result = mgr.get_buffer(&session_id).await;
         assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        assert!(result.unwrap() == SessionBuffer::default());
     }
 
     // ── Natural-exit status settling (issue #2369) ────────────────────

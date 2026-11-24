@@ -8,8 +8,6 @@
 //! the generic `ConnectionConfig` persistence struct, and re-exports of core
 //! config types used across the desktop crate.
 
-use std::sync::mpsc;
-
 use serde::{Deserialize, Serialize};
 
 use crate::utils::expand::expand_config_value;
@@ -439,19 +437,7 @@ pub struct RemoteStateChangeEvent {
 /// share a single source of truth.
 pub use termihub_core::output::OUTPUT_CHANNEL_CAPACITY;
 
-/// Channel sender the agent I/O task delivers an agent-hosted session's output
-/// on (#4416).
-///
-/// Deliberately **unbounded**, so the I/O task — which serves every session,
-/// request and reply of one agent connection — never blocks and never drops a
-/// chunk: a `send` only fails once the session's receiver is gone. Memory stays
-/// bounded because the receiving side ([`RemoteProxy`]'s bridge into the
-/// session's bounded output channel) applies backpressure, and a paused
-/// terminal pauses the agent itself (`connection.output_flow`), so at most the
-/// output already in flight when the pause landed queues here.
-///
-/// [`RemoteProxy`]: crate::session::remote_proxy::RemoteProxy
-pub type OutputSender = mpsc::Sender<Vec<u8>>;
+pub use super::output_route::{OutputPosition, OutputSender};
 
 #[cfg(test)]
 mod tests {
