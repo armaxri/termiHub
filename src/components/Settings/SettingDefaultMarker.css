@@ -1,12 +1,10 @@
-/* Label-row marker of a setting that follows a built-in default (#5632): a
-   small outlined "Default" tag, or a "Reset to default" ghost button once the
-   value is overridden. Pushed to the row's right edge so it lines up with the
-   end of the full-width control below. */
+/* Label-row marker of a setting that follows a built-in default (#5632,
+   #5843). At the default it is plain muted text — no border, no fill — so it
+   reads as a status, never as a button; once the value is overridden it
+   becomes a labelled "Reset to default" ghost button. Pushed to the row's
+   right edge. */
 .settings-default-marker__tag {
   margin-left: auto;
-  padding: 0 var(--spacing-xs);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   line-height: 1.6;
   color: var(--text-secondary);
@@ -14,6 +12,19 @@
 
 .settings-default-marker__reset {
   margin-left: auto;
+}
+
+/* The "?" beside a label (#5843): a small icon button just after the label
+   text; its tooltip carries the setting's longer explanation. */
+.settings-help-tip.ui-btn {
+  margin-left: var(--spacing-xs);
+  color: var(--text-secondary);
+}
+
+.settings-help-tip__content {
+  display: block;
+  max-width: var(--settings-help-tip-max-width);
+  white-space: normal;
 }
 
 /* An unset text setting's placeholder names the default; italic keeps it from

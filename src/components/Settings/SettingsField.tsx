@@ -4,6 +4,7 @@ import { Field } from "../ui/Field";
 import type { FieldHintVariant } from "../ui/Field";
 import { Button } from "../ui/Button";
 import { Toggle } from "../ui/Toggle";
+import { SettingsHelpTip } from "./SettingsHelpTip";
 import { SETTINGS_FIELD_ATTR, SettingsSavedMark, useSavedFieldId } from "./settingsSavedAck";
 
 /** Visual variant applied to the field's hint text. */
@@ -68,6 +69,13 @@ export interface SettingsFieldProps {
    * kept off the control row so every control spans the same width (#5632).
    */
   labelAccessory?: ReactNode;
+  /**
+   * Longer explanation behind a "?" beside the label (#5843). Keep `hint` to
+   * one short line and put limits, retention or long lists here instead.
+   */
+  help?: ReactNode;
+  /** Test id of the "?" button ({@link SettingsHelpTip}). */
+  helpTestId?: string;
 }
 
 /**
@@ -86,17 +94,25 @@ export function SettingsField({
   children,
   layout,
   labelAccessory,
+  help,
+  helpTestId,
 }: SettingsFieldProps): ReactElement {
   // Lets the panel show its "Saved" tick beside this field's label once an
   // edit made here has been auto-saved (#5562).
   const fieldId = useId();
   const saved = useSavedFieldId() === fieldId;
+  const hasHelp = help !== undefined && help !== null && help !== false;
   return (
     <Field
       {...{ [SETTINGS_FIELD_ATTR]: fieldId }}
       labelAccessory={
-        saved || labelAccessory ? (
+        saved || labelAccessory || hasHelp ? (
           <>
+            {hasHelp && (
+              <SettingsHelpTip name={label} data-testid={helpTestId}>
+                {help}
+              </SettingsHelpTip>
+            )}
             {saved && <SettingsSavedMark />}
             {labelAccessory}
           </>
