@@ -1,24 +1,24 @@
 /**
  * The "Run local process" step stays behind the experimental switch (#5818,
- * maintainer decision 2026-11-23), and a schedule runs unattended: with the
- * switch off, a schedule never runs an automation that can reach that step.
- * The schedule editor, the schedules list and the runtime share this one rule.
+ * maintainer decision 2026-11-23): with the switch off, nothing runs an
+ * automation that can reach that step, whatever starts the run (#5988). The
+ * run entry points, the schedule editor and the schedules list share this rule.
  */
 import { reachesLocalProcess } from "@/services/automationRunner";
 import type { Automation } from "@/types/generated/Automation";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 
-/** Why such a schedule does not run. */
-export const SCHEDULE_LOCAL_PROCESS_REASON =
+/** Why such a run does not start. */
+export const LOCAL_PROCESS_REASON =
   `Will not run: it runs a local process, which is experimental. ` +
-  `Turn on ${EXPERIMENTAL_SETTING_PATH} to schedule it.`;
+  `Turn on ${EXPERIMENTAL_SETTING_PATH} to run it.`;
 
-/** The reason a schedule must not run `automation`, or `null` when it may. */
-export function scheduleBlockedReason(
+/** The reason `automation` must not run, or `null` when it may. */
+export function localProcessBlockedReason(
   automation: Automation,
   resolve: (id: string) => Automation | undefined,
   experimental: boolean
 ): string | null {
   if (experimental || !reachesLocalProcess(automation, resolve)) return null;
-  return SCHEDULE_LOCAL_PROCESS_REASON;
+  return LOCAL_PROCESS_REASON;
 }

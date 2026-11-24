@@ -27,16 +27,14 @@ export interface RunLocalProcessArgs {
   program: string;
   /** Discrete argument vector (never concatenated into a command line). */
   args: string[];
-  /** The run was started by a schedule; the backend then also requires experimental features. */
-  scheduled?: boolean;
   /** Optional timeout in ms; the backend applies a default and a hard cap. */
   timeoutMs?: number;
 }
 
 /**
  * Spawn a guarded local process and resolve its outcome once it finishes. The
- * backend re-checks the master opt-in and rejects if it is disabled, so a
- * disabled setting surfaces as a rejected promise here.
+ * backend re-checks the experimental switch and the master opt-in and rejects
+ * if either is off, so a disabled setting surfaces as a rejected promise here.
  */
 export async function invokeRunLocalProcess(
   args: RunLocalProcessArgs
@@ -46,7 +44,6 @@ export async function invokeRunLocalProcess(
     program: args.program,
     args: args.args,
     timeoutMs: args.timeoutMs ?? null,
-    scheduled: args.scheduled ?? false,
   });
 }
 

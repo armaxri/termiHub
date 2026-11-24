@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
-import { SCHEDULE_LOCAL_PROCESS_REASON, scheduleBlockedReason } from "./scheduleLocalProcessGate";
+import { LOCAL_PROCESS_REASON, localProcessBlockedReason } from "./localProcessGate";
 
 const lp: AutomationStep = { kind: "run-local-process", program: "make", args: [] };
 const call = (automationId: string): AutomationStep => ({ kind: "run-automation", automationId });
@@ -15,11 +15,11 @@ const automation = (id: string, steps: AutomationStep[]): Automation => ({
   updatedAt: "",
 });
 const reason = (library: Automation[], experimental = false) =>
-  scheduleBlockedReason(library[0], (id) => library.find((a) => a.id === id), experimental);
+  localProcessBlockedReason(library[0], (id) => library.find((a) => a.id === id), experimental);
 
-describe("scheduleBlockedReason", () => {
+describe("localProcessBlockedReason", () => {
   it("blocks the step unless experimental features are on", () => {
-    expect(reason([automation("a", [lp])])).toBe(SCHEDULE_LOCAL_PROCESS_REASON);
+    expect(reason([automation("a", [lp])])).toBe(LOCAL_PROCESS_REASON);
     expect(reason([automation("a", [lp])], true)).toBeNull();
     expect(reason([automation("a", [{ kind: "wait", delayMs: 1 }])])).toBeNull();
   });

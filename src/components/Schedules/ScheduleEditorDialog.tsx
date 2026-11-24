@@ -34,7 +34,7 @@ import {
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { t } from "@/i18n/catalog";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
+import { localProcessBlockedReason } from "@/utils/localProcessGate";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
 import "./Schedules.css";
 
@@ -169,7 +169,7 @@ export function ScheduleEditorDialog({
   const blockedReason = (id: string): string | null => {
     const find = (x: string) => automations.find((a) => a.id === x);
     const automation = find(id);
-    return automation ? scheduleBlockedReason(automation, find, experimental) : null;
+    return automation ? localProcessBlockedReason(automation, find, experimental) : null;
   };
   const blockedPick = blockedReason(watched.automationId);
   const storedPick = watched.automationId === schedule?.action.automationId;

@@ -42,6 +42,12 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { AnsiStreamStripper } from "@/utils/stripAnsi";
 
+import {
+  experimentalFeaturesOn,
+  localProcessRefusal,
+  localProcessRefusalToastId,
+} from "../localProcessRefusal";
+import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { AppState } from "../appStore";
 import { currentSettingsView } from "../settingsBridge";
 import {
@@ -230,6 +236,14 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     sessionless,
   } = run;
   const workflowId = workflow.id;
+  // The one place every run that can spawn a local process goes through: refuse
+  // it whole rather than half-way, whichever entry point started it (#5988).
+  // The entry points check first, before they prompt or connect anything.
+  const refusal = localProcessRefusal(get(), workflow);
+  if (refusal) {
+    frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
+    return { status: "failed", stepsCompleted: 0, error: refusal };
+  }
   // This run's key in the workflow-run region (#3418): concurrent targets of a
   // fan-out each get their own entry, progressing and settling independently.
   const runId = newId("wfrun");
@@ -252,16 +266,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // other untrusted program.
   const askAuthorization = async (program: string, args: string[]): Promise<boolean> => {
     const settings = currentSettingsView();
-    // The step is experimental and a scheduled run is unattended (#5818). The
-    // schedule was checked before it started; this catches an automation or a
-    // setting that changed while it runs. The backend checks it once more.
-    if (triggeredBy === "scheduled" && settings.experimentalFeaturesEnabled !== true) {
-      frontendLog(
-        "workflow",
-        `scheduled run refused local program (experimental features are off): ${program}`
-      );
-      return false;
-    }
     if (!settings.workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
         description:
@@ -298,6 +302,18 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     return true;
   };
   const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = (program, args) => {
+    // The run was checked before it started; this catches an automation or the
+    // switch that changed while it runs (#5988). Before the shared decisions, so
+    // a fan-out cannot reuse one made while the switch was on. The backend
+    // checks it once more.
+    if (!experimentalFeaturesOn()) {
+      frontendLog("workflow", `refused local program (experimental features are off): ${program}`);
+      toast.error("Local process was not run", {
+        id: localProcessRefusalToastId(workflowId),
+        description: LOCAL_PROCESS_REASON,
+      });
+      return Promise.resolve(false);
+    }
     // A fan-out shares one decision per program + args across its targets.
     const key = JSON.stringify([program, ...args]);
     const shared = fanout?.authDecisions?.get(key);
@@ -363,7 +379,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         runId: processRunId,
         program,
         args,
-        scheduled: triggeredBy === "scheduled",
         timeoutMs: LOCAL_PROCESS_TIMEOUT_MS,
       });
       frontendLog(

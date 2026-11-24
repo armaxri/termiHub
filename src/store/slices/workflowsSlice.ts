@@ -15,6 +15,8 @@ import type { WorkflowParamValues } from "@/services/workflowRunner";
 import { Workflow, WorkflowParameter, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
+import { localProcessRefusal, localProcessRefusalToastId } from "../localProcessRefusal";
+import { frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "../appStore";
 import { getActiveTab } from "../layoutHelpers";
 import { automationToWorkflow, isMacroShaped, workflowToAutomation } from "./automationViews";
@@ -366,6 +368,18 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     if (workflow.steps.length === 0) {
       // toast-policy: explains-outcome — nothing runs, and this says why
       toast.info(`Workflow "${workflow.name}" has no steps to run`);
+      return;
+    }
+
+    // Run local process is experimental (#5988): refused before the parameter
+    // prompt, before a running run is superseded and before anything is typed.
+    const refusal = localProcessRefusal(state, workflow);
+    if (refusal) {
+      frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
+      toast.error(`Workflow "${workflow.name}" was not run`, {
+        id: localProcessRefusalToastId(workflow.id),
+        description: refusal,
+      });
       return;
     }
 

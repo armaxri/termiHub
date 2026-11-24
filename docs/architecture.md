@@ -2161,11 +2161,19 @@ sequenceDiagram
   local program makes it skip/fail), and never while another run or macro playback is active in
   that window. The window resolves the automation (`fetchAutomationForRun`); a typing-only one
   plays like a macro, any other runs per target like a workflow, and either is recorded in the
-  automation run history with the `scheduled` origin; with experimental features off, one that can reach a "Run local process" step (nested or through
-  `run-automation`) is refused before anything is connected or typed
-  (`src/utils/scheduleLocalProcessGate.ts`), again at the spawn authorization
-  (`workflowRunOnTarget.ts`) and in the backend (`run_local_process`, `authorize_spawn`); a missing one is skipped with "The
+  automation run history with the `scheduled` origin; one that the local-process gate refuses (below)
+  is skipped with the reason, before anything is connected or typed; a missing one is skipped with
+  "The
   automation no longer exists"; the status bar shows "N schedules active".
+- **Run local process is experimental** (#5988) — with "Allow experimental features" off, no run
+  starts that can reach the step (its own, in a conditional or loop, or through `run-automation`),
+  whatever started it: sidebar, palette, hotkey, "Run on…", the on-connect / on-disconnect /
+  on-output-match triggers or a schedule. The entry points refuse up front with the reason
+  (`src/utils/localProcessGate.ts`, `src/store/localProcessRefusal.ts`), `runWorkflowOnTarget` (the
+  only supplier of the spawn seam) refuses the whole run again, the spawn authorization catches a
+  change during a run, and `run_local_process` checks the persisted settings whatever the frontend
+  says (`authorize_spawn`). The `workflowLocalProcessEnabled` opt-in and the per-program allowlist
+  (or prompt) are separate controls; a spawn needs all three.
 - **Connect if not connected** (#3527, opt-in per schedule, `connectIfNeeded`, default off) — the
   fire names one `connectWindow` (the main window, else the first listening one). That window
   connects each target with no connected terminal there through the shared saved-connection flow

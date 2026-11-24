@@ -152,7 +152,7 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import { SCHEDULE_LOCAL_PROCESS_REASON } from "@/utils/scheduleLocalProcessGate";
+import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { automationLibraryState } from "./slices/automationStoreState";
@@ -164,6 +164,7 @@ import {
   setWorkflowTransportForTest,
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
+import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import {
   connected,
@@ -184,6 +185,7 @@ import { activeWorkflowRunCount } from "./slices/workflowRunOnTarget";
 import type { ScheduleFire } from "@/types/schedule";
 
 setupSettingsRegion();
+setupConnectionsRegion();
 
 // ── In-memory twin of the Rust WorkflowRunStore (client-scoped) ────────────────
 
@@ -411,6 +413,29 @@ function seedConnectedTerminal(tabId = "tab-active", sessionId: string | null = 
   // test, so the target starts non-exited with no explicit reset needed.
 }
 
+const lpStep: AutomationStep = { kind: "run-local-process", program: "make", args: [] };
+const typedStep: AutomationStep = { kind: "send-command", command: "uptime" };
+const auto = (id: string, steps: AutomationStep[]): Automation => ({
+  id,
+  name: id,
+  tags: [],
+  steps,
+  triggers: [],
+  createdAt: "",
+  updatedAt: "",
+});
+
+/** The one refusal toast, naming the switch and where it is. */
+function expectRefusedUpFront(id: string) {
+  expect(toast.error).toHaveBeenCalledWith(
+    expect.stringMatching(/was not run$/),
+    expect.objectContaining({
+      id: `workflow-local-process-refused-${id}`,
+      description: expect.stringContaining("Settings ▸ General ▸ Allow experimental features"),
+    })
+  );
+}
+
 describe("appStore — workflow run slice (#1852)", () => {
   let injected: string[];
   let transport: WorkflowStoreTransport;
@@ -590,6 +615,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     /** Enable the opt-in, optionally pre-authorizing programs. */
     function enableLocalProcess(allowlist: string[] = []) {
       seedSettings({
+        experimentalFeaturesEnabled: true,
         workflowLocalProcessEnabled: true,
         workflowLocalProcessAllowlist: allowlist,
       });
@@ -597,6 +623,8 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     it("GUARDRAIL: refuses to spawn when the opt-in is off (default)", async () => {
       seedConnectedTerminal();
+      // Experimental on: it is the opt-in (a separate control) that refuses.
+      seedSettings({ experimentalFeaturesEnabled: true });
       useAppStore.setState({ workflows: [workflow("w1", [cmd("a"), lp("rm", ["-rf", "/"])])] });
 
       await useAppStore.getState().runWorkflow("w1");
@@ -605,6 +633,129 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(injected).toEqual(["a\n"]);
       expect(invokeRunLocalProcess).not.toHaveBeenCalled();
       expect(toast.error).toHaveBeenCalled();
+    });
+
+    describe("the experimental switch (#5988)", () => {
+      type Opts = Parameters<ReturnType<typeof useAppStore.getState>["runWorkflow"]>[1];
+      const allow = (experimentalFeaturesEnabled?: boolean) =>
+        seedSettings({
+          experimentalFeaturesEnabled,
+          workflowLocalProcessEnabled: true,
+          workflowLocalProcessAllowlist: ["make"],
+        });
+      // Sidebar and palette start a run with no options, "Run on…" and the
+      // palette's broadcast entry with several targets.
+      const origins: [string, Opts][] = [
+        ["manual or palette", undefined],
+        ["hotkey", { triggeredBy: "hotkey" }],
+        ["on-connect", { triggeredBy: "on-connect", targetTabId: "tab-active" }],
+        ["several terminals", { targetTabIds: ["tab-active"] }],
+      ];
+      const libraries: [string, Automation[]][] = [
+        ["direct", [auto("w1", [typedStep, lpStep])]],
+        [
+          "nested",
+          [
+            auto("w1", [
+              typedStep,
+              {
+                kind: "conditional",
+                condition: { left: "a", op: "eq", right: "a" },
+                then: [lpStep],
+              },
+            ]),
+          ],
+        ],
+        [
+          "run-automation",
+          [
+            auto("w1", [typedStep, { kind: "run-automation", automationId: "b" }]),
+            auto("b", [lpStep]),
+          ],
+        ],
+      ];
+      const cases = origins.flatMap(([origin, opts]) =>
+        libraries.map(([shape, library]) => ({ origin, opts, shape, library }))
+      );
+
+      it.each(cases)("off: $origin, $shape is refused up front", async ({ opts, library }) => {
+        for (const off of [undefined, false]) {
+          vi.mocked(toast.error).mockClear();
+          seedConnectedTerminal();
+          allow(off);
+          useAppStore.setState(automationLibraryState(library));
+          await useAppStore.getState().runWorkflow("w1", opts);
+          expectRefusedUpFront("w1");
+        }
+        expect(injected).toEqual([]);
+        expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        expect(recordedRuns).toEqual([]);
+      });
+
+      it.each(cases)("on: $origin, $shape runs as before", async ({ opts, library }) => {
+        seedConnectedTerminal();
+        allow(true);
+        useAppStore.setState(automationLibraryState(library));
+        await useAppStore.getState().runWorkflow("w1", opts);
+        expect(injected).toEqual(["uptime\n"]);
+        expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      });
+
+      it("off: refuses before asking for parameters", async () => {
+        seedConnectedTerminal();
+        allow(false);
+        useAppStore.setState(
+          automationLibraryState([
+            {
+              ...auto("w1", [lpStep]),
+              parameters: [{ name: "env", type: "string", required: true }],
+            },
+          ])
+        );
+        await useAppStore.getState().runWorkflow("w1");
+        expect(useAppStore.getState().workflowParamPrompt).toBeNull();
+        expectRefusedUpFront("w1");
+      });
+
+      it("off: a refused run does not stop one that is in progress", async () => {
+        seedConnectedTerminal();
+        allow(false);
+        useAppStore.setState(
+          automationLibraryState([
+            auto("slow", [{ kind: "wait", delayMs: 40 }, typedStep]),
+            auto("w1", [lpStep]),
+          ])
+        );
+        const slow = useAppStore.getState().runWorkflow("slow");
+        await useAppStore.getState().runWorkflow("w1");
+        await slow;
+        expect(injected).toEqual(["uptime\n"]);
+      });
+
+      it("turned off while a manual run types: refused at the spawn, with the reason", async () => {
+        seedConnectedTerminal();
+        allow(true);
+        registerTerminalInputInjector(async (_tabId, data) => {
+          injected.push(data);
+          allow(false);
+          return true;
+        });
+        useAppStore.setState(automationLibraryState(libraries[0][1]));
+        await useAppStore.getState().runWorkflow("w1");
+        expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith(
+          "Local process was not run",
+          expect.objectContaining({ description: LOCAL_PROCESS_REASON })
+        );
+      });
+
+      it("off: automations without the step still run", async () => {
+        seedConnectedTerminal();
+        allow(false);
+        useAppStore.setState(automationLibraryState([auto("w1", [typedStep])]));
+        await useAppStore.getState().runWorkflow("w1");
+        expect(injected).toEqual(["uptime\n"]);
+      });
     });
 
     it("runs an allowlisted program without prompting, passing discrete args", async () => {
@@ -1132,7 +1283,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     it("prompts (allowlist absent) and persists to a fresh allowlist on 'always'", async () => {
       seedConnectedTerminal();
       // Enabled, but NO allowlist key at all → the `?? []` guards default it.
-      seedSettings({ workflowLocalProcessEnabled: true });
+      seedSettings({ experimentalFeaturesEnabled: true, workflowLocalProcessEnabled: true });
       useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
 
       const done = layoutState().runWorkflow("w1");
@@ -1148,6 +1299,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     it("logs a null exit code without crashing the run", async () => {
       seedConnectedTerminal();
       seedSettings({
+        experimentalFeaturesEnabled: true,
         workflowLocalProcessEnabled: true,
         workflowLocalProcessAllowlist: ["make"],
       });
@@ -1165,6 +1317,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     it("surfaces a backend spawn rejection (Error) as a failed step, not a crash", async () => {
       seedConnectedTerminal();
       seedSettings({
+        experimentalFeaturesEnabled: true,
         workflowLocalProcessEnabled: true,
         workflowLocalProcessAllowlist: ["make"],
       });
@@ -1181,6 +1334,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     it("surfaces a non-Error backend spawn rejection via String(err)", async () => {
       seedConnectedTerminal();
       seedSettings({
+        experimentalFeaturesEnabled: true,
         workflowLocalProcessEnabled: true,
         workflowLocalProcessAllowlist: ["make"],
       });
@@ -1196,6 +1350,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     it("forwards a cancel to the backend while a local process is running", async () => {
       seedConnectedTerminal();
       seedSettings({
+        experimentalFeaturesEnabled: true,
         workflowLocalProcessEnabled: true,
         workflowLocalProcessAllowlist: ["sleep"],
       });
@@ -1598,7 +1753,11 @@ describe("appStore — workflow run slice (#1852)", () => {
     it("asks for local-process authorization once for all concurrent targets", async () => {
       seedTwoTerminals();
       captureSends();
-      seedSettings({ workflowLocalProcessEnabled: true, workflowLocalProcessAllowlist: [] });
+      seedSettings({
+        experimentalFeaturesEnabled: true,
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: [],
+      });
       useAppStore.setState({
         workflows: [workflow("w1", [{ kind: "run-local-process", program: "echo", args: ["hi"] }])],
       });
@@ -1763,6 +1922,41 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
 
     await vi.waitFor(() => expect(injected).toContain("echo wf-a\n"));
   });
+
+  it.each([
+    [false, 0],
+    [true, 1],
+  ])(
+    "a local-process workflow on connect: experimental %s spawns %i (#5988)",
+    async (experimentalFeaturesEnabled, spawns) => {
+      vi.spyOn(toast, "error");
+      invokeRunLocalProcess.mockClear();
+      seedSettings({
+        experimentalFeaturesEnabled,
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["make"],
+      });
+      useAppStore.setState({
+        workflows: [
+          {
+            ...onConnectWorkflow("wf-a", ["conn-1"]),
+            steps: [cmd("typed"), { kind: "run-local-process", program: "make", args: [] }],
+          },
+        ],
+      });
+      seedUnconnectedTab("conn-1");
+
+      useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
+
+      if (experimentalFeaturesEnabled) {
+        await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1));
+      } else {
+        await vi.waitFor(() => expectRefusedUpFront("wf-a"));
+      }
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(spawns);
+      expect(injected).toEqual(experimentalFeaturesEnabled ? ["typed\n"] : []);
+    }
+  );
 
   it("does not run for a connection with no matching on-connect trigger", async () => {
     useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-other"])] });
@@ -2031,17 +2225,9 @@ describe("appStore — scheduled runs (PROD-043)", () => {
   });
 
   describe("an automation that can run a local process (#5818)", () => {
-    const lp: AutomationStep = { kind: "run-local-process", program: "make", args: [] };
-    const typed: AutomationStep = { kind: "send-command", command: "uptime" };
-    const automation = (id: string, steps: AutomationStep[]): Automation => ({
-      id,
-      name: id,
-      tags: [],
-      steps,
-      triggers: [],
-      createdAt: "",
-      updatedAt: "",
-    });
+    const lp = lpStep;
+    const typed = typedStep;
+    const automation = auto;
     const condition = { left: "a", op: "eq", right: "a" } as const;
     const call = (automationId: string): AutomationStep => ({
       kind: "run-automation",
@@ -2090,7 +2276,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
         const report = await executeScheduledRun(fire(), store);
         expect(report).toEqual({
           outcome: "skipped",
-          message: SCHEDULE_LOCAL_PROCESS_REASON,
+          message: LOCAL_PROCESS_REASON,
           targetsRun: 0,
         });
       }
@@ -2110,8 +2296,31 @@ describe("appStore — scheduled runs (PROD-043)", () => {
         store,
         { connectMissing }
       );
-      expect(report.message).toBe(SCHEDULE_LOCAL_PROCESS_REASON);
+      expect(report.message).toBe(LOCAL_PROCESS_REASON);
       expect(connectMissing).not.toHaveBeenCalled();
+    });
+
+    it("types and records nothing when the switch goes off while a target connects", async () => {
+      allowProgram(true);
+      useAppStore.setState(automationLibraryState(libraries[0][1]));
+      const connectMissing = vi.fn(async () => {
+        allowProgram(false);
+        return { status: "refused" as const, reason: "needs a password" };
+      });
+      // conn-a is connected here; only conn-b2 is connected unattended first.
+      seedConnectionsRegion({
+        connections: [{ id: "conn-b2", name: "b2", config: {} as never, folderId: null }],
+      });
+      const report = await executeScheduledRun(
+        fire({ targets: { kind: "connections", connectionIds: ["conn-a", "conn-b2"] } }),
+        store,
+        { connectMissing }
+      );
+      expect(connectMissing).toHaveBeenCalledTimes(1);
+      expect(report).toEqual({ outcome: "skipped", message: LOCAL_PROCESS_REASON, targetsRun: 0 });
+      expect(injected).toEqual([]);
+      expect(recordedRuns).toEqual([]);
+      expect(useAppStore.getState().automationRuns).toEqual([]);
     });
 
     it.each([libraries[0], libraries[1], libraries[3]])(
@@ -2122,11 +2331,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
         const report = await executeScheduledRun(fire(), store);
         expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
         expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
-        // Tells the backend, which checks the switch again at the trust boundary.
-        expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({
-          program: "make",
-          scheduled: true,
-        });
+        expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({ program: "make" });
       }
     );
 
