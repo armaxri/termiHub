@@ -54,7 +54,7 @@ mod executed {
     /// The tools the script may use; no `sudo`, no `systemctl`.
     const TOOLS: &[&str] = &[
         "sh", "cat", "cp", "mv", "ln", "rm", "mkdir", "rmdir", "chmod", "dirname", "head", "cksum",
-        "wc", "id", "readlink", "ps", "find", "tee",
+        "wc", "id", "readlink", "ps", "find", "tee", "ls",
     ];
 
     fn shells() -> Vec<&'static str> {
@@ -105,6 +105,7 @@ mod executed {
             // Retries and flushes need no real waiting here.
             host.tool("sleep", "exit 0");
             host.tool("sync", "exit 0");
+            host.strict_mv("");
             host
         }
 
@@ -133,6 +134,23 @@ mod executed {
             let path = self.path("bin").join(name);
             let _ = std::fs::remove_file(&path);
             write_exec(&path, &format!("#!/bin/sh\n{body}\n"));
+        }
+
+        /// `mv` as GNU coreutils has it: two names of one file (hard links) are
+        /// refused. BSD `mv` accepts them, so macOS alone never showed it
+        /// (#6010). `first` runs before, for a test's own fault.
+        fn strict_mv(&self, first: &str) {
+            let mv = ["/bin/mv", "/usr/bin/mv"];
+            let mv = mv.iter().find(|p| Path::new(p).exists()).unwrap();
+            self.tool(
+                "mv",
+                &format!(
+                    "{first}\nif [ \"$2\" -ef \"$3\" ]; then\n\
+                     echo \"mv: $2 and $3 are the same file\" | tee -a '{}' >&2\nexit 1\nfi\n\
+                     exec {mv} \"$@\"",
+                    self.path("same-file.log").display()
+                ),
+            );
         }
 
         fn upload_dir(&self) -> PathBuf {
@@ -206,6 +224,8 @@ mod executed {
             left.retain(|n| n != "termihub-agent");
             assert!(left.is_empty(), "left behind {left:?}: {what}");
             assert!(!self.upload_dir().exists(), "upload left: {what}");
+            let refused = std::fs::read_to_string(self.path("same-file.log"));
+            assert!(refused.is_err(), "{refused:?}: {what}");
         }
 
         fn starts(&self) -> bool {
@@ -341,6 +361,30 @@ mod executed {
                             host.assert_only(Some(OLD), &what);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_reinstall_of_the_same_build_survives_a_failure_at_any_point() {
+        // The kept copy, the installed agent and the new one look the same.
+        for shell in shells() {
+            for fault in ["exit 7", "kill -KILL $$"] {
+                for at in 0..markers() {
+                    let host = Host::update(shell, OLD);
+                    let script = faulty(&host.script(&host.target(), false), at, fault);
+                    let (status, out) = host.run(&script);
+                    let what = format!("{fault} at {at}: {out}");
+                    if fault.contains("KILL") {
+                        assert!(host.starts(), "{shell}: {what}");
+                        host.stage(OLD);
+                        let (status, out) = host.setup();
+                        assert_eq!(status, Some(0), "{shell}: {what}\nthen {out}");
+                    } else {
+                        assert!(status == KEPT || status == Some(0), "{shell}: {what}");
+                    }
+                    host.assert_only(Some(OLD), &what);
                 }
             }
         }
@@ -625,19 +669,14 @@ mod executed {
     fn a_restore_that_fails_keeps_the_copy_for_the_next_setup() {
         for shell in shells() {
             let host = Host::update(shell, FAILS_FINAL);
-            let mv = ["/bin/mv", "/usr/bin/mv"];
-            let mv = mv.iter().find(|p| Path::new(p).exists()).unwrap();
-            host.tool(
-                "mv",
-                &format!("case \"$2\" in *.previous) exit 1 ;; esac\nexec {mv} \"$@\""),
-            );
+            host.strict_mv("case \"$2\" in *.previous) exit 1 ;; esac");
             let (status, out) = host.setup();
             assert_eq!(status, Some(1), "{shell}: {out}");
             assert!(!out.contains("still in place"), "{out}");
             let kept = std::fs::read_to_string(host.file(".previous")).ok();
             assert_eq!(kept.as_deref(), Some(OLD), "{shell}: the only working copy");
 
-            host.tool("mv", &format!("exec {mv} \"$@\""));
+            host.strict_mv("");
             host.stage(BROKEN);
             let (status, out) = host.setup();
             assert_eq!(status, KEPT, "{shell}: {out}");
