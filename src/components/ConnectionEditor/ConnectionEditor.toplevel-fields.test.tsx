@@ -344,25 +344,33 @@ describe("ConnectionEditor top-level fields — blank-name validation (#5284)", 
     expect(nameInput().getAttribute("aria-required")).toBe("true");
   });
 
-  it("shows 'Name is required.' once the blank Name field is touched", async () => {
+  it("shows no error on a pristine editor, even after Name loses focus (#5909)", async () => {
     renderEditor("new");
     await flush();
+    expect(q("connection-editor-name-error")).toBeNull();
+    // Name is autofocused; moving on (e.g. to the Type select) is not an edit.
     act(() => {
       nameInput().focus();
       nameInput().blur();
     });
     await flush();
-    expect(q("connection-editor-name-error")?.textContent).toBe("Name is required.");
-    expect(nameInput().getAttribute("aria-invalid")).toBe("true");
+    expect(q("connection-editor-name-error")).toBeNull();
+    expect(nameInput().getAttribute("aria-invalid")).not.toBe("true");
   });
 
-  it("shows the error when a typed name is cleared, and drops it once named", async () => {
+  it("shows the error once a typed-then-cleared name is left, and drops it once named", async () => {
     renderEditor("new");
     await flush();
     setInput(nameInput(), "x");
     setInput(nameInput(), "   ");
     await flush();
+    // Still in the field: not yet the user's mistake.
+    expect(q("connection-editor-name-error")).toBeNull();
+
+    act(() => nameInput().blur());
+    await flush();
     expect(q("connection-editor-name-error")?.textContent).toBe("Name is required.");
+    expect(nameInput().getAttribute("aria-invalid")).toBe("true");
 
     setInput(nameInput(), "Named");
     await flush();

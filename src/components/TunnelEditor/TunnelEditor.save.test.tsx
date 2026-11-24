@@ -162,9 +162,15 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
   it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", async () => {
     await render();
     const nameError = () => document.getElementById(`tunnel-name-${TAB_ID}-error`);
+    // A new tunnel opens without errors (#5909); Save is still gated.
+    expect(nameError()).toBeNull();
+    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
+
+    // Trying to save reveals the reason.
+    click(saveButton());
+    await flush();
     expect(nameError()?.textContent).toBe("Name is required.");
     expect(nameInput().getAttribute("aria-invalid")).toBe("true");
-    expect(saveButton().getAttribute("aria-disabled")).toBe("true");
 
     setValue(nameInput(), "Dev DB");
     expect(nameError()).toBeNull();
@@ -175,6 +181,8 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
     seedConnectionsRegion({ connections: [] });
     await render();
     setValue(nameInput(), "Dev DB");
+    click(saveButton());
+    await flush();
     const sshField = container.querySelector('[data-testid="tunnel-editor-ssh-connection-field"]');
     expect(sshField?.textContent).toContain("An SSH connection is required.");
     expect(saveButton().getAttribute("aria-disabled")).toBe("true");
@@ -222,6 +230,9 @@ describe("TunnelEditor — save feedback (UX-022)", () => {
       '[data-testid="tunnel-editor-remote-port"]'
     )!;
     setValue(remotePort, "");
+    act(() => {
+      remotePort.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
     expect(remotePort.getAttribute("aria-invalid")).toBe("true");
     expect(document.getElementById(`${remotePort.id}-error`)?.textContent).toBeTruthy();
 

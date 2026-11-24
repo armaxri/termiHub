@@ -714,6 +714,11 @@ describe("ConnectionSettingsForm", () => {
       nativeInputValueSetter?.call(portInput, "0");
       portInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    // Shown once the user leaves the edited field (#5909), not while typing.
+    expect(query("field-port-error")).toBeNull();
+    await act(async () => {
+      portInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
     expect(query("field-port-error")).toBeTruthy();
   });
 
