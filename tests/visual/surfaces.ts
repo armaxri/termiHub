@@ -23,17 +23,16 @@ export const SIDEBAR_WIDTHS = [
   { name: "min", width: "aria-valuemin" },
 ] as const;
 
-/** Every sidebar (experimental ones are switched on by the mock settings). */
+/** Every sidebar. */
 export const SIDEBARS = [
   "connections",
   "files",
   "recent-sessions",
   "workspaces",
-  "macros",
+  "automations",
   "tunnels",
   "services",
   "network-tools",
-  "workflows",
   "plugins",
 ] as const;
 
@@ -97,6 +96,13 @@ export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
     kind: "workspace",
     view: "workspaces",
     row: ".sidebar-list-item",
+    name: ".sidebar-list-item__name",
+    actions: ".sidebar-list-item__actions button",
+  },
+  {
+    kind: "automation",
+    view: "automations",
+    row: ".sidebar-list-item.automation-item",
     name: ".sidebar-list-item__name",
     actions: ".sidebar-list-item__actions button",
   },

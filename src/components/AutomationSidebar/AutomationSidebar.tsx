@@ -1,14 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import {
-  CircleDot,
-  Download,
-  Keyboard,
-  ListPlus,
-  MoreHorizontal,
-  Plus,
-  Upload,
-} from "lucide-react";
+import { CircleDot, Download, Keyboard, ListPlus, Plus, Upload } from "lucide-react";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
@@ -40,7 +32,7 @@ import "./AutomationSidebar.css";
  * show as icons: the name, a marker, the switch and Run no longer fit on one
  * line with a readable name under it.
  */
-export const AUTOMATIONS_COMPACT_WIDTH = 240;
+const AUTOMATIONS_COMPACT_WIDTH = 240;
 
 const NO_TARGETS: never[] = [];
 
@@ -48,8 +40,8 @@ const NO_TARGETS: never[] = [];
  * The Automations sidebar (#5818, slice 6): the one place to find, run and
  * create an automation. It replaces the Macros and Workflows sidebars.
  *
- * Toolbar: New (step by step, or typed keystrokes), Record, and a "…" menu with
- * Import and Export all, every one named in text (R-037). The list holds every
+ * Toolbar: New (step by step, typed keystrokes, Import, Export all) and Record,
+ * every one named in text (R-037) and both in view at every width. The list holds every
  * automation, searchable by name, description and tag; rows show names and
  * state, never settings. Below it, the collapsible Schedules and History
  * sections and the output of a running local process.
@@ -271,26 +263,7 @@ export function AutomationSidebar() {
                 onSelect: newFromKeys,
                 testId: "automation-new-keys",
               },
-            ],
-          },
-          {
-            id: "record",
-            label: recording ? "Stop recording" : "Record",
-            tooltip: recording
-              ? "Stop recording and name the automation"
-              : "Record what you type in the active terminal",
-            icon: <CircleDot size={12} />,
-            onClick: toggleMacroRecording,
-            testId: "automation-record-btn",
-          },
-          {
-            id: "more",
-            label: "More automation actions",
-            icon: <MoreHorizontal size={14} />,
-            iconOnly: true,
-            joinOverflow: true,
-            testId: "automation-toolbar-more",
-            menu: [
+              { type: "separator", id: "files-sep" },
               {
                 id: "import",
                 label: "Import…",
@@ -307,6 +280,16 @@ export function AutomationSidebar() {
                 testId: "automation-export-all-btn",
               },
             ],
+          },
+          {
+            id: "record",
+            label: recording ? "Stop recording" : "Record",
+            tooltip: recording
+              ? "Stop recording and name the automation"
+              : "Record what you type in the active terminal",
+            icon: <CircleDot size={12} />,
+            onClick: toggleMacroRecording,
+            testId: "automation-record-btn",
           },
         ]}
       />

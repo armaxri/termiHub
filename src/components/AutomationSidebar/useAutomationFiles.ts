@@ -8,7 +8,7 @@ import { serializeWorkflows, type WorkflowImportResult } from "@/services/workfl
 import { slugify } from "@/utils/slugify";
 
 /** What an import needs the user to look at before running it; empty when nothing. */
-export function importWarnings(result: WorkflowImportResult): string[] {
+function importWarnings(result: WorkflowImportResult): string[] {
   const warnings: string[] = [];
   if (result.localProcessSteps > 0) {
     // Security surfacing (#1856): an imported automation may carry a

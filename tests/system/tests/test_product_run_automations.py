@@ -614,8 +614,8 @@ class TestProductRunAutomations(
             "A macro row shows its name; what it types and its last run are in the tooltip; "
             "the toolbar and history read cleanly",
             expect="the Automations sidebar at rest: the macro row shows only its name and Play (no "
-            "'echo …' preview, no 'Last run' line, no step count); the toolbar reads 'New' and 'Record' "
-            "beside one '…' menu; each History row is one line, and an opened row "
+            "'echo …' preview, no 'Last run' line, no step count); the toolbar reads 'New' and "
+            "'Record'; each History row is one line, and an opened row "
             "reads 'Run by you' / 'Run by schedule' in sentence case (#5680, #5818)",
         ):
             self.require("automations.macro.edit")
@@ -652,8 +652,7 @@ class TestProductRunAutomations(
             f"the tooltip names no terminal: {tip!r}"
         )
 
-        # Every toolbar action is named in text (R-037); at a narrow width Record
-        # moves into the one "…" menu.
+        # Every toolbar action is named in text (R-037).
         new = self.driver.get_text("automation-new-btn").strip()
         record = (
             self.driver.get_text("automation-record-btn").strip()

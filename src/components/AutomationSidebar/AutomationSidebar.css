@@ -21,12 +21,11 @@
   padding: var(--spacing-xs) 0;
 }
 
-/* Two open sections share what the list leaves: neither takes more than a third. */
+/* Open sections shrink before the list loses its few rows, never past their header. */
 .automation-sidebar > .schedules,
 .automation-sidebar > .automation-history {
   flex-shrink: 1;
-  max-height: 33%;
-  min-height: min-content;
+  min-height: var(--control-height-md);
 }
 
 /*

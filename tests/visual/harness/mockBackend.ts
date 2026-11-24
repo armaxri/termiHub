@@ -116,27 +116,68 @@ const WORKSPACES = [
   { id: "ws-3", name: "a-workspace-with-a-reasonably-long-name", connectionCount: 2 },
 ];
 
-const MACROS = [
-  { id: "m-1", name: "Deploy staging", tags: [], steps: [], createdAt: STAMP, updatedAt: STAMP },
+/** Automations of every row shape: typed, stepped with a long name, armed, off, failed (#5818). */
+const AUTOMATIONS = [
   {
-    id: "m-2",
-    name: "Collect diagnostics",
+    id: "m-1",
+    name: "Deploy staging",
+    description: "Pull, build and restart the web tier",
+    tags: ["ops"],
+    steps: [
+      {
+        kind: "type-keys",
+        chunks: [{ data: "git pull\r", delayMs: 0 }],
+        timing: "recorded",
+        recorded: true,
+      },
+    ],
+    triggers: [],
+    createdAt: STAMP,
+    updatedAt: STAMP,
+  },
+  {
+    id: "wf-1",
+    name: "Nightly backup of the Frankfurt database replica",
     tags: [],
-    steps: [],
+    steps: [{ kind: "send-command", command: "./backup.sh" }],
+    triggers: [],
+    createdAt: STAMP,
+    updatedAt: STAMP,
+  },
+  {
+    id: "wf-2",
+    name: "Answer the confirmation on match",
+    tags: [],
+    steps: [{ kind: "send-command", command: "yes" }],
+    triggers: [{ kind: "on-output-match", connectionIds: ["conn-1"], pattern: "Continue?" }],
+    createdAt: STAMP,
+    updatedAt: STAMP,
+  },
+  {
+    id: "wf-3",
+    name: "Nightly cleanup",
+    tags: [],
+    steps: [{ kind: "wait", delayMs: 500 }],
+    triggers: [{ kind: "on-connect", connectionIds: ["conn-1"] }],
+    triggersEnabled: false,
     createdAt: STAMP,
     updatedAt: STAMP,
   },
 ];
 
-const WORKFLOWS = [
+const AUTOMATION_RUNS = [
   {
-    id: "wf-1",
-    name: "Nightly backup",
-    tags: [],
-    steps: [],
-    triggers: [],
-    createdAt: STAMP,
-    updatedAt: STAMP,
+    id: "run-1",
+    automationId: "wf-1",
+    automationName: "Nightly backup of the Frankfurt database replica",
+    startedAt: STAMP,
+    endedAt: STAMP,
+    status: "failed",
+    stepsCompleted: 0,
+    total: 1,
+    error: "timed out",
+    targetLabel: "db-1",
+    origin: "scheduled",
   },
 ];
 
@@ -147,7 +188,7 @@ const SCHEDULES = {
       id: "sch-1",
       name: "Backup every night",
       running: false,
-      action: { kind: "workflow", workflowId: "wf-1" },
+      action: { kind: "automation", automationId: "wf-1" },
       targets: { kind: "connections", connectionIds: [] },
       rule: { kind: "daily", time: "02:00" },
       missedRuns: "skip",
@@ -810,10 +851,10 @@ export function handleCommand(cmd: string, args: Args): unknown {
       const summary = WORKSPACES.find((ws) => ws.id === id);
       return summary ? { id, name: summary.name, tabGroups: [] } : null;
     }
-    case "list_macros":
-      return populated ? MACROS : [];
-    case "list_workflows":
-      return populated ? WORKFLOWS : [];
+    case "list_automations":
+      return populated ? AUTOMATIONS : [];
+    case "list_automation_runs":
+      return populated ? AUTOMATION_RUNS : [];
     case "list_schedules":
       return populated ? SCHEDULES : { paused: false, schedules: [] };
     case "get_credential_store_status":

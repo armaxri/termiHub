@@ -21,7 +21,7 @@ import { formatRelativeTime } from "@/utils/formatters";
 import { automationRunTargets } from "./historyFormat";
 
 /** How many bound connection names a trigger lists before collapsing to "+N". */
-export const MAX_SUMMARY_CONNECTIONS = 2;
+const MAX_SUMMARY_CONNECTIONS = 2;
 
 /** Resolves a saved connection id to its name. */
 export type ConnectionName = (connectionId: string) => string | undefined;

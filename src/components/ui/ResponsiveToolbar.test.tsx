@@ -276,30 +276,6 @@ describe("ResponsiveToolbar", () => {
     expect(liveButton("Import Workspaces")).not.toBeNull();
   });
 
-  it("joins a '…' drop-down's entries into the overflow menu (#5818)", () => {
-    const onImport = vi.fn();
-    const actions: ToolbarAction[] = [
-      makeActions()[0],
-      {
-        id: "more",
-        label: "More",
-        icon: <Download size={14} />,
-        iconOnly: true,
-        joinOverflow: true,
-        testId: "tb-more",
-        menu: [{ id: "import", label: "Import…", onSelect: onImport, testId: "tb-join-import" }],
-      },
-    ];
-    render(actions);
-    ro.resize(10);
-    openOverflow();
-    expect(document.querySelector('[data-testid="tb-more"]')).toBeNull();
-    const entry = document.querySelector<HTMLElement>('[data-testid="tb-join-import"]')!;
-    expect(entry.getAttribute("aria-haspopup")).toBeNull();
-    act(() => entry.click());
-    expect(onImport).toHaveBeenCalledTimes(1);
-  });
-
   it("turns a drop-down action into a sub-menu when it overflows", () => {
     const onBlank = vi.fn();
     render([

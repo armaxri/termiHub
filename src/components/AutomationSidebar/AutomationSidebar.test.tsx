@@ -284,7 +284,7 @@ describe("empty state", () => {
 
   it("keeps Import reachable and disables Export all", async () => {
     await render([]);
-    openMenu("automation-toolbar-more");
+    openMenu("automation-new-btn");
     expect(query("automation-import-btn")!.hasAttribute("data-disabled")).toBe(false);
     expect(query("automation-export-all-btn")!.hasAttribute("data-disabled")).toBe(true);
   });
@@ -295,7 +295,7 @@ describe("toolbar (R-037)", () => {
     await render();
     expect(query("automation-new-btn")!.textContent).toBe("New");
     expect(query("automation-record-btn")!.textContent).toBe("Record");
-    openMenu("automation-toolbar-more");
+    openMenu("automation-new-btn");
     expect(query("automation-import-btn")!.textContent).toBe("Import…");
     expect(query("automation-export-all-btn")!.textContent).toBe("Export all…");
   });
@@ -319,21 +319,15 @@ describe("toolbar (R-037)", () => {
     expect(query("automation-record-btn")!.textContent).toBe("Stop recording");
   });
 
-  it("keeps New in view and folds the rest into one menu when narrow", async () => {
+  it("folds Record into one menu only below the smallest sidebar", async () => {
     await render();
-    ro.resize(150);
+    ro.resize(184); // the 200px minimum sidebar's toolbar
     expect(query("automation-new-btn")!.textContent).toBe("New");
-    expect(query("automation-toolbar-more")).toBeNull();
+    expect(query("automation-record-btn")!.textContent).toBe("Record");
+    ro.resize(110);
+    expect(query("automation-new-btn")).not.toBeNull();
     openMenu("automation-toolbar-overflow");
-    // Text, and no sub-menu to dig through.
-    for (const id of [
-      "automation-record-btn",
-      "automation-import-btn",
-      "automation-export-all-btn",
-    ]) {
-      expect(query(id)!.getAttribute("role"), id).toBe("menuitem");
-      expect(query(id)!.getAttribute("aria-haspopup"), id).toBeNull();
-    }
+    expect(query("automation-record-btn")!.getAttribute("role")).toBe("menuitem");
   });
 });
 
@@ -732,7 +726,7 @@ describe("files", () => {
   it("exports the whole library to one file both old importers read", async () => {
     dialogSave.mockResolvedValue("/tmp/a.json");
     await render();
-    openMenu("automation-toolbar-more");
+    openMenu("automation-new-btn");
     click("automation-export-all-btn");
     await flushAsync();
     expect(dialogSave.mock.calls[0][0].defaultPath).toBe("termihub-automations.json");
@@ -761,7 +755,7 @@ describe("files", () => {
     dialogOpen.mockResolvedValue("/tmp/in.json");
     fsReadTextFile.mockResolvedValue(json);
     await render();
-    openMenu("automation-toolbar-more");
+    openMenu("automation-new-btn");
     click("automation-import-btn");
     await flushAsync();
   }
@@ -807,10 +801,10 @@ describe("files", () => {
     dialogSave.mockResolvedValue(null);
     dialogOpen.mockResolvedValue(null);
     await render();
-    openMenu("automation-toolbar-more");
+    openMenu("automation-new-btn");
     click("automation-export-all-btn");
     await flushAsync();
-    openMenu("automation-toolbar-more");
+    openMenu("automation-new-btn");
     click("automation-import-btn");
     await flushAsync();
     expect(fsWriteTextFile).not.toHaveBeenCalled();

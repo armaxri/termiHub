@@ -236,7 +236,7 @@ class TestProductRunAutomationSidebar(
             "automation-sidebar.empty",
             "One Automations item opens a view that says what automations are and how to start",
             expect="the Automations sidebar: 'No automations yet.' with a Record and a 'New step "
-            "by step' button; toolbar New ▾, Record and '…'; closed Schedules and History",
+            "by step' button; toolbar New ▾ and Record; closed Schedules and History",
         ):
             self.show_automations()
             present = [t for t in ("activity-bar-macros", "activity-bar-workflows")
