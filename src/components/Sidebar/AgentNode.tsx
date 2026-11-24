@@ -35,6 +35,7 @@ import {
   ArrowDown,
   Folder,
   FolderInput,
+  MoreHorizontal,
 } from "lucide-react";
 import {
   folderMoveTargets,
@@ -57,6 +58,9 @@ import {
   ContextMenuContent,
   ContextMenuRoot,
   ContextMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
   MenuItem,
   MenuSeparator,
   MenuSub,
@@ -162,7 +166,7 @@ export interface AgentRowPresentation {
   /** Non-colour state word for the dot's accessible name and tooltip. */
   label: string;
   /** The inline header action a not-connected agent offers, if any. */
-  action: "connect" | "reconnect" | null;
+  action: "connect" | "reconnect" | "setup" | null;
 }
 
 /**
@@ -171,17 +175,24 @@ export interface AgentRowPresentation {
  * connected", grey dot, "Connect") unless something actually went wrong —
  * `failed` (a stored `lastError`, a failed connect attempt, or an unexpected
  * drop) — and only then reads as the red "Disconnected" with "Reconnect".
+ * An agent whose host has no termiHub agent yet (`notInstalled`) is an
+ * expected first-run state, not a failure (#5851): neutral, "Agent not
+ * installed", with "Set up agent" as its action.
  * Any unknown state is treated as not connected.
  */
 export function agentRowPresentation(
   connectionState: string,
-  failed: boolean
+  failed: boolean,
+  notInstalled = false
 ): AgentRowPresentation {
   if (connectionState === "connected") {
     return { tone: "connected", label: connectionStateLabel("connected"), action: null };
   }
   if (connectionState === "connecting" || connectionState === "reconnecting") {
     return { tone: "connecting", label: connectionStateLabel(connectionState), action: null };
+  }
+  if (notInstalled) {
+    return { tone: "disabled", label: "Agent not installed", action: "setup" };
   }
   return failed
     ? { tone: "disconnected", label: connectionStateLabel("disconnected"), action: "reconnect" }
@@ -198,6 +209,8 @@ interface AgentRowFailureState {
   prev: string;
   failed: boolean;
   userEnded: boolean;
+  /** The last connect found no agent on the host (#5851). */
+  notInstalled: boolean;
 }
 
 /** The next {@link AgentRowFailureState} once `connectionState` changes. */
@@ -206,13 +219,14 @@ function nextAgentRowFailureState(
   connectionState: string
 ): AgentRowFailureState {
   if (connectionState === "connected") {
-    return { prev: connectionState, failed: false, userEnded: false };
+    return { prev: connectionState, failed: false, userEnded: false, notInstalled: false };
   }
   const dropped =
     connectionState === "disconnected" &&
     (state.prev === "connected" || state.prev === "reconnecting") &&
     !state.userEnded;
   return {
+    ...state,
     prev: connectionState,
     failed: state.failed || dropped,
     // The user's intent covers exactly the transition it caused.
@@ -1093,6 +1107,7 @@ export function AgentNode({
     prev: agent.connectionState,
     failed: false,
     userEnded: false,
+    notInstalled: false,
   }));
   if (rowFailure.prev !== agent.connectionState) {
     setRowFailure(nextAgentRowFailureState(rowFailure, agent.connectionState));
@@ -1106,9 +1121,16 @@ export function AgentNode({
   // A disconnect request that failed leaves the agent up: forget the intent so
   // a later real drop is not mistaken for it.
   const clearUserEnded = useCallback(() => setRowFailure((s) => ({ ...s, userEnded: false })), []);
+  // A stored "no agent on the host" error keeps the row neutral across a
+  // remount, like the local flag does right after the failed connect (#5851).
+  const lastErrorNotInstalled = useMemo(
+    () => !!agent.lastError && classifyAgentError(agent.lastError).category === "agent-missing",
+    [agent.lastError]
+  );
   const rowPresentation = agentRowPresentation(
     agent.connectionState,
-    rowFailure.failed || !!agent.lastError
+    rowFailure.failed || !!agent.lastError,
+    rowFailure.notInstalled || lastErrorNotInstalled
   );
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
@@ -1401,8 +1423,12 @@ export function AgentNode({
       const classified = classifyAgentError(err);
       setConnectionError(classified);
       setErrorDialogOpen(true);
-      // A failed attempt (not one the user canceled) turns the row red (#5621).
-      if (!connectCanceledRef.current) setRowFailure((s) => ({ ...s, failed: true }));
+      // A failed attempt (not one the user canceled) turns the row red (#5621);
+      // a host without the agent yet is a next step, not a failure (#5851).
+      if (!connectCanceledRef.current) {
+        const notInstalled = classified.category === "agent-missing";
+        setRowFailure((s) => ({ ...s, failed: !notInstalled, notInstalled }));
+      }
     } finally {
       setConnecting(false);
     }
@@ -1471,6 +1497,13 @@ export function AgentNode({
         : "Agent shut down"
     );
   }, [agent.id, shutdownRemoteAgent, markUserEnded, clearUserEnded]);
+
+  // The "…" and context menus have no error state: report a failed shutdown here.
+  const handleShutdownFromMenu = useCallback(() => {
+    handleShutdown().catch((err: unknown) => {
+      toast.error(`Failed to shut down agent: ${errorMessage(err)}`);
+    });
+  }, [handleShutdown]);
 
   // Open the Update dialog (#4038). The update re-uses the SSH config, so a
   // password agent resolves its password first (stored credential, else a
@@ -1826,11 +1859,13 @@ export function AgentNode({
             {...listeners}
             onKeyDown={handleHeaderKeyDown}
           >
-            {/* Row 1: the toggle (state, name, version) plus the agent's single
-                state action — Connect, Reconnect or Cancel — inline beside the
-                name (R-010, #5702). Row 2 below only holds a connected agent's
-                several actions, which would crowd the name off row 1 (#2524). */}
-            <div className="connection-list__group-row">
+            {/* One row: the toggle (state, name, description, compact markers)
+                plus the agent's actions as icons at its end — Connect,
+                Reconnect, Set up agent or Cancel; "+" and "…" once connected
+                (R-010 #5702, R-013/R-015 #5851). The name takes the free width. */}
+            <div
+              className={`connection-list__group-row${agent.description ? " connection-list__group-row--described" : ""}`}
+            >
               <button
                 className={AGENT_TOGGLE_CLASS}
                 onClick={() => toggleRemoteAgent(agent.id)}
@@ -1845,11 +1880,24 @@ export function AgentNode({
                   testId={`agent-state-${agent.id}`}
                 />
                 <Server size={14} />
-                <span
-                  className="connection-list__group-title"
-                  data-testid={`agent-name-${agent.id}`}
-                >
-                  {agent.name}
+                {/* The name and the user's description (#5770) share one text
+                    column, so the description starts exactly under the name,
+                    like a connection row's (R-047, #5851). */}
+                <span className="connection-list__group-text">
+                  <span
+                    className="connection-list__group-title"
+                    data-testid={`agent-name-${agent.id}`}
+                  >
+                    {agent.name}
+                  </span>
+                  {agent.description && (
+                    <span
+                      className="connection-list__group-description"
+                      data-testid={`agent-description-${agent.id}`}
+                    >
+                      {agent.description}
+                    </span>
+                  )}
                 </span>
                 {/* The version is in the tooltip; the badge shows only when
                     the agent needs attention (#5770). */}
@@ -1887,97 +1935,139 @@ export function AgentNode({
                 // last error so the user learns *why* the agent went down (matching
                 // the sidebar tree's title-based hover help); clicking re-runs the
                 // normal connect path (disconnected → connecting). The async Button
-                // gives pending/success feedback and a toast on failure.
+                // gives pending/success feedback and a toast on failure. An icon,
+                // so the agent's name keeps the row's width (R-015, #5851).
                 <div className="connection-list__group-actions connection-list__group-actions--inline">
                   <Button
                     variant="ghost"
                     size="sm"
+                    iconOnly
                     icon={<RefreshCw size={14} />}
                     onClick={handleConnect}
                     aria-label="Reconnect"
-                    title={agent.lastError ?? "Reconnect"}
+                    title={agent.lastError ? `Reconnect — ${agent.lastError}` : "Reconnect"}
                     data-testid={`agent-reconnect-${agent.id}`}
-                  >
-                    Reconnect
-                  </Button>
+                  />
                 </div>
               )}
               {isDisconnected && rowPresentation.action === "connect" && (
                 // Nothing has failed yet (never connected, or the user ended the
-                // last connection): a plain Connect, not a Reconnect (#5621).
+                // last connection): a plain Connect, not a Reconnect (#5621). An
+                // icon with a tooltip, so it never cuts the name short (#5851).
                 <div className="connection-list__group-actions connection-list__group-actions--inline">
                   <Button
                     variant="ghost"
                     size="sm"
+                    iconOnly
                     icon={<Play size={14} />}
                     onClick={handleConnect}
                     aria-label="Connect"
                     title="Connect"
                     data-testid={`agent-connect-${agent.id}`}
-                  >
-                    Connect
-                  </Button>
+                  />
+                </div>
+              )}
+              {isDisconnected && rowPresentation.action === "setup" && (
+                // The host has no agent yet (#5851): the next step, not a retry.
+                <div className="connection-list__group-actions connection-list__group-actions--inline">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<Upload size={14} />}
+                    onClick={() => setSetupDialogOpen(true)}
+                    aria-label="Set up agent"
+                    title={`Set up the agent on ${agent.config.host}`}
+                    data-testid={`agent-setup-${agent.id}`}
+                  />
+                </div>
+              )}
+              {isConnected && (
+                // A connected agent's actions: "+" and one "…" menu, on the
+                // name row, so four bare icons no longer take a row of their
+                // own (R-013, #5851).
+                <div className="connection-list__group-actions connection-list__group-actions--inline">
+                  <Tooltip content="New connection" side="top">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      icon={<Plus size={16} />}
+                      onClick={() => handleNewConnection(null)}
+                      aria-label="New connection"
+                      data-testid={`agent-new-connection-${agent.id}`}
+                    />
+                  </Tooltip>
+                  <DropdownMenuRoot>
+                    <Tooltip content="More actions" side="top">
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          icon={<MoreHorizontal size={16} />}
+                          aria-label={`More actions for ${agent.name}`}
+                          data-testid={`agent-more-${agent.id}`}
+                        />
+                      </DropdownMenuTrigger>
+                    </Tooltip>
+                    <DropdownMenuContent
+                      align="end"
+                      onCloseAutoFocus={newFolderMenu.onCloseAutoFocus}
+                      data-testid={`agent-more-menu-${agent.id}`}
+                    >
+                      <MenuItem
+                        onSelect={() => {
+                          newFolderMenu.request();
+                          if (!agent.isExpanded) toggleRemoteAgent(agent.id);
+                        }}
+                        data-testid={`agent-new-folder-${agent.id}`}
+                      >
+                        <FolderPlus size={14} />
+                        New folder
+                      </MenuItem>
+                      <MenuItem onSelect={handleRefresh} data-testid={`agent-refresh-${agent.id}`}>
+                        <RefreshCw size={14} />
+                        Refresh sessions
+                      </MenuItem>
+                      <MenuItem
+                        onSelect={() => setRunningSessionsOpen(true)}
+                        data-testid={`agent-running-sessions-${agent.id}`}
+                      >
+                        <Terminal size={14} />
+                        Running sessions…
+                      </MenuItem>
+                      {canUpdateAgent && (
+                        <MenuItem
+                          onSelect={() => void handleOpenUpdate()}
+                          data-testid={`agent-update-${agent.id}`}
+                        >
+                          <ArrowUpCircle size={14} />
+                          Update agent…
+                        </MenuItem>
+                      )}
+                      <MenuSeparator />
+                      {/* Two distinct teardown intents (G9, #1237). Detach keeps
+                          the remote sessions running; Shutdown stops them. */}
+                      <MenuItem
+                        onSelect={handleDisconnectFromMenu}
+                        data-testid={`agent-disconnect-${agent.id}`}
+                      >
+                        <Unplug size={14} />
+                        Disconnect (detach)
+                      </MenuItem>
+                      <MenuItem
+                        onSelect={handleShutdownFromMenu}
+                        data-testid={`agent-shutdown-${agent.id}`}
+                      >
+                        <Power size={14} />
+                        Shutdown (stop remote)
+                      </MenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenuRoot>
                 </div>
               )}
             </div>
-            {/* The user's description (#5770), muted under the name. */}
-            {agent.description && (
-              <span
-                className="connection-list__group-description"
-                data-testid={`agent-description-${agent.id}`}
-              >
-                {agent.description}
-              </span>
-            )}
-            {isConnected && (
-              <div className="connection-list__group-actions">
-                <Tooltip content="New folder" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<FolderPlus size={16} />}
-                    onClick={() => setCreatingFolder(true)}
-                    aria-label="New folder"
-                  />
-                </Tooltip>
-                <Tooltip content="New connection" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    icon={<Plus size={16} />}
-                    onClick={() => handleNewConnection(null)}
-                    aria-label="New connection"
-                  />
-                </Tooltip>
-                {/* Two distinct teardown intents (G9, #1237). Detach keeps the
-                    remote sessions running; Shutdown stops them. Both go through
-                    the async Button so every action gives pending/error feedback;
-                    Shutdown adds a success toast with the stopped-session count. */}
-                <Tooltip content="Detach transport — keep persistent remote sessions" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Unplug size={14} />}
-                    onClick={handleDisconnect}
-                    errorToast={false}
-                    aria-label="Disconnect (detach)"
-                    data-testid={`agent-disconnect-${agent.id}`}
-                  />
-                </Tooltip>
-                <Tooltip content="Stop remote sessions and disconnect" side="top">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Power size={14} />}
-                    onClick={handleShutdown}
-                    aria-label="Shutdown (stop remote)"
-                    data-testid={`agent-shutdown-${agent.id}`}
-                  />
-                </Tooltip>
-              </div>
-            )}
           </div>
         </ContextMenuTrigger>
 
@@ -2009,7 +2099,7 @@ export function AgentNode({
                 <Unplug size={14} />
                 Disconnect (detach)
               </MenuItem>
-              <MenuItem onSelect={() => void handleShutdown()} data-testid="context-agent-shutdown">
+              <MenuItem onSelect={handleShutdownFromMenu} data-testid="context-agent-shutdown">
                 <Power size={14} />
                 Shutdown (stop remote)
               </MenuItem>
@@ -2174,6 +2264,7 @@ export function AgentNode({
         open={errorDialogOpen}
         onOpenChange={setErrorDialogOpen}
         error={connectionError}
+        host={agent.config.host}
         onSetupAgent={handleSetupFromError}
         onForceReconnect={handleForceReconnect}
       />
@@ -2314,17 +2405,59 @@ export function AgentNode({
                 </p>
               )}
 
-              {/* Empty state */}
+              {/* Empty state: the action as a link, not a right-click hint (R-013, #5851). */}
               {!hasContent && !filter && (
-                <div className="agent-node__hint" style={{ paddingLeft: 32 }}>
-                  No sessions. Right-click to create one.
-                </div>
+                <p
+                  className="agent-node__hint"
+                  style={{ paddingLeft: 32 }}
+                  data-testid={`agent-empty-${agent.id}`}
+                >
+                  No connections yet.{" "}
+                  <button
+                    type="button"
+                    className="agent-node__link"
+                    onClick={() => handleNewConnection(null)}
+                    data-testid={`agent-empty-new-connection-${agent.id}`}
+                  >
+                    New connection
+                  </button>
+                </p>
               )}
             </>
+          ) : rowPresentation.action === "setup" ? (
+            // No agent on the host yet (#5851): name the host and the next step.
+            <p
+              className="agent-node__hint"
+              style={{ paddingLeft: 32 }}
+              data-testid={`agent-empty-${agent.id}`}
+            >
+              The agent is not installed on {agent.config.host} yet.{" "}
+              <button
+                type="button"
+                className="agent-node__link"
+                onClick={() => setSetupDialogOpen(true)}
+                data-testid={`agent-empty-setup-${agent.id}`}
+              >
+                Set up agent
+              </button>
+            </p>
           ) : (
-            <div className="agent-node__hint" style={{ paddingLeft: 32 }}>
-              Connect to view sessions
-            </div>
+            <p
+              className="agent-node__hint"
+              style={{ paddingLeft: 32 }}
+              data-testid={`agent-empty-${agent.id}`}
+            >
+              Not connected.{" "}
+              <button
+                type="button"
+                className="agent-node__link"
+                onClick={() => void handleConnect()}
+                disabled={isConnecting}
+                data-testid={`agent-empty-connect-${agent.id}`}
+              >
+                Connect
+              </button>
+            </p>
           )}
         </AgentRootDropZone>
       )}

@@ -176,7 +176,7 @@ describe("AgentNode — keyboard navigation + filter (#1379)", () => {
   it("marks folder rows with aria-expanded", () => {
     seed([def("d1", "alpha", "f1")], [folder("f1", "Prod")]);
     render();
-    const folderRow = container.querySelector("[aria-expanded]");
+    const folderRow = container.querySelector('[role="treeitem"][aria-expanded]');
     expect(folderRow).not.toBeNull();
     expect(folderRow!.getAttribute("aria-expanded")).toBe("true");
   });

@@ -41,3 +41,8 @@
   word-break: break-all;
   white-space: pre-wrap;
 }
+
+/* A host without the agent yet is a next step, not an error (#5851). */
+.connection-error-dialog__icon--info {
+  color: var(--color-info);
+}

@@ -135,6 +135,7 @@ import { partitionConnectionTypes } from "@/utils/pluginConnectionTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 import { errorMessage } from "@/utils/errorMessage";
+import { requestRemoteAgentReveal } from "@/components/Sidebar/remoteAgentReveal";
 
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
@@ -1115,6 +1116,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           agentSettings,
         };
         updateRemoteAgent(updated);
+        requestRemoteAgentReveal(updated.id);
         return { entry: updated, persistedId: Promise.resolve(updated.id) };
       } else {
         const newAgent: RemoteAgentDefinition = {
@@ -1127,6 +1129,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           connectionState: "disconnected",
         };
         addRemoteAgent(newAgent);
+        requestRemoteAgentReveal(newAgent.id);
         return { entry: newAgent, persistedId: Promise.resolve(newAgent.id) };
       }
     }

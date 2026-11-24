@@ -17,6 +17,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { openAgentMoreMenu } from "@/test/agentMoreMenu";
 
 // --- mocks required by AgentNode --------------------------------------------
 
@@ -135,7 +136,7 @@ function expectNeutral() {
   expect(cls).toContain("status-dot--disabled");
   expect(cls).not.toContain("status-dot--disconnected");
   expect(stateDot()?.getAttribute("aria-label")).toBe("Not connected");
-  expect(connectButton()?.textContent).toBe("Connect");
+  expect(connectButton()?.getAttribute("aria-label")).toBe("Connect");
   expect(reconnectButton()).toBeNull();
 }
 
@@ -143,7 +144,7 @@ function expectFailed() {
   const cls = stateDot()?.className ?? "";
   expect(cls).toContain("status-dot--disconnected");
   expect(stateDot()?.getAttribute("aria-label")).toBe("Disconnected");
-  expect(reconnectButton()?.textContent).toBe("Reconnect");
+  expect(reconnectButton()?.getAttribute("aria-label")).toBe("Reconnect");
   expect(connectButton()).toBeNull();
 }
 
@@ -223,8 +224,9 @@ describe("AgentNode — row state + name presentation (#5621)", () => {
   it("returns to neutral after a user-initiated disconnect", async () => {
     useAppStore.setState({ disconnectRemoteAgent: vi.fn().mockResolvedValue(undefined) });
     renderAgent(makeAgent({ connectionState: "connected" }));
+    await openAgentMoreMenu(AGENT_ID);
     await act(async () => {
-      byTestId<HTMLButtonElement>(`agent-disconnect-${AGENT_ID}`)!.click();
+      document.querySelector<HTMLElement>(`[data-testid="agent-disconnect-${AGENT_ID}"]`)!.click();
     });
     await settle();
     renderAgent(makeAgent({ connectionState: "disconnected" }));
@@ -240,8 +242,9 @@ describe("AgentNode — row state + name presentation (#5621)", () => {
     renderAgent(makeAgent({ connectionState: "connected" }));
     expect(stateDot()?.className).toContain("status-dot--connected");
     // A later deliberate disconnect is neutral again — the old drop is gone.
+    await openAgentMoreMenu(AGENT_ID);
     await act(async () => {
-      byTestId<HTMLButtonElement>(`agent-disconnect-${AGENT_ID}`)!.click();
+      document.querySelector<HTMLElement>(`[data-testid="agent-disconnect-${AGENT_ID}"]`)!.click();
     });
     await settle();
     renderAgent(makeAgent({ connectionState: "disconnected" }));

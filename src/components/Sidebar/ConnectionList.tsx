@@ -94,6 +94,7 @@ import {
   useUndoableDeleteOptOut,
 } from "@/hooks/useUndoableDeleteOptOut";
 import { AgentNode } from "./AgentNode";
+import { subscribeRemoteAgentReveal } from "./remoteAgentReveal";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useOpenAfterMenuClose } from "./useOpenAfterMenuClose";
@@ -1611,6 +1612,24 @@ export function ConnectionList() {
     remoteAgentsOverride && remoteAgentsOverride.whenEmpty === remoteAgentsEmpty
       ? remoteAgentsOverride.collapsed
       : remoteAgentsEmpty;
+  // After the editor creates or saves an agent, expand Remote agents and
+  // scroll the agent into view once its row renders (R-081, #5851).
+  const [revealAgentId, setRevealAgentId] = useState<string | null>(null);
+  useEffect(
+    () =>
+      subscribeRemoteAgentReveal((agentId) => {
+        setRemoteAgentsOverride({ collapsed: false, whenEmpty: false });
+        setRevealAgentId(agentId);
+      }),
+    []
+  );
+  useEffect(() => {
+    if (!revealAgentId) return;
+    const row = document.querySelector<HTMLElement>(`[data-testid="agent-node-${revealAgentId}"]`);
+    if (!row) return;
+    row.scrollIntoView?.({ block: "nearest" });
+    setRevealAgentId(null);
+  }, [revealAgentId, remoteAgents, remoteAgentsCollapsed]);
   const toggleRemoteAgentsCollapsed = useCallback(
     () =>
       setRemoteAgentsOverride({ collapsed: !remoteAgentsCollapsed, whenEmpty: remoteAgentsEmpty }),
@@ -1878,6 +1897,27 @@ export function ConnectionList() {
                         onMoveBy={moveAgentBy}
                       />
                     ))}
+                    {!normalizedAgentQuery && remoteAgents.length === 0 && (
+                      // The empty section names its action (#5851).
+                      <EmptyState
+                        role={null}
+                        className="connections-empty--compact"
+                        data-testid="remote-agents-none"
+                        title={
+                          <>
+                            No remote agents yet.{" "}
+                            <button
+                              type="button"
+                              className="connections-empty__link"
+                              onClick={handleNewAgent}
+                              data-testid="remote-agents-none-new-agent"
+                            >
+                              New remote agent
+                            </button>
+                          </>
+                        }
+                      />
+                    )}
                     {normalizedAgentQuery && visibleAgents.length === 0 && (
                       <EmptyState
                         title={`No agents match “${agentFilterQuery.trim()}”.`}
