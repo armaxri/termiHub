@@ -85,7 +85,8 @@ export function WorkflowSidebar() {
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
   const handleSchedule = useCallback(
-    (workflowId: string) => openScheduleEditor({ action: { kind: "workflow", workflowId } }),
+    (workflowId: string) =>
+      openScheduleEditor({ action: { kind: "automation", automationId: workflowId } }),
     [openScheduleEditor]
   );
   const cancelAllWorkflowRuns = useCallback(() => cancelWorkflowRun(), [cancelWorkflowRun]);

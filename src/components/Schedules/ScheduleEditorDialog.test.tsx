@@ -4,19 +4,13 @@ import { createRoot, Root } from "react-dom/client";
 import { withTooltip } from "@/test/tooltip";
 import type { SavedConnection } from "@/types/connection";
 import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
-import type { Macro } from "@/types/macro";
-import type { Workflow } from "@/types/workflow";
+import type { Automation } from "@/types/generated/Automation";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { flushAsync } from "@/test/flushAsync";
 import { leaveField } from "@/test/leaveField";
 import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
-
-const useExperimentalFeatures = vi.fn<() => boolean>(() => true);
-vi.mock("@/hooks/useExperimentalFeatures", () => ({
-  useExperimentalFeatures: () => useExperimentalFeatures(),
-}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -32,7 +26,7 @@ function setInput(testId: string, value: string) {
   });
 }
 
-const workflows: Workflow[] = [
+const automations: Automation[] = [
   {
     id: "wf-1",
     name: "Health check",
@@ -42,8 +36,16 @@ const workflows: Workflow[] = [
     createdAt: "",
     updatedAt: "",
   },
+  {
+    id: "m-1",
+    name: "Restart",
+    tags: [],
+    steps: [{ kind: "type-keys", chunks: [{ data: "restart\r", delayMs: 0 }], timing: "recorded" }],
+    triggers: [],
+    createdAt: "",
+    updatedAt: "",
+  },
 ];
-const macros: Macro[] = [{ id: "m-1", name: "Restart" } as Macro];
 const connections: SavedConnection[] = [
   { id: "c1", name: "web-1", config: {} as never, folderId: null },
   { id: "c2", name: "web-2", config: {} as never, folderId: null },
@@ -64,10 +66,9 @@ function render(props: {
           initialAction={
             "initialAction" in props
               ? props.initialAction
-              : { kind: "workflow", workflowId: "wf-1" }
+              : { kind: "automation", automationId: "wf-1" }
           }
-          workflows={workflows}
-          macros={macros}
+          automations={automations}
           connections={connections}
           groups={[]}
           onOpenChange={vi.fn()}
@@ -80,7 +81,6 @@ function render(props: {
 
 describe("ScheduleEditorDialog (PROD-043)", () => {
   beforeEach(() => {
-    useExperimentalFeatures.mockReturnValue(true);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -101,7 +101,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     expect(save().getAttribute("aria-disabled")).toBe("false");
   });
 
-  it("saves the pre-selected workflow on the chosen connections every N minutes", async () => {
+  it("saves the pre-selected automation on the chosen connections every N minutes", async () => {
     const onSave = vi.fn();
     render({ onSave });
     setInput("schedule-editor-name", "  Ping  ");
@@ -111,7 +111,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     expect(onSave).toHaveBeenCalledWith({
       id: "schedule-new",
       name: "Ping",
-      action: { kind: "workflow", workflowId: "wf-1" },
+      action: { kind: "automation", automationId: "wf-1" },
       targets: { kind: "connections", connectionIds: ["c1"] },
       rule: { kind: "interval", everyMinutes: 5 },
       missedRuns: "skip",
@@ -160,7 +160,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       schedule: {
         id: "s1",
         name: "Backups",
-        action: { kind: "workflow", workflowId: "wf-1" },
+        action: { kind: "automation", automationId: "wf-1" },
         targets: { kind: "connections", connectionIds: ["c2"] },
         rule: { kind: "weekly", days: ["sat"], time: "03:15" },
         missedRuns: "run-once",
@@ -177,7 +177,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     const existing: ScheduleInput = {
       id: "s1",
       name: "Backups",
-      action: { kind: "workflow", workflowId: "wf-1" },
+      action: { kind: "automation", automationId: "wf-1" },
       targets: { kind: "connections", connectionIds: ["c1", "c2"] },
       rule: { kind: "interval", everyMinutes: 5 },
       missedRuns: "skip",
@@ -254,9 +254,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     });
   });
 
-  describe("the experimental Workflow action is gated (#4629)", () => {
-    const actionKindOptions = () => {
-      const trigger = query("schedule-editor-action-kind") as HTMLButtonElement;
+  describe("one automation picker (#5818)", () => {
+    const pickerOptions = () => {
+      const trigger = query("schedule-editor-automation") as HTMLButtonElement;
       act(() => {
         trigger.focus();
         trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -264,74 +264,58 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       return Array.from(document.querySelectorAll('[role="option"]')).map((o) => o.textContent);
     };
 
-    const workflowSchedule: ScheduleInput = {
-      id: "s1",
-      name: "Backups",
-      action: { kind: "workflow", workflowId: "wf-1" },
-      targets: { kind: "connections", connectionIds: ["c1"] },
-      rule: { kind: "interval", everyMinutes: 5 },
-      missedRuns: "skip",
-    };
-
-    it("offers Workflow and Macro while experimental features are on", () => {
-      useExperimentalFeatures.mockReturnValue(true);
+    it("lists every automation in one picker, typed and command ones alike", () => {
       render({ initialAction: undefined });
-      expect(query("schedule-editor-action-kind")!.textContent).toContain("Workflow");
-      expect(query("schedule-editor-workflow")).not.toBeNull();
-      expect(actionKindOptions()).toEqual(["Workflow", "Macro"]);
+      expect(query("schedule-editor-action-kind")).toBeNull();
+      expect(query("schedule-editor-workflow")).toBeNull();
+      expect(query("schedule-editor-macro")).toBeNull();
+      expect(pickerOptions()).toEqual(["Health check", "Restart"]);
+      const text = query("schedule-editor-dialog")!.textContent ?? "";
+      expect(text).toContain("Run an automation");
+      expect(text).not.toMatch(/\b(macro|workflow)\b/i);
     });
 
-    it("offers only Macro, defaulting to it, while experimental features are off", async () => {
-      useExperimentalFeatures.mockReturnValue(false);
+    it("asks for an automation before saving", async () => {
       const onSave = vi.fn();
       render({ initialAction: undefined, onSave });
-      expect(query("schedule-editor-action-kind")!.textContent).toContain("Macro");
-      expect(query("schedule-editor-workflow")).toBeNull();
-      expect(query("schedule-editor-macro")).not.toBeNull();
-      expect(query("schedule-editor-dialog")!.textContent).not.toContain("Run a workflow");
-      expect(actionKindOptions()).toEqual(["Macro"]);
+      setInput("schedule-editor-name", "Ping");
+      act(() => query("schedule-editor-connection-c1")!.click());
+      expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
+      await act(async () => query("schedule-editor-save")!.click());
+      expect(onSave).not.toHaveBeenCalled();
+      expect(query("schedule-editor-dialog")!.textContent).toContain("Pick an automation.");
     });
 
-    it("never starts a new schedule on a pre-selected workflow while off", () => {
-      useExperimentalFeatures.mockReturnValue(false);
-      render({ initialAction: { kind: "workflow", workflowId: "wf-1" } });
-      expect(query("schedule-editor-action-kind")!.textContent).toContain("Macro");
-      expect(query("schedule-editor-workflow")).toBeNull();
-    });
-
-    it("shows an existing workflow schedule's action read-only while off, and keeps it on save", async () => {
-      useExperimentalFeatures.mockReturnValue(false);
+    it("pre-selects a typed automation from its row", async () => {
       const onSave = vi.fn();
-      render({ schedule: workflowSchedule, onSave });
-      const kind = query("schedule-editor-action-kind") as HTMLButtonElement;
-      const workflow = query("schedule-editor-workflow") as HTMLButtonElement;
-      expect(kind.textContent).toContain("Workflow");
-      expect(kind.hasAttribute("disabled")).toBe(true);
-      expect(workflow.textContent).toContain("Health check");
-      expect(workflow.hasAttribute("disabled")).toBe(true);
-      expect(query("schedule-editor-dialog")!.textContent).toContain("Workflows are experimental");
-      // Names the toggle exactly as its Settings label reads (#5363).
-      expect(query("schedule-editor-dialog")!.textContent).toContain(
-        "Turn on Settings ▸ General ▸ Allow experimental features to change this action."
-      );
-
-      setInput("schedule-editor-name", "Backups v2");
+      render({ initialAction: { kind: "automation", automationId: "m-1" }, onSave });
+      expect(query("schedule-editor-automation")!.textContent).toContain("Restart");
+      setInput("schedule-editor-name", "Nightly restart");
+      act(() => query("schedule-editor-connection-c2")!.click());
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: "Backups v2",
-          action: { kind: "workflow", workflowId: "wf-1" },
-        })
+        expect.objectContaining({ action: { kind: "automation", automationId: "m-1" } })
       );
     });
 
-    it("leaves an existing workflow schedule editable while on", () => {
-      useExperimentalFeatures.mockReturnValue(true);
-      render({ schedule: workflowSchedule });
-      expect(query("schedule-editor-action-kind")!.hasAttribute("disabled")).toBe(false);
-      expect(query("schedule-editor-workflow")!.hasAttribute("disabled")).toBe(false);
-      expect(query("schedule-editor-dialog")!.textContent).not.toContain(
-        "Workflows are experimental"
+    it("keeps a deleted automation's id on save and names it as deleted", async () => {
+      const onSave = vi.fn();
+      render({
+        schedule: {
+          id: "s1",
+          name: "Orphan",
+          action: { kind: "automation", automationId: "gone" },
+          targets: { kind: "connections", connectionIds: ["c1"] },
+          rule: { kind: "interval", everyMinutes: 5 },
+          missedRuns: "skip",
+        },
+        onSave,
+      });
+      expect(query("schedule-editor-automation")!.textContent).toContain("Deleted automation");
+      setInput("schedule-editor-name", "Orphan 2");
+      await act(async () => query("schedule-editor-save")!.click());
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ action: { kind: "automation", automationId: "gone" } })
       );
     });
   });

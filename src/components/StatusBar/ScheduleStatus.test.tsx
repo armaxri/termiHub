@@ -14,7 +14,7 @@ function view(id: string, enabled: boolean, running = false): ScheduleView {
   return {
     id,
     name: id,
-    action: { kind: "workflow", workflowId: "wf" },
+    action: { kind: "automation", automationId: "wf" },
     targets: { kind: "connections", connectionIds: ["c"] },
     rule: { kind: "interval", everyMinutes: 5 },
     missedRuns: "skip",

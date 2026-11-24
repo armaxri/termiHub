@@ -1832,7 +1832,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     token: "tok-1",
     scheduleId: "sch-1",
     scheduleName: "Health",
-    action: { kind: "workflow", workflowId: "w1" },
+    action: { kind: "automation", automationId: "w1" },
     targets: { kind: "connections", connectionIds: ["conn-a"] },
     catchUp: false,
     ...overrides,
@@ -1891,7 +1891,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     expect(run.triggeredBy).toBe("scheduled");
     expect(run.tabId).toBe("tab-a");
     // The report links the schedule attempt to the run-history record (#3528).
-    expect(report).toEqual({ outcome: "completed", targetsRun: 1, workflowRunIds: [run.id] });
+    expect(report).toEqual({ outcome: "completed", targetsRun: 1, runIds: [run.id] });
   });
 
   it("runs on every member of a broadcast group", async () => {
@@ -1906,7 +1906,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     );
 
     expect(report).toMatchObject({ outcome: "completed", targetsRun: 2 });
-    expect(report.workflowRunIds).toHaveLength(2);
+    expect(report.runIds).toHaveLength(2);
     expect(injected.map((i) => i.tabId).sort()).toEqual(["tab-a", "tab-b"]);
   });
 
@@ -1923,8 +1923,8 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     expect(injected).toEqual([]);
   });
 
-  it("skips when the workflow or the broadcast group no longer exists", async () => {
-    expect((await executeScheduledRun(fire(), store)).message).toMatch(/workflow no longer/);
+  it("skips when the automation or the broadcast group no longer exists", async () => {
+    expect((await executeScheduledRun(fire(), store)).message).toMatch(/automation no longer/);
     useAppStore.setState({ workflows: [workflow("w1", [cmd("x")])] });
     const missingGroup = await executeScheduledRun(
       fire({ targets: { kind: "broadcast-group", groupId: "gone" } }),
@@ -2015,6 +2015,46 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     expect(injected).toEqual([{ tabId: "tab-a", data: "a\n" }]);
   });
 
+  it("runs a stored automation the schedule names by id (#5818)", async () => {
+    useAppStore.setState(
+      automationLibraryState([
+        {
+          id: "auto-1",
+          name: "Disk",
+          tags: [],
+          steps: [{ kind: "send-command", command: "df -h" }],
+          triggers: [],
+          createdAt: "",
+          updatedAt: "",
+        },
+        {
+          id: "auto-2",
+          name: "Typed",
+          tags: [],
+          steps: [{ kind: "type-keys", chunks: [{ data: "id\n", delayMs: 0 }], timing: "instant" }],
+          triggers: [],
+          createdAt: "",
+          updatedAt: "",
+        },
+      ])
+    );
+
+    const command = await executeScheduledRun(
+      fire({ action: { kind: "automation", automationId: "auto-1" } }),
+      store
+    );
+    expect(command).toMatchObject({ outcome: "completed", targetsRun: 1 });
+    expect(command.runIds).toHaveLength(1);
+
+    const typed = await executeScheduledRun(
+      fire({ token: "tok-2", action: { kind: "automation", automationId: "auto-2" } }),
+      store
+    );
+    expect(typed).toMatchObject({ outcome: "completed", targetsRun: 1 });
+    expect(typed.runIds).toHaveLength(1);
+    expect(injected.map((i) => i.data)).toEqual(["df -h\n", "id\n"]);
+  });
+
   it("plays a scheduled macro into the target terminals", async () => {
     const macro: Macro = {
       id: "m1",
@@ -2027,21 +2067,21 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     useAppStore.setState({ macros: [macro] });
 
     const report = await executeScheduledRun(
-      fire({ action: { kind: "macro", macroId: "m1" } }),
+      fire({ action: { kind: "automation", automationId: "m1" } }),
       store
     );
 
     expect(report).toEqual({
       outcome: "completed",
       targetsRun: 1,
-      macroRunIds: [expect.any(String)],
+      runIds: [expect.any(String)],
     });
     expect(injected).toEqual([{ tabId: "tab-a", data: "ping -c1 host\n" }]);
     // The attempt links the scheduled playback's run-history record (#3543).
     await vi.waitFor(() =>
-      expect(recordedMacroRuns.some((r) => r.id === report.macroRunIds?.[0])).toBe(true)
+      expect(recordedMacroRuns.some((r) => r.id === report.runIds?.[0])).toBe(true)
     );
-    const recorded = recordedMacroRuns.find((r) => r.id === report.macroRunIds?.[0]);
+    const recorded = recordedMacroRuns.find((r) => r.id === report.runIds?.[0]);
     expect(recorded).toMatchObject({ origin: "scheduled", targetLabels: ["tab-a"] });
   });
 
@@ -2081,7 +2121,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       });
 
       const report = await executeScheduledRun(
-        fire({ action: { kind: "macro", macroId: "m1" } }),
+        fire({ action: { kind: "automation", automationId: "m1" } }),
         store
       );
 

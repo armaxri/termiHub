@@ -14,7 +14,7 @@ import {
 } from "./scheduleForm";
 
 const valid = (over: Partial<ScheduleFormValues> = {}): ScheduleFormValues => ({
-  ...blankScheduleForm({ kind: "workflow", workflowId: "wf" }),
+  ...blankScheduleForm({ kind: "automation", automationId: "wf" }),
   name: "Health",
   connectionIds: ["c1"],
   ...over,
@@ -32,8 +32,7 @@ describe("scheduleFormSchema", () => {
 
   it("requires a name, an action and at least one target", () => {
     expect(issues(valid({ name: "  " }))).toContain("name");
-    expect(issues(valid({ workflowId: "" }))).toContain("workflowId");
-    expect(issues(valid({ actionKind: "macro", macroId: "" }))).toContain("macroId");
+    expect(issues(valid({ automationId: "" }))).toContain("automationId");
     expect(issues(valid({ connectionIds: [] }))).toContain("connectionIds");
     expect(issues(valid({ targetsKind: "broadcast-group", groupId: "" }))).toContain("groupId");
   });
@@ -63,7 +62,7 @@ describe("form ↔ input conversion", () => {
       {
         id: "s1",
         name: "A",
-        action: { kind: "workflow", workflowId: "wf" },
+        action: { kind: "automation", automationId: "wf" },
         targets: { kind: "connections", connectionIds: ["c1", "c2"] },
         rule: { kind: "interval", everyMinutes: 5 },
         missedRuns: "skip",
@@ -71,7 +70,7 @@ describe("form ↔ input conversion", () => {
       {
         id: "s2",
         name: "B",
-        action: { kind: "macro", macroId: "m" },
+        action: { kind: "automation", automationId: "m" },
         targets: { kind: "broadcast-group", groupId: "g" },
         rule: { kind: "weekly", days: ["mon", "fri"], time: "18:30" },
         missedRuns: "run-once",
@@ -79,7 +78,7 @@ describe("form ↔ input conversion", () => {
       {
         id: "s3",
         name: "C",
-        action: { kind: "workflow", workflowId: "wf" },
+        action: { kind: "automation", automationId: "wf" },
         targets: { kind: "connections", connectionIds: ["c1"] },
         rule: { kind: "daily", time: "07:05" },
         missedRuns: "skip",
@@ -100,11 +99,10 @@ describe("form ↔ input conversion", () => {
   });
 
   it("pre-selects the action a new schedule was opened for", () => {
-    expect(blankScheduleForm({ kind: "macro", macroId: "m1" })).toMatchObject({
-      actionKind: "macro",
-      macroId: "m1",
-      workflowId: "",
+    expect(blankScheduleForm({ kind: "automation", automationId: "m1" })).toMatchObject({
+      automationId: "m1",
     });
+    expect(blankScheduleForm().automationId).toBe("");
   });
 });
 
@@ -195,7 +193,7 @@ describe("connect if not connected (#3527)", () => {
   const base: ScheduleInput = {
     id: "s1",
     name: "Health",
-    action: { kind: "workflow", workflowId: "wf" },
+    action: { kind: "automation", automationId: "wf" },
     targets: { kind: "connections", connectionIds: ["c1"] },
     rule: { kind: "interval", everyMinutes: 15 },
     missedRuns: "skip",
@@ -223,7 +221,7 @@ describe("description (#5757)", () => {
       id: "s1",
       name: "A",
       description: "Checks the web hosts",
-      action: { kind: "workflow", workflowId: "wf" },
+      action: { kind: "automation", automationId: "wf" },
       targets: { kind: "connections", connectionIds: ["c1"] },
       rule: { kind: "interval", everyMinutes: 5 },
       missedRuns: "skip",

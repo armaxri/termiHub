@@ -23,6 +23,12 @@
  * - it never supersedes something the user started: if a workflow run (or a
  *   macro playback) is already in flight in this window, the run is skipped.
  *
+ * A schedule runs one automation (schema v3, #5818). Until the run picker is
+ * merged, a typing-only automation plays like a macro (one playback into all
+ * targets) and every other automation runs like a workflow (one run per
+ * target); both record into the single automation run history, and the
+ * report carries those records' ids as `runIds`.
+ *
  * Every outcome — including "nothing to do here" — is reported, so the backend
  * can settle the run and record the reason.
  */
@@ -31,6 +37,7 @@ import type { WorkflowParamValues } from "@/services/workflowRunner";
 import type { ScheduleFire, ScheduleTargets, WindowRunReport } from "@/types/schedule";
 import type { BroadcastGroup } from "@/types/terminal";
 import type { Workflow, WorkflowParameter } from "@/types/workflow";
+import type { Automation } from "@/types/generated/Automation";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -46,6 +53,7 @@ import {
   type FanoutOutcome,
 } from "./slices/workflowFanout";
 import { newMacroRunId } from "./slices/macroRunHistory";
+import { automationToWorkflow, isMacroShaped } from "./slices/automationViews";
 import {
   closeRunTabs,
   connectedIds,
@@ -152,7 +160,7 @@ async function runScheduledWorkflow(
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
-  if (workflow.steps.length === 0) return skip(`Workflow "${workflow.name}" has no steps`);
+  if (workflow.steps.length === 0) return skip(`Automation "${workflow.name}" has no steps`);
   const { targets } = resolveConnectedTargets(store.getState(), tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
   const params = unattendedParamValues(workflow.parameters ?? []);
@@ -163,7 +171,7 @@ async function runScheduledWorkflow(
   const toastId = `schedule-run-${fire.token}`;
   toast.loading(`Scheduled run "${fire.scheduleName}"`, {
     id: toastId,
-    description: `Running workflow "${workflow.name}" on ${targets.length} terminal${
+    description: `Running automation "${workflow.name}" on ${targets.length} terminal${
       targets.length === 1 ? "" : "s"
     }…`,
   });
@@ -186,10 +194,8 @@ async function runScheduledWorkflow(
     if (result) outcomes.push({ title: targets[index].title, result });
   });
   toastFanoutSummary(workflow.name, outcomes, targets.length, 0, toastId);
-  const workflowRunIds = outcomes.flatMap((o) =>
-    o.result.historyRunId ? [o.result.historyRunId] : []
-  );
-  const ids = workflowRunIds.length > 0 ? { workflowRunIds } : {};
+  const runIds = outcomes.flatMap((o) => (o.result.historyRunId ? [o.result.historyRunId] : []));
+  const ids = runIds.length > 0 ? { runIds } : {};
 
   const failed = outcomes.find((o) => o.result.status === "failed");
   if (failed) {
@@ -206,15 +212,15 @@ async function runScheduledWorkflow(
   return { outcome: "completed", targetsRun: outcomes.length, ...ids };
 }
 
-/** Play a macro into this window's connected targets. */
+/** Play a typing-only automation into this window's connected targets. */
 async function runScheduledMacro(
-  macroId: string,
+  automation: Automation,
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
   const state = store.getState();
-  const macro = state.macros.find((m) => m.id === macroId);
-  if (!macro) return skip("The macro no longer exists");
+  const macroId = automation.id;
+  if (automation.steps.length === 0) return skip(`Automation "${automation.name}" has no steps`);
   const targets = filterConnectedTerminalTabIds(state, tabIds);
   if (targets.length === 0) return skip("None of the target connections is connected");
   // Pre-generate the run-history record id so the schedule's attempt log can
@@ -225,7 +231,7 @@ async function runScheduledMacro(
     origin: "scheduled",
     runId,
   });
-  const ids = { macroRunIds: [runId] };
+  const ids = { runIds: [runId] };
   switch (status) {
     case "completed":
       return { outcome: "completed", targetsRun: targets.length, ...ids };
@@ -276,13 +282,10 @@ async function runAction(
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
-  if (fire.action.kind === "workflow") {
-    const workflowId = fire.action.workflowId;
-    const workflow = store.getState().workflows.find((w) => w.id === workflowId);
-    if (!workflow) return skip("The workflow no longer exists");
-    return await runScheduledWorkflow(fire, workflow, tabIds, store);
-  }
-  return await runScheduledMacro(fire.action.macroId, tabIds, store);
+  const automation = await store.getState().fetchAutomationForRun(fire.action.automationId);
+  if (!automation) return skip("The automation no longer exists");
+  if (isMacroShaped(automation)) return await runScheduledMacro(automation, tabIds, store);
+  return await runScheduledWorkflow(fire, automationToWorkflow(automation), tabIds, store);
 }
 
 /**

@@ -9,8 +9,7 @@ import { describeTargetNames } from "./scheduleForm";
 
 /** Human labels for a schedule's action and targets, from live store state. */
 export function useScheduleLabels() {
-  const workflows = useAppStore((s) => s.workflows);
-  const macros = useAppStore((s) => s.macros);
+  const automations = useAppStore((s) => s.automations);
   const { connections } = useProjectedConnections();
   const groups = useBroadcastGroups();
 
@@ -18,14 +17,10 @@ export function useScheduleLabels() {
 
   const actionLabel = useCallback(
     (action: ScheduleAction): string => {
-      if (action.kind === "workflow") {
-        const w = workflows.find((x) => x.id === action.workflowId);
-        return w ? `workflow "${w.name}"` : "a deleted workflow";
-      }
-      const m = macros.find((x) => x.id === action.macroId);
-      return m ? `macro "${m.name}"` : "a deleted macro";
+      const automation = automations.find((x) => x.id === action.automationId);
+      return automation ? `automation "${automation.name}"` : "a deleted automation";
     },
-    [workflows, macros]
+    [automations]
   );
 
   const targets = useCallback(
@@ -33,5 +28,5 @@ export function useScheduleLabels() {
     [names, groups]
   );
 
-  return { workflows, macros, connections, groups, actionLabel, targets };
+  return { automations, connections, groups, actionLabel, targets };
 }

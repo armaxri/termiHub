@@ -8,14 +8,14 @@ import { useScheduleLabels } from "./useScheduleLabels";
 
 /**
  * App-level host of the schedule editor (PROD-043), so it can be opened from
- * the schedules list and from any workflow or macro row.
+ * the schedules list and from any automation row.
  */
 export function ScheduleEditorHost() {
   const editor = useAppStore((s) => s.scheduleEditor);
   const schedules = useAppStore((s) => s.schedules);
   const saveSchedule = useAppStore((s) => s.saveSchedule);
   const closeScheduleEditor = useAppStore((s) => s.closeScheduleEditor);
-  const { workflows, macros, connections, groups } = useScheduleLabels();
+  const { automations, connections, groups } = useScheduleLabels();
 
   const existing = editor?.scheduleId
     ? (schedules.find((s) => s.id === editor.scheduleId) ?? null)
@@ -63,8 +63,7 @@ export function ScheduleEditorHost() {
       scheduleId={scheduleId}
       schedule={input}
       initialAction={editor?.action}
-      workflows={workflows}
-      macros={macros}
+      automations={automations}
       connections={connections}
       groups={groups}
       onOpenChange={(open) => {

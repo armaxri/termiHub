@@ -21,7 +21,7 @@ function view(over: Partial<ScheduleView> = {}): ScheduleView {
   return {
     id: "s1",
     name: "Health",
-    action: { kind: "workflow", workflowId: "wf-1" },
+    action: { kind: "automation", automationId: "wf-1" },
     targets: { kind: "connections", connectionIds: ["c1", "c2"] },
     rule: { kind: "interval", everyMinutes: 15 },
     missedRuns: "skip",
@@ -44,7 +44,7 @@ async function render(schedules: ScheduleView[], paused = false) {
     useAppStore.setState({
       schedules,
       schedulesPaused: paused,
-      workflows: [
+      automations: [
         {
           id: "wf-1",
           name: "Uptime",
@@ -106,7 +106,7 @@ describe("SchedulesSection (PROD-043)", () => {
   it("puts the next run, rule, action and target hosts in the tooltip (#5757)", async () => {
     await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
     expect(tip("s1")).toMatch(
-      /^Next: today .*\. Every 15 minutes · workflow "Uptime" on web-1, web-2$/
+      /^Next: today .*\. Every 15 minutes · automation "Uptime" on web-1, web-2$/
     );
     // An enabled schedule with a run coming shows only its name (and dot).
     expect(query("schedule-summary-s1")).toBeNull();
@@ -270,7 +270,7 @@ describe("SchedulesSection (PROD-043)", () => {
         durationMs: 125_000,
         outcome: "completed" as const,
         message: "Ran on 2 terminals",
-        workflowRunIds: ["run-a", "run-b"],
+        runIds: ["run-a", "run-b"],
       },
       {
         at: iso(10),
@@ -296,7 +296,7 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(items).toHaveLength(3);
     expect(items[0].textContent).toContain("Completed");
     expect(items[0].textContent).toContain("2m 05s");
-    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("2 workflow runs in history");
+    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("2 runs in history");
     expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("run-a\nrun-b");
     expect(items[1].textContent).toContain("Skipped");
     expect(items[1].textContent).toContain("catch-up");
@@ -308,17 +308,17 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-attempts-s1")).toBeNull();
   });
 
-  it("links a scheduled macro attempt to its macro run-history record (#3543)", async () => {
+  it("links a scheduled attempt to its automation run-history record (#3543, #5818)", async () => {
     const attempt = {
       at: new Date().toISOString(),
       outcome: "completed" as const,
       message: "Ran on 1 terminal",
-      macroRunIds: ["mrun-1"],
+      runIds: ["mrun-1"],
     };
     await render([view({ lastResult: attempt, history: [attempt] })]);
 
     act(() => query("schedule-attempts-toggle-s1")!.click());
-    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("1 macro run in history");
+    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("1 run in history");
     expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("mrun-1");
   });
 

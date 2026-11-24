@@ -1,4 +1,4 @@
-/* Scheduled workflows and macros (PROD-043). Tokens only. */
+/* Scheduled automations (PROD-043). Tokens only. */
 
 /* Wraps the fields so leaving one, or a failed Save, can reveal errors (#5917);
    it adds no box, so the Modal body lays the fields out as before. */

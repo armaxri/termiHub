@@ -58,7 +58,7 @@ export function scheduleTone(s: ScheduleView, paused: boolean): StatusTone {
 }
 
 /**
- * The schedules list (PROD-043): every scheduled workflow/macro run by name,
+ * The schedules list (PROD-043): every scheduled automation run by name,
  * with its state dot and a marker when the state needs attention; its rule,
  * targets, next run and last result are in the name's tooltip (#5757). A row
  * expands to its recent attempts (#3528); per-schedule enable (the first
@@ -217,7 +217,7 @@ export function SchedulesSection({
       {schedules.length === 0 ? (
         <EmptyState
           title="No schedules yet"
-          description="Schedule a workflow or macro to run it on saved connections at set times."
+          description="Schedule an automation to run it on saved connections at set times."
           action={
             creatable ? (
               <Button
