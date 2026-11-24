@@ -339,6 +339,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.24.0          | 0.43.0        | Yes (the desktop requests 0.24.0; definitions report when a session was last created from them as `last_used_at`)                     |
 | 0.24.0          | 0.42.0        | Yes (the desktop requests 0.24.0; `connectionDescription` shows the Description field for agent connections)                          |
 | 0.24.0          | 0.41.0        | Yes (the desktop requests 0.24.0; `fileTruncate` lets a crashed agent-hosted upload resume from its last checkpoint)                  |
 | 0.24.0          | 0.40.0        | Yes (the desktop requests 0.24.0; a serial port gone for good or a stopped container on the agent ends its tab via `connection.exit`) |
@@ -425,6 +426,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                            |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
+
+**0.43.0 (additive, minor)** — saved connection definitions carry an optional **`last_used_at`** (#5940): Unix milliseconds of the last successful [`connection.create`](#connectioncreate) that named the definition by `definition_id`. The agent stamps it itself (a failed create stamps nothing, and a stamp never moves back), and [`connections.list`](#connectionslist) and the `connections.create` / `connections.update` results report it when set. No request gains a member — `connections.update` never touches it — so there is **no capability flag**: an older desktop ignores the unknown key, and an older agent never sends it (the desktop reads that as never used). The agent leaves the key out of `connections.json` until the definition is first used, so the store needs no schema step; an older agent that loads a file carrying it keeps it as an unknown field (#3931), so a downgrade does not lose it. Definitions from read-only external files are never stamped. The desktop still requests `0.24.0`.
 
 **0.42.0 (additive, minor)** — saved connection definitions carry an optional one-line **description** (#5769), shown muted under the name in the Remote Agents tree and matched by its search: [`connections.create`](#connectionscreate) takes `description`, [`connections.update`](#connectionsupdate) takes it as a tri-state patch (explicit `null` clears, omitted leaves unchanged), and [`connections.list`](#connectionslist) and the create / update results report it when set. The agent stores it opaquely (the desktop normalizes it to one line of at most 80 characters) and leaves it out of `connections.json` when unset, so the key needs no store schema step of its own; an agent that loads a file carrying it without knowing it keeps it as an unknown field (#3931), so a downgrade does not lose it. The `initialize` result gains `capabilities.connectionDescription: true`. Negotiation is by **capability**: an older agent ignores the unknown key and would silently drop the text, so the desktop shows the Description field only for an agent that advertises the flag. An older desktop never sends the key. The desktop still requests `0.24.0`. (0.41.0 is `connection.files.truncate`, #5736.)
 
@@ -689,6 +692,7 @@ For serial sessions:
 | `type`           | `string`  | Connection type ID (e.g., `"local"`, `"ssh"`, `"serial"`, `"docker"`, `"telnet"`, `"wsl"`)                                                                                                                                                                                                                  |
 | `config`         | `object`  | Type-specific configuration (see below)                                                                                                                                                                                                                                                                     |
 | `title`          | `string?` | Optional display title                                                                                                                                                                                                                                                                                      |
+| `definition_id`  | `string?` | Saved connection definition the session is created from, if any. Reported back on the session; a successful create stamps the definition's `last_used_at` (0.43.0, #5940).                                                                                                                                  |
 | `correlation_id` | `string?` | Optional log correlation id (0.16.0, #3085): the desktop's own `session_id`. The agent logs this session under an `agent_session` span carrying it. At most 128 characters of `A–Z a–z 0–9 - _ .`; the agent ignores (does not log) any other value rather than failing the create. Older agents ignore it. |
 | `unattended`     | `bool?`   | Connect with nobody at the keyboard (0.23.0, #3877): never prompt; refuse with `host_key_untrusted`, `interaction_required` or `auth_failed` instead. Absent = `false`. Sent only to an agent that advertises `capabilities.unattendedConnect`.                                                             |
 
@@ -2070,23 +2074,24 @@ List all saved connections and folders.
 }
 ```
 
-| Result Field                 | Type           | Description                                        |
-| ---------------------------- | -------------- | -------------------------------------------------- |
-| `connections`                | `Connection[]` | All saved connections                              |
-| `connections[].id`           | `string`       | Connection identifier                              |
-| `connections[].name`         | `string`       | Display name                                       |
-| `connections[].session_type` | `string`       | `"shell"`, `"serial"`, `"docker"`, or `"ssh"`      |
-| `connections[].config`       | `object`       | Type-specific configuration                        |
-| `connections[].persistent`   | `boolean`      | Whether sessions are persistent                    |
-| `connections[].folder_id`    | `string?`      | Parent folder ID, or `null` for root               |
-| `connections[].icon_color`   | `string?`      | Icon colour; omitted when unset (0.33.0+)          |
-| `connections[].icon_emoji`   | `string?`      | Single-emoji icon; omitted when unset (0.33.0+)    |
-| `connections[].description`  | `string?`      | One-line description; omitted when unset (0.42.0+) |
-| `folders`                    | `Folder[]`     | All folders                                        |
-| `folders[].id`               | `string`       | Folder identifier                                  |
-| `folders[].name`             | `string`       | Display name                                       |
-| `folders[].parent_id`        | `string?`      | Parent folder ID, or `null` for root               |
-| `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                             |
+| Result Field                 | Type           | Description                                                                    |
+| ---------------------------- | -------------- | ------------------------------------------------------------------------------ |
+| `connections`                | `Connection[]` | All saved connections                                                          |
+| `connections[].id`           | `string`       | Connection identifier                                                          |
+| `connections[].name`         | `string`       | Display name                                                                   |
+| `connections[].session_type` | `string`       | `"shell"`, `"serial"`, `"docker"`, or `"ssh"`                                  |
+| `connections[].config`       | `object`       | Type-specific configuration                                                    |
+| `connections[].persistent`   | `boolean`      | Whether sessions are persistent                                                |
+| `connections[].folder_id`    | `string?`      | Parent folder ID, or `null` for root                                           |
+| `connections[].icon_color`   | `string?`      | Icon colour; omitted when unset (0.33.0+)                                      |
+| `connections[].icon_emoji`   | `string?`      | Single-emoji icon; omitted when unset (0.33.0+)                                |
+| `connections[].description`  | `string?`      | One-line description; omitted when unset (0.42.0+)                             |
+| `connections[].last_used_at` | `number?`      | Unix ms of the last session created from it; omitted when never used (0.43.0+) |
+| `folders`                    | `Folder[]`     | All folders                                                                    |
+| `folders[].id`               | `string`       | Folder identifier                                                              |
+| `folders[].name`             | `string`       | Display name                                                                   |
+| `folders[].parent_id`        | `string?`      | Parent folder ID, or `null` for root                                           |
+| `folders[].is_expanded`      | `boolean`      | Whether expanded in UI                                                         |
 
 > **Persistence and downgrade safety (#3920):** the agent saves these definitions
 > in its `connections.json` with a schema `version` (currently `"3"`; a file

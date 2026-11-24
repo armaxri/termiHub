@@ -274,6 +274,8 @@ fn agent_fixture() -> Value {
             icon_emoji: Some("\u{1F680}".into()),
             // A description on an agent definition (#5769).
             description: Some("Lab bench console".into()),
+            // When a session was last created from it (#5940), Unix ms.
+            last_used_at: Some(1_767_225_600_000),
             source_file: Some("/etc/termihub/shared.json".into()),
         },
         AgentDefinitionInfo {
@@ -288,6 +290,7 @@ fn agent_fixture() -> Value {
             icon_color: None,
             icon_emoji: None,
             description: None,
+            last_used_at: None,
             source_file: None,
         },
     ];
@@ -376,6 +379,64 @@ fn workspace_fixture() -> Value {
     json!({ "loadWorkspace": wire("WorkspaceDefinition", &definition) })
 }
 
+// ── automations (`list_automations`, `list_automation_runs`, #5818) ──────────
+
+fn automations_fixture() -> Value {
+    use crate::automations::convert::{from_macro, from_workflow};
+    use crate::automations::history::{from_macro_run, from_workflow_run};
+    // A converted macro (one recorded `type-keys` step, no triggers) and a
+    // converted workflow (a nested `run-macro` read as `run-automation`, the
+    // `manual` trigger dropped, disarmed), as the boot migration writes them.
+    let recorded = from_macro(&from_json(
+        "Macro",
+        json!({
+            "id": "macro-1", "name": "Sudo password", "tags": ["auth"],
+            "steps": [{ "data": "s3cret", "delayMs": 120 }, { "data": "\r", "delayMs": 0 }],
+            "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-02T00:00:00Z"
+        }),
+    ));
+    let typed = from_workflow(&from_json(
+        "Workflow",
+        json!({
+            "id": "workflow-1", "name": "Rotate logs", "tags": [],
+            "steps": [
+                { "kind": "send-command", "command": "logrotate -f /etc/logrotate.conf" },
+                { "kind": "loop", "loop": { "kind": "count", "count": 2 },
+                  "body": [{ "kind": "run-macro", "macroId": "macro-1", "continueOnError": true }] }
+            ],
+            "triggers": [{ "kind": "manual" }, { "kind": "on-connect", "connectionIds": ["db-1"] }],
+            "triggersEnabled": false,
+            "createdAt": "2026-11-01T00:00:00Z", "updatedAt": "2026-11-03T00:00:00Z"
+        }),
+    ));
+    let macro_run = from_macro_run(
+        &from_json(
+            "MacroRun",
+            json!({
+                "id": "run-1", "macroId": "macro-1", "macroName": "Sudo password",
+                "startedAt": "2026-11-20T09:00:00Z", "endedAt": "2026-11-20T09:00:01Z",
+                "status": "error", "stepsPlayed": 1, "totalSteps": 2, "targetCount": 2,
+                "targetLabels": ["prod-web", "prod-db"], "origin": "workflow-step",
+                "error": "Terminal closed"
+            }),
+        ),
+        &Default::default(),
+    );
+    let workflow_run = from_workflow_run(&from_json(
+        "WorkflowRun",
+        json!({
+            "id": "run-2", "workflowId": "workflow-1", "workflowName": "Rotate logs",
+            "startedAt": "2026-11-20T09:10:00Z", "endedAt": "2026-11-20T09:10:30Z",
+            "status": "completed", "stepsCompleted": 2, "total": 2,
+            "tabId": "tab-1", "targetLabel": "db-1", "triggeredBy": "scheduled"
+        }),
+    ));
+    json!({
+        "listAutomations": [wire("Automation", &recorded), wire("Automation", &typed)],
+        "listAutomationRuns": [wire("AutomationRun", &workflow_run), wire("AutomationRun", &macro_run)],
+    })
+}
+
 // ── open ports (`network_open_ports`) ─────────────────────────────────────────
 
 fn open_ports_fixture() -> Value {
@@ -459,6 +520,7 @@ fn write_ipc_wire_fixtures() {
     write_fixture("agent.json", agent_fixture());
     write_fixture("settings.json", settings_fixture());
     write_fixture("workspace.json", workspace_fixture());
+    write_fixture("automations.json", automations_fixture());
     write_fixture("open_ports.json", open_ports_fixture());
     write_fixture("projection.json", projection_fixture());
     write_fixture("events.json", events_fixture());

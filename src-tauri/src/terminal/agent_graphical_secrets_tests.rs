@@ -64,6 +64,7 @@ fn info(id: &str, session_type: &str, config: Value) -> AgentDefinitionInfo {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         source_file: None,
     }
 }

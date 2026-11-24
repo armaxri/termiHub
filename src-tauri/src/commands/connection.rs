@@ -404,6 +404,34 @@ fn record_agent_path<R: Runtime>(
     }
 }
 
+/// Stamp now as the last successful connect of the saved connection
+/// `connection_id` (#5940), through the same `commit` + connections fold as
+/// [`save_connection`], so every window's `connections` region carries the new
+/// time and the empty window re-ranks its "Recent connections".
+///
+/// Called by the backend once a session for the connection is open — the
+/// connect command, the reconnect redrive, a persistent session and a remote
+/// desktop connect — never by the frontend, so no stale copy can write it. An
+/// empty id (an ad-hoc session) does nothing. Best-effort: a failure is logged
+/// and the session stands.
+pub(crate) fn record_connection_used<R: Runtime>(app: &AppHandle<R>, connection_id: &str) {
+    if connection_id.is_empty() {
+        return;
+    }
+    let Some(manager) = app.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let result = commit(app, &[Fold::Connections], || {
+        manager.record_connection_used(connection_id, now)
+    });
+    match result {
+        Ok(true) => debug!(connection_id, "Stamped the connection's last-used time"),
+        Ok(false) => debug!(connection_id, "No main-store connection to stamp"),
+        Err(e) => tracing::warn!(connection_id, "Could not store the last-used time: {e:#}"),
+    }
+}
+
 /// Delete a remote agent definition by ID.
 #[tauri::command]
 pub fn delete_remote_agent<R: Runtime>(

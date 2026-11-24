@@ -1078,14 +1078,24 @@ class TestProductRunSettingsThemes(
         with self.step(
             "settings.shared-layout",
             "Settings ▸ Appearance, Terminal and Sessions use compact number inputs with "
-            "units, a plain Default marker, one-line hints and one centred page width (#5843)",
+            "units, a plain Default marker, one-line hints and one centred page width (#5843); "
+            "Accessibility, Safety prompts, Monitoring and Plugins keep one-line hints (#5900)",
             expect="A centred settings page with short number boxes (px / lines / sessions), "
             "plain grey 'Default' text, one-line hints with a '?' and secondary clear buttons",
         ):
             self.driver.resize_window(1600, 900)
             try:
                 pages = []
-                for category in ("appearance", "terminal", "sessions"):
+                for category in (
+                    "appearance",
+                    "terminal",
+                    "sessions",
+                    # The pages whose long hints moved behind the "?" (#5900).
+                    "accessibility",
+                    "safety-prompts",
+                    "monitoring",
+                    "plugins",
+                ):
                     self.open_settings_category(category)
                     time.sleep(0.4)
                     self.shot(label=f"layout-{category}", expect="settings-panel-content")
