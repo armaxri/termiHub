@@ -54,7 +54,9 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Restore last session on startup"
-            hint="Choose how the tabs and panel layout from your previous session are handled when the app starts. Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
+            hint="What happens to your previous session's tabs and layout at startup."
+            help="Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
+            helpTestId="settings-restore-last-session-mode-help"
           >
             <Select
               value={restoreMode}
@@ -187,7 +189,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Clear network tool history"
-            hint="Remove every recorded network tool run for all tools and every recorded HTTP monitor check."
+            hint="Remove every recorded network tool run and HTTP monitor check."
           >
             <Button
               variant="secondary"
