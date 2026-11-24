@@ -275,7 +275,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.append",
             "A recording is added to an existing automation as its last step",
-            expect="Save the recording with Add to an automation chosen and the automation picked",
+            expect="Save recording with Add to an automation chosen and the automation picked",
             screenshot=False,
         ):
             self.require("automation-recording.kept")
@@ -302,7 +302,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.password",
             "What is typed at a password prompt is announced while recording and not stored",
-            expect="the chip 'Recording: password prompt'; then Save the recording naming the "
+            expect="the chip 'Recording: password prompt'; then Save recording naming the "
             "prompt, with 'Leave it out' chosen",
             screenshot=False,
         ):
@@ -382,7 +382,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.closed-terminal",
             "Closing the recorded terminal stops the recording and keeps what was typed",
-            expect="Save the recording with a note that the terminal was closed",
+            expect="Save recording with a note that the terminal was closed",
             screenshot=False,
         ):
             self.require("automation-recording.toolbar")
@@ -412,7 +412,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.narrow",
             "At 800x600 the save dialog fits, with its description and tags open",
-            expect="the 800x600 Save the recording dialog with Description and Tags; nothing "
+            expect="the 800x600 Save recording dialog with Description and Tags; nothing "
             "cut off, Discard recording and Save in view",
             screenshot=False,
         ):
