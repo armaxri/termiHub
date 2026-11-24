@@ -966,6 +966,14 @@ unattached too. After the post-reconnect `connection.list`, the desktop therefor
 `attached: false`. A session that fails to re-attach settles its tab to "session lost"; one that
 another desktop took in the meantime (`-32023`) folds the tab `Evicted` (#4017).
 
+A user **Disconnect** of the agent detaches its sessions the same way: they keep running unattached
+and the desktop ends the tabs that showed them. The desktop remembers which session each ended tab
+showed, and that tab's **Reconnect** sends a plain `connection.attach` for it (after a
+`connection.list` shows it `running` and not `attached`) instead of a `connection.create` — then
+replays its buffer with [`session.getBuffer`](#sessiongetbuffer). A session that is gone or held
+by another desktop gets a new `connection.create`, never a takeover (#5953). Nothing on the wire
+changed, so the protocol version did not either.
+
 **Compatibility:** the field is append-only. An agent that predates it ignores it, so a Reclaim
 of a session that agent does not hold fails with `-32001` (the desktop keeps the tab in its
 evicted state and reports the error). A pre-SM-003 daemon never sends `MSG_EVICTED`; the worker
