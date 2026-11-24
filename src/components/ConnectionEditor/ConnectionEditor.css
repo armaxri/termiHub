@@ -327,6 +327,18 @@
   flex-shrink: 0;
 }
 
+/* Neutral "Preview" badge on an experimental (remote-desktop) type (#5873,
+   R-166): a quiet outlined pill, not a warning colour. */
+.connection-editor__preview-badge {
+  flex-shrink: 0;
+  padding: 0 var(--spacing-xs);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
 .connection-editor__plugin-badge {
   flex-shrink: 0;
   color: var(--text-accent);

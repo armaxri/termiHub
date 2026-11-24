@@ -1,10 +1,17 @@
 import { Network, Plus } from "lucide-react";
 import { Button, EmptyState } from "@/components/ui";
+import { useAppStore } from "@/store/appStore";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { ExperimentalSettingLink } from "@/components/Settings/ExperimentalSettingLink";
+import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 
 /** The compact line, which points at the header's "New" menu (#5848). */
 export const COMPACT_EMPTY_TEXT = "No saved connections. Add one with “New” above.";
+
+/** The experimental signpost's sentence: what is still behind the switch (#5873). */
+export const EXPERIMENTAL_HINT_TEXT = "Workflows are still experimental.";
+
+/** The signpost's one action, which opens Settings ▸ General (#5873, R-098). */
+export const EXPERIMENTAL_HINT_ACTION = "Turn on in Settings";
 
 /**
  * Props for {@link ConnectionsEmptyState}.
@@ -26,7 +33,10 @@ export interface ConnectionsEmptyStateProps {
  * A brand-new user lands on the Connections view with no saved connections; this
  * gives them a clear call-to-action to create their first connection instead of a
  * blank pane, plus a smaller secondary signpost to the feature areas still behind
- * the experimental switch (workflows) — shown only while that switch is off. SSH
+ * the experimental switch (workflows) — shown only while that switch is off. The
+ * signpost is a short sentence and one small button that opens Settings ▸
+ * General; the old inline "Settings ▸ General ▸ …" link wrapped into several
+ * underlined fragments in a narrow sidebar (#5873, R-098). SSH
  * tunnels, services and network tools graduated and are always shown (#5858).
  *
  * When the sidebar already shows other content (remote agents), the card
@@ -38,6 +48,7 @@ export function ConnectionsEmptyState({
   compact = false,
 }: ConnectionsEmptyStateProps) {
   const experimental = useExperimentalFeatures();
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   if (compact) {
     return (
@@ -72,18 +83,25 @@ export function ConnectionsEmptyState({
             New connection
           </Button>
           {!experimental && (
-            // Secondary, smaller signpost. It ends on the link with no trailing
-            // period: a lone "." wrapped onto its own line in a narrow sidebar (#5621).
-            <p
+            // Secondary, smaller signpost: one sentence, then one action that
+            // never splits across lines (#5873). The button's tooltip names the
+            // toggle's full path, so the user knows where it leads.
+            <div
               className="connections-empty__hint"
               data-testid="connections-empty-experimental-hint"
             >
-              Workflows are behind{" "}
-              <ExperimentalSettingLink
-                className="connections-empty__link"
-                data-testid="connections-empty-experimental-link"
-              />
-            </p>
+              <p className="connections-empty__hint-text">{EXPERIMENTAL_HINT_TEXT}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="connections-empty__hint-action"
+                title={`Opens ${EXPERIMENTAL_SETTING_PATH}`}
+                onClick={() => openSettingsTab({ category: "general" })}
+                data-testid="connections-empty-experimental-action"
+              >
+                {EXPERIMENTAL_HINT_ACTION}
+              </Button>
+            </div>
           )}
         </>
       }

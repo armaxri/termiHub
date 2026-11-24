@@ -122,7 +122,11 @@ import { findLeafByTab } from "@/utils/panelTree";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { buildGatedTypeOptions } from "@/utils/experimentalTypes";
+import {
+  buildGatedTypeOptions,
+  PREVIEW_BADGE_LABEL,
+  previewTypeNote,
+} from "@/utils/experimentalTypes";
 import { connectionTabContentType } from "@/utils/connectionTabContentType";
 import {
   agentGraphicalTabConfig,
@@ -889,6 +893,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       pluginTypes: plugins,
     };
   }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes, experimental, selectedType]);
+  const selectedTypeIsPreview =
+    builtinTypeOptions.find((opt) => opt.value === selectedType)?.preview === true;
 
   // Get the current schema from the effective registry
   const currentTypeInfo = useMemo(
@@ -1814,7 +1820,20 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <h3 className="settings-panel__category-title">General</h3>
         {/* Type first: it decides every field below (#5835, R-063). */}
         {!isAgentTransportMode && (
-          <Field variant="settings" label="Type" htmlFor={typeSelectId}>
+          <Field
+            variant="settings"
+            label="Type"
+            htmlFor={typeSelectId}
+            // A preview (experimental) type says what that means and its known
+            // limits in one line, instead of an unexplained suffix (#5873, R-166).
+            hint={
+              selectedTypeIsPreview ? (
+                <span data-testid="connection-editor-preview-note">
+                  {previewTypeNote(selectedType)}
+                </span>
+              ) : undefined
+            }
+          >
             <Select
               id={typeSelectId}
               value={selectedType}
@@ -1833,6 +1852,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
                       aria-hidden
                     />
                     {opt.label}
+                    {opt.preview && (
+                      <span
+                        className="connection-editor__preview-badge"
+                        data-testid="connection-type-preview-badge"
+                      >
+                        {PREVIEW_BADGE_LABEL}
+                      </span>
+                    )}
                   </span>
                 </SelectItem>
               ))}
