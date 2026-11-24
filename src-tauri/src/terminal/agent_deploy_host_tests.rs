@@ -240,7 +240,13 @@ async fn successful_update_removes_the_backup() {
         "{result:?}"
     );
     assert_eq!(installed(&state), Some(new));
-    assert!(ran(&state, "cp -pf "), "the previous binary was backed up");
+    assert!(
+        ran(
+            &state,
+            &format!("rm -f {DEFAULT_REMOTE_PATH}.previous && cp -pf ")
+        ),
+        "the previous binary was backed up"
+    );
     assert!(
         backup(&state).is_none(),
         "the backup is deleted once verified"
@@ -289,7 +295,10 @@ async fn leftover_backup_with_a_missing_install_is_restored_before_the_update() 
     assert_eq!(installed(&state), Some(new));
     let st = state.lock().expect("host");
     let restore = format!("mv -f {DEFAULT_REMOTE_PATH}.previous {DEFAULT_REMOTE_PATH}");
-    let backup_cmd = format!("cp -pf {DEFAULT_REMOTE_PATH} {DEFAULT_REMOTE_PATH}.previous");
+    let backup_cmd = format!(
+        "rm -f {DEFAULT_REMOTE_PATH}.previous && \
+         cp -pf {DEFAULT_REMOTE_PATH} {DEFAULT_REMOTE_PATH}.previous"
+    );
     let pos = |c: &str| st.commands.iter().position(|x| x == c);
     assert!(
         pos(&restore) < pos(&backup_cmd) && pos(&restore).is_some(),
