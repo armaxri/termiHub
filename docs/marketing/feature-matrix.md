@@ -34,37 +34,35 @@
 
 ## Tunnels & forwarding
 
-| Capability        | Description                                                                                | Status       |
-| ----------------- | ------------------------------------------------------------------------------------------ | ------------ |
-| Local forwarding  | `-L`-style local port forwarding with session pooling, set up in the SSH connection editor | Stable       |
-| Remote forwarding | `-R`-style remote port forwarding, set up in the SSH connection editor                     | Stable       |
-| Dynamic (SOCKS)   | Dynamic SOCKS5 / SOCKS4 / SOCKS4a proxy forwarding, set up in the SSH connection editor    | Stable       |
-| SSH Tunnels view  | Separate sidebar for managing tunnels                                                      | Experimental |
-| Jump hosts        | Connect through one or more bastion hosts (`ProxyJump`-style chains)                       | Stable       |
-| X11 forwarding    | Forward remote GUI apps to a local X server                                                | Stable       |
+| Capability        | Description                                                                                | Status |
+| ----------------- | ------------------------------------------------------------------------------------------ | ------ |
+| Local forwarding  | `-L`-style local port forwarding with session pooling, set up in the SSH connection editor | Stable |
+| Remote forwarding | `-R`-style remote port forwarding, set up in the SSH connection editor                     | Stable |
+| Dynamic (SOCKS)   | Dynamic SOCKS5 / SOCKS4 / SOCKS4a proxy forwarding, set up in the SSH connection editor    | Stable |
+| SSH Tunnels view  | Separate sidebar for managing tunnels                                                      | Beta   |
+| Jump hosts        | Connect through one or more bastion hosts (`ProxyJump`-style chains)                       | Stable |
+| X11 forwarding    | Forward remote GUI apps to a local X server                                                | Stable |
 
 ## Network tools
 
-The Network Tools view is experimental.
-
-| Capability   | Description                                     | Status       |
-| ------------ | ----------------------------------------------- | ------------ |
-| Ping         | Live latency stats and chart                    | Experimental |
-| Traceroute   | Hop-by-hop path tracing                         | Experimental |
-| Port scanner | Scan a host/range for open TCP ports            | Experimental |
-| DNS lookup   | Resolve hostnames / records                     | Experimental |
-| HTTP monitor | Periodic HTTP checks with response-time history | Experimental |
-| Wake-on-LAN  | Send magic packets to wake saved hosts          | Experimental |
+| Capability   | Description                                     | Status |
+| ------------ | ----------------------------------------------- | ------ |
+| Ping         | Live latency stats and chart                    | Beta   |
+| Traceroute   | Hop-by-hop path tracing                         | Beta   |
+| Port scanner | Scan a host/range for open TCP ports            | Beta   |
+| DNS lookup   | Resolve hostnames / records                     | Beta   |
+| HTTP monitor | Periodic HTTP checks with response-time history | Beta   |
+| Wake-on-LAN  | Send magic packets to wake saved hosts          | Beta   |
 
 ## Embedded servers
 
-Managed from the Services view, which is experimental.
+Managed from the Services view.
 
-| Capability  | Description                                                    | Status       |
-| ----------- | -------------------------------------------------------------- | ------------ |
-| HTTP server | Serve a local directory over HTTP with lifecycle management    | Experimental |
-| FTP server  | Local FTP server for quick file transfer / device provisioning | Experimental |
-| TFTP server | Local TFTP server for network-device provisioning              | Experimental |
+| Capability  | Description                                                    | Status |
+| ----------- | -------------------------------------------------------------- | ------ |
+| HTTP server | Serve a local directory over HTTP with lifecycle management    | Beta   |
+| FTP server  | Local FTP server for quick file transfer / device provisioning | Beta   |
+| TFTP server | Local TFTP server for network-device provisioning              | Beta   |
 
 ## Remote desktop
 

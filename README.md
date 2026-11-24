@@ -135,7 +135,7 @@ Prefer to build it yourself? See [Development](#development) below.
 ### SSH Features
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
-- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The separate **SSH tunnels** sidebar view is **experimental** — hidden until you enable **Settings → General → Allow experimental features**
+- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The **SSH tunnels** sidebar view lists every tunnel in one place
 - **Jump hosts** — Connect through one or more bastion hosts (`ProxyJump`-style chains)
 - **X11 forwarding** — Forward remote GUI applications to your local X server
 - **System monitoring** — Real-time CPU, memory, swap, disk, and network throughput stats for remote hosts
@@ -143,8 +143,8 @@ Prefer to build it yourself? See [Development](#development) below.
 ### Power Tools
 
 - **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** with an Ed25519 signature / trust model. Native plugins are off by default; each one runs out of process in an OS sandbox (`termihub-plugin-runner`) — see the plugin trust warning under [Security](#security)
-- **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN. **Experimental** — the Network Tools view is hidden until you enable **Settings → General → Allow experimental features**
-- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. **Experimental** — the Services view that manages them is hidden until you enable **Settings → General → Allow experimental features**
+- **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN. Open them from the **Network tools** view in the Activity Bar
+- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. Manage them from the **Services** view in the Activity Bar, or share a folder from the file browser (**Share via …**)
 - **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`); replay into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
 
 ### Workspace and Windows
@@ -223,7 +223,7 @@ termiHub uses a VS Code-inspired three-column layout:
 └──────────┴────────────────┴──────────────────────────────────────────┘
 ```
 
-- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Macros and Plugins. With **Settings → General → Allow experimental features** on, it also shows SSH tunnels, Services (embedded servers), Network tools and Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
+- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Macros, SSH tunnels, Services (embedded servers), Network tools and Plugins. With **Settings → General → Allow experimental features** on, it also shows Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
 - **Terminal View** — The main area with a tab bar, terminal content, toolbar (New terminal, Split, Close panel), and status bar.
 

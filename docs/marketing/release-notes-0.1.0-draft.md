@@ -14,8 +14,8 @@
 
 First public beta of termiHub — a cross-platform terminal hub that unifies local shells,
 SSH, serial, telnet, Docker, and WSL connections in one VS Code-inspired workspace, with
-SFTP/FTP file transfer, SSH tunnels, and (experimental) network diagnostics, embedded
-servers, and remote-desktop sessions.
+SFTP/FTP file transfer, SSH tunnels, network diagnostics, embedded servers, and
+(experimental) remote-desktop sessions.
 
 ### Added
 
@@ -56,8 +56,9 @@ servers, and remote-desktop sessions.
   never records secrets or terminal contents.
 - **Experimental** — hidden behind **Settings → General → Allow experimental features**:
   remote desktop (RDP / VNC, with VNC file transfer), authored multi-step workflow
-  automation, network tools (ping, traceroute, port scanner, DNS lookup, HTTP monitor,
-  Wake-on-LAN), embedded HTTP / FTP / TFTP servers, and the separate SSH Tunnels view.
+  automation. Network tools (ping, traceroute, port scanner, DNS
+  lookup, HTTP monitor, Wake-on-LAN), embedded HTTP / FTP / TFTP servers and the SSH
+  Tunnels view are on by default.
 
 ### Security
 
@@ -78,8 +79,7 @@ servers, and remote-desktop sessions.
   updates.
 - **Telnet is unencrypted** by protocol design.
 - **Serial** support requires platform-specific drivers.
-- **Remote desktop, workflow automation, network tools, embedded servers and the SSH
-  Tunnels view are experimental** and off by default.
+- **Remote desktop and workflow automation are experimental** and off by default.
 
 ---
 

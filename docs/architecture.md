@@ -2592,7 +2592,6 @@ if (!experimental) return null;
 | Feature      | Entry points gated                                               |
 | ------------ | ---------------------------------------------------------------- |
 | Remote Agent | Connection type dropdown, agent nodes in the Connections sidebar |
-| SSH Tunnels  | Activity Bar item (SSH Tunnels sidebar view)                     |
 
 #### Stability Contract
 

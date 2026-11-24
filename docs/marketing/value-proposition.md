@@ -18,7 +18,7 @@ local shells, SSH, serial, telnet, Docker, and WSL — into a single VS Code-ins
 workspace. Instead of juggling a terminal emulator, a separate SSH client, an SFTP tool,
 a serial monitor, and a bag of network utilities, you organize every connection in one
 place, open them as split-view tabs, browse and edit remote files inline, and reach for
-built-in tunnels, file transfer, and (experimental) network diagnostics without leaving the app. A shared
+built-in tunnels, file transfer, and network diagnostics without leaving the app. A shared
 Rust core powers both the desktop app and an optional remote agent, so sessions on headless
 servers can survive disconnects.
 
@@ -33,7 +33,7 @@ servers can survive disconnects.
 - **Embedded / hardware and network engineers** who need serial console access, telnet to
   legacy gear, Wake-on-LAN, and quick port/DNS checks alongside their shells.
 - **Homelab and infrastructure tinkerers** who want SFTP browsing, SSH tunnels, embedded
-  file servers, and remote-desktop sessions (the last two experimental) in one tool.
+  file servers, and (experimental) remote-desktop sessions in one tool.
 
 ## Why termiHub instead of a plain terminal
 
@@ -50,7 +50,7 @@ workflow-level layer around them:
 - **Files where the shell is.** A built-in SFTP/local file browser and a Monaco-powered
   editor let you browse, upload, download, and edit remote files inline — no second tool.
 - **Built-in tunnels and diagnostics.** Local / remote / dynamic (SOCKS) SSH port
-  forwarding, plus (experimental) ping, traceroute, port scanner, DNS lookup, HTTP monitor,
+  forwarding, plus ping, traceroute, port scanner, DNS lookup, HTTP monitor,
   and Wake-on-LAN — without shelling out.
 - **Layout that scales.** Horizontal/vertical splits, drag-and-drop tabs between panels,
   tear-out windows, saved workspaces, session auto-restore, and broadcast input across a
@@ -81,7 +81,5 @@ These are stated plainly in the current README and should stay in any public pos
 
 - **Beta, unsigned binaries.** v0.1.0 binaries are unsigned; macOS Gatekeeper and Windows
   SmartScreen warn on first launch (documented workarounds exist). No auto-update.
-- **Remote desktop (RDP / VNC), workflow automation, the SSH Tunnels view, network tools
-  and embedded servers are experimental**, hidden behind **Settings → General → Allow
-  Experimental Features**.
+- **Remote desktop (RDP / VNC) and workflow automation are experimental**, hidden behind **Settings → General → Allow experimental features**.
 - **Telnet is unencrypted** by protocol design.
