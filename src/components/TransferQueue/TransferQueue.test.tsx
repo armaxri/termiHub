@@ -41,6 +41,7 @@ vi.mock("@/components/ui", async () => {
 
 import { TransferQueue, TRANSFER_PANEL_AUTO_COLLAPSE_MS } from "./TransferQueue";
 import { TransferQueueIndicator } from "./TransferQueueIndicator";
+import { resetTransferSummaries, showTransferSummary } from "./transferSummaryVisibility";
 import { TooltipProvider, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { transferCancel, transferPause, transferResume, transferRetry } from "@/services/api";
@@ -540,5 +541,50 @@ describe("TransferQueueIndicator (minimized)", () => {
     expect(transport.dispatched).toContainEqual(
       expect.objectContaining({ kind: "transfer.setMinimized", payload: { minimized: false } })
     );
+  });
+
+  describe("one transfer summary on screen (#5834)", () => {
+    afterEach(() => resetTransferSummaries());
+
+    function renderIndicator() {
+      act(() =>
+        root.render(
+          <TooltipProvider>
+            <TransferQueueIndicator />
+          </TooltipProvider>
+        )
+      );
+    }
+
+    it("hides while the file browser already summarises every transfer", () => {
+      seed([entry({ id: "a", state: "completed" }), entry({ id: "b", state: "completed" })], true);
+      renderIndicator();
+      expect(query("transfer-queue-indicator")?.textContent).toContain("2 finished");
+
+      let hide: () => void = () => {};
+      act(() => {
+        hide = showTransferSummary("sess-a");
+      });
+      expect(query("transfer-queue-indicator")).toBeNull();
+
+      // The summary line goes away (the file browser closed): the count is back.
+      act(() => hide());
+      expect(query("transfer-queue-indicator")?.textContent).toContain("2 finished");
+    });
+
+    it("stays while another session's transfers have no summary on screen", () => {
+      act(() => {
+        showTransferSummary("sess-a");
+      });
+      seed(
+        [
+          entry({ id: "a", state: "completed" }),
+          entry({ id: "b", sessionId: "sess-b", state: "active" }),
+        ],
+        true
+      );
+      renderIndicator();
+      expect(query("transfer-queue-indicator")?.textContent).toContain("1 transferring");
+    });
   });
 });
