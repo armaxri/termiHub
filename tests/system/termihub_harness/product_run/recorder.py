@@ -115,8 +115,20 @@ class Recorder:
         return doc
 
     # ── steps ─────────────────────────────────────────────────────────────────
-    def begin(self, step_id: str, title: str, *, phase: str, expect: str = "") -> None:
-        """Start (or restart) a step; it becomes the run's current step."""
+    def begin(
+        self,
+        step_id: str,
+        title: str,
+        *,
+        phase: str,
+        expect: str = "",
+        node: Optional[str] = None,
+    ) -> None:
+        """Start (or restart) a step; it becomes the run's current step.
+
+        ``node`` is the pytest node id the step runs in, so a review-loop round
+        can re-run just that test (#5817, :mod:`.review_loop`).
+        """
 
         def add(doc: dict) -> None:
             doc["steps"] = [s for s in doc["steps"] if s["id"] != step_id]
@@ -133,6 +145,7 @@ class Recorder:
                     "graded_by": "harness",
                     "started_at": self._clock(),
                     "ended_at": None,
+                    **({"node": node} if node else {}),
                 }
             )
             doc["current"] = step_id
@@ -167,9 +180,11 @@ class Recorder:
 
         self._update(settle)
 
-    def not_tested(self, step_id: str, title: str, *, phase: str, reason: str) -> None:
+    def not_tested(
+        self, step_id: str, title: str, *, phase: str, reason: str, node: Optional[str] = None
+    ) -> None:
         """Record a step that cannot run here (missing input, not built yet)."""
-        self.begin(step_id, title, phase=phase)
+        self.begin(step_id, title, phase=phase, node=node)
         self.end(step_id, "not-tested", reason=reason)
 
     def step_status(self, step_id: str) -> Optional[str]:

@@ -166,6 +166,12 @@ def notify_operator(title: str, message: str) -> None:
         pass
 
 
+def current_node() -> Optional[str]:
+    """The pytest node id of the running test (``PYTEST_CURRENT_TEST`` minus its phase)."""
+    current = os.environ.get("PYTEST_CURRENT_TEST", "").strip()
+    return current.rsplit(" (", 1)[0] if "::" in current else None
+
+
 def failed_steps_of(instance: object) -> list[str]:
     """The steps a product-run test instance recorded as failed (for conftest)."""
     return list(getattr(instance, "_failed_steps", None) or [])
@@ -225,7 +231,7 @@ class ProductRunUi(HarnessMixin):
         an earlier one calls :meth:`require` first.
         """
         rec = self.recorder
-        rec.begin(step_id, title, phase=self.phase, expect=expect)
+        rec.begin(step_id, title, phase=self.phase, expect=expect, node=current_node())
         started = time.monotonic()
         try:
             yield
@@ -257,7 +263,9 @@ class ProductRunUi(HarnessMixin):
 
     def not_tested(self, step_id: str, title: str, reason: str) -> None:
         """Record a step that cannot run here, with the reason."""
-        self.recorder.not_tested(step_id, title, phase=self.phase, reason=reason)
+        self.recorder.not_tested(
+            step_id, title, phase=self.phase, reason=reason, node=current_node()
+        )
 
     def require(self, *step_ids: str) -> None:
         """Inside a step: mark it *not tested* (blocked) unless ``step_ids`` passed."""
