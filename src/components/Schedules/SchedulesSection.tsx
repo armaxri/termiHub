@@ -157,9 +157,10 @@ export function SchedulesSection({
 
   const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
 
-  // Nothing to pause without a schedule (R-135); a pause left on stays reachable.
+  // The sidebar's header has nothing to pause without a schedule (R-135); a pause
+  // left on stays reachable.
   const pauseToggle =
-    schedules.length === 0 && !paused ? null : (
+    collapse && schedules.length === 0 && !paused ? null : (
       <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
         <label className="schedules__pause" htmlFor="schedules-pause-toggle">
           {compactHeader ? null : <span>Pause all</span>}

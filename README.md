@@ -145,7 +145,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar, with a curated plugin index to browse and install from (Settings → Plugins → Browse plugins; every download is checksum-verified and still needs your review). Includes **native (cdylib) backends** with an Ed25519 signature / trust model. Native plugins are off by default; each one runs out of process in an OS sandbox (`termihub-plugin-runner`) — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN. Open them from the **Network tools** view in the Activity Bar
 - **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning. Manage them from the **Services** view in the Activity Bar, or share a folder from the file browser (**Share via …**)
-- **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`); replay into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
+- **Automations** — Record what you type in a terminal or create an automation step by step, then run it with one click, on many terminals, on a trigger or on a schedule (see [Automations](#automations))
 
 ### Workspace and Windows
 
@@ -173,29 +173,32 @@ Prefer to build it yourself? See [Development](#development) below.
 
 > ⚠️ **Plugin trust warning.** termiHub can load **native plugins** (cdylib backends). They are **off by default** (Settings → Plugins → **Enable native plugins**), and each one loads only after you trust that exact build and the access it asks for. A native plugin never runs inside termiHub: it runs in its own `termihub-plugin-runner` process, confined by an OS sandbox (landlock, seccomp and namespaces on Linux; Seatbelt on macOS; a Less-Privileged AppContainer in a job object on Windows). In that sandbox it can read and write only its own data folder, cannot open sockets, start programs or reach devices, and gets network and file access only through termiHub's permission-checked bridge. If full isolation is unavailable (mostly an older Linux kernel without landlock), the plugin loads only after you accept reduced isolation for that build; there is no setting to turn the sandbox off. Plugins also carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`). The sandbox raises the cost of an attack but does not protect against kernel or operating-system vulnerabilities, or against a plugin misleading you inside its own terminal (for example, asking for a password). **Only install plugins from publishers you trust.** Details: [SECURITY.md](SECURITY.md#native-plugin-sandbox) and [The plugin sandbox](docs/plugin-authoring.md#the-plugin-sandbox).
 
-### Workflow Automation (experimental)
+### Automations
 
-- **Authored multi-step workflows** — Save named, ordered sequences of steps that run against a terminal session
+- **One place** — The Automations view lists every automation, searchable by name, description and tag. Each row shows its name, its description and its state (Armed or Off, Running, Failed) and has a Run button; Edit, Run on…, Schedule…, Recent runs, Duplicate, Export and Delete are in the row's menu (the … button or a right-click)
+- **Recorded or typed keystrokes** — **Record** what you type in a terminal, or write the keystrokes by hand (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`)
+- **Step by step** — Named, ordered sequences of steps that run against a terminal session
 - **Step types** — `send-command` (type a command), `run-script` (stream a multi-line script), `run-macro` (replay a saved macro), `wait` (delay), `run-local-process` (run a local program — see the security callout below), plus three control-flow steps:
   - `conditional` — compare two values (`eq`, `ne`, `gt`, `lt`, `gte`, `lte`, `contains`; numeric when both sides are numbers) and run the _then_ steps or the optional _else_ steps. Operands can use `${parameter}` references
   - `loop` — repeat a body of steps a fixed number of times or while a condition holds; the body sees the 0-based `${iteration}`. A loop runs at most 1000 iterations: a longer count is clamped, and a while-loop that reaches the cap fails the run instead of spinning forever
   - `wait-for-output` — pause until the terminal prints matching text (a plain substring by default, or a regular expression), matched against the ANSI-stripped output that arrives after the step starts. It times out after 30 s by default (at most 10 minutes) and a timeout fails the step
   - Conditionals and loops nest up to 10 levels deep
-- **Triggers** — A workflow can carry five kinds of trigger:
-  - _Manual_ — run it from the command palette or the Workflows sidebar. Every saved workflow can be run this way
+- **Triggers** — An automation can carry five kinds of trigger:
+  - _Manual_ — run it from the command palette or the Automations view. Every automation can be run this way
   - _Hotkey_ — a single key combination (no chords) that runs it on the active terminal. An app shortcut bound to the same keys takes precedence
   - _On-connect_ — run it automatically, once per session, when a session for one of the chosen saved connections opens
   - _On-disconnect_ — run it once when a terminal session for one of the chosen saved connections ends. Choose which endings count: unexpected drops only (the default: a lost connection or a non-zero exit), user closes only (closing the tab, killing the session, or a clean logout), or any disconnect. The session is already gone, so the run has no terminal: steps that send to the session fail. Use `run-local-process` and `wait` steps
   - _On-output-match_ — run it in the terminal whose output matches a pattern: plain text by default, or a regular expression. Only sessions of the chosen saved connections are watched, and the pattern is matched against the visible text (colors and other escape codes removed). A pattern is at most 256 characters, and regexes with nested quantifiers such as `(a+)+` or with backreferences are rejected, because they can make matching very slow. Each trigger waits a cooldown between runs (10 s by default, 1 s to 24 h) and runs at most a set number of times per session (5 by default, up to 100)
   - Automatic triggers (on-disconnect and on-output-match) never prompt and never interrupt a run in progress: parameters use their defaults, a local program must already be on the allowlist, and a trigger that fires while another workflow is running is skipped. Time-based runs are not a workflow trigger: they are set up separately under **Schedules** (below)
 - **Error handling** — Per step, retry a failing step (up to 10 retries, fixed or exponential back-off) and/or mark it _continue on error_ so the run carries on past an expected failure; tolerated failures are shown in the run toast and history
-- **Run on many terminals** — "Run on…" in the Workflows panel runs a workflow on a chosen set of connected terminals (or the current broadcast group) in parallel (up to 8 at a time, or one after another), with per-terminal progress, per-terminal or all-at-once Stop, and a per-terminal summary
-- **Sidebar + editor** — Manage, edit, and organize workflows from the Workflows panel; import and export workflows as portable JSON
-- **Schedules** — Run a workflow or macro every N minutes, daily, or on chosen weekdays at a local time (DST-aware) on chosen saved connections or a broadcast group, while termiHub is open. Schedules start disabled, the first enable asks you to confirm the target hosts, the status bar shows how many are active, and one switch pauses them all. **Settings → Schedules** lists every schedule and lets you turn one off, pause them all, or delete one, even with experimental features off (the status-bar indicator opens it then; with them on it opens the Workflows view, where schedules are also created and edited). A scheduled run only types into terminals that are already connected, never prompts, never overlaps its previous run, and is recorded in the run history as `scheduled`; runs missed while termiHub was closed or the computer slept are skipped (or run once, per schedule)
+- **Run on many terminals** — "Run on…" runs an automation on a chosen set of connected terminals (this panel, all terminals, the current broadcast set or a saved broadcast group) after a confirmation that names every terminal, in parallel (up to 8 at a time, or one after another), with per-terminal progress, per-terminal or all-at-once Stop, and a per-terminal summary
+- **Import and export** — One automation or the whole library as portable JSON; files exported by the earlier Macros and Workflows views import too
+- **History** — One list of every run, with who or what started it, its outcome and its terminals
+- **Schedules** — Run an automation every N minutes, daily, or on chosen weekdays at a local time (DST-aware) on chosen saved connections or a broadcast group, while termiHub is open. Schedules start disabled, the first enable asks you to confirm the target hosts, the status bar shows how many are active, and one switch pauses them all. **Settings → Schedules** lists every schedule and lets you turn one off, pause them all, create or delete one; the **Schedules** section of the Automations view, which the status-bar indicator opens, also edits them. A scheduled run only types into terminals that are already connected, never prompts, never overlaps its previous run, and is recorded in the run history as `scheduled`; runs missed while termiHub was closed or the computer slept are skipped (or run once, per schedule)
 
-> ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type works through the terminal session: it sends text into it (i.e. runs on the remote host when you are connected), reads its output, or only controls the run. `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported workflows are **never** auto-authorized.
+> ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type works through the terminal session: it sends text into it (i.e. runs on the remote host when you are connected), reads its output, or only controls the run. `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported automations are **never** auto-authorized.
 >
-> The Workflows panel is **experimental** and behind the experimental-features toggle — enable **Settings → General → Allow experimental features** to use it. Design reference: [`docs/concepts/implemented/workflow-automation.html`](docs/concepts/implemented/workflow-automation.html).
+> This step is the one part of Automations that is **experimental**: it is offered, and an automation that can reach it runs, only while **Settings → General → Allow experimental features** is on. Design reference: [`docs/concepts/partial/automations.html`](docs/concepts/partial/automations.html).
 
 ### Platform Support
 
@@ -216,14 +219,14 @@ termiHub uses a VS Code-inspired three-column layout:
 │  [File]  │  selected in   │  ├──────┴──────┴──────┤                 │
 │  [Rcnt]  │  the Activity  │  │                    │                 │
 │  [Wksp]  │  Bar           │  │  Terminal Content  │                 │
-│  [Mcro]  │                │  │                    │                 │
+│  [Auto]  │                │  │                    │                 │
 │  [Plug]  │                │  │                    │                 │
 │  [Logs]  │                │  └────────────────────┘                 │
 │  [Gear]  │                │  Status Bar                             │
 └──────────┴────────────────┴──────────────────────────────────────────┘
 ```
 
-- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Macros, SSH tunnels, Services (embedded servers), Network tools and Plugins. With **Settings → General → Allow experimental features** on, it also shows Workflows. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
+- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Automations, SSH tunnels, Services (embedded servers), Network tools and Plugins. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
 - **Terminal View** — The main area with a tab bar, terminal content, toolbar (New terminal, Split, Close panel), and status bar.
 
@@ -441,7 +444,7 @@ Click the **gear icon** > **Settings** to open the settings tab. termiHub stores
 TERMIHUB_CONFIG_DIR=./my-project/termihub-config pnpm tauri dev
 ```
 
-**Settings → Schedules** shows every scheduled workflow and macro run with its rule, target hosts, next run and last result. Turn a schedule off or on, pause all schedules with one switch, or delete a schedule. This category is always available, including with experimental features off. To create or edit a schedule, use the Workflows view (experimental) or schedule a macro from the Macros view.
+**Settings → Schedules** shows every scheduled automation run with its rule, target hosts, next run and last result. Turn a schedule off or on, pause all schedules with one switch, or delete a schedule. To edit a schedule, or to schedule an automation from its row, use the Automations view.
 
 ### Tips and Tricks
 

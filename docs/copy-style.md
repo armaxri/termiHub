@@ -71,7 +71,7 @@ One primary button per footer. Cancel is on the left; the primary action is on t
 
 Feedback is visible in place; a toast only when it isn't (maintainer decision on
 [#5859](https://github.com/armaxri/termiHub/issues/5859)). A saved form that closes and shows its
-row, a tab that opens connected, a toggle that flips, a macro that types into the visible terminal:
+row, a tab that opens connected, a toggle that flips, an automation that types into the visible terminal:
 none of these toast. Toasts are for:
 
 - **Failures** — always, and they stay until dismissed.
@@ -159,7 +159,7 @@ termiHub uses US English.
 > "Users are looking for names and maybe for a short description, but not the settings."
 > (maintainer, 2026-11-13, [#5757](https://github.com/armaxri/termiHub/issues/5757))
 
-A row in a sidebar or list (connections, workflows, macros, schedules, agents, tunnels,
+A row in a sidebar or list (connections, automations, schedules, agents, tunnels,
 services, HTTP monitors, plugins) shows:
 
 - **The name the user gave the item.**
@@ -169,7 +169,7 @@ services, HTTP monitors, plugins) shows:
 - **A compact state marker, only when the state needs attention:** running, error or failed,
   armed/off, connected, disabled, paused. A routine state that the dot already says ("on,
   next run at 09:10") is not a marker.
-- **Its run control, when the list exists to run things:** a macro's Play, a tunnel's or
+- **Its run control, when the list exists to run things:** an automation's Run, a tunnel's or
   service's Start / Stop (Retry after an error). It stays visible at rest on the row's
   trailing edge (`SidebarListItem`'s `primaryAction`); the other actions show on hover.
   A status dot names its state in a tooltip and as its accessible name ("Stopped",
