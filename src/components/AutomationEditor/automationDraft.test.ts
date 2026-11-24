@@ -147,6 +147,19 @@ describe("type-keys drafts", () => {
     });
   });
 
+  it("keeps what it does not know of an edited chunk and its step", () => {
+    const future = withFutureFields(recorded);
+    if (future.kind !== "type-keys") throw new Error("fixture");
+    const draft = toStepDraft(future);
+    const keys = draft.keys!.map((k, i) => (i === 0 ? { ...k, text: "x" } : k));
+    expect(bytes(fromStepDraft({ ...draft, keys }))).toBe(
+      bytes({
+        ...future,
+        chunks: future.chunks.map((c, i) => (i === 0 ? { ...c, data: "x" } : c)),
+      })
+    );
+  });
+
   it("saves whole, non-negative delays", () => {
     const draft = toStepDraft({ kind: "type-keys", chunks: [{ data: "a", delayMs: 5 }] });
     const delay = (delayMs: number | "") => {
