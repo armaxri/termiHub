@@ -442,6 +442,35 @@ class Driver:
             }
         )
 
+    def terminal_key(
+        self,
+        key: str,
+        tab_id: Optional[str] = None,
+        *,
+        ctrl: bool = False,
+        meta: bool = False,
+        shift: bool = False,
+        alt: bool = False,
+    ) -> None:
+        """Press ``key`` in the terminal of ``tab_id`` (active tab) like a real key (#5966).
+
+        Unlike :meth:`press_key` on a wrapper, this lands on xterm's hidden
+        input textarea, so the key runs through xterm's key handler and the
+        app's key routing: Enter in an ended terminal runs the session-end
+        strip's action, and a live terminal gets the key's bytes.
+        """
+        self._call(
+            {
+                "action": "terminalKey",
+                "key": key,
+                "tabId": tab_id,
+                "ctrl": ctrl,
+                "meta": meta,
+                "shift": shift,
+                "alt": alt,
+            }
+        )
+
     def editor_cursor(self, direction: str, *, times: int = 1) -> None:
         """Move the active file editor's caret ``times`` steps in ``direction``.
 

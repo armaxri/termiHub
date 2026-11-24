@@ -57,6 +57,7 @@ import {
   sandboxHasParsers,
   sandboxSessionPending,
   enqueueSandboxTransform,
+  enqueueSandboxPassthrough,
   sandboxNotifySessionStart,
   sandboxNotifySessionEnd,
   discardSandboxSession,
@@ -1227,8 +1228,12 @@ export function Terminal({
           });
           // Staged behind the output still waiting for its flush, so the exit
           // line is always written after the session's last output (#5955).
-          outputFlow.push(textEncoder.encode(`\r\n\x1b[90m${exitLabel}\x1b[0m\r\n`));
-          flushOutput();
+          // Output a protocol parser still holds queues first (#5965).
+          const exitBytes = textEncoder.encode(`\r\n\x1b[90m${exitLabel}\x1b[0m\r\n`);
+          if (!enqueueSandboxPassthrough(sessionId, exitBytes)) {
+            outputFlow.push(exitBytes);
+            flushOutput();
+          }
           // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).
           sandboxNotifySessionEnd(sessionId);
           sessionIdRef.current = null;

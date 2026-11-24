@@ -5,7 +5,10 @@ app in the per-PR lane (``tests/test_product_run_hostkey_compare.py``) and on
 the live prompts in the product run's SSH phase.
 
 - R-111: both host-key dialogs name the connection the user clicked, not only
-  ``127.0.0.1:<port>`` (:func:`connection_problems`).
+  ``127.0.0.1:<port>`` (:func:`connection_problems`). A prompt with no owning
+  terminal tab — a tunnel, an SFTP browser, an agent, the editor's Test —
+  names the connection the backend connect gave it (#5943), labelled by what
+  asks (:func:`expected_connection_label`, :func:`origin_connection_problems`).
 - R-109: a changed key gives the user a real comparison aid, not two 43-char
   strings to compare by eye (:func:`changed_compare_problems`): a block glyph
   beside each fingerprint whose patterns differ, both fingerprints split into
@@ -40,6 +43,38 @@ def connection_problems(shown: Optional[str], name: str) -> list[str]:
     if shown.strip() != name:
         return [f"the dialog names {shown.strip()!r}, want {name!r}"]
     return []
+
+
+#: What can raise a host-key prompt, and how the dialog labels its connection
+#: (#5943, mirroring ``src-tauri/src/session/prompt_connection_name.rs``): a
+#: terminal tab, a session's own SFTP / monitoring login and the editor's Test
+#: show the connection's name as is; a tunnel and an agent say what they are.
+PROMPT_ORIGIN_SUFFIXES = {
+    "tab": "",
+    "saved": "",
+    "sftp": "",
+    "test": "",
+    "tunnel": " (tunnel)",
+    "agent": " (agent)",
+}
+
+
+def expected_connection_label(origin: str, name: str) -> str:
+    """The connection line a prompt raised by ``origin`` for ``name`` shows (#5943)."""
+    try:
+        suffix = PROMPT_ORIGIN_SUFFIXES[origin]
+    except KeyError:
+        raise ValueError(f"unknown prompt origin {origin!r}") from None
+    return f"{name.strip()}{suffix}"
+
+
+def origin_connection_problems(shown: Optional[str], origin: str, name: str) -> list[str]:
+    """Whether a prompt raised by ``origin`` names connection ``name`` (#5943), or ``[]``.
+
+    A tunnel's or an agent's prompt has no owning tab; before #5943 it showed
+    only the host, which this names as a missing connection line.
+    """
+    return connection_problems(shown, expected_connection_label(origin, name))
 
 
 def fingerprint_groups(text_items: list[dict[str, Any]]) -> list[str]:
