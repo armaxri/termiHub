@@ -45,6 +45,9 @@ export function SharedCredentialsSettings() {
 
   const mode = credentialStoreStatus?.mode ?? "none";
   const status = credentialStoreStatus?.status;
+  // With passwords not saved the section collapses to its heading and the
+  // one storage-off line: no paragraph about a feature that cannot work (#5875).
+  const storageOff = mode === "none";
   const unavailable =
     mode === "none"
       ? credentialStorageOffText("use shared credentials")
@@ -90,13 +93,19 @@ export function SharedCredentialsSettings() {
   }, [pendingDelete]);
 
   return (
-    <div className="settings-panel__section" data-testid="shared-credentials">
+    <div
+      className="settings-panel__section"
+      data-testid="shared-credentials"
+      data-collapsed={storageOff ? "true" : undefined}
+    >
       <SettingsSectionHeading>Shared credentials</SettingsSectionHeading>
-      <p className="settings-panel__description">
-        A password or key passphrase that several connections use. Change it here once and every
-        connection that uses it picks up the new secret. Choose one in a connection&apos;s
-        Authentication settings.
-      </p>
+      {!storageOff && (
+        <p className="settings-panel__description" data-testid="shared-credentials-description">
+          A password or key passphrase that several connections use. Change it here once and every
+          connection that uses it picks up the new secret. Choose one in a connection&apos;s
+          Authentication settings.
+        </p>
+      )}
       {unavailable && (
         <p className="settings-panel__description" data-testid="shared-credentials-unavailable">
           {unavailable}
@@ -134,7 +143,7 @@ export function SharedCredentialsSettings() {
         </div>
       )}
       {/* With no store creating cannot work, so the line above replaces it (#5685). */}
-      {mode !== "none" && (
+      {!storageOff && (
         <div className="credential-vault__actions">
           <Button
             variant="secondary"

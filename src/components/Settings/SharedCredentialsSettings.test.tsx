@@ -112,6 +112,33 @@ describe("SharedCredentialsSettings (#3557)", () => {
     expect(query("shared-credentials-create")).toBeNull();
   });
 
+  // #5875: with passwords not saved the section is its heading and one muted line.
+  it("collapses to the heading and the storage-off line while passwords are not saved", async () => {
+    mockedList.mockResolvedValue([]);
+    await render("none");
+    const section = query("shared-credentials")!;
+    expect(section.dataset.collapsed).toBe("true");
+    expect(query("shared-credentials-description")).toBeNull();
+    const lines = section.querySelectorAll("p");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].classList.contains("settings-panel__description")).toBe(true);
+    expect(lines[0].dataset.testid).toBe("shared-credentials-unavailable");
+  });
+
+  it.each(["os_keychain", "master_password"] as const)(
+    "keeps the full description in %s mode",
+    async (mode) => {
+      mockedList.mockResolvedValue([]);
+      await render(mode);
+      expect(query("shared-credentials")!.dataset.collapsed).toBeUndefined();
+      expect(query("shared-credentials-description")?.textContent).toMatch(
+        /^A password or key passphrase that several connections use\./
+      );
+      expect(query("shared-credentials-unavailable")).toBeNull();
+      expect(query("shared-credentials-create")).not.toBeNull();
+    }
+  );
+
   it("keeps creating disabled, not hidden, before a master password is set", async () => {
     await render("master_password", "unavailable");
     expect(query("shared-credentials-unavailable")?.textContent).toBe(
