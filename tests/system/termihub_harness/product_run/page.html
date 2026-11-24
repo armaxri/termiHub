@@ -92,6 +92,23 @@
       .s-human {
         color: var(--human);
       }
+      .grades {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 8px 0 12px;
+      }
+      .grades th,
+      .grades td {
+        text-align: left;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      .grade-up {
+        color: var(--pass);
+      }
+      .grade-down {
+        color: var(--fail);
+      }
       .panel {
         background: var(--panel);
         border: 1px solid var(--line);
@@ -357,6 +374,51 @@
         list.replaceChildren(...nodes);
       };
 
+      // Grade (1-5) per surface with its trend across linked loop rounds (#5817).
+      function renderGrades(grades, history, loop) {
+        const show = (g) => (g === null || g === undefined ? "-" : String(g));
+        const rows = grades.map(([surface, g]) => {
+          const trend = ((history.surfaces || {})[surface] || []).map((e) => show(e.grade));
+          const change = g.change || 0;
+          const cls = change > 0 ? "grade-up" : change < 0 ? "grade-down" : "";
+          const verdicts = Object.entries(g.verdicts || {})
+            .filter(([, n]) => n)
+            .map(([v, n]) => `${n} ${v}`)
+            .join(", ");
+          return el(
+            "tr",
+            {},
+            el("td", {}, surface),
+            el(
+              "td",
+              { class: cls },
+              show(g.grade) + (change ? ` (${change > 0 ? "+" : ""}${change})` : "")
+            ),
+            el("td", {}, trend.join(" → ") || "-"),
+            el("td", {}, verdicts || "-"),
+            el("td", {}, (g.reasons || []).join(" ") || "-")
+          );
+        });
+        const head = el(
+          "tr",
+          {},
+          ...["Surface", "Grade", "Trend", "Previous findings", "Reason"].map((h) =>
+            el("th", {}, h)
+          )
+        );
+        const box = el("div", {}, el("table", { class: "grades" }, head, ...rows));
+        if (loop) {
+          box.append(
+            el(
+              "div",
+              { class: "reason" },
+              `Loop round ${loop.rounds_done} of ${loop.max_rounds}: ${loop.action} (${loop.reason})`
+            )
+          );
+        }
+        return box;
+      }
+
       // The UI review (#5538): review/findings.js, written by
       // scripts/internal/product-run-review.py merge after the reviewers ran.
       window.__productRunReview = function (doc) {
@@ -377,6 +439,8 @@
             )
           ),
         ];
+        const grades = Object.entries(doc.grades || {});
+        if (grades.length) nodes.push(renderGrades(grades, doc.history || {}, doc.loop));
         for (const bad of doc.rejected || []) {
           nodes.push(
             el("div", { class: "panel reason" }, `Rejected ${bad.file}: ${bad.errors.join("; ")}`)
@@ -393,7 +457,8 @@
               el("span", { class: "step-title" }, f.finding),
               el("span", { class: "step-id" }, `${f.id} · ${f.kind} · ${f.surface}`)
             ),
-            el("div", { class: "reason" }, "Suggestion: " + f.suggestion)
+            ...(f.task ? [el("div", { class: "reason" }, "Task: " + f.task)] : []),
+            el("div", { class: "reason" }, "Recommendation: " + (f.recommendation || f.suggestion))
           );
           const shots = el("div", { class: "shots" });
           for (const file of f.screenshots || []) {
