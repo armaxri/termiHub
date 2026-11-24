@@ -146,6 +146,14 @@ describe("what is typed at a password prompt", () => {
     expect(recorder.finish().secrets).toEqual([]);
   });
 
+  it("stays hidden when other output moves the prompt while it is answered", () => {
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", () => "Password: ");
+    recorder.push("w", () => "[1]+  Done   sleep 1");
+    recorder.push("\r", () => "");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 3, prompt: "Password:" }]);
+  });
+
   it("never gets in the way of typing when the screen cannot be read", () => {
     const recorder = new InputRecorder(() => 0);
     const broken = () => {

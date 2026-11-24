@@ -57,9 +57,12 @@ function readSafely(readPrompt: ReadPrompt): string {
   }
 }
 
-/** Whether `now` is still the prompt `prompt`, with nothing or a mask after it. */
-function stillHidden(prompt: string, now: string): boolean {
-  return now.startsWith(prompt) && MASK.test(now.slice(prompt.length).trim());
+/**
+ * Whether `now` shows typed text behind `prompt`. A line that other output has
+ * replaced says nothing about an echo, so it does not count as one.
+ */
+function showsEcho(prompt: string, now: string): boolean {
+  return now.startsWith(prompt) && !MASK.test(now.slice(prompt.length).trim());
 }
 
 /** Records one terminal's input. `now` is a monotonic clock in milliseconds. */
@@ -141,7 +144,7 @@ export class InputRecorder {
   /** Keys that show up behind the "prompt" were echoed: it was no password. */
   private dropEchoedRun(): void {
     const { open, readPrompt } = this;
-    if (!open || !readPrompt || stillHidden(open.prompt, readSafely(readPrompt))) return;
+    if (!open || !readPrompt || !showsEcho(open.prompt, readSafely(readPrompt))) return;
     for (const entry of this.entries) if (entry.secret === open) entry.secret = null;
     this.open = null;
   }
