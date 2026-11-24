@@ -37,7 +37,7 @@ from termihub_harness.product_run import ProductRunUi
 pytestmark = [pytest.mark.product_run, pytest.mark.integration]
 
 TOAST_REGION = "toast-region"
-WORKFLOW_DIALOG = "workflow-editor-dialog"
+WORKFLOW_DIALOG = "automation-editor-dialog"
 #: The minimum supported window, where a ``lg`` dialog leaves no 240px column.
 NARROW_WINDOW = (800, 600)
 #: The product run's normal window, restored afterwards.

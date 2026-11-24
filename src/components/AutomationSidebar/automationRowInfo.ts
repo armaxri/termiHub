@@ -9,10 +9,9 @@ import {
   stepKindLabel,
   stepSummary,
   triggerKindLabel,
-} from "@/components/WorkflowSidebar/workflowStepMeta";
-import { MAX_PREVIEW_LINES, macroPreviewLines } from "@/components/MacroSidebar/macroStepFormat";
+} from "@/components/AutomationEditor/stepMeta";
+import { MAX_PREVIEW_LINES, macroPreviewLines } from "@/components/AutomationEditor/keysFormat";
 import { t, tf } from "@/i18n/catalog";
-import { automationToMacro, automationToWorkflow } from "@/store/slices/automationViews";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
@@ -102,7 +101,9 @@ function firstStepLines(automation: Automation): string[] {
   const [first] = automation.steps;
   if (!first) return [];
   if (first.kind === "type-keys") {
-    const lines = macroPreviewLines(automationToMacro(automation).steps);
+    const lines = macroPreviewLines(
+      automation.steps.flatMap((step) => (step.kind === "type-keys" ? step.chunks : []))
+    );
     if (lines.length === 0) return [];
     return [
       t("macro.tooltip.types"),
@@ -112,9 +113,8 @@ function firstStepLines(automation: Automation): string[] {
   }
   // A nested automation is named by the library, which this has not got.
   if (first.kind === "run-automation") return [];
-  const [step] = automationToWorkflow({ ...automation, steps: [first] }).steps;
   const more = automation.steps.length - 1;
-  const line = `${stepKindLabel(step.kind)}: ${stepSummary(step)}`;
+  const line = `${stepKindLabel(first.kind)}: ${stepSummary(first)}`;
   return [more > 0 ? tf("automation.tooltip.moreSteps", { line, count: more }) : line];
 }
 

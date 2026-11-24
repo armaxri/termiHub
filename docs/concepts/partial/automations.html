@@ -151,7 +151,7 @@
       <header class="concept-header">
         <h1>Automations: one type for macros and workflows</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial · slice 1 of 12 implemented</span>
+          <span class="concept-status">Partial · slices 1–7, 9 and 10 of 12 implemented</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a></span
           >
@@ -180,8 +180,8 @@
       <section>
         <p>
           Status: partially implemented. The maintainer decided the open questions on 2026-11-23
-          (see the end). Slice 1 (the Rust model and the pure converters) has landed; slices 2–12
-          are open. Umbrella issue:
+          (see the end). Slices 1–7, 9 and 10 have landed; recording into the model (8), the palette
+          and file format (11) and the cleanup (12) are open. Umbrella issue:
           <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>. Originally written
           against <code>develop</code> in November 2026.
         </p>
@@ -1689,15 +1689,13 @@ flowchart LR
                 <td>6 Automations sidebar</td>
                 <td>
                   Done. One list and one Activity Bar item (the bolt); the Macros and Workflows
-                  sidebars are deleted. Settings v4 maps the hidden and the last open view. The two
-                  editors stay until slice 7: an automation that only types keystrokes opens in the
-                  keystroke editor, every other one in the step editor. Import reads either old file
-                  format and Export all writes both lists to one file, until slice 11. Differs from
-                  3.3: import and export are text entries of New ▾ (R-037), Schedules and History
-                  start closed and are remembered for the app session only, and without an active
-                  terminal Run opens the run picker instead of failing. "Promote a macro" is now the
-                  row's "New automation from this…". "Run local process" is offered in Add step only
-                  while experimental features are on
+                  sidebars are deleted. Settings v4 maps the hidden and the last open view. Import
+                  reads either old file format and Export all writes both lists to one file, until
+                  slice 11. Differs from 3.3: import and export are text entries of New ▾ (R-037),
+                  Schedules and History start closed and are remembered for the app session only,
+                  and without an active terminal Run opens the run picker instead of failing.
+                  "Promote a macro" is now the row's "New automation from this…". "Run local
+                  process" is offered in Add step only while experimental features are on
                 </td>
                 <td>
                   <code>src/components/AutomationSidebar/</code>,
@@ -1709,7 +1707,46 @@ flowchart LR
                 </td>
               </tr>
               <tr>
-                <td>2–12</td>
+                <td>7 Unified editor</td>
+                <td>
+                  Done. One editor; the keystroke and the step editor are deleted. Name and
+                  Description share a line, then the steps, one line each; "When it runs", "Ask for
+                  values when it runs" and "Tags" open on demand, and an automation that only types
+                  keys never shows the values. A Type keys step opens to its keys in escape notation
+                  (Enter in them adds an Enter key) and its saved typing speed (<a
+                    href="https://github.com/armaxri/termiHub/issues/5820"
+                    >#5820</a
+                  >); no start overrides that speed any more. A step's "…" menu holds Typing speed,
+                  If this step fails, Move up/down, Duplicate and Delete; the handle drags and takes
+                  the arrow keys; a deleted step comes back with Undo. Each trigger shows its
+                  settings under itself (R-158), several of one kind are allowed. Waits, timeouts
+                  and retry waits are in seconds (R-167); the runner still cuts a wait above 5 s (<a
+                    href="https://github.com/armaxri/termiHub/issues/6008"
+                    >#6008</a
+                  >), which the editor says. Saving an unchanged automation writes nothing. Differs
+                  from 3.4: Description has no 0/80 counter (its field stops at 80), a step that
+                  cannot run without experimental features says so in its row, "On a schedule…" of a
+                  new automation opens the schedule editor right after Save, and Enter runs the
+                  primary action only from Name, Description and Tags, never from a step. "Record
+                  steps" comes with slice 8
+                </td>
+                <td>
+                  <code>src/components/AutomationEditor/</code> (<code>automationDraft.ts</code>,
+                  <code>draftValidation.ts</code>, <code>AutomationEditorDialog.tsx</code>),
+                  <code>useAutomationEditors.tsx</code>; round trip on the golden files in
+                  <code>automationDraft.test.ts</code>; grade in
+                  <code>test_product_run_automation_editor.py</code>
+                </td>
+              </tr>
+              <tr>
+                <td>2–4, 9, 10</td>
+                <td>Done</td>
+                <td>
+                  Tracked in <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>
+                </td>
+              </tr>
+              <tr>
+                <td>8, 11, 12</td>
                 <td>Open</td>
                 <td>
                   Tracked in <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>

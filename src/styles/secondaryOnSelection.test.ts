@@ -28,7 +28,6 @@ const ROW_STATE_REDIRECTS: [string, string][] = [
     "components/LogViewer/LogViewer.css",
     ".log-viewer__level-filter--active.log-viewer__level-filter--debug",
   ],
-  ["components/MacroSidebar/MacroEditorDialog.css", ".macro-editor__step:hover"],
   ["components/OpenConnections/OpenConnectionsModal.css", ".oc-row:hover"],
   ["components/Plugins/Plugins.css", ".plugin-row:hover"],
   [
@@ -46,7 +45,7 @@ const ROW_STATE_REDIRECTS: [string, string][] = [
   ["components/CommandPalette/CommandPalette.css", ".command-palette__item--active"],
   ["components/TransferQueue/TransferQueue.css", ".transfer-row:hover"],
   ["components/TransferView/TransferView.css", ".transfer-pane__row:hover"],
-  ["components/WorkflowSidebar/WorkflowEditorDialog.css", ".workflow-step"],
+  ["components/AutomationEditor/AutomationEditor.css", ".automation-step"],
   ["components/ui/ui.css", ".ui-select__item[data-highlighted]"],
   ["components/ui/ui.css", ".ui-menu__item:hover"],
   ["components/ui/ui.css", '.ui-menu__sub-trigger[data-state="open"]'],

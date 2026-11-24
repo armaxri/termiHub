@@ -13,7 +13,7 @@ import {
   resolveImportCollisions,
 } from "./macroIo";
 import type { Macro } from "@/types/macro";
-import { parseMacroStepText } from "@/components/MacroSidebar/macroStepFormat";
+import { parseMacroStepText } from "@/components/AutomationEditor/keysFormat";
 
 function makeMacro(overrides: Partial<Macro> = {}): Macro {
   return {

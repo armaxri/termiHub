@@ -68,9 +68,14 @@
       "transform": "strip-hash"
     },
     {
-      "globs": ["workflow-editor-add-step-*"],
-      "source": "src/components/WorkflowSidebar/workflowStepMeta.tsx",
-      "extract": { "kind": "array", "const": "WORKFLOW_STEP_KINDS" }
+      "globs": ["automation-editor-add-step-*"],
+      "source": "src/components/AutomationEditor/stepMeta.tsx",
+      "extract": { "kind": "array", "const": "AUTOMATION_STEP_KINDS" }
+    },
+    {
+      "globs": ["automation-editor-add-trigger-*"],
+      "source": "src/components/AutomationEditor/WhenItRuns.tsx",
+      "extract": { "kind": "array", "const": "AUTOMATION_TRIGGER_KINDS" }
     },
     {
       "globs": ["keyboard-settings-group-title-*"],
@@ -96,9 +101,10 @@
     "http-monitor-entry-*": "entry index",
     "jump-host-source-saved-*": "jump-host row index",
     "jump-host-connection-*": "jump-host row index",
-    "macro-editor-step-*": "step index",
-    "macro-editor-step-data-*": "step index",
-    "workflow-editor-step-*": "step index",
-    "workflow-editor-step-command-*": "step field id"
+    "automation-editor-step-*": "step path",
+    "automation-editor-step-command-*": "step path",
+    "automation-editor-keys-text-*": "step path and key row",
+    "automation-editor-keys-row-*": "step path and key row",
+    "automation-editor-keys-error-*": "step path and key row"
   }
 }

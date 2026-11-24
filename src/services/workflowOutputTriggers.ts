@@ -345,18 +345,3 @@ export function maxFiresInRange(value: number | undefined): boolean {
     Number.isInteger(value) && value >= 1 && value <= OUTPUT_TRIGGER_LIMITS.maxMaxFiresPerSession
   );
 }
-
-/**
- * Whether every trigger can be saved: each on-output-match trigger needs a
- * valid, bounded pattern and in-range limits. Other kinds are always valid.
- * The workflow editor gates Save on this.
- */
-export function workflowTriggersValid(triggers: readonly WorkflowTrigger[]): boolean {
-  return triggers.every(
-    (t) =>
-      t.kind !== "on-output-match" ||
-      (validateOutputPattern(t.pattern, t.isRegex) === null &&
-        cooldownInRange(t.cooldownMs) &&
-        maxFiresInRange(t.maxFiresPerSession))
-  );
-}

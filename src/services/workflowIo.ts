@@ -103,7 +103,15 @@ type StepFieldOf<K extends WorkflowStepKind> = Exclude<
  * What is wrong when a step's kind-specific field fails validation. Typed so a
  * new field on any step kind is a compile error until it has a message.
  */
-const STEP_FIELD_PROBLEMS: { [K in WorkflowStepKind]: Record<StepFieldOf<K>, string> } = {
+const STEP_FIELD_PROBLEMS: { [K in WorkflowStepKind]: Record<StepFieldOf<K>, string> } & {
+  "type-keys": Record<"chunks" | "timing" | "fixedDelayMs" | "recorded", string>;
+} = {
+  "type-keys": {
+    chunks: 'has invalid "chunks".',
+    timing: 'has an invalid "timing".',
+    fixedDelayMs: 'has an invalid "fixedDelayMs".',
+    recorded: 'has an invalid "recorded".',
+  },
   "send-command": { command: 'is missing "command".' },
   "run-script": {
     script: 'is missing "script".',

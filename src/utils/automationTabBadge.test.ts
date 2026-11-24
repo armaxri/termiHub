@@ -6,7 +6,6 @@ const playback = (over: Partial<MacroPlaybackState> = {}): MacroPlaybackState =>
   macroId: "m1",
   macroName: "Deploy",
   tabId: "a",
-  timingMode: "real-time",
   total: 4,
   played: 3,
   ...over,
