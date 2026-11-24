@@ -2155,6 +2155,11 @@ refused where that is unavailable, while the rest of the backup still works).
   unencrypted backup keeps the contents in a `contents` field; sections that hold secrets in their
   own store (embedded-server passwords) are refused there, and credentials stay sealed in their own
   vault envelope, so a secret never appears in plaintext.
+- **The Back up dialog** asks for one secret per step (#5847): what to back up, then the backup
+  passphrase that locks the whole file, then — only when credentials from the master-password
+  vault are included — the master password. "Save without a passphrase" is offered on the
+  passphrase step only while nothing locked-only (credentials, host keys, embedded servers,
+  plugins) is chosen.
 - **Restore preview** decrypts, runs each section through its store's typed model and
   `VersionedStore` gate (older schemas are migrated forward, newer ones and unknown sections are
   refused) and compares items by id with the current store (new / differ / unchanged).
