@@ -12,7 +12,6 @@ use super::*;
 use crate::terminal::agent_install::{
     powershell_encoded_command, windows_install_plan, WindowsDeployShell, WindowsShell,
 };
-use crate::terminal::agent_setup_outcome::{parse_check, windows_check_command, HostCheck};
 
 const CMD: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::Cmd);
 const POWERSHELL: WindowsDeployShell = WindowsDeployShell::Native(WindowsShell::PowerShell);
@@ -145,6 +144,7 @@ fn no_line_reads_the_output_to_decide_the_outcome() {
 #[cfg(unix)]
 mod executed {
     use super::*;
+    use crate::terminal::agent_setup_outcome::{parse_check, windows_check_command, HostCheck};
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
