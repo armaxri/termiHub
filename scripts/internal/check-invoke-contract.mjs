@@ -63,6 +63,10 @@ export const INJECTED_TYPES = new Set([
   "GlobalScope",
 ]);
 
+/** Why the merged automation commands have no caller yet (#5818). */
+const AUTOMATIONS_SLICE_4 =
+  "slice 4 of #5818 switches the frontend to the merged automation store; remove then";
+
 /**
  * Registered commands with no production caller in src/ that are kept on
  * purpose, each with the reason. Keep this list short: a command that nothing
@@ -70,7 +74,17 @@ export const INJECTED_TYPES = new Set([
  *
  * @type {Map<string, string>}
  */
-export const ORPHAN_ALLOWLIST = new Map([]);
+export const ORPHAN_ALLOWLIST = new Map(
+  [
+    "list_automations",
+    "get_automation",
+    "save_automation",
+    "delete_automation",
+    "list_automation_runs",
+    "record_automation_run",
+    "clear_automation_run_history",
+  ].map((command) => [command, AUTOMATIONS_SLICE_4])
+);
 
 /**
  * Convert a Rust parameter name to the invoke key Tauri expects (heck's

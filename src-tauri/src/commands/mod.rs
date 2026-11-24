@@ -2,6 +2,7 @@ pub mod about;
 pub mod agent;
 pub mod agent_docker;
 pub mod agent_serial;
+pub mod automations;
 pub mod backup;
 pub mod connection;
 pub mod connection_path;
