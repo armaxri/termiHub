@@ -13,7 +13,7 @@ Steps (in order): macro create, edit, play on the local shell, play on SSH;
 workflow create (send-command, wait, a delayed output, wait-for-output,
 send-command), edit, run on both terminals at once ("Run on…"); an
 on-output-match trigger fired by real terminal output; macro and workflow run
-history; workflow rows showing name and armed state, with trigger and target in
+history (the one Automation history, #5818); workflow rows showing name and armed state, with trigger and target in
 the tooltip (#5635, #5757); the
 command palette; a 1-minute schedule that fires on the local
 connection (Settings -> Schedules), then is switched off.
@@ -282,9 +282,10 @@ class TestProductRunAutomations(
     def test_40_history(self):
         with self.step(
             "automations.history",
-            "Run history lists the macro's and the workflows' runs with their outcome",
-            expect="the Macros sidebar with its run history open: completed runs of the macro, "
-            "named, with their target terminals",
+            "The one automation history lists the macro's and the workflows' runs",
+            expect="the Macros sidebar with the History narrowed to the macro: its completed "
+            "runs, each row the name, a green dot and the time; the Workflows sidebar shows the "
+            "same History with every automation's runs (#5818)",
             screenshot=False,
         ):
             self.require("automations.macro.play.local")
@@ -294,14 +295,14 @@ class TestProductRunAutomations(
             assert len(runs) >= 2 and all(r["status"] == "completed" for r in runs), runs
             self.show_macros()
             self.driver.click(f"macro-history-{self.ids['macro']}")
-            self.wait(lambda: self.driver.exists("macro-history-list"), what="the macro history")
-            shown = self.driver.get_text("macro-history-list")
+            self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            shown = self.driver.get_text("automation-history-list")
             self.evidence(f"macro history text: {shown[:200]!r}")
             assert "Release check" in shown, "the history does not name the macro"
             self.shot(label="macros")
             self.open_workflows_sidebar()
-            self.wait(lambda: self.driver.exists("workflow-history-list"), what="the workflow history")
-            shown = self.driver.get_text("workflow-history-list")
+            self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            shown = self.driver.get_text("automation-history-list")
             self.evidence(f"workflow history text: {shown[:200]!r}")
             assert "Deploy smoke" in shown and "Answer on match" in shown, shown
             self.shot(label="workflows")
@@ -350,9 +351,15 @@ class TestProductRunAutomations(
             fresh = sorted(self.workflow_runs(manual), key=lambda r: r["startedAt"])[-2:]
             targets = []
             for run in fresh:
-                testid = f"workflow-run-target-{run['id']}"
+                # The terminal is in the run's details, behind the row (#5818).
+                toggle = f"automation-run-toggle-{run['id']}"
+                self.wait(lambda tid=toggle: self.driver.exists(tid), what=f"{toggle}")
+                if self.driver.get_attribute(toggle, "aria-expanded") != "true":
+                    self.driver.click(toggle)
+                testid = f"automation-run-target-{run['id']}"
                 self.wait(lambda tid=testid: self.driver.exists(tid), what=f"{testid}")
                 targets.append(self.driver.get_text(testid).strip())
+                self.driver.click(toggle)
             self.evidence(f"history targets: {targets}; labels {[r.get('targetLabel') for r in fresh]}")
             assert len(targets) == 2 and all(targets), f"history rows do not name a target: {targets}"
             assert targets[0] != targets[1], f"both runs show the same target: {targets}"
@@ -478,8 +485,8 @@ class TestProductRunAutomations(
             "A macro row offers Play without a hover, and the history header labels and "
             "separates its actions",
             expect="the Macros sidebar at rest: the macro row's Play button visible after its "
-            "name; the history filtered to the macro, the filter a removable chip on its own row "
-            "below the header, and a labelled 'Clear…' action in the header (#5636)",
+            "name; the History filtered to the macro, the filter select and its × on their own "
+            "row below the header, and a labelled 'Clear…' action in the header (#5636, #5818)",
             screenshot=False,
         ):
             self.require("automations.macro.create")
@@ -505,31 +512,33 @@ class TestProductRunAutomations(
             self.shot(label="row")
 
             self.driver.click(f"macro-history-{mid}")
-            self.wait(lambda: self.driver.exists("macro-history-filter"), what="the macro filter")
-            header = self.driver.measure_element("macro-history-header")["rect"]
-            chip = self.driver.measure_element("macro-history-show-all")["rect"]
+            self.wait(
+                lambda: self.driver.exists("automation-history-show-all"), what="the macro filter"
+            )
+            header = self.driver.measure_element("automation-history-header")["rect"]
+            chip = self.driver.measure_element("automation-history-show-all")["rect"]
             self.evidence(f"history header {header}, filter clear {chip}")
             assert chip["y"] >= header["y"] + header["height"] - 1, (
                 "the filter's clear button sits in the header beside Clear history"
             )
-            label = self.driver.get_text("macro-history-clear").strip()
+            label = self.driver.get_text("automation-history-clear").strip()
             self.evidence(f"clear action text: {label!r}")
             assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
             before = len(self.macro_runs(mid))
-            self.driver.click("macro-history-clear")
+            self.driver.click("automation-history-clear")
             self.wait(
-                lambda: self.driver.exists("macro-history-clear-confirm-cancel"),
+                lambda: self.driver.exists("automation-history-clear-confirm-cancel"),
                 what="the clear-history confirmation",
             )
             self.shot(label="confirm")
-            self.driver.click("macro-history-clear-confirm-cancel")
+            self.driver.click("automation-history-clear-confirm-cancel")
             self.wait(
-                lambda: not self.driver.exists("macro-history-clear-confirm-cancel"),
+                lambda: not self.driver.exists("automation-history-clear-confirm-cancel"),
                 what="the confirmation to close",
             )
             after = len(self.macro_runs(mid))
             assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
-            self.driver.click("macro-history-show-all")
+            self.driver.click("automation-history-show-all")
 
     # ── workflow editor layout ───────────────────────────────────────────────
     def test_80_workflow_editor_layout(self):
@@ -608,8 +617,8 @@ class TestProductRunAutomations(
             expect="the Macros sidebar at rest: the macro row shows only its name and Play (no "
             "'echo …' preview, no 'Last run' line, no step count); the toolbar is a text 'New' "
             "plus icon-only "
-            "record dot, export and import; the history rows read 'Manual' / 'Palette' / "
-            "'Scheduled' in sentence case, each on one line (#5680)",
+            "record dot, export and import; each History row is one line, and an opened row "
+            "reads 'Run by you' / 'Run by schedule' in sentence case (#5680, #5818)",
         ):
             self.require("automations.macro.edit")
             mid = self.ids["macro"]
@@ -656,63 +665,69 @@ class TestProductRunAutomations(
         self.shot(label="row")
 
     def _grade_macro_history_polish(self, mid: str) -> None:
-        """Grade the macro history meta (R-081 sentence case, R-082 one line)."""
+        """Grade the history rows (R-082 one line) and their origin labels (#5818)."""
         runs = self.macro_runs(mid)
         assert runs, "no macro runs recorded to grade the history with"
-        self.wait(lambda: self.driver.exists("macro-history-list"), what="the macro history")
-        labels = {"manual": "Manual", "palette": "Palette", "scheduled": "Scheduled",
-                  "workflow-step": "Workflow step"}
+        self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+        # The macro view of a run keeps the macro origin names.
+        labels = {"manual": "Run by you", "palette": "Run by you", "scheduled": "Run by schedule",
+                  "workflow-step": "Run by another automation"}
         graded = 0
         for run in runs[:5]:
-            meta_id = f"macro-run-meta-{run['id']}"
-            if not self.driver.exists(meta_id):
+            toggle = f"automation-run-toggle-{run['id']}"
+            if not self.driver.exists(toggle):
                 continue
-            meta = self.driver.get_text(meta_id).strip()
-            wrap = self.driver.get_computed_style("white-space", meta_id)
+            wrap = self.driver.get_computed_style("white-space", f"automation-run-time-{run['id']}")
+            self.driver.click(toggle)
+            origin_id = f"automation-run-origin-{run['id']}"
+            self.wait(lambda oid=origin_id: self.driver.exists(oid), what=f"{origin_id}")
+            shown = self.driver.get_text(origin_id).strip()
+            self.driver.click(toggle)
             want = labels.get(run.get("origin", ""), "")
-            self.evidence(f"{meta_id}: {meta!r} (white-space {wrap}; origin {run.get('origin')})")
-            assert want and f"· {want}" in meta, f"origin not sentence case: {meta!r}"
-            assert wrap == "nowrap", f"the history meta wraps ({wrap}): {meta!r}"
+            self.evidence(f"{origin_id}: {shown!r} (time white-space {wrap}; "
+                          f"origin {run.get('origin')})")
+            assert want and shown.startswith(want), f"origin label: {shown!r}, want {want!r}"
+            assert wrap == "nowrap", f"the history row's time wraps ({wrap})"
             graded += 1
-        assert graded, "no history row rendered a meta line"
+        assert graded, "no history row rendered"
         self.shot(label="history")
 
     # ── workflow history clear confirmation (#5719) ──────────────────────────
     def test_95_workflow_history_clear_confirm(self):
         with self.step(
             "automations.workflow.history-clear",
-            "Clearing the workflow run history asks first, like the macro history",
-            expect="the Workflows sidebar with a danger confirmation open: 'Clear workflow run "
-            "history?' with 'This removes the recorded runs of every workflow. It cannot be "
-            "undone.' and a red 'Clear history' button; the history header's action reads "
-            "'Clear…' (#5719)",
+            "Clearing the automation history from the Workflows sidebar asks first",
+            expect="the Workflows sidebar with a danger confirmation open: 'Clear automation "
+            "history?' with 'This removes the recorded runs of every automation. It cannot be "
+            "undone.' and a red 'Clear history' button; the History header's action reads "
+            "'Clear…' (#5719, #5818)",
             screenshot=False,
         ):
             self.require("automations.workflow.run-on")
             self.open_workflows_sidebar()
             self.wait(
-                lambda: self.driver.exists("workflow-history-list"), what="the workflow history"
+                lambda: self.driver.exists("automation-history-list"), what="the history"
             )
-            label = self.driver.get_text("workflow-history-clear").strip()
+            label = self.driver.get_text("automation-history-clear").strip()
             self.evidence(f"clear action text: {label!r}")
             assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
-            before = len(self._state_list("workflowRuns"))
+            before = len(self._state_list("automationRuns"))
             assert before, "no workflow runs recorded to protect"
-            self.driver.click("workflow-history-clear")
+            self.driver.click("automation-history-clear")
             self.wait(
-                lambda: self.driver.exists("workflow-history-clear-confirm-cancel"),
+                lambda: self.driver.exists("automation-history-clear-confirm-cancel"),
                 what="the clear-history confirmation",
             )
             self.shot(label="confirm")
-            self.driver.click("workflow-history-clear-confirm-cancel")
+            self.driver.click("automation-history-clear-confirm-cancel")
             self.wait(
-                lambda: not self.driver.exists("workflow-history-clear-confirm-cancel"),
+                lambda: not self.driver.exists("automation-history-clear-confirm-cancel"),
                 what="the confirmation to close",
             )
-            after = len(self._state_list("workflowRuns"))
+            after = len(self._state_list("automationRuns"))
             self.evidence(f"workflow runs before {before}, after cancel {after}")
             assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
-            assert self.driver.exists("workflow-history-list"), "the history list disappeared"
+            assert self.driver.exists("automation-history-list"), "the history list disappeared"
 
     # ── the row saved from the editor is marked briefly (#5687) ──────────────
     def test_96_workflow_edited_row_marked(self):

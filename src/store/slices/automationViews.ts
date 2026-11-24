@@ -1,19 +1,22 @@
 /**
  * Thin adapters between the single automation store and the two legacy views
  * (#5818, slice 4). The store holds `Automation`s and `AutomationRun`s only; the
- * Macros and Workflows sidebars, editors, palette entries and history panels
- * keep reading `Macro` / `Workflow` / `MacroRun` / `WorkflowRun` objects, which
- * these **pure** functions derive from it, and write back through them.
+ * Macros and Workflows sidebars, editors and palette entries keep reading
+ * `Macro` / `Workflow` / `MacroRun` / `WorkflowRun` objects, which these
+ * **pure** functions derive from it, and write back through them. The one
+ * Automation history panel (slice 9) reads `AutomationRun`s directly.
  *
  * Which view an automation shows in: an automation with only `type-keys` steps,
  * no triggers and no parameters is a macro; everything else is a workflow. An
  * automation with no steps follows its `legacy` provenance (a macro only when
  * it came from `macros.json`). Every automation shows in exactly one view.
  *
- * A run belongs to the Macros history when it carries `targetCount` (macro
- * playbacks always record it, migrated macro runs too) and to the Workflows
- * history otherwise.
+ * A run belongs to the `macroRuns` view (the macro rows' "Last run") when it
+ * carries `targetCount` (macro playbacks always record it, migrated macro runs
+ * too) and to the `workflowRuns` view otherwise.
  */
+import { newId } from "@/services/transport/ids";
+import type { WorkflowNestedRunEvent } from "@/services/workflowRunner";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
@@ -315,4 +318,47 @@ export function workflowRunToAutomationRun(run: WorkflowRun): AutomationRun {
   if (run.tabId) record.tabId = run.tabId;
   if (run.targetLabel) record.targetLabel = run.targetLabel;
   return record;
+}
+
+/**
+ * The history record of an automation a `run-automation` step ran (#5818,
+ * slice 9): its own run, started by another automation, on the caller's
+ * terminal. Pure apart from the generated default `runId`.
+ */
+export function nestedRunRecord(
+  event: WorkflowNestedRunEvent,
+  tabId: string,
+  targetLabel: string | undefined,
+  runId: string = newId("workflow-run")
+): AutomationRun {
+  const record: AutomationRun = {
+    id: runId,
+    automationId: event.automation.id,
+    automationName: event.automation.name,
+    startedAt: event.startedAt.toISOString(),
+    endedAt: event.endedAt.toISOString(),
+    status: event.status,
+    stepsCompleted: event.stepsCompleted,
+    total: event.automation.steps.length,
+    tabId,
+    origin: "run-by-automation",
+  };
+  if (event.failedStepIndex !== undefined) record.failedStepIndex = event.failedStepIndex;
+  if (event.error) record.error = event.error;
+  if (targetLabel) record.targetLabel = targetLabel;
+  return record;
+}
+
+/**
+ * Add a finished nested run to a run's `nested` records, keyed by automation
+ * id. An automation called several times in one run (a loop, a retry) keeps one
+ * record: from its first start, with its latest outcome. Otherwise one looping
+ * automation would push every other run out of the capped history.
+ */
+export function collectNestedRun(nested: Map<string, AutomationRun>, record: AutomationRun): void {
+  const first = nested.get(record.automationId);
+  nested.set(
+    record.automationId,
+    first ? { ...record, id: first.id, startedAt: first.startedAt } : record
+  );
 }

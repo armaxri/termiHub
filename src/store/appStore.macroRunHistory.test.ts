@@ -136,14 +136,17 @@ describe("appStore — macro run history (#3543)", () => {
     await vi.waitFor(() => expect(useAppStore.getState().macroRuns).toHaveLength(1));
   });
 
-  it("records the caller's origin and pre-generated run id", async () => {
+  it("records the caller's origin and hands it the record", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
+    const onRecorded = vi.fn();
     await useAppStore
       .getState()
-      .playMacro("m1", { timingMode: "instant", origin: "palette", runId: "mrun-fixed" });
+      .playMacro("m1", { timingMode: "instant", origin: "palette", onRecorded });
 
-    expect(await lastRecorded()).toMatchObject({ id: "mrun-fixed", origin: "palette" });
+    expect(onRecorded).toHaveBeenCalledTimes(1);
+    const { id } = onRecorded.mock.calls[0][0];
+    expect(await lastRecorded()).toMatchObject({ id, origin: "palette" });
   });
 
   it("records a playback that lost its terminal as an error", async () => {
@@ -158,23 +161,36 @@ describe("appStore — macro run history (#3543)", () => {
     expect(run.error).toMatch(/stopped accepting input/);
   });
 
-  it("records a multi-target playback with every target label", async () => {
+  it("records a multi-target playback once per terminal (#5818)", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b", "c"] });
+    const handed: string[] = [];
+    await useAppStore.getState().playMacro("m1", {
+      timingMode: "instant",
+      targetTabIds: ["a", "b", "c"],
+      origin: "scheduled",
+      onRecorded: (run) => handed.push(run.id),
+    });
 
     // c is not connected, so it never became a target.
-    expect(await lastRecorded()).toMatchObject({
-      status: "completed",
-      targetCount: 2,
-      targetLabels: ["title-a", "title-b"],
-      origin: "manual",
-    });
+    await vi.waitFor(() => expect(recorded).toHaveLength(2));
+    const byLabel = Object.fromEntries(recorded.map((r) => [r.targetLabel, r]));
+    expect(Object.keys(byLabel).sort()).toEqual(["title-a", "title-b"]);
+    for (const run of recorded) {
+      expect(run).toMatchObject({
+        automationId: "m1",
+        status: "completed",
+        targetCount: 1,
+        stepsCompleted: 1,
+        total: 1,
+        origin: "scheduled",
+      });
+    }
+    // The caller gets every terminal's record.
+    expect(handed.sort()).toEqual(recorded.map((r) => r.id).sort());
   });
 
-  it("notes a multi-target playback whose terminals dropped out", async () => {
+  it("records each terminal's own outcome when one drops out (#5818)", async () => {
     registerTerminalInputInjector(async (tabId) => tabId !== "b");
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
@@ -182,7 +198,15 @@ describe("appStore — macro run history (#3543)", () => {
       .getState()
       .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
 
-    expect((await lastRecorded()).error).toBe("1 of 2 terminals stopped receiving input");
+    await vi.waitFor(() => expect(recorded).toHaveLength(2));
+    const byLabel = Object.fromEntries(recorded.map((r) => [r.targetLabel, r]));
+    expect(byLabel["title-a"]).toMatchObject({ status: "completed", stepsCompleted: 1 });
+    expect(byLabel["title-a"].error).toBeUndefined();
+    expect(byLabel["title-b"]).toMatchObject({
+      status: "failed",
+      stepsCompleted: 0,
+      error: "The terminal stopped accepting input",
+    });
   });
 
   it("records nothing for a playback that never started", async () => {

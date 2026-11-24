@@ -493,8 +493,33 @@ export interface WorkflowStepContinuedEvent {
   attempts: number;
 }
 
+/**
+ * An automation a `run-automation` step ran has finished (#5818, slice 9):
+ * what the run history records as that automation's own run, started "by
+ * another automation". Fired only once the called automation actually started
+ * (not for a cycle, a missing automation or a too-deep chain).
+ */
+export interface WorkflowNestedRunEvent {
+  /** The automation the step ran. */
+  automation: Automation;
+  /** When its first step started. */
+  startedAt: Date;
+  /** When it reached its terminal state. */
+  endedAt: Date;
+  /** How it ended. */
+  status: "completed" | "cancelled" | "failed";
+  /** Its steps that completed before it ended. */
+  stepsCompleted: number;
+  /** For a failed run: the 0-based index of its step that failed. */
+  failedStepIndex?: number;
+  /** For a failed run: why its step failed. */
+  error?: string;
+}
+
 /** Optional lifecycle hooks fired as a run advances. */
 export interface WorkflowRunHooks {
+  /** Fired when an automation a `run-automation` step ran has finished (#5818). */
+  onNestedRunFinished?: (event: WorkflowNestedRunEvent) => void;
   /** Fired after each step completes, with the 1-based count, total, and step. */
   onProgress?: (completed: number, total: number, step: RunnableStep) => void;
   /** Fired before a failing step is retried (PROD-045). */
@@ -864,8 +889,30 @@ async function runNestedAutomation(
 
   const chain = [...callChain, automationId];
   const values = calleeParamValues(callee, paramValues);
+  const startedAt = new Date();
+  const finish = (
+    status: WorkflowNestedRunEvent["status"],
+    stepsCompleted: number,
+    failure?: { index: number; error: string }
+  ): void => {
+    const event: WorkflowNestedRunEvent = {
+      automation: callee,
+      startedAt,
+      endedAt: new Date(),
+      status,
+      stepsCompleted,
+    };
+    if (failure) {
+      event.failedStepIndex = failure.index;
+      event.error = failure.error;
+    }
+    policy?.hooks?.onNestedRunFinished?.(event);
+  };
   for (let i = 0; i < callee.steps.length; i++) {
-    if (signal?.isCancelled()) return { ok: true, cancelled: true };
+    if (signal?.isCancelled()) {
+      finish("cancelled", i);
+      return { ok: true, cancelled: true };
+    }
     const outcome = await executeStepWithPolicy(
       callee.steps[i],
       deps,
@@ -878,13 +925,18 @@ async function runNestedAutomation(
       chain
     );
     if (!outcome.ok) {
+      finish("failed", i, { index: i, error: outcome.error });
       return {
         ok: false,
         error: `in automation "${callee.name}", step ${i + 1}: ${outcome.error}`,
       };
     }
-    if (outcome.cancelled) return { ok: true, cancelled: true };
+    if (outcome.cancelled) {
+      finish("cancelled", i);
+      return { ok: true, cancelled: true };
+    }
   }
+  finish("completed", callee.steps.length);
   return { ok: true };
 }
 

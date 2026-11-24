@@ -258,15 +258,16 @@ class TestProductRunComplaints(
             self.wait(lambda: self.driver.exists(f"macro-play-{ids['macro']}"), what="Play")
             self.driver.click(f"macro-play-{ids['macro']}")
             self.wait_for_output(f"PR_MACRO_3_{tag}")
+            # One Automation history in both sidebars since #5818 (slice 9).
             self.driver.click(f"macro-history-{ids['macro']}")
-            self.wait(lambda: self.driver.exists("macro-history-list"), what="the macro history")
-            self._row_grade("macro-history-list", macro_name, "macro history")
+            self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            self._row_grade("automation-history-list", macro_name, "macro history")
             self.shot(label="macro-history")
             self.open_workflows_sidebar()
             self.run_workflow(ids["workflow"])
             self.wait_for_output(f"PR_WF_3_{tag}")
-            self.wait(lambda: self.driver.exists("workflow-history-list"), what="the workflow history")
-            self._row_grade("workflow-history-list", workflow_name, "workflow history")
+            self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            self._row_grade("automation-history-list", workflow_name, "workflow history")
             self.shot(label="workflow-history")
         with self.step(
             "complaints.automations.palette",
