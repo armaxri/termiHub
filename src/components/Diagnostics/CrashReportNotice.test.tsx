@@ -105,35 +105,39 @@ describe("CrashReportNotice", () => {
     expect(mockedApi.acknowledgeCrashReports).toHaveBeenCalledTimes(1);
   });
 
-  it("offers Don't show again, Close and View report in one action row (#5558, #5638)", async () => {
+  it("offers View report and Close in the action row, Close on the right (#5638, #5856)", async () => {
     await render();
     const actions = byTestId("crash-report-notice")?.querySelector(".bottom-banner__actions");
     const labels = Array.from(actions?.querySelectorAll("button") ?? []).map((b) =>
       b.textContent?.trim()
     );
-    expect(labels).toEqual(["Don't show again", "Close", "View report"]);
+    expect(labels).toEqual(["View report", "Close"]);
     // Export moved into the report viewer, where the user sees what they export.
     expect(byTestId("crash-report-notice-export")).toBeNull();
   });
 
-  it("uses no filled primary, so the view keeps a single primary (#5549)", async () => {
+  it("makes Close the one outlined main action and uses no filled primary (#5549, #5856)", async () => {
     await render();
     const notice = byTestId("crash-report-notice");
     expect(notice?.querySelector(".ui-btn--primary")).toBeNull();
-    expect(byTestId("crash-report-notice-view")?.className).toContain("ui-btn--secondary");
+    expect(byTestId("crash-report-notice-dismiss")?.className).toContain("ui-btn--secondary");
+    const view = byTestId("crash-report-notice-view")?.className ?? "";
+    for (const cls of ["ui-btn", "ui-btn--ghost", "ui-btn--sm", "bottom-banner__action"]) {
+      expect(view).toContain(cls);
+    }
+    expect(byTestId("crash-report-notice-dismiss")?.className).toContain("ui-btn--sm");
   });
 
-  it("renders Close and Don't show again as ghost Button primitives (#5638)", async () => {
+  it("moves the opt-out to a small link that names its scope (R-086, #5856)", async () => {
     await render();
-    for (const id of ["crash-report-notice-dismiss", "crash-report-notice-never"]) {
-      const cls = byTestId(id)?.className ?? "";
-      expect(cls).toContain("ui-btn");
-      expect(cls).toContain("ui-btn--ghost");
-      expect(cls).toContain("ui-btn--sm");
-      expect(cls).toContain("bottom-banner__action");
-    }
-    // Same size as View report, so all three share one height and hit area.
-    expect(byTestId("crash-report-notice-view")?.className).toContain("ui-btn--sm");
+    const link = byTestId("crash-report-notice-never");
+    expect(link?.textContent).toBe("Don't tell me about future crashes");
+    expect(link?.className).toContain("bottom-banner__link");
+    expect(link?.className).not.toContain("ui-btn");
+    // Out of the action row, under the description.
+    expect(link?.closest(".bottom-banner__actions")).toBeNull();
+    expect(link?.closest(".bottom-banner__text")).not.toBeNull();
+    expect(byTestId("crash-report-notice")?.textContent).not.toContain("Don't show again");
   });
 
   it("uses the warning banner surface (#5638)", async () => {
@@ -143,7 +147,7 @@ describe("CrashReportNotice", () => {
     expect(notice?.className).toContain("bottom-banner--warning");
   });
 
-  it("don't show again persists showCrashReportNotice: false", async () => {
+  it("the opt-out link persists showCrashReportNotice: false", async () => {
     await render();
     await click("crash-report-notice-never");
     expect(byTestId("crash-report-notice")).toBeNull();

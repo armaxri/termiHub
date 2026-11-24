@@ -80,3 +80,30 @@
 .bottom-banner__action.ui-btn--ghost {
   color: var(--text-primary);
 }
+
+/* #5856: the rarely wanted choice (the crash notice's opt-out) as a small
+   link under the description. Full-contrast text, underlined, so it reads as
+   a link on the tinted surface in every theme without competing with the
+   action row. */
+.bottom-banner__link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bottom-banner__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+.bottom-banner__link:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
