@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ITEM_DESCRIPTION_MAX_LENGTH } from "@/utils/itemDescription";
 import { Controller } from "react-hook-form";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { draftKey } from "@/utils/draftKey";
 import {
   Button,
@@ -112,12 +113,21 @@ export function ScheduleEditorDialog({
   const {
     form: { control, getValues, setValue, reset },
     draft: watched,
-    errors,
+    errors: allErrors,
     canSave,
   } = useZodEditorForm<ScheduleFormValues>({
     schema: scheduleFormSchema,
     defaultValues: blankScheduleForm(),
   });
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5917) — a new schedule does not open with required fields in red.
+  // `canSave` still reads every error.
+  const {
+    shown: errors,
+    rootProps,
+    revealAndFocus,
+    rebaseline,
+  } = useRevealOnSave(allErrors, watched);
 
   // Load the working copy when the dialog opens or switches to another schedule
   // — keyed on the ids, not the objects, so a refresh of the schedules list (a
@@ -137,8 +147,9 @@ export function ScheduleEditorDialog({
       initial = { ...initial, actionKind: "macro", workflowId: "" };
     }
     reset(initial);
+    rebaseline(initial);
     setBaselineKey(draftKey(initial));
-  }, [open, scheduleId, loadedId, reset]);
+  }, [open, scheduleId, loadedId, reset, rebaseline]);
 
   // A connection renamed while the dialog is open: re-point the targets, or
   // saving would write the old id back (#3603).
@@ -152,7 +163,12 @@ export function ScheduleEditorDialog({
   const errorFor = (path: keyof ScheduleFormValues): string | undefined => errors[path];
 
   const handleSave = () => {
-    if (!canSave) return;
+    // Save stays reachable while invalid (aria-disabled, not disabled):
+    // activating it then points at the problem instead of saving.
+    if (!canSave) {
+      revealAndFocus();
+      return;
+    }
     return onSave(formToScheduleInput(scheduleId, getValues()));
   };
 
@@ -180,7 +196,8 @@ export function ScheduleEditorDialog({
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={!canSave}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             errorToast={false}
             data-testid="schedule-editor-save"
           >
@@ -189,315 +206,317 @@ export function ScheduleEditorDialog({
         </>
       }
     >
-      <Controller
-        name="name"
-        control={control}
-        render={({ field }) => (
-          <Field label="Name" htmlFor="schedule-editor-name" error={errorFor("name")}>
-            <Input
-              id="schedule-editor-name"
-              value={field.value}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="Nightly health check"
-              data-testid="schedule-editor-name"
-            />
-          </Field>
-        )}
-      />
-      <Controller
-        name="description"
-        control={control}
-        render={({ field }) => (
-          <Field
-            label="Description (optional)"
-            htmlFor="schedule-editor-description"
-            error={errorFor("description")}
-          >
-            <Input
-              id="schedule-editor-description"
-              value={field.value}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-              placeholder="What this schedule is for"
-              data-testid="schedule-editor-description"
-            />
-          </Field>
-        )}
-      />
-
-      <div className="schedule-editor__row">
+      <div className="schedule-editor__form" data-testid="schedule-editor-form" {...rootProps}>
         <Controller
-          name="actionKind"
+          name="name"
           control={control}
           render={({ field }) => (
-            <Field
-              label="Run"
-              htmlFor="schedule-editor-action-kind"
-              hint={
-                workflowActionLocked
-                  ? `Workflows are experimental. Turn on ${EXPERIMENTAL_SETTING_PATH} to change this action.`
-                  : undefined
-              }
-            >
-              <Select
-                id="schedule-editor-action-kind"
+            <Field label="Name" htmlFor="schedule-editor-name" error={errorFor("name")}>
+              <Input
+                id="schedule-editor-name"
                 value={field.value}
-                onChange={field.onChange}
-                options={actionOptions}
-                disabled={workflowActionLocked}
-                data-testid="schedule-editor-action-kind"
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="Nightly health check"
+                data-testid="schedule-editor-name"
               />
             </Field>
           )}
         />
-        {watched.actionKind === "workflow" ? (
+        <Controller
+          name="description"
+          control={control}
+          render={({ field }) => (
+            <Field
+              label="Description (optional)"
+              htmlFor="schedule-editor-description"
+              error={errorFor("description")}
+            >
+              <Input
+                id="schedule-editor-description"
+                value={field.value}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                placeholder="What this schedule is for"
+                data-testid="schedule-editor-description"
+              />
+            </Field>
+          )}
+        />
+
+        <div className="schedule-editor__row">
           <Controller
-            name="workflowId"
+            name="actionKind"
             control={control}
             render={({ field }) => (
               <Field
-                label="Workflow"
-                htmlFor="schedule-editor-workflow"
-                error={errorFor("workflowId")}
+                label="Run"
+                htmlFor="schedule-editor-action-kind"
+                hint={
+                  workflowActionLocked
+                    ? `Workflows are experimental. Turn on ${EXPERIMENTAL_SETTING_PATH} to change this action.`
+                    : undefined
+                }
               >
                 <Select
-                  id="schedule-editor-workflow"
-                  value={field.value || undefined}
+                  id="schedule-editor-action-kind"
+                  value={field.value}
                   onChange={field.onChange}
-                  placeholder="Pick a workflow"
+                  options={actionOptions}
                   disabled={workflowActionLocked}
-                  options={workflows.map((w) => ({ value: w.id, label: w.name }))}
-                  data-testid="schedule-editor-workflow"
+                  data-testid="schedule-editor-action-kind"
                 />
+              </Field>
+            )}
+          />
+          {watched.actionKind === "workflow" ? (
+            <Controller
+              name="workflowId"
+              control={control}
+              render={({ field }) => (
+                <Field
+                  label="Workflow"
+                  htmlFor="schedule-editor-workflow"
+                  error={errorFor("workflowId")}
+                >
+                  <Select
+                    id="schedule-editor-workflow"
+                    value={field.value || undefined}
+                    onChange={field.onChange}
+                    placeholder="Pick a workflow"
+                    disabled={workflowActionLocked}
+                    options={workflows.map((w) => ({ value: w.id, label: w.name }))}
+                    data-testid="schedule-editor-workflow"
+                  />
+                </Field>
+              )}
+            />
+          ) : (
+            <Controller
+              name="macroId"
+              control={control}
+              render={({ field }) => (
+                <Field label="Macro" htmlFor="schedule-editor-macro" error={errorFor("macroId")}>
+                  <Select
+                    id="schedule-editor-macro"
+                    value={field.value || undefined}
+                    onChange={field.onChange}
+                    placeholder="Pick a macro"
+                    options={macros.map((m) => ({ value: m.id, label: m.name }))}
+                    data-testid="schedule-editor-macro"
+                  />
+                </Field>
+              )}
+            />
+          )}
+        </div>
+
+        <Controller
+          name="targetsKind"
+          control={control}
+          render={({ field }) => (
+            <Field label="On" htmlFor="schedule-editor-targets-kind">
+              <Select
+                id="schedule-editor-targets-kind"
+                value={field.value}
+                onChange={field.onChange}
+                options={TARGET_OPTIONS}
+                data-testid="schedule-editor-targets-kind"
+              />
+            </Field>
+          )}
+        />
+        {watched.targetsKind === "connections" ? (
+          <Controller
+            name="connectionIds"
+            control={control}
+            render={({ field }) => (
+              <Field label="Connections" error={errorFor("connectionIds")}>
+                {connections.length === 0 ? (
+                  <EmptyState title="No saved connections." />
+                ) : (
+                  <div
+                    className="schedule-editor__connections"
+                    data-testid="schedule-editor-connections"
+                  >
+                    {connections.map((conn) => (
+                      <label className="schedule-editor__connection" key={conn.id}>
+                        <Checkbox
+                          checked={field.value.includes(conn.id)}
+                          onCheckedChange={(checked) =>
+                            field.onChange(
+                              checked
+                                ? [...field.value, conn.id]
+                                : field.value.filter((id) => id !== conn.id)
+                            )
+                          }
+                          aria-label={conn.name}
+                          data-testid={`schedule-editor-connection-${conn.id}`}
+                        />
+                        <span>{conn.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </Field>
             )}
           />
         ) : (
           <Controller
-            name="macroId"
+            name="groupId"
             control={control}
             render={({ field }) => (
-              <Field label="Macro" htmlFor="schedule-editor-macro" error={errorFor("macroId")}>
+              <Field
+                label="Broadcast group"
+                htmlFor="schedule-editor-group"
+                error={errorFor("groupId")}
+              >
                 <Select
-                  id="schedule-editor-macro"
+                  id="schedule-editor-group"
                   value={field.value || undefined}
                   onChange={field.onChange}
-                  placeholder="Pick a macro"
-                  options={macros.map((m) => ({ value: m.id, label: m.name }))}
-                  data-testid="schedule-editor-macro"
+                  placeholder={groups.length === 0 ? "No saved broadcast groups" : "Pick a group"}
+                  disabled={groups.length === 0}
+                  options={groups.map((g) => ({ value: g.id, label: g.name }))}
+                  data-testid="schedule-editor-group"
                 />
               </Field>
             )}
           />
         )}
-      </div>
 
-      <Controller
-        name="targetsKind"
-        control={control}
-        render={({ field }) => (
-          <Field label="On" htmlFor="schedule-editor-targets-kind">
-            <Select
-              id="schedule-editor-targets-kind"
-              value={field.value}
-              onChange={field.onChange}
-              options={TARGET_OPTIONS}
-              data-testid="schedule-editor-targets-kind"
-            />
-          </Field>
-        )}
-      />
-      {watched.targetsKind === "connections" ? (
-        <Controller
-          name="connectionIds"
-          control={control}
-          render={({ field }) => (
-            <Field label="Connections" error={errorFor("connectionIds")}>
-              {connections.length === 0 ? (
-                <EmptyState title="No saved connections." />
-              ) : (
-                <div
-                  className="schedule-editor__connections"
-                  data-testid="schedule-editor-connections"
+        <div className="schedule-editor__row">
+          <Controller
+            name="ruleKind"
+            control={control}
+            render={({ field }) => (
+              <Field label="When" htmlFor="schedule-editor-rule-kind">
+                <Select
+                  id="schedule-editor-rule-kind"
+                  value={field.value}
+                  onChange={field.onChange}
+                  options={RULE_OPTIONS}
+                  data-testid="schedule-editor-rule-kind"
+                />
+              </Field>
+            )}
+          />
+          {watched.ruleKind === "interval" ? (
+            <Controller
+              name="everyMinutes"
+              control={control}
+              render={({ field }) => (
+                <Field
+                  label="Minutes"
+                  htmlFor="schedule-editor-every"
+                  error={errorFor("everyMinutes")}
                 >
-                  {connections.map((conn) => (
-                    <label className="schedule-editor__connection" key={conn.id}>
-                      <Checkbox
-                        checked={field.value.includes(conn.id)}
-                        onCheckedChange={(checked) =>
+                  <NumberInput
+                    id="schedule-editor-every"
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    min={MIN_INTERVAL_MINUTES}
+                    max={MAX_INTERVAL_MINUTES}
+                    data-testid="schedule-editor-every"
+                  />
+                </Field>
+              )}
+            />
+          ) : (
+            <Controller
+              name="time"
+              control={control}
+              render={({ field }) => (
+                <Field label="Local time" htmlFor="schedule-editor-time" error={errorFor("time")}>
+                  <Input
+                    id="schedule-editor-time"
+                    type="time"
+                    value={field.value}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    data-testid="schedule-editor-time"
+                  />
+                </Field>
+              )}
+            />
+          )}
+        </div>
+        {watched.ruleKind === "weekly" ? (
+          <Controller
+            name="days"
+            control={control}
+            render={({ field }) => (
+              <Field label="Days" error={errorFor("days")}>
+                <div className="schedule-editor__days" data-testid="schedule-editor-days">
+                  {SCHEDULE_WEEKDAYS.map((day) => {
+                    const active = field.value.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        className={`schedule-chip${active ? " schedule-chip--active" : ""}`}
+                        aria-pressed={active}
+                        onClick={() =>
                           field.onChange(
-                            checked
-                              ? [...field.value, conn.id]
-                              : field.value.filter((id) => id !== conn.id)
+                            active ? field.value.filter((d) => d !== day) : [...field.value, day]
                           )
                         }
-                        aria-label={conn.name}
-                        data-testid={`schedule-editor-connection-${conn.id}`}
-                      />
-                      <span>{conn.name}</span>
-                    </label>
-                  ))}
+                        data-testid={`schedule-editor-day-${day}`}
+                      >
+                        {weekdayLabel(day)}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
-            </Field>
-          )}
-        />
-      ) : (
+              </Field>
+            )}
+          />
+        ) : null}
+
         <Controller
-          name="groupId"
+          name="missedRuns"
           control={control}
           render={({ field }) => (
             <Field
-              label="Broadcast group"
-              htmlFor="schedule-editor-group"
-              error={errorFor("groupId")}
+              label="If a run is missed (termiHub closed or the computer asleep)"
+              htmlFor="schedule-editor-missed"
             >
               <Select
-                id="schedule-editor-group"
-                value={field.value || undefined}
-                onChange={field.onChange}
-                placeholder={groups.length === 0 ? "No saved broadcast groups" : "Pick a group"}
-                disabled={groups.length === 0}
-                options={groups.map((g) => ({ value: g.id, label: g.name }))}
-                data-testid="schedule-editor-group"
-              />
-            </Field>
-          )}
-        />
-      )}
-
-      <div className="schedule-editor__row">
-        <Controller
-          name="ruleKind"
-          control={control}
-          render={({ field }) => (
-            <Field label="When" htmlFor="schedule-editor-rule-kind">
-              <Select
-                id="schedule-editor-rule-kind"
+                id="schedule-editor-missed"
                 value={field.value}
                 onChange={field.onChange}
-                options={RULE_OPTIONS}
-                data-testid="schedule-editor-rule-kind"
+                options={MISSED_OPTIONS}
+                data-testid="schedule-editor-missed"
               />
             </Field>
           )}
         />
-        {watched.ruleKind === "interval" ? (
-          <Controller
-            name="everyMinutes"
-            control={control}
-            render={({ field }) => (
-              <Field
-                label="Minutes"
-                htmlFor="schedule-editor-every"
-                error={errorFor("everyMinutes")}
-              >
-                <NumberInput
-                  id="schedule-editor-every"
-                  value={field.value}
-                  onValueChange={field.onChange}
-                  min={MIN_INTERVAL_MINUTES}
-                  max={MAX_INTERVAL_MINUTES}
-                  data-testid="schedule-editor-every"
-                />
-              </Field>
-            )}
-          />
-        ) : (
-          <Controller
-            name="time"
-            control={control}
-            render={({ field }) => (
-              <Field label="Local time" htmlFor="schedule-editor-time" error={errorFor("time")}>
-                <Input
-                  id="schedule-editor-time"
-                  type="time"
-                  value={field.value}
-                  onChange={(e) => field.onChange(e.target.value)}
-                  data-testid="schedule-editor-time"
-                />
-              </Field>
-            )}
-          />
-        )}
-      </div>
-      {watched.ruleKind === "weekly" ? (
         <Controller
-          name="days"
+          name="connectIfNeeded"
           control={control}
           render={({ field }) => (
-            <Field label="Days" error={errorFor("days")}>
-              <div className="schedule-editor__days" data-testid="schedule-editor-days">
-                {SCHEDULE_WEEKDAYS.map((day) => {
-                  const active = field.value.includes(day);
-                  return (
-                    <button
-                      key={day}
-                      type="button"
-                      className={`schedule-chip${active ? " schedule-chip--active" : ""}`}
-                      aria-pressed={active}
-                      onClick={() =>
-                        field.onChange(
-                          active ? field.value.filter((d) => d !== day) : [...field.value, day]
-                        )
-                      }
-                      data-testid={`schedule-editor-day-${day}`}
-                    >
-                      {weekdayLabel(day)}
-                    </button>
-                  );
-                })}
+            <Field
+              label={t("schedule.connect.fieldLabel")}
+              htmlFor="schedule-editor-connect"
+              hint={t("schedule.connect.help")}
+            >
+              <div className="schedule-editor__connection">
+                <Checkbox
+                  id="schedule-editor-connect"
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                  data-testid="schedule-editor-connect"
+                />
+                <label htmlFor="schedule-editor-connect">{t("schedule.connect.label")}</label>
               </div>
             </Field>
           )}
         />
-      ) : null}
-
-      <Controller
-        name="missedRuns"
-        control={control}
-        render={({ field }) => (
-          <Field
-            label="If a run is missed (termiHub closed or the computer asleep)"
-            htmlFor="schedule-editor-missed"
-          >
-            <Select
-              id="schedule-editor-missed"
-              value={field.value}
-              onChange={field.onChange}
-              options={MISSED_OPTIONS}
-              data-testid="schedule-editor-missed"
-            />
-          </Field>
-        )}
-      />
-      <Controller
-        name="connectIfNeeded"
-        control={control}
-        render={({ field }) => (
-          <Field
-            label={t("schedule.connect.fieldLabel")}
-            htmlFor="schedule-editor-connect"
-            hint={t("schedule.connect.help")}
-          >
-            <div className="schedule-editor__connection">
-              <Checkbox
-                id="schedule-editor-connect"
-                checked={field.value}
-                onCheckedChange={field.onChange}
-                data-testid="schedule-editor-connect"
-              />
-              <label htmlFor="schedule-editor-connect">{t("schedule.connect.label")}</label>
-            </div>
-          </Field>
-        )}
-      />
-      <p className="schedule-editor__note">
-        Runs only while termiHub is open and never prompts. Without “Connect if not connected” it
-        runs only on terminals that are already connected. New schedules start disabled.
-      </p>
+        <p className="schedule-editor__note">
+          Runs only while termiHub is open and never prompts. Without “Connect if not connected” it
+          runs only on terminals that are already connected. New schedules start disabled.
+        </p>
+      </div>
     </Modal>
   );
 }

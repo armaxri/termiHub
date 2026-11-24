@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import {
-  EXPERIMENTAL_TYPE_SUFFIX,
+  PREVIEW_BADGE_LABEL,
   isExperimentalConnectionType,
   experimentalTypeIds,
   buildGatedTypeOptions,
+  previewTypeNote,
 } from "./experimentalTypes";
 
 function makeType(typeId: string, displayName: string, graphical = false): ConnectionTypeInfo {
@@ -61,18 +62,15 @@ describe("buildGatedTypeOptions", () => {
     expect(values).not.toContain("mock-remote-desktop");
   });
 
-  it("shows experimental types labelled '— Experimental' when the flag is on", () => {
+  it("flags experimental types as preview and keeps their plain names (#5873)", () => {
     const opts = buildGatedTypeOptions(registry, true);
-    const byValue = Object.fromEntries(opts.map((o) => [o.value, o.label]));
-    expect(byValue.ssh).toBe("SSH");
-    expect(byValue.vnc).toBe("VNC" + EXPERIMENTAL_TYPE_SUFFIX);
-    expect(byValue.rdp).toBe("RDP" + EXPERIMENTAL_TYPE_SUFFIX);
-    expect(byValue["mock-remote-desktop"]).toBe("Mock Remote Desktop" + EXPERIMENTAL_TYPE_SUFFIX);
-  });
-
-  it("does not suffix non-experimental labels when the flag is on", () => {
-    const opts = buildGatedTypeOptions(registry, true);
-    expect(opts.find((o) => o.value === "ssh")?.label).toBe("SSH");
+    const byValue = Object.fromEntries(opts.map((o) => [o.value, o]));
+    expect(byValue.ssh).toEqual({ value: "ssh", label: "SSH", preview: false });
+    expect(byValue.vnc).toEqual({ value: "vnc", label: "VNC", preview: true });
+    expect(byValue.rdp).toEqual({ value: "rdp", label: "RDP", preview: true });
+    expect(byValue["mock-remote-desktop"].label).toBe("Mock Remote Desktop");
+    // No "— Experimental" suffix anywhere in a label (R-166).
+    expect(opts.some((o) => /experimental/i.test(o.label))).toBe(false);
   });
 
   it("retains the currently-selected experimental type even when the flag is off", () => {
@@ -80,7 +78,24 @@ describe("buildGatedTypeOptions", () => {
     const values = opts.map((o) => o.value);
     expect(values).toContain("vnc");
     expect(values).not.toContain("rdp");
-    // Still labelled experimental so the user sees why it is unusual.
-    expect(opts.find((o) => o.value === "vnc")?.label).toBe("VNC" + EXPERIMENTAL_TYPE_SUFFIX);
+    // Still flagged preview so the user sees why it is unusual.
+    expect(opts.find((o) => o.value === "vnc")?.preview).toBe(true);
+  });
+});
+
+describe("preview badge and note (#5873)", () => {
+  it("uses a neutral Preview badge", () => {
+    expect(PREVIEW_BADGE_LABEL).toBe("Preview");
+  });
+
+  it("is one line naming that the type is still being tested", () => {
+    const note = previewTypeNote("rdp");
+    expect(note).toMatch(/^Preview: still being tested/);
+    expect(note).not.toMatch(/\n/);
+  });
+
+  it("adds a type's known limits", () => {
+    expect(previewTypeNote("vnc")).toContain("VNC has no audio.");
+    expect(previewTypeNote("rdp")).not.toContain("audio");
   });
 });

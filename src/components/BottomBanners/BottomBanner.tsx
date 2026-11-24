@@ -1,4 +1,4 @@
-import type { AriaRole, ReactNode } from "react";
+import type { AriaRole, ButtonHTMLAttributes, ReactNode } from "react";
 import { Button, type ButtonProps } from "@/components/ui";
 import "./BottomBanners.css";
 
@@ -17,6 +17,12 @@ export interface BottomBannerProps {
   description: ReactNode;
   /** The action row: {@link BottomBannerAction}s only. */
   actions: ReactNode;
+  /**
+   * Optional small link under the description, for a rarely wanted choice
+   * that should not compete with the action row (a {@link BottomBannerLink},
+   * e.g. the crash notice's opt-out, #5856).
+   */
+  footnote?: ReactNode;
   /** Optional landmark role (the crash notices are `status`). */
   role?: AriaRole;
   /** Test id of the banner root. */
@@ -35,6 +41,7 @@ export function BottomBanner({
   title,
   description,
   actions,
+  footnote,
   role,
   "data-testid": testId,
 }: BottomBannerProps) {
@@ -44,6 +51,7 @@ export function BottomBanner({
       <div className="bottom-banner__text">
         <strong>{title}</strong>
         <span>{description}</span>
+        {footnote}
       </div>
       <div className="bottom-banner__actions">{actions}</div>
     </div>
@@ -71,6 +79,26 @@ export function BottomBannerAction({ main = false, className, ...rest }: BottomB
       variant={main ? "secondary" : "ghost"}
       size="sm"
       className={["bottom-banner__action", className].filter(Boolean).join(" ")}
+    />
+  );
+}
+
+/**
+ * A small text link under a banner's description (#5856): for a choice that
+ * has to be reachable but is rarely wanted, such as turning a notice off for
+ * good. It is not part of the action row, so it never competes with Close or
+ * the main action.
+ */
+export function BottomBannerLink({
+  className,
+  type = "button",
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...rest}
+      type={type}
+      className={["bottom-banner__link", className].filter(Boolean).join(" ")}
     />
   );
 }

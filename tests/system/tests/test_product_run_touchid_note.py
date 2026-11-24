@@ -10,9 +10,11 @@ reads a short "Protected by the operating system" note.
 
 Steps:
 
-* **off**: with a master-password store and the unlock off, no note shows.
+* **off**: with a master-password store and the unlock off, no note shows and
+  the toggle's hint is one short line without the conditions (#5876).
 * **on** (human, attended only): the operator turns the unlock on with Touch
-  ID; the note shows the plain text (or the OS-enforced note on a signed build).
+  ID; the note shows the plain text (or the OS-enforced note on a signed build)
+  and, under it, when the master password is needed again (#5876).
 
 Without Touch ID hardware the Security panel has no biometric toggle, so both
 steps skip, as the credentials phase's Touch ID step does.
@@ -40,6 +42,9 @@ NOTE = "biometric-unlock-protection"
 TOGGLE = "biometric-unlock-toggle"
 APP_PROTECTED_TEXT = "Less secure: other apps running as you could read the unlock key."
 OS_ENFORCED_PREFIX = "Protected by the operating system"
+HINT = "biometric-unlock-hint"
+CONDITIONS = "biometric-unlock-conditions"
+SHORT_HINT = "Use Touch ID instead of typing your master password."
 
 
 class TestProductRunTouchIdNote(
@@ -80,6 +85,9 @@ class TestProductRunTouchIdNote(
             assert not self.driver.exists(NOTE), (
                 f"a protection note shows while the unlock is off: {self.driver.get_text(NOTE)!r}"
             )
+            hint = self.driver.get_text(HINT).strip()
+            assert hint == SHORT_HINT, f"the toggle's hint reads {hint!r} (R-157)"
+            assert not self.driver.exists(CONDITIONS), "the conditions show while the unlock is off"
             self.evidence("unlock off, no protection note")
 
     def test_20_note_text_while_on(self):
@@ -105,3 +113,6 @@ class TestProductRunTouchIdNote(
             else:
                 assert tone == "warning", f"unexpected note tone {tone!r}"
                 assert text.startswith(APP_PROTECTED_TEXT), f"unexpected note: {text!r}"
+            conditions = self.driver.get_text(CONDITIONS).strip()
+            self.evidence(f"conditions: {conditions!r}")
+            assert "enrollment changes" in conditions, f"unexpected conditions: {conditions!r}"

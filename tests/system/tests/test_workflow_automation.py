@@ -224,7 +224,7 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         )
         assert not self.driver.exists("macro-editor-step-data-1"), "expected a single step"
         self.driver.type("macro-editor-step-data-0", step_text)
-        self.wait(lambda: not self.is_disabled("macro-editor-save"), what="Save to enable")
+        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
         self.driver.click("macro-editor-save")
         self.wait(
             lambda: not self.driver.exists("macro-editor-dialog"), what="the macro editor to close"

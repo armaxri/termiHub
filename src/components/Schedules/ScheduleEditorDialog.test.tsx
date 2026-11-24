@@ -8,6 +8,7 @@ import type { Macro } from "@/types/macro";
 import type { Workflow } from "@/types/workflow";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { flushAsync } from "@/test/flushAsync";
+import { leaveField } from "@/test/leaveField";
 import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
@@ -93,11 +94,11 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
   it("keeps Save disabled until the schedule has a name and a target", () => {
     render({});
     const save = () => query("schedule-editor-save") as HTMLButtonElement;
-    expect(save().disabled).toBe(true);
+    expect(save().getAttribute("aria-disabled")).toBe("true");
     setInput("schedule-editor-name", "Nightly");
-    expect(save().disabled).toBe(true);
+    expect(save().getAttribute("aria-disabled")).toBe("true");
     act(() => query("schedule-editor-connection-c2")!.click());
-    expect(save().disabled).toBe(false);
+    expect(save().getAttribute("aria-disabled")).toBe("false");
   });
 
   it("saves the pre-selected workflow on the chosen connections every N minutes", async () => {
@@ -150,6 +151,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
   it("shows an inline error for an out-of-range interval", () => {
     render({});
     setInput("schedule-editor-every", "0");
+    leaveField(query("schedule-editor-every"));
     expect(document.body.textContent).toContain("At least 1 minute.");
   });
 
@@ -215,12 +217,41 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     });
   });
 
-  it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
-    render({});
+  describe("validation timing (#5917)", () => {
     const nameError = () => document.getElementById("schedule-editor-name-error");
-    expect(nameError()?.textContent).toBe("Name is required.");
-    setInput("schedule-editor-name", "Nightly");
-    expect(nameError()).toBeNull();
+    const connectionsError = () =>
+      query("schedule-editor-dialog")!.textContent?.includes("Pick at least one saved connection.");
+
+    it("opens a new schedule without any error", () => {
+      render({});
+      expect(nameError()).toBeNull();
+      expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+      expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
+    });
+
+    it("shows a field's error once it was edited and left", () => {
+      render({});
+      setInput("schedule-editor-name", "x");
+      setInput("schedule-editor-name", "");
+      expect(nameError()).toBeNull();
+      leaveField(query("schedule-editor-name"));
+      expect(nameError()?.textContent).toBe("Name is required.");
+      setInput("schedule-editor-name", "Nightly");
+      expect(nameError()).toBeNull();
+    });
+
+    it("a Save attempt saves nothing, shows every error and focuses Name", async () => {
+      const onSave = vi.fn();
+      render({ onSave });
+      const save = query("schedule-editor-save") as HTMLButtonElement;
+      expect(save.disabled).toBe(false);
+      act(() => save.focus());
+      await act(async () => save.click());
+      expect(onSave).not.toHaveBeenCalled();
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(connectionsError()).toBe(true);
+      expect(document.activeElement).toBe(query("schedule-editor-name"));
+    });
   });
 
   describe("the experimental Workflow action is gated (#4629)", () => {

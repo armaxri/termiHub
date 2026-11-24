@@ -3,6 +3,7 @@ import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/i
 import { Controller, useFieldArray } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { ArrowDown, ArrowUp, CornerDownLeft, Plus, Trash2 } from "lucide-react";
 import { Modal, ModalClose, Button, Input, Field, NumberInput, EmptyState } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
@@ -128,10 +129,20 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
   const {
     form: { control, getValues, reset, setValue },
     draft,
-    errors,
+    errors: allErrors,
     canSave,
   } = useZodEditorForm<MacroFormValues>({ schema: macroFormSchema, defaultValues: EMPTY_FORM });
   const { fields, append, remove, move } = useFieldArray({ control, name: "steps" });
+
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5917) — a new macro does not open with "Name is required." in red.
+  // `canSave` still reads every error.
+  const {
+    shown: errors,
+    rootProps,
+    revealAndFocus,
+    rebaseline,
+  } = useRevealOnSave(allErrors, draft);
 
   const isNew = macro === null;
 
@@ -150,8 +161,10 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
     [macro]
   );
   useEffect(() => {
-    if (open) reset(initialForm);
-  }, [open, initialForm, reset]);
+    if (!open) return;
+    reset(initialForm);
+    rebaseline(initialForm);
+  }, [open, initialForm, reset, rebaseline]);
 
   // Any difference from the opened macro arms the Modal's dismiss guard (UX2-004).
   const isDirty = toDraftKey(draft) !== toDraftKey(initialForm);
@@ -178,7 +191,17 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
   // its own error toast, so `errorToast` is disabled on the Button to avoid a
   // duplicate; a rejection just returns the button to idle with the dialog open.
   const handleSave = () => {
-    if (!canSave) return;
+    // Save stays reachable while invalid (aria-disabled, not disabled):
+    // activating it then points at the problem instead of saving.
+    if (!canSave) {
+      // No field to point at means the step list is empty: offer "Add step".
+      if (!revealAndFocus()) {
+        rootProps.ref.current
+          ?.querySelector<HTMLElement>('[data-testid="macro-editor-add-step"]')
+          ?.focus();
+      }
+      return;
+    }
     const current = getValues();
     const steps: MacroStep[] = [];
     for (const step of current.steps) {
@@ -322,7 +345,8 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={!canSave}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             errorToast={false}
             data-testid="macro-editor-save"
           >
@@ -331,83 +355,85 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
         </>
       }
     >
-      <Controller
-        name="name"
-        control={control}
-        render={({ field }) => (
-          <Field label="Name" htmlFor="macro-editor-name" error={errors["name"]}>
-            <Input
-              id="macro-editor-name"
-              value={field.value ?? ""}
-              error={Boolean(errors["name"])}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="Macro name"
-              data-testid="macro-editor-name"
-            />
-          </Field>
-        )}
-      />
-      <Controller
-        name="description"
-        control={control}
-        render={({ field }) => (
-          <Field label="Description (optional)" htmlFor="macro-editor-description">
-            <Input
-              id="macro-editor-description"
-              value={field.value ?? ""}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="What this macro does"
-              maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-              data-testid="macro-editor-description"
-            />
-          </Field>
-        )}
-      />
-      <Controller
-        name="tags"
-        control={control}
-        render={({ field }) => (
-          <Field label="Tags (optional, comma-separated)" htmlFor="macro-editor-tags">
-            <Input
-              id="macro-editor-tags"
-              value={field.value ?? ""}
-              onChange={(e) => field.onChange(e.target.value)}
-              onBlur={field.onBlur}
-              placeholder="ops, release"
-              data-testid="macro-editor-tags"
-            />
-          </Field>
-        )}
-      />
-      <div className="macro-editor__steps-header">
-        <span className="macro-editor__steps-title">Steps ({fields.length})</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<Plus size={12} />}
-          onClick={addStep}
-          data-testid="macro-editor-add-step"
-        >
-          Add step
-        </Button>
-      </div>
-      <p className="macro-editor__hint" data-testid="macro-editor-escape-hint">
-        Type the exact input each step sends. Use <code>\r</code> for Enter, <code>\t</code> Tab,{" "}
-        <code>\e</code> Esc, <code>\xHH</code> any other control byte (e.g. <code>\x03</code>{" "}
-        Ctrl+C) and <code>\\</code> for a backslash.
-      </p>
-      {fields.length === 0 ? (
-        <EmptyState
-          title="This macro has no steps. Add one, or it cannot be saved."
-          data-testid="macro-editor-no-steps"
+      <div className="macro-editor__form" data-testid="macro-editor-form" {...rootProps}>
+        <Controller
+          name="name"
+          control={control}
+          render={({ field }) => (
+            <Field label="Name" htmlFor="macro-editor-name" error={errors["name"]}>
+              <Input
+                id="macro-editor-name"
+                value={field.value ?? ""}
+                error={Boolean(errors["name"])}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="Macro name"
+                data-testid="macro-editor-name"
+              />
+            </Field>
+          )}
         />
-      ) : (
-        <div className="macro-editor__steps" data-testid="macro-editor-steps">
-          {stepRows}
+        <Controller
+          name="description"
+          control={control}
+          render={({ field }) => (
+            <Field label="Description (optional)" htmlFor="macro-editor-description">
+              <Input
+                id="macro-editor-description"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="What this macro does"
+                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                data-testid="macro-editor-description"
+              />
+            </Field>
+          )}
+        />
+        <Controller
+          name="tags"
+          control={control}
+          render={({ field }) => (
+            <Field label="Tags (optional, comma-separated)" htmlFor="macro-editor-tags">
+              <Input
+                id="macro-editor-tags"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="ops, release"
+                data-testid="macro-editor-tags"
+              />
+            </Field>
+          )}
+        />
+        <div className="macro-editor__steps-header">
+          <span className="macro-editor__steps-title">Steps ({fields.length})</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Plus size={12} />}
+            onClick={addStep}
+            data-testid="macro-editor-add-step"
+          >
+            Add step
+          </Button>
         </div>
-      )}
+        <p className="macro-editor__hint" data-testid="macro-editor-escape-hint">
+          Type the exact input each step sends. Use <code>\r</code> for Enter, <code>\t</code> Tab,{" "}
+          <code>\e</code> Esc, <code>\xHH</code> any other control byte (e.g. <code>\x03</code>{" "}
+          Ctrl+C) and <code>\\</code> for a backslash.
+        </p>
+        {fields.length === 0 ? (
+          <EmptyState
+            title="This macro has no steps. Add one, or it cannot be saved."
+            data-testid="macro-editor-no-steps"
+          />
+        ) : (
+          <div className="macro-editor__steps" data-testid="macro-editor-steps">
+            {stepRows}
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AlertTriangle } from "lucide-react";
-import { BottomBanner, BottomBannerAction } from "./BottomBanner";
+import { BottomBanner, BottomBannerAction, BottomBannerLink } from "./BottomBanner";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -111,5 +111,46 @@ describe("BottomBanners.css (#5638)", () => {
     const block = /\.bottom-banner--warning\s*\{([^}]*)\}/.exec(css);
     expect(block?.[1]).toMatch(/var\(--banner-accent-width\)/);
     expect(block?.[1]).toMatch(/var\(--color-warning\)/);
+  });
+});
+
+describe("BottomBannerLink (#5856)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("renders a footnote link under the description, outside the action row (#5856)", async () => {
+    const onOptOut = vi.fn();
+    await act(async () => {
+      root.render(
+        <BottomBanner
+          tone="warning"
+          icon={<AlertTriangle size={16} />}
+          title="Something happened."
+          description="A detail line."
+          data-testid="banner"
+          footnote={
+            <BottomBannerLink onClick={onOptOut} data-testid="banner-link">
+              Don't tell me again
+            </BottomBannerLink>
+          }
+          actions={<BottomBannerAction data-testid="banner-close">Close</BottomBannerAction>}
+        />
+      );
+    });
+    const link = byTestId("banner-link") as HTMLButtonElement;
+    expect(link.type).toBe("button");
+    expect(link.className).toBe("bottom-banner__link");
+    expect(link.closest(".bottom-banner__text")).not.toBeNull();
+    expect(link.closest(".bottom-banner__actions")).toBeNull();
+    act(() => link.click());
+    expect(onOptOut).toHaveBeenCalledTimes(1);
   });
 });

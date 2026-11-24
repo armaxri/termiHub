@@ -3,6 +3,7 @@ import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/i
 import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { Plus } from "lucide-react";
 import { DndContext, DragEndEvent, useSensor, useSensors } from "@dnd-kit/core";
 import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
@@ -145,12 +146,21 @@ export function WorkflowEditorDialog({
   const {
     form: { control, getValues, reset },
     draft: formDraft,
-    errors,
+    errors: allErrors,
     valid: formValid,
   } = useZodEditorForm<WorkflowFormValues>({
     schema: workflowFormSchema,
     defaultValues: { name: "", description: "", tags: "" },
   });
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5917) — a new workflow does not open with "Name is required." in red.
+  // The Save gate still reads every error.
+  const {
+    shown: errors,
+    rootProps,
+    revealAndFocus,
+    rebaseline,
+  } = useRevealOnSave(allErrors, formDraft);
   const [entries, setEntries] = useState<WorkflowStepEntry[]>([]);
   const [triggers, setTriggers] = useState<WorkflowTrigger[]>([]);
   const [parameters, setParameters] = useState<WorkflowParameter[]>([]);
@@ -168,7 +178,8 @@ export function WorkflowEditorDialog({
   // Reload the working copy each time a workflow is opened so a prior edit never
   // leaks in and cancel truly discards.
   useEffect(() => {
-    if (open && workflow) {
+    if (!open) return;
+    if (workflow) {
       reset({
         name: workflow.name,
         description: workflow.description ?? "",
@@ -184,7 +195,9 @@ export function WorkflowEditorDialog({
       setTriggers(workflow.triggers.map((t) => ({ ...t })));
       setParameters((workflow.parameters ?? []).map((p) => ({ ...p })));
     }
-  }, [open, workflow, reset]);
+    // Each opening starts pristine: no error shows until a field is left.
+    rebaseline(getValues());
+  }, [open, workflow, reset, rebaseline, getValues]);
 
   // A valid form AND at least one step AND every step's error-handling policy
   // (PROD-045) within the runner's bounds.
@@ -267,7 +280,17 @@ export function WorkflowEditorDialog({
   // own pending spinner; the parent surfaces its own error toast, so the Button's
   // is disabled to avoid a duplicate.
   const handleSave = () => {
-    if (!canSave) return;
+    // Save stays reachable while invalid (aria-disabled, not disabled):
+    // activating it then points at the problem instead of saving. With no
+    // invalid field to focus, the block is the empty step list: offer "Add step".
+    if (!canSave) {
+      if (!revealAndFocus() && entries.length === 0) {
+        rootProps.ref.current
+          ?.querySelector<HTMLElement>('[data-testid="workflow-editor-add-step"]')
+          ?.focus();
+      }
+      return;
+    }
     const values = getValues();
     return onSave({
       name: values.name.trim(),
@@ -301,7 +324,8 @@ export function WorkflowEditorDialog({
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={!canSave}
+            aria-disabled={!canSave}
+            data-invalid={!canSave || undefined}
             errorToast={false}
             data-testid="workflow-editor-save"
           >
@@ -312,7 +336,7 @@ export function WorkflowEditorDialog({
     >
       {/* One scroll container — the Modal body — and one vertical rhythm:
           every field and section is a flex child spaced by a token (#5637). */}
-      <div className="workflow-editor__form" data-testid="workflow-editor-form">
+      <div className="workflow-editor__form" data-testid="workflow-editor-form" {...rootProps}>
         <Controller
           name="name"
           control={control}

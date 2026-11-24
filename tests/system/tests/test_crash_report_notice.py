@@ -5,7 +5,7 @@ pruning and the ``.notified`` marker (``core/src/diagnostics/crash_report_tests.
 and the notice's buttons against a mocked API (``CrashReportNotice.test.tsx``).
 This suite runs the real app over the real files: a report seeded into the app's
 ``crash-reports/`` dir before a launch raises the notice, **View Report** shows
-the file, the next start shows no second notice, and **Don't show again**
+the file, the next start shows no second notice, and **Don't tell me about future crashes**
 persists across a restart.
 
 The harness gives each app its own log dir (``TERMIHUB_LOG_DIR`` =

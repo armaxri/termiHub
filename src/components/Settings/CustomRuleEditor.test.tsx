@@ -12,6 +12,7 @@ import { defaultHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { createCustomRule } from "@/services/customHighlightRules";
 import type { HighlightRule, SyntaxHighlightingConfig } from "@/types/syntaxHighlighting";
 import { CustomRuleEditor } from "./CustomRuleEditor";
+import { leaveField } from "@/test/leaveField";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -69,27 +70,35 @@ describe("CustomRuleEditor", () => {
   it("disables Save until a name and valid pattern are entered", () => {
     render();
     const save = byTestId("custom-rule-save") as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
+    expect(save.getAttribute("aria-disabled")).toBe("true");
 
     setInput(byTestId("custom-rule-name"), "TODO markers");
     setInput(byTestId("custom-rule-pattern"), "TODO");
-    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("shows an error and blocks Save for an invalid regex", () => {
     render();
     setInput(byTestId("custom-rule-name"), "bad");
     setInput(byTestId("custom-rule-pattern"), "(unclosed");
+    leaveField(byTestId("custom-rule-pattern"));
     expect(container.textContent).toMatch(/invalid regular expression/i);
-    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("blocks Save for a catastrophic-backtracking pattern", () => {
     render();
     setInput(byTestId("custom-rule-name"), "danger");
     setInput(byTestId("custom-rule-pattern"), "(a+)+$");
+    leaveField(byTestId("custom-rule-pattern"));
     expect(container.textContent).toMatch(/backtracking|redos|slow/i);
-    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("calls onSave with a trimmed, normalized rule", () => {
@@ -130,11 +139,16 @@ describe("CustomRuleEditor", () => {
     setInput(byTestId("custom-rule-name"), "colored");
     setInput(byTestId("custom-rule-pattern"), "INFO");
     // Valid so far.
-    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
 
     setInput(byTestId("custom-rule-color-hex"), "not-a-color");
+    leaveField(byTestId("custom-rule-color-hex"));
     expect(byTestId("custom-rule-color-hex").getAttribute("aria-invalid")).toBe("true");
-    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("populates flag defaults for a new rule (case-sensitive on, whole-word off)", () => {
@@ -210,15 +224,37 @@ describe("CustomRuleEditor", () => {
     const save = () => byTestId("custom-rule-save") as HTMLButtonElement;
     const nameError = () => document.getElementById("custom-rule-name-error");
 
+    it("opens a new rule without any error (#5917)", () => {
+      render();
+      expect(nameError()).toBeNull();
+      expect(container.querySelector('[aria-invalid="true"]')).toBeNull();
+      expect(save().getAttribute("aria-disabled")).toBe("true");
+      expect(save().disabled).toBe(false);
+    });
+
+    it("a Save attempt saves nothing, shows every error and focuses Name (#5917)", () => {
+      const { onSave } = render();
+      act(() => save().focus());
+      act(() => save().click());
+      expect(onSave).not.toHaveBeenCalled();
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(document.getElementById("custom-rule-pattern-error")).not.toBeNull();
+      expect(document.activeElement).toBe(byTestId("custom-rule-name"));
+    });
+
     it("shows 'Name is required.' for a blank name and blocks Save until one is typed", () => {
       render();
       setInput(byTestId("custom-rule-pattern"), "NOTE");
+      leaveField(byTestId("custom-rule-pattern"));
+      // Only the edited field reveals its error; Name was never touched.
+      expect(nameError()).toBeNull();
+      act(() => save().click());
       expect(nameError()?.textContent).toBe("Name is required.");
-      expect(save().disabled).toBe(true);
+      expect(save().getAttribute("aria-disabled")).toBe("true");
 
       setInput(byTestId("custom-rule-name"), "Note markers");
       expect(nameError()).toBeNull();
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
     });
 
     it("shows the hex colour error and blocks Save until the colour is valid", () => {
@@ -226,13 +262,14 @@ describe("CustomRuleEditor", () => {
       setInput(byTestId("custom-rule-name"), "Note markers");
       setInput(byTestId("custom-rule-pattern"), "NOTE");
       setInput(byTestId("custom-rule-color-hex"), "not-a-colour");
+      leaveField(byTestId("custom-rule-color-hex"));
       expect(byTestId("custom-rule-color-error")?.textContent).toBe("Use a #RRGGBB color.");
       expect(byTestId("custom-rule-color-hex").getAttribute("aria-invalid")).toBe("true");
-      expect(save().disabled).toBe(true);
+      expect(save().getAttribute("aria-disabled")).toBe("true");
 
       setInput(byTestId("custom-rule-color-hex"), "#112233");
       expect(byTestId("custom-rule-color-error")).toBeNull();
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
     });
   });
 });

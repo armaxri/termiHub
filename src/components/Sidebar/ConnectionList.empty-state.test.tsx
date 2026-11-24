@@ -126,7 +126,7 @@ describe("ConnectionList — first-run empty state", () => {
     await render(root);
 
     expect(
-      container.querySelector('[data-testid="connections-empty-experimental-link"]')
+      container.querySelector('[data-testid="connections-empty-experimental-action"]')
     ).not.toBeNull();
   });
 
@@ -138,7 +138,7 @@ describe("ConnectionList — first-run empty state", () => {
     expect(container.querySelector('[data-testid="connections-empty-state"]')).not.toBeNull();
     // ...but the "enable experimental" signpost is gone.
     expect(
-      container.querySelector('[data-testid="connections-empty-experimental-link"]')
+      container.querySelector('[data-testid="connections-empty-experimental-action"]')
     ).toBeNull();
   });
 
@@ -155,13 +155,13 @@ describe("ConnectionList — first-run empty state", () => {
     expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
   });
 
-  it("signpost link deep-links to the General settings category", async () => {
+  it("signpost button deep-links to the General settings category", async () => {
     const openSettingsTab = vi.fn();
     useAppStore.setState({ openSettingsTab });
     await render(root);
 
     const link = container.querySelector(
-      '[data-testid="connections-empty-experimental-link"]'
+      '[data-testid="connections-empty-experimental-action"]'
     ) as HTMLButtonElement;
     click(link);
 
@@ -196,9 +196,9 @@ describe("ConnectionList — first-run empty state", () => {
     expect(hint).not.toBeNull();
     expect(hint!.className).toContain("connections-empty__hint");
     expect(
-      hint!.contains(card.querySelector('[data-testid="connections-empty-experimental-link"]'))
+      hint!.contains(card.querySelector('[data-testid="connections-empty-experimental-action"]'))
     ).toBe(true);
-    // The hint ends on the link: no orphaned period (#5621).
+    // The hint ends on its button: no orphaned period (#5621).
     expect(hint!.textContent!.trim().endsWith(".")).toBe(false);
   });
 

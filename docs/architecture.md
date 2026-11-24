@@ -2592,7 +2592,7 @@ if (!experimental) return null;
 
 **Activity Bar items** — set `experimental: true` on the item definition in `ActivityBar.tsx`. The item is automatically hidden when the flag is off and shown with a " — Experimental" suffix in the right-click context menu when enabled.
 
-**Connection type options** — gate inclusion via the `includeRemoteAgent` parameter of `buildTypeOptions()` in `ConnectionEditor.tsx`.
+**Connection type options** — a type that reports `capabilities.graphical` is experimental. `buildGatedTypeOptions()` in `src/utils/experimentalTypes.ts` omits it while the flag is off; with the flag on the type picker shows its plain name with a neutral "Preview" badge, and selecting it shows a one-line note on its known limits (`previewTypeNote()`, #5873).
 
 **Sidebar sections** — guard the render block with `experimental &&` in `ConnectionList.tsx`.
 

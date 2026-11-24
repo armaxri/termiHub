@@ -1,8 +1,13 @@
-import { AppWindow, Plus, Network } from "lucide-react";
+import { useId, useState } from "react";
+import { AppWindow, Plus, Network, Upload } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { Button, EmptyState } from "@/components/ui";
+import { BackupRestoreDialog } from "@/components/Settings/BackupRestoreDialog";
+import { ConnectionIcon } from "@/utils/connectionIcons";
+import { connectSavedConnection } from "@/utils/connectSavedConnection";
+import { pickRecentConnections } from "@/utils/recentConnections";
 import "./EmptyWindowState.css";
 
 /**
@@ -15,48 +20,36 @@ import "./EmptyWindowState.css";
  * activity bar and sidebar stay mounted (they live outside this component), so a
  * connection can be launched straight into the empty window.
  *
- * Because this is also the closest thing to a first-run screen, the secondary
- * CTA adapts to what the user actually has: with **≥1 saved connection** it opens
- * the command palette so they can fuzzy-find and connect one (reusing the
- * sidebar's exact connect/credential flow); with **zero connections** it routes
- * straight to the new-connection editor rather than dead-ending on a blank
- * Connections panel. The copy likewise speaks to a first-run user, and the
- * power-user "Move to window" hint is shown only when more than one window is
- * actually open.
+ * Because this is also the closest thing to a first-run screen, the actions
+ * adapt to what the user actually has (#5856):
+ *
+ * - **≥1 saved connection:** up to five of them, most recently opened first,
+ *   as one-click buttons that connect exactly like the sidebar. No generic
+ *   "Open connection…" and no "New connection" (the sidebar has one, R-107).
+ * - **No saved connection** (a fresh or wiped profile): "New connection" and
+ *   "Restore from backup…", so someone starting over sees that a restore is
+ *   possible from here (R-085).
+ *
+ * The power-user "Move to window" hint is shown only when more than one window
+ * is actually open.
  *
  * Rendered by {@link SplitView} in place of the tab-group/tab-bar tree while the
- * window holds no tabs; both actions run against *this* window's store, so a
+ * window holds no tabs; every action runs against *this* window's store, so a
  * launched session (or a tab moved in via "Move to window") replaces the CTA
  * with the normal tab UI.
  */
 export function EmptyWindowState() {
   const addLocalShellTab = useAppStore((s) => s.addLocalShellTab);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
-  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
+  const sessionHistory = useAppStore((s) => s.sessionHistory);
   const { connections } = useProjectedConnections();
   const { count: windowCount } = useWindowInfo();
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const recentLabelId = useId();
 
   const hasConnections = connections.length > 0;
   const multiWindow = windowCount > 1;
-
-  /** Launch a local shell into this window. */
-  const handleNewTerminal = () => {
-    addLocalShellTab();
-  };
-
-  /**
-   * Get the user to a connection from an empty window. With saved connections
-   * present, open the command palette (its ranked list includes every saved
-   * connection); with none, open the new-connection editor so a first-run user
-   * lands on the create flow instead of a blank Connections panel.
-   */
-  const handleOpenConnection = () => {
-    if (hasConnections) {
-      setCommandPaletteOpen(true);
-    } else {
-      openConnectionEditorTab("new");
-    }
-  };
+  const recent = pickRecentConnections(connections, sessionHistory);
 
   return (
     <div className="empty-window" data-testid="empty-window-state">
@@ -67,11 +60,9 @@ export function EmptyWindowState() {
         title="This window is empty"
         description={
           <>
-            Start a local terminal now, or{" "}
             {hasConnections
-              ? "open a saved connection"
-              : "create a connection to save it for next time"}
-            .
+              ? "Start a local terminal, or open one of your connections."
+              : "Start a local terminal, create a connection, or restore your data from a backup."}
             {multiWindow && (
               <>
                 {" "}
@@ -82,30 +73,80 @@ export function EmptyWindowState() {
           </>
         }
         action={
-          <>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus size={14} />}
-              onClick={handleNewTerminal}
-              data-testid="empty-window-new-terminal"
-            >
-              New terminal
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={<Network size={14} />}
-              onClick={handleOpenConnection}
-              data-testid="empty-window-open-connection"
-            >
-              {/* Name the action the click runs, matching the copy above:
-                  open a saved one, or create the first one (R-087, #5702). */}
-              {hasConnections ? "Open connection…" : "New connection"}
-            </Button>
-          </>
+          <div className="empty-window__actions">
+            <div className="empty-window__row">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
+                onClick={() => {
+                  addLocalShellTab();
+                }}
+                data-testid="empty-window-new-terminal"
+              >
+                New terminal
+              </Button>
+              {!hasConnections && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Network size={14} />}
+                    onClick={() => openConnectionEditorTab("new")}
+                    data-testid="empty-window-new-connection"
+                  >
+                    New connection
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Upload size={14} />}
+                    onClick={() => setRestoreOpen(true)}
+                    data-testid="empty-window-restore"
+                  >
+                    Restore from backup…
+                  </Button>
+                </>
+              )}
+            </div>
+            {hasConnections && (
+              <div
+                className="empty-window__recent"
+                role="group"
+                aria-labelledby={recentLabelId}
+                data-testid="empty-window-recent"
+              >
+                <p id={recentLabelId} className="empty-window__recent-label">
+                  {recent.fromHistory ? "Recent connections" : "Your connections"}
+                </p>
+                {recent.connections.map((connection) => (
+                  <Button
+                    key={connection.id}
+                    variant="ghost"
+                    size="sm"
+                    fullWidth
+                    className="empty-window__recent-item"
+                    icon={
+                      <ConnectionIcon
+                        config={connection.config}
+                        customIcon={connection.icon}
+                        iconColor={connection.iconColor}
+                        iconEmoji={connection.iconEmoji}
+                        size={14}
+                      />
+                    }
+                    onClick={() => void connectSavedConnection(connection)}
+                    data-testid={`empty-window-recent-${connection.id}`}
+                  >
+                    {connection.name}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
         }
       />
+      {!hasConnections && <BackupRestoreDialog open={restoreOpen} onOpenChange={setRestoreOpen} />}
     </div>
   );
 }

@@ -8,7 +8,9 @@ the live progress page shows them as they run.
 The checklist (supersedes the hand-run kit and #5516):
 
 1. Crash banner (#5454): wording and buttons, **Close** removes it; its
-   buttons follow the bottom-banner pattern (#5638). The one-time file-manager
+   buttons follow the bottom-banner pattern (#5638): View report · **Close**,
+   the opt-out a small link (#5856, its own grade:
+   ``test_product_run_first_launch.py``). The one-time file-manager
    offer (a toast since #5753) never shows in this crash session, not even
    after the banner is closed (its own grade:
    ``test_product_run_file_manager_offer.py``).
@@ -214,10 +216,11 @@ class TestProductRunChecklist(
     def test_01_crash_banner(self):
         with self.step(
             "checklist.banner.wording",
-            "Crash banner says 'closed unexpectedly' with Don't show again, Close and View report "
-            "in one action row (#5558, #5638)",
-            expect="the crash banner with an amber left accent and three same-height buttons, "
-            "Don't show again, Close and View report; no Export and no button named Dismiss",
+            "Crash banner says 'closed unexpectedly' with View report and Close in one action row "
+            "and a 'Don't tell me about future crashes' link (#5558, #5638, #5856)",
+            expect="the crash banner with an amber left accent, two same-height buttons View "
+            "report and Close, and a small 'Don't tell me about future crashes' link under the "
+            "text; no Export and no button named Dismiss",
         ):
             self.require("checklist.profile")
             self.wait_notice_visible(CRASH_NOTICE)
@@ -225,7 +228,7 @@ class TestProductRunChecklist(
             self.evidence(f"banner text: {text!r}")
             assert "termiHub closed unexpectedly last time." in text, text
             labels = {
-                CRASH_NOTICE_NEVER: "Don't show again",
+                CRASH_NOTICE_NEVER: "Don't tell me about future crashes",
                 CRASH_NOTICE_DISMISS: "Close",
                 CRASH_NOTICE_VIEW: "View report",
             }
@@ -241,7 +244,7 @@ class TestProductRunChecklist(
             assert not self.driver.exists(CRASH_EXPORT), "Export is still in the banner (#5558)"
             assert "Dismiss" not in text, f"a button still says Dismiss: {text!r}"
             # Kept for checklist.banner.buttons (#5638): the crash banner is gone by then.
-            type(self)._crash_actions = self._banner_actions(CRASH_NOTICE)
+            type(self)._crash_actions = self._banner_actions(CRASH_NOTICE, (CRASH_NOTICE_NEVER,))
             type(self)._crash_text_color = self.driver.get_computed_style("color", CRASH_NOTICE)
         with self.step(
             "checklist.banner.close",
@@ -256,11 +259,12 @@ class TestProductRunChecklist(
     _crash_actions: Optional[list[dict[str, str]]] = None
     _crash_text_color: str = ""
 
-    def _banner_actions(self, banner: str) -> list[dict[str, str]]:
-        """Each visible action button of ``banner``: label, class, height and color."""
+    def _banner_actions(self, banner: str, links: tuple[str, ...] = ()) -> list[dict[str, str]]:
+        """Each visible action button of ``banner``: label, class, height and color.
+        ``links`` are footnote links (#5856), not part of the action row."""
         out = []
         for item in self.driver.measure_element(banner, "buttons")["items"]:
-            if not item["visible"] or not item.get("testId"):
+            if not item["visible"] or not item.get("testId") or item["testId"] in links:
                 continue
             tid = item["testId"]
             out.append(
@@ -300,16 +304,16 @@ class TestProductRunChecklist(
         with self.step(
             "checklist.banner.buttons",
             "The crash banner follows the bottom-banner button pattern (#5638)",
-            expect="the main window after the crash banner closed; its buttons were Don't show "
-            "again, Close and View report, all the same height, View report the only outlined one",
+            expect="the main window after the crash banner closed; its buttons were View report "
+            "and Close, the same height, Close the only outlined one (#5856)",
             screenshot=False,
         ):
             self.require("checklist.banner.close")
             crash = type(self)._crash_actions
             assert crash, "the crash banner's buttons were not recorded"
             self.evidence(f"crash actions: {crash}")
-            assert [a["text"] for a in crash] == ["Don't show again", "Close", "View report"], crash
-            self._assert_banner_button_pattern(crash, "View report", type(self)._crash_text_color)
+            assert [a["text"] for a in crash] == ["View report", "Close"], crash
+            self._assert_banner_button_pattern(crash, "Close", type(self)._crash_text_color)
             heights = {a["height"] for a in crash}
             assert len(heights) == 1, f"banner buttons differ in height: {heights}"
 

@@ -8,6 +8,7 @@ import {
 } from "./MacroEditorDialog";
 import { runMacroPlayback } from "@/services/macroPlayback";
 import { withTooltip } from "@/test/tooltip";
+import { leaveField } from "@/test/leaveField";
 import type { Macro } from "@/types/macro";
 
 vi.mock("@/themes", () => ({
@@ -149,13 +150,17 @@ describe("MacroEditorDialog", () => {
   it("enables Save with a valid name and at least one step", () => {
     render();
     // Pre-filled edit mode: name is populated and the macro has steps.
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("disables Save when the name is emptied", () => {
     render();
     setInput("macro-editor-name", "   ");
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("does not call onSave while the name is invalid", async () => {
@@ -172,9 +177,13 @@ describe("MacroEditorDialog", () => {
   it("re-enables Save once a valid name is restored", () => {
     render();
     setInput("macro-editor-name", "");
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     setInput("macro-editor-name", "Restored");
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
   });
 
   it("disables Save when all steps are removed", () => {
@@ -183,7 +192,9 @@ describe("MacroEditorDialog", () => {
     act(() => (query("macro-editor-step-delete-1") as HTMLButtonElement).click());
     act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
     expect(query("macro-editor-no-steps")).not.toBeNull();
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
   });
 
   it("shows recorded control characters in the editable escape notation", () => {
@@ -234,17 +245,25 @@ describe("MacroEditorDialog", () => {
   it("blocks Save and explains an invalid escape", () => {
     render();
     setInput("macro-editor-step-data-0", "echo \\q");
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    leaveField(query("macro-editor-step-data-0"));
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     expect(query("macro-editor-step-error-0")?.textContent).toContain("\\q");
     setInput("macro-editor-step-data-0", "echo ok\\r");
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(false);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "false"
+    );
     expect(query("macro-editor-step-error-0")).toBeNull();
   });
 
   it("blocks Save when a step's input is empty", () => {
     render();
     setInput("macro-editor-step-data-2", "");
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    leaveField(query("macro-editor-step-data-2"));
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     expect(query("macro-editor-step-error-2")?.textContent).toContain("empty");
   });
 
@@ -254,7 +273,9 @@ describe("MacroEditorDialog", () => {
     act(() => (query("macro-editor-add-step") as HTMLButtonElement).click());
     expect(query("macro-editor-step-3")).not.toBeNull();
     // A fresh empty step blocks Save until filled.
-    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+      "true"
+    );
     setInput("macro-editor-step-data-3", "exit");
     act(() => (query("macro-editor-step-enter-3") as HTMLButtonElement).click());
     expect((query("macro-editor-step-data-3") as HTMLInputElement).value).toBe("exit\\r");
@@ -288,7 +309,9 @@ describe("MacroEditorDialog", () => {
       expect((query("macro-editor-name") as HTMLInputElement).value).toBe("");
       expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("");
       expect(query("macro-editor-step-1")).toBeNull();
-      expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+      expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
+        "true"
+      );
     });
 
     it("authors a multi-step macro that plays exactly like the recorded equivalent", async () => {
@@ -335,6 +358,61 @@ describe("MacroEditorDialog", () => {
     });
   });
 
+  describe("validation timing (#5917)", () => {
+    const save = () => query("macro-editor-save") as HTMLButtonElement;
+    const nameError = () => document.getElementById("macro-editor-name-error");
+
+    it("opens a new macro without any error, Save reachable but blocked", () => {
+      render({ macro: null });
+      expect(nameError()).toBeNull();
+      expect(query("macro-editor-step-error-0")).toBeNull();
+      expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+      expect(save().getAttribute("aria-disabled")).toBe("true");
+      expect(save().disabled).toBe(false);
+    });
+
+    it("leaving the edited Name shows its error, but not the untouched step's", () => {
+      render({ macro: null });
+      setInput("macro-editor-name", "x");
+      setInput("macro-editor-name", "");
+      leaveField(query("macro-editor-name"));
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(query("macro-editor-step-error-0")).toBeNull();
+    });
+
+    it("a Save attempt saves nothing, shows every error and focuses Name", async () => {
+      const onSave = vi.fn();
+      render({ macro: null, onSave });
+      act(() => save().focus());
+      act(() => save().click());
+      await flush();
+      expect(onSave).not.toHaveBeenCalled();
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(query("macro-editor-step-error-0")?.textContent).toBe("Step input cannot be empty.");
+      expect(document.activeElement).toBe(query("macro-editor-name"));
+    });
+
+    it("a Save attempt with no steps left focuses Add step", async () => {
+      render();
+      act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
+      act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
+      act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
+      expect(query("macro-editor-no-steps")).not.toBeNull();
+      act(() => save().click());
+      await flush();
+      expect(document.activeElement).toBe(query("macro-editor-add-step"));
+    });
+
+    it("reopening starts pristine again", () => {
+      render({ macro: null });
+      act(() => save().click());
+      expect(nameError()).not.toBeNull();
+      render({ macro: null, open: false });
+      render({ macro: null });
+      expect(nameError()).toBeNull();
+    });
+  });
+
   describe("zod field errors (UISF2-003)", () => {
     const save = () => query("macro-editor-save") as HTMLButtonElement;
     const nameError = () => document.getElementById("macro-editor-name-error");
@@ -342,23 +420,25 @@ describe("MacroEditorDialog", () => {
     it("shows 'Name is required.' on the Name field and re-enables Save once named", () => {
       render();
       expect(nameError()).toBeNull();
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
 
       setInput("macro-editor-name", "   ");
+      leaveField(query("macro-editor-name"));
       expect(nameError()?.textContent).toBe("Name is required.");
       expect(query("macro-editor-name")?.getAttribute("aria-invalid")).toBe("true");
-      expect(save().disabled).toBe(true);
+      expect(save().getAttribute("aria-disabled")).toBe("true");
 
       setInput("macro-editor-name", "Deploy");
       expect(nameError()).toBeNull();
-      expect(save().disabled).toBe(false);
+      expect(save().getAttribute("aria-disabled")).toBe("false");
     });
 
     it("shows a step's input error under that step and blocks Save", () => {
       render();
       setInput("macro-editor-step-data-1", "");
+      leaveField(query("macro-editor-step-data-1"));
       expect(query("macro-editor-step-error-1")?.textContent).toBe("Step input cannot be empty.");
-      expect(save().disabled).toBe(true);
+      expect(save().getAttribute("aria-disabled")).toBe("true");
     });
   });
 });

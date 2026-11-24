@@ -1093,9 +1093,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "powerMonitoring",
     label: "Power monitoring",
-    description: "Monitor CPU, memory, and power events via SSH agent connections",
+    description: "Monitor CPU, memory and power events for SSH connections",
     category: "monitoring",
-    // "advanced" / "external" keep the pre-#5775 home (External files ▸ Advanced) findable.
+    // "advanced" / "external" keep the pre-#5775 home (External files ▸ Advanced) findable;
+    // "agent" keeps the pre-#5930 hint ("via SSH agent connections") findable.
     keywords: ["power", "monitoring", "cpu", "memory", "agent", "ssh", "advanced", "external"],
   },
   {

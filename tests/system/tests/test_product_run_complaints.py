@@ -194,7 +194,7 @@ class TestProductRunComplaints(
                 self.driver.click("macro-editor-add-step")
                 self.wait(lambda f=field: self.driver.exists(f), what=f"macro step {index}")
             self.driver.type(field, data)
-        self.wait(lambda: not self.is_disabled("macro-editor-save"), what="Save to enable")
+        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
         self.driver.click("macro-editor-save")
         self.wait(lambda: not self.driver.exists("macro-editor-dialog"), what="the editor to close")
         macro = self.wait(
