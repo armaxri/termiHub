@@ -69,6 +69,7 @@ const toastMock = vi.hoisted(() => ({
   loading: vi.fn(() => "toast-1"),
   success: vi.fn(),
   error: vi.fn(),
+  dismiss: vi.fn(),
 }));
 
 vi.mock("@/components/ui", async (importOriginal) => ({
@@ -211,21 +212,26 @@ describe("AgentSetupDialog — the setup tab (#5865)", () => {
     expect(useAgentSetupStatus.getState().tabs["tab-setup"]).toEqual({
       agentId: "agent-1",
       agentName: "Test Host",
+      sessionId: "setup-session",
       reportsExit: true,
       progress: { kind: "running" },
       dismissed: false,
     });
   });
 
-  it("a Windows setup's tab reports through the exit of its commands too (#5946)", async () => {
+  it("a Windows setup's tab waits for the checked outcome, not the exit code (#5992)", async () => {
     detectAgentArch.mockResolvedValueOnce(windowsArchInfo);
     await startSetup();
-    expect(useAgentSetupStatus.getState().tabs["tab-setup"].reportsExit).toBe(true);
-    // Its "done" (commands sent) waits for the exit instead of reading as "sent".
-    act(() => progressCallback?.("agent-1", "done", "Setup commands sent to terminal"));
-    expect(useAgentSetupStatus.getState().tabs["tab-setup"].progress).toEqual({
-      kind: "running",
-    });
+    const tab = () => useAgentSetupStatus.getState().tabs["tab-setup"];
+    expect(tab().reportsExit).toBe(false);
+    expect(tab().sessionId).toBe("setup-session");
+    act(() => progressCallback?.("agent-1", "sent", "Install commands sent"));
+    // The dialog gives way to the tab, without claiming the agent was deployed.
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.dismiss).toHaveBeenCalledWith("toast-1");
+    expect(tab().progress).toEqual({ kind: "running" });
+    expect(phase()).toBe("installing");
   });
 
   it("marks the tab failed with the backend's message", async () => {

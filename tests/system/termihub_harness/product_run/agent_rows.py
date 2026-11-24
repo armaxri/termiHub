@@ -98,20 +98,31 @@ def row_width_problems(row: dict[str, Any], name: str) -> list[str]:
     return problems
 
 
+#: An expanded, disconnected agent's empty line: no second Connect (#5980).
+DISCONNECTED_EMPTY = "Not connected."
+
+
 def empty_state_problems(text: Optional[str], *, state: str, host: str = "") -> list[str]:
     """What is wrong with an expanded agent's empty line (R-013); empty when fine.
 
     ``state`` is ``"connected"`` (nothing saved yet: a New connection link),
     ``"not-installed"`` (names ``host`` and Set up agent) or ``"disconnected"``
-    (a Connect link). Never a right-click hint.
+    (just "Not connected.": the row's own Connect action is the one way to
+    connect, #5980). Never a right-click hint.
     """
     if text is None:
         return ["the expanded agent shows no empty-state line"]
     problems: list[str] = []
     if "right-click" in text.lower():
         problems.append(f"the empty state hides its action behind right-click: {text!r}")
-    action = {"connected": "New connection", "not-installed": "Set up agent",
-              "disconnected": "Connect"}[state]
+    if state == "disconnected":
+        if text.strip() != DISCONNECTED_EMPTY:
+            problems.append(
+                f"the empty state reads {text!r}, want {DISCONNECTED_EMPTY!r} (the row's "
+                "Connect action is the only connect affordance)"
+            )
+        return problems
+    action = {"connected": "New connection", "not-installed": "Set up agent"}[state]
     if not text.endswith(action):
         problems.append(f"the empty state does not end in the {action!r} link: {text!r}")
     if state == "not-installed" and host and host not in text:

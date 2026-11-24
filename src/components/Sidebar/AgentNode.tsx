@@ -181,7 +181,9 @@ export interface AgentRowPresentation {
  * installed", with "Set up agent" as its action.
  * While a setup installs the agent (`setupPhase`), the row reads "Installing…";
  * once it succeeded, the neutral "Not connected" + "Connect", whatever the
- * connect that offered the setup left behind (#5906).
+ * connect that offered the setup left behind (#5906). A setup whose outcome
+ * could not be checked (#5992) reads as neither installed nor failed: neutral,
+ * "Setup outcome unknown", with the action the row offered before the setup.
  * Any unknown state is treated as not connected.
  */
 export function agentRowPresentation(
@@ -201,6 +203,10 @@ export function agentRowPresentation(
   }
   if (setupPhase === "installed") {
     return { tone: "disabled", label: "Not connected", action: "connect" };
+  }
+  if (setupPhase === "unknown") {
+    const action = notInstalled ? "setup" : failed ? "reconnect" : "connect";
+    return { tone: "disabled", label: "Setup outcome unknown", action };
   }
   if (notInstalled) {
     return { tone: "disabled", label: "Agent not installed", action: "setup" };
@@ -1148,7 +1154,9 @@ export function AgentNode({
   // Once the agent connects, the finished setup has served its purpose: a
   // later drop must read as a failure again.
   useEffect(() => {
-    if (isConnected && setupPhase === "installed") clearSetupPhase(agent.id);
+    if (isConnected && (setupPhase === "installed" || setupPhase === "unknown")) {
+      clearSetupPhase(agent.id);
+    }
   }, [isConnected, setupPhase, clearSetupPhase, agent.id]);
   const rowPresentation = agentRowPresentation(
     agent.connectionState,
@@ -2458,21 +2466,15 @@ export function AgentNode({
               </button>
             </p>
           ) : (
+            // One connect affordance (#5980): the row's own Connect action.
+            // A second "Connect" link here made the expanded row differ from
+            // the collapsed one for the same state.
             <p
               className="agent-node__hint"
               style={{ paddingLeft: 32 }}
               data-testid={`agent-empty-${agent.id}`}
             >
-              Not connected.{" "}
-              <button
-                type="button"
-                className="agent-node__link"
-                onClick={() => void handleConnect()}
-                disabled={isConnecting}
-                data-testid={`agent-empty-connect-${agent.id}`}
-              >
-                Connect
-              </button>
+              Not connected.
             </p>
           )}
         </AgentRootDropZone>

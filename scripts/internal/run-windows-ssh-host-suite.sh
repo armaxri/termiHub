@@ -35,6 +35,10 @@
 #    windows_ssh_host_tests/daemon_update.rs (#5254): an update while a session
 #    daemon holds the installed exe installs, a broken one rolls back, and
 #    the session survives both.
+#    Every DefaultShell first runs the setup-outcome test of
+#    windows_ssh_host_tests/setup_outcome.rs (#5992): the setup tab's lines are
+#    typed into a real PTY shell, and a failed setup is reported failed although
+#    the server sends exit code 0 for it, with the OLD agent still running (#5996).
 # 6. `cmd` also runs native_05b/05i of core/tests/ssh_native.rs first
 #    (#5109): with the opt-in hook on, a cd is reported, no setup text is
 #    left on screen and nothing of it is in the console's command history --
@@ -60,7 +64,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '3,58p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,62p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -96,6 +100,8 @@ TEST_NAME="terminal::agent_manager::windows_ssh_host_tests::${DEFAULT_SHELL}_def
 ROLLBACK_TEST="terminal::agent_manager::windows_ssh_host_tests::rollback::${DEFAULT_SHELL}_default_shell_update_rollback"
 # The update under a running session daemon, same DefaultShell (#5254).
 DAEMON_UPDATE_TEST="terminal::agent_manager::windows_ssh_host_tests::daemon_update::${DEFAULT_SHELL}_default_shell_update_with_daemon_session"
+# The setup tab's outcome, every DefaultShell (#5992).
+SETUP_TEST="terminal::agent_manager::windows_ssh_host_tests::setup_outcome::${DEFAULT_SHELL}_default_shell_setup_outcome"
 AGENT_SUITE="native_sshd_agent_backends"
 AGENT_TESTS=(
   ssh_session_through_agent_round_trips_resizes_and_closes_cleanly
@@ -358,6 +364,11 @@ cargo test -p termihub --lib "$TEST_NAME" -- --exact --show-output "$@" 2>&1 | t
 # Guard against a false green: the named test must have run and passed, and
 # must not have skipped.
 require_passed "$log" "$TEST_NAME"
+
+# ---- Setup tab outcome (#5992): exit code 0 is not success ----
+setup_log="$(mktemp)"
+cargo test -p termihub --lib "$SETUP_TEST" -- --exact --show-output "$@" 2>&1 | tee "$setup_log"
+require_passed "$setup_log" "$SETUP_TEST"
 
 # The Git Bash leg ends here (#5523): the update and agent-side steps below are
 # graded through the cmd / powershell legs. The EXIT trap restores the

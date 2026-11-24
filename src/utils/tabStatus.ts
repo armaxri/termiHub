@@ -12,7 +12,15 @@ export type TabStatus =
   | "failed"
   | "disconnected"
   | "exited"
-  | "evicted";
+  | "evicted"
+  /**
+   * An ended agent setup tab (#5980): its agent was installed (`finished`),
+   * the host is still being checked, or the outcome is unknown (#5992). Not
+   * derived here: the tab strip sets them from the setup's outcome.
+   */
+  | "finished"
+  | "checking"
+  | "unknown";
 
 /**
  * The subset of the app store's tab-lifecycle maps needed to derive a tab's

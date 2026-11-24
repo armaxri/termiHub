@@ -4,7 +4,7 @@ The product-run UI review saw the agent's "update available" notice rendered
 as three columns inside the 260 px sidebar row: the text wrapped one word per
 line and ran off the bottom (R-001), and "Apply now" did not say what it does
 (R-012). The row now carries only a compact marker; the notice is a full-width
-strip under the row ("Update to v<x> available", a short note, Close and
+strip under the row ("Update to v<x> available", a short note, Later and
 "Restart agent and update"). :func:`measure_agent_update_notice` reads the
 boxes over the bridge; :func:`agent_update_notice_problems` grades them
 without an app.

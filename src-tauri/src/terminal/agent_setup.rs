@@ -14,6 +14,14 @@ use crate::session::manager::SessionManager;
 use crate::terminal::agent_binary;
 use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install;
+use crate::terminal::agent_setup_outcome::{
+    recover_and_check_host, sha256_hex, windows_setup_outcome, SessionEndWatch, SetupOutcome,
+    CHECK_TIMEOUT, SHELL_END_CEILING,
+};
+use crate::terminal::agent_setup_windows::{
+    windows_echo_input, windows_setup_input, windows_setup_script, WINDOWS_ENTER,
+    WINDOWS_SETUP_SCRIPT_NAME,
+};
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
@@ -142,6 +150,9 @@ pub struct AgentSetupProgress {
     pub agent_id: String,
     pub step: String,
     pub message: String,
+    /// The setup's terminal session, on a step that must only reach that run's
+    /// tab (a Windows run's `sent` and its outcome, #5992).
+    pub session_id: Option<String>,
 }
 
 /// Result returned to the frontend after initiating setup.
@@ -268,17 +279,28 @@ fn run_setup_background(
     rt_handle: &tokio::runtime::Handle,
     cancel: Option<&CancellationToken>,
 ) {
+    let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
     std::thread::sleep(std::time::Duration::from_millis(SHELL_INIT_DELAY_MS));
 
     if bail_if_cancelled(cancel).is_err() {
-        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        report_setup_cancelled(
+            is_windows,
+            agent_id,
+            session_id,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
         return;
     }
 
     inject_commands(
         session_manager,
         session_id,
-        "echo 'Preparing termiHub agent setup, please wait...'\n",
+        &format!(
+            "echo 'Preparing termiHub agent setup, please wait...'{}",
+            if is_windows { WINDOWS_ENTER } else { "\n" }
+        ),
         rt_handle,
     );
 
@@ -299,18 +321,34 @@ fn run_setup_background(
                 "error",
                 &format!("SFTP connection failed: {}", e),
             );
-            inject_error_inline(
-                session_manager,
-                session_id,
-                "SFTP connection failed",
-                rt_handle,
-            );
+            if is_windows {
+                inject_windows_error(
+                    session_manager,
+                    session_id,
+                    "SFTP connection failed",
+                    rt_handle,
+                );
+            } else {
+                inject_error_inline(
+                    session_manager,
+                    session_id,
+                    "SFTP connection failed",
+                    rt_handle,
+                );
+            }
             return;
         }
     };
 
     if bail_if_cancelled(cancel).is_err() {
-        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        report_setup_cancelled(
+            is_windows,
+            agent_id,
+            session_id,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
         return;
     }
 
@@ -332,7 +370,6 @@ fn run_setup_background(
     // injected directly into the terminal (no POSIX `sh` setup script). POSIX
     // hosts upload into a fresh private dir, never a shared `/tmp` name
     // (AGT2-002, #4287).
-    let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
     let upload_dir = if is_windows {
         None
     } else {
@@ -354,7 +391,14 @@ fn run_setup_background(
 
     // Upload binary via SFTP
     if bail_if_cancelled(cancel).is_err() {
-        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        report_setup_cancelled(
+            is_windows,
+            agent_id,
+            session_id,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
         return;
     }
     emit_progress(app_handle, agent_id, "upload", "Uploading agent binary...");
@@ -372,7 +416,14 @@ fn run_setup_background(
         }
         Err(TerminalError::Cancelled) => {
             rollback_uploaded_binary(&sftp_session, upload_path);
-            report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+            report_setup_cancelled(
+                is_windows,
+                agent_id,
+                session_id,
+                app_handle,
+                session_manager,
+                rt_handle,
+            );
             return;
         }
         Err(e) => {
@@ -399,7 +450,14 @@ fn run_setup_background(
     // behind or inject any install commands — roll it back and stop (G10, #1242).
     if bail_if_cancelled(cancel).is_err() {
         rollback_uploaded_binary(&sftp_session, upload_path);
-        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        report_setup_cancelled(
+            is_windows,
+            agent_id,
+            session_id,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
         return;
     }
 
@@ -408,9 +466,11 @@ fn run_setup_background(
             agent_id,
             session_id,
             &sftp_session,
+            &binary_path,
             app_handle,
             session_manager,
             rt_handle,
+            cancel,
         );
         return;
     };
@@ -441,7 +501,14 @@ fn run_setup_background(
 
     if bail_if_cancelled(cancel).is_err() {
         rollback_uploaded_binary(&sftp_session, upload_path);
-        report_setup_cancelled(agent_id, session_id, app_handle, session_manager, rt_handle);
+        report_setup_cancelled(
+            is_windows,
+            agent_id,
+            session_id,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
         return;
     }
 
@@ -490,6 +557,7 @@ fn run_setup_background(
 /// Emit a `cancelled` progress event and show the cancellation in the visible
 /// terminal so the user gets feedback that the setup was aborted (G10, #1242).
 fn report_setup_cancelled(
+    is_windows: bool,
     agent_id: &str,
     session_id: &str,
     app_handle: &AppHandle,
@@ -498,12 +566,12 @@ fn report_setup_cancelled(
 ) {
     info!("Agent setup: cancelled for agent {agent_id}");
     emit_progress(app_handle, agent_id, "cancelled", "Setup cancelled");
-    inject_commands(
-        session_manager,
-        session_id,
-        "printf '%s\\n' 'Agent setup cancelled.'\n",
-        rt_handle,
-    );
+    let line = if is_windows {
+        windows_echo_input("Agent setup cancelled.")
+    } else {
+        "printf '%s\\n' 'Agent setup cancelled.'\n".to_string()
+    };
+    inject_commands(session_manager, session_id, &line, rt_handle);
 }
 
 /// Best-effort removal of a partially uploaded binary after a cancel (G10, #1242).
@@ -521,19 +589,24 @@ fn rollback_uploaded_binary(sftp_session: &SshSession, upload_path: &str) {
     }
 }
 
-/// Install the uploaded agent on a Windows host by injecting the
-/// platform-appropriate `cmd.exe`/PowerShell install + verify commands into the
-/// visible terminal ([`windows_setup_lines`]). They end the tab's shell with
-/// the install's status, so the setup tab learns the outcome from the session's
-/// exit code (#5946). No systemd service is installed (Phase 1 uses on-demand
-/// `--stdio` launch).
+/// Install the uploaded agent on a Windows host: upload the setup script and
+/// run it in the visible terminal ([`windows_setup_input`]). The script keeps
+/// the previous agent until the new one is proven (#5996) and ends the tab's
+/// shell. Its exit code does not say how the install went on Windows, so the
+/// host itself is checked then ([`windows_setup_outcome`], #5992), after putting
+/// the previous agent back if the script did not get to it. No systemd service
+/// is installed (Phase 1 uses on-demand `--stdio` launch).
+// The setup context plus the cancellation token, like `run_setup_background`.
+#[allow(clippy::too_many_arguments)]
 fn run_windows_install(
     agent_id: &str,
     session_id: &str,
     sftp_session: &SshSession,
+    binary_path: &str,
     app_handle: &AppHandle,
     session_manager: &SessionManager,
     rt_handle: &tokio::runtime::Handle,
+    cancel: Option<&CancellationToken>,
 ) {
     // Fail closed when no PowerShell or cmd.exe syntax works (#5449): typing
     // a guessed syntax into the terminal would leave the upload behind.
@@ -564,127 +637,77 @@ fn run_windows_install(
         "install",
         "Installing agent binary...",
     );
-    // The last line exits the tab's shell with the install's status, so the
-    // session's exit code says installed or failed, as on POSIX (#5946).
-    for line in windows_setup_lines(shell) {
-        inject_commands(session_manager, session_id, &format!("{line}\n"), rt_handle);
+    if let Err(e) = upload_bytes_via_sftp(
+        sftp_session,
+        windows_setup_script().as_bytes(),
+        WINDOWS_SETUP_SCRIPT_NAME,
+    ) {
+        error!("Agent setup: script upload failed: {e}");
+        rollback_uploaded_binary(sftp_session, agent_install::WINDOWS_UPLOAD_NAME);
+        let message = format!("Script upload failed: {e}");
+        emit_progress(app_handle, agent_id, "error", &message);
+        inject_windows_error(session_manager, session_id, &message, rt_handle);
+        return;
+    }
+    // The last moment a cancel leaves the host exactly as it was.
+    if bail_if_cancelled(cancel).is_err() {
+        rollback_uploaded_binary(sftp_session, WINDOWS_SETUP_SCRIPT_NAME);
+        rollback_uploaded_binary(sftp_session, agent_install::WINDOWS_UPLOAD_NAME);
+        report_setup_cancelled(
+            true,
+            agent_id,
+            session_id,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
+        return;
+    }
+    // Watch before typing: the line ends the tab's shell.
+    let watch = SessionEndWatch::start(app_handle, session_id);
+    for line in windows_setup_input(shell) {
+        inject_commands(session_manager, session_id, &line, rt_handle);
     }
 
-    // The install lands at the managed Windows location, not the POSIX default
-    // the next connect would run: store it as the agent path (#5522).
-    record_setup_install_path(
+    // From here on nothing can be cancelled: the command is typed.
+    emit_session_progress(
         app_handle,
         agent_id,
-        agent_install::resolve_windows_install_path(sftp_session, shell),
-    );
-
-    emit_progress(
-        app_handle,
-        agent_id,
-        "done",
-        "Setup commands sent to terminal",
+        session_id,
+        "sent",
+        "Install commands sent, waiting for the result...",
     );
     info!("Agent setup: Windows install commands sent for agent {agent_id}");
-}
 
-/// The `cmd.exe` variable holding a Windows setup's status (0 installed).
-const WINDOWS_STATUS_VAR: &str = "TERMIHUB_SETUP_STATUS";
-
-/// The line a Windows setup prints when it installed the agent.
-const WINDOWS_SETUP_DONE: &str = "=== Setup Complete ===";
-
-/// The line a Windows setup prints when a step failed.
-const WINDOWS_SETUP_FAILED: &str = "Agent setup failed: see the output above.";
-
-/// The PowerShell lines of a Windows setup (install, verify, stale cleanup),
-/// ending in `exit` with the setup's status: 0 when the install and the
-/// agent's `--version` check succeeded, 1 otherwise (#5946).
-///
-/// The install and verify run in a child scope with `$ErrorActionPreference =
-/// 'Stop'`, so a failed `Move-Item` or a missing exe is caught, and a non-zero
-/// `--version` exit is turned into an error. The cleanup is best effort and
-/// never changes the status.
-fn powershell_setup_lines(plan: &agent_install::InstallPlan) -> Vec<String> {
-    let cleanup = plan.cleanup_stale_command.clone().into_iter();
-    std::iter::once("Write-Output '=== termiHub Agent Setup ==='".to_string())
-        .chain(std::iter::once(format!(
-            "$global:termihubSetupStatus = 1; & {{ $ErrorActionPreference = 'Stop'; try {{ \
-             {install}; {verify}; if ($LASTEXITCODE -ne 0) {{ throw \"the agent's version \
-             check exited with code $LASTEXITCODE\" }}; $global:termihubSetupStatus = 0 }} \
-             catch {{ Write-Output \"[error] $_\" }} }}",
-            install = plan.install_command,
-            verify = plan.verify_command,
-        )))
-        .chain(cleanup)
-        .chain(std::iter::once(format!(
-            "if ($termihubSetupStatus -eq 0) {{ Write-Output '{WINDOWS_SETUP_DONE}' }} else \
-             {{ Write-Output '{WINDOWS_SETUP_FAILED}' }}; exit $termihubSetupStatus"
-        )))
-        .collect()
-}
-
-/// The `cmd.exe` lines of a Windows setup, ending in `exit` with the setup's
-/// status like [`powershell_setup_lines`]. Each line is typed into the live
-/// shell, so `%TERMIHUB_SETUP_STATUS%` is expanded after the line before set
-/// it. The install chain is grouped: `&` binds looser than `&&`.
-fn cmd_setup_lines(plan: &agent_install::InstallPlan) -> Vec<String> {
-    let mut lines = vec![
-        "echo === termiHub Agent Setup ===".to_string(),
-        format!("set \"{WINDOWS_STATUS_VAR}=1\""),
-        format!(
-            "({}) && ({}) && set \"{WINDOWS_STATUS_VAR}=0\"",
-            plan.install_command, plan.verify_command
-        ),
-    ];
-    lines.extend(plan.cleanup_stale_command.clone());
-    lines.push(format!(
-        "if \"%{WINDOWS_STATUS_VAR}%\"==\"0\" (echo {WINDOWS_SETUP_DONE}) else (echo \
-         {WINDOWS_SETUP_FAILED})"
-    ));
-    lines.push(format!("exit %{WINDOWS_STATUS_VAR}%"));
-    lines
-}
-
-/// The lines a Windows setup types into its tab for `shell` (#5946). Each one
-/// is a single command line; the last ends the tab's shell with the setup's
-/// status (0 installed, non-zero failed), so the session's exit code tells the
-/// setup tab the outcome, as `exec sh setup.sh` does on POSIX
-/// ([`setup_exec_command`]). No output is ever read to decide it.
-///
-/// A login shell that is neither `cmd.exe` nor PowerShell gets the PowerShell
-/// lines as one encoded `powershell.exe` script, and then exits with its
-/// status (`exit $?`, as Git Bash, MSYS2 and Cygwin all spell it).
-pub(crate) fn windows_setup_lines(shell: agent_install::WindowsDeployShell) -> Vec<String> {
-    use agent_install::{WindowsDeployShell, WindowsShell};
-    match shell {
-        WindowsDeployShell::Native(WindowsShell::Cmd) => {
-            cmd_setup_lines(&agent_install::windows_install_plan(WindowsShell::Cmd))
-        }
-        WindowsDeployShell::Native(WindowsShell::PowerShell) => powershell_setup_lines(
-            &agent_install::windows_install_plan(WindowsShell::PowerShell),
-        ),
-        WindowsDeployShell::EncodedPowerShell => {
-            let script = powershell_setup_lines(&agent_install::windows_install_plan(
-                WindowsShell::PowerShell,
-            ))
-            .join("\n");
-            vec![
-                "echo === termiHub Agent Setup ===".to_string(),
-                format!(
-                    "{}; exit $?",
-                    agent_install::powershell_encoded_command(&script)
-                ),
-            ]
-        }
+    let end = watch.wait(SHELL_END_CEILING, || {
+        rt_handle
+            .block_on(session_manager.list_sessions())
+            .iter()
+            .any(|s| s.id == session_id)
+    });
+    let check = std::fs::read(binary_path)
+        .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))
+        .and_then(|bytes| recover_and_check_host(sftp_session, &sha256_hex(&bytes), CHECK_TIMEOUT));
+    let outcome = windows_setup_outcome(end, &check);
+    info!("Agent setup: Windows shell end {end:?}, host check {check:?}: {outcome:?}");
+    // The install lands at the managed Windows location, not the POSIX default
+    // the next connect would run: store it as the agent path (#5522). A failed
+    // setup keeps the stored path: it names the agent that was working.
+    if !matches!(outcome, SetupOutcome::Failed(_)) {
+        record_setup_install_path(
+            app_handle,
+            agent_id,
+            agent_install::resolve_windows_install_path(sftp_session, shell),
+        );
     }
+    let (step, message) = outcome.progress();
+    emit_session_progress(app_handle, agent_id, session_id, step, message);
 }
 
 /// Store the launch path a Windows setup resolved as the agent's `agentPath`
 /// (#5522), through the same persisted, folded path as `save_remote_agent`.
 ///
-/// The setup only types the install into the visible terminal, so it cannot
-/// see whether it succeeded; it records the one location that install writes
-/// to. An unresolvable path (the encoded-PowerShell profile path is unusable)
+/// It records the one location that install writes to. An unresolvable path (the encoded-PowerShell profile path is unusable)
 /// keeps the stored path and is logged.
 fn record_setup_install_path<R: Runtime>(
     app_handle: &AppHandle<R>,
@@ -712,13 +735,7 @@ fn inject_setup_error(
     rt_handle: &tokio::runtime::Handle,
 ) {
     if is_windows {
-        let safe = message.replace(['\r', '\n'], " ");
-        inject_commands(
-            session_manager,
-            session_id,
-            &format!("echo Agent setup failed: {safe}\n"),
-            rt_handle,
-        );
+        inject_windows_error(session_manager, session_id, message, rt_handle);
     } else {
         inject_error_script(
             sftp_session,
@@ -728,6 +745,22 @@ fn inject_setup_error(
             rt_handle,
         );
     }
+}
+
+/// Show a setup error in a Windows tab: one plain `echo`, never POSIX text and
+/// never a character of `message` a shell could act on.
+fn inject_windows_error(
+    session_manager: &SessionManager,
+    session_id: &str,
+    message: &str,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    inject_commands(
+        session_manager,
+        session_id,
+        &windows_echo_input(&format!("Agent setup failed: {message}")),
+        rt_handle,
+    );
 }
 
 /// Resolve the agent binary to a local path, downloading or validating as needed.
@@ -743,6 +776,7 @@ fn resolve_binary(
     session_id: &str,
     rt_handle: &tokio::runtime::Handle,
 ) -> Option<String> {
+    let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
     match &setup_config.binary_source {
         AgentBinarySource::GithubDownload => {
             let version = env!("CARGO_PKG_VERSION");
@@ -758,7 +792,14 @@ fn resolve_binary(
                     );
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    inject_setup_error(
+                        is_windows,
+                        sftp_session,
+                        session_manager,
+                        session_id,
+                        &msg,
+                        rt_handle,
+                    );
                     return None;
                 }
             };
@@ -785,7 +826,14 @@ fn resolve_binary(
                     let msg = format!("Failed to obtain agent binary: {}", e);
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    inject_setup_error(
+                        is_windows,
+                        sftp_session,
+                        session_manager,
+                        session_id,
+                        &msg,
+                        rt_handle,
+                    );
                     None
                 }
             }
@@ -803,7 +851,14 @@ fn resolve_binary(
                     );
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    inject_setup_error(
+                        is_windows,
+                        sftp_session,
+                        session_manager,
+                        session_id,
+                        &msg,
+                        rt_handle,
+                    );
                     return None;
                 }
             };
@@ -830,7 +885,14 @@ fn resolve_binary(
                     let msg = format!("Failed to obtain branch build binary: {}", e);
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    inject_setup_error(
+                        is_windows,
+                        sftp_session,
+                        session_manager,
+                        session_id,
+                        &msg,
+                        rt_handle,
+                    );
                     None
                 }
             }
@@ -848,7 +910,8 @@ fn resolve_binary(
                         );
                         error!("Agent setup: {}", msg);
                         emit_progress(app_handle, agent_id, "error", &msg);
-                        inject_error_script(
+                        inject_setup_error(
+                            is_windows,
                             sftp_session,
                             session_manager,
                             session_id,
@@ -1144,10 +1207,32 @@ fn generate_error_script(message: &str) -> String {
 
 /// Emit a setup progress event to the frontend.
 fn emit_progress(app_handle: &AppHandle, agent_id: &str, step: &str, message: &str) {
+    emit_event(app_handle, agent_id, None, step, message);
+}
+
+/// [`emit_progress`] for the run of `session_id` only.
+fn emit_session_progress(
+    app_handle: &AppHandle,
+    agent_id: &str,
+    session_id: &str,
+    step: &str,
+    message: &str,
+) {
+    emit_event(app_handle, agent_id, Some(session_id), step, message);
+}
+
+fn emit_event(
+    app_handle: &AppHandle,
+    agent_id: &str,
+    session_id: Option<&str>,
+    step: &str,
+    message: &str,
+) {
     let event = AgentSetupProgress {
         agent_id: agent_id.to_string(),
         step: step.to_string(),
         message: message.to_string(),
+        session_id: session_id.map(str::to_string),
     };
     if let Err(e) = app_handle.emit("agent-setup-progress", &event) {
         error!("Agent setup: failed to emit progress: {}", e);
@@ -1465,7 +1550,3 @@ mod install_path_tests;
 #[cfg(test)]
 #[path = "agent_setup_output_tests.rs"]
 mod output_tests;
-
-#[cfg(test)]
-#[path = "agent_setup_windows_tests.rs"]
-mod windows_tests;

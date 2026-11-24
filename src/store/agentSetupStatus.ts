@@ -11,39 +11,46 @@
  * "Installing…" and then fall back to a plain "Connect".
  *
  * It also records the setup's own terminal tab (#5865), so the tab can say
- * when the setup is over: failed or cancelled (from the progress events), or
- * finished, which a setup reports through the exit code of the shell it ends:
- * the POSIX setup script runs with `exec`, and the Windows install commands
- * end with `exit` and the install's status (#5946).
+ * when the setup is over. A failure or a cancel comes from the progress events.
+ * A finished POSIX setup is reported by the exit code of the shell its script
+ * replaced (`exec`). A Windows setup is never judged by an exit code: Windows
+ * reports 0 for a failed one too. Its backend checks the host after the shell
+ * ended and sends `installed`, `failed` or `unknown` (#5992).
  *
  * Session-only, like the backend's setup state: nothing is persisted.
  */
 
 import { create } from "zustand";
 
-/** What a setup run on an agent's host is doing, as the agent row shows it. */
-export type AgentSetupPhase = "installing" | "installed";
+/**
+ * What a setup run on an agent's host is doing, as the agent row shows it.
+ * `unknown`: it ended, but its outcome could not be checked (#5992).
+ */
+export type AgentSetupPhase = "installing" | "installed" | "unknown";
 
 /**
  * Where a setup tab's run stands, as the progress events tell it (#5865).
- * `running`: still going, or (POSIX) waiting for the script's exit; `sent`:
- * the Windows install commands were typed into the tab, which cannot report
- * their result; `failed` / `cancelled`: the backend gave up or was cancelled.
+ * `running`: still going, or waiting for the outcome; `installed` / `failed` /
+ * `unknown`: what the backend found out (`failed` also before the install, with
+ * any host); `cancelled`: the user cancelled it.
  */
 export type AgentSetupTabProgress =
   | { kind: "running" }
-  | { kind: "sent" }
+  | { kind: "installed" }
   | { kind: "failed"; message: string }
+  | { kind: "unknown"; message: string }
   | { kind: "cancelled" };
 
 /** One setup run's terminal tab (#5865). */
 export interface AgentSetupTab {
   agentId: string;
   agentName: string;
+  /** The setup's terminal session, when known: its events reach no other tab. */
+  sessionId?: string;
   /**
-   * The run ends the tab's shell with the setup's exit code (POSIX `exec`,
-   * Windows `exit`, #5946), so the session's exit says whether the agent was
-   * installed. `false` falls back to "the commands were sent".
+   * The exit code of the tab's session is the setup's result (POSIX: the
+   * script replaced the shell). `false` on Windows, where 0 says nothing and
+   * the backend checks the host instead (#5992).
    */
   reportsExit: boolean;
   progress: AgentSetupTabProgress;
@@ -60,15 +67,21 @@ interface AgentSetupStatusState {
   markInstalling: (agentId: string) => void;
   /**
    * Fold one backend `agent-setup-progress` step into the agent's phase and
-   * into its running setup tab, if any.
+   * into its running setup tab, if any. A step with a `sessionId` belongs to
+   * that run: it changes nothing once another run's tab is the agent's newest.
    */
-  applyProgress: (agentId: string, step: string, message?: string) => void;
+  applyProgress: (
+    agentId: string,
+    step: string,
+    message?: string,
+    sessionId?: string | null
+  ) => void;
   /** Forget the agent's setup phase (a new connect, a failed start). */
   clear: (agentId: string) => void;
   /** Record the terminal tab a setup run opened (#5865). */
   registerSetupTab: (
     tabId: string,
-    tab: { agentId: string; agentName: string; reportsExit: boolean }
+    tab: { agentId: string; agentName: string; sessionId?: string; reportsExit: boolean }
   ) => void;
   /** Hide the setup strip of a tab (the user dismissed it). */
   dismissSetupTab: (tabId: string) => void;
@@ -76,8 +89,9 @@ interface AgentSetupStatusState {
 
 /** The phase a setup progress `step` leaves the agent in (`null`: none). */
 export function setupPhaseAfterStep(step: string): AgentSetupPhase | null {
-  if (step === "done") return "installed";
-  if (step === "error" || step === "cancelled") return null;
+  if (step === "done" || step === "installed") return "installed";
+  if (step === "unknown") return "unknown";
+  if (step === "error" || step === "failed" || step === "cancelled") return null;
   return "installing";
 }
 
@@ -97,8 +111,8 @@ function withPhase(
 
 /**
  * The progress a setup tab is left in after `step` (#5865). Only a running tab
- * moves: once it failed, was cancelled or sent its commands, a late or
- * repeated event (the dialog and the app-wide listener both fold each one)
+ * moves: once it failed, was cancelled or has its outcome, a late or repeated
+ * event (the dialog and the app-wide listener both fold each one)
  * changes nothing.
  */
 export function setupTabProgressAfterStep(
@@ -107,10 +121,11 @@ export function setupTabProgressAfterStep(
   message = ""
 ): AgentSetupTabProgress {
   if (tab.progress.kind !== "running") return tab.progress;
-  if (step === "error") return { kind: "failed", message };
+  if (step === "error" || step === "failed") return { kind: "failed", message };
   if (step === "cancelled") return { kind: "cancelled" };
-  // A reporting run's "done" only means the commands started: its exit says more.
-  if (step === "done" && !tab.reportsExit) return { kind: "sent" };
+  if (step === "installed") return { kind: "installed" };
+  if (step === "unknown") return { kind: "unknown", message };
+  // "done" (POSIX) and "sent" (Windows) only mean the install was started.
   return tab.progress;
 }
 
@@ -118,11 +133,12 @@ function withTabProgress(
   tabs: Record<string, AgentSetupTab>,
   agentId: string,
   step: string,
-  message: string | undefined
+  message: string | undefined,
+  sessionId: string | null | undefined
 ): Record<string, AgentSetupTab> {
   let next = tabs;
   for (const [tabId, tab] of Object.entries(tabs)) {
-    if (tab.agentId !== agentId) continue;
+    if (tab.agentId !== agentId || isOtherRun(tab, sessionId)) continue;
     const progress = setupTabProgressAfterStep(tab, step, message);
     if (progress === tab.progress) continue;
     if (next === tabs) next = { ...tabs };
@@ -131,14 +147,33 @@ function withTabProgress(
   return next;
 }
 
+/** Whether a step of `sessionId`'s run is not about `tab`'s run. */
+function isOtherRun(tab: AgentSetupTab, sessionId: string | null | undefined): boolean {
+  return !!sessionId && !!tab.sessionId && tab.sessionId !== sessionId;
+}
+
+/** Whether the agent's newest setup tab belongs to another run than `sessionId`'s. */
+function isSuperseded(
+  tabs: Record<string, AgentSetupTab>,
+  agentId: string,
+  sessionId: string | null | undefined
+): boolean {
+  const newest = Object.values(tabs)
+    .filter((tab) => tab.agentId === agentId)
+    .pop();
+  return !!newest && isOtherRun(newest, sessionId);
+}
+
 export const useAgentSetupStatus = create<AgentSetupStatusState>((set) => ({
   phases: {},
   tabs: {},
   markInstalling: (agentId) => set((s) => ({ phases: withPhase(s.phases, agentId, "installing") })),
-  applyProgress: (agentId, step, message) =>
+  applyProgress: (agentId, step, message, sessionId) =>
     set((s) => ({
-      phases: withPhase(s.phases, agentId, setupPhaseAfterStep(step)),
-      tabs: withTabProgress(s.tabs, agentId, step, message),
+      phases: isSuperseded(s.tabs, agentId, sessionId)
+        ? s.phases
+        : withPhase(s.phases, agentId, setupPhaseAfterStep(step)),
+      tabs: withTabProgress(s.tabs, agentId, step, message, sessionId),
     })),
   clear: (agentId) => set((s) => ({ phases: withPhase(s.phases, agentId, null) })),
   registerSetupTab: (tabId, tab) =>

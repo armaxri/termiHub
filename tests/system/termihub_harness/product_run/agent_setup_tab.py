@@ -20,7 +20,8 @@ HEADINGS: dict[str, str] = {
     "installed": "Agent installed",
     "failed": "Agent setup failed",
     "cancelled": "Agent setup cancelled",
-    "sent": "Setup commands sent",
+    "checking": "Checking the agent",
+    "unknown": "Agent setup outcome unknown",
 }
 
 #: The plain session-end headings a setup tab must no longer show.
@@ -53,9 +54,9 @@ def setup_tab_problems(
     heading = HEADINGS[outcome]
     if heading not in flat:
         problems.append(f"the strip does not say {heading!r}: {flat!r}")
-    if outcome != "sent" and (variant == "agent-setup-sent" or HEADINGS["sent"] in flat):
-        # A Windows setup ends its shell with the install's status too (#5946).
-        problems.append("the setup tab only says its commands were sent, not the outcome")
+    if outcome != "checking" and variant == "agent-setup-checking":
+        # A Windows setup's outcome is checked on the host after its shell ended (#5992).
+        problems.append("the setup tab is still checking the agent, it has no outcome yet")
     plain = [h for h in PLAIN_END_HEADINGS if h in flat]
     if plain:
         problems.append(f"the setup tab reads as a plain session end: {plain[0]!r}")

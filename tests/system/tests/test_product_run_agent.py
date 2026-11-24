@@ -376,9 +376,9 @@ class TestProductRunAgent(
         with self.step(
             "agent.update-banner",
             "An announced agent update shows a marker on the agent row and a strip under "
-            "it; Close hides it",
+            "it; Later hides it",
             expect="the agent row with an arrow-up marker and, under it, the strip 'Update to "
-            "v99.0.0 available' (Close / Restart agent and update)",
+            "v99.0.0 available' (Later / Restart agent and update)",
             screenshot=False,
         ):
             self.require("agent.reconnect")
