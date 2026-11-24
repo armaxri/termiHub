@@ -1,10 +1,10 @@
 import {
   Terminal,
-  KeyRound,
-  Monitor,
+  SquareTerminal,
+  MonitorCog,
   ScreenShare,
   Cable,
-  Globe,
+  Network,
   Server,
   Container,
   BicepsFlexed,
@@ -45,15 +45,20 @@ const PENGUIN_ICON: ConnectionIconInfo = { iconNode: labIcons.penguin as IconNod
  * picker, agent session rows, connect overlay). Each built-in type has its own
  * glyph; Wi-Fi glyphs are reserved for connectivity state, and graphical
  * types never borrow the local-shell `>_` glyph (#5622).
+ *
+ * #5850: the key glyph means saved credentials (OS Keychain indicator,
+ * credential chooser), so SSH draws a framed remote terminal instead; Telnet
+ * is a network glyph, not the web globe; VNC and RDP share the monitor family
+ * with distinct marks (share arrow vs. cog) so the two read apart at a glance.
  */
 const TYPE_ICONS: Record<string, ConnectionIconInfo> = {
   local: TERMINAL_ICON,
-  ssh: { component: KeyRound, id: "key-round" },
+  ssh: { component: SquareTerminal, id: "square-terminal" },
   serial: { component: Cable, id: "cable" },
-  telnet: { component: Globe, id: "globe" },
+  telnet: { component: Network, id: "network" },
   docker: { component: Container, id: "container" },
   vnc: { component: ScreenShare, id: "screen-share" },
-  rdp: { component: Monitor, id: "monitor" },
+  rdp: { component: MonitorCog, id: "monitor-cog" },
   wsl: PENGUIN_ICON,
   remote: { component: Server, id: "server" },
   "remote-session": { component: Server, id: "server" },

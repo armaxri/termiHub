@@ -44,7 +44,8 @@ export function CredentialStoreIndicator() {
         title="Credentials are stored in the native OS credential store"
         data-testid="credential-store-indicator"
       >
-        <KeyRound size={12} />
+        {/* The key glyph means saved credentials; no connection type uses it (#5850). */}
+        <KeyRound size={12} data-icon="key-round" />
         Keychain
       </span>
     );
