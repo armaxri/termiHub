@@ -2239,6 +2239,14 @@ sequenceDiagram
   window acknowledges the fire with the target connections it runs on itself, and the connect
   window asks `schedule_run_coverage` (waiting briefly until every other window acknowledged)
   and skips those, so each target runs once per fire, in the window that holds it.
+- **Recording** (`src/store/slices/recordingSlice.ts`, `src/services/inputRecorder.ts`, #1674,
+  #5818) — one terminal of a window at a time. It taps what that tab sends on behalf of the user:
+  xterm's user input (`xtermUserInput.ts` drops the focus reports and query replies that share
+  `onData`), pastes (a slot is reserved when the paste is asked for, so it keeps its place while
+  the clipboard is read) and dropped paths. The recording lives in frontend memory only, and only a
+  save or a discard ends it; `prepareWindowClose` and `prepareAppQuit` ask while one exists. Input
+  typed while the text before the cursor is a password prompt, and not echoed, is kept apart and
+  stored only on request.
 - **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,
