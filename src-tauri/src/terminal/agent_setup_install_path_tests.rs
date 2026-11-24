@@ -108,7 +108,9 @@ fn the_setup_script_refuses_to_replace_a_file_that_is_not_an_agent() {
     let guard = script
         .find("Never replace a file that is not a termiHub agent")
         .expect("the guard is in the script");
-    let mv = script.find("$SUDO mv").expect("the install move");
+    let mv = script
+        .find("$SUDO mv -f \"$NEW\" \"$TARGET\"")
+        .expect("the install move");
     assert!(
         guard < mv,
         "the guard runs before the binary is moved into place"
