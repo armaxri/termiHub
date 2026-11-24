@@ -188,43 +188,69 @@ const en = {
     "The SSH connection this tunnel used was deleted. Choose another SSH connection.",
   "tunnel.editor.chooseSshConnection": "Choose an SSH connection",
 
-  // ── Credential store switch result (SecuritySettings, #2839 / #3323) ────
-  "credentialSwitch.count.one": "{count} credential",
-  "credentialSwitch.count.other": "{count} credentials",
-  "credentialSwitch.migrated.success": "Switched to {target} — {credentials} migrated.",
-  "credentialSwitch.switched": "Switched to {target}.",
-  "credentialSwitch.migrated.partial":
-    "Switched to {target}. {migrated} of {total} credentials migrated; {failed} could not be moved and stayed in {previous}.",
-  "credentialSwitch.migrated.failed":
-    "Switch failed, nothing changed: none of your {credentials} could be moved to {target}. {previous} is still active.",
-  "credentialSwitch.removed.success": "Switched to {target} — {credentials} removed.",
-  "credentialSwitch.removed.partial":
-    "Switched to {target}. {removed} of {total} credentials removed; {failed} could not be removed from {previous}.",
-  "credentialSwitch.removed.failed":
-    "Switch failed, nothing changed: none of your {credentials} could be removed. {previous} is still active.",
-  "credentialSwitch.remaining.title": "Still stored in {previous}:",
+  // ── Credential store switch (Settings ▸ Security, #2839 / #3323 / #5629 / #5837) ──
+  // Plain words and the option cards' names, never the internal mode names:
+  // "saved passwords", "the OS Keychain", "your master-password vault".
+  "credentialSwitch.passwords.one": "{count} saved password",
+  "credentialSwitch.passwords.other": "{count} saved passwords",
+  "credentialSwitch.place.keychain": "the OS Keychain",
+  "credentialSwitch.place.vault": "your master-password vault",
 
-  // ── Credential store switch confirmation (SecuritySettings, #5629) ──────
-  // Chosen by the (current, target) mode pair; each names its action and says
-  // what happens to the saved credentials and the master-password vault.
-  "credentialSwitch.confirm.toKeychain.move.title": "Move saved credentials to OS Keychain?",
+  // Result shown in place under the option cards. {passwords} is
+  // "2 saved passwords"; {target} and {previous} are places ("the OS Keychain").
+  "credentialSwitch.result.moved.toKeychain":
+    "Moved {passwords} to the OS Keychain. Your master-password vault is kept.",
+  "credentialSwitch.result.moved.toVault":
+    "Moved {passwords} to your master-password vault. The copies in the OS Keychain are kept.",
+  "credentialSwitch.result.using.keychain": "Passwords are now saved in the OS Keychain.",
+  "credentialSwitch.result.using.vault": "Passwords are now saved in your master-password vault.",
+  "credentialSwitch.result.moved.partial":
+    "Moved {moved} of {total} saved passwords to {target}. {failed} could not be moved and stay in {previous}.",
+  "credentialSwitch.result.moved.failed":
+    "Nothing changed: none of your {passwords} could be moved to {target}. They stay in {previous}.",
+  "credentialSwitch.result.stopped": "Stopped saving passwords.",
+  "credentialSwitch.result.stopped.removed": "Stopped saving passwords. {passwords} removed.",
+  "credentialSwitch.result.stopped.partial":
+    "Stopped saving passwords. {removed} of {total} saved passwords removed; {failed} could not be removed from {previous}.",
+  "credentialSwitch.result.stopped.failed":
+    "Nothing changed: none of your {passwords} could be removed from {previous}, so termiHub keeps saving passwords there.",
+  "credentialSwitch.result.remaining.title": "Still saved in {previous}:",
+
+  // Progress shown on the confirm button and beside the cards while a switch
+  // runs. {passwords} is "2 passwords".
+  "credentialSwitch.progress.move": "Moving {passwords}…",
+  "credentialSwitch.progress.moveUncounted": "Moving saved passwords…",
+  "credentialSwitch.progress.delete": "Deleting {passwords}…",
+  "credentialSwitch.progress.deleteUncounted": "Deleting saved passwords…",
+  "credentialSwitch.progress.switch": "Switching…",
+  "credentialSwitch.progress.count.one": "{count} password",
+  "credentialSwitch.progress.count.other": "{count} passwords",
+
+  // Confirmation before a switch that moves or deletes saved passwords. A
+  // counted variant names how many; the uncounted one is used when the count
+  // is unknown (a locked vault, or an OS Keychain item older than termiHub's
+  // key index). A switch with nothing saved needs no confirmation (#5837).
+  "credentialSwitch.confirm.toKeychain.move.title": "Move {passwords} to the OS Keychain?",
+  "credentialSwitch.confirm.toKeychain.moveUncounted.title":
+    "Move saved passwords to the OS Keychain?",
   "credentialSwitch.confirm.toKeychain.move.text":
-    "termiHub copies your saved credentials into the OS Keychain and reads them from there. Your master-password vault stays on this computer, locked and unchanged. Switching back to Master password opens it again with the same password.",
+    "termiHub copies them from your master-password vault into the OS Keychain and reads them from there. Your vault stays on this computer, locked and unchanged. Switching back to Master password opens it again with the same password.",
   "credentialSwitch.confirm.toKeychain.move.action": "Move to OS Keychain",
   "credentialSwitch.confirm.toKeychain.fresh.title": "Use OS Keychain?",
   "credentialSwitch.confirm.toKeychain.fresh.text":
-    "Credentials you save from now on are stored in the OS Keychain. Nothing is saved yet, so nothing is moved.",
+    "Passwords you save from now on are stored in the OS Keychain. Nothing is saved yet, so nothing is moved.",
   "credentialSwitch.confirm.toKeychain.fresh.action": "Use OS Keychain",
-  "credentialSwitch.confirm.toNone.title": "Delete saved credentials?",
+  "credentialSwitch.confirm.toNone.title": "Stop saving passwords?",
   "credentialSwitch.confirm.toNone.text":
-    "This permanently deletes every credential saved in {source} and cannot be undone. You'll be prompted for passwords each time you connect.",
-  "credentialSwitch.confirm.toNone.source.keychain": "the OS Keychain",
-  "credentialSwitch.confirm.toNone.source.vault": "your master-password vault",
-  "credentialSwitch.confirm.toNone.action": "Delete saved credentials",
-  "credentialSwitch.confirm.toMaster.move.title":
-    "Move saved credentials to a master-password vault",
+    "This permanently deletes the {passwords} in {source} and cannot be undone. You'll be asked for passwords each time you connect.",
+  "credentialSwitch.confirm.toNone.textUncounted":
+    "This permanently deletes every password termiHub saved in {source} and cannot be undone. You'll be asked for passwords each time you connect.",
+  "credentialSwitch.confirm.toNone.action": "Delete saved passwords",
+  "credentialSwitch.confirm.toMaster.move.title": "Move {passwords} to a master-password vault",
+  "credentialSwitch.confirm.toMaster.moveUncounted.title":
+    "Move saved passwords to a master-password vault",
   "credentialSwitch.confirm.toMaster.move.text":
-    "Choose a strong password. termiHub copies your saved credentials from the OS Keychain into a vault encrypted with it. The copies in the OS Keychain are left in place.",
+    "Choose a strong password. termiHub copies your saved passwords from the OS Keychain into a vault encrypted with it. The copies in the OS Keychain are left in place.",
   "credentialSwitch.confirm.toMaster.move.action": "Move to Master password",
   "credentialSwitch.confirm.toMaster.fresh.title": "Set master password",
   "credentialSwitch.confirm.toMaster.fresh.text":
