@@ -702,6 +702,9 @@ pub struct SessionManager {
     /// Initial commands held because the shell never announced its prompt,
     /// for the tab's Send now (#5509).
     pub(super) held_initial_commands: HeldInitialCommands,
+    /// The agent sessions of tabs a user agent Disconnect ended, for the tab's
+    /// Reconnect to resume (#5953).
+    pub(super) user_ended_agent_sessions: UserEndedAgentSessions,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -820,6 +823,7 @@ impl SessionManager {
             session_opened_hook: Arc::new(StdMutex::new(None)),
             side_channels: Default::default(),
             held_initial_commands: HeldInitialCommands::default(),
+            user_ended_agent_sessions: UserEndedAgentSessions::default(),
         }
     }
 
@@ -1230,10 +1234,11 @@ impl SessionManager {
         // (proxy handshake, local connect, initial command) groups under it (OBS-004).
         tracing::Span::current().record("session_id", session_id.as_str());
 
+        // Whether this connect re-attached the tab's own agent session after a
+        // user Disconnect instead of starting a new one (#5953).
+        let mut resumed = false;
         let (connection, remote_session_id): (Box<dyn ConnectionType>, Option<String>) =
             if let Some(aid) = agent_id {
-                // Remote: create proxy to agent.
-                let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
                 // Wrap settings with the type information for the remote side.
                 // The desktop session id rides along so the agent logs this
                 // session under the same id (#3085, OBS-004).
@@ -1242,6 +1247,21 @@ impl SessionManager {
                     "config": settings,
                     (CORRELATION_ID_KEY): session_id,
                 });
+                // The Reconnect of a tab a user agent Disconnect ended resumes
+                // the session it showed while the agent still runs it (#5953).
+                let resume = match connect_id.and_then(tab_id_from_connect_id) {
+                    Some(tab_id) => {
+                        self.resume_user_ended_agent_session(&tab_id, aid, &remote_settings)
+                            .await
+                    }
+                    None => None,
+                };
+                if let Some(resume) = resume {
+                    resumed = true;
+                    (Box::new(resume.proxy), Some(resume.remote_session_id))
+                } else {
+                // Remote: create proxy to agent.
+                let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
                 // Scoped to the connect id so an OTP prompt it raises is owned
                 // by this tab and cancelled when the tab closes (#3437).
                 if let Err(e) = with_prompt_owner(
@@ -1262,6 +1282,7 @@ impl SessionManager {
                 }
                 let remote_sid = proxy.remote_session_id();
                 (Box::new(proxy), remote_sid)
+                }
             } else {
                 // Local: instantiate from registry. Lock only long enough to run
                 // the factory (no `await` under the lock); this resolves built-in
@@ -1387,6 +1408,10 @@ impl SessionManager {
                 .release(&session_id);
         }
 
+        if resumed {
+            self.mark_resumed_session(&session_id);
+        }
+
         // Record the backend `session_id` → frontend `tab_id` identity bridge
         // (#2431) so server-side lifecycle sources can address this session's
         // tab-id-keyed `session-lifecycle` region entry. The tab id is the
@@ -1473,10 +1498,11 @@ impl SessionManager {
 
         // A connection's initial command waits for the shell's prompt mark
         // (#4345). The output itself is never held back.
+        // A resumed session already ran it, and its shell may be busy (#5953).
         let initial_command = settings
             .get("initialCommand")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
+            .filter(|s| !s.is_empty() && !resumed)
             .map(str::to_string);
         let prompt_ready = initial_command
             .as_ref()
@@ -2822,6 +2848,10 @@ use held_initial_command::{HeldInitialCommands, InitialCommandCue};
 /// Backend write / resize / teardown outside the session-map lock (#4300).
 pub(super) mod session_io;
 use session_io::SessionIo;
+
+/// Resume a tab's agent session after the user's agent Disconnect (#5953).
+mod user_ended_resume;
+use user_ended_resume::UserEndedAgentSessions;
 
 #[cfg(test)]
 mod tests;
