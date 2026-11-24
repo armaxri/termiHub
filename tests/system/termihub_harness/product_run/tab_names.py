@@ -8,7 +8,9 @@ numbered when the name is taken (``zsh``, ``zsh 2``); an agent's shell tab
 ``<agent> · bash``.
 
 :func:`local_tab_name_problems` grades the titles of several new local tabs,
-:func:`agent_tab_name_problems` one agent shell tab.
+:func:`agent_tab_name_problems` one agent shell tab. A workspace's untitled
+shell tabs take the same names when it opens (#5899); :func:`workspace_titles`
+is the twin of ``applyDefaultTitles`` in ``src/utils/workspaceLayout.ts``.
 """
 
 from __future__ import annotations
@@ -41,6 +43,27 @@ def shell_tab_name(shell: Optional[str]) -> str:
 def numbered(base: str, count: int) -> list[str]:
     """The titles of ``count`` tabs opened one after another under ``base``."""
     return [base if i == 1 else f"{base} {i}" for i in range(1, count + 1)]
+
+
+def workspace_titles(saved: Sequence[Optional[str]], shell: Optional[str]) -> list[str]:
+    """The titles a workspace's local tabs open with, given their saved titles.
+
+    ``None`` is a tab saved without a title: it takes ``shell``'s name, numbered
+    around every title the layout already fixes. A saved title is never changed.
+    """
+    taken = [t for t in saved if t is not None]
+    out: list[str] = []
+    base = shell_tab_name(shell)
+    for title in saved:
+        if title is None:
+            n = 1
+            title = base
+            while title in taken:
+                n += 1
+                title = f"{base} {n}"
+            taken.append(title)
+        out.append(title)
+    return out
 
 
 def _old_name(title: str) -> bool:
