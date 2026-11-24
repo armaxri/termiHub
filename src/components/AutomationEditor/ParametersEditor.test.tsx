@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, useState } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { WorkflowParametersEditor } from "./WorkflowParametersEditor";
+import { ParametersEditor } from "./ParametersEditor";
 import type { WorkflowParameter } from "@/types/workflow";
 
 vi.mock("@/themes", () => ({
@@ -49,7 +49,7 @@ function Harness({
 }) {
   const [params, setParams] = useState<WorkflowParameter[]>(initial);
   return (
-    <WorkflowParametersEditor
+    <ParametersEditor
       parameters={params}
       onChange={(next) => {
         onChangeSpy(next);
@@ -77,52 +77,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("WorkflowParametersEditor", () => {
+describe("ParametersEditor", () => {
   it("shows the empty hint when there are no parameters", () => {
     render([], vi.fn());
-    expect(query("workflow-params-empty")).not.toBeNull();
-    expect(query("workflow-params-list")).toBeNull();
+    expect(query("automation-params-empty")).not.toBeNull();
+    expect(query("automation-params-list")).toBeNull();
   });
 
   it("adds a new string parameter", () => {
     const onChange = vi.fn();
     render([], onChange);
-    click("workflow-params-add");
+    click("automation-params-add");
     expect(onChange).toHaveBeenCalledWith([{ name: "", type: "string" }]);
-    expect(query("workflow-param-0")).not.toBeNull();
+    expect(query("automation-param-0")).not.toBeNull();
   });
 
   it("edits a parameter name", () => {
     const onChange = vi.fn();
     render([{ name: "", type: "string" }], onChange);
-    setInput("workflow-param-name-0", "host");
+    setInput("automation-param-name-0", "host");
     expect(onChange).toHaveBeenLastCalledWith([{ name: "host", type: "string" }]);
   });
 
   it("toggles required on", () => {
     const onChange = vi.fn();
     render([{ name: "host", type: "string" }], onChange);
-    click("workflow-param-required-0");
+    click("automation-param-required-0");
     expect(onChange).toHaveBeenLastCalledWith([{ name: "host", type: "string", required: true }]);
   });
 
   it("renders the enum options field only for an enum parameter", () => {
     render([{ name: "env", type: "enum", options: ["dev", "prod"] }], vi.fn());
-    const options = query("workflow-param-options-0") as HTMLInputElement;
+    const options = query("automation-param-options-0") as HTMLInputElement;
     expect(options).not.toBeNull();
     expect(options.value).toBe("dev, prod");
   });
 
   it("does not render the enum options field for a string parameter", () => {
     render([{ name: "host", type: "string" }], vi.fn());
-    expect(query("workflow-param-options-0")).toBeNull();
+    expect(query("automation-param-options-0")).toBeNull();
   });
 
   it("removes a parameter", () => {
     const onChange = vi.fn();
     render([{ name: "host", type: "string" }], onChange);
-    click("workflow-param-remove-0");
+    click("automation-param-remove-0");
     expect(onChange).toHaveBeenLastCalledWith([]);
-    expect(query("workflow-param-0")).toBeNull();
+    expect(query("automation-param-0")).toBeNull();
   });
 });

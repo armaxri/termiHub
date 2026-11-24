@@ -1,0 +1,580 @@
+/* One flex column inside the Modal body — the dialog's only scroll container
+   (#5637). Fields and sections are spaced by the gap, never by margins. */
+.automation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+/* Name and Description share a line, so the steps keep the space (R-076). */
+.automation-editor__head {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--spacing-md);
+  align-items: start;
+}
+
+.automation-editor__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.automation-editor__section-heading {
+  margin: 0;
+}
+
+.automation-editor__section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  width: 100%;
+  min-height: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.automation-editor__section-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.automation-editor__section-title {
+  flex-shrink: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.automation-editor__section-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.automation-editor__section-content {
+  /* Lines up with the section title, past the chevron. */
+  padding-left: calc(14px + var(--spacing-xs-sm));
+}
+
+.automation-editor__steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  /* Keeps the header the same height with or without its action button. */
+  min-height: var(--control-height-sm);
+}
+
+.automation-editor__no-steps {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.automation-editor__no-steps--error {
+  color: var(--color-error);
+}
+
+/* ── Step lists ─────────────────────────────────────────────────────── */
+.automation-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+}
+
+.automation-steps--nested {
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.automation-steps__label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Steps flow in the dialog body: no max-height, no inner scroll box (#5637). */
+.automation-steps__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automation-steps__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.automation-steps__deleted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Step row ───────────────────────────────────────────────────────── */
+.automation-step {
+  /* #5249: secondary text here sits on --bg-hover / --bg-active. */
+  --text-secondary: var(--text-secondary-on-selection);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-xs-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+}
+
+.automation-step__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.automation-step__grip {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-secondary);
+  cursor: grab;
+}
+
+.automation-step__grip:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
+}
+
+.automation-step__grip:active {
+  cursor: grabbing;
+}
+
+.automation-step__index {
+  flex-shrink: 0;
+  width: 18px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: right;
+}
+
+/* The expand/collapse header: chevron, kind icon, kind label and — collapsed —
+   the one-line summary. Fills the row between the index and the actions. */
+.automation-step__toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xxs) 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.automation-step__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.automation-step__chevron {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform var(--transition-fast);
+}
+
+.automation-step__chevron--open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .automation-step__chevron {
+    transition: none;
+  }
+}
+
+/* Step type titles are UI labels, not code (#5637): UI font, semibold. */
+.automation-step__kind {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+.automation-step__summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+}
+
+/* The step's value (a command, a pattern) is the only monospace text. */
+.automation-step__summary-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.automation-step__notes {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.automation-step__blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xxs);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
+}
+
+.automation-step__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  /* Geometry, not spacing: indents the body past the step's grip + index
+     column (#3170). */
+  --automation-step-body-indent: 26px;
+  padding-left: var(--automation-step-body-indent);
+}
+
+/* ── Local-process discrete argument list (#1857) ───────────────────── */
+.automation-step__args {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  align-items: flex-start;
+}
+
+.automation-step__arg-row {
+  display: flex;
+  gap: var(--spacing-xs-sm);
+  align-items: center;
+  width: 100%;
+}
+
+.automation-step__arg-row > :first-child {
+  flex: 1;
+}
+
+.automation-step__args-empty {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Run-script file source (#4310) ──────────────────────────────────── */
+.automation-step__source {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+}
+
+.automation-step__source-path {
+  display: flex;
+  gap: var(--spacing-xs-sm);
+  align-items: center;
+  min-width: 0;
+}
+
+.automation-step__source-path code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.automation-step__source-status {
+  display: flex;
+  gap: var(--spacing-xs-sm);
+  align-items: flex-start;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.automation-step__source-status--untrusted {
+  padding: var(--spacing-xs-sm);
+  color: var(--text-primary);
+  background: var(--bg-warning);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-sm);
+}
+
+.automation-step__source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs-sm);
+}
+
+/* ── Per-step failure options (PROD-045) ─────────────────────────────── */
+.automation-step__policy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-primary);
+}
+
+.automation-step__policy-row,
+.automation-step__inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--spacing-sm) var(--spacing-xl);
+}
+
+.automation-step__policy-row > .ui-field--checkbox,
+.automation-step__inline > .ui-field--checkbox {
+  gap: var(--spacing-sm);
+  min-height: var(--control-height-lg);
+  align-items: center;
+}
+
+.automation-step__retry {
+  display: flex;
+  gap: var(--spacing-xs-sm);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.automation-step__retry > * {
+  flex: 1;
+  min-width: 120px;
+}
+
+.automation-step__note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.automation-step__note--warning {
+  padding: var(--spacing-xs-sm);
+  color: var(--text-primary);
+  background: var(--bg-warning);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Type keys ───────────────────────────────────────────────────────── */
+.type-keys {
+  /* Geometry, not spacing: the row-number column, shared by the number and the
+     error line that aligns under the keys (#3170). */
+  --type-keys-index-width: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+}
+
+.type-keys__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.type-keys__hint code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.type-keys__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.type-keys__row-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.type-keys__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+}
+
+.type-keys__index {
+  flex-shrink: 0;
+  width: var(--type-keys-index-width);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: right;
+}
+
+.type-keys__row .type-keys__text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.type-keys__delay {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
+.type-keys__delay .ui-input {
+  width: 72px;
+}
+
+.type-keys__unit {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.type-keys__row-actions {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.type-keys__error {
+  margin: 0 0 var(--spacing-xxs);
+  padding-left: calc(var(--type-keys-index-width) + var(--spacing-xs-sm));
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
+.type-keys__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+/* ── Condition and loop steps (PROD-0044) ────────────────────────────── */
+.automation-step__container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.automation-step__condition {
+  display: flex;
+  gap: var(--spacing-xs-sm);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.automation-step__condition > :first-child,
+.automation-step__condition > :last-child {
+  flex: 1;
+  min-width: 120px;
+}
+
+/* ── When it runs ────────────────────────────────────────────────────── */
+.automation-triggers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.automation-triggers__manual {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.automation-triggers__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automation-triggers__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.automation-triggers__card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+}
+
+.automation-triggers__kind {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.automation-triggers__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+}
+
+.automation-triggers__detail-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.automation-triggers__hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.automation-triggers__connections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.automation-triggers__connection {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.automation-triggers__schedule {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
+  font-size: var(--font-size-sm);
+}
+
+.automation-triggers__schedule-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

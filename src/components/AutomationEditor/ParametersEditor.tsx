@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button, Input, Field, Select, Toggle, EmptyState } from "@/components/ui";
 import type { WorkflowParameter, WorkflowParameterType } from "@/types/workflow";
-import "./WorkflowParametersEditor.css";
+import "./ParametersEditor.css";
 
 /** The parameter value types, in the order shown in the type picker. */
 const PARAMETER_TYPES: readonly WorkflowParameterType[] = [
@@ -11,7 +12,7 @@ const PARAMETER_TYPES: readonly WorkflowParameterType[] = [
   "enum",
 ] as const;
 
-export interface WorkflowParametersEditorProps {
+export interface ParametersEditorProps {
   /** The parameters being edited. */
   parameters: WorkflowParameter[];
   /** Called with the next parameter list on any edit. */
@@ -27,14 +28,12 @@ function parseOptions(raw: string): string[] {
 }
 
 /**
- * Editor for a workflow's declared parameters (PROD-0040): a list of rows, each
- * defining a parameter's name, optional label, value type, default, whether it
- * is required, and — for an `enum` — its options. Parameter references of the
- * form `${name}` in step text fields are substituted with the value collected at
- * run time. Composed entirely from the shared UI primitives, mirroring
- * {@link "./WorkflowTriggersEditor".WorkflowTriggersEditor}.
+ * Editor for the values an automation asks for when it runs (PROD-0040): a list
+ * of rows, each defining a parameter's name, optional label, value type, default,
+ * whether it is required, and — for an `enum` — its options. A `${name}`
+ * reference in a step's text is replaced by the value given at run time.
  */
-export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParametersEditorProps) {
+export function ParametersEditor({ parameters, onChange }: ParametersEditorProps) {
   const updateParam = (index: number, patch: Partial<WorkflowParameter>) => {
     onChange(parameters.map((p, i) => (i === index ? { ...p, ...patch } : p)));
   };
@@ -74,38 +73,38 @@ export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParam
   };
 
   return (
-    <div className="workflow-params" data-testid="workflow-params">
+    <div className="automation-params" data-testid="automation-params">
       {parameters.length === 0 ? (
         <EmptyState
           title={
             <>
-              No parameters. Add one to prompt for a value before the workflow runs and reference it
-              as <code className="workflow-params__code">{"${name}"}</code> in a step.
+              Nothing is asked. Add a value to ask for it before each run and use it as{" "}
+              <code className="automation-params__code">{"${name}"}</code> in a step.
             </>
           }
-          data-testid="workflow-params-empty"
+          data-testid="automation-params-empty"
         />
       ) : (
-        <ul className="workflow-params__list" data-testid="workflow-params-list">
+        <ul className="automation-params__list" data-testid="automation-params-list">
           {parameters.map((param, index) => (
             <li
               key={index}
-              className="workflow-params__row"
-              data-testid={`workflow-param-${index}`}
+              className="automation-params__row"
+              data-testid={`automation-param-${index}`}
             >
-              <div className="workflow-params__grid">
-                <Field label="Name" htmlFor={`workflow-param-name-${index}`}>
+              <div className="automation-params__grid">
+                <Field label="Name" htmlFor={`automation-param-name-${index}`}>
                   <Input
-                    id={`workflow-param-name-${index}`}
+                    id={`automation-param-name-${index}`}
                     value={param.name}
                     onChange={(e) => updateParam(index, { name: e.target.value })}
                     placeholder="host"
-                    data-testid={`workflow-param-name-${index}`}
+                    data-testid={`automation-param-name-${index}`}
                   />
                 </Field>
-                <Field label="Label (optional)" htmlFor={`workflow-param-label-${index}`}>
+                <Field label="Label (optional)" htmlFor={`automation-param-label-${index}`}>
                   <Input
-                    id={`workflow-param-label-${index}`}
+                    id={`automation-param-label-${index}`}
                     value={param.label ?? ""}
                     onChange={(e) =>
                       updateParam(index, {
@@ -113,37 +112,37 @@ export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParam
                       })
                     }
                     placeholder="Target host"
-                    data-testid={`workflow-param-label-${index}`}
+                    data-testid={`automation-param-label-${index}`}
                   />
                 </Field>
-                <Field label="Type" htmlFor={`workflow-param-type-${index}`}>
+                <Field label="Type" htmlFor={`automation-param-type-${index}`}>
                   <Select
-                    id={`workflow-param-type-${index}`}
+                    id={`automation-param-type-${index}`}
                     value={param.type}
                     onChange={(v) => changeType(index, v as WorkflowParameterType)}
                     options={PARAMETER_TYPES.map((t) => ({ value: t, label: t }))}
-                    data-testid={`workflow-param-type-${index}`}
+                    data-testid={`automation-param-type-${index}`}
                   />
                 </Field>
                 {param.type === "boolean" ? (
-                  <Field label="Default" htmlFor={`workflow-param-default-${index}`}>
+                  <Field label="Default" htmlFor={`automation-param-default-${index}`}>
                     <Toggle
-                      id={`workflow-param-default-${index}`}
+                      id={`automation-param-default-${index}`}
                       checked={param.default === true}
                       onCheckedChange={(checked) => updateParam(index, { default: checked })}
                       aria-label="Default value"
-                      data-testid={`workflow-param-default-${index}`}
+                      data-testid={`automation-param-default-${index}`}
                     />
                   </Field>
                 ) : (
-                  <Field label="Default (optional)" htmlFor={`workflow-param-default-${index}`}>
+                  <Field label="Default (optional)" htmlFor={`automation-param-default-${index}`}>
                     <Input
-                      id={`workflow-param-default-${index}`}
+                      id={`automation-param-default-${index}`}
                       type={param.type === "number" ? "number" : "text"}
                       value={param.default === undefined ? "" : String(param.default)}
                       onChange={(e) => setDefault(index, e.target.value)}
                       placeholder="default value"
-                      data-testid={`workflow-param-default-${index}`}
+                      data-testid={`automation-param-default-${index}`}
                     />
                   </Field>
                 )}
@@ -151,26 +150,24 @@ export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParam
               {param.type === "enum" && (
                 <Field
                   label="Options (comma-separated)"
-                  htmlFor={`workflow-param-options-${index}`}
+                  htmlFor={`automation-param-options-${index}`}
                 >
-                  <Input
-                    id={`workflow-param-options-${index}`}
-                    value={(param.options ?? []).join(", ")}
-                    onChange={(e) => updateParam(index, { options: parseOptions(e.target.value) })}
-                    placeholder="dev, staging, prod"
-                    data-testid={`workflow-param-options-${index}`}
+                  <OptionsInput
+                    id={`automation-param-options-${index}`}
+                    options={param.options ?? []}
+                    onChange={(options) => updateParam(index, { options })}
                   />
                 </Field>
               )}
-              <div className="workflow-params__row-footer">
-                <label className="workflow-params__required">
+              <div className="automation-params__row-footer">
+                <label className="automation-params__required">
                   <Toggle
                     checked={param.required === true}
                     onCheckedChange={(checked) =>
                       updateParam(index, { required: checked ? true : undefined })
                     }
                     aria-label="Required"
-                    data-testid={`workflow-param-required-${index}`}
+                    data-testid={`automation-param-required-${index}`}
                   />
                   Required
                 </label>
@@ -179,8 +176,8 @@ export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParam
                   size="sm"
                   icon={<Trash2 size={14} />}
                   onClick={() => removeParam(index)}
-                  aria-label={`Remove parameter ${index + 1}`}
-                  data-testid={`workflow-param-remove-${index}`}
+                  aria-label={`Remove value ${index + 1}`}
+                  data-testid={`automation-param-remove-${index}`}
                 >
                   Remove
                 </Button>
@@ -189,15 +186,43 @@ export function WorkflowParametersEditor({ parameters, onChange }: WorkflowParam
           ))}
         </ul>
       )}
-      <Button
-        variant="secondary"
-        size="sm"
-        icon={<Plus size={14} />}
-        onClick={addParam}
-        data-testid="workflow-params-add"
-      >
-        Add parameter…
-      </Button>
+      <div>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Plus size={14} />}
+          onClick={addParam}
+          data-testid="automation-params-add"
+        >
+          Add value
+        </Button>
+      </div>
     </div>
+  );
+}
+
+interface OptionsInputProps {
+  id: string;
+  options: string[];
+  onChange: (options: string[]) => void;
+}
+
+/**
+ * The options of an `enum` value as comma-separated text. The text is kept as
+ * typed: reading it back from the parsed list would eat each comma.
+ */
+function OptionsInput({ id, options, onChange }: OptionsInputProps) {
+  const [text, setText] = useState(options.join(", "));
+  return (
+    <Input
+      id={id}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(parseOptions(e.target.value));
+      }}
+      placeholder="dev, staging, prod"
+      data-testid={id}
+    />
   );
 }

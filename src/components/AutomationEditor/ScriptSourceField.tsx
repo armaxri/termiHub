@@ -13,7 +13,7 @@ import { errorMessage } from "@/utils/errorMessage";
 
 interface ScriptSourceFieldProps {
   /** Unique id/testid suffix for this step's fields. */
-  fieldId: string;
+  path: string;
   /** 1-based number used in aria labels ("step N"). */
   stepNumber: number;
   /** The step's current on-disk script path, if any. */
@@ -36,7 +36,7 @@ interface ScriptSourceFieldProps {
  * setting, which no workflow file can write.
  */
 export function ScriptSourceField({
-  fieldId,
+  path,
   stepNumber,
   sourcePath,
   onPick,
@@ -90,21 +90,21 @@ export function ScriptSourceField({
   }, [sourcePath, trustPath]);
 
   return (
-    <div className="workflow-step__source" data-testid={`workflow-editor-step-source-${fieldId}`}>
+    <div className="automation-step__source" data-testid={`automation-editor-step-source-${path}`}>
       {sourcePath !== undefined && (
         <>
-          <div className="workflow-step__source-path">
+          <div className="automation-step__source-path">
             <FileText size={12} aria-hidden="true" />
-            <code data-testid={`workflow-editor-step-source-path-${fieldId}`}>{sourcePath}</code>
+            <code data-testid={`automation-editor-step-source-path-${path}`}>{sourcePath}</code>
           </div>
           <p
             className={
               confirmed
-                ? "workflow-step__source-status"
-                : "workflow-step__source-status workflow-step__source-status--untrusted"
+                ? "automation-step__source-status"
+                : "automation-step__source-status automation-step__source-status--untrusted"
             }
             role={confirmed ? undefined : "alert"}
-            data-testid={`workflow-editor-step-source-status-${fieldId}`}
+            data-testid={`automation-editor-step-source-status-${path}`}
           >
             {confirmed ? (
               <>
@@ -120,7 +120,7 @@ export function ScriptSourceField({
           </p>
         </>
       )}
-      <div className="workflow-step__source-actions">
+      <div className="automation-step__source-actions">
         {sourcePath !== undefined && !confirmed && (
           <Button
             size="sm"
@@ -128,7 +128,7 @@ export function ScriptSourceField({
             disabled={busy}
             onClick={() => void handleConfirm()}
             aria-label={`Confirm script file for step ${stepNumber}`}
-            data-testid={`workflow-editor-step-source-confirm-${fieldId}`}
+            data-testid={`automation-editor-step-source-confirm-${path}`}
           >
             Confirm file
           </Button>
@@ -139,7 +139,7 @@ export function ScriptSourceField({
           disabled={busy}
           onClick={() => void handlePick()}
           aria-label={`Choose script file for step ${stepNumber}`}
-          data-testid={`workflow-editor-step-source-pick-${fieldId}`}
+          data-testid={`automation-editor-step-source-pick-${path}`}
         >
           {sourcePath !== undefined ? "Choose another file…" : "Load from file…"}
         </Button>
@@ -150,7 +150,7 @@ export function ScriptSourceField({
             disabled={busy}
             onClick={onDetach}
             aria-label={`Detach script file from step ${stepNumber}`}
-            data-testid={`workflow-editor-step-source-detach-${fieldId}`}
+            data-testid={`automation-editor-step-source-detach-${path}`}
           >
             Detach file
           </Button>

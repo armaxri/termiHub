@@ -1,16 +1,16 @@
 /**
- * Client-side validation for a workflow step's error-handling policy (PROD-045):
- * `continueOnError` and the bounded `retry` policy. The editor AND-s
- * {@link workflowStepsPolicyValid} into its Save gate and shows
- * {@link stepPolicyErrors} inline, so a policy outside the runner's safety caps
- * can never be saved from the UI. (The runner clamps regardless — this is UX
+ * Client-side validation for a step's error-handling policy (PROD-045):
+ * `continueOnError` and the bounded `retry` policy. The editor blocks Save on
+ * {@link stepPolicyErrors} and shows them inline, so a policy outside the
+ * runner's safety caps can never be saved from the UI. (The runner clamps regardless — this is UX
  * feedback, not the safety boundary.)
  */
 import { z } from "zod";
 
 import { MAX_RETRY_DELAY_MS, MAX_STEP_RETRIES } from "@/services/workflowRunner";
 import { workflowStepRetryShape } from "@/services/workflowSchema";
-import type { WorkflowStep, WorkflowStepRetry } from "@/types/workflow";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
+import type { WorkflowStepRetry } from "@/types/workflow";
 
 /** The retry policy a freshly enabled "Retry on failure" toggle starts with. */
 export const DEFAULT_STEP_RETRY: WorkflowStepRetry = { count: 3, delayMs: 1000, backoff: "fixed" };
@@ -45,7 +45,7 @@ const workflowStepPolicySchema = z
       ctx.addIssue({
         code: "custom",
         path: ["retry", "delayMs"],
-        message: `Retry delay must be between 0 and ${MAX_RETRY_DELAY_MS} ms.`,
+        message: `Retry delay must be between 0 and ${MAX_RETRY_DELAY_MS / 1000} seconds.`,
       });
     }
   });
@@ -61,7 +61,7 @@ export interface StepPolicyErrors {
 }
 
 /** Validate `step`'s own policy; an empty object means it is valid. */
-export function stepPolicyErrors(step: WorkflowStep): StepPolicyErrors {
+export function stepPolicyErrors(step: AutomationStep): StepPolicyErrors {
   const result = workflowStepPolicySchema.safeParse({
     continueOnError: step.continueOnError,
     retry: step.retry,
@@ -74,26 +74,4 @@ export function stepPolicyErrors(step: WorkflowStep): StepPolicyErrors {
     errors[key] ??= issue.message;
   }
   return errors;
-}
-
-/** `true` when `step`'s own policy (not its nested steps) is valid. */
-function stepPolicyValid(step: WorkflowStep): boolean {
-  return Object.keys(stepPolicyErrors(step)).length === 0;
-}
-
-/** The nested step lists a step owns (conditional branches, loop body). */
-function childSteps(step: WorkflowStep): WorkflowStep[] {
-  switch (step.kind) {
-    case "conditional":
-      return [...step.then, ...(step.else ?? [])];
-    case "loop":
-      return step.body;
-    default:
-      return [];
-  }
-}
-
-/** `true` when every step (recursively, including nested steps) has a valid policy. */
-export function workflowStepsPolicyValid(steps: WorkflowStep[]): boolean {
-  return steps.every((step) => stepPolicyValid(step) && workflowStepsPolicyValid(childSteps(step)));
 }

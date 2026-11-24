@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Checkbox, EmptyState } from "@/components/ui";
 import { t } from "@/i18n/catalog";
 import type { SavedConnection } from "@/types/connection";
@@ -16,7 +17,7 @@ interface TriggerConnectionPickerProps {
 }
 
 /**
- * The saved-connection checklist a connection-bound workflow trigger
+ * The saved-connection checklist a connection-bound trigger
  * (on-connect, on-disconnect, on-output-match) binds to.
  */
 export function TriggerConnectionPicker({
@@ -26,19 +27,22 @@ export function TriggerConnectionPicker({
   onChange,
   testIdPrefix,
 }: TriggerConnectionPickerProps) {
+  const labelId = useId();
   const toggle = (connectionId: string, checked: boolean) => {
     onChange(checked ? [...selected, connectionId] : selected.filter((id) => id !== connectionId));
   };
 
   return (
     <>
-      <span className="workflow-triggers__detail-label">{label}</span>
+      <span id={labelId} className="automation-triggers__detail-label">
+        {label}
+      </span>
       {connections.length === 0 ? (
         <EmptyState title={t("workflow.trigger.connections.empty")} />
       ) : (
-        <div className="workflow-triggers__connections">
+        <div className="automation-triggers__connections" role="group" aria-labelledby={labelId}>
           {connections.map((conn) => (
-            <label className="workflow-triggers__connection" key={conn.id}>
+            <label className="automation-triggers__connection" key={conn.id}>
               <Checkbox
                 checked={selected.includes(conn.id)}
                 onCheckedChange={(v) => toggle(conn.id, v)}
@@ -49,6 +53,11 @@ export function TriggerConnectionPicker({
             </label>
           ))}
         </div>
+      )}
+      {connections.length > 0 && selected.length === 0 && (
+        <span className="automation-triggers__hint" data-testid={`${testIdPrefix}-none`}>
+          Choose at least one connection, or this never starts it.
+        </span>
       )}
     </>
   );

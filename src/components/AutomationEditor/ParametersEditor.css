@@ -1,17 +1,17 @@
-.workflow-params {
+.automation-params {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
 }
 
-.workflow-params__code {
+.automation-params__code {
   padding: 0 var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   font-family: var(--font-mono);
 }
 
-.workflow-params__list {
+.automation-params__list {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
@@ -20,7 +20,7 @@
   list-style: none;
 }
 
-.workflow-params__row {
+.automation-params__row {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
@@ -29,20 +29,20 @@
   border-radius: var(--radius-sm);
 }
 
-.workflow-params__grid {
+.automation-params__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--spacing-sm);
 }
 
-.workflow-params__row-footer {
+.automation-params__row-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-sm);
 }
 
-.workflow-params__required {
+.automation-params__required {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);

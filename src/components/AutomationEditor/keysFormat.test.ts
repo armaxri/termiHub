@@ -4,7 +4,7 @@ import {
   formatMacroStepData,
   parseMacroStepText,
   macroPreviewLines,
-} from "./macroStepFormat";
+} from "./keysFormat";
 
 describe("formatMacroStepData", () => {
   it("passes printable characters through unchanged", () => {
