@@ -413,7 +413,7 @@ class TestProductRunAgent(
         with self.step(
             "connections.empty-compact",
             "With remote agents listed, the empty Saved group is one compact line (#5702, R-077)",
-            expect="'No saved connections. New connection' as a single line above the agents",
+            expect="'No saved connections. Add one with “New” above.' as one line above the agents (#5848)",
         ):
             if self.driver.exists("connections-empty-state"):
                 cls = self.driver.get_attribute("connections-empty-state", "class") or ""

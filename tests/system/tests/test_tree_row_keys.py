@@ -84,7 +84,7 @@ class TestTreeRowKeys(TabsUi, SidebarUi, SettingsUi, AgentUi, ConnectionsUi, Sys
         self.close_all_tabs()
         self.switch_to_connections_sidebar()
         self.wait(
-            lambda: self.driver.exists(self.NEW_CONNECTION),
+            lambda: self.driver.exists(self.NEW_MENU),
             what="the connections sidebar",
         )
         yield
