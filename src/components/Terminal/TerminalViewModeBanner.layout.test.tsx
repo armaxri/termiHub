@@ -180,7 +180,7 @@ describe("TerminalViewModeBanner layout (#5823)", () => {
     render("tab-d");
     expect(host.style.getPropertyValue(TOP_NOTICE_INSET_VAR)).toMatch(/^\d+px$/);
     const search = declarations(cssRule("TerminalSearchBar.css", ".terminal-search-bar"));
-    expect(search).toContain(`var(${TOP_NOTICE_INSET_VAR}, 0px)`);
+    expect(search).toContain(`var(${TOP_NOTICE_INSET_VAR})`);
     act(() => root.render(<></>));
     expect(host.style.getPropertyValue(TOP_NOTICE_INSET_VAR)).toBe("");
   });

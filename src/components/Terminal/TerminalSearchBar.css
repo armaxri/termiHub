@@ -1,8 +1,15 @@
+/* Height of the notice pinned to the top of a terminal slot (#5823): 0 by
+   default; `useTopNoticeInset` overrides it inline on the slot's wrapper while
+   the view-mode banner or reconnect strip shows. */
+:root {
+  --terminal-top-notice-inset: 0px;
+}
+
 .terminal-search-bar {
   position: absolute;
   /* Below a top-of-slot notice (view-mode banner, reconnect strip) so it never
      covers the notice's Reconnect / Cancel button (#5823). */
-  top: calc(4px + var(--terminal-top-notice-inset, 0px));
+  top: calc(4px + var(--terminal-top-notice-inset));
   right: 16px;
   z-index: var(--z-float);
   display: flex;
