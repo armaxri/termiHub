@@ -501,7 +501,7 @@ fn report_setup_cancelled(
     inject_commands(
         session_manager,
         session_id,
-        "echo 'termiHub agent setup cancelled.'\n",
+        "printf '%s\\n' 'Agent setup cancelled.'\n",
         rt_handle,
     );
 }
@@ -652,7 +652,7 @@ fn inject_setup_error(
         inject_commands(
             session_manager,
             session_id,
-            &format!("echo Error: {safe}\n"),
+            &format!("echo Agent setup failed: {safe}\n"),
             rt_handle,
         );
     } else {
@@ -805,7 +805,10 @@ fn resolve_binary(
 ///
 /// The script handles privilege escalation detection, directory creation,
 /// binary installation, verification, and optional systemd service setup.
-/// It uses `set -e` for error handling and provides verbose emoji output.
+/// It uses `set -e` for error handling and prints plain-ASCII progress
+/// markers (`[..]`, `[ok]`, `[error]`) via `printf '%s\n'` only, ending in one
+/// summary line: `Agent installed (v<x>) at <path>.` or
+/// `Agent setup failed: <reason>` (#5822).
 /// `binary_src` is where the agent binary was uploaded — inside a private
 /// upload dir validated by [`agent_install::parse_prepared_upload_dir`].
 pub fn generate_setup_script(remote_path: &str, install_service: bool, binary_src: &str) -> String {
@@ -828,47 +831,70 @@ INSTALL_PATH="__INSTALL_PATH__"
 INSTALL_SERVICE=__INSTALL_SERVICE__
 
 # --- Helpers ---
+# Plain ASCII markers printed with printf only: `echo` does not expand escapes
+# in every sh, so the output reads the same on any shell and locale (#5822).
+say() {
+    printf '%s\n' "$*"
+}
+
+FAILED=false
 fail() {
-    printf '\033[31m\342\235\214 Error: %s\033[0m\n' "$1"
-    echo ""
-    printf '\033[31m\342\235\214 === Setup Failed ===\033[0m\n'
+    FAILED=true
+    say "[error] $1"
+    if [ -n "$2" ]; then
+        say "        $2"
+    fi
+    say ""
+    say "Agent setup failed: $1"
     exit 1
 }
 
-echo ""
-echo "\360\237\232\200 === termiHub Agent Setup ==="
-echo ""
+# The script removes itself, a leftover upload and its private upload dir, so
+# the command typed into the terminal stays one short `sh` line (#5822).
+finish() {
+    status=$?
+    if [ "$status" -ne 0 ] && [ "$FAILED" = false ]; then
+        say ""
+        say "Agent setup failed: a setup step exited with status $status (see above)."
+    fi
+    rm -f "$BINARY_SRC" "$0" 2>/dev/null || true
+    rmdir "${0%/*}" 2>/dev/null || true
+}
+trap finish EXIT
+
+say ""
+say "=== termiHub Agent Setup ==="
+say ""
 
 # --- Step 1: Verify uploaded binary ---
-printf "\360\237\224\215 Checking uploaded binary... "
+say "[..] Checking the uploaded agent binary"
 if [ -f "$BINARY_SRC" ]; then
-    echo "found at $BINARY_SRC"
+    say "[ok] Agent binary uploaded"
 else
-    echo ""
-    fail "Agent binary not found at $BINARY_SRC. The upload may have failed."
+    fail "The agent binary was not uploaded." "Run the setup again."
 fi
 
 # --- Step 2: Resolve install path ---
 case "$INSTALL_PATH" in
     "~/"*) INSTALL_PATH="$HOME/${INSTALL_PATH#\~/}" ;;
 esac
-echo "\360\237\223\201 Install path: $INSTALL_PATH"
+say "[..] Install path: $INSTALL_PATH"
 
 # --- Step 2b: Never replace a file that is not a termiHub agent ---
 if [ -e "$INSTALL_PATH" ]; then
     EXISTING=$("$INSTALL_PATH" --version 2>/dev/null || true)
     case "$EXISTING" in
-        "termihub-agent "*) echo "Replacing the installed agent: $EXISTING" ;;
-        *) fail "$INSTALL_PATH already exists and is not a termiHub agent; it was not replaced. Remove it or choose another install path." ;;
+        "termihub-agent "*) say "[..] Replacing the installed agent ($EXISTING)" ;;
+        *) fail "$INSTALL_PATH already exists and is not a termiHub agent; it was not replaced." "Remove it or choose another install path." ;;
     esac
 fi
 
 # --- Step 3: Check permissions ---
 SUDO=""
 TARGET_DIR=$(dirname "$INSTALL_PATH")
-printf "\360\237\224\221 Checking permissions for $TARGET_DIR... "
+say "[..] Checking write access to $TARGET_DIR"
 if [ -d "$TARGET_DIR" ] && [ -w "$TARGET_DIR" ]; then
-    echo "writable \342\234\223"
+    say "[ok] $TARGET_DIR is writable"
 else
     # Walk up to the first existing ancestor to check writability
     CHECK_DIR="$TARGET_DIR"
@@ -876,51 +902,53 @@ else
         CHECK_DIR=$(dirname "$CHECK_DIR")
     done
     if [ -w "$CHECK_DIR" ]; then
-        echo "writable \342\234\223"
+        say "[ok] $CHECK_DIR is writable"
     elif [ "$(id -u)" -eq 0 ]; then
-        echo "running as root \342\234\223"
+        say "[ok] Running as root"
     elif command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
-        echo "using sudo \342\234\223"
+        say "[ok] Using sudo to write to $TARGET_DIR"
     else
-        echo "no write access"
-        fail "Cannot create $TARGET_DIR (permission denied, no sudo available).\n  \360\237\222\241 Ask the server admin to create the directory, or choose a writable path."
+        fail "Cannot create $TARGET_DIR (permission denied, no sudo available)." "Ask the server admin to create the directory, or choose a writable path."
     fi
 fi
 
 # --- Step 4: Create directory ---
 if [ ! -d "$TARGET_DIR" ]; then
-    echo "\360\237\223\202 Creating directory $TARGET_DIR..."
+    say "[..] Creating $TARGET_DIR"
     $SUDO mkdir -p "$TARGET_DIR"
 fi
 
 # --- Step 5: Install binary ---
-echo "\360\237\223\246 Moving agent binary to $INSTALL_PATH..."
+say "[..] Installing the agent to $INSTALL_PATH"
 $SUDO mv "$BINARY_SRC" "$INSTALL_PATH"
 $SUDO chmod +x "$INSTALL_PATH"
 
 # --- Step 6: Verify ---
-printf "\342\234\205 Verifying installation... "
-"$INSTALL_PATH" --version
+say "[..] Verifying the installed agent"
+if ! VERSION_OUT=$("$INSTALL_PATH" --version 2>&1); then
+    fail "The installed agent at $INSTALL_PATH does not run: $VERSION_OUT" "Check that the binary matches this host's architecture."
+fi
+VERSION_LINE=$(printf '%s\n' "$VERSION_OUT" | head -n 1)
+VERSION=${VERSION_LINE#termihub-agent }
+VERSION=${VERSION#v}
+say "[ok] $VERSION_LINE"
 
 # --- Step 7: Optional systemd service ---
 if [ "$INSTALL_SERVICE" = true ]; then
-    echo "\342\232\231\357\270\217  Installing systemd service..."
+    say "[..] Installing the systemd service termihub-agent"
     printf '[Unit]\nDescription=termiHub Agent\nAfter=network.target\n\n[Service]\nExecStart=%s --listen 127.0.0.1:7685\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n' "$INSTALL_PATH" \
         | $SUDO tee /etc/systemd/system/termihub-agent.service > /dev/null
     $SUDO systemctl daemon-reload
-    printf "  \342\234\223 Service registered\n"
-    $SUDO systemctl enable termihub-agent
-    printf "  \342\234\223 Service enabled\n"
+    say "[ok] Service registered"
+    $SUDO systemctl enable --quiet termihub-agent
+    say "[ok] Service enabled"
     $SUDO systemctl start termihub-agent
-    printf "  \342\234\223 Service started\n"
+    say "[ok] Service started"
 fi
 
-echo ""
-echo "\360\237\216\211 === Setup Complete ==="
-echo ""
-echo "You can close this terminal tab now."
-echo ""
+say ""
+say "Agent installed (v$VERSION) at $INSTALL_PATH. You can close this tab."
 "#;
 
 /// Inject commands into the visible terminal session via the SessionManager.
@@ -977,16 +1005,28 @@ fn inject_error_script(
     }
 }
 
-/// The terminal command that runs the setup script staged in `upload_dir` and
-/// then removes the script and the (by then empty) private upload dir.
-/// `upload_dir` was validated by [`agent_install::parse_prepared_upload_dir`],
-/// so single-quoting it is safe.
+/// The terminal command that runs the setup script staged in `upload_dir`.
+///
+/// The script removes itself and its private upload dir on exit (`finish`
+/// trap), so the visible command is one short line instead of a chain of
+/// `rm -f`/`rmdir` the user has to read past (#5822). `upload_dir` was
+/// validated by [`agent_install::parse_prepared_upload_dir`], so
+/// single-quoting it is safe.
 fn setup_exec_command(upload_dir: &str) -> String {
-    let script = format!("{upload_dir}/{SETUP_SCRIPT_NAME}");
-    format!("sh '{script}'; rm -f '{script}'; rmdir '{upload_dir}' 2>/dev/null\n")
+    format!("sh '{upload_dir}/{SETUP_SCRIPT_NAME}'\n")
 }
 
-/// Inject a red error banner directly into the terminal (fallback).
+/// The plain failure lines shared by the error script and its inline
+/// fallback: `[error] <reason>`, a blank line, then the one summary line
+/// `Agent setup failed: <reason>` (#5822). Returned as a single-quoted
+/// `printf '%s\n'` argument list, safe to paste into a POSIX shell.
+fn failure_printf(message: &str) -> String {
+    let one_line = message.replace(['\r', '\n'], " ");
+    let safe = one_line.replace('\'', "'\\''");
+    format!("printf '%s\\n' '[error] {safe}' '' 'Agent setup failed: {safe}'\n")
+}
+
+/// Inject the plain failure lines directly into the terminal (fallback).
 ///
 /// Used only when SFTP is unavailable (e.g. connection failed).
 fn inject_error_inline(
@@ -995,25 +1035,22 @@ fn inject_error_inline(
     message: &str,
     rt_handle: &tokio::runtime::Handle,
 ) {
-    let safe_msg = message.replace('\'', "'\\''");
-    let cmd = format!(
-        "printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
-         echo ''\n\
-         printf '\\033[31m\\342\\235\\214 === Setup Failed ===\\033[0m\\n'\n",
-        safe_msg
+    inject_commands(
+        session_manager,
+        session_id,
+        &failure_printf(message),
+        rt_handle,
     );
-    inject_commands(session_manager, session_id, &cmd, rt_handle);
 }
 
-/// Generate a small POSIX error script matching the setup script's `fail()` style.
+/// Generate a small POSIX error script matching the setup script's `fail()`
+/// output. Like the setup script it removes itself and its upload dir on exit.
 fn generate_error_script(message: &str) -> String {
-    let safe_msg = message.replace('\'', "'\\''");
     format!(
         "#!/bin/sh\n\
-         printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
-         echo ''\n\
-         printf '\\033[31m\\342\\235\\214 === Setup Failed ===\\033[0m\\n'\n",
-        safe_msg
+         trap 'rm -f \"$0\"; rmdir \"${{0%/*}}\" 2>/dev/null || true' EXIT\n\
+         {}",
+        failure_printf(message)
     )
 }
 
@@ -1071,16 +1108,14 @@ mod tests {
     }
 
     #[test]
-    fn setup_runs_its_script_from_the_private_dir_and_cleans_up() {
+    fn setup_runs_its_script_from_the_private_dir_with_one_short_command() {
         let cmd = setup_exec_command(TEST_UPLOAD_DIR);
-        assert_eq!(
-            cmd,
-            format!(
-                "sh '{TEST_UPLOAD_DIR}/setup.sh'; rm -f '{TEST_UPLOAD_DIR}/setup.sh'; \
-                 rmdir '{TEST_UPLOAD_DIR}' 2>/dev/null\n"
-            )
-        );
+        assert_eq!(cmd, format!("sh '{TEST_UPLOAD_DIR}/setup.sh'\n"));
         assert!(!cmd.contains("/tmp"));
+        // The cleanup moved into the script's exit trap (#5822).
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", false, TEST_BINARY_SRC);
+        assert!(script.contains("trap finish EXIT"));
+        assert!(script.contains(r#"rmdir "${0%/*}""#));
     }
 
     #[test]
@@ -1092,9 +1127,9 @@ mod tests {
         assert!(script.contains("INSTALL_SERVICE=false"));
         assert!(script.contains("--version"));
         assert!(script.contains("=== termiHub Agent Setup ==="));
-        assert!(script.contains("=== Setup Complete ==="));
-        assert!(script.contains("You can close this terminal tab now."));
-        assert!(script.contains("=== Setup Failed ==="));
+        assert!(script
+            .contains("Agent installed (v$VERSION) at $INSTALL_PATH. You can close this tab."));
+        assert!(script.contains("Agent setup failed: $1"));
         assert!(script.contains("INSTALL_SERVICE=false"));
     }
 
@@ -1105,7 +1140,7 @@ mod tests {
         assert!(script.contains("systemd service"));
         assert!(script.contains("$SUDO tee /etc/systemd/system/termihub-agent.service"));
         assert!(script.contains("$SUDO systemctl daemon-reload"));
-        assert!(script.contains("$SUDO systemctl enable termihub-agent"));
+        assert!(script.contains("$SUDO systemctl enable --quiet termihub-agent"));
         assert!(script.contains("$SUDO systemctl start termihub-agent"));
         assert!(script.contains("ExecStart=%s --listen 127.0.0.1:7685"));
     }
@@ -1338,3 +1373,7 @@ mod tests {
 #[cfg(test)]
 #[path = "agent_setup_install_path_tests.rs"]
 mod install_path_tests;
+
+#[cfg(test)]
+#[path = "agent_setup_output_tests.rs"]
+mod output_tests;

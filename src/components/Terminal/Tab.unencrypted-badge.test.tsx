@@ -1,7 +1,8 @@
 /**
- * The "Unencrypted" badge on telnet tabs (#5749): telnet sends everything,
- * passwords included, in clear text, so its tabs carry a state badge. SSH and
- * other tabs carry none.
+ * The "Unencrypted" marker on telnet tabs (#5749): telnet sends everything,
+ * passwords included, in clear text, so its tabs carry a state marker — an
+ * icon-only open lock with an accessible name since #5827. SSH and other tabs
+ * carry none.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -63,14 +64,27 @@ describe("Tab — Unencrypted badge (#5749)", () => {
     document.body.innerHTML = "";
   });
 
-  it("marks a telnet tab as unencrypted", () => {
+  it("marks a telnet tab as unencrypted with an icon-only, labelled marker (#5827)", () => {
     root = renderTab(makeTab({ type: "telnet", config: { host: "10.0.0.7", port: 23 } }));
-    expect(badge()?.textContent).toBe("Unencrypted");
+    // No text in the strip: the badge took the room the name needs (#5827).
+    expect(badge()?.textContent).toBe("");
+    expect(badge()?.querySelector("svg")).not.toBeNull();
+    expect(badge()?.getAttribute("role")).toBe("img");
+    expect(badge()?.getAttribute("aria-label")).toBe("Unencrypted");
     expect(badge()?.getAttribute("title")).toBe(
-      "Telnet sends everything unencrypted, passwords included."
+      "Unencrypted: Telnet sends everything unencrypted, passwords included."
     );
-    // #5740: primary text on the warning tint (UnencryptedBadge.css).
+    // #5740: the warning tint (UnencryptedBadge.css), in its compact form.
     expect(badge()?.classList.contains("unencrypted-badge")).toBe(true);
+    expect(badge()?.classList.contains("unencrypted-badge--compact")).toBe(true);
+  });
+
+  it("keeps the full name as the tab's tooltip, the marker outside the title", () => {
+    root = renderTab(makeTab({ type: "telnet", config: { host: "h" } }));
+    const tab = document.querySelector('[data-testid="tab-t1"]')!;
+    expect(tab.getAttribute("title")).toBe("Lab switch");
+    expect(tab.querySelector(".tab__title")!.textContent).toBe("Lab switch");
+    expect(tab.querySelector(".tab__title")!.contains(badge())).toBe(false);
   });
 
   it("marks a telnet session on a remote agent", () => {

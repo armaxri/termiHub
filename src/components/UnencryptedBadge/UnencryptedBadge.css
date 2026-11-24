@@ -16,3 +16,10 @@
   background: var(--bg-warning);
   border: 1px solid var(--border-warning);
 }
+
+/* Icon-only marker in the tab strip (#5827): a round warning-tinted chip that
+   keeps the cue without taking the connection name's room. */
+.unencrypted-badge--compact {
+  justify-content: center;
+  padding: var(--spacing-xxs);
+}

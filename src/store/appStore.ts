@@ -146,6 +146,12 @@ export interface AddTabOptions {
    * set a start cwd at spawn (#1511).
    */
   initialCommand?: string;
+  /**
+   * Open the tab right after the last tab of the same saved connection in its
+   * panel, instead of at the end of the strip (#5827), so duplicate sessions of
+   * one connection sit side by side. Needs `connectionId`; defaults to `false`.
+   */
+  besideSibling?: boolean;
 }
 
 /**
