@@ -106,3 +106,47 @@ def end_copy_problems(
     if other in buttons:
         problems.append(f"the strip offers {other!r} for a {kind!r} end")
     return problems
+
+
+#: The plugin crash strip's headings per failure kind (#4188, #5916).
+PLUGIN_HEADINGS = (
+    "The plugin stopped unexpectedly",
+    "The plugin stopped responding",
+    "The plugin used too much memory",
+    "The plugin sent invalid data",
+)
+
+
+def plugin_exit_problems(
+    *,
+    variant: Optional[str],
+    classes: Sequence[str],
+    text: str,
+    buttons: Sequence[str],
+    keep_clear: int,
+) -> list[str]:
+    """What is wrong with a plugin tab's crash notice (#5916).
+
+    ``variant`` is its ``data-variant``, ``classes`` its class list, ``text`` its
+    visible text, ``buttons`` its button labels and ``keep_clear`` how many
+    elements in the pane carry ``data-toast-avoid``. Wants the session-end
+    strip (not the full-pane overlay with a scrim), a failure heading, Restart
+    session and Close tab, and the strip as the only keep-clear zone. Pair with
+    :func:`strip_layout_problems` for where it sits. Empty when right.
+    """
+    problems: list[str] = []
+    flat = " ".join(text.split())
+    if variant != "plugin-exit":
+        problems.append(f"the notice variant is {variant!r}, not 'plugin-exit'")
+    if "terminal-disconnect-strip" not in classes:
+        problems.append("the plugin crash notice is not the session-end strip")
+    if "terminal-disconnect-overlay" in classes:
+        problems.append("the plugin crash notice is the full-pane overlay with a scrim")
+    if not any(h in flat for h in PLUGIN_HEADINGS):
+        problems.append(f"no plugin failure heading in {flat!r}")
+    for label in ("Restart session", "Close tab"):
+        if label not in buttons:
+            problems.append(f"the strip offers no {label!r} (buttons: {list(buttons)})")
+    if keep_clear != 1:
+        problems.append(f"{keep_clear} toast keep-clear zones in the pane; only the strip may be one")
+    return problems
