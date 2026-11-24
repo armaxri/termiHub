@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type RefObject,
+} from "react";
+import { flushSync } from "react-dom";
 import type { ZodFieldErrors } from "./useZodEditorForm";
 
 /**
@@ -42,9 +51,12 @@ export interface RevealedErrors {
   /**
    * Treat the current values as pristine again: forget the edited and revealed
    * fields and take the next values as the new baseline. Call it right after
-   * `reset` swaps the form for another one (a connection type switch).
+   * `reset` swaps the form for another one (a connection type switch, a dialog
+   * reopening). Pass the values `reset` just loaded as `baseline` when they
+   * may equal the current ones: without it the baseline is the next *changed*
+   * value, so the user's first edit after an unchanged reset would be missed.
    */
-  rebaseline: () => void;
+  rebaseline: (baseline?: unknown) => void;
 }
 
 /**
@@ -109,9 +121,15 @@ export function useRevealedErrors(
 
   const revealAll = useCallback(() => setAllRevealed(true), []);
 
-  const rebaseline = useCallback(() => {
+  const rebaseline = useCallback((baseline?: unknown) => {
     editedRef.current = new Set();
-    previousRef.current = null;
+    if (baseline === undefined) {
+      previousRef.current = null;
+    } else {
+      const next = new Map<string, string>();
+      flattenLeaves(baseline, "", next);
+      previousRef.current = next;
+    }
     setRevealed(new Set());
     setAllRevealed(false);
   }, []);
@@ -132,4 +150,55 @@ export function useRevealedErrors(
 
   const revealProps = useMemo(() => ({ onBlurCapture }), [onBlurCapture]);
   return { shown, revealProps, revealAll, rebaseline };
+}
+
+/** What {@link useRevealOnSave} returns. */
+export interface RevealOnSave {
+  /** The subset of the errors the user should see now. */
+  shown: ZodFieldErrors;
+  /**
+   * Spread onto the element that wraps the form's fields. It reveals errors
+   * when a field is left, and is where {@link RevealOnSave.revealAndFocus}
+   * looks for the first invalid field.
+   */
+  rootProps: {
+    ref: RefObject<HTMLDivElement>;
+    onBlurCapture: (event: FocusEvent) => void;
+  };
+  /**
+   * Call when the user activates an invalid Save: renders every error, then
+   * moves focus to the first invalid field (`aria-invalid`, in DOM order).
+   * Returns the focused element, or `null` when no field is marked invalid
+   * (the caller may then focus something else that explains the block).
+   */
+  revealAndFocus: () => HTMLElement | null;
+  /** See {@link RevealedErrors.rebaseline}. */
+  rebaseline: (baseline?: unknown) => void;
+}
+
+/**
+ * {@link useRevealedErrors} plus the save-attempt half of the pattern (#5917):
+ * a dialog keeps its Save `aria-disabled` (focusable, clickable) while the
+ * form is invalid, and activating it calls `revealAndFocus` instead of saving.
+ */
+export function useRevealOnSave(errors: ZodFieldErrors, values: unknown): RevealOnSave {
+  const { shown, revealProps, revealAll, rebaseline } = useRevealedErrors(errors, values);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const revealAndFocus = useCallback((): HTMLElement | null => {
+    // Render every error first: the focus target is the first `aria-invalid`.
+    flushSync(revealAll);
+    const target = rootRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? null;
+    if (target) {
+      target.scrollIntoView?.({ block: "center" });
+      target.focus();
+    }
+    return target;
+  }, [revealAll]);
+
+  const rootProps = useMemo(
+    () => ({ ref: rootRef, onBlurCapture: revealProps.onBlurCapture }),
+    [revealProps]
+  );
+  return { shown, rootProps, revealAndFocus, rebaseline };
 }

@@ -3,6 +3,7 @@ import { Controller } from "react-hook-form";
 import { z } from "zod";
 import { AlertCircle } from "lucide-react";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
+import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { Button, Checkbox, ColorInput, Field, Input, TOAST_AVOID_PROPS } from "@/components/ui";
 import { compileRules, findMatches, normalizeHexColor } from "@/services/syntaxHighlighting";
 import { resolveActiveRules } from "@/services/syntaxHighlightingConfig";
@@ -152,9 +153,13 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
   const {
     form: { control, getValues },
     draft,
-    errors,
+    errors: allErrors,
     canSave,
   } = useZodEditorForm<HighlightRule>({ schema: customRuleSchema, defaultValues: initialRule });
+  // Errors show once the user edited a field and left it, or tried to save
+  // (#5917) — a new rule does not open with "Name is required." in red.
+  // `canSave` still reads every error, so an unsafe pattern is never saved.
+  const { shown: errors, rootProps, revealAndFocus } = useRevealOnSave(allErrors, draft);
 
   const nameError = errors["name"];
   const patternError = errors["pattern"];
@@ -166,7 +171,12 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
   }, [draft, config]);
 
   const handleSave = () => {
-    if (!canSave) return;
+    // Save stays reachable while invalid (aria-disabled, not disabled):
+    // activating it then points at the problem instead of saving.
+    if (!canSave) {
+      revealAndFocus();
+      return;
+    }
     const current = getValues();
     onSave({
       ...current,
@@ -181,7 +191,7 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
   const colorSwatch = normalizeHexColor(draft.style.color) ?? "#000000";
 
   return (
-    <div className="custom-rule-editor" data-testid="custom-rule-editor">
+    <div className="custom-rule-editor" data-testid="custom-rule-editor" {...rootProps}>
       <div className="custom-rule-editor__title">{isNew ? "New custom rule" : "Edit rule"}</div>
 
       <Controller
@@ -363,7 +373,8 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
         <Button
           variant="primary"
           onClick={handleSave}
-          disabled={!canSave}
+          aria-disabled={!canSave}
+          data-invalid={!canSave || undefined}
           data-testid="custom-rule-save"
         >
           {isNew ? "Save rule" : "Save changes"}
