@@ -152,6 +152,9 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { SCHEDULE_LOCAL_PROCESS_REASON } from "@/utils/scheduleLocalProcessGate";
+import type { Automation } from "@/types/generated/Automation";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { automationLibraryState } from "./slices/automationStoreState";
 import { workflowToAutomation } from "./slices/automationViews";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
@@ -1968,7 +1971,12 @@ describe("appStore — scheduled runs (PROD-043)", () => {
   });
 
   it("never prompts: an un-allowlisted local program is refused and the run fails", async () => {
-    seedSettings({ workflowLocalProcessEnabled: true, workflowLocalProcessAllowlist: [] });
+    // Experimental on, so it is the allowlist (a separate control) that refuses.
+    seedSettings({
+      experimentalFeaturesEnabled: true,
+      workflowLocalProcessEnabled: true,
+      workflowLocalProcessAllowlist: [],
+    });
     useAppStore.setState({
       workflows: [workflow("w1", [{ kind: "run-local-process", program: "curl", args: [] }])],
     });
@@ -1976,8 +1984,129 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     const report = await executeScheduledRun(fire(), store);
 
     expect(report.outcome).toBe("failed");
+    expect(report.message).toContain('"curl" is not authorized');
     expect(useAppStore.getState().localProcessPrompt).toBeNull();
     expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+  });
+
+  describe("an automation that can run a local process (#5818)", () => {
+    const lp: AutomationStep = { kind: "run-local-process", program: "make", args: [] };
+    const typed: AutomationStep = { kind: "send-command", command: "uptime" };
+    const automation = (id: string, steps: AutomationStep[]): Automation => ({
+      id,
+      name: id,
+      tags: [],
+      steps,
+      triggers: [],
+      createdAt: "",
+      updatedAt: "",
+    });
+    const condition = { left: "a", op: "eq", right: "a" } as const;
+    const call = (automationId: string): AutomationStep => ({
+      kind: "run-automation",
+      automationId,
+    });
+    const libraries: [string, Automation[]][] = [
+      ["directly", [automation("w1", [typed, lp])]],
+      [
+        "in a conditional branch",
+        [automation("w1", [typed, { kind: "conditional", condition, then: [lp] }])],
+      ],
+      [
+        "in an else branch inside a loop",
+        [
+          automation("w1", [
+            typed,
+            {
+              kind: "loop",
+              loop: { kind: "count", count: 1 },
+              body: [{ kind: "conditional", condition, then: [], else: [lp] }],
+            },
+          ]),
+        ],
+      ],
+      [
+        "through run-automation, two levels deep",
+        [
+          automation("w1", [typed, call("mid")]),
+          automation("mid", [call("leaf")]),
+          automation("leaf", [lp]),
+        ],
+      ],
+    ];
+    /** Everything else allows the program: only the switch decides. */
+    const allowProgram = (experimentalFeaturesEnabled?: boolean) =>
+      seedSettings({
+        experimentalFeaturesEnabled,
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["make"],
+      });
+
+    it.each(libraries)("is refused before anything runs: %s", async (_name, library) => {
+      for (const off of [undefined, false]) {
+        allowProgram(off);
+        useAppStore.setState(automationLibraryState(library));
+        const report = await executeScheduledRun(fire(), store);
+        expect(report).toEqual({
+          outcome: "skipped",
+          message: SCHEDULE_LOCAL_PROCESS_REASON,
+          targetsRun: 0,
+        });
+      }
+      expect(injected).toEqual([]);
+      expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+    });
+
+    it("is refused before a missing target is connected", async () => {
+      allowProgram(false);
+      useAppStore.setState(automationLibraryState(libraries[0][1]));
+      const connectMissing = vi.fn();
+      const report = await executeScheduledRun(
+        fire({ targets: { kind: "connections", connectionIds: ["conn-offline"] } }),
+        store,
+        { connectMissing }
+      );
+      expect(report.message).toBe(SCHEDULE_LOCAL_PROCESS_REASON);
+      expect(connectMissing).not.toHaveBeenCalled();
+    });
+
+    it.each([libraries[0], libraries[1], libraries[3]])(
+      "runs as before with experimental features on: %s",
+      async (_name, library) => {
+        allowProgram(true);
+        useAppStore.setState(automationLibraryState(library));
+        const report = await executeScheduledRun(fire(), store);
+        expect(report).toMatchObject({ outcome: "completed", targetsRun: 1 });
+        expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+        // Tells the backend, which checks the switch again at the trust boundary.
+        expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({
+          program: "make",
+          scheduled: true,
+        });
+      }
+    );
+
+    it("is refused at the spawn when the switch is turned off while it runs", async () => {
+      allowProgram(true);
+      registerTerminalInputInjector(async (tabId, data) => {
+        injected.push({ tabId, data });
+        allowProgram(false);
+        return true;
+      });
+      useAppStore.setState(automationLibraryState(libraries[0][1]));
+      const report = await executeScheduledRun(fire(), store);
+      expect(report.outcome).toBe("failed");
+      expect(injected).toHaveLength(1);
+      expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+    });
+
+    it("still schedules automations without the step while the switch is off", async () => {
+      allowProgram(false);
+      useAppStore.setState(
+        automationLibraryState([automation("w1", [call("w2")]), automation("w2", [typed])])
+      );
+      expect((await executeScheduledRun(fire(), store)).outcome).toBe("completed");
+    });
   });
 
   it("does not supersede a run already in progress in this window", async () => {

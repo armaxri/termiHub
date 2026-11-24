@@ -27,6 +27,8 @@ export interface RunLocalProcessArgs {
   program: string;
   /** Discrete argument vector (never concatenated into a command line). */
   args: string[];
+  /** The run was started by a schedule; the backend then also requires experimental features. */
+  scheduled?: boolean;
   /** Optional timeout in ms; the backend applies a default and a hard cap. */
   timeoutMs?: number;
 }
@@ -44,6 +46,7 @@ export async function invokeRunLocalProcess(
     program: args.program,
     args: args.args,
     timeoutMs: args.timeoutMs ?? null,
+    scheduled: args.scheduled ?? false,
   });
 }
 

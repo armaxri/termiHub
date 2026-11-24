@@ -5,12 +5,18 @@ import { withTooltip } from "@/test/tooltip";
 import type { SavedConnection } from "@/types/connection";
 import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
 import type { Automation } from "@/types/generated/Automation";
+import { SCHEDULE_LOCAL_PROCESS_REASON } from "@/utils/scheduleLocalProcessGate";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { flushAsync } from "@/test/flushAsync";
 import { leaveField } from "@/test/leaveField";
 import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
+
+const experimental = vi.hoisted(() => ({ on: false }));
+vi.mock("@/hooks/useExperimentalFeatures", () => ({
+  useExperimentalFeatures: () => experimental.on,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -46,6 +52,22 @@ const automations: Automation[] = [
     updatedAt: "",
   },
 ];
+/** Reaches a local process only through another automation. */
+const localAutomations: Automation[] = [
+  ...automations,
+  {
+    ...automations[0],
+    id: "lp",
+    name: "Build",
+    steps: [{ kind: "run-local-process", program: "make", args: [] }],
+  },
+  {
+    ...automations[0],
+    id: "calls-lp",
+    name: "Release",
+    steps: [{ kind: "run-automation", automationId: "lp" }],
+  },
+];
 const connections: SavedConnection[] = [
   { id: "c1", name: "web-1", config: {} as never, folderId: null },
   { id: "c2", name: "web-2", config: {} as never, folderId: null },
@@ -55,6 +77,7 @@ function render(props: {
   schedule?: ScheduleInput | null;
   onSave?: (i: ScheduleInput) => void;
   initialAction?: ScheduleAction;
+  automations?: Automation[];
 }) {
   act(() => {
     root.render(
@@ -68,7 +91,7 @@ function render(props: {
               ? props.initialAction
               : { kind: "automation", automationId: "wf-1" }
           }
-          automations={automations}
+          automations={props.automations ?? automations}
           connections={connections}
           groups={[]}
           onOpenChange={vi.fn()}
@@ -81,6 +104,7 @@ function render(props: {
 
 describe("ScheduleEditorDialog (PROD-043)", () => {
   beforeEach(() => {
+    experimental.on = false;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -316,6 +340,77 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).toHaveBeenCalledWith(
         expect.objectContaining({ action: { kind: "automation", automationId: "gone" } })
+      );
+    });
+  });
+
+  describe("an automation that can run a local process (#5818)", () => {
+    const pickerOptions = () => {
+      act(() => {
+        const trigger = query("schedule-editor-automation") as HTMLButtonElement;
+        trigger.focus();
+        trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      });
+      return Array.from(document.querySelectorAll('[role="option"]')).map((o) => [
+        o.textContent,
+        o.getAttribute("aria-disabled") === "true",
+      ]);
+    };
+    const existing = (automationId: string): ScheduleInput => ({
+      id: "s1",
+      name: "Old",
+      action: { kind: "automation", automationId },
+      targets: { kind: "connections", connectionIds: ["c1"] },
+      rule: { kind: "interval", everyMinutes: 5 },
+      missedRuns: "skip",
+    });
+    const text = () => query("schedule-editor-dialog")!.textContent ?? "";
+
+    it("is listed disabled with the reason while experimental features are off", () => {
+      render({ initialAction: undefined, automations: localAutomations });
+      expect(pickerOptions()).toEqual([
+        ["Health check", false],
+        ["Restart", false],
+        ["Build (experimental: runs a local process)", true],
+        ["Release (experimental: runs a local process)", true],
+      ]);
+    });
+
+    it("is an ordinary choice while they are on", () => {
+      experimental.on = true;
+      render({ initialAction: undefined, automations: localAutomations });
+      expect(pickerOptions().slice(2)).toEqual([
+        ["Build", false],
+        ["Release", false],
+      ]);
+    });
+
+    it("cannot be saved when its row pre-selected it", async () => {
+      const onSave = vi.fn();
+      render({
+        initialAction: { kind: "automation", automationId: "calls-lp" },
+        automations: localAutomations,
+        onSave,
+      });
+      setInput("schedule-editor-name", "Nightly");
+      act(() => query("schedule-editor-connection-c1")!.click());
+      expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
+      expect(text()).toContain(SCHEDULE_LOCAL_PROCESS_REASON);
+      await act(async () => query("schedule-editor-save")!.click());
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it("keeps its id on an existing schedule, which says why it will not run", async () => {
+      const onSave = vi.fn();
+      render({ schedule: existing("lp"), automations: localAutomations, onSave });
+      expect(text()).toContain(SCHEDULE_LOCAL_PROCESS_REASON);
+      setInput("schedule-editor-name", "Renamed");
+      await act(async () => query("schedule-editor-save")!.click());
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Renamed",
+          action: { kind: "automation", automationId: "lp" },
+        })
       );
     });
   });

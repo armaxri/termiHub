@@ -1,9 +1,12 @@
 import { useCallback, useMemo } from "react";
 
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { useAppStore } from "@/store/appStore";
 import { useBroadcastGroups } from "@/store/broadcastGroups";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import type { ScheduleAction, ScheduleTargets } from "@/types/schedule";
+
+import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
 
 import { describeTargetNames } from "./scheduleForm";
 
@@ -23,10 +26,21 @@ export function useScheduleLabels() {
     [automations]
   );
 
+  const experimental = useExperimentalFeatures();
+  /** Why a schedule of this action will not run, or `null` (#5818). */
+  const blockedReason = useCallback(
+    (action: ScheduleAction): string | null => {
+      const find = (id: string) => automations.find((x) => x.id === id);
+      const automation = find(action.automationId);
+      return automation ? scheduleBlockedReason(automation, find, experimental) : null;
+    },
+    [automations, experimental]
+  );
+
   const targets = useCallback(
     (t: ScheduleTargets) => describeTargetNames(t, (id) => names.get(id), groups),
     [names, groups]
   );
 
-  return { automations, connections, groups, actionLabel, targets };
+  return { automations, connections, groups, actionLabel, blockedReason, targets };
 }

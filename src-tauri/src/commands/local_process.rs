@@ -11,6 +11,8 @@
 //!    a per-program confirmation/allowlist on top, but this backend check means a
 //!    step can never spawn a process without the user having opted in — even if
 //!    the frontend were bypassed.
+//!    A **scheduled** run also needs experimental features on (#5818): the step is
+//!    experimental and a schedule runs unattended ([`authorize_spawn`]).
 //! 2. **Direct argv — never a shell.** The program is spawned with
 //!    [`tokio::process::Command`] from `program` + a discrete `args` vector. No
 //!    shell is ever involved and no argument is concatenated into a command line,
@@ -35,7 +37,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::connection::settings::SettingsStorage;
+use crate::connection::settings::{AppSettings, SettingsStorage};
 use crate::utils::errors::TerminalError;
 
 /// Tauri event carrying one streamed line of a local process's output, keyed by
@@ -138,6 +140,22 @@ impl LocalProcessRegistry {
             }
         }
     }
+}
+
+/// The trust-boundary check of [`run_local_process`]: the master opt-in, and for
+/// a scheduled (unattended) run also the experimental switch (#5818).
+fn authorize_spawn(settings: &AppSettings, scheduled: bool) -> Result<(), &'static str> {
+    if scheduled && settings.experimental_features_enabled != Some(true) {
+        return Err(
+            "a scheduled run cannot start a local process while experimental features are off",
+        );
+    }
+    if !settings.workflow_local_process_enabled {
+        return Err(
+            "local process execution is disabled; enable it in Settings before running this step",
+        );
+    }
+    Ok(())
 }
 
 /// Clamp a caller-requested timeout into `[1ms, MAX_TIMEOUT_MS]`, applying the
@@ -298,6 +316,7 @@ pub async fn run_local_process(
     program: String,
     args: Vec<String>,
     timeout_ms: Option<u64>,
+    scheduled: Option<bool>,
     registry: State<'_, LocalProcessRegistry>,
     app_handle: AppHandle,
 ) -> Result<LocalProcessOutcome, TerminalError> {
@@ -309,12 +328,9 @@ pub async fn run_local_process(
         .map_err(|e| {
             TerminalError::WorkflowError(format!("could not load settings to authorize step: {e}"))
         })?;
-    if !settings.workflow_local_process_enabled {
-        warn!(run_id, "refused local-process step: execution is disabled");
-        return Err(TerminalError::WorkflowError(
-            "local process execution is disabled; enable it in Settings before running this step"
-                .to_string(),
-        ));
+    if let Err(reason) = authorize_spawn(&settings, scheduled.unwrap_or(false)) {
+        warn!(run_id, reason, "refused local-process step");
+        return Err(TerminalError::WorkflowError(reason.to_string()));
     }
 
     let timeout = resolve_timeout(timeout_ms);
@@ -365,6 +381,27 @@ pub fn cancel_local_process(run_id: String, registry: State<'_, LocalProcessRegi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #5818: the experimental switch gates scheduled spawns, on top of (and
+    /// independent of) the master opt-in.
+    #[test]
+    fn a_scheduled_spawn_needs_experimental_and_the_opt_in() {
+        let settings = |experimental, enabled| AppSettings {
+            experimental_features_enabled: experimental,
+            workflow_local_process_enabled: enabled,
+            ..AppSettings::default()
+        };
+        for off in [None, Some(false)] {
+            let err = authorize_spawn(&settings(off, true), true).unwrap_err();
+            assert!(err.contains("experimental"), "{err}");
+        }
+        assert!(authorize_spawn(&settings(Some(true), true), true).is_ok());
+        let err = authorize_spawn(&settings(Some(true), false), true).unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+        // Other runs are unchanged here: the opt-in alone decides.
+        assert!(authorize_spawn(&settings(None, true), false).is_ok());
+        assert!(authorize_spawn(&settings(None, false), false).is_err());
+    }
 
     /// Drain the output channel into a flat list of `(stream, line)` pairs.
     #[cfg(unix)] // only the unix-gated argv tests inspect output

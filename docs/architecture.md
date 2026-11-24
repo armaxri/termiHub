@@ -2141,7 +2141,7 @@ sequenceDiagram
   deleted macro's schedule never runs a workflow. The v2 file is copied once to
   `schedules.json.pre-automations.bak`, and a v2 build refuses to overwrite the v3 file (PER-004).
   A restored backup (or a boot
-  whose automation migration failed) is migrated without the id map: its actions keep the legacy
+  whose automation migration failed) is migrated without the id map, after the same one-time copy: its actions keep the legacy
   kind in `legacySource` until the next boot migration resolves them, and a run is skipped while
   the automation's provenance does not match.
 - **Timing** — `timing.rs` is pure and generic over `chrono::TimeZone` (production uses
@@ -2161,7 +2161,10 @@ sequenceDiagram
   local program makes it skip/fail), and never while another run or macro playback is active in
   that window. The window resolves the automation (`fetchAutomationForRun`); a typing-only one
   plays like a macro, any other runs per target like a workflow, and either is recorded in the
-  automation run history with the `scheduled` origin; a missing one is skipped with "The
+  automation run history with the `scheduled` origin; with experimental features off, one that can reach a "Run local process" step (nested or through
+  `run-automation`) is refused before anything is connected or typed
+  (`src/utils/scheduleLocalProcessGate.ts`), again at the spawn authorization
+  (`workflowRunOnTarget.ts`) and in the backend (`run_local_process`, `authorize_spawn`); a missing one is skipped with "The
   automation no longer exists"; the status bar shows "N schedules active".
 - **Connect if not connected** (#3527, opt-in per schedule, `connectIfNeeded`, default off) — the
   fire names one `connectWindow` (the main window, else the first listening one). That window

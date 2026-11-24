@@ -14,6 +14,7 @@ import {
   ModalClose,
   NumberInput,
   Select,
+  type SelectOption,
 } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import type { Automation } from "@/types/generated/Automation";
@@ -32,6 +33,8 @@ import {
 } from "./scheduleForm";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { t } from "@/i18n/catalog";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
 import "./Schedules.css";
 
@@ -69,13 +72,19 @@ const MISSED_OPTIONS = [
 
 /**
  * The picker's options: every automation by name, plus the stored id when it
- * no longer resolves, so an edit keeps (and shows) a deleted automation.
+ * no longer resolves, so an edit keeps (and shows) a deleted automation. One
+ * that a schedule must not run (#5818) is listed disabled, with the reason.
  */
 function automationOptions(
   automations: readonly Automation[],
-  selected: string
-): { value: string; label: string }[] {
-  const options = automations.map((a) => ({ value: a.id, label: a.name }));
+  selected: string,
+  blockedReason: (id: string) => string | null
+): SelectOption[] {
+  const options: SelectOption[] = automations.map((a) =>
+    blockedReason(a.id)
+      ? { value: a.id, label: `${a.name} (experimental: runs a local process)`, disabled: true }
+      : { value: a.id, label: a.name }
+  );
   if (selected && !automations.some((a) => a.id === selected)) {
     options.push({ value: selected, label: "Deleted automation" });
   }
@@ -152,6 +161,20 @@ export function ScheduleEditorDialog({
   }, open);
 
   const isDirty = baselineKey !== null && draftKey(watched) !== baselineKey;
+
+  // With experimental features off, an automation that can run a local process
+  // cannot be scheduled (#5818). A schedule that already runs one keeps it, and
+  // the picker says why it will not run; picking another one is not possible.
+  const experimental = useExperimentalFeatures();
+  const blockedReason = (id: string): string | null => {
+    const find = (x: string) => automations.find((a) => a.id === x);
+    const automation = find(id);
+    return automation ? scheduleBlockedReason(automation, find, experimental) : null;
+  };
+  const blockedPick = blockedReason(watched.automationId);
+  const storedPick = watched.automationId === schedule?.action.automationId;
+  const pickRefused = blockedPick !== null && !storedPick;
+
   const errorFor = (path: keyof ScheduleFormValues): string | undefined => errors[path];
 
   const handleSave = () => {
@@ -159,6 +182,10 @@ export function ScheduleEditorDialog({
     // activating it then points at the problem instead of saving.
     if (!canSave) {
       revealAndFocus();
+      return;
+    }
+    if (pickRefused) {
+      document.getElementById("schedule-editor-automation")?.focus();
       return;
     }
     return onSave(formToScheduleInput(scheduleId, getValues()));
@@ -184,8 +211,8 @@ export function ScheduleEditorDialog({
           <Button
             variant="primary"
             onClick={handleSave}
-            aria-disabled={!canSave}
-            data-invalid={!canSave || undefined}
+            aria-disabled={!canSave || pickRefused}
+            data-invalid={!canSave || pickRefused || undefined}
             errorToast={false}
             data-testid="schedule-editor-save"
           >
@@ -240,7 +267,9 @@ export function ScheduleEditorDialog({
             <Field
               label="Automation"
               htmlFor="schedule-editor-automation"
-              error={errorFor("automationId")}
+              error={pickRefused ? (blockedPick ?? undefined) : errorFor("automationId")}
+              hint={storedPick ? (blockedPick ?? undefined) : undefined}
+              hintVariant="warning"
             >
               <Select
                 id="schedule-editor-automation"
@@ -250,7 +279,7 @@ export function ScheduleEditorDialog({
                   automations.length === 0 ? "No saved automations" : "Pick an automation"
                 }
                 disabled={automations.length === 0}
-                options={automationOptions(automations, field.value)}
+                options={automationOptions(automations, field.value, blockedReason)}
                 data-testid="schedule-editor-automation"
               />
             </Field>

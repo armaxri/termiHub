@@ -240,9 +240,11 @@ export function SchedulesSection({
             const attempts = s.history ?? [];
             const open = expanded.has(s.id);
             const status = scheduleStatus(s, paused);
+            const blocked = labels.blockedReason(s.action);
             const lastFailed = result?.outcome === "failed";
             const tooltip = [
               status,
+              blocked ?? "",
               `${describeRule(s.rule)} · ${labels.actionLabel(s.action)} on ${
                 labels.targets(s.targets).label
               }`,
@@ -327,11 +329,16 @@ export function SchedulesSection({
                   </>
                 }
                 details={
-                  showStatus || lastFailed || (open && attempts.length > 0) ? (
+                  showStatus || blocked || lastFailed || (open && attempts.length > 0) ? (
                     <>
                       {showStatus ? (
                         <span className="schedules__meta" data-testid={`schedule-status-${s.id}`}>
                           {status}
+                        </span>
+                      ) : null}
+                      {blocked ? (
+                        <span className="schedules__meta" data-testid={`schedule-blocked-${s.id}`}>
+                          {blocked}
                         </span>
                       ) : null}
                       {lastFailed ? (

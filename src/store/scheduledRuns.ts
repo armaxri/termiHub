@@ -20,6 +20,9 @@
  *   A target another window runs on itself is never connected here (#3878):
  *   each window acknowledges the fire with {@link claimedTargetIds}, and the
  *   connect window skips those, so each target runs once, where it is held;
+ * - with experimental features off it never runs an automation that can reach a
+ *   "Run local process" step (#5818): refused here before anything is connected
+ *   or typed, and again at the spawn (the authorization seam and the backend);
  * - it never supersedes something the user started: if a workflow run (or a
  *   macro playback) is already in flight in this window, the run is skipped.
  *
@@ -40,6 +43,7 @@ import type { Workflow, WorkflowParameter } from "@/types/workflow";
 import type { Automation } from "@/types/generated/Automation";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
+import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
 
 import type { AppState } from "./appStore";
 import { collectLiveTabs } from "./layoutHelpers";
@@ -53,7 +57,9 @@ import {
   type FanoutOutcome,
 } from "./slices/workflowFanout";
 import { newMacroRunId } from "./slices/macroRunHistory";
+import { automationForRun } from "./slices/automationStoreState";
 import { automationToWorkflow, isMacroShaped } from "./slices/automationViews";
+import { currentSettingsView } from "./settingsBridge";
 import {
   closeRunTabs,
   connectedIds,
@@ -276,19 +282,36 @@ function withSkippedTargets(report: WindowRunReport, skipped: readonly string[])
   return { ...report, message };
 }
 
-/** Run the fire's action on `tabIds` in this window. */
-async function runAction(
+/**
+ * The automation the fire runs, or the reason it must not run at all. Checked
+ * before anything is connected or typed.
+ */
+async function resolveAction(
   fire: ScheduleFire,
-  tabIds: string[],
   store: ScheduledRunStore
-): Promise<WindowRunReport> {
+): Promise<{ automation: Automation } | { refused: string }> {
   const automation = await store.getState().fetchAutomationForRun(fire.action.automationId);
   // An action whose legacy id is not resolved yet (`legacySource`) must never
   // run an automation of the other kind that happens to have the same id.
   const { legacySource } = fire.action;
   if (!automation || (legacySource && automation.legacy?.from !== legacySource)) {
-    return skip("The automation no longer exists");
+    return { refused: "The automation no longer exists" };
   }
+  const blocked = scheduleBlockedReason(
+    automation,
+    (id) => automationForRun(store.getState(), id),
+    currentSettingsView().experimentalFeaturesEnabled === true
+  );
+  return blocked ? { refused: blocked } : { automation };
+}
+
+/** Run the fire's automation on `tabIds` in this window. */
+async function runAction(
+  fire: ScheduleFire,
+  automation: Automation,
+  tabIds: string[],
+  store: ScheduledRunStore
+): Promise<WindowRunReport> {
   if (isMacroShaped(automation)) return await runScheduledMacro(automation, tabIds, store);
   return await runScheduledWorkflow(fire, automationToWorkflow(automation), tabIds, store);
 }
@@ -308,8 +331,16 @@ export async function executeScheduledRun(
   try {
     const connectionIds = resolveTargetConnectionIds(fire.targets, currentBroadcastGroups());
     if (connectionIds === null) return skip("The broadcast group no longer exists");
+    const action = await resolveAction(fire, store);
+    if ("refused" in action) return skip(action.refused);
+    const { automation } = action;
     if (!options.connectMissing) {
-      return await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
+      return await runAction(
+        fire,
+        automation,
+        targetTabIds(store.getState(), connectionIds),
+        store
+      );
     }
     const elsewhere = new Set(options.connectedElsewhere ? await options.connectedElsewhere() : []);
     const connected = await connectMissingTargets(
@@ -320,7 +351,12 @@ export async function executeScheduledRun(
     );
     closeRunTabs(store.getState, connected.abandoned, false);
     try {
-      const report = await runAction(fire, targetTabIds(store.getState(), connectionIds), store);
+      const report = await runAction(
+        fire,
+        automation,
+        targetTabIds(store.getState(), connectionIds),
+        store
+      );
       return withSkippedTargets(report, connected.skipped);
     } finally {
       // Tabs the run opened close whatever its outcome (#3527).

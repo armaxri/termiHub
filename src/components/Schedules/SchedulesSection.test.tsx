@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
+import { SCHEDULE_LOCAL_PROCESS_REASON } from "@/utils/scheduleLocalProcessGate";
 import { useAppStore } from "@/store/appStore";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { withTooltip } from "@/test/tooltip";
@@ -320,6 +321,20 @@ describe("SchedulesSection (PROD-043)", () => {
     act(() => query("schedule-attempts-toggle-s1")!.click());
     expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("1 run in history");
     expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("mrun-1");
+  });
+
+  it("says why a schedule of a local-process automation will not run (#5818)", async () => {
+    await render([view({})]);
+    expect(query("schedule-blocked-s1")).toBeNull();
+    act(() => {
+      useAppStore.setState((state) => ({
+        automations: state.automations.map((x) => ({
+          ...x,
+          steps: [{ kind: "run-local-process" as const, program: "make", args: [] }],
+        })),
+      }));
+    });
+    expect(query("schedule-blocked-s1")!.textContent).toBe(SCHEDULE_LOCAL_PROCESS_REASON);
   });
 
   it("offers no attempts toggle before the first attempt", async () => {
