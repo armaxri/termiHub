@@ -2043,6 +2043,26 @@ Windows uses the OS-enforced Hello key wherever Hello key credentials are set up
 detect a newly enrolled finger. Linux has no biometric unlock (polkit export only,
 [#3535](https://github.com/armaxri/termiHub/issues/3535)).
 
+#### Automation runs
+
+Automations (#5818) run on the workflow engine, `src/services/workflowRunner.ts`; there is no
+second scheduler. The runner executes the two automation-only step kinds next to every workflow
+step:
+
+- **`type-keys`** types its recorded chunks byte for byte through the `send` seam, which is the
+  same `send_input` injector macro playback uses. It adds no newline and does no `${param}`
+  substitution. The chunks are scheduled by `runMacroPlayback` with the step's saved timing
+  (`recorded`, `fixed` or `instant`). Delays sleep through the runner's `wait` seam, so tests
+  drive them with a fake clock. Agent-hosted and remote sessions need no protocol change.
+- **`run-automation`** runs another automation's steps inline on the same target. The chain of
+  automation ids is passed down the call stack: a call back into the chain fails with the path
+  (`"A" → "B" → "A"`), and nesting is capped at `MAX_AUTOMATION_DEPTH` (10).
+
+`src/services/automationRunner.ts` adds two things. `runAutomation` checks for cycles before any
+step runs, so a cyclic automation types nothing. `runAutomationOnTargets` runs one automation on
+several terminals as independent runs, at most 8 at once or one after another. This replaces the
+lock-step macro fan-out. The UI switches to these entry points in a later slice.
+
 #### Scheduled workflows and macros
 
 Scheduled runs (PROD-043, `src-tauri/src/schedules/`) are **backend-timed, frontend-executed**.
