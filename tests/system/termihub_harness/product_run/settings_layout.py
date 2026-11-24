@@ -46,7 +46,24 @@ HINTS: dict[str, tuple[str, ...]] = {
         "settings-font-size-hint",
         "settings-line-height-hint",
     ),
-    "terminal": ("settings-scrollback-buffer-hint",),
+    # General and Terminal hints moved behind the "?" by #5846 / #5900.
+    "general": (
+        "settings-default-x11-forwarding-hint",
+        "settings-file-browser-hint",
+        "settings-file-log-level-hint",
+        "settings-copy-debug-info-hint",
+    ),
+    "terminal": (
+        "settings-scrollback-buffer-hint",
+        "settings-line-ending-hint",
+        "settings-right-click-behavior-hint",
+        "settings-terminal-inline-images-hint",
+        "settings-terminal-combine-emoji-hint",
+        "settings-ask-open-saved-file-in-tab-hint",
+        "settings-terminal-command-decorations-hint",
+        "settings-default-shell-integration-hint",
+    ),
+    "updates": ("update-auto-check-hint",),
     "sessions": (
         "settings-restore-last-session-mode-hint",
         "settings-session-history-enabled-hint",

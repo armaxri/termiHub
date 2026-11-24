@@ -111,7 +111,10 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("defaultLineEnding") && (
           <SettingsField
             label="Line ending"
-            hint="Sequence sent when pressing Enter and used to normalize line endings in pasted text. Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can be overridden per connection."
+            hint="What Enter sends. Each connection can override it."
+            help="Pasted text is converted to the same line ending, so Windows CRLF does not insert blank lines on Unix shells and serial devices."
+            hintTestId="settings-line-ending-hint"
+            helpTestId="settings-line-ending-help"
           >
             <Select
               data-testid="settings-line-ending"
@@ -129,7 +132,10 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("rightClickBehavior") && (
           <SettingsField
             label="Right-click behavior"
-            hint="Context menu shows the full right-click menu. Quick copy/paste copies selected text or pastes if nothing is selected. Default: Context menu on macOS/Linux, Quick copy/paste on Windows."
+            hint="What a right-click in the terminal does."
+            help="Context menu shows the full right-click menu. Quick copy/paste copies selected text or pastes if nothing is selected. Default: Context menu on macOS and Linux, Quick copy/paste on Windows."
+            hintTestId="settings-right-click-behavior-hint"
+            helpTestId="settings-right-click-behavior-help"
           >
             <Select
               data-testid="settings-right-click-behavior"
@@ -150,7 +156,10 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("terminalInlineImages") && (
           <SettingsField
             label="Inline images"
-            hint="Render images sent by the shell (SIXEL and the iTerm2 inline image protocol, e.g. img2sixel, imgcat). Oversized images are dropped and each terminal's image memory is capped; images are not kept across reconnects."
+            hint="Show images that programs like imgcat print in the terminal."
+            help="Supports SIXEL and the iTerm2 inline image protocol (img2sixel, imgcat). Oversized images are dropped and each terminal's image memory is capped; images are not kept across reconnects."
+            hintTestId="settings-terminal-inline-images-hint"
+            helpTestId="settings-terminal-inline-images-help"
           >
             <Toggle
               data-testid="settings-terminal-inline-images"
@@ -164,7 +173,10 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("combineEmoji") && (
           <SettingsField
             label="Combine emoji (experimental)"
-            hint="Show emoji sequences (families, skin tones, flags) as one double-width glyph. Some shells count the parts separately, which can make the cursor drift on lines with such emoji. Applies to new output."
+            hint="One emoji for families, skin tones and flags. May make the cursor drift."
+            help="Some shells count the parts of such an emoji separately, which can make the cursor drift on lines that contain one. Applies to new output."
+            hintTestId="settings-terminal-combine-emoji-hint"
+            helpTestId="settings-terminal-combine-emoji-help"
           >
             <Toggle
               data-testid="settings-terminal-combine-emoji"
@@ -176,7 +188,10 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         {show("askOpenSavedFileInTab") && (
           <SettingsField
             label="Open saved file in tab"
-            hint="After saving terminal content to a file, ask whether to open it in an editor tab. When off, files are saved without prompting and are not opened."
+            hint="After saving terminal output to a file, offer to open it in a tab."
+            help="When off, the file is saved without asking and is not opened."
+            hintTestId="settings-ask-open-saved-file-in-tab-hint"
+            helpTestId="settings-ask-open-saved-file-in-tab-help"
           >
             <Toggle
               checked={settings.askOpenSavedFileInTab ?? true}
@@ -200,6 +215,13 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
   );
 }
 
+/** The command-marks hint in plain words (#5846): no protocol names. */
+const COMMAND_MARKS_HINT = "Works with bash, zsh, fish and PowerShell once the shell hook is on.";
+
+/** The details behind the "?" — the protocol name lives only here (#5846). */
+const COMMAND_MARKS_HELP =
+  "A thin mark beside each finished command's prompt: green means the command succeeded, red that it failed. The shell must report its commands (OSC 133); termiHub's shell hook does that for local, SSH and WSL shells.";
+
 interface CommandMarksSettingsProps {
   settings: AppSettings;
   onChange: (settings: AppSettings) => void;
@@ -218,7 +240,10 @@ function CommandMarksSettings({ settings, onChange, show }: CommandMarksSettings
       {show("terminalCommandDecorations") && (
         <SettingsField
           label="Show command marks"
-          hint="Show a thin green (success) or red (failure) mark next to each finished command's prompt. Needs a shell that reports its commands (OSC 133); the shell hook below makes local, SSH and WSL shells do that."
+          hint={COMMAND_MARKS_HINT}
+          help={COMMAND_MARKS_HELP}
+          hintTestId="settings-terminal-command-decorations-hint"
+          helpTestId="settings-terminal-command-decorations-help"
         >
           <Toggle
             data-testid="settings-terminal-command-decorations"
@@ -233,7 +258,10 @@ function CommandMarksSettings({ settings, onChange, show }: CommandMarksSettings
         <div className="settings-panel__nested">
           <SettingsField
             label="Add shell hook to new sessions automatically"
-            hint="Turns the shell hook on for new local, SSH and WSL connections, so each command gets a mark. Off by default because it sends one line of shell code when a session starts. Each connection can still change it."
+            hint="Turn the shell hook on for new local, SSH and WSL connections."
+            help="Off by default because the hook sends one line of shell code when a session starts. Each connection can still turn it on or off."
+            hintTestId="settings-default-shell-integration-hint"
+            helpTestId="settings-default-shell-integration-help"
           >
             <Toggle
               data-testid="settings-default-shell-integration"

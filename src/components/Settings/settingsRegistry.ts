@@ -157,7 +157,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "fileBrowser",
     label: "File browser",
-    description: "Enable the SFTP file browser for SSH agent sessions",
+    description: "Show the file browser for SSH connections",
     category: "general",
     // "advanced" / "external" keep the pre-#5786 home (External files ▸ Advanced) findable.
     keywords: [
@@ -281,7 +281,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "defaultShellIntegration",
     label: "Add shell hook to new sessions automatically",
     description:
-      "Turn the shell hook (OSC 133 command marks) on for new local, SSH and WSL connections",
+      "Turn the shell hook (for command marks) on for new local, SSH and WSL connections",
     category: "terminal",
     keywords: [
       "ssh",
@@ -1161,10 +1161,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "updateAutoCheck",
-    label: "Auto-check for updates",
+    label: "Check for updates automatically",
     description: "Check for app updates on startup and every 24 hours while running",
     category: "updates",
-    keywords: ["update", "updates", "auto-check", "auto check", "automatic", "startup", "release"],
+    keywords: [
+      "update",
+      "updates",
+      // The label before #5846.
+      "auto-check for updates",
+      "auto-check",
+      "auto check",
+      "automatic",
+      "startup",
+      "release",
+    ],
   },
   {
     id: "updateStatus",

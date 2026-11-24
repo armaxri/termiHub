@@ -74,10 +74,14 @@ describe("GeneralSettings — X11 forwarding default (#5555)", () => {
 
   it("explains what turning it on exposes", async () => {
     await renderWith(FRESH);
-    const field = container
-      .querySelector("[data-testid='settings-default-x11-forwarding']")!
-      .closest(".settings-form__field")!;
-    expect(field.textContent).toContain("Off by default");
-    expect(field.textContent).toContain("local X server");
+    // The safety sentence stays visible; the details sit behind the "?" (#5900).
+    const hint = container.querySelector("[data-testid='settings-default-x11-forwarding-hint']");
+    expect(hint?.textContent).toContain("read what you type");
+    const help = container.querySelector<HTMLElement>(
+      "[data-testid='settings-default-x11-forwarding-help']"
+    )!;
+    act(() => help.focus());
+    expect(document.body.textContent).toContain("Off by default");
+    expect(document.body.textContent).toContain("local X server");
   });
 });
