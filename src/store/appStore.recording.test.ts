@@ -252,7 +252,9 @@ describe("the recorded terminal", () => {
       },
     });
     store().followRecordedTerminal();
-    emitSessionViewForTest({ a: { status: "reconnecting" } });
+    emitSessionViewForTest({
+      a: { status: "reconnecting", exit: { code: null, reason: "killed" } },
+    });
     store().followRecordedTerminal();
     emitSessionViewForTest({ a: { status: "connected" } });
     store().followRecordedTerminal();
