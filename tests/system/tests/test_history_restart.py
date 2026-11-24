@@ -11,7 +11,7 @@ asserts the history is shown again, then clears it:
   empties it. Then, with recording turned off in Settings → Sessions, a new ping
   is not recorded.
 * **Macro run history (#3543)** — play a hand-authored macro into a local
-  terminal from the Macros sidebar; the per-macro filter narrows the one
+  terminal from the Automations sidebar; the per-macro filter narrows the one
   Automation history panel (#5818); restart, the playback row is back; Clear history empties it.
 * **HTTP monitor check history (#3462)** — monitor a local stdlib HTTP server
   (the per-monitor "Private network" opt-in allows the loopback target, #4021),
@@ -35,6 +35,7 @@ from typing import Any, Iterator, Optional
 import pytest
 
 from termihub_harness import (
+    AutomationSidebarUi,
     SETTINGS_REGION,
     LocalThreadingHTTPServer,
     NetworkToolsUi,
@@ -92,7 +93,9 @@ def http_target() -> Iterator[int]:
         server.server_close()
 
 
-class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, TabsUi, SystemTest):
+class TestHistoryRestart(
+    AutomationSidebarUi, NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, TabsUi, SystemTest
+):
     """One app; each test records history, restarts the app, and clears it."""
 
     @pytest.fixture(autouse=True)
@@ -182,44 +185,6 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
             what=f"history recording={enabled} saved to settings.json",
         )
 
-    # ── macros ───────────────────────────────────────────────────────────────
-    def _open_macros_sidebar(self) -> None:
-        self._ensure_sidebar("macros", "activity-bar-macros")
-        self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
-
-    def _create_macro(self, name: str, step_text: str) -> str:
-        """Author a one-step macro in the editor dialog; return its id."""
-        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
-        self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
-        self.driver.type("macro-editor-name", name)
-        # A new macro opens pre-seeded with one empty step; only add one if the
-        # form ever starts empty, or a blank second step keeps Save disabled.
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0")
-            or self.driver.exists("macro-editor-no-steps"),
-            what="the macro editor's steps",
-        )
-        if not self.driver.exists("macro-editor-step-data-0"):
-            self.driver.click("macro-editor-add-step")
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0"), what="the first macro step"
-        )
-        assert not self.driver.exists("macro-editor-step-data-1"), "expected a single step"
-        self.driver.type("macro-editor-step-data-0", step_text)
-        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
-        self.driver.click("macro-editor-save")
-        self.wait(
-            lambda: not self.driver.exists("macro-editor-dialog"), what="the macro editor to close"
-        )
-        macro = self.wait(
-            lambda: next(
-                (m for m in self.driver.get_state("macros") or [] if m.get("name") == name),
-                None,
-            ),
-            what=f"the saved macro {name!r}",
-        )
-        return macro["id"]
-
     # ── PROD-032: network tool run history ───────────────────────────────────
     def test_network_tool_run_history_survives_restart(self):
         self.start_ping("127.0.0.1")
@@ -276,12 +241,14 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
     # ── #3543: macro run history ─────────────────────────────────────────────
     def test_macro_run_history_survives_restart(self):
         self.ensure_terminal()
-        self._open_macros_sidebar()
-        played_id = self._create_macro(unique_name("hist-macro"), "echo macro-history\\r")
-        other_id = self._create_macro(unique_name("hist-idle"), "echo idle\\r")
+        self.open_automation_history()
+        played_id = self.create_typed_automation(
+            unique_name("hist-macro"), ["echo macro-history\\r"]
+        )
+        other_id = self.create_typed_automation(unique_name("hist-idle"), ["echo idle\\r"])
 
         # Play into the active local terminal from the sidebar (origin "manual").
-        self.driver.click(f"macro-play-{played_id}")
+        self.run_automation(played_id)
         run = self.wait(
             lambda: next(
                 (
@@ -299,10 +266,10 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
 
         # The per-macro filter narrows the panel: the idle macro has no playbacks,
         # the played one shows its row; "Show all" drops the filter.
-        self.driver.click(f"macro-history-{other_id}")
+        self.automation_menu(other_id, "history")
         self.wait(lambda: self.driver.exists("automation-history-show-all"), what="the macro filter")
         self.wait(lambda: self.driver.exists("automation-history-empty"), what="an empty filtered list")
-        self.driver.click(f"macro-history-{played_id}")
+        self.automation_menu(played_id, "history")
         self.wait(
             lambda: self.driver.exists(f"automation-run-{run_id}"), what="the filtered playback row"
         )
@@ -318,7 +285,7 @@ class TestHistoryRestart(NetworkToolsUi, TerminalUi, SidebarUi, SettingsUi, Tabs
         self.close_all_tabs()
         self.restart_app()
 
-        self._open_macros_sidebar()
+        self.open_automation_history()
         self.wait(
             lambda: self.driver.exists(f"automation-run-{run_id}"), what="the playback row after restart"
         )

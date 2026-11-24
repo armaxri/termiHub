@@ -818,7 +818,7 @@ class TestProductRunSettingsThemes(
             expect="Settings ▸ Schedules: one title, a Pause all switch, and a New schedule button",
         ):
             self.open_settings_category("schedules")
-            self.wait(lambda: self.driver.exists("schedules-section"), what="the schedules list")
+            self.wait(lambda: self.driver.exists("schedules-settings"), what="the schedules list")
             empty = self.driver.exists("schedules-empty")
             create = "schedules-empty-new-btn" if empty else "schedules-new-btn"
             has_create = self.driver.exists(create)

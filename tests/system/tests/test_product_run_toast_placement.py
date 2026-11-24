@@ -254,7 +254,6 @@ class TestProductRunToastPlacement(
         ):
             # A workflow run raises no toast since #5859, so the stale toast is
             # the tab-close undo, which still toasts.
-            self.enable_experimental_features()
             self.switch_to_connections_sidebar()
             before = self.tab_ids()
             self.open_new_terminal()
@@ -264,7 +263,7 @@ class TestProductRunToastPlacement(
                 lambda: any(i["text"].startswith("Closed") for i in self._toast_items()) or None,
                 what="the 'Closed' toast",
             )
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.open_new_workflow()
             try:
                 self.wait(

@@ -1,7 +1,7 @@
-"""End-to-end coverage for the Workflow Automation feature (#1851).
+"""End-to-end coverage for step-by-step automations (#1851, #5818).
 
 Drives the real app over the bridge through the whole authoring + run journey:
-reveal the Workflows panel, author a workflow in the editor dialog (add every
+show the Automations sidebar, author a workflow in the step editor (add every
 step kind through the "Add step…" menu, edit a field, reorder, remove), confirm
 the manual trigger, save it, then run a `send-command` workflow against a live
 local-shell session and assert the command actually reaches the terminal.
@@ -13,8 +13,8 @@ item that renders-but-does-nothing fails here. The run-macro step's Macro
 select is the same kind of portalled listbox inside the modal;
 :meth:`WorkflowUi.pick_macro` clicks an option in the real webview (#4012).
 
-The Workflows activity-bar item is experimental-gated (re-gated as experimental
-on develop), so every suite enables experimental features before opening it.
+Automations need no experimental switch (#5818); only the "Run local process"
+step does.
 """
 
 import pytest
@@ -46,15 +46,12 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         self.dismiss_modals(*WORKFLOW_MODALS)
 
     def test_panel_opens(self):
-        # The Workflows panel is experimental-gated, so reveal it first, then
-        # open it from the activity bar.
-        self.enable_experimental_features()
-        self.open_workflows_sidebar()
-        assert self.driver.exists("workflow-sidebar")
-        assert self.driver.get_state("sidebarView") == "workflows"
+        # Graduated with the Automations merge (#5818): no experimental switch.
+        self.show_automations()
+        assert self.driver.exists("automation-sidebar")
+        assert self.driver.get_state("sidebarView") == "automations"
 
     def test_new_workflow_opens_empty_editor(self):
-        self.open_workflows_sidebar()
         self.open_new_workflow()
         assert self.editor_open()
         assert self.step_count() == 0
@@ -67,6 +64,8 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
     def test_add_step_menu_adds_every_kind(self):
         # The #1868 surface: each kind must be genuinely clickable in the real
         # app, not merely present. add_step asserts the count actually grows.
+        # "Run local process" is the one kind still behind the switch (#5818).
+        self.enable_experimental_features()
         self.open_new_workflow()
         for index, kind in enumerate(STEP_KINDS):
             self.add_step(kind)
@@ -122,7 +121,7 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         saved = self.find_workflow(name)
         assert saved is not None
         assert len(saved["steps"]) == 1
-        assert self.driver.exists(f"workflow-item-{saved['id']}")
+        assert self.driver.exists(f"automation-item-{saved['id']}")
 
 
 class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest):
@@ -137,9 +136,6 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         name = unique_name("wf-run")
         marker = unique_name("WF_MARK").replace("-", "_")
 
-        # The Workflows panel is experimental-gated — reveal it first.
-        self.enable_experimental_features()
-        self.open_workflows_sidebar()
         self.open_new_workflow()
         self.add_step("send-command")
         self.set_command(0, f"echo {marker}")
@@ -160,7 +156,6 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         first = unique_name("WF_A").replace("-", "_")
         second = unique_name("WF_B").replace("-", "_")
 
-        self.open_workflows_sidebar()
         self.open_new_workflow()
         self.add_step("run-script")
         self.set_script(0, f"echo {first}\necho {second}")
@@ -183,8 +178,6 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         macro_id = self._create_macro(macro_name, f"echo {marker}\\r")
 
         name = unique_name("wf-pick")
-        self.enable_experimental_features()
-        self.open_workflows_sidebar()
         self.open_new_workflow()
         self.add_step("run-macro")
         self.pick_macro(0, macro_id, macro_name)
@@ -203,37 +196,5 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         assert marker in self.wait_for_output(marker)
 
     def _create_macro(self, name: str, step_text: str) -> str:
-        """Author a one-step macro in the Macros sidebar; return its id."""
-        self._ensure_sidebar("macros", "activity-bar-macros")
-        self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
-        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
-        self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
-        self.driver.type("macro-editor-name", name)
-        # A new macro opens pre-seeded with one empty step; only add one if the
-        # form ever starts empty, or a blank second step keeps Save disabled
-        # (the same harness bug test_history_restart hit, #4017).
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0")
-            or self.driver.exists("macro-editor-no-steps"),
-            what="the macro editor's steps",
-        )
-        if not self.driver.exists("macro-editor-step-data-0"):
-            self.driver.click("macro-editor-add-step")
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0"), what="the first macro step"
-        )
-        assert not self.driver.exists("macro-editor-step-data-1"), "expected a single step"
-        self.driver.type("macro-editor-step-data-0", step_text)
-        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
-        self.driver.click("macro-editor-save")
-        self.wait(
-            lambda: not self.driver.exists("macro-editor-dialog"), what="the macro editor to close"
-        )
-        macro = self.wait(
-            lambda: next(
-                (m for m in self.driver.get_state("macros") or [] if m.get("name") == name),
-                None,
-            ),
-            what=f"the saved macro {name!r}",
-        )
-        return macro["id"]
+        """Write a one-step automation in the Automations sidebar; return its id."""
+        return self.create_typed_automation(name, [step_text])

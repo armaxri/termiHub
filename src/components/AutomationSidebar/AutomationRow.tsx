@@ -232,7 +232,7 @@ export function AutomationRow({
         size="sm"
         iconOnly
         aria-label={tf(runTarget ? "automation.run.label" : "automation.run.labelPick", { name })}
-        data-testid={`automation-run-${id}`}
+        data-testid={`automation-start-${id}`}
         icon={<Play size={12} />}
         onClick={(e) => {
           e.stopPropagation();
@@ -273,6 +273,7 @@ export function AutomationRow({
             </>
           }
           moreActionsLabel={tf("automation.more.label", { name })}
+          moreActionsTestId={`automation-more-group-${id}`}
           actions={
             <>
               <Tooltip content="Edit" side="top">

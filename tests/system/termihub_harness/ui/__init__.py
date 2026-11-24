@@ -29,7 +29,8 @@ Mixin → concern:
 - :class:`NetworkToolsUi`    — the Network Tools sidebar + diagnostic panels
 - :class:`PluginsUi`         — seed a frontend plugin on disk + the frontend gate
 - :class:`AgentUi`           — remote-agent create / connect / error dialog / setup
-- :class:`WorkflowUi`        — workflow-automation editor + sidebar (author / run)
+- :class:`AutomationSidebarUi` — the Automations sidebar (find / create / run / row menu / sections)
+- :class:`WorkflowUi`        — the step-by-step automation editor (author / run)
 - :class:`RemoteDesktopUi`   — VNC/RDP tab: create, overlays, resolution, canvas pixels
 - :class:`WindowsUi`         — multi-window: open / move a tab into / close a native window
 - :class:`OsInputUi`         — real OS keys / clicks / drags aimed at the test instance's PID
@@ -78,6 +79,7 @@ from .ssh import SshUi
 from .tabs import TabsUi
 from .terminal import TerminalUi
 from .windows import WindowsUi
+from .automation_sidebar import AutomationSidebarUi
 from .workflow import WorkflowUi
 
 __all__ = [
@@ -107,6 +109,7 @@ __all__ = [
     "RemoteDesktopUi",
     "EmbeddedServicesUi",
     "ShellFsUi",
+    "AutomationSidebarUi",
     "WorkflowUi",
     "WindowsUi",
     "connections",

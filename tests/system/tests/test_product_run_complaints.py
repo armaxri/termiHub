@@ -173,39 +173,11 @@ class TestProductRunComplaints(
         counts = STEP_COUNT.findall(measured["text"])
         assert not counts, f"{where}: shows a step count {counts} in {measured['text']!r}"
 
-    def _show_macros(self) -> None:
-        """Show the Macros sidebar (clicking its active icon would close it)."""
-        showing = self.driver.get_state("sidebarView") == "macros" and not self.driver.get_state(
-            "sidebarCollapsed"
-        )
-        if not showing:
-            self.driver.click("activity-bar-macros")
-        self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
-
     def _create_macro(self, name: str, steps: list[str]) -> str:
-        self.enable_experimental_features()
-        self._show_macros()
-        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
-        self.wait(lambda: self.driver.exists("macro-editor-dialog"), what="the macro editor")
-        self.driver.type("macro-editor-name", name)
-        for index, data in enumerate(steps):
-            field = f"macro-editor-step-data-{index}"
-            if not self.driver.exists(field):
-                self.driver.click("macro-editor-add-step")
-                self.wait(lambda f=field: self.driver.exists(f), what=f"macro step {index}")
-            self.driver.type(field, data)
-        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
-        self.driver.click("macro-editor-save")
-        self.wait(lambda: not self.driver.exists("macro-editor-dialog"), what="the editor to close")
-        macro = self.wait(
-            lambda: next((m for m in self.driver.get_state("macros") or [] if m.get("name") == name), None),
-            what=f"the saved macro {name!r}",
-        )
-        return macro["id"]
+        return self.create_typed_automation(name, steps)
 
     def _create_workflow(self, name: str, commands: list[str]) -> str:
-        self.enable_experimental_features()
-        self.open_workflows_sidebar()
+        self.show_automations()
         self.open_new_workflow()
         for index, command in enumerate(commands):
             self.add_step("send-command")
@@ -221,7 +193,7 @@ class TestProductRunComplaints(
         with self.step(
             "complaints.automations.create",
             "A macro and a workflow with three steps each are saved",
-            expect="the Workflows sidebar listing the new three-step workflow",
+            expect="the Automations sidebar listing the new three-step workflow",
         ):
             ids["macro"] = self._create_macro(
                 macro_name, [f"echo PR_MACRO_{i}_{tag}\\r" for i in range(1, 4)]
@@ -238,12 +210,12 @@ class TestProductRunComplaints(
             screenshot=False,
         ):
             self.require("complaints.automations.create")
-            self.open_workflows_sidebar()
-            self._row_grade(f"workflow-item-{ids['workflow']}", workflow_name, "workflow row")
+            self.show_automations()
+            self._row_grade(f"automation-item-{ids['workflow']}", workflow_name, "workflow row")
             self.shot(label="workflows")
-            self._show_macros()
-            self.wait(lambda: self.driver.exists(f"macro-item-{ids['macro']}"), what="the macro row")
-            self._row_grade(f"macro-item-{ids['macro']}", macro_name, "macro row")
+            self.show_automations()
+            self.wait(lambda: self.driver.exists(f"automation-item-{ids['macro']}"), what="the macro row")
+            self._row_grade(f"automation-item-{ids['macro']}", macro_name, "macro row")
             self.shot(label="macros")
         with self.step(
             "complaints.automations.history",
@@ -254,18 +226,16 @@ class TestProductRunComplaints(
         ):
             self.require("complaints.automations.create")
             self.ensure_terminal()
-            self._show_macros()
-            self.wait(lambda: self.driver.exists(f"macro-play-{ids['macro']}"), what="Play")
-            self.driver.click(f"macro-play-{ids['macro']}")
+            self.run_automation(ids["macro"])
             self.wait_for_output(f"PR_MACRO_3_{tag}")
-            # One Automation history in both sidebars since #5818 (slice 9).
-            self.driver.click(f"macro-history-{ids['macro']}")
+            # One Automation history since #5818 (slice 9), narrowed from the row.
+            self.automation_menu(ids['macro'], "history")
             self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
             self._row_grade("automation-history-list", macro_name, "macro history")
             self.shot(label="macro-history")
-            self.open_workflows_sidebar()
             self.run_workflow(ids["workflow"])
             self.wait_for_output(f"PR_WF_3_{tag}")
+            self.automation_menu(ids["workflow"], "history")
             self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
             self._row_grade("automation-history-list", workflow_name, "workflow history")
             self.shot(label="workflow-history")
@@ -759,7 +729,7 @@ class TestProductRunComplaints(
         ):
             workflow = self._create_workflow(f"Toast clear {tag}", [f"echo PR_TOAST_DLG_{tag}"])
             self.ensure_terminal()
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.run_workflow(workflow)
             self.wait_for_output(f"PR_TOAST_DLG_{tag}")
             # Since #5859 a run raises no success toast; none may show either way.
@@ -795,7 +765,7 @@ class TestProductRunComplaints(
             first = self._create_workflow(f"Run once {tag}", [f"echo PR_RUN_A_{tag}"])
             second = self._create_workflow(f"Run twice {tag}", [f"echo PR_RUN_B_{tag}"])
             self.ensure_terminal()
-            self.open_workflows_sidebar()
+            self.show_automations()
             for workflow, marker in ((first, "A"), (second, "B"), (first, "A")):
                 needle = f"PR_RUN_{marker}_{tag}"
                 seen = self.driver.read_terminal().count(needle)
@@ -849,8 +819,7 @@ class TestProductRunComplaints(
             tab = next(t for t in self.tab_ids() if t not in before)
             self.close_tab(tab)
             self.wait(lambda: self._toast_titles("Closed") or None, what="the 'Closed' toast")
-            self.enable_experimental_features()
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.open_new_workflow()
             try:
                 deadline = time.monotonic() + 3.0

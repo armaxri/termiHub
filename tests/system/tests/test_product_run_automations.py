@@ -95,7 +95,6 @@ class TestProductRunAutomations(
             "Run targets: a saved local-shell connection and an SSH session on the run's sshd",
             expect="two terminal tabs: a local shell and an SSH session, both at a prompt",
         ):
-            self.enable_experimental_features()
             local = f"pr-auto-local-{self.tag}"
             self.switch_to_connections_sidebar()
             self.create_local_connection(local, connect=True)
@@ -135,8 +134,8 @@ class TestProductRunAutomations(
         name = f"Release check {t}"
         with self.step(
             "automations.macro.create",
-            "A three-step macro is saved from the Macros sidebar",
-            expect="the Macros sidebar with the new macro row, its name first",
+            "A three-step macro is saved from the Automations sidebar",
+            expect="the Automations sidebar with the new macro row, its name first",
         ):
             self.ids["macro"] = self.create_macro(name, self._macro_steps())
             steps = [s.get("data") for s in (self.macro(self.ids["macro"]) or {}).get("steps", [])]
@@ -145,7 +144,7 @@ class TestProductRunAutomations(
         with self.step(
             "automations.macro.edit",
             "Editing the macro's first step saves the new text",
-            expect="the Macros sidebar after the edit, the macro row unchanged in place",
+            expect="the Automations sidebar after the edit, the macro row unchanged in place",
         ):
             self.require("automations.macro.create")
             self.edit_macro_step(self.ids["macro"], 0, f"echo PR_MACRO_EDITED_{t}\\r")
@@ -183,7 +182,7 @@ class TestProductRunAutomations(
         with self.step(
             "automations.workflow.create",
             "A workflow with a wait and a wait-for-output step is saved",
-            expect="the Workflows sidebar listing the new workflow by name",
+            expect="the Automations sidebar listing the new workflow by name",
         ):
             self.author_workflow(name, [
                 ("send-command", {"step-command": f"echo PR_WF_START_{t}"}),
@@ -202,7 +201,7 @@ class TestProductRunAutomations(
         with self.step(
             "automations.workflow.edit",
             "Editing the wait step's delay saves the new value",
-            expect="the Workflows sidebar after the edit; the edited workflow's row is tinted "
+            expect="the Automations sidebar after the edit; the edited workflow's row is tinted "
             "with an accent bar on its leading edge (#5687, it fades after about 3 s)",
         ):
             self.require("automations.workflow.create")
@@ -216,13 +215,13 @@ class TestProductRunAutomations(
         with self.step(
             "automations.workflow.run-on",
             "Run on… both terminals: each runs every step, waits, and records a completed run",
-            expect="the Workflows sidebar with two completed runs in History; both terminals "
+            expect="the Automations sidebar with two completed runs in History; both terminals "
             "show START, READY_42 and DONE",
         ):
             self.require("automations.workflow.edit", "automations.targets")
             wid = self.ids["workflow"]
             before = len(self.workflow_runs(wid))
-            self.run_workflow_on(wid, [self.tabs["local"], self.tabs["ssh"]])
+            self.run_automation_on(wid, [self.tabs["local"], self.tabs["ssh"]])
             runs = self.wait(
                 lambda: (lambda r: r if len(r) >= before + 2 else None)(self.workflow_runs(wid)),
                 timeout=60.0, what="two finished workflow runs",
@@ -245,7 +244,7 @@ class TestProductRunAutomations(
                          text.rfind(f"PR_WF_DONE_{t}\n")]
                 self.evidence(f"{target}: positions {spots}")
                 assert -1 not in spots and spots == sorted(spots), f"{target}: steps out of order"
-            self.open_workflows_sidebar()
+            self.show_automations()
 
     def test_30_output_match_trigger(self):
         t = self.tag
@@ -283,9 +282,9 @@ class TestProductRunAutomations(
         with self.step(
             "automations.history",
             "The one automation history lists the macro's and the workflows' runs",
-            expect="the Macros sidebar with the History narrowed to the macro: its completed "
-            "runs, each row the name, a green dot and the time; the Workflows sidebar shows the "
-            "same History with every automation's runs (#5818)",
+            expect="the Automations sidebar with the History narrowed to one automation: its "
+            "completed runs, each row the name, a green dot and the time; then every "
+            "automation's runs (#5818)",
             screenshot=False,
         ):
             self.require("automations.macro.play.local")
@@ -293,19 +292,22 @@ class TestProductRunAutomations(
             self.evidence("macro runs: " + "; ".join(
                 f"{r['status']} {r.get('origin')} {r.get('targetLabels')}" for r in runs))
             assert len(runs) >= 2 and all(r["status"] == "completed" for r in runs), runs
-            self.show_macros()
-            self.driver.click(f"macro-history-{self.ids['macro']}")
+            self.show_automations()
+            self.automation_menu(self.ids['macro'], "history")
             self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
             shown = self.driver.get_text("automation-history-list")
             self.evidence(f"macro history text: {shown[:200]!r}")
             assert "Release check" in shown, "the history does not name the macro"
-            self.shot(label="macros")
-            self.open_workflows_sidebar()
-            self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            self.shot(label="filtered")
+            self.driver.click("automation-history-show-all")
+            self.wait(
+                lambda: not self.driver.exists("automation-history-show-all"),
+                what="the filter to clear",
+            )
             shown = self.driver.get_text("automation-history-list")
-            self.evidence(f"workflow history text: {shown[:200]!r}")
+            self.evidence(f"whole history text: {shown[:200]!r}")
             assert "Deploy smoke" in shown and "Answer on match" in shown, shown
-            self.shot(label="workflows")
+            self.shot(label="all")
 
     def test_45_workflow_rows(self):
         """Workflow rows show the name and armed state; trigger and target in the tooltip.
@@ -319,32 +321,32 @@ class TestProductRunAutomations(
             "automations.workflow.rows",
             "Workflow rows show names and the armed state; trigger and target are in the "
             "tooltip; history names each run's terminal",
-            expect="the Workflows sidebar: 'Deploy smoke' shows only its name (and its "
+            expect="the Automations sidebar: 'Deploy smoke' shows only its name (and its "
             "description once edited); 'Answer on match' shows its name and an 'Armed' marker "
             "with its switch, no 'On output match' text on the row; the two Deploy smoke "
             "history rows name different terminals (#5635, #5757)",
         ):
             self.require("automations.workflow.run-on", "automations.trigger.output-match")
-            self.open_workflows_sidebar()
+            self.open_automation_history()
             manual = self.ids["workflow"]
             armed = self.workflow_id(f"Answer on match {t}")
-            self.wait(lambda: self.driver.exists(f"workflow-armed-{armed}"),
+            self.wait(lambda: self.driver.exists(f"automation-armed-{armed}"),
                       what="the armed workflow's marker")
             for wid in (manual, armed):
-                row = f"workflow-item-{wid}"
+                row = f"automation-item-{wid}"
                 data = self.workflow(wid) or {}
-                marker = (self.driver.get_text(f"workflow-armed-{wid}")
-                          if self.driver.exists(f"workflow-armed-{wid}") else "")
+                marker = (self.driver.get_text(f"automation-armed-{wid}")
+                          if self.driver.exists(f"automation-armed-{wid}") else "")
                 text = self.row_text(row)
                 tip = self.row_tooltip(row)
                 left = row_leftover_text(text, [data.get("name", ""),
                                                 data.get("description") or "", marker])
                 self.evidence(f"{data.get('name')!r}: row {text!r}; tooltip {tip!r}")
                 assert left == "", f"settings text on the workflow row: {left!r}"
-            manual_tip = self.row_tooltip(f"workflow-item-{manual}")
-            armed_tip = self.row_tooltip(f"workflow-item-{armed}")
+            manual_tip = self.row_tooltip(f"automation-item-{manual}")
+            armed_tip = self.row_tooltip(f"automation-item-{armed}")
             assert manual_tip.startswith("Manual"), f"manual workflow tooltip: {manual_tip!r}"
-            assert not self.driver.exists(f"workflow-armed-{manual}"), "a manual workflow is marked armed"
+            assert not self.driver.exists(f"automation-armed-{manual}"), "a manual workflow is marked armed"
             assert armed_tip.startswith("On output match"), f"trigger missing: {armed_tip!r}"
             assert f"pr-auto-local-{t}" in armed_tip, f"watched connection missing: {armed_tip!r}"
             assert "step" not in armed_tip.lower(), f"step count in the tooltip: {armed_tip!r}"
@@ -404,7 +406,7 @@ class TestProductRunAutomations(
             screenshot=False,
         ):
             self.require("automations.macro.edit", "automations.targets")
-            sid = self.schedule_macro(self.ids["macro"], f"Every minute {t}", self.ids["local_conn"])
+            sid = self.schedule_automation(self.ids["macro"], f"Every minute {t}", self.ids["local_conn"])
             self.ids["schedule"] = sid
             tab = self.tabs["local"]
             before = _count(self.driver.read_terminal(tab), f"PR_MACRO_3_{t}")
@@ -484,21 +486,21 @@ class TestProductRunAutomations(
             "automations.macro.row-actions",
             "A macro row offers Play without a hover, and the history header labels and "
             "separates its actions",
-            expect="the Macros sidebar at rest: the macro row's Play button visible after its "
+            expect="the Automations sidebar at rest: the macro row's Play button visible after its "
             "name; the History filtered to the macro, the filter select and its × on their own "
             "row below the header, and a labelled 'Clear…' action in the header (#5636, #5818)",
             screenshot=False,
         ):
             self.require("automations.macro.create")
             mid = self.ids["macro"]
-            self.show_macros()
+            self.show_automations()
             self.driver.force_hover(None)
-            row = self.driver.get_attribute(f"macro-item-{mid}", "class") or ""
+            row = self.driver.get_attribute(f"automation-item-{mid}", "class") or ""
             self.evidence(f"row classes: {row}")
             assert "sidebar-list-item--actions-visible" in row, f"Play hides behind hover: {row}"
-            name = self.driver.measure_element(f"macro-name-{mid}")["rect"]
-            play = self.driver.measure_element(f"macro-play-{mid}")["rect"]
-            more = self.driver.measure_element(f"macro-more-{mid}")["rect"]
+            name = self.driver.measure_element(f"automation-name-{mid}")["rect"]
+            play = self.driver.measure_element(f"automation-start-{mid}")["rect"]
+            more = self.driver.measure_element(f"automation-more-group-{mid}")["rect"]
             self.evidence(f"name {name}, play {play}, more {more}")
             assert play["width"] > 0 and play["height"] > 0, "the Play button is not laid out"
             assert play["x"] >= name["x"] + name["width"] - 1, f"Play {play} leads the name {name}"
@@ -506,12 +508,12 @@ class TestProductRunAutomations(
                 "width"
             ]
             assert not inside_more, "Play sits in the hover-revealed group"
-            assert self.driver.get_computed_style("opacity", f"macro-more-{mid}") == "0", (
+            assert self.driver.get_computed_style("opacity", f"automation-more-group-{mid}") == "0", (
                 "the secondary actions show at rest and crowd the name"
             )
             self.shot(label="row")
 
-            self.driver.click(f"macro-history-{mid}")
+            self.automation_menu(mid, "history")
             self.wait(
                 lambda: self.driver.exists("automation-history-show-all"), what="the macro filter"
             )
@@ -553,10 +555,7 @@ class TestProductRunAutomations(
             self.require("automations.workflow.create")
             self.driver.resize_window(800, 600)
             try:
-                self.open_workflows_sidebar()
-                self.driver.click(f"workflow-edit-{self.ids['workflow']}")
-                self.wait(lambda: self.driver.exists("workflow-editor-dialog"),
-                          what="the workflow editor")
+                self.edit_automation(self.ids["workflow"], "workflow-editor-dialog")
                 self._grade_workflow_editor_layout()
                 # The step's capture, at 800x600 with the editor open: the
                 # cancel below closes it (#5857).
@@ -614,15 +613,14 @@ class TestProductRunAutomations(
             "automations.macro.row-polish",
             "A macro row shows its name; what it types and its last run are in the tooltip; "
             "the toolbar and history read cleanly",
-            expect="the Macros sidebar at rest: the macro row shows only its name and Play (no "
-            "'echo …' preview, no 'Last run' line, no step count); the toolbar is a text 'New' "
-            "plus icon-only "
-            "record dot, export and import; each History row is one line, and an opened row "
+            expect="the Automations sidebar at rest: the macro row shows only its name and Play (no "
+            "'echo …' preview, no 'Last run' line, no step count); the toolbar reads 'New' and 'Record' "
+            "beside one '…' menu; each History row is one line, and an opened row "
             "reads 'Run by you' / 'Run by schedule' in sentence case (#5680, #5818)",
         ):
             self.require("automations.macro.edit")
             mid = self.ids["macro"]
-            self.show_macros()
+            self.show_automations()
             self.driver.force_hover(None)
             self._grade_macro_row_polish(mid)
             self._grade_macro_history_polish(mid)
@@ -632,13 +630,13 @@ class TestProductRunAutomations(
 
         The row shows the name (and the description when set) only: what the
         macro types (R-112) and where it last ran (R-113) are in the row's
-        tooltip, not on the row (#5757). R-079: "Record new" is an icon-only
-        record dot next to the text "New".
+        tooltip, not on the row (#5757). R-037: the toolbar names its
+        actions in text.
         """
         data = self.macro(mid) or {}
         joined = "".join(s.get("data", "") for s in data.get("steps", []))
         lines = [ln for ln in re.split(r"\r\n|\r|\n", joined) if ln.strip()]
-        row_id = f"macro-item-{mid}"
+        row_id = f"automation-item-{mid}"
         text = self.row_text(row_id)
         tip = self.row_tooltip(row_id)
         self.evidence(f"row {text!r}; tooltip {tip!r}; first input line {lines[:1]!r}")
@@ -654,14 +652,17 @@ class TestProductRunAutomations(
             f"the tooltip names no terminal: {tip!r}"
         )
 
-        record = "macro-record-btn"
-        label = self.driver.get_attribute(record, "aria-label")
-        text = self.driver.get_text(record).strip()
-        new = self.driver.get_text("macro-new-btn").strip()
-        self.evidence(f"record aria-label {label!r}, text {text!r}; New text {new!r}")
-        assert label == "Record new macro", f"record action label: {label!r}"
-        assert text == "", f"record is not icon-only: {text!r}"
+        # Every toolbar action is named in text (R-037); at a narrow width Record
+        # moves into the one "…" menu.
+        new = self.driver.get_text("automation-new-btn").strip()
+        record = (
+            self.driver.get_text("automation-record-btn").strip()
+            if self.driver.exists("automation-record-btn")
+            else None
+        )
+        self.evidence(f"New text {new!r}; Record text {record!r}")
         assert new == "New", f"the primary action is not a text 'New': {new!r}"
+        assert record in (None, "Record"), f"the record action reads {record!r}"
         self.shot(label="row")
 
     def _grade_macro_history_polish(self, mid: str) -> None:
@@ -696,15 +697,15 @@ class TestProductRunAutomations(
     def test_95_workflow_history_clear_confirm(self):
         with self.step(
             "automations.workflow.history-clear",
-            "Clearing the automation history from the Workflows sidebar asks first",
-            expect="the Workflows sidebar with a danger confirmation open: 'Clear automation "
+            "Clearing the automation history asks first",
+            expect="the Automations sidebar with a danger confirmation open: 'Clear automation "
             "history?' with 'This removes the recorded runs of every automation. It cannot be "
             "undone.' and a red 'Clear history' button; the History header's action reads "
             "'Clear…' (#5719, #5818)",
             screenshot=False,
         ):
             self.require("automations.workflow.run-on")
-            self.open_workflows_sidebar()
+            self.open_automation_history()
             self.wait(
                 lambda: self.driver.exists("automation-history-list"), what="the history"
             )
@@ -734,14 +735,14 @@ class TestProductRunAutomations(
         with self.step(
             "automations.workflow.edited-row",
             "Saving an edited workflow marks its row briefly so the change is easy to find",
-            expect="the Workflows sidebar right after a save: the edited workflow's row is "
+            expect="the Automations sidebar right after a save: the edited workflow's row is "
             "tinted with the accent colour and a 2px accent bar on its leading edge, the "
             "other rows are not; the row's name and description stay readable (#5687)",
             screenshot=False,
         ):
             self.require("automations.workflow.edit")
             wid = self.ids["workflow"]
-            row = f"workflow-item-{wid}"
+            row = f"automation-item-{wid}"
             self.edit_workflow(wid, {"workflow-editor-description": f"edited {self.tag}"})
             marked = self.driver.get_attribute(row, "data-just-saved")
             background = self.driver.get_computed_style("background-color", row)
@@ -752,7 +753,7 @@ class TestProductRunAutomations(
             )
             self.shot(label="marked")
             box = self.driver.measure_element(row)["rect"]
-            pane = self.driver.measure_element("workflow-list")["rect"]
+            pane = self.driver.measure_element("automation-list")["rect"]
             self.evidence(f"row {box}; list {pane}")
             assert box["y"] >= pane["y"] - 1 and box["y"] + box["height"] <= (
                 pane["y"] + pane["height"] + 1

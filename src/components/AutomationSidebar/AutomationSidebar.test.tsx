@@ -341,19 +341,23 @@ describe("running", () => {
   it("runs on the active terminal and says which one", async () => {
     await render();
     for (const id of ["macro-1", "workflow-1"]) {
-      click(`automation-run-${id}`);
+      click(`automation-start-${id}`);
       expect(storeFns.runAutomation).toHaveBeenLastCalledWith(id);
     }
-    expect(query("automation-run-workflow-1")!.getAttribute("aria-label")).toBe("Run Deploy prep");
+    expect(query("automation-start-workflow-1")!.getAttribute("aria-label")).toBe(
+      "Run Deploy prep"
+    );
   });
 
   it("asks where instead of failing when no terminal is active", async () => {
     seedTerminals(null);
     await render();
-    click("automation-run-macro-1");
+    click("automation-start-macro-1");
     expect(storeFns.runAutomation).not.toHaveBeenCalled();
     expect(query("run-targets-dialog")!.textContent).toContain('Run "Sudo login"');
-    expect(query("automation-run-macro-1")!.getAttribute("aria-label")).toBe("Run Sudo login on…");
+    expect(query("automation-start-macro-1")!.getAttribute("aria-label")).toBe(
+      "Run Sudo login on…"
+    );
   });
 
   it.each(["macro-1", "workflow-1"])("runs %s on picked terminals", async (id) => {
@@ -397,7 +401,7 @@ describe("running", () => {
     });
     await render();
     expect(query("automation-running-workflow-1")!.textContent).toBe("Running");
-    expect(query("automation-run-workflow-1")).toBeNull();
+    expect(query("automation-start-workflow-1")).toBeNull();
     expect(query("automation-targets-workflow-1")).toBeNull();
     click("automation-stop-workflow-1");
     expect(storeFns.cancelWorkflowRun).toHaveBeenCalledWith();
@@ -531,7 +535,7 @@ describe("markers", () => {
       "Last automatic run failed"
     );
     // Run and the switch stay.
-    expect(query("automation-run-workflow-2")).not.toBeNull();
+    expect(query("automation-start-workflow-2")).not.toBeNull();
     expect(query("automation-arm-toggle-workflow-2")).not.toBeNull();
     ro.resize(320);
     expect(query("automation-armed-workflow-2")!.textContent).toBe("Armed");

@@ -1,7 +1,7 @@
 """Authoring and run reads of the product run's automations phase (#5536).
 
-:class:`AutomationPhaseUi` drives macros, workflows and schedules the way a
-user does (sidebar toolbar, editor dialogs, row actions, Settings ->
+:class:`AutomationPhaseUi` drives automations and schedules the way a
+user does (sidebar toolbar, editor dialogs, row menus, Settings ->
 Schedules) and reads the stores the steps grade on (``macros``,
 ``macroRuns``, ``workflows``, ``workflowRuns``, ``schedules``). Mix it in after
 :class:`~.ui.ProductRunUi` with ``WorkflowUi``, ``SettingsUi``, ``SidebarUi``
@@ -13,10 +13,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..ui.base import HarnessMixin
+from ..ui.automation_sidebar import KEYS_EDITOR, STEPS_EDITOR, AutomationSidebarUi
 
-MACRO_EDITOR = "macro-editor-dialog"
-WORKFLOW_EDITOR = "workflow-editor-dialog"
 SCHEDULE_EDITOR = "schedule-editor-dialog"
 SCHEDULE_CONFIRM = "schedule-enable-confirm"
 #: The one run picker (#5818, slice 5) behind every "Run on…" and Play macro….
@@ -26,14 +24,17 @@ RUN_TARGETS = "run-targets-dialog"
 _STEP_FIELD = re.compile(r"^workflow-editor-step-[a-z-]+-(\d+)$")
 
 
-class AutomationPhaseUi(HarnessMixin):
-    """Macros, workflows and schedules through the real UI."""
+class AutomationPhaseUi(AutomationSidebarUi):
+    """Automations and their schedules through the real UI.
+
+    "Macro" and "workflow" here name the store's two views of an automation
+    (one that only types keystrokes, and every other one); both are rows of the
+    one Automations sidebar (#5818).
+    """
 
     if TYPE_CHECKING:  # supplied by SettingsUi / SidebarUi / WorkflowUi / TabsUi
         def tab_ids(self) -> list[str]: ...
-        def enable_experimental_features(self) -> None: ...
         def open_settings_category(self, category: str) -> None: ...
-        def open_workflows_sidebar(self) -> None: ...
         def open_new_workflow(self) -> None: ...
         def add_step(self, kind: str) -> None: ...
         def set_name(self, name: str) -> None: ...
@@ -72,70 +73,27 @@ class AutomationPhaseUi(HarnessMixin):
         self.driver.force_hover(None)
         return self.driver.get_text(row_testid)
 
-    # ── macros ───────────────────────────────────────────────────────────────
-    def show_macros(self) -> None:
-        """Show the Macros sidebar (clicking its active icon would close it)."""
-        showing = self.driver.get_state("sidebarView") == "macros" and not self.driver.get_state(
-            "sidebarCollapsed"
-        )
-        if not showing:
-            self.driver.click("activity-bar-macros")
-        self.wait(lambda: self.driver.exists("macro-sidebar"), what="the Macros sidebar")
-
-    def _fill_macro_steps(self, steps: list[str]) -> None:
-        for index, data in enumerate(steps):
-            field = f"macro-editor-step-data-{index}"
-            if not self.driver.exists(field):
-                self.driver.click("macro-editor-add-step")
-                self.wait(lambda f=field: self.driver.exists(f), what=f"macro step {index}")
-            self.driver.type(field, data)
-
-    def _save_macro(self) -> None:
-        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
-        self.driver.click("macro-editor-save")
-        self.wait(lambda: not self.driver.exists(MACRO_EDITOR), what="the macro editor to close")
-
+    # ── typed keystrokes (the macro view) ────────────────────────────────────
     def create_macro(self, name: str, steps: list[str]) -> str:
-        """Author a macro in the Macros sidebar; return its id."""
-        self.show_macros()
-        self.invoke_toolbar_action("macro-new-btn", overflow="macro-toolbar-overflow")
-        self.wait(lambda: self.driver.exists(MACRO_EDITOR), what="the macro editor")
-        self.driver.type("macro-editor-name", name)
-        self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0")
-            or self.driver.exists("macro-editor-no-steps"),
-            what="the macro editor's steps",
-        )
-        self._fill_macro_steps(steps)
-        self._save_macro()
-        found = self.wait(
-            lambda: next((m for m in self._state_list("macros") if m.get("name") == name), None),
-            what=f"the saved macro {name!r}",
-        )
-        return found["id"]
+        """Write an automation's keystrokes by hand; return its id."""
+        return self.create_typed_automation(name, steps)
 
     def edit_macro_step(self, macro_id: str, index: int, data: str) -> None:
-        """Open the macro's editor from its row, change one step, save."""
-        self.show_macros()
-        self.driver.click(f"macro-edit-{macro_id}")
-        self.wait(lambda: self.driver.exists(MACRO_EDITOR), what="the macro editor")
+        """Open the keystroke editor from the row, change one step, save."""
+        self.edit_automation(macro_id, KEYS_EDITOR)
         self.wait(
             lambda: self.driver.exists(f"macro-editor-step-data-{index}"),
-            what=f"macro step {index} in the editor",
+            what=f"keystroke step {index} in the editor",
         )
         self.driver.type(f"macro-editor-step-data-{index}", data)
-        self._save_macro()
+        self.save_keystrokes()
 
     def play_macro(self, macro_id: str) -> None:
-        self.show_macros()
-        self.wait(lambda: self.driver.exists(f"macro-play-{macro_id}"), what="the macro's Play")
-        self.driver.click(f"macro-play-{macro_id}")
+        self.run_automation(macro_id)
 
     # ── workflows ────────────────────────────────────────────────────────────
     def author_workflow(self, name: str, steps: list[tuple[str, dict[str, Any]]]) -> None:
         """Fill a new workflow's steps (kind, fields) and its name; leaves it open."""
-        self.enable_experimental_features()
-        self.open_workflows_sidebar()
         self.open_new_workflow()
         for index, (kind, fields) in enumerate(steps):
             self.add_step(kind)
@@ -160,9 +118,7 @@ class AutomationPhaseUi(HarnessMixin):
 
     def edit_workflow(self, workflow_id: str, fields: dict[str, Any]) -> None:
         """Open the workflow's editor from its row, set fields by testid, save."""
-        self.open_workflows_sidebar()
-        self.driver.click(f"workflow-edit-{workflow_id}")
-        self.wait(lambda: self.driver.exists(WORKFLOW_EDITOR), what="the workflow editor")
+        self.edit_automation(workflow_id, STEPS_EDITOR)
         for testid, value in fields.items():
             step = _STEP_FIELD.match(testid)
             if step:
@@ -171,24 +127,10 @@ class AutomationPhaseUi(HarnessMixin):
             self.driver.type(testid, str(value))
         self.save_workflow()
 
-    def run_workflow_on(self, workflow_id: str, tab_ids: list[str]) -> None:
-        """Row "Run on…": pick exactly ``tab_ids`` in the run picker and run."""
-        self.open_workflows_sidebar()
-        self.driver.click(f"workflow-run-on-{workflow_id}")
+    def run_automation_on(self, automation_id: str, tab_ids: list[str]) -> None:
+        """Row menu "Run on…": pick exactly ``tab_ids`` in the run picker and run."""
+        self.automation_menu(automation_id, "run-on")
         self.run_picker_on(tab_ids)
-
-    def play_macro_on(self, macro_id: str, tab_ids: list[str]) -> None:
-        """Macro row "Run on…": pick exactly ``tab_ids`` in the run picker and run."""
-        self.show_macros()
-        self.invoke_row_action(f"macro-item-{macro_id}", f"macro-run-on-{macro_id}")
-        self.run_picker_on(tab_ids)
-
-    def invoke_row_action(self, row_testid: str, action_testid: str) -> None:
-        """Click a hover-revealed row action (hovering the row first)."""
-        self.wait(lambda: self.driver.exists(row_testid), what=f"the row {row_testid}")
-        self.driver.force_hover(row_testid)
-        self.wait(lambda: self.driver.exists(action_testid), what=f"the action {action_testid}")
-        self.driver.click(action_testid)
 
     def run_picker_on(self, tab_ids: list[str]) -> None:
         """In the open run picker: "Pick terminals…", tick exactly ``tab_ids``,
@@ -223,24 +165,16 @@ class AutomationPhaseUi(HarnessMixin):
         self.wait(lambda: not self.driver.exists(RUN_TARGETS), what="the run picker to close")
 
     # ── schedules ────────────────────────────────────────────────────────────
-    def schedule_macro(
-        self, macro_id: str, name: str, connection_id: str, description: Optional[str] = None
+    def schedule_automation(
+        self,
+        automation_id: str,
+        name: str,
+        connection_id: str,
+        description: Optional[str] = None,
     ) -> str:
-        """Macro row "Schedule": every minute on one connection; return the id."""
-        self.show_macros()
-        return self.schedule_from_row(f"macro-schedule-{macro_id}", name, connection_id, description)
-
-    def schedule_workflow(self, workflow_id: str, name: str, connection_id: str) -> str:
-        """Workflow row "Schedule": every minute on one connection; return the id."""
-        self.open_workflows_sidebar()
-        return self.schedule_from_row(f"workflow-schedule-{workflow_id}", name, connection_id)
-
-    def schedule_from_row(
-        self, row_button: str, name: str, connection_id: str, description: Optional[str] = None
-    ) -> str:
-        """A row's "Schedule" opens the editor with that automation picked (#5818);
+        """Row menu "Schedule…": the editor opens with that automation picked (#5818);
         save it every minute on one connection and return the schedule id."""
-        self.driver.click(row_button)
+        self.automation_menu(automation_id, "schedule")
         self.wait(lambda: self.driver.exists(SCHEDULE_EDITOR), what="the schedule editor")
         self.driver.type("schedule-editor-name", name)
         if description is not None:
@@ -260,6 +194,7 @@ class AutomationPhaseUi(HarnessMixin):
 
     def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> None:
         """Settings -> Schedules: flip the switch (accepting the first-enable confirmation)."""
+        self.close_automation_schedules()  # its rows share Settings' testIds
         self.open_settings_category("schedules")
         toggle = f"schedule-enable-{schedule_id}"
         self.wait(lambda: self.driver.exists(toggle), what="the schedule's enable switch")

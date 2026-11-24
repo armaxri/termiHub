@@ -49,6 +49,8 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
   primaryAction?: React.ReactNode;
   /** Accessible name of the hover-revealed group when a `primaryAction` is set. */
   moreActionsLabel?: string;
+  /** Test hook for that hover-revealed group. */
+  moreActionsTestId?: string;
   /** Test hook for the always-visible run control's wrapper. */
   primaryActionTestId?: string;
   /** Optional leading status indicator (typically a {@link SidebarStatusDot}). */
@@ -146,6 +148,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       actions,
       primaryAction,
       moreActionsLabel,
+      moreActionsTestId,
       primaryActionTestId,
       status,
       badge,
@@ -279,6 +282,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
                   className="sidebar-list-item__more"
                   role="group"
                   aria-label={moreActionsLabel}
+                  data-testid={moreActionsTestId}
                 >
                   {actions}
                 </span>
