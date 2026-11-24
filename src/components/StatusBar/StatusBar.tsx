@@ -58,6 +58,7 @@ import {
   MenuItem,
   MenuLabel,
   MenuSeparator,
+  TOAST_AVOID_PROPS,
 } from "@/components/ui";
 import { MonitoringHistoryPanel } from "./MonitoringHistoryPanel";
 import { ProcessTablePanel } from "./ProcessTablePanel";
@@ -139,7 +140,14 @@ export function StatusBar() {
     : "";
 
   return (
-    <footer className="status-bar" data-testid="status-bar" aria-label="Status bar">
+    // A toast keep-clear zone (#5830): the stack starts above the status bar,
+    // so a toast never hides its lock indicator or any other item.
+    <footer
+      className="status-bar"
+      data-testid="status-bar"
+      aria-label="Status bar"
+      {...TOAST_AVOID_PROPS}
+    >
       <div className="status-bar__section status-bar__section--left">
         <WindowIndicator />
         <BroadcastStatus />

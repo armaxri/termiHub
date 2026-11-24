@@ -20,6 +20,7 @@ import {
   Tooltip,
   UnsavedChangesDialog,
   TOAST_AVOID_PROPS,
+  TOAST_AVOID_FORM_PROPS,
 } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
@@ -364,7 +365,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
         </h2>
       </div>
 
-      <div className="workspace-editor__form">
+      <div className="workspace-editor__form" {...TOAST_AVOID_FORM_PROPS}>
         <Field label="Name" htmlFor="ws-name" className="workspace-editor__field">
           <Input
             id="ws-name"

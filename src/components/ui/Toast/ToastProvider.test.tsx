@@ -382,18 +382,22 @@ describe("ToastProvider docked over a tall dialog (#5715)", () => {
     expect(shown("Save failed")).toBe(true);
   });
 
-  it("takes a success toast already showing down when the dialog opens", async () => {
+  it("dismisses a success toast already showing when the dialog opens (#5830)", async () => {
     render(<ToastProvider />);
     act(() => {
       toast.success("Connected");
+      toast.error("Save failed");
     });
     await waitFor(() => shown("Connected"));
 
     act(() => openTallDialog());
     await waitFor(() => !shown("Connected"));
 
+    // Old feedback never comes back beside the new decision; errors stay.
     act(() => dialog.remove());
-    await waitFor(() => shown("Connected"));
+    await tick(100);
+    expect(shown("Connected")).toBe(false);
+    expect(shown("Save failed")).toBe(true);
   });
 
   it("shows one toast at a time while docked", async () => {

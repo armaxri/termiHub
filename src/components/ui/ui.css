@@ -1072,6 +1072,53 @@
   border-top: 1px solid var(--border-secondary);
 }
 
+/*
+ * Inline status line (#5830): success/info feedback of an action taken in the
+ * dialog, at the left of the footer instead of a toast beside the dialog.
+ * Empty, it stays in the accessibility tree (a live region must exist before
+ * its message) but takes no room, so it never shifts the footer's buttons.
+ */
+.ui-modal__status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  margin-right: auto;
+  align-self: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+.ui-modal__status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ui-modal__status-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+.ui-modal__status[data-kind="success"] .ui-modal__status-icon {
+  color: var(--color-success);
+}
+.ui-modal__status[data-kind="info"] .ui-modal__status-icon {
+  color: var(--color-info);
+}
+.ui-modal__status-text {
+  min-width: 0;
+}
+.ui-modal__status-detail {
+  color: var(--text-secondary);
+}
+.ui-modal__status-row {
+  display: flex;
+  padding: 0 var(--spacing-lg) var(--spacing-md);
+}
+
 /* Shared enter/exit motion: fade + 8px rise, driven by tokens. */
 .ui-modal__overlay[data-state="open"] {
   animation: ui-fade-in var(--transition-normal);

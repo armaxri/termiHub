@@ -198,6 +198,77 @@ const MAX_DEFERRED = 10;
 /** Whether success/info toasts are deferred right now (#5715). */
 let deferring = false;
 
+/**
+ * A success/info message an open dialog shows in its own inline status line
+ * instead of a toast (#5830).
+ */
+export interface InlineStatus {
+  /** The toast id it stands in for. */
+  id: string | number;
+  kind: "success" | "info";
+  message: string;
+  description?: string;
+}
+
+/** An open dialog's inline status line: shows a message, or clears on `null`. */
+export type InlineStatusSink = (status: InlineStatus | null) => void;
+
+/**
+ * The inline status lines of the open dialogs, innermost (last opened) last
+ * (#5830). While one is registered, success/info toasts without a button show
+ * there instead of in the toast stack beside the dialog.
+ */
+const inlineSinks: InlineStatusSink[] = [];
+
+/** The message an inline status line shows right now, and its expiry timer. */
+let inlineShown: {
+  id: string | number;
+  sink: InlineStatusSink;
+  timer: ReturnType<typeof setTimeout> | undefined;
+} | null = null;
+
+/** How long an inline status message shows unless its toast set a duration. */
+export const INLINE_STATUS_DURATION = 6000;
+
+/** Clear the inline status message (only `id`'s, when given). */
+function clearInline(id?: string | number): void {
+  if (!inlineShown || (id !== undefined && inlineShown.id !== id)) return;
+  const { sink, timer } = inlineShown;
+  if (timer !== undefined) clearTimeout(timer);
+  inlineShown = null;
+  sink(null);
+}
+
+/**
+ * Register an open dialog's inline status line (#5830): until the returned
+ * function is called, success/info toasts without an action or cancel button
+ * show there instead of in the toast stack. The last registered line wins, so
+ * a nested dialog takes over from the one under it.
+ */
+export function registerInlineStatusSink(sink: InlineStatusSink): () => void {
+  inlineSinks.push(sink);
+  return () => {
+    const at = inlineSinks.lastIndexOf(sink);
+    if (at >= 0) inlineSinks.splice(at, 1);
+    if (inlineShown?.sink === sink) clearInline();
+  };
+}
+
+/** Show `spec` in the innermost dialog's status line, if it can go there. */
+function showInline(spec: TransientSpec): boolean {
+  const sink = inlineSinks[inlineSinks.length - 1];
+  if (!sink || spec.opts.action || spec.opts.cancel) return false;
+  const { id } = spec.opts;
+  // Take down whatever shows under this id (a loading toast resolving here).
+  dismissById(id);
+  clearInline();
+  const duration = spec.opts.duration ?? INLINE_STATUS_DURATION;
+  const timer = Number.isFinite(duration) ? setTimeout(() => clearInline(id), duration) : undefined;
+  inlineShown = { id, sink, timer };
+  sink({ id, kind: spec.kind, message: spec.message, description: spec.opts.description });
+  return true;
+}
+
 /** Counter for ids given to toasts raised without one. */
 let nextTransientId = 0;
 
@@ -212,6 +283,7 @@ function showTransient(spec: TransientSpec): string | number {
   cancelRedismiss(id);
   trackTransient(id, true);
   trackModalStale(id, spec.opts.dismissOnModal);
+  if (showInline(spec)) return id;
   if (deferring) {
     deferredTransient.delete(id);
     deferredTransient.set(id, spec);
@@ -247,6 +319,7 @@ function showTransient(spec: TransientSpec): string | number {
 /** Stop tracking `id` as a success/info toast (it was dismissed or replaced). */
 function forgetTransientSpec(id: string | number | undefined): void {
   if (id === undefined) return;
+  clearInline(id);
   deferredTransient.delete(id);
   shownTransient.delete(id);
 }
@@ -293,8 +366,10 @@ export function dismissModalStaleToasts(): void {
  * async user action that resolves in the background should surface one of these
  * so nothing resolves silently (the "reactive" pillar).
  *
- * - `success` / `info` auto-dismiss. While the stack is docked over a tall
- *   dialog they wait until it closes (#5715).
+ * - `success` / `info` auto-dismiss. While a dialog is open they show in its
+ *   inline status line (#5830) unless they carry a button; while the stack is
+ *   docked over a tall dialog without one, they wait until it closes (#5715).
+ *   Those still showing are dismissed when a dialog opens (#5830).
  * - `error` persists until dismissed.
  * - `loading` resolves in place into success/error via `loading().then(...)`
  *   or the {@link ToastApi.promise} helper — ideal for agent deploy, tunnel
@@ -326,8 +401,8 @@ export interface ToastApi {
   dismiss(id?: string | number): void;
   /**
    * Dismiss every success/info toast still showing, leaving errors and loading
-   * toasts. Called when an error dialog opens, so a stale "Connected" or
-   * "Saved" confirmation never sits beside the error (#5618).
+   * toasts. Called whenever a dialog opens (#5618, #5830), so a stale
+   * "Connected" or "Saved" confirmation never sits beside a new decision.
    */
   dismissTransient(): void;
   /**
@@ -404,6 +479,7 @@ export const toast: ToastApi = {
       modalStaleIds.clear();
       deferredTransient.clear();
       shownTransient.clear();
+      clearInline();
       sonnerToast.dismiss();
       return;
     }
@@ -417,10 +493,11 @@ export const toast: ToastApi = {
     const ids = Array.from(transientIds);
     transientIds.clear();
     deferredTransient.clear();
+    clearInline();
     for (const id of ids) dismissById(id);
   },
 
   isActive(id) {
-    return shownTransient.has(id) || deferredTransient.has(id);
+    return shownTransient.has(id) || deferredTransient.has(id) || inlineShown?.id === id;
   },
 };

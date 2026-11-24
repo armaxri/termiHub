@@ -78,7 +78,12 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
     // A 640px-wide dialog on a narrower window, reaching down to y=760.
     const dialog = box(180, 300, 820, 760);
     const zone = { ...ZONE, viewportWidth: 1000 };
-    expect(computeToastLayout([dialog], zone)).toEqual({ inset: 500, width: 340, docked: false });
+    expect(computeToastLayout([dialog], zone)).toEqual({
+      inset: 500,
+      width: 340,
+      docked: false,
+      pinnedTop: null,
+    });
   });
 
   it("narrows the column beside a dialog too tall to clear", () => {
@@ -87,7 +92,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
     const footer = box(320, 700, 960, 760);
     const layout = computeToastLayout([dialog, footer], ZONE);
     // 1280 - 16 (edge) - 960 (dialog right) - 16 (gap) = 288.
-    expect(layout).toEqual({ inset: 0, width: 288, docked: false });
+    expect(layout).toEqual({ inset: 0, width: 288, docked: false, pinnedTop: null });
   });
 
   it("docks the stack when there is no room beside a tall dialog (#5715)", () => {
@@ -115,7 +120,12 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
   it("does not dock for a tall dialog that leaves a 240px column (#5715)", () => {
     // 1280 - 16 - 1008 - 16 = 240: exactly the narrowest column.
     const dialog = box(368, 40, 1008, 760);
-    expect(computeToastLayout([dialog], ZONE)).toEqual({ inset: 0, width: 240, docked: false });
+    expect(computeToastLayout([dialog], ZONE)).toEqual({
+      inset: 0,
+      width: 240,
+      docked: false,
+      pinnedTop: null,
+    });
   });
 
   it("does not dock for a short dialog it can lift above (#5715)", () => {
@@ -130,6 +140,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
       inset: 0,
       width: 340,
       docked: false,
+      pinnedTop: null,
     });
   });
 
@@ -140,6 +151,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
       inset: 200,
       width: 340,
       docked: false,
+      pinnedTop: null,
     });
   });
 });
