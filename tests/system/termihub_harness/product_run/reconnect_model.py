@@ -11,19 +11,26 @@ after the last attempt (R-164), and a ~110-character serial path (R-072).
 :func:`notice_problems` grades a measured disconnect notice (the overlay, the
 reconnect strip or the view-mode banner); :func:`reconnected_marker_problems`
 grades the scrollback marker after a reconnect.
+
+#5908 / #5910 (run ``20261124T080801Z``): the notice is a full-width strip
+that pushes the terminal below it instead of a clear card over the output, and
+a process exit reads "Process exited (code N)", never "Session disconnected".
 """
 
 from __future__ import annotations
 
 import re
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
+
+from .session_end_strip import LINK_HEADING, strip_layout_problems
 
 #: The one cause line per cause (``data-cause`` on the notice). Twin of the
 #: ``drop.cause.*`` entries in ``src/i18n/catalog.ts``.
 CAUSE_LINES: dict[str, str] = {
     "user": "You disconnected this session.",
     "ended": "The session ended normally",
-    "exited": "The process exited with code",
+    # #5910: a process exit says so in the heading, not as a lost connection.
+    "exited": "Process exited (code",
     "server": "The server closed the connection.",
     "timeout": "The connection timed out.",
     "network": "The network connection was lost.",
@@ -44,9 +51,6 @@ WHERE_TO_TURN_ON = "Turn it on with “Auto-reconnect” in the connection's set
 AFTER_LAST_ATTEMPT = re.compile(r"After attempt \d+, retrying stops and the tab offers Reconnect\.")
 RETRY_NOW = "Retry now"
 
-#: A computed background that is no scrim at all.
-CLEAR_BACKGROUNDS = ("transparent", "rgba(0, 0, 0, 0)")
-
 
 def notice_problems(
     *,
@@ -56,8 +60,7 @@ def notice_problems(
     expected_cause: str,
     transport: str = "ssh",
     auto_reconnect_off: bool = False,
-    background: Optional[str] = None,
-    pointer_events: Optional[str] = None,
+    layout: Optional[Mapping[str, Mapping[str, float]]] = None,
     buttons: Sequence[str] = (),
     waiting: bool = False,
     device_path: Optional[str] = None,
@@ -66,8 +69,9 @@ def notice_problems(
 
     ``variant`` is the notice's ``data-variant`` (``disconnected``, ``failed``,
     ``strip`` or ``banner``), ``text`` its visible text, ``cause`` its
-    ``data-cause`` and ``expected_cause`` what really happened. For the overlay,
-    ``background`` / ``pointer_events`` are its computed styles; for the strip,
+    ``data-cause`` and ``expected_cause`` what really happened. For the
+    session-end strip, ``layout`` holds the measured ``strip``, ``pane`` and
+    ``terminal`` boxes (it must not cover the output, #5908); for the reconnect strip,
     ``buttons`` are its button labels and ``waiting`` whether a backoff window is
     open. ``device_path`` is a serial tab's full port path. Empty when right.
     """
@@ -87,10 +91,12 @@ def notice_problems(
         problems.append(f"the notice says the connection was lost although it was {expected_cause!r}")
 
     if variant in ("disconnected", "failed"):
-        if background is not None and background.strip() not in CLEAR_BACKGROUNDS:
-            problems.append(f"the overlay has a scrim ({background!r}) over the scrollback")
-        if pointer_events is not None and pointer_events.strip() != "none":
-            problems.append("the overlay blocks the scrollback around its card from the pointer")
+        if layout is not None:
+            problems += strip_layout_problems(
+                strip=layout["strip"], pane=layout["pane"], terminal=layout["terminal"]
+            )
+        if expected_cause in ("exited", "ended", "user") and LINK_HEADING in flat:
+            problems.append(f"a process end says {LINK_HEADING!r} (#5910)")
         if "choose View scrollback" in flat:
             problems.append("the overlay still asks to choose View scrollback to read it")
     if variant == "disconnected":

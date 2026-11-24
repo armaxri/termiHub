@@ -11,8 +11,9 @@ were lost (R-101).
 The live grade uses no containers: the run's own telnet server closes the
 connection from the server side (telnet starts with auto-reconnect off), and a
 local shell exits with code 3. Each notice is graded for its cause line, the
-auto-reconnect note, the clear overlay (no scrim, pointer events reach the
-scrollback) and, after Reconnect, the marker.
+auto-reconnect note, the strip that pushes the terminal below it instead of
+covering it (#5908), and, after Reconnect, the marker. A process exit reads
+"Process exited (code N)", never "Session disconnected" (#5910).
 
 The ``test_grade_*`` functions grade fixed notices without an app and run in
 the normal lane.
@@ -53,6 +54,11 @@ TELNET_CLOSED = (
 
 
 # ── app-free grade tests ──────────────────────────────────────────────────
+PANE_BOX = {"x": 490, "y": 160, "width": 1500, "height": 1040}
+STRIP_BOX = {"x": 490, "y": 160, "width": 1500, "height": 70}
+PUSHED_TERMINAL = {"x": 490, "y": 230, "width": 1500, "height": 970}
+
+
 def _overlay(**overrides):
     args = {
         "variant": "disconnected",
@@ -61,8 +67,7 @@ def _overlay(**overrides):
         "expected_cause": "server",
         "transport": "telnet",
         "auto_reconnect_off": True,
-        "background": "rgba(0, 0, 0, 0)",
-        "pointer_events": "none",
+        "layout": {"strip": STRIP_BOX, "pane": PANE_BOX, "terminal": PUSHED_TERMINAL},
     }
     args.update(overrides)
     return notice_problems(**args)
@@ -87,10 +92,12 @@ def test_grade_the_old_telnet_overlay_fails():
     assert any("why telnet did not retry" in p for p in problems)
 
 
-def test_grade_a_scrim_over_the_scrollback_fails():
-    problems = _overlay(background="rgba(0, 0, 0, 0.55)", pointer_events="auto")
-    assert any("has a scrim" in p for p in problems)
-    assert any("blocks the scrollback" in p for p in problems)
+def test_grade_a_card_over_the_output_fails():
+    # The #5908 shape (R-005): a card near the pane top, the terminal under it.
+    card = {"x": 995, "y": 172, "width": 500, "height": 290}
+    problems = _overlay(layout={"strip": card, "pane": PANE_BOX, "terminal": PANE_BOX})
+    assert any("does not span the pane" in p for p in problems)
+    assert any("output are covered" in p for p in problems)
 
 
 def test_grade_an_auto_reconnect_note_on_a_retrying_connection_fails():
@@ -99,13 +106,18 @@ def test_grade_an_auto_reconnect_note_on_a_retrying_connection_fails():
 
 
 def test_grade_a_process_exit_needs_its_code():
-    text = "Session disconnected The process exited with code 3. Scrollback is kept."
+    text = "Process exited (code 3) Scrollback is kept. Restart View scrollback"
     assert (
         notice_problems(
             variant="disconnected", text=text, cause="exited", expected_cause="exited"
         )
         == []
     )
+    # The #5910 shape (R-004): a process exit titled as a lost connection.
+    old = "Session disconnected Process exited (code 3). Scrollback is kept."
+    assert notice_problems(
+        variant="disconnected", text=old, cause="exited", expected_cause="exited"
+    ) == ["a process end says 'Session disconnected' (#5910)"]
     assert notice_problems(
         variant="disconnected",
         text="Session disconnected The connection was lost.",
@@ -177,18 +189,20 @@ class TestProductRunReconnectModel(
         type(self).pytest_config = request.config
         yield
 
-    def _grade_overlay(self, *, expected_cause: str, transport: str, off: bool) -> None:
+    def _grade_overlay(
+        self, tab: str, *, expected_cause: str, transport: str, off: bool
+    ) -> None:
         self.wait(lambda: self.driver.exists(OVERLAY), timeout=30.0, what="the disconnect notice")
         text = self.driver.get_text(OVERLAY)
         variant = self.driver.get_attribute(OVERLAY, "data-variant")
         cause = self.driver.get_attribute(OVERLAY, "data-cause")
-        background = self.driver.get_computed_style("background-color", OVERLAY)
-        pointer = self.driver.get_computed_style("pointer-events", OVERLAY)
+        layout = {
+            "strip": self.driver.measure_element(OVERLAY)["rect"],
+            "pane": self.driver.measure_element(f"terminal-context-trigger-{tab}")["rect"],
+            "terminal": self.driver.measure_element(f"terminal-renderer-{tab}")["rect"],
+        }
         self.shot(label=expected_cause)
-        self.evidence(
-            f"notice {variant!r} cause {cause!r}: {text!r}; background {background!r}; "
-            f"pointer-events {pointer!r}"
-        )
+        self.evidence(f"notice {variant!r} cause {cause!r}: {text!r}; layout {layout}")
         problems = notice_problems(
             variant=variant or "",
             text=text,
@@ -196,8 +210,7 @@ class TestProductRunReconnectModel(
             expected_cause=expected_cause,
             transport=transport,
             auto_reconnect_off=off,
-            background=background,
-            pointer_events=pointer,
+            layout=layout,
         )
         assert not problems, problems
 
@@ -207,9 +220,10 @@ class TestProductRunReconnectModel(
             "reconnect-model.telnet-closed",
             "The telnet server closing the connection says so, says why telnet did not retry, "
             "and keeps the scrollback readable (#5831)",
-            expect="the telnet tab's login prompt readable around a card at the top: 'Session "
-            "disconnected — The server closed the connection.' and 'Auto-reconnect is off for "
-            "this connection: telnet connections start with it off.' with Reconnect",
+            expect="a full-width strip at the top of the telnet tab with the login prompt fully "
+            "readable below it: 'Session disconnected — The server closed the connection.' and "
+            "'Auto-reconnect is off for this connection: telnet connections start with it off.' "
+            "with Reconnect",
         ):
             try:
                 srv = TelnetServer(
@@ -226,7 +240,7 @@ class TestProductRunReconnectModel(
             tab = self.wait(lambda: self.find_tab(name), what="the telnet tab")["id"]
             self.wait_for_output("login:", tab_id=tab, timeout=30.0)
             self.evidence(f"server closed {srv.drop_all()} connection(s)")
-            self._grade_overlay(expected_cause="server", transport="telnet", off=True)
+            self._grade_overlay(tab, expected_cause="server", transport="telnet", off=True)
         with self.step(
             "reconnect-model.telnet-marker",
             "After Reconnect the marker says the telnet session is new (#5831)",
@@ -248,8 +262,10 @@ class TestProductRunReconnectModel(
         name = unique_name("pr-reconnect-exit")
         with self.step(
             "reconnect-model.exit-code",
-            "A shell that exits with a code says so, not that a connection was lost (#5831)",
-            expect="a local tab with a card at the top: 'The process exited with code 3.'",
+            "A shell that exits with a code says so, not that a connection was lost (#5831, "
+            "#5910)",
+            expect="a local tab with a full-width strip above the output: a process icon, "
+            "'Process exited (code 3)' and Restart; no wifi icon, no 'Session disconnected'",
         ):
             self.switch_to_connections_sidebar()
             self.create_local_connection(name, connect=True)
@@ -258,5 +274,5 @@ class TestProductRunReconnectModel(
             self.wait(lambda: self.driver.read_terminal(tab).strip(), what="the prompt")
             self.run_command("exit 3")
             self.wait(lambda: self.terminal_session_exited(tab), what="the shell to exit")
-            self._grade_overlay(expected_cause="exited", transport="other", off=False)
+            self._grade_overlay(tab, expected_cause="exited", transport="other", off=False)
         self.close_all_tabs()
