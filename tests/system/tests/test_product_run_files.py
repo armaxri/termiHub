@@ -380,7 +380,11 @@ class TestProductRunFiles(
                         lambda: not self.driver.exists(TRANSFER_PANEL),
                         what="the all-done Transfers panel to collapse",
                     )
-                    assert self.driver.exists(TRANSFER_INDICATOR)
+                    # The status-bar count, or the sidebar's line alone while it
+                    # covers every transfer (#5834).
+                    assert self.driver.exists(TRANSFER_INDICATOR) or self.driver.exists(
+                        TRANSFER_SUMMARY
+                    ), "nothing summarises the collapsed transfers"
 
     def test_07_raspberry_pi(self):
         pi = self.inputs.get("raspberry_pi")

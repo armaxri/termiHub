@@ -6,6 +6,8 @@ import { LOCAL_TRANSFER_SESSION, type TransferProgress } from "@/services/api";
 import { isBatchTransfer } from "@/hooks/batchTransferToasts";
 import { subscribeGuarded } from "@/hooks/useTauriListener";
 import { isTransferSummaryShown } from "@/components/TransferQueue/transferSummaryVisibility";
+import { revealDownload, revealDownloadLabel } from "@/components/TransferQueue/revealDownload";
+import { currentTransfersView } from "@/store/transfersBridge";
 
 /**
  * Raise the single terminal-phase toast for a settled transfer (#1286).
@@ -32,6 +34,9 @@ import { isTransferSummaryShown } from "@/components/TransferQueue/transferSumma
  * A finished transfer whose session's summary line is on screen (the file
  * browser's "1 transfer done", #5859) stays quiet as well: that line already
  * says it, so the toast would only be a second copy. A failure still toasts.
+ *
+ * A finished download whose destination the row recorded offers "Reveal in
+ * Finder" (worded per platform) on its toast (#5834).
  */
 function toastTerminalPhase(progress: TransferProgress): void {
   const { phase, direction, fileName, message } = progress;
@@ -42,8 +47,17 @@ function toastTerminalPhase(progress: TransferProgress): void {
   if (phase === "done") {
     if (isTransferSummaryShown(progress.sessionId)) return;
     const verb = isLocalCopy ? "Copied" : direction === "download" ? "Downloaded" : "Uploaded";
+    const localPath =
+      direction === "download" && !isLocalCopy
+        ? currentTransfersView().queue[progress.transferId]?.localPath
+        : undefined;
     // toast-policy: background — the transfer finished while no summary of it was on screen
-    toast.success(`${verb} ${fileName}`, { testId: "transfer-done-toast" });
+    toast.success(`${verb} ${fileName}`, {
+      testId: "transfer-done-toast",
+      ...(localPath
+        ? { action: { label: revealDownloadLabel(), onClick: () => revealDownload(localPath) } }
+        : {}),
+    });
   } else if (phase === "error") {
     const verb = isLocalCopy ? "Copy" : direction === "download" ? "Download" : "Upload";
     toast.error(`${verb} of ${fileName} failed: ${message ?? "Transfer failed"}`, {

@@ -65,6 +65,9 @@ pytestmark = pytest.mark.integration
 QUEUE = "transfer-queue"
 QUEUE_SUMMARY = "transfer-queue-summary"
 QUEUE_INDICATOR = "transfer-queue-indicator"
+# The file browser's one-line summary (#5625); while it covers every transfer
+# the status-bar indicator stays away and the line reopens the panel (#5834).
+FILE_BROWSER_SUMMARY = "file-browser-transfer-summary"
 ROW = "transfer-row"
 ROW_NAME = "transfer-row-name"
 ROW_STATUS = "transfer-row-status"
@@ -127,13 +130,17 @@ class TransferQueueReads(ProjectionHarness):
         return [e["state"] for e in self.queue_entries()]
 
     def restore_panel(self) -> None:
-        """Un-minimize the panel via its indicator (the store has no direct setter)."""
+        """Un-minimize the panel via its indicator, or the file browser's summary
+        line when that is the one summary on screen (#5834)."""
         if self.driver.exists(QUEUE_INDICATOR):
             self.driver.click(QUEUE_INDICATOR)
             self.wait(
                 lambda: not self.driver.exists(QUEUE_INDICATOR),
                 what="the panel to restore",
             )
+        elif not self.driver.exists(QUEUE) and self.driver.exists(FILE_BROWSER_SUMMARY):
+            self.driver.click(FILE_BROWSER_SUMMARY)
+            self.wait(lambda: self.driver.exists(QUEUE), what="the panel to restore")
 
     def wait_for_queue_size(self, size: int, *, timeout: float = 30.0) -> list[dict]:
         return self.wait(
@@ -299,11 +306,15 @@ class TestTransferQueueLiveTransfer(
         # #5625: with every transfer completed, the panel gets out of the way — it
         # collapses into the status-bar indicator a moment later. Reopening it
         # from the indicator keeps it open (that finished set collapses once).
+        # The collapsed queue is summarised by the status-bar indicator, or by
+        # the file browser's line alone while that covers it (#5834).
         self.wait(
-            lambda: self.driver.exists(QUEUE_INDICATOR),
+            lambda: not self.driver.exists(QUEUE)
+            and (
+                self.driver.exists(QUEUE_INDICATOR) or self.driver.exists(FILE_BROWSER_SUMMARY)
+            ),
             what="the panel to collapse once the transfer completed",
         )
-        assert not self.driver.exists(QUEUE)
         self.restore_panel()
 
         # The panel renders the completed row and summarises it.

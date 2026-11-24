@@ -32,6 +32,13 @@ name: string,
  */
 path?: string, 
 /**
+ * Where a download lands on this computer, when the app chose it (#5834):
+ * a finished download offers to show this file in the OS file manager.
+ * Absent for uploads and for downloads with no user-visible destination
+ * (a drag-out staging copy). `#[serde(default)]` keeps older rows readable.
+ */
+localPath?: string, 
+/**
  * Derived lifecycle state.
  */
 state: TransferQueueState, 

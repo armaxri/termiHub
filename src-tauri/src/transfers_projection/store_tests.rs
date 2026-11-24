@@ -20,6 +20,7 @@ fn seed(id: &str) -> TransferSeed {
         direction: TransferDirection::Download,
         name: "data.csv".to_string(),
         path: Some("/remote/data.csv".to_string()),
+        local_path: None,
         total_bytes: Some(1000),
     }
 }
@@ -66,6 +67,37 @@ fn seed_creates_a_queued_row() {
     assert_eq!(entry.speed_bytes_per_sec, None);
     assert_eq!(entry.path.as_deref(), Some("/remote/data.csv"));
     assert_eq!(entry.updated_at, 1_000);
+}
+
+#[test]
+fn a_downloads_local_destination_survives_every_progress_event() {
+    // The seed is the only place the destination is known (#5834); the events
+    // that follow never carry it, so the finished row must keep it.
+    let store = TransferStore::new();
+    let mut s = seed("t1");
+    s.local_path = Some("/Users/me/Downloads/data.csv".to_string());
+    store.seed(&s, 1_000);
+    store.progress(&progress("t1", TransferQueueState::Active, 500), 2_000);
+    store.progress(&progress("t1", TransferQueueState::Completed, 1000), 3_000);
+
+    let entry = store.get("t1").unwrap();
+    assert_eq!(entry.state, TransferQueueState::Completed);
+    assert_eq!(
+        entry.local_path.as_deref(),
+        Some("/Users/me/Downloads/data.csv")
+    );
+    let snap = store.snapshot();
+    assert_eq!(
+        snap["queue"]["t1"]["localPath"],
+        json!("/Users/me/Downloads/data.csv")
+    );
+}
+
+#[test]
+fn a_row_without_a_local_destination_serializes_without_one() {
+    let store = TransferStore::new();
+    store.seed(&seed("t1"), 1_000);
+    assert!(store.snapshot()["queue"]["t1"].get("localPath").is_none());
 }
 
 #[test]

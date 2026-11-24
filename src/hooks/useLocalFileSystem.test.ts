@@ -880,6 +880,7 @@ describe("useLocalFileSystem — action wiring", () => {
         sessionId: "ssh-1",
         direction: "download",
         remotePath: "/srv/a.log",
+        localPath: "/home/user/a.log",
       });
       // The queued leg's event path owns the success toast; the pending one is dismissed.
       expect(toastMock.loading).toHaveBeenCalledWith('Pasting "a.log"…');
