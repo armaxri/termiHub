@@ -1,10 +1,9 @@
 /**
- * Regression tests for the connect success confirmation (#1127).
+ * Regression tests for the connect confirmation (#1127, #5859).
  *
- * A successful connect must not resolve silently: once createTerminal resolves,
- * the Terminal fires a non-intrusive `toast.success` so the user gets positive
- * feedback that the session is live. The toast carries a per-tab id so a
- * reconnect replaces it, and local shells get none (#5618).
+ * A connected tab is its own confirmation: the tab's status dot turns green and
+ * the terminal shows the remote prompt, so no connect raises a success toast
+ * (#5859: feedback is visible in place; toast only when it isn't).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -134,8 +133,8 @@ const SSH_CONFIG = {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe("Terminal — connect success confirmation", () => {
-  it("fires a success toast once a fresh connect resolves", async () => {
+describe("Terminal — connect confirmation", () => {
+  it("fires no success toast once a remote connect resolves (#5859)", async () => {
     act(() => {
       root.render(
         <TerminalPortalProvider>
@@ -148,8 +147,7 @@ describe("Terminal — connect success confirmation", () => {
     });
 
     expect(mockCreateTerminal).toHaveBeenCalledTimes(1);
-    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-    expect(mockToastSuccess.mock.calls[0][1]).toMatchObject({ id: "connected:tab-1" });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
   it("fires no success toast for a local shell (#5618)", async () => {

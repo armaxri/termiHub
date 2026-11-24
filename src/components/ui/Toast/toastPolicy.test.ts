@@ -32,6 +32,11 @@ export const REASONS = {
   undo: "it offers to undo what the user just did",
   /** The result has no surface in termiHub's visible UI. */
   "no-in-place-surface": "the clipboard, a file on disk, a remote machine or a sent signal",
+  /**
+   * Raised while its dialog is open, so it shows in that dialog's inline status
+   * line (#5830), next to the action — not in the toast stack.
+   */
+  "dialog-status": "it shows in the open dialog's own status line",
   /** It says why an action did nothing, or ended other than asked. */
   "explains-outcome": "nothing visible changed, and the toast says why",
 } as const;

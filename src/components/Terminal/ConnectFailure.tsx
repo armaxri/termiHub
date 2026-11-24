@@ -25,12 +25,14 @@ import "./TerminalConnectionOverlay.css";
  */
 async function copyCommand(command: string): Promise<void> {
   await writeClipboard(command);
+  // toast-policy: no-in-place-surface — the command is on the clipboard
   toast.success("Command copied to clipboard");
 }
 
 /** Copy the raw backend error so it can be pasted into a bug report (#5183). */
 async function copyError(error: string): Promise<void> {
   await writeClipboard(error);
+  // toast-policy: no-in-place-surface — the details are on the clipboard
   toast.success(t("connection.details.copied"));
 }
 

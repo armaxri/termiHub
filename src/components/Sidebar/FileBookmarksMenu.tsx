@@ -51,8 +51,7 @@ function useScopedBookmarks(scope: string | null, currentPath: string) {
   const handleAdd = useCallback(async () => {
     if (!scope || !currentPath) return;
     try {
-      const stored = await add(scope, currentPath);
-      toast.success(`Bookmarked "${stored.name}"`);
+      await add(scope, currentPath);
     } catch (err) {
       toast.error(`Could not add bookmark: ${errorMessage(err)}`);
     }
@@ -62,7 +61,6 @@ function useScopedBookmarks(scope: string | null, currentPath: string) {
     if (!current) return;
     try {
       await remove(current.id);
-      toast.success(`Removed bookmark "${current.name}"`);
     } catch (err) {
       toast.error(`Could not remove bookmark: ${errorMessage(err)}`);
     }
