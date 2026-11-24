@@ -33,6 +33,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
+import { textBeforeCursor } from "@/services/passwordPrompt";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 import { getXtermTheme } from "@/themes";
 import { isFitReady, isProposedFitSafe } from "./safeFit";
@@ -647,7 +648,15 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       for (const target of pasteTargets(tabId, sessionId)) {
         slots.set(target.sessionId, reserveSessionInputSlot(target.sessionId, "paste"));
       }
-      const releaseSlots = () => slots.forEach((slot) => slot.cancel());
+      // Its place in a recording too (#5818), so it is recorded in that order.
+      const recorded = useAppStore.getState().reserveRecordedPaste(tabId, () => {
+        const xterm = xtermRegistryRef.current.get(tabId);
+        return xterm ? textBeforeCursor(xterm.buffer.active) : "";
+      });
+      const releaseSlots = () => {
+        slots.forEach((slot) => slot.cancel());
+        recorded?.cancel();
+      };
 
       let text: string;
       try {
@@ -669,6 +678,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
           const xterm = xtermRegistryRef.current.get(targetTabId);
           const payload =
             xterm && xterm.modes.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
+          // Recorded once, as it is sent to the terminal it was pasted into.
+          if (targetTabId === tabId) recorded?.fill(payload);
           // A target that ended meanwhile drops its share of the paste (#5384).
           const send = () => sendInputDetached(targetSessionId, payload, "paste");
           // Fill the reserved slot; a target that appeared since just queues.

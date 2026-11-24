@@ -56,6 +56,7 @@ import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
 import type { RunningAutomationInfo } from "@/utils/automationTabBadge";
 import { TabAutomationBadge } from "./TabAutomationBadge";
+import { TabRecordingBadge } from "@/components/Recording/TabRecordingBadge";
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
 import { isUnencryptedSession } from "@/utils/unencryptedSession";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
@@ -138,6 +139,10 @@ interface TabProps {
    * `null`/`undefined` hides it.
    */
   runningAutomation?: RunningAutomationInfo | null;
+  /** What is typed into this tab is recorded (#5818, slice 8). */
+  isRecording?: boolean;
+  /** Stop the recording (the badge and the context menu). */
+  onStopRecording?: () => void;
   /** Stop the running automation on this tab (the badge and the context menu). */
   onStopAutomation?: () => void;
   /**
@@ -229,6 +234,8 @@ export function Tab({
   onDisconnect,
   status,
   isBroadcast,
+  isRecording,
+  onStopRecording,
   runningAutomation,
   onStopAutomation,
   controlledByWindow,
@@ -428,6 +435,7 @@ export function Tab({
           <Radio size={12} aria-hidden />
         </span>
       )}
+      {isRecording && <TabRecordingBadge tabId={tab.id} onStop={onStopRecording} />}
       {runningAutomation && (
         <TabAutomationBadge tabId={tab.id} info={runningAutomation} onStop={onStopAutomation} />
       )}
@@ -536,6 +544,11 @@ export function Tab({
         <MenuItem onSelect={() => onRename?.()} data-testid="tab-context-rename">
           <Pencil size={14} /> Rename
         </MenuItem>
+        {isRecording && onStopRecording && (
+          <MenuItem onSelect={() => onStopRecording()} data-testid="tab-context-stop-recording">
+            <CircleStop size={14} /> Stop recording
+          </MenuItem>
+        )}
         {runningAutomation && onStopAutomation && (
           <MenuItem onSelect={() => onStopAutomation()} data-testid="tab-context-stop-automation">
             <CircleStop size={14} /> Stop automation

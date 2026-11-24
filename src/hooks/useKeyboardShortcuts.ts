@@ -194,7 +194,7 @@ export function useKeyboardShortcuts() {
 
         case "toggle-macro-recording":
           e.preventDefault();
-          useAppStore.getState().toggleMacroRecording();
+          useAppStore.getState().toggleRecording();
           break;
 
         case "toggle-broadcast":

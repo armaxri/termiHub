@@ -288,6 +288,19 @@ function otherTabRows(
     });
 }
 
+/** `recording` for a {@link WindowCloseRequest}, omitted when nothing would be lost. */
+function recordingField(state: AppState): Pick<WindowCloseRequest, "recording"> {
+  const { recording, recordedTake } = state;
+  if (recording && (recording.keys > 0 || !recordedTake)) {
+    // Nothing typed yet is nothing to lose, unless an editor waits hidden for it.
+    if (recording.keys === 0 && recording.intoEditor === null) return {};
+    return { recording: { tabTitle: recording.tabTitle, keys: recording.keys } };
+  }
+  return recordedTake
+    ? { recording: { tabTitle: recordedTake.tabTitle, keys: recordedTake.chunks.length } }
+    : {};
+}
+
 /** `otherTabs` for a {@link WindowCloseRequest}, omitted when there are none. */
 function otherTabsField(
   tabs: TerminalTab[],
@@ -470,8 +483,18 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
       tabs.filter((tab) => !starting.has(tab.id)),
       get().editorDirtyTabs
     );
-    if (dirtyEditors.length > 0) {
-      set({ pendingWindowClose: { sessions, otherWindows, dirtyEditors, ...otherTabs } });
+    // A recording lives in this window only: closing it must ask too (#5818).
+    const recording = recordingField(get());
+    if (dirtyEditors.length > 0 || recording.recording) {
+      set({
+        pendingWindowClose: {
+          sessions,
+          otherWindows,
+          ...(dirtyEditors.length > 0 ? { dirtyEditors } : {}),
+          ...otherTabs,
+          ...recording,
+        },
+      });
       return "prompt";
     }
     if (sessions.length === 0) {
@@ -499,13 +522,17 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     const tabs = collectWindowTabs(get());
     const sessions = classifyWindowCloseSessions(tabs, startingTabIds(get()));
     const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
-    if (dirtyEditors.length === 0 && !windowCloseWouldLoseData(sessions)) return "ready";
+    const recording = recordingField(get());
+    if (dirtyEditors.length === 0 && !recording.recording && !windowCloseWouldLoseData(sessions)) {
+      return "ready";
+    }
     set({
       pendingWindowClose: {
         sessions,
         otherWindows: [],
         mode: "quit",
         ...(dirtyEditors.length > 0 ? { dirtyEditors } : {}),
+        ...recording,
       },
     });
     return "prompt";

@@ -6,6 +6,7 @@ import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
 import { createAutomationsSlice, AutomationsSlice } from "./slices/automationsSlice";
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
+import { createRecordingSlice, RecordingSlice } from "./slices/recordingSlice";
 import { createPluginsSlice, PluginsSlice } from "./slices/pluginsSlice";
 import { createSessionHistorySlice, SessionHistorySlice } from "./slices/sessionHistorySlice";
 import { createZoomSlice, ZoomSlice } from "./slices/zoomSlice";
@@ -194,6 +195,7 @@ export interface AppState
     EmbeddedServersSlice,
     AutomationsSlice,
     MacrosSlice,
+    RecordingSlice,
     PluginsSlice,
     SessionHistorySlice,
     ZoomSlice,
@@ -254,6 +256,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createEmbeddedServersSlice(set, get, store),
     ...createAutomationsSlice(set, get, store),
     ...createMacrosSlice(set, get, store),
+    ...createRecordingSlice(set, get, store),
     ...createPluginsSlice(set, get, store),
     ...createSessionHistorySlice(set, get, store),
     ...createZoomSlice(set, get, store),

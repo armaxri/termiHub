@@ -222,12 +222,23 @@ export interface WindowCloseRequest {
    */
   otherTabs?: WindowCloseOtherTab[];
   /**
+   * What closing would drop of a recording (#5818): its terminal's title and how
+   * many keys it holds. Absent when none runs and none waits to be saved.
+   */
+  recording?: WindowCloseRecording;
+  /**
    * Why the dialog is up (#4296). `"close"` (the default when absent) closes
    * this window; `"quit"` answers an app-wide quit (Cmd+Q / menu Quit), which
    * the backend completes once every window agreed, so moving tabs to another
    * window is not offered.
    */
   mode?: "close" | "quit";
+}
+
+/** A recording listed in the window-close decision dialog (#5818). */
+export interface WindowCloseRecording {
+  tabTitle: string;
+  keys: number;
 }
 
 /** One unsaved editor tab listed in the window-close decision dialog. */
