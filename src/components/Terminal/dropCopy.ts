@@ -191,7 +191,8 @@ export function formatClock(at: Date): string {
  * server served a session on a remote agent, which the agent reports with the
  * session's end cause (#5732; a lost agent link never carries one); a serial
  * device on an agent that is gone for good (`device_gone`, #5783) reads as
- * "device disconnected" like a direct serial tab; any real
+ * "device disconnected" like a direct serial tab; a link the user ended reads
+ * "— disconnected by you hh:mm:ss —" (#5959); any real
  * process exit keeps "[Process exited…]".
  */
 export function sessionEndSeparator(input: {
@@ -203,6 +204,10 @@ export function sessionEndSeparator(input: {
   endCause?: SessionEndCause | null;
 }): string {
   const { transport, exitCode, reason, at, endCause } = input;
+  // The user ended a link (a tab or agent Disconnect): nothing was lost (#5959).
+  if (reason === "killed" && exitCode === null && transport !== "other") {
+    return tf("drop.separator.user", { time: formatClock(at) });
+  }
   if (reason === "dropped" && exitCode === null && transport !== "other") {
     const time = formatClock(at);
     // A serial device on a remote agent that is gone for good (#5783).
