@@ -5,9 +5,14 @@ import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import type { ShellIntegrationStatus } from "@/types/connection";
 import { toast } from "@/components/ui";
 import { getShellIntegrationStatus, installShellIntegration } from "@/services/api";
-import { INSTALL_TOAST, syncRegistrationFacts } from "@/components/Settings/shellIntegrationStore";
+import { installToast, syncRegistrationFacts } from "@/components/Settings/shellIntegrationStore";
 import { crashChecksDone, useBottomBannerStore } from "@/components/BottomBanners";
 import { errorMessage } from "@/utils/errorMessage";
+import { fileManagerPlace } from "@/utils/platform";
+import { t, tf } from "@/i18n/catalog";
+
+/** Id of the note "Not now" leaves behind, saying where the offer lives (#5845). */
+export const FILE_MANAGER_OFFER_LATER_TOAST_ID = "file-manager-offer-later";
 
 /** Id of the offer toast, so it can be taken down when a crash notice appears. */
 export const FILE_MANAGER_OFFER_TOAST_ID = "file-manager-offer";
@@ -26,9 +31,11 @@ export function __resetFileManagerOfferForTest(): void {
 
 /**
  * The one-time "Open in termiHub" file-manager offer (#5753): a toast with
- * "Install" (the action) and "Not now" (the cancel); closing it is the same as
- * "Not now". It replaces the docked first-launch banner, and the same install
- * stays available in Settings › File manager integration (#5616).
+ * "Add to Finder" (the primary action, named for the platform's file manager,
+ * #5845) next to "Not now" (the cancel); closing it is the same as "Not now".
+ * "Not now" leaves a short note saying where to find it later. It replaces the
+ * docked first-launch banner, and the same action stays available in
+ * Settings ▸ Open in termiHub (#5616).
  *
  * - **Once.** It persists `shellIntegration.firstLaunchBannerDismissed` the
  *   moment it is shown, so it never comes back on a later launch whatever the
@@ -75,29 +82,37 @@ export function FileManagerOffer() {
     if (!eligible || !storedSi || offeredThisSession) return;
     if (!status || status.registered || !crashChecked || crashThisSession) return;
     offeredThisSession = true;
-    // toast-policy: background — an offer termiHub makes on its own, with an install action
-    toast.info("Add “Open in termiHub” to your file manager?", {
+    const place = fileManagerPlace();
+    // toast-policy: background — an offer termiHub makes on its own, with an add action
+    toast.info(tf("fileManagerIntegration.offer.title", { place }), {
       id: FILE_MANAGER_OFFER_TOAST_ID,
       testId: "file-manager-offer",
-      description:
-        "Right-click any folder to open it in termiHub. You can also do this later in Settings › File manager integration.",
+      description: tf("fileManagerIntegration.offer.description", { place }),
       duration: Infinity,
       action: {
-        label: "Install",
+        label: tf("fileManagerIntegration.action.install", { place }),
         testId: "file-manager-offer-install",
         onClick: () => {
-          // INSTALL_TOAST reports a failure to the user; this only logs it.
+          // installToast reports a failure to the user; this only logs it.
           fireAndForget(
             // toast-policy: no-in-place-surface — the file-manager entry lives outside termiHub
-            toast.promise(installShellIntegration(), INSTALL_TOAST).then(syncRegistrationFacts),
+            toast
+              .promise(installShellIntegration(), installToast(place))
+              .then(syncRegistrationFacts),
             "file-manager offer install"
           );
         },
       },
       cancel: {
-        label: "Not now",
+        label: t("fileManagerIntegration.offer.notNow"),
         testId: "file-manager-offer-not-now",
-        onClick: () => {},
+        onClick: () => {
+          // toast-policy: explains-outcome — the offer is gone; say where it lives now
+          toast.info(t("fileManagerIntegration.offer.later"), {
+            id: FILE_MANAGER_OFFER_LATER_TOAST_ID,
+            testId: "file-manager-offer-later",
+          });
+        },
       },
     });
     // Shown once: remember it right away, so neither answering nor quitting

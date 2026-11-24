@@ -305,17 +305,38 @@ const en = {
   "process.kill.windowsOnly":
     "Windows has no POSIX signals, so a local process can only be terminated. SIGTERM and SIGKILL both end it; the other signals are not available.",
   "process.kill.sent": "Sent {signal} to {name} (pid {pid})",
-  // ── File manager integration (ShellIntegrationSettings, #5616) ─────────
-  // The actions follow the registration state: nothing to update or remove
-  // until the integration is installed.
-  "fileManagerIntegration.title": "File manager integration",
+  // ── File manager integration (ShellIntegrationSettings, #5616, #5845) ──
+  // One name for the feature everywhere: "Open in termiHub", the entry the user
+  // sees in the right-click menu. `{place}` is the platform's file manager
+  // (`fileManagerPlace`: Finder, File Explorer, your file manager), so the
+  // status and its button say the same thing ("Not added to Finder" / "Add to
+  // Finder"). The actions follow the registration state: nothing to update or
+  // remove until the entry is added.
+  "fileManagerIntegration.title": "Open in termiHub",
   "fileManagerIntegration.description":
-    "Adds “Open in termiHub” to your file manager's right-click menu.",
-  "fileManagerIntegration.status.registered": "Registered",
-  "fileManagerIntegration.status.notRegistered": "Not registered",
-  "fileManagerIntegration.action.install": "Install",
-  "fileManagerIntegration.action.reinstall": "Reinstall / update",
-  "fileManagerIntegration.action.uninstall": "Uninstall",
+    "Adds “Open in termiHub” to the right-click menu in {place}.",
+  "fileManagerIntegration.status.registered": "Added to {place}",
+  "fileManagerIntegration.status.notRegistered": "Not added to {place}",
+  "fileManagerIntegration.action.install": "Add to {place}",
+  "fileManagerIntegration.action.reinstall": "Update",
+  "fileManagerIntegration.action.uninstall": "Remove from {place}",
+  "fileManagerIntegration.toast.adding": "Adding “Open in termiHub” to {place}…",
+  "fileManagerIntegration.toast.added": "Added “Open in termiHub” to {place}",
+  "fileManagerIntegration.toast.addFailed": "Could not add it to {place}: {error}",
+  "fileManagerIntegration.toast.removing": "Removing “Open in termiHub” from {place}…",
+  "fileManagerIntegration.toast.removed": "Removed “Open in termiHub” from {place}",
+  "fileManagerIntegration.toast.removeFailed": "Could not remove it from {place}: {error}",
+  // The one-time offer (FileManagerOffer, #5753): the primary "Add to {place}"
+  // sits next to "Not now"; after "Not now" a short note says where it lives.
+  "fileManagerIntegration.offer.title": "Add “Open in termiHub” to {place}?",
+  "fileManagerIntegration.offer.description":
+    "Right-click any folder in {place} to open it in termiHub. You can also add it later in Settings ▸ Open in termiHub.",
+  "fileManagerIntegration.offer.notNow": "Not now",
+  "fileManagerIntegration.offer.later": "You can add it any time in Settings ▸ Open in termiHub.",
+  "fileManagerIntegration.fallback.label": "When opening a folder",
+  "fileManagerIntegration.fallback.hint": "Used when no quick-access entry matches the folder.",
+  "fileManagerIntegration.fallback.picker": "Ask which session",
+  "fileManagerIntegration.fallback.systemDefaultShell": "Open a new terminal",
 
   // ── Dropped-session wording per transport (#5619, #5660, #5666) ─────────
   // A serial port has no shell or agent, and a network drop is not a process
