@@ -227,15 +227,25 @@ class CredsPhaseUi(HarnessMixin):
         detail = ""
         if self.driver.exists("backup-export-credentials-detail"):
             detail = self.driver.get_text("backup-export-credentials-detail").strip()
-        if credentials and master_password is not None:
-            self.wait(
-                lambda: self.driver.exists("backup-export-master-password"),
-                what="the master password field",
-            )
-            self.driver.type("backup-export-master-password", master_password)
+        # One secret per step (#5847): the parts, the passphrase, then the
+        # master password; each step is captured for the review.
+        self.shot(label="export-dialog")
+        self.driver.click("backup-export-next")
+        self.wait(
+            lambda: self.driver.exists("backup-export-passphrase"),
+            what="the backup passphrase step",
+        )
         self.driver.type("backup-export-passphrase", passphrase)
         self.driver.type("backup-export-confirm", passphrase)
-        self.shot(label="export-dialog")
+        self.shot(label="export-passphrase")
+        if credentials and master_password is not None:
+            self.driver.click("backup-export-next")
+            self.wait(
+                lambda: self.driver.exists("backup-export-master-password"),
+                what="the master password step",
+            )
+            self.driver.type("backup-export-master-password", master_password)
+            self.shot(label="export-master-password")
         self.driver.stub_native_dialog("save", target)
         self.driver.click("backup-export-submit")
         return detail
