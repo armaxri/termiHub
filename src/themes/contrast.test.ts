@@ -670,7 +670,7 @@ describe("solarized light selection and filled buttons (#5562)", () => {
     const css = readFileSync(join(SRC_DIR, "styles/variables.css"), "utf8");
     expect(css).toMatch(/--selected-row-bg:\s*var\(--bg-selected\);/);
     expect(css).toMatch(/--selected-row-hover-bg:\s*var\(--bg-selected-hover\);/);
-    expect(css).toMatch(/--selected-row-indicator:\s*transparent;/);
+    expect(css).toMatch(/--selected-row-indicator:\s*var\(--accent-color\);/);
   });
 });
 

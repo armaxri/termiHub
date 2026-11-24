@@ -120,7 +120,7 @@ export interface ThemeDefinition {
    * `sidebarBg` (connection tree, file browser, plugin list) and, through
    * `secondary`, on `bgSecondary` (transfer panes). Without it, those rows
    * paint the `--bg-selected` / `--bg-selected-hover` accent tints (see
-   * `styles/variables.css`) and carry no indicator bar. A theme built from a
+   * `styles/variables.css`) with an `accentColor` indicator bar (#5888). A theme built from a
    * fixed palette (Solarized Light and Dark) sets palette colours here, so a
    * selection never reads as a blended, off-palette grey. Built-in themes
    * only: custom and plugin themes always use the tint defaults.
