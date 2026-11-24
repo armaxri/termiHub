@@ -32,7 +32,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use termihub_core::connection::ConnectionType;
+use termihub_core::connection::{ConnectionType, OutputReplay};
+use termihub_core::protocol::methods::SessionGetBufferResult;
 
 use crate::connection::id_changes::ConnectionIdRemap;
 use crate::utils::errors::TerminalError;
@@ -42,7 +43,7 @@ use super::manager::{
     EventEmitter, PersistentAttach, PersistentRecord, PersistentSessionStateEvent, SessionEntry,
     SessionInfo, SessionManager, SessionOrigin, TabBinding,
 };
-use super::output_capture::{extend_back, ScrollbackReplay};
+use super::output_capture::ScrollbackReplay;
 use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 
 /// How long a repaint waits for the buffer the agent sends again on an attach.
@@ -515,44 +516,50 @@ impl<'a> PersistentController<'a> {
         // (#5990): only it knows which live output it already holds. After an
         // attach the buffer is still arriving as live output, so wait for it:
         // a replay that ends in the middle would put whatever the tab writes
-        // next, and the older output, in the wrong place.
-        let caught_up = self.wait_caught_up(session_id, older.len()).await;
-        let (mut replay, dropped) = self
-            .manager
-            .read_capture(session_id, |c| (c.snapshot(), c.has_dropped_history()))
-            .await
-            .unwrap_or_default();
-        if caught_up && dropped {
-            replay.data = extend_back(&older, replay.data);
-        }
+        // next in the middle of the history.
+        let full = tokio::time::timeout(CATCH_UP_TIMEOUT, self.catch_up(session_id, &older)).await;
+        let mut replay = match full {
+            Ok(Some(replay)) => replay,
+            // Too late, or it is not known where the agent's buffer belongs.
+            Ok(None) | Err(_) => self
+                .manager
+                .read_capture(session_id, |capture, _| capture.snapshot())
+                .await
+                // The session ended meanwhile: there is nothing to repaint.
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?,
+        };
+        replay.coming = replay.data.is_empty() && !older.data.is_empty();
         Ok(replay)
     }
 
-    /// Wait until `session_id`'s capture holds what the agent's buffer of `len`
-    /// bytes held, up to [`CATCH_UP_TIMEOUT`]. Returns whether it does.
-    async fn wait_caught_up(&self, session_id: &str, len: usize) -> bool {
-        let caught_up = async {
-            loop {
-                let done = self
-                    .manager
-                    .read_capture(session_id, |c| c.has_caught_up_with(len))
-                    .await;
-                match done {
-                    Some(true) => return true,
-                    // The session ended meanwhile.
-                    None => return false,
-                    Some(false) => tokio::time::sleep(CATCH_UP_POLL).await,
-                }
+    /// Wait until `session_id`'s capture holds everything `older` held, and
+    /// take it with the history before it. `None` when the session ended or
+    /// `older` cannot be placed in its output.
+    async fn catch_up(&self, session_id: &str, older: &AgentBuffer) -> Option<ScrollbackReplay> {
+        loop {
+            let step = self
+                .manager
+                .read_capture(session_id, |capture, replay| {
+                    match older.end_in_stream(replay) {
+                        BufferPlace::At(end) if capture.end_offset() >= end => {
+                            Some(Some(capture.snapshot_after(&older.data, end)))
+                        }
+                        BufferPlace::Unknown => Some(None),
+                        // The replay, or the rest of it, is on its way.
+                        BufferPlace::At(_) | BufferPlace::NotYet => None,
+                    }
+                })
+                .await?;
+            match step {
+                Some(result) => return result,
+                None => tokio::time::sleep(CATCH_UP_POLL).await,
             }
-        };
-        tokio::time::timeout(CATCH_UP_TIMEOUT, caught_up)
-            .await
-            .unwrap_or(false)
+        }
     }
 
     /// The agent's own buffer of `session_id`: `session.getBuffer` over
     /// JSON-RPC, which reads the daemon's ring buffer non-destructively.
-    async fn fetch_remote_buffer(&self, session_id: &str) -> Result<Vec<u8>, TerminalError> {
+    async fn fetch_remote_buffer(&self, session_id: &str) -> Result<AgentBuffer, TerminalError> {
         let (agent_id, remote_sid) = {
             let sessions = self.manager.sessions.lock().await;
             let entry = sessions
@@ -582,15 +589,56 @@ impl<'a> PersistentController<'a> {
         .map_err(|e| TerminalError::RemoteError(format!("spawn_blocking join: {e}")))?
         .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
-        let b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
-        if b64.is_empty() {
-            return Ok(Vec::new());
-        }
+        let result: SessionGetBufferResult = serde_json::from_value(result)
+            .map_err(|e| TerminalError::RemoteError(format!("session.getBuffer result: {e}")))?;
 
         use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .map_err(|e| TerminalError::RemoteError(format!("base64 decode error: {e}")))
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(&result.data)
+            .map_err(|e| TerminalError::RemoteError(format!("base64 decode error: {e}")))?;
+        Ok(AgentBuffer {
+            data,
+            replay_id: result.replay_id,
+            end_position: result.end_position,
+        })
+    }
+}
+
+/// The agent's own buffer of a session.
+struct AgentBuffer {
+    data: Vec<u8>,
+    /// Where `data` ends, counted from this replay (#5990).
+    replay_id: Option<u64>,
+    /// `None` from an agent that does not say (before 0.45.0).
+    end_position: Option<u64>,
+}
+
+/// Where an [`AgentBuffer`] ends in the session's output stream.
+#[derive(Debug, PartialEq, Eq)]
+enum BufferPlace {
+    At(u64),
+    /// Its replay has not arrived here yet.
+    NotYet,
+    /// It cannot be told: an older agent, or a replay after it came first.
+    Unknown,
+}
+
+impl AgentBuffer {
+    /// Place the buffer by `replay`, the last one that arrived here.
+    fn end_in_stream(&self, replay: Option<OutputReplay>) -> BufferPlace {
+        let Some(position) = self.end_position else {
+            return BufferPlace::Unknown;
+        };
+        match (self.replay_id, replay) {
+            (Some(id), Some(replay)) if replay.id == id => BufferPlace::At(replay.start + position),
+            // Ids grow. An id of an agent worker before a reconnect may be
+            // larger; the bounded wait ends that case.
+            (Some(id), Some(replay)) if replay.id > id => BufferPlace::Unknown,
+            (Some(_), _) => BufferPlace::NotYet,
+            (None, None) => BufferPlace::At(position),
+            // Nothing was sent again on an attach that came after `replay`.
+            (None, Some(_)) => BufferPlace::Unknown,
+        }
     }
 }
 
@@ -656,4 +704,42 @@ pub(super) fn rekey_persistent_registry(
     }
     events.sort_by(|a, b| a.connection_id.cmp(&b.connection_id));
     events
+}
+
+#[cfg(test)]
+mod buffer_place_tests {
+    use super::*;
+
+    fn place(buffer: (Option<u64>, Option<u64>), replay: Option<(u64, u64)>) -> BufferPlace {
+        AgentBuffer {
+            data: Vec::new(),
+            replay_id: buffer.0,
+            end_position: buffer.1,
+        }
+        .end_in_stream(replay.map(|(id, start)| OutputReplay { id, start }))
+    }
+
+    #[test]
+    fn a_buffer_is_placed_by_the_replay_it_counts_from() {
+        assert_eq!(
+            place((Some(4), Some(10)), Some((4, 3))),
+            BufferPlace::At(13)
+        );
+        // The answer overtook the replay.
+        assert_eq!(place((Some(4), Some(10)), None), BufferPlace::NotYet);
+        assert_eq!(
+            place((Some(4), Some(10)), Some((3, 0))),
+            BufferPlace::NotYet
+        );
+        // A later replay overtook the answer.
+        assert_eq!(
+            place((Some(4), Some(10)), Some((5, 30))),
+            BufferPlace::Unknown
+        );
+        // No replay on this attach: counted from the start.
+        assert_eq!(place((None, Some(10)), None), BufferPlace::At(10));
+        assert_eq!(place((None, Some(10)), Some((5, 3))), BufferPlace::Unknown);
+        // An older agent says nothing, whatever arrived.
+        assert_eq!(place((None, None), None), BufferPlace::Unknown);
+    }
 }

@@ -339,7 +339,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                                           |
 | --------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 0.24.0          | 0.45.0        | Yes (the desktop requests 0.24.0; `replay_start` marks where a re-sent session buffer starts)                                         |
+| 0.24.0          | 0.45.0        | Yes (the desktop requests 0.24.0; `replay_id` marks where a re-sent session buffer starts)                                            |
 | 0.24.0          | 0.44.0        | Yes (the desktop requests 0.24.0; `connection.sshAlgorithms` names the cipher and key exchange in the SSH security popover)           |
 | 0.24.0          | 0.43.0        | Yes (the desktop requests 0.24.0; definitions report when a session was last created from them as `last_used_at`)                     |
 | 0.24.0          | 0.42.0        | Yes (the desktop requests 0.24.0; `connectionDescription` shows the Description field for agent connections)                          |
@@ -429,7 +429,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                                  |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                                   |
 
-**0.45.0 (additive, minor)** — [`connection.output`](#connectionoutput) carries an optional **`replay_start`** (#5990) on the first chunk of the buffer an attach sends again. No request changes and no capability: an older desktop ignores the key. From an older agent the desktop cannot tell the re-sent buffer from new output, so a tab that repaints after a Reclaim, a Take over or a transport reconnect may show the earlier history twice; nothing is lost.
+**0.45.0 (additive, minor)** — [`connection.output`](#connectionoutput) carries an optional **`replay_id`** (#5990) on the first chunk of the buffer an attach sends again, and the [`session.getBuffer`](#sessiongetbuffer) result optional **`replay_id`** / **`end_position`**: where the buffer ends in what was sent since that replay. No request changes and no capability: an older desktop ignores the keys. From an older agent the desktop cannot tell the re-sent buffer from new output, so a tab that repaints after a Reclaim, a Take over or a transport reconnect may show the earlier history twice, and a repaint shows only what the desktop received; nothing is lost.
 
 **0.44.0 (additive, minor)** — adds [`connection.sshAlgorithms`](#connectionsshalgorithms) (#5896): the cipher, integrity MAC, key exchange and host-key algorithm an agent-hosted SSH session's transport negotiated, so the desktop's "Connection security" popover can name them as it does for a direct SSH session. The session daemon tells the worker in a new frame right after its ready frame on every attach (append-only: a worker of any version skips it). Negotiation is by **method-not-found fallback**: the desktop asks only when the popover opens, and an older agent's `-32601` — like a session started by an older agent's session daemon, which answers `{"algorithms": null}` — leaves the popover's plain "Encrypted (SSH)". An older desktop never asks. The desktop still requests `0.24.0`.
 
@@ -1395,10 +1395,12 @@ protocol 0.2.0 (#666); the ring-buffer size is the `persistentScrollbackBufferSi
 | ------------ | -------- | -------------------- |
 | `session_id` | `string` | Session to read from |
 
-| Result Field | Type     | Description                                                     |
-| ------------ | -------- | --------------------------------------------------------------- |
-| `session_id` | `string` | The session that was read                                       |
-| `data`       | `string` | Base64 ring-buffer contents; empty for a non-persistent session |
+| Result Field   | Type      | Description                                                                                                    |
+| -------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
+| `session_id`   | `string`  | The session that was read                                                                                      |
+| `data`         | `string`  | Base64 ring-buffer contents; empty for a non-persistent session                                                |
+| `end_position` | `number?` | Where `data` ends in the bytes sent as `connection.output` since the replay (0.45.0+); absent without a buffer |
+| `replay_id`    | `number?` | The replay `end_position` counts from; absent when the attach had nothing to send again (then from its start)  |
 
 **Errors:**
 
@@ -4244,14 +4246,14 @@ Terminal output data from a session the desktop is attached to.
 }
 ```
 
-| Param          | Type       | Description                                                                          |
-| -------------- | ---------- | ------------------------------------------------------------------------------------ |
-| `session_id`   | `string`   | Source session UUID                                                                  |
-| `data`         | `string`   | Base64-encoded output bytes                                                          |
-| `replay_start` | `boolean?` | `true` on the first chunk of a replay of the session's buffer (0.45.0+); else absent |
+| Param        | Type      | Description                                                                                     |
+| ------------ | --------- | ----------------------------------------------------------------------------------------------- |
+| `session_id` | `string`  | Source session UUID                                                                             |
+| `data`       | `string`  | Base64-encoded output bytes                                                                     |
+| `replay_id`  | `number?` | On the first chunk of a replay of the session's buffer: names the replay (0.45.0+). Absent else |
 
 Every attach of a daemon-backed session makes the agent send the session's whole buffer again
-before live output goes on. Its first chunk carries `replay_start: true`: everything sent for the
+before live output goes on. Its first chunk carries a `replay_id`: everything sent for the
 session before it is part of what follows. The desktop starts the session's captured history over
 there, so a repaint shows it once, whichever action attached the session (#5990).
 

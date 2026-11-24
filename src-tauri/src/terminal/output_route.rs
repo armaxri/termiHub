@@ -2,47 +2,36 @@
 //! where in that output the agent last started over (#5990).
 //!
 //! Every attach of a daemon-backed session makes the agent send the session's
-//! whole buffer again before live output goes on. The first chunk of it is
-//! marked ([`replay_start`]), so whatever keeps the session's history knows
-//! that everything before it comes once more — no matter which desktop action
+//! whole buffer again before live output goes on. The first chunk of it carries
+//! a [`replay_id`], so whatever keeps the session's history knows that
+//! everything before it comes once more — no matter which desktop action
 //! attached the session.
 //!
-//! [`replay_start`]: termihub_core::protocol::methods::ConnectionOutputNotification::replay_start
+//! [`replay_id`]: termihub_core::protocol::methods::ConnectionOutputNotification::replay_id
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
 
-/// No replay has been received.
-const NONE: u64 = u64::MAX;
+use termihub_core::connection::OutputReplay;
 
-/// How much output a session's route received, and where the last replay in it
-/// starts. Clones share the state.
-#[derive(Debug, Clone)]
-pub struct OutputPosition(Arc<Positions>);
+/// How much output a session's route received, and the last replay in it.
+/// Clones share the state.
+#[derive(Debug, Clone, Default)]
+pub struct OutputPosition(Arc<Mutex<Received>>);
 
-#[derive(Debug)]
-struct Positions {
-    received: AtomicU64,
-    replay_start: AtomicU64,
-}
-
-impl Default for OutputPosition {
-    fn default() -> Self {
-        Self(Arc::new(Positions {
-            received: AtomicU64::new(0),
-            replay_start: AtomicU64::new(NONE),
-        }))
-    }
+#[derive(Debug, Default)]
+struct Received {
+    bytes: u64,
+    replay: Option<OutputReplay>,
 }
 
 impl OutputPosition {
-    /// Where the agent's last replay starts in this route's output; what came
-    /// before it is part of it. `None` before any replay.
-    pub fn replay_start(&self) -> Option<u64> {
-        match self.0.replay_start.load(Ordering::SeqCst) {
-            NONE => None,
-            start => Some(start),
-        }
+    fn lock(&self) -> MutexGuard<'_, Received> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The agent's last replay in this route's output.
+    pub fn replay(&self) -> Option<OutputReplay> {
+        self.lock().replay
     }
 }
 
@@ -72,20 +61,36 @@ impl OutputSender {
 
     /// Deliver live output.
     pub fn send(&self, data: Vec<u8>) -> Result<(), mpsc::SendError<Vec<u8>>> {
-        // Counted before it is delivered, so a reader that has the bytes sees
-        // them counted. Only the agent's I/O task sends.
-        self.position
-            .0
-            .received
-            .fetch_add(data.len() as u64, Ordering::SeqCst);
-        self.tx.send(data)
+        self.deliver(None, data)
     }
 
-    /// Deliver the first chunk of a replay of the whole session buffer.
-    pub fn send_replay_start(&self, data: Vec<u8>) -> Result<(), mpsc::SendError<Vec<u8>>> {
-        let start = self.position.0.received.load(Ordering::SeqCst);
-        self.position.0.replay_start.store(start, Ordering::SeqCst);
-        self.send(data)
+    /// Deliver the first chunk of replay `id` of the whole session buffer.
+    pub fn send_replay_start(
+        &self,
+        id: u64,
+        data: Vec<u8>,
+    ) -> Result<(), mpsc::SendError<Vec<u8>>> {
+        self.deliver(Some(id), data)
+    }
+
+    fn deliver(
+        &self,
+        replay_id: Option<u64>,
+        data: Vec<u8>,
+    ) -> Result<(), mpsc::SendError<Vec<u8>>> {
+        // Counted before it is delivered, so a reader that has the bytes sees
+        // them counted. Only the agent's I/O task sends.
+        {
+            let mut received = self.position.lock();
+            if let Some(id) = replay_id {
+                received.replay = Some(OutputReplay {
+                    id,
+                    start: received.bytes,
+                });
+            }
+            received.bytes += data.len() as u64;
+        }
+        self.tx.send(data)
     }
 }
 
@@ -105,15 +110,18 @@ mod tests {
         let position = OutputPosition::default();
         let route = OutputSender::new(tx, position.clone());
         route.send(b"abc".to_vec()).unwrap();
-        assert_eq!(position.replay_start(), None);
+        assert_eq!(position.replay(), None);
 
-        route.send_replay_start(b"abcd".to_vec()).unwrap();
+        route.send_replay_start(5, b"abcd".to_vec()).unwrap();
         route.send(b"e".to_vec()).unwrap();
-        assert_eq!(position.replay_start(), Some(3));
+        assert_eq!(position.replay(), Some(OutputReplay { id: 5, start: 3 }));
 
         // The next one, from a clone, counts on.
-        route.clone().send_replay_start(b"abcde".to_vec()).unwrap();
-        assert_eq!(position.replay_start(), Some(8));
+        route
+            .clone()
+            .send_replay_start(6, b"abcde".to_vec())
+            .unwrap();
+        assert_eq!(position.replay(), Some(OutputReplay { id: 6, start: 8 }));
         drop(route);
         assert_eq!(rx.iter().collect::<Vec<_>>().concat(), b"abcabcdeabcde");
     }
@@ -123,8 +131,8 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let position = OutputPosition::default();
         let route = OutputSender::new(tx, position.clone());
-        route.send_replay_start(b"x".to_vec()).unwrap();
-        assert_eq!(position.replay_start(), Some(0));
+        route.send_replay_start(1, b"x".to_vec()).unwrap();
+        assert_eq!(position.replay(), Some(OutputReplay { id: 1, start: 0 }));
     }
 
     #[test]

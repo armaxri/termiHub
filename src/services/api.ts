@@ -745,6 +745,8 @@ export interface SessionScrollback {
    */
   endOffset: number;
   epoch: number;
+  /** `data` is empty, but the session's history is on its way as live output. */
+  coming: boolean;
 }
 
 function decodeScrollback({ data, ...end }: ScrollbackReplay): SessionScrollback {

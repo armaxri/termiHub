@@ -48,7 +48,7 @@ use serde_json::Value;
 use tracing::{debug, warn};
 
 use termihub_core::connection::{
-    Capabilities, ConnectionType, OutputReceiver, SessionEndCause, SettingsSchema,
+    Capabilities, ConnectionType, OutputReceiver, OutputReplay, SessionEndCause, SettingsSchema,
     SshNegotiatedAlgorithms,
 };
 use termihub_core::errors::{CoreError, FileError, SessionError};
@@ -428,8 +428,8 @@ impl ConnectionType for RemoteProxy {
             .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
     }
 
-    fn output_replay_start(&self) -> Option<u64> {
-        self.output_position.replay_start()
+    fn output_replay(&self) -> Option<OutputReplay> {
+        self.output_position.replay()
     }
 
     fn subscribe_output(&self) -> OutputReceiver {

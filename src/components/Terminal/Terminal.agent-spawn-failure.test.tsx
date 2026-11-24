@@ -66,7 +66,7 @@ vi.mock("@/themes", () => ({
 const mockCreateTerminal = vi.fn();
 const mockGetAgentSessionBuffer = vi
   .fn()
-  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
 
 vi.mock("@/services/api", () => ({
   createTerminal: (...args: unknown[]) => mockCreateTerminal(...args),

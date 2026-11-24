@@ -126,14 +126,19 @@ function endStream(): void {
 
 /** A snapshot holding everything streamed up to now. */
 function snapshot(text: string, endOffset = streamed) {
-  return { data: encoder.encode(text), endOffset, epoch };
+  return { data: encoder.encode(text), endOffset, epoch, coming: false };
 }
 
 beforeEach(async () => {
   useAppStore.setState(useAppStore.getInitialState());
   mockGetAgentSessionBuffer.mockReset();
   mockReplayScrollback.mockReset();
-  mockReplayScrollback.mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
+  mockReplayScrollback.mockResolvedValue({
+    data: new Uint8Array(),
+    endOffset: 0,
+    epoch: 1,
+    coming: false,
+  });
   mockSetLineEnding.mockReset();
   const held = new Promise<void>((resolve) => {
     releaseLineEnding = resolve;
@@ -437,7 +442,7 @@ describe("Terminal — a window that regains a session keeps the repaint's outpu
     await settle();
     // The repaint of the ended stream comes too late to wipe the end line.
     await act(async () => {
-      answers[0]({ data: encoder.encode("stale"), endOffset: 5, epoch: 1 });
+      answers[0]({ data: encoder.encode("stale"), endOffset: 5, epoch: 1, coming: false });
       await wait(60);
     });
 

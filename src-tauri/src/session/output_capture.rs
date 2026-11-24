@@ -34,6 +34,10 @@ pub struct ScrollbackReplay {
     /// Which output stream of the session this is (see [`StreamPosition`]).
     #[cfg_attr(test, ts(type = "number"))]
     pub epoch: u64,
+    /// `data` is empty, but the agent holds output that is on its way as live
+    /// output: a tab that shows the session's earlier output itself will get it
+    /// again.
+    pub coming: bool,
 }
 
 /// Where a chunk starts.
@@ -84,8 +88,13 @@ impl OutputCapture {
             epoch: self.epoch,
             offset: self.written,
         };
-        self.ring.write(data);
         self.written += data.len() as u64;
+        // What comes before the history may still be on its way when the replay
+        // is known: it is part of the stream, not of the history.
+        let stale = self.history_start.saturating_sub(start.offset);
+        if let Some(history) = usize::try_from(stale).ok().and_then(|n| data.get(n..)) {
+            self.ring.write(history);
+        }
         start
     }
 
@@ -95,17 +104,45 @@ impl OutputCapture {
             data: self.ring.read_all(),
             end_offset: self.written,
             epoch: self.epoch,
+            coming: false,
         }
     }
 
+    /// The position the next byte will have.
+    pub fn end_offset(&self) -> u64 {
+        self.written
+    }
+
+    /// Where the kept output starts.
+    fn kept_start(&self) -> u64 {
+        self.written - self.ring.len() as u64
+    }
+
+    /// [`snapshot`](Self::snapshot) with the history before what is kept, taken
+    /// from `older`: the source's own buffer, which ends at `older_end` in the
+    /// stream and may be configured larger than the capture.
+    ///
+    /// Nothing is added when `older` does not reach what is kept.
+    pub fn snapshot_after(&self, older: &[u8], older_end: u64) -> ScrollbackReplay {
+        let mut replay = self.snapshot();
+        let before = older_end
+            .checked_sub(self.kept_start())
+            .and_then(|shared| older.len().checked_sub(usize::try_from(shared).ok()?))
+            .and_then(|end| older.get(..end));
+        if let Some(before) = before {
+            replay.data.splice(0..0, before.iter().copied());
+        }
+        replay
+    }
+
     /// The source sends everything it has again from `offset` on
-    /// ([`output_replay_start`]): forget what came before, which would
+    /// ([`output_replay`]): forget what came before, which would
     /// otherwise be in the history twice. Positions stay as they are.
     ///
     /// `offset` may be ahead of what was written; nothing is kept then until
     /// the replay arrives.
     ///
-    /// [`output_replay_start`]: termihub_core::connection::ConnectionType::output_replay_start
+    /// [`output_replay`]: termihub_core::connection::ConnectionType::output_replay
     pub fn history_starts_at(&mut self, offset: u64) {
         if offset <= self.history_start {
             return;
@@ -118,71 +155,6 @@ impl OutputCapture {
             self.ring.write(&all[all.len() - keep..]);
         }
     }
-
-    /// How much of the history was written so far, kept or not.
-    fn history_len(&self) -> u64 {
-        self.written.saturating_sub(self.history_start)
-    }
-
-    /// Whether everything the source held when it had `len` bytes is here.
-    pub fn has_caught_up_with(&self, len: usize) -> bool {
-        self.history_len() >= len as u64
-    }
-
-    /// Whether the history is longer than what is kept of it.
-    pub fn has_dropped_history(&self) -> bool {
-        self.history_len() > self.ring.len() as u64
-    }
-}
-
-/// Shortest run of bytes that places `recent` inside `older`.
-const MIN_OVERLAP: usize = 4096;
-
-/// `recent` with the output before it, taken from `older`.
-///
-/// `older` is the agent's own buffer of the same session, which may be
-/// configured larger than the capture. It must end inside `recent`, so call
-/// this only for a capture that has caught up with `older` and dropped the
-/// start of its history. Only the part before `recent` is used, so where the
-/// replay ends is still decided by `recent` alone. When `recent` cannot be
-/// found in `older`, `recent` is all there is.
-pub fn extend_back(older: &[u8], recent: Vec<u8>) -> Vec<u8> {
-    if older.len() <= recent.len() || recent.len() < MIN_OVERLAP {
-        return recent;
-    }
-    let overlap = longest_overlap(&older[older.len() - recent.len()..], &recent);
-    if overlap < MIN_OVERLAP {
-        return recent;
-    }
-    let mut all = older[..older.len() - overlap].to_vec();
-    all.extend_from_slice(&recent);
-    all
-}
-
-/// The longest prefix of `recent` that `older` ends with (Knuth-Morris-Pratt,
-/// so repetitive output costs no more than any other).
-fn longest_overlap(older: &[u8], recent: &[u8]) -> usize {
-    let mut fallback = vec![0usize; recent.len()];
-    let mut len = 0;
-    for i in 1..recent.len() {
-        while len > 0 && recent[i] != recent[len] {
-            len = fallback[len - 1];
-        }
-        if recent[i] == recent[len] {
-            len += 1;
-        }
-        fallback[i] = len;
-    }
-    let mut matched = 0;
-    for &byte in older {
-        while matched > 0 && (matched == recent.len() || byte != recent[matched]) {
-            matched = fallback[matched - 1];
-        }
-        if byte == recent[matched] {
-            matched += 1;
-        }
-    }
-    matched
 }
 
 #[cfg(test)]
@@ -202,6 +174,7 @@ mod tests {
                 data: b"abcde".to_vec(),
                 end_offset: 5,
                 epoch: start.epoch,
+                coming: false,
             }
         );
     }
@@ -239,62 +212,64 @@ mod tests {
         // A replay that is announced but not here yet.
         capture.history_starts_at(20);
         assert!(capture.snapshot().data.is_empty());
-        assert!(!capture.has_caught_up_with(1));
+        // The rest of what came before it arrives first, and must not stay.
+        assert_eq!(capture.write(b"stale").offset, 11);
+        assert!(capture.snapshot().data.is_empty());
+        assert_eq!(capture.snapshot().end_offset, 16);
+        // Also when one chunk holds both.
+        assert_eq!(capture.write(b"4567old+").offset, 16);
+        capture.write(b"new");
+        assert_eq!(capture.snapshot().data, b"old+new");
+        assert_eq!(capture.snapshot().end_offset, 27);
+    }
+
+    /// A capture of `kept` bytes that saw all of `history`.
+    fn capture_of(history: &[u8], kept: usize) -> OutputCapture {
+        let mut capture = OutputCapture::with_capacity(kept);
+        capture.write(history);
+        capture
     }
 
     #[test]
-    fn catching_up_and_dropping_count_from_the_replay() {
-        let mut capture = OutputCapture::with_capacity(4);
-        assert!(capture.has_caught_up_with(0));
-        capture.write(b"abcd");
-        assert!(!capture.has_dropped_history());
-        capture.write(b"e");
-        assert!(capture.has_dropped_history());
-        assert!(capture.has_caught_up_with(5) && !capture.has_caught_up_with(6));
-        capture.history_starts_at(3);
-        assert!(!capture.has_dropped_history());
-        assert!(capture.has_caught_up_with(2) && !capture.has_caught_up_with(3));
-    }
-
-    /// Non-periodic bytes, so an overlap has one place.
-    fn stream(len: usize) -> Vec<u8> {
-        (0..len as u32)
-            .flat_map(|i| i.wrapping_mul(2_654_435_761).to_le_bytes())
-            .take(len)
-            .collect()
-    }
-
-    #[test]
-    fn a_larger_agent_buffer_supplies_only_what_came_before() {
-        let all = stream(40_000);
-        // The agent's buffer was read before the last 1000 bytes came.
-        let older = &all[5_000..39_000];
-        let recent = all[20_000..].to_vec();
-        assert_eq!(extend_back(older, recent), all[5_000..].to_vec());
-    }
-
-    #[test]
-    fn an_agent_buffer_that_does_not_fit_is_not_used() {
-        let recent = stream(20_000);
-        for older in [Vec::new(), vec![b'x'; 30_000], stream(100)] {
-            assert_eq!(extend_back(&older, recent.clone()), recent);
+    fn a_larger_buffer_adds_exactly_what_came_before() {
+        // All alike: only positions can tell where the buffer belongs.
+        let history = b"heartbeat OK\r\n".repeat(100);
+        for lag in [0, 1, 14, 200] {
+            let capture = capture_of(&history, 300);
+            let end = history.len() - lag;
+            let older = &history[end - 1_000..end];
+            let replay = capture.snapshot_after(older, end as u64);
+            assert!(replay.data == history[end - 1_000..], "lag {lag}");
+            assert_eq!(replay.end_offset, history.len() as u64);
         }
-        // Too little captured to place it: the capture wins.
-        let short = stream(10);
-        assert_eq!(extend_back(&stream(30_000), short.clone()), short);
     }
 
     #[test]
-    fn repetitive_output_is_placed_in_linear_time() {
-        // A megabyte of one byte with a different end: a naive search compares
-        // a megabyte at each of a million starts.
-        let mut older = vec![b'z'; 100];
-        older.extend(vec![b'x'; 1 << 20]);
-        let mut recent = vec![b'x'; 1 << 20];
-        recent.extend(b"end");
-        let out = extend_back(&older, recent.clone());
-        assert_eq!(&out[..100], vec![b'z'; 100]);
-        assert_eq!(&out[100..], recent);
+    fn a_buffer_that_ends_before_what_is_kept_adds_nothing() {
+        let history = b"heartbeat OK\r\n".repeat(100);
+        let capture = capture_of(&history, 300);
+        let end = history.len() - 301;
+        assert_eq!(
+            capture.snapshot_after(&history[..end], end as u64).data,
+            history[history.len() - 300..]
+        );
+    }
+
+    #[test]
+    fn a_buffer_inside_what_is_kept_adds_nothing() {
+        let capture = capture_of(b"abcdef", 300);
+        assert_eq!(capture.snapshot_after(b"bcd", 4).data, b"abcdef");
+        assert_eq!(capture.snapshot_after(b"", 0).data, b"abcdef");
+    }
+
+    #[test]
+    fn a_buffer_is_placed_after_a_replay_too() {
+        let mut capture = OutputCapture::with_capacity(4);
+        capture.write(b"old");
+        capture.write(b"0123456789");
+        capture.history_starts_at(3);
+        // The buffer read when 8 bytes of the replay had been sent.
+        assert_eq!(capture.snapshot_after(b"01234567", 11).data, b"0123456789");
     }
 
     #[test]
@@ -303,11 +278,12 @@ mod tests {
             data: vec![0xff, 0x00],
             end_offset: 7,
             epoch: 3,
+            coming: true,
         })
         .expect("serialize");
         assert_eq!(
             json,
-            serde_json::json!({ "data": "/wA=", "endOffset": 7, "epoch": 3 })
+            serde_json::json!({ "data": "/wA=", "endOffset": 7, "epoch": 3, "coming": true })
         );
     }
 }

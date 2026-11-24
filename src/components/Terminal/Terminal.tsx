@@ -540,6 +540,9 @@ export function Terminal({
         // Where the scrollback this tab repainted ends in the session's output
         // stream (#5990): live output before it is on screen already.
         let replayEnd = NO_REPLAY;
+        // Set by a resumed session's repaint, see `ResumedRepaint`.
+        let typedDuringRepaint: string[] = [];
+        let beforeFirstOutput: (() => void) | null = null;
         // Output of a session being repainted is collected until the tab
         // subscribes below (or is torn down, or fails to set up).
         const holdOutput = (sid: string) => {
@@ -945,7 +948,9 @@ export function Terminal({
             isCanceled
           );
           resumedAgentSession = repaint.resumed;
-          if (repaint.resumed) replayEnd = repaint.replayEnd;
+          replayEnd = repaint.replayEnd;
+          typedDuringRepaint = repaint.typed;
+          beforeFirstOutput = repaint.beforeFirstOutput;
         }
         if (isCanceled()) return;
 
@@ -1218,7 +1223,10 @@ export function Terminal({
             return;
           }
           const fresh = afterReplay(data, position, replayEnd);
-          if (fresh) showOutput(fresh);
+          if (!fresh) return;
+          beforeFirstOutput?.();
+          beforeFirstOutput = null;
+          showOutput(fresh);
         };
         /** End the repaint in progress, if any, and show what waited for it. */
         const endRepaint = () => {
@@ -1278,7 +1286,7 @@ export function Terminal({
         });
 
         // Send user input to backend
-        const onDataDisposable = xterm.onData((data) => {
+        const sendTyped = (data: string) => {
           // SM-003 (single-attach): another desktop/window controls this session
           // — never send it input until the user explicitly reclaims it.
           if (isTabEvicted(tabId)) return;
@@ -1318,7 +1326,9 @@ export function Terminal({
             // recording is active — the store guards on the recording flag.
             store.recordMacroInput(data);
           }
-        });
+        };
+        const onDataDisposable = xterm.onData(sendTyped);
+        typedDuringRepaint.forEach(sendTyped);
 
         // Send resize events after fit — deduplicated to avoid SIGWINCH storms.
         // Multiple fit() calls from TerminalSlot (sync+RAF), ResizeObserver,

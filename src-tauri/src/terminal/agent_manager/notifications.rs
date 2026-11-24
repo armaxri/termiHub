@@ -304,10 +304,9 @@ pub(super) fn handle_notification(
                 // so this only fails once the session's receiver is gone. The
                 // receiving side backpressures, and a paused terminal pauses the
                 // agent (`connection.output_flow`), which bounds the backlog.
-                let _ = if n.replay_start {
-                    output_tx.send_replay_start(data)
-                } else {
-                    output_tx.send(data)
+                let _ = match n.replay_id {
+                    Some(id) => output_tx.send_replay_start(id, data),
+                    None => output_tx.send(data),
                 };
             }
         }

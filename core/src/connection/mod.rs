@@ -203,6 +203,16 @@ pub trait GatedSetup: Send + Sync {
     }
 }
 
+/// A replay of everything the source of a session's output still has (#5990):
+/// what came before `start` comes once more after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputReplay {
+    /// Names the replay; the source's own.
+    pub id: u64,
+    /// Its position in the output since connecting.
+    pub start: u64,
+}
+
 /// Unified trait for all connection backends.
 ///
 /// Each connection type (local shell, SSH, serial, telnet, Docker, WSL)
@@ -441,10 +451,9 @@ pub trait ConnectionType: Send + Sync {
     }
 
     /// Where the source of this session's output last started over with a
-    /// replay of everything it still has (#5990), as a position in the output
-    /// since connecting: what came before it comes once more after it. `None`
-    /// for a backend that never does (the default).
-    fn output_replay_start(&self) -> Option<u64> {
+    /// replay of everything it still has (#5990). `None` for a backend that
+    /// never does (the default).
+    fn output_replay(&self) -> Option<OutputReplay> {
         None
     }
 

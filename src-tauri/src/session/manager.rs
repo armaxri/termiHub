@@ -18,7 +18,8 @@ use tokio_util::sync::CancellationToken;
 use serde::Serialize;
 use tauri::Emitter;
 use termihub_core::connection::{
-    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry, SessionEndCause,
+    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry, OutputReplay,
+    SessionEndCause,
 };
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
 use termihub_core::session::prompt_ready::wait_for_prompt;
@@ -977,17 +978,17 @@ impl SessionManager {
     /// nothing has been captured yet. The backend session is never touched —
     /// this is a pure read of the capture buffer.
     pub async fn replay_scrollback(&self, session_id: &str) -> ScrollbackReplay {
-        self.read_capture(session_id, OutputCapture::snapshot)
+        self.read_capture(session_id, |capture, _| capture.snapshot())
             .await
             .unwrap_or_default()
     }
 
     /// Read `session_id`'s capture, brought up to the last replay its source
-    /// sent (#5990). `None` when it has no capture.
+    /// sent (#5990), and that replay. `None` when it has no capture.
     pub(super) async fn read_capture<T>(
         &self,
         session_id: &str,
-        read: impl FnOnce(&OutputCapture) -> T,
+        read: impl FnOnce(&OutputCapture, Option<OutputReplay>) -> T,
     ) -> Option<T> {
         // The capture first: a stream's connection is registered before its
         // capture starts, so the connection read after it is never an older one,
@@ -1002,10 +1003,11 @@ impl SessionManager {
         let mut capture = capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(start) = connection.and_then(|c| c.output_replay_start()) {
-            capture.history_starts_at(start);
+        let replay = connection.and_then(|c| c.output_replay());
+        if let Some(replay) = replay {
+            capture.history_starts_at(replay.start);
         }
-        Some(read(&capture))
+        Some(read(&capture, replay))
     }
 
     /// The capture of `session_id`, if it has one.

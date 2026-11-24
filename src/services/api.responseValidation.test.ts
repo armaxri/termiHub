@@ -73,7 +73,7 @@ describe("api response-validation (TFE-004)", () => {
     const b64 = "AEF/gMD+/w==";
 
     it("replaySessionScrollback decodes base64 into an exact Uint8Array", async () => {
-      mockedInvoke.mockResolvedValue({ data: b64, endOffset: 9, epoch: 4 });
+      mockedInvoke.mockResolvedValue({ data: b64, endOffset: 9, epoch: 4, coming: false });
 
       const result = await replaySessionScrollback("sess-1");
 
@@ -87,7 +87,7 @@ describe("api response-validation (TFE-004)", () => {
     });
 
     it("replaySessionScrollback yields an empty Uint8Array for an empty buffer", async () => {
-      mockedInvoke.mockResolvedValue({ data: "", endOffset: 0, epoch: 0 });
+      mockedInvoke.mockResolvedValue({ data: "", endOffset: 0, epoch: 0, coming: false });
 
       const result = await replaySessionScrollback("sess-empty");
 
@@ -97,7 +97,7 @@ describe("api response-validation (TFE-004)", () => {
     });
 
     it("getAgentSessionBuffer decodes base64 into an exact Uint8Array", async () => {
-      mockedInvoke.mockResolvedValue({ data: b64, endOffset: 9, epoch: 4 });
+      mockedInvoke.mockResolvedValue({ data: b64, endOffset: 9, epoch: 4, coming: false });
 
       const result = await getAgentSessionBuffer("agent-sess-1");
 

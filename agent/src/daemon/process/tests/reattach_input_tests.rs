@@ -92,7 +92,7 @@ async fn output_until(
     let all = tokio::time::timeout(BOUND, async {
         while !seen.windows(needle.len()).any(|w| w == needle) {
             let note = notifications.recv().await.expect("the worker is attached");
-            if note.params.get("replay_start").is_some() {
+            if note.params.get("replay_id").is_some() {
                 // Only the first chunk of the buffer an attach sends again.
                 assert!(seen.is_empty(), "a replay start after {seen:?}");
                 replay_starts += 1;
@@ -143,10 +143,19 @@ async fn input_right_after_an_adoption_reaches_the_session_and_is_answered() {
     out_tx.send(b"$ ".to_vec()).await.expect("prompt");
     // Nothing was printed before the attach: live output, not a replay.
     assert_eq!(output_until(&mut notes, b"$ ").await, (b"$ ".to_vec(), 0));
+    // Nothing was sent again on this attach: counted from its start.
+    let end = first
+        .query_buffer()
+        .await
+        .expect("buffer")
+        .end
+        .expect("end");
+    assert_eq!((end.replay_id, end.position), (None, 2));
     first.detach().await;
 
     // Adopt it again and again, typing at once each time.
     let mut expected = b"$ ".to_vec();
+    let mut last_replay = None;
     for round in 0..20 {
         let (tx, mut notes) = mpsc::unbounded_channel();
         let mut client = attach(tx).await.expect("adopt");
@@ -157,6 +166,13 @@ async fn input_right_after_an_adoption_reaches_the_session_and_is_answered() {
         expected.extend_from_slice(&line);
         // The replay, then the answer: nothing lost, nothing twice.
         assert_eq!(output_until(&mut notes, &line).await, (expected.clone(), 1));
+        // The buffer says where it ends in what this worker was sent.
+        let buffer = client.query_buffer().await.expect("buffer");
+        assert_eq!(buffer.data, expected);
+        let end = buffer.end.expect("a daemon session has an end");
+        assert_eq!(end.position, expected.len() as u64);
+        assert!(end.replay_id > last_replay, "a new replay per attach");
+        last_replay = end.replay_id;
         client.detach().await;
     }
     assert_eq!(

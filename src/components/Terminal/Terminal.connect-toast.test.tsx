@@ -62,7 +62,7 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: vi
     .fn()
-    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 }),
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false }),
 }));
 
 vi.mock("@/services/events", () => ({

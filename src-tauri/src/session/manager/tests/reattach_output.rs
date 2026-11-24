@@ -53,12 +53,32 @@ async fn persistent_session(manager: &SessionManager) {
     );
 }
 
-/// The agent's `session.getBuffer` answer.
-fn buffer_reply(bytes: &[u8]) -> Step {
+/// The replay id the fake agent uses.
+const REPLAY: u64 = 7;
+
+/// The `session.getBuffer` answer of an agent that does not say where its
+/// buffer ends (before 0.45.0).
+fn old_buffer_reply(bytes: &[u8]) -> Step {
     use base64::Engine;
     Step::Reply(serde_json::json!({
+        "session_id": "remote-1",
         "data": base64::engine::general_purpose::STANDARD.encode(bytes)
     }))
+}
+
+/// The answer of a current agent: `bytes` end `end` bytes into the replay.
+fn buffer_reply_at(bytes: &[u8], end: usize) -> Step {
+    let Step::Reply(mut reply) = old_buffer_reply(bytes) else {
+        unreachable!()
+    };
+    reply["replay_id"] = REPLAY.into();
+    reply["end_position"] = end.into();
+    Step::Reply(reply)
+}
+
+/// [`buffer_reply_at`] for a buffer that is all that was sent.
+fn buffer_reply(bytes: &[u8]) -> Step {
+    buffer_reply_at(bytes, bytes.len())
 }
 
 /// The answer to input typed right after a re-attach is emitted, and starts
@@ -76,7 +96,7 @@ async fn output_after_a_reattach_starts_where_the_repaint_ended() {
     let agent = spy.session_outputs.lock().unwrap().last().cloned().unwrap();
 
     // The daemon re-forwards its buffer as live output.
-    agent.send_replay_start(b"$ ".to_vec()).unwrap();
+    agent.send_replay_start(REPLAY, b"$ ".to_vec()).unwrap();
     chunks_until(&emitter, "sess-1", 2).await;
     let repaint = manager.get_remote_session_buffer("sess-1").await.unwrap();
     assert_eq!(repaint.data, b"$ ");
@@ -124,14 +144,19 @@ fn heartbeats(lines: usize) -> Vec<u8> {
 }
 
 /// An attached session whose agent answers `session.getBuffer` with `buffer`.
-async fn attached(
-    buffer: &[u8],
-) -> (
+async fn attached(buffer: &[u8]) -> Attached {
+    attached_to(buffer_reply(buffer)).await
+}
+
+type Attached = (
     Arc<SessionManager>,
     MockEventEmitter,
     crate::terminal::backend::OutputSender,
-) {
-    let spy = Arc::new(spy_agent().always("send_request", buffer_reply(buffer)));
+);
+
+/// An attached session whose agent answers `session.getBuffer` with `reply`.
+async fn attached_to(reply: Step) -> Attached {
+    let spy = Arc::new(spy_agent().always("send_request", reply));
     let manager = Arc::new(SessionManager::new(
         ConnectionTypeRegistry::new(),
         spy.clone(),
@@ -161,7 +186,9 @@ async fn a_repaint_waits_for_a_re_forward_that_is_still_arriving() {
     let buffer = heartbeats(600);
     for first in [1, 6_000, 8_192] {
         let (manager, emitter, agent) = attached(&buffer).await;
-        agent.send_replay_start(buffer[..first].to_vec()).unwrap();
+        agent
+            .send_replay_start(REPLAY, buffer[..first].to_vec())
+            .unwrap();
         chunks_until(&emitter, "sess-1", first).await;
         let reading = tokio::spawn({
             let manager = manager.clone();
@@ -184,7 +211,9 @@ async fn a_re_forward_that_stalls_is_still_shown_once() {
     let buffer = heartbeats(600);
     for first in [6_000, 8_192] {
         let (manager, emitter, agent) = attached(&buffer).await;
-        agent.send_replay_start(buffer[..first].to_vec()).unwrap();
+        agent
+            .send_replay_start(REPLAY, buffer[..first].to_vec())
+            .unwrap();
         chunks_until(&emitter, "sess-1", first).await;
         let repaint = manager.get_remote_session_buffer("sess-1").await.unwrap();
         agent.send(buffer[first..].to_vec()).unwrap();
@@ -193,6 +222,96 @@ async fn a_re_forward_that_stalls_is_still_shown_once() {
         assert_eq!(all.len(), buffer.len(), "first={first}");
         assert!(all == buffer);
     }
+}
+
+/// A full agent buffer larger than the capture, read 14 bytes before the rest
+/// of the re-forward and more output arrived: every line alike, so only the
+/// position can tell where the two meet.
+#[tokio::test]
+async fn a_full_agent_buffer_is_joined_by_position() {
+    let line = b"heartbeat OK\r\n";
+    let capacity = termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
+    let mut history = line.repeat(capacity / line.len());
+    history.extend_from_slice(b"ERROR disk full\r\n");
+    history.extend(line.repeat(capacity / line.len()));
+    // The agent keeps the last part of it, read before the last two lines.
+    let (read, ring) = (history.len() - 2 * line.len(), capacity + 100_000);
+    let buffer = &history[read - ring..read];
+    // It had sent this buffer again, and 2 lines since: the replay is `sent`.
+    let sent = &history[read - ring..];
+    let (manager, emitter, agent) = attached_to(buffer_reply_at(buffer, ring)).await;
+    let here = ring - 14;
+    agent
+        .send_replay_start(REPLAY, sent[..here].to_vec())
+        .unwrap();
+    chunks_until(&emitter, "sess-1", here).await;
+    let reading = tokio::spawn({
+        let manager = manager.clone();
+        async move { manager.get_remote_session_buffer("sess-1").await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!reading.is_finished(), "14 bytes are missing");
+    agent.send(sent[here..].to_vec()).unwrap();
+
+    let repaint = reading.await.unwrap().unwrap();
+    let chunks = chunks_until(&emitter, "sess-1", sent.len()).await;
+    let all = shown(&repaint, &chunks);
+    assert_eq!(all.len(), sent.len());
+    assert!(all == sent);
+    assert_eq!(repaint.end_offset, sent.len() as u64);
+}
+
+/// An agent from before 0.45.0 says neither where a replay starts nor where its
+/// buffer ends: no wait and no extension, and nothing lost or shown twice.
+#[tokio::test]
+async fn an_older_agent_gets_the_capture_only_repaint() {
+    let buffer = heartbeats(600);
+    let (manager, emitter, agent) = attached_to(old_buffer_reply(&buffer)).await;
+    agent.send(buffer[..6_000].to_vec()).unwrap();
+    chunks_until(&emitter, "sess-1", 6_000).await;
+    let started = std::time::Instant::now();
+    let repaint = manager.get_remote_session_buffer("sess-1").await.unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1), "it waited");
+    assert_eq!(repaint.data, buffer[..6_000]);
+    agent.send(buffer[6_000..].to_vec()).unwrap();
+    let chunks = chunks_until(&emitter, "sess-1", buffer.len()).await;
+    assert!(shown(&repaint, &chunks) == buffer);
+}
+
+/// Nothing is here yet, but the agent has it: the tab is told that it comes.
+/// An agent without a buffer for the session has nothing to send.
+#[tokio::test]
+async fn an_empty_repaint_says_whether_the_history_is_coming() {
+    for (reply, coming) in [
+        (old_buffer_reply(b"$ "), true),
+        (old_buffer_reply(b""), false),
+    ] {
+        let (manager, _emitter, _agent) = attached_to(reply).await;
+        let repaint = manager.get_remote_session_buffer("sess-1").await.unwrap();
+        assert!(repaint.data.is_empty());
+        assert_eq!(repaint.coming, coming);
+    }
+}
+
+/// The session ends while the repaint waits: that is an error, not an empty
+/// history a tab would replace its own scrollback with.
+#[tokio::test]
+async fn a_session_that_ends_during_the_wait_is_an_error() {
+    let (manager, emitter, agent) = attached(b"0123456789").await;
+    agent.send_replay_start(REPLAY, b"01".to_vec()).unwrap();
+    chunks_until(&emitter, "sess-1", 2).await;
+    let reading = tokio::spawn({
+        let manager = manager.clone();
+        async move { manager.get_remote_session_buffer("sess-1").await }
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!reading.is_finished());
+    manager.close_session("sess-1").await.expect("close");
+    let result = reading.await.unwrap();
+    assert!(
+        matches!(result, Err(TerminalError::SessionNotFound(_))),
+        "{result:?}"
+    );
 }
 
 /// A buffer larger than the capture is shown in full, once.
@@ -205,7 +324,7 @@ async fn a_buffer_larger_than_the_capture_is_shown_in_full() {
     let (manager, emitter, agent) = attached(&buffer).await;
     let mut pieces = buffer.chunks(65_536);
     agent
-        .send_replay_start(pieces.next().unwrap().to_vec())
+        .send_replay_start(REPLAY, pieces.next().unwrap().to_vec())
         .unwrap();
     for piece in pieces {
         agent.send(piece.to_vec()).unwrap();
@@ -246,7 +365,7 @@ async fn a_repaint_shows_the_history_once_whoever_attached_again() {
         let (manager, emitter, agent) = attached(&history).await;
         agent.send(before.to_vec()).unwrap();
         chunks_until(&emitter, "sess-1", before.len()).await;
-        agent.send_replay_start(replay.to_vec()).unwrap();
+        agent.send_replay_start(REPLAY, replay.to_vec()).unwrap();
         if !after.is_empty() {
             agent.send(after.to_vec()).unwrap();
         }
@@ -282,7 +401,9 @@ async fn an_attach_past_the_session_manager_restarts_the_history_too() {
     // As `take_over_agent_session` does.
     crate::terminal::agent_manager::AgentRpcClient::reclaim_session(&*spy, "agent-1", "remote-1")
         .expect("take over");
-    agent.send_replay_start(b"$ ls\r\n$ ".to_vec()).unwrap();
+    agent
+        .send_replay_start(REPLAY, b"$ ls\r\n$ ".to_vec())
+        .unwrap();
     chunks_until(&emitter, &sid, 14).await;
     assert_eq!(manager.replay_scrollback(&sid).await.data, b"$ ls\r\n$ ");
 }

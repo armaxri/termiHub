@@ -3108,21 +3108,22 @@ fn other_disconnects_are_an_unexpected_loss() {
 }
 
 /// #5990: the first chunk of a buffer the agent sends again on an attach marks
-/// where the session's history starts over, on every path that dispatches
-/// notifications (the live loop, a transport reconnect, the handshake).
+/// where the session's history starts over. Every path that dispatches
+/// notifications ends in this handler; the paths themselves are not run here.
 #[test]
 fn a_replay_start_is_recorded_where_it_lands_in_the_stream() {
     use crate::terminal::backend::OutputPosition;
+    use termihub_core::connection::OutputReplay;
     let b64 = base64::engine::general_purpose::STANDARD;
     let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
     let position = OutputPosition::default();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     session_outputs.insert("s".to_string(), OutputSender::new(tx, position.clone()));
     let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
-    let deliver = |data: &[u8], replay_start: bool| {
+    let deliver = |data: &[u8], replay_id: Option<u64>| {
         let mut params = json!({ "session_id": "s", "data": b64.encode(data) });
-        if replay_start {
-            params["replay_start"] = json!(true);
+        if let Some(id) = replay_id {
+            params["replay_id"] = json!(id);
         }
         handle_notification(
             "connection.output",
@@ -3132,13 +3133,14 @@ fn a_replay_start_is_recorded_where_it_lands_in_the_stream() {
             &b64,
         );
     };
-    deliver(b"live", false);
-    assert_eq!(position.replay_start(), None);
-    deliver(b"live+", true);
-    deliver(b"more", false);
-    assert_eq!(position.replay_start(), Some(4));
-    deliver(b"live+more", true);
-    assert_eq!(position.replay_start(), Some(13));
+    // As an older agent sends it: no replay is known.
+    deliver(b"live", None);
+    assert_eq!(position.replay(), None);
+    deliver(b"live+", Some(1));
+    deliver(b"more", None);
+    assert_eq!(position.replay(), Some(OutputReplay { id: 1, start: 4 }));
+    deliver(b"live+more", Some(2));
+    assert_eq!(position.replay(), Some(OutputReplay { id: 2, start: 13 }));
     drop(session_outputs);
     assert_eq!(
         rx.iter().collect::<Vec<_>>().concat(),

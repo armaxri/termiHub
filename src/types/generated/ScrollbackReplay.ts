@@ -16,4 +16,10 @@ endOffset: number,
 /**
  * Which output stream of the session this is (see [`StreamPosition`]).
  */
-epoch: number, };
+epoch: number, 
+/**
+ * `data` is empty, but the agent holds output that is on its way as live
+ * output: a tab that shows the session's earlier output itself will get it
+ * again.
+ */
+coming: boolean, };

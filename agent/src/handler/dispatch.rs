@@ -254,10 +254,12 @@ use termihub_core::monitoring::{
 /// agent-hosted SSH session negotiated, for the desktop's security popover.
 /// An older agent answers method-not-found and the popover says only
 /// "Encrypted (SSH)"; an older desktop never asks.
-/// Bumped to 0.45.0 for the additive, optional `replay_start` of
-/// `connection.output` (#5990): the first chunk of the buffer an attach sends
-/// again is marked. An older desktop ignores the key; from an older agent the
-/// desktop may keep a re-sent buffer twice in a repaint.
+/// Bumped to 0.45.0 for the additive, optional `replay_id` of
+/// `connection.output` (#5990), on the first chunk of the buffer an attach sends
+/// again, and the `replay_id` / `end_position` of the `session.getBuffer`
+/// result, where the buffer ends in what was sent since. An older desktop
+/// ignores the keys; from an older agent the desktop may keep a re-sent buffer
+/// twice in a repaint and repaints only what it received.
 const AGENT_PROTOCOL_VERSION: &str = "0.45.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
@@ -1638,15 +1640,16 @@ fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             .parse()
             .map_err(|e| invalid_params("session.getBuffer", e))?;
 
-        let data = session_manager
+        let buffer = session_manager
             .get_buffer(&p.session_id)
             .await
             .map_err(|e| rpc_err(errors::SESSION_NOT_FOUND, e))?;
 
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
         to_result_value(&SessionGetBufferResult {
             session_id: p.session_id,
-            data: encoded,
+            data: base64::engine::general_purpose::STANDARD.encode(&buffer.data),
+            replay_id: buffer.end.and_then(|end| end.replay_id),
+            end_position: buffer.end.map(|end| end.position),
         })
     })?;
     Ok(())
@@ -4121,7 +4124,8 @@ mod tests {
     /// `connectionDescription` capability (#5769),
     /// and 0.43.0 the definition `last_used_at` (#5940), and 0.44.0
     /// `connection.sshAlgorithms` (#5896), and 0.45.0 the optional
-    /// `replay_start` of `connection.output` (#5990).
+    /// `replay_id` of `connection.output` and the end position of
+    /// `session.getBuffer` (#5990).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
         assert_eq!(AGENT_PROTOCOL_VERSION, "0.45.0");
@@ -7228,10 +7232,13 @@ mod tests {
             }
         }
 
-        async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
+        async fn get_buffer(
+            &self,
+            session_id: &str,
+        ) -> Result<crate::daemon::client::SessionBuffer, String> {
             let sessions = self.sessions.lock().await;
             if sessions.iter().any(|s| s.id == session_id) {
-                Ok(Vec::new())
+                Ok(Default::default())
             } else {
                 Err("Session not found".to_string())
             }

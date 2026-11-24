@@ -72,7 +72,7 @@ const mockSendInput = vi.fn().mockResolvedValue(undefined);
 const mockResizeTerminal = vi.fn().mockResolvedValue(undefined);
 const mockReplayScrollback = vi
   .fn()
-  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
 
 vi.mock("@/services/api", () => ({
   createTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
@@ -82,7 +82,7 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: vi
     .fn()
-    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 }),
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false }),
   replaySessionScrollback: (...args: unknown[]) => mockReplayScrollback(...args),
 }));
 
@@ -268,6 +268,7 @@ describe("Terminal — no input while another window controls the session (#3368
       data: new Uint8Array([0x24, 0x20]),
       endOffset: 2,
       epoch: 1,
+      coming: false,
     });
 
     act(() => useAppStore.getState().setSessionOwners({ "session-1": "win-1" }));
