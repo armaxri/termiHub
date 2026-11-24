@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
-import { SCHEDULE_LOCAL_PROCESS_REASON } from "@/utils/scheduleLocalProcessGate";
+import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { useAppStore } from "@/store/appStore";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { withTooltip } from "@/test/tooltip";
@@ -334,7 +334,7 @@ describe("SchedulesSection (PROD-043)", () => {
         })),
       }));
     });
-    expect(query("schedule-blocked-s1")!.textContent).toBe(SCHEDULE_LOCAL_PROCESS_REASON);
+    expect(query("schedule-blocked-s1")!.textContent).toBe(LOCAL_PROCESS_REASON);
   });
 
   it("offers no attempts toggle before the first attempt", async () => {

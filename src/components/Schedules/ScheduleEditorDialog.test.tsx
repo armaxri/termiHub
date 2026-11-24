@@ -5,7 +5,7 @@ import { withTooltip } from "@/test/tooltip";
 import type { SavedConnection } from "@/types/connection";
 import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
 import type { Automation } from "@/types/generated/Automation";
-import { SCHEDULE_LOCAL_PROCESS_REASON } from "@/utils/scheduleLocalProcessGate";
+import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { flushAsync } from "@/test/flushAsync";
 import { leaveField } from "@/test/leaveField";
@@ -395,7 +395,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       setInput("schedule-editor-name", "Nightly");
       act(() => query("schedule-editor-connection-c1")!.click());
       expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
-      expect(text()).toContain(SCHEDULE_LOCAL_PROCESS_REASON);
+      expect(text()).toContain(LOCAL_PROCESS_REASON);
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).not.toHaveBeenCalled();
     });
@@ -403,7 +403,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     it("keeps its id on an existing schedule, which says why it will not run", async () => {
       const onSave = vi.fn();
       render({ schedule: existing("lp"), automations: localAutomations, onSave });
-      expect(text()).toContain(SCHEDULE_LOCAL_PROCESS_REASON);
+      expect(text()).toContain(LOCAL_PROCESS_REASON);
       setInput("schedule-editor-name", "Renamed");
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).toHaveBeenCalledWith(

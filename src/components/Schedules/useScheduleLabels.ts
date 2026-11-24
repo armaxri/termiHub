@@ -6,7 +6,7 @@ import { useBroadcastGroups } from "@/store/broadcastGroups";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import type { ScheduleAction, ScheduleTargets } from "@/types/schedule";
 
-import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
+import { localProcessBlockedReason } from "@/utils/localProcessGate";
 
 import { describeTargetNames } from "./scheduleForm";
 
@@ -32,7 +32,7 @@ export function useScheduleLabels() {
     (action: ScheduleAction): string | null => {
       const find = (id: string) => automations.find((x) => x.id === id);
       const automation = find(action.automationId);
-      return automation ? scheduleBlockedReason(automation, find, experimental) : null;
+      return automation ? localProcessBlockedReason(automation, find, experimental) : null;
     },
     [automations, experimental]
   );

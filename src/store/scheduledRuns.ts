@@ -43,7 +43,7 @@ import type { Workflow, WorkflowParameter } from "@/types/workflow";
 import type { Automation } from "@/types/generated/Automation";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
-import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
+import { localProcessBlockedReason } from "@/utils/localProcessGate";
 
 import type { AppState } from "./appStore";
 import { collectLiveTabs } from "./layoutHelpers";
@@ -59,7 +59,7 @@ import {
 import { newMacroRunId } from "./slices/macroRunHistory";
 import { automationForRun } from "./slices/automationStoreState";
 import { automationToWorkflow, isMacroShaped } from "./slices/automationViews";
-import { currentSettingsView } from "./settingsBridge";
+import { experimentalFeaturesOn } from "./localProcessRefusal";
 import {
   closeRunTabs,
   connectedIds,
@@ -297,10 +297,10 @@ async function resolveAction(
   if (!automation || (legacySource && automation.legacy?.from !== legacySource)) {
     return { refused: "The automation no longer exists" };
   }
-  const blocked = scheduleBlockedReason(
+  const blocked = localProcessBlockedReason(
     automation,
     (id) => automationForRun(store.getState(), id),
-    currentSettingsView().experimentalFeaturesEnabled === true
+    experimentalFeaturesOn()
   );
   return blocked ? { refused: blocked } : { automation };
 }

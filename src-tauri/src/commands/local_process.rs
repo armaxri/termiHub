@@ -11,8 +11,8 @@
 //!    a per-program confirmation/allowlist on top, but this backend check means a
 //!    step can never spawn a process without the user having opted in — even if
 //!    the frontend were bypassed.
-//!    A **scheduled** run also needs experimental features on (#5818): the step is
-//!    experimental and a schedule runs unattended ([`authorize_spawn`]).
+//!    The step is also experimental: `experimental_features_enabled` must be on
+//!    too, for every run and whatever started it ([`authorize_spawn`], #5988).
 //! 2. **Direct argv — never a shell.** The program is spawned with
 //!    [`tokio::process::Command`] from `program` + a discrete `args` vector. No
 //!    shell is ever involved and no argument is concatenated into a command line,
@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Runtime, State};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -142,12 +142,14 @@ impl LocalProcessRegistry {
     }
 }
 
-/// The trust-boundary check of [`run_local_process`]: the master opt-in, and for
-/// a scheduled (unattended) run also the experimental switch (#5818).
-fn authorize_spawn(settings: &AppSettings, scheduled: bool) -> Result<(), &'static str> {
-    if scheduled && settings.experimental_features_enabled != Some(true) {
+/// The trust-boundary check of [`run_local_process`]: the experimental switch
+/// (#5988) **and** the master opt-in, whatever started the run. The per-program
+/// allowlist is the frontend's, on top of both.
+fn authorize_spawn(settings: &AppSettings) -> Result<(), &'static str> {
+    if settings.experimental_features_enabled != Some(true) {
         return Err(
-            "a scheduled run cannot start a local process while experimental features are off",
+            "running a local process is experimental; turn on Settings ▸ General ▸ Allow \
+             experimental features to run this step",
         );
     }
     if !settings.workflow_local_process_enabled {
@@ -207,7 +209,7 @@ where
 /// the program as a single, literal argument and can never be reinterpreted as a
 /// command line. Kept free of any Tauri dependency so the guardrails are unit
 /// testable.
-pub async fn execute_local_process(
+async fn execute_local_process(
     program: &str,
     args: &[String],
     timeout: Duration,
@@ -306,29 +308,29 @@ pub async fn execute_local_process(
 
 /// Spawn a guarded local process for a `run-local-process` workflow step.
 ///
-/// Enforces the master opt-in (`workflow_local_process_enabled`) before doing
+/// Enforces the experimental switch and the master opt-in before doing
 /// anything, then delegates to [`execute_local_process`], forwarding streamed
 /// output as [`EVENT_LOCAL_PROCESS_OUTPUT`] events and returning the exit
 /// outcome. Awaits completion so the caller learns the exit status.
 #[tauri::command]
-pub async fn run_local_process(
+pub async fn run_local_process<R: Runtime>(
     run_id: String,
     program: String,
     args: Vec<String>,
     timeout_ms: Option<u64>,
-    scheduled: Option<bool>,
     registry: State<'_, LocalProcessRegistry>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
 ) -> Result<LocalProcessOutcome, TerminalError> {
-    // GUARDRAIL: explicit opt-in, enforced at the trust boundary. A step can
-    // never spawn a process unless the user has enabled local-process execution.
+    // GUARDRAIL: the experimental switch and the explicit opt-in, enforced at the
+    // trust boundary from the persisted settings. A step can never spawn a process
+    // unless the user turned on both, whatever the frontend says about the run.
     let settings = SettingsStorage::new(&app_handle)
         .and_then(|storage| storage.load_with_recovery())
         .map(|recovered| recovered.data)
         .map_err(|e| {
             TerminalError::WorkflowError(format!("could not load settings to authorize step: {e}"))
         })?;
-    if let Err(reason) = authorize_spawn(&settings, scheduled.unwrap_or(false)) {
+    if let Err(reason) = authorize_spawn(&settings) {
         warn!(run_id, reason, "refused local-process step");
         return Err(TerminalError::WorkflowError(reason.to_string()));
     }
@@ -382,25 +384,67 @@ pub fn cancel_local_process(run_id: String, registry: State<'_, LocalProcessRegi
 mod tests {
     use super::*;
 
-    /// #5818: the experimental switch gates scheduled spawns, on top of (and
-    /// independent of) the master opt-in.
+    /// #5988: the experimental switch and the master opt-in are both required.
     #[test]
-    fn a_scheduled_spawn_needs_experimental_and_the_opt_in() {
+    fn a_spawn_needs_experimental_and_the_opt_in() {
         let settings = |experimental, enabled| AppSettings {
             experimental_features_enabled: experimental,
             workflow_local_process_enabled: enabled,
             ..AppSettings::default()
         };
         for off in [None, Some(false)] {
-            let err = authorize_spawn(&settings(off, true), true).unwrap_err();
-            assert!(err.contains("experimental"), "{err}");
+            let err = authorize_spawn(&settings(off, true)).unwrap_err();
+            assert!(err.contains("Allow experimental features"), "{err}");
+            assert!(authorize_spawn(&settings(off, false)).is_err());
         }
-        assert!(authorize_spawn(&settings(Some(true), true), true).is_ok());
-        let err = authorize_spawn(&settings(Some(true), false), true).unwrap_err();
+        assert!(authorize_spawn(&settings(Some(true), true)).is_ok());
+        let err = authorize_spawn(&settings(Some(true), false)).unwrap_err();
         assert!(err.contains("disabled"), "{err}");
-        // Other runs are unchanged here: the opt-in alone decides.
-        assert!(authorize_spawn(&settings(None, true), false).is_ok());
-        assert!(authorize_spawn(&settings(None, false), false).is_err());
+    }
+
+    /// The real command against settings on disk: with either control off it
+    /// returns an error and no process is created; with both on it runs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_command_spawns_only_with_both_controls_on() {
+        use crate::utils::config_paths::ConfigDirOverride;
+        use tauri::Manager;
+
+        for (experimental, enabled) in [
+            (None, true),
+            (Some(false), true),
+            (Some(true), false),
+            (Some(true), true),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let app = tauri::test::mock_app();
+            app.manage(ConfigDirOverride(dir.path().to_path_buf()));
+            app.manage(LocalProcessRegistry::default());
+            SettingsStorage::new(app.handle())
+                .unwrap()
+                .save(&AppSettings {
+                    experimental_features_enabled: experimental,
+                    workflow_local_process_enabled: enabled,
+                    ..AppSettings::default()
+                })
+                .unwrap();
+            let marker = dir.path().join("spawned");
+
+            let result = run_local_process(
+                "run-1".into(),
+                "/usr/bin/touch".into(),
+                vec![marker.display().to_string()],
+                Some(5_000),
+                app.state(),
+                app.handle().clone(),
+            )
+            .await;
+
+            let allowed = experimental == Some(true) && enabled;
+            let case = format!("experimental {experimental:?}, opt-in {enabled}");
+            assert_eq!(result.is_ok(), allowed, "{case}: {result:?}");
+            assert_eq!(marker.exists(), allowed, "{case}");
+        }
     }
 
     /// Drain the output channel into a flat list of `(stream, line)` pairs.
