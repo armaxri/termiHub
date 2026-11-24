@@ -7,7 +7,7 @@
  * confirmations still go for good (#5830).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
 import { toast } from "./toast";
