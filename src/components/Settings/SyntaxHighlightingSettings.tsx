@@ -105,7 +105,10 @@ export function SyntaxHighlightingSettings({
       <SettingsSectionHeading>Syntax highlighting</SettingsSectionHeading>
       <SettingsField
         label="Enable syntax highlighting"
-        hint="Colorize recognizable patterns (errors, URLs, paths, IPs, …) in plain terminal output. Colors the remote server already set via ANSI are never overridden."
+        hint="Color errors, URLs, paths and IPs in plain terminal output."
+        help="Recognizable patterns such as errors, URLs, paths and IP addresses are colored. Colors the remote server already set via ANSI are never overridden."
+        hintTestId="settings-syntax-highlighting-enabled-hint"
+        helpTestId="settings-syntax-highlighting-enabled-help"
       >
         <Toggle
           checked={enabled}

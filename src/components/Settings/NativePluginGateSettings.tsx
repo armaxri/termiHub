@@ -212,7 +212,10 @@ export function NativePluginGateSettings() {
 
         <SettingsField
           label="Enable native plugins"
-          hint="Off by default. Even when enabled, each native plugin must be trusted individually below before it loads. Theme and JavaScript plugins are unaffected by this setting."
+          hint="Each native plugin must still be trusted below before it loads."
+          help="Off by default. Theme and JavaScript plugins are unaffected by this setting."
+          hintTestId="settings-native-plugins-enabled-hint"
+          helpTestId="settings-native-plugins-enabled-help"
           hintVariant="warning"
         >
           <Toggle

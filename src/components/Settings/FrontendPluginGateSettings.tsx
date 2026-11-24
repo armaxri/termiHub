@@ -44,7 +44,10 @@ export function FrontendPluginGateSettings() {
 
         <SettingsField
           label="Enable frontend (JavaScript) plugins"
-          hint="Experimental. Runs plugin-provided JavaScript (protocol parsers and status-bar widgets). Theme-only and backend plugins are unaffected by this setting."
+          hint="Experimental. Runs JavaScript that plugins provide."
+          help="Plugin JavaScript powers protocol parsers and status-bar widgets. Theme-only and backend plugins are unaffected by this setting."
+          hintTestId="settings-frontend-plugins-enabled-hint"
+          helpTestId="settings-frontend-plugins-enabled-help"
           hintVariant="warning"
         >
           <Toggle
