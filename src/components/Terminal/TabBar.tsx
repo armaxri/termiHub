@@ -15,7 +15,8 @@ import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
 import { getTabDisplayTitle } from "@/utils/editorTabTitle";
 import { deriveTabStatus } from "@/utils/tabStatus";
-import { macroReceivingInfo } from "@/utils/macroTabMarker";
+import { runningAutomationOnTab } from "@/utils/automationTabBadge";
+import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { routeDirtyTabClose } from "@/utils/tabCloseGuard";
 import { continueTabClose, requestTabClose } from "@/utils/tabCloseFlow";
@@ -86,10 +87,14 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const broadcast = useProjectedBroadcast();
   const broadcastActive = broadcast.active;
   const broadcastTargetTabIds = broadcast.targetTabIds;
-  // Multi-target macro playback (#3446): every receiving tab gets a marker. The
-  // playback state is this window's own, and the strip only renders this
-  // window's tabs, so only the window showing a target tab marks it.
+  // One "running automation" badge (#5818, slice 5) on every tab a macro or a
+  // workflow is typing into. Macro playback state is this window's own, and
+  // the strip only renders this window's tabs, so only the window showing a
+  // target tab marks it; workflow runs come from the `workflow-run` region.
   const macroPlayback = useAppStore((s) => s.macroPlayback);
+  const cancelMacroPlaybackOnTab = useAppStore((s) => s.cancelMacroPlaybackOnTab);
+  const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
+  const { workflowRuns } = useProjectedWorkflowRun();
   // "Controlled by another window" badge (#2872): a session has a single owning
   // window (backend `session → window` map, mirrored into `sessionOwners` and
   // kept fresh by `session-ownership-changed`). A tab rendering a session this
@@ -281,7 +286,12 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               }
               displayTitle={getTabDisplayTitle(tab, allTabs)}
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
-              macroReceiving={macroReceivingInfo(macroPlayback, tab.id)}
+              runningAutomation={runningAutomationOnTab(macroPlayback, workflowRuns, tab.id)}
+              onStopAutomation={() => {
+                const running = runningAutomationOnTab(macroPlayback, workflowRuns, tab.id);
+                if (running?.stop.kind === "macro") cancelMacroPlaybackOnTab(tab.id);
+                else if (running?.stop.kind === "workflow") cancelWorkflowRun(running.stop.runId);
+              }}
               controlledByWindow={resolveControllingWindow({
                 sessionId: tab.sessionId,
                 sessionOwners,

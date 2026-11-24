@@ -26,7 +26,6 @@ import {
   TriangleAlert,
   Unplug,
   MonitorX,
-  ListVideo,
   ArrowLeft,
   ArrowRight,
   CircleDashed,
@@ -53,7 +52,8 @@ import {
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
-import { macroReceivingLabel, type MacroReceivingInfo } from "@/utils/macroTabMarker";
+import type { RunningAutomationInfo } from "@/utils/automationTabBadge";
+import { TabAutomationBadge } from "./TabAutomationBadge";
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
 import { isUnencryptedSession } from "@/utils/unencryptedSession";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
@@ -124,12 +124,14 @@ interface TabProps {
    */
   isBroadcast?: boolean;
   /**
-   * Set while this tab is one of the terminals receiving a multi-target macro
-   * playback (#3446). Shows a "receiving macro" badge — distinct in icon and
-   * colour from the broadcast badge — with the macro name and step progress, so
-   * every host a macro types into is visibly marked. `null`/`undefined` hides it.
+   * Set while an automation (a macro or a workflow) is typing into this tab
+   * (#5818, slice 5). Shows the one "running automation" badge, distinct in
+   * icon and colour from the broadcast badge, with the name and progress.
+   * `null`/`undefined` hides it.
    */
-  macroReceiving?: MacroReceivingInfo | null;
+  runningAutomation?: RunningAutomationInfo | null;
+  /** Stop the running automation on this tab (the badge and the context menu). */
+  onStopAutomation?: () => void;
   /**
    * The window that currently controls this tab's session, when it is a
    * *different* window than the one rendering the tab (#2872, follow-up to
@@ -219,7 +221,8 @@ export function Tab({
   onDisconnect,
   status,
   isBroadcast,
-  macroReceiving,
+  runningAutomation,
+  onStopAutomation,
   controlledByWindow,
   onFocusOwningWindow,
   displayTitle,
@@ -417,21 +420,9 @@ export function Tab({
           <Radio size={12} aria-hidden />
         </span>
       )}
-      {macroReceiving &&
-        (() => {
-          const label = macroReceivingLabel(macroReceiving);
-          return (
-            <span
-              className="tab__macro-badge"
-              role="img"
-              aria-label={label}
-              title={label}
-              data-testid={`tab-macro-badge-${tab.id}`}
-            >
-              <ListVideo size={12} aria-hidden />
-            </span>
-          );
-        })()}
+      {runningAutomation && (
+        <TabAutomationBadge tabId={tab.id} info={runningAutomation} onStop={onStopAutomation} />
+      )}
       {controlledByWindow && (
         <Tooltip
           content={`Taken over by ${controlledByWindow.name} — input and resize are disabled here. Click to focus that window.`}
@@ -537,6 +528,11 @@ export function Tab({
         <MenuItem onSelect={() => onRename?.()} data-testid="tab-context-rename">
           <Pencil size={14} /> Rename
         </MenuItem>
+        {runningAutomation && onStopAutomation && (
+          <MenuItem onSelect={() => onStopAutomation()} data-testid="tab-context-stop-automation">
+            <CircleStop size={14} /> Stop automation
+          </MenuItem>
+        )}
         {onDisconnect && (
           <>
             <MenuSeparator />

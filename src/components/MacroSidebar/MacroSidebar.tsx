@@ -15,6 +15,7 @@ import { MacroListItem } from "./MacroListItem";
 import { HistorySection } from "@/components/AutomationSidebar";
 import { latestMacroRuns } from "./macroRunFormat";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
+import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
 import "./MacroSidebar.css";
@@ -88,6 +89,13 @@ export function MacroSidebar() {
     },
     [playMacro]
   );
+
+  // "Run on…" (#5818, slice 5): the run picker for one macro.
+  const [runOnId, setRunOnId] = useState<string | null>(null);
+  const runOnItems = useMemo(() => {
+    const macro = macros.find((m) => m.id === runOnId);
+    return macro ? [{ id: macro.id, name: macro.name, stepCount: macro.steps.length }] : [];
+  }, [macros, runOnId]);
 
   const handleEdit = useCallback((macroId: string) => {
     setCreating(false);
@@ -309,6 +317,7 @@ export function MacroSidebar() {
                 key={macro.id}
                 macro={macro}
                 onPlay={handlePlay}
+                onRunOn={setRunOnId}
                 onEdit={handleEdit}
                 onSchedule={handleSchedule}
                 onShowHistory={setHistoryMacroId}
@@ -335,6 +344,17 @@ export function MacroSidebar() {
           }
         }}
         onSave={creating ? handleSaveNew : handleSaveEdit}
+      />
+      <RunTargetsDialog
+        open={runOnId !== null}
+        automations={runOnItems}
+        emptyText="This macro no longer exists."
+        onOpenChange={(open) => {
+          if (!open) setRunOnId(null);
+        }}
+        onRun={(macroId, targetTabIds, { parallel }) =>
+          void playMacro(macroId, { targetTabIds, parallel })
+        }
       />
       <ConfirmDeleteDialog
         {...macroDelete.dialogProps}

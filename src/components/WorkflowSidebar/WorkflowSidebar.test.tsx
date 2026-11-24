@@ -261,10 +261,14 @@ describe("WorkflowSidebar", () => {
     await render();
 
     act(() => (query("workflow-run-on-workflow-1") as HTMLButtonElement).click());
-    // The active terminal is preselected; add the second one and run.
-    expect(query("workflow-run-target-tab-a")?.getAttribute("aria-checked")).toBe("true");
-    act(() => query("workflow-run-target-tab-b")?.click());
-    act(() => (query("workflow-run-targets-run") as HTMLButtonElement).click());
+    // Pick terminals: the active one is preselected; add the second one.
+    act(() => query("run-targets-target-pick")?.click());
+    expect(query("run-targets-terminal-tab-a")?.getAttribute("aria-checked")).toBe("true");
+    act(() => query("run-targets-terminal-tab-b")?.click());
+    // Two terminals: Run asks to confirm, then runs.
+    act(() => (query("run-targets-run") as HTMLButtonElement).click());
+    expect(runWorkflow).not.toHaveBeenCalled();
+    act(() => (query("run-targets-run") as HTMLButtonElement).click());
 
     expect(runWorkflow).toHaveBeenCalledWith("workflow-1", { targetTabIds: ["tab-a", "tab-b"] });
   });

@@ -1,5 +1,14 @@
 import type React from "react";
-import { Play, Pencil, Copy, Download, Trash2, CalendarClock, History } from "lucide-react";
+import {
+  Play,
+  Pencil,
+  Copy,
+  Download,
+  Trash2,
+  CalendarClock,
+  History,
+  ListChecks,
+} from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Macro, MacroRun } from "@/types/macro";
@@ -9,6 +18,8 @@ import { macroRowTooltip } from "./macroRowTooltip";
 interface MacroListItemProps {
   macro: Macro;
   onPlay: (macroId: string) => void;
+  /** Open the run picker for this macro (#5818: "Run on…" one or more terminals). */
+  onRunOn?: (macroId: string) => void;
   onEdit: (macroId: string) => void;
   /** Open the schedule editor for this macro (PROD-043). */
   onSchedule?: (macroId: string) => void;
@@ -45,6 +56,7 @@ interface MacroListItemProps {
 export function MacroListItem({
   macro,
   onPlay,
+  onRunOn,
   onEdit,
   onSchedule,
   onShowHistory,
@@ -96,6 +108,22 @@ export function MacroListItem({
             aria-label={`More actions for ${macro.name}`}
             data-testid={`macro-more-${macro.id}`}
           >
+            {onRunOn ? (
+              <Tooltip content="Run on…" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Run on…"
+                  data-testid={`macro-run-on-${macro.id}`}
+                  icon={<ListChecks size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRunOn(macro.id);
+                  }}
+                />
+              </Tooltip>
+            ) : null}
             <Tooltip content="Edit" side="top">
               <Button
                 variant="ghost"

@@ -20,7 +20,7 @@ import { handleAgentStateChange, type AgentStateChangePayload } from "./agentSta
 import { TabGroupChips } from "./TabGroupChips";
 import { TerminalToolbarMore } from "./TerminalToolbarMore";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
-import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
+import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
@@ -98,6 +98,10 @@ export function TerminalView() {
   const playMacro = useAppStore((s) => s.playMacro);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
   const [macroPlaybackDialogOpen, setMacroPlaybackDialogOpen] = useState(false);
+  const macroPickerItems = useMemo(
+    () => macros.map((m) => ({ id: m.id, name: m.name, stepCount: m.steps.length })),
+    [macros]
+  );
   const [broadcastDialogOpen, setBroadcastDialogOpen] = useState(false);
   const [broadcastSourceTabId, setBroadcastSourceTabId] = useState<string | null>(null);
   // Session output logging (#1960): the set of session IDs currently logging to
@@ -363,12 +367,14 @@ export function TerminalView() {
         onSave={(meta) => void saveRecordedMacro(meta)}
         onDiscard={discardRecordedMacro}
       />
-      <MacroPlaybackDialog
+      <RunTargetsDialog
         open={macroPlaybackDialogOpen}
-        macros={macros}
+        automations={macroPickerItems}
+        automationLabel="Macro"
+        emptyText="No macros saved yet. Record one with the terminal toolbar's record button first."
         onOpenChange={setMacroPlaybackDialogOpen}
-        onPlay={(macroId, timingMode, targetTabIds) =>
-          void playMacro(macroId, { timingMode, targetTabIds })
+        onRun={(macroId, targetTabIds, { parallel }) =>
+          void playMacro(macroId, { targetTabIds, parallel })
         }
       />
       <BroadcastScopeDialog
