@@ -8,8 +8,10 @@ from typing import Callable
 from ..colors import Rgba, parse_color
 
 #: Words that keep their capitals mid-label (proper nouns, acronyms, letters).
+#: Words that keep their capitals mid-label; "termiHub" is a proper noun with a
+#: lower-case first letter ("Open in termiHub", #5845).
 CAPITAL_WORDS = frozenset(
-    {"X", "SSH", "OS", "RDP", "VNC", "SFTP", "WSL", "JSON", "PDF", "VS", "Code", "I"}
+    {"X", "SSH", "OS", "RDP", "VNC", "SFTP", "WSL", "JSON", "PDF", "VS", "Code", "I", "termiHub"}
 )
 
 

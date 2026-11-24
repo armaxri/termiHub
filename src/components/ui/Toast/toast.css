@@ -209,11 +209,14 @@
 }
 
 /*
- * An offer toast (#5753) has two buttons: the quieter cancel ("Not now") on
- * the left as a ghost button, the action ("Install") on the right. Both share
- * the row under the message.
+ * An offer toast (#5753) has two buttons side by side at the right of the row
+ * under the message, like a dialog footer (#5845): the quieter cancel ("Not
+ * now") as a ghost button, then the action ("Add to Finder") as the primary.
+ * The cancel ends column 2; the action takes column 3, under the close button,
+ * which stays at the right edge however wide the action is.
  */
 .th-toast [data-cancel] {
+  justify-self: end;
   background: transparent;
   border-color: transparent;
 }
@@ -221,6 +224,16 @@
   background: var(--bg-hover);
 }
 .th-toast [data-cancel] ~ [data-action] {
+  grid-column: 3;
+  justify-self: end;
+  background: var(--accent-color);
+  color: var(--text-on-accent);
+  border-color: var(--accent-color);
+}
+.th-toast [data-cancel] ~ [data-action]:hover {
+  background: var(--accent-hover);
+}
+.th-toast:has([data-cancel]) [data-close-button] {
   justify-self: end;
 }
 /* Docked over a dialog the toast is one line: the close button declines. */
