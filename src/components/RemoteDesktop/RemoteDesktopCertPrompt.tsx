@@ -4,6 +4,11 @@ import type { RemoteDesktopCertPromptPayload } from "@/types/remoteDesktop";
 interface RemoteDesktopCertPromptProps {
   /** The pending prompt, or `null` when no decision is needed. */
   prompt: RemoteDesktopCertPromptPayload | null;
+  /**
+   * The name of the connection being opened or tested, shown above the host
+   * (#5862, R-111). Omitted when there is none to name.
+   */
+  connectionName?: string;
   /** Called with the user's verdict: `accept` proceeds, `remember` persists it. */
   onDecision: (accept: boolean, remember: boolean) => void;
 }
@@ -20,12 +25,19 @@ interface RemoteDesktopCertPromptProps {
  *
  * Rendered through the shared {@link TrustPrompt} primitive (UISF-007), so the
  * MITM warning and three-verdict footer stay identical to the SSH host-key
- * prompt; the verdict is routed back to the backend via
- * `remoteDesktopCertDecision`.
+ * prompt, and names the connection the user opened (#5862). The verdict is
+ * routed back to the backend via `remoteDesktopCertDecision`.
  */
-export function RemoteDesktopCertPrompt({ prompt, onDecision }: RemoteDesktopCertPromptProps) {
+export function RemoteDesktopCertPrompt({
+  prompt,
+  connectionName,
+  onDecision,
+}: RemoteDesktopCertPromptProps) {
   const facts: TrustFact[] = prompt
     ? [
+        ...(connectionName?.trim()
+          ? [{ label: "Connection", value: connectionName.trim(), testId: "cert-connection" }]
+          : []),
         { label: "Host", value: prompt.host, testId: "cert-host" },
         ...(prompt.subject
           ? [{ label: "Subject", value: prompt.subject, testId: "cert-subject" }]

@@ -17,6 +17,7 @@ import pytest
 from ..bridge import BridgeError
 from ..ui.base import HarnessMixin
 from .hostkey_changed_safe import changed_safe_problems
+from .hostkey_compare import changed_compare_problems, connection_problems, fingerprint_groups
 from .hostkey_emphasis import changed_emphasis_problems, first_contact_emphasis_problems
 from .hostkey_layout import fingerprint_layout_problems, rejected_screen_problems
 from .hosts import RunHosts, run_hosts
@@ -36,6 +37,11 @@ HOSTKEY_MITM = "ssh-hostkey-mitm-warning"
 HOSTKEY_ACCEPT_REMEMBER = "ssh-hostkey-accept-remember"
 HOSTKEY_REJECT = "ssh-hostkey-reject"
 HOSTKEY_ACCEPT_ONCE = "ssh-hostkey-accept-once"
+HOSTKEY_CONNECTION = "ssh-hostkey-connection"
+HOSTKEY_CHANGES = "ssh-hostkey-changes"
+HOSTKEY_GLYPH = "ssh-hostkey-fingerprint-glyph"
+HOSTKEY_PREV_GLYPH = "ssh-hostkey-prev-fingerprint-glyph"
+HOSTKEY_COPY = "ssh-hostkey-fingerprint-copy"
 
 
 class SshPhaseUi(HarnessMixin):
@@ -122,7 +128,9 @@ class SshPhaseUi(HarnessMixin):
         """Wait for the host-key prompt; return host, type, fingerprint, remember label.
 
         Also ``mitm`` (the changed-key warning), ``previous`` and
-        ``previous_type`` (the previously trusted key) when shown.
+        ``previous_type`` (the previously trusted key), ``connection`` (the
+        connection the prompt names, #5862) and ``changes`` (what changed)
+        when shown.
         """
         self.wait(self.hostkey_prompt_open, timeout=timeout, what="the SSH host-key prompt")
         shown = {
@@ -137,6 +145,9 @@ class SshPhaseUi(HarnessMixin):
             shown["previous"] = self.driver.get_text(HOSTKEY_PREV_FINGERPRINT).strip()
         if self.driver.exists(HOSTKEY_PREV_TYPE):
             shown["previous_type"] = self.driver.get_text(HOSTKEY_PREV_TYPE).strip()
+        for key, test_id in (("connection", HOSTKEY_CONNECTION), ("changes", HOSTKEY_CHANGES)):
+            if self.driver.exists(test_id):
+                shown[key] = self.driver.get_text(test_id).strip()
         return shown
 
     def answer_hostkey_prompt(self, button: str) -> None:
@@ -183,6 +194,37 @@ class SshPhaseUi(HarnessMixin):
             rects[verdict] = rect if rect and rect.get("width", 0) > 0 else None
             classes[verdict] = self.driver.get_attribute(test_id, "class")
         return changed_safe_problems(rects, classes)
+
+    def hostkey_compare_problems(self, *, connection: str, changed: bool) -> list[str]:
+        """The open prompt's connection-name and comparison-aid problems (#5862), or ``[]``.
+
+        Every prompt must name ``connection`` (R-111); a changed-key prompt must
+        also carry the comparison aid (R-109).
+        """
+        exists = self.driver.exists
+        shown = self.driver.get_text(HOSTKEY_CONNECTION) if exists(HOSTKEY_CONNECTION) else None
+        problems = connection_problems(shown, connection)
+        if not changed:
+            return problems
+
+        def glyph(test_id: str) -> Optional[str]:
+            return self.driver.get_attribute(test_id, "data-glyph") if exists(test_id) else None
+
+        def groups(test_id: str) -> list[str]:
+            if not exists(test_id):
+                return []
+            return fingerprint_groups(self.driver.measure_element(test_id, "text").get("items", []))
+
+        return problems + changed_compare_problems(
+            previous_glyph=glyph(HOSTKEY_PREV_GLYPH),
+            new_glyph=glyph(HOSTKEY_GLYPH),
+            previous_groups=groups(HOSTKEY_PREV_FINGERPRINT),
+            new_groups=groups(HOSTKEY_FINGERPRINT),
+            changes=self.driver.get_text(HOSTKEY_CHANGES) if exists(HOSTKEY_CHANGES) else None,
+            copy_label=(
+                self.driver.get_attribute(HOSTKEY_COPY, "aria-label") if exists(HOSTKEY_COPY) else None
+            ),
+        )
 
     def rejected_screen_problems(self) -> list[str]:
         """Whether the rejected-key screen says it once (#5662), or ``[]``."""

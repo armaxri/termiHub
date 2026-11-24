@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
-import { TrustPrompt, fingerprintChunks, type TrustFact } from "./TrustPrompt";
+import { TrustPrompt, fingerprintChunks, fingerprintGroups, type TrustFact } from "./TrustPrompt";
 import { toast } from "./Toast";
 import { flushAsync } from "@/test/flushAsync";
 
@@ -358,5 +358,116 @@ describe("fingerprintChunks (#5662)", () => {
       expect(fingerprintChunks(v).join("")).toBe(v);
     }
     expect(fingerprintChunks("aa bb")).toEqual(["aa ", "bb"]);
+  });
+});
+
+describe("fingerprintGroups (#5862)", () => {
+  it("splits a long base64 chunk into groups of four", () => {
+    const body = "nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
+    const groups = fingerprintGroups(body);
+    expect(groups[0]).toBe("nThb");
+    expect(groups[groups.length - 1]).toBe("SY8");
+    expect(groups.join("")).toBe(body);
+  });
+
+  it("keeps short chunks and prefixes whole", () => {
+    expect(fingerprintGroups("SHA256:")).toEqual(["SHA256:"]);
+    expect(fingerprintGroups("AB:")).toEqual(["AB:"]);
+    expect(fingerprintGroups("AABBCCDD")).toEqual(["AABBCCDD"]);
+  });
+});
+
+describe("TrustPrompt comparison aid (#5862)", () => {
+  const OLD = "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s";
+  const NEW = "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU";
+  const compareFacts: TrustFact[] = [
+    { label: "Connection", value: "prod web", testId: "tp-connection" },
+    {
+      label: "Previously trusted",
+      value: OLD,
+      mono: true,
+      copyable: true,
+      copyNoun: "previously trusted fingerprint",
+      glyph: true,
+      glyphTestId: "tp-prev-glyph",
+      testId: "tp-prev",
+      copyTestId: "tp-prev-copy",
+    },
+    {
+      label: "Now presented",
+      value: NEW,
+      mono: true,
+      copyable: true,
+      copyNoun: "new fingerprint",
+      glyph: true,
+      glyphTestId: "tp-new-glyph",
+      testId: "tp-new",
+      copyTestId: "tp-new-copy",
+    },
+  ];
+  const changes = ["The fingerprint is different from the key trusted before."];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  const q = (testid: string) => document.querySelector(`[data-testid="${testid}"]`);
+
+  const renderCompare = (changed = true) =>
+    renderPrompt({ changed, facts: compareFacts, changes, changesTestId: "tp-changes" });
+
+  it("groups each fingerprint in fours without changing its text", () => {
+    renderCompare();
+    const groups = [...q("tp-new")!.querySelectorAll(".ui-trust-prompt__fact-group")].map(
+      (g) => g.textContent
+    );
+    expect(groups.slice(0, 3)).toEqual(["SHA256:", "47DE", "Qpj8"]);
+    expect(q("tp-new")?.querySelector(".ui-trust-prompt__fact-text")?.textContent).toBe(NEW);
+  });
+
+  it("draws a different glyph beside the old and the new fingerprint", () => {
+    renderCompare();
+    const prev = q("tp-prev-glyph");
+    const next = q("tp-new-glyph");
+    expect(prev && q("tp-prev")?.contains(prev)).toBe(true);
+    expect(next && q("tp-new")?.contains(next)).toBe(true);
+    expect(prev?.getAttribute("data-glyph")).not.toBe(next?.getAttribute("data-glyph"));
+  });
+
+  it("names the copy action after the value it copies", async () => {
+    const success = vi.spyOn(toast, "success").mockReturnValue("id");
+    renderCompare();
+    expect(q("tp-new-copy")?.getAttribute("aria-label")).toBe("Copy new fingerprint");
+    expect(q("tp-prev-copy")?.getAttribute("aria-label")).toBe(
+      "Copy previously trusted fingerprint"
+    );
+    click("tp-new-copy");
+    await flushAsync();
+    expect(writeClipboard).toHaveBeenCalledWith(NEW);
+    expect(success).toHaveBeenCalledWith("Copied new fingerprint to clipboard");
+    success.mockRestore();
+  });
+
+  it("says what changed on a changed identity only", () => {
+    renderCompare(true);
+    expect(q("tp-changes")?.textContent).toBe(changes[0]);
+    act(() => root.unmount());
+    root = createRoot(container);
+    renderCompare(false);
+    expect(q("tp-changes")).toBeNull();
+  });
+
+  it("renders the connection as a plain fact", () => {
+    renderCompare();
+    expect(q("tp-connection")?.textContent).toBe("prod web");
+    expect(q("tp-connection")?.previousElementSibling?.textContent).toBe("Connection");
   });
 });

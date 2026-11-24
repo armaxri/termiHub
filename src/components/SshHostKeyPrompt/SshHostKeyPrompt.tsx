@@ -4,6 +4,9 @@ import { onSshHostKeyPrompt, onSshHostKeyPromptClosed } from "@/services/events"
 import { sshHostKeyDecision } from "@/services/api";
 import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
 import { useAppStore } from "@/store/appStore";
+import { collectLiveTabs } from "@/store/layoutHelpers";
+import { promptConnectionName } from "@/utils/promptOwner";
+import { hostKeyChanges } from "@/utils/hostKeyChanges";
 
 /**
  * Global interactive SSH host-key trust dialog (#1959) — the terminal analogue
@@ -30,11 +33,21 @@ import { useAppStore } from "@/store/appStore";
  *
  * The prompt names its connect (`owner`); while it is open, that tab's
  * client-side connect deadline is paused, and it resumes once the prompt is
- * decided or closed (#5243).
+ * decided or closed (#5243). The owning tab also names the connection the
+ * user clicked, shown above the host (#5862, R-111).
+ *
+ * On a changed key the old and the new fingerprint are grouped in aligned
+ * four-character pieces, each with a block glyph drawn from it, and the dialog
+ * says in words what changed (#5862, R-109).
  */
 export function SshHostKeyPrompt() {
   const [queue, setQueue] = useState<SshHostKeyPromptPayload[]>([]);
   const current = queue[0] ?? null;
+  // The connection behind the prompt, from the terminal tab that raised it
+  // (#5862). A string selector, so the dialog only re-renders when it changes.
+  const connectionName = useAppStore((s) =>
+    promptConnectionName(current?.owner, collectLiveTabs(s))
+  );
 
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
@@ -80,6 +93,9 @@ export function SshHostKeyPrompt() {
 
   const facts: TrustFact[] = current
     ? [
+        ...(connectionName
+          ? [{ label: "Connection", value: connectionName, testId: "ssh-hostkey-connection" }]
+          : []),
         { label: "Host", value: hostPort, testId: "ssh-hostkey-host" },
         // With a prior to compare against, each fingerprint carries its own key
         // type: the previously trusted key(s) first, then the presented one.
@@ -95,6 +111,9 @@ export function SshHostKeyPrompt() {
             detailTestId: `${testId}-type`,
             mono: true,
             copyable: true,
+            copyNoun: "previously trusted fingerprint",
+            glyph: true,
+            glyphTestId: `${testId}-glyph`,
             testId,
             copyTestId: `${testId}-copy`,
           };
@@ -102,7 +121,15 @@ export function SshHostKeyPrompt() {
         {
           label: hasPrior ? "Now presented" : "Fingerprint",
           value: current.fingerprint,
-          ...(hasPrior ? { detail: current.key_type, detailTestId: "ssh-hostkey-type" } : {}),
+          ...(hasPrior
+            ? {
+                detail: current.key_type,
+                detailTestId: "ssh-hostkey-type",
+                copyNoun: "new fingerprint",
+                glyph: true,
+                glyphTestId: "ssh-hostkey-fingerprint-glyph",
+              }
+            : {}),
           mono: true,
           copyable: true,
           testId: "ssh-hostkey-fingerprint",
@@ -121,6 +148,8 @@ export function SshHostKeyPrompt() {
       changedLead="The SSH server presented a different host key than the one you trusted for:"
       changedWarningSubject="host key for this server"
       facts={facts}
+      changes={current ? hostKeyChanges(current) : []}
+      changesTestId="ssh-hostkey-changes"
       onReject={() => decide(false, false)}
       onAcceptOnce={() => decide(true, false)}
       onAcceptForHost={() => decide(true, true)}

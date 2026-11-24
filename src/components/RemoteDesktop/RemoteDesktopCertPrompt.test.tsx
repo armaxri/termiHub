@@ -95,4 +95,20 @@ describe("RemoteDesktopCertPrompt", () => {
     await act(async () => click("cert-fingerprint-copy"));
     expect(writeClipboard).toHaveBeenCalledWith("sha256:AB:CD:EF");
   });
+
+  it("names the connection above the host (#5862)", () => {
+    render(
+      <RemoteDesktopCertPrompt prompt={untrusted} connectionName="Office PC" onDecision={vi.fn()} />
+    );
+    const name = document.querySelector('[data-testid="cert-connection"]');
+    expect(name?.textContent).toBe("Office PC");
+    expect(
+      name?.compareDocumentPosition(document.querySelector('[data-testid="cert-host"]')!)
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("shows no connection line without a name", () => {
+    render(<RemoteDesktopCertPrompt prompt={changed} connectionName=" " onDecision={vi.fn()} />);
+    expect(document.querySelector('[data-testid="cert-connection"]')).toBeNull();
+  });
 });
