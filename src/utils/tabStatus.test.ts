@@ -51,6 +51,19 @@ describe("deriveTabStatus", () => {
     expect(deriveTabStatus(maps, "a")).toBe("disconnected");
   });
 
+  it("returns 'exited' when the session's process exited on its own (#5955)", () => {
+    const maps = makeMaps({
+      terminalExitedTabs: { a: true, b: true },
+      terminalProcessExited: { a: true },
+    });
+    expect(deriveTabStatus(maps, "a")).toBe("exited");
+    expect(deriveTabStatus(maps, "b")).toBe("disconnected");
+    // A live tab never reads as exited, whatever the map says.
+    expect(deriveTabStatus(makeMaps({ terminalProcessExited: { a: true } }), "a")).toBe(
+      "connected"
+    );
+  });
+
   it("returns 'disconnected' when the live agent session is lost (#2524)", () => {
     // #2512 session-lost: the transport came back but the live session could not
     // be recovered. The dot must never stay green — regression for #2524 bug 2.

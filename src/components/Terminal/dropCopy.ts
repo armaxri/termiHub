@@ -240,6 +240,15 @@ export function reconnectedMarker(at: Date, transport: DropTransport = "other"):
  */
 export type SessionEndKind = "exited" | "ended" | "user" | "device" | "link";
 
+/**
+ * Whether a session ended because its process did (#5955): it exited with a
+ * code, or ended normally. The tab strip then shows a stop marker rather than
+ * the network-drop plug.
+ */
+export function isProcessEnd(kind: SessionEndKind): boolean {
+  return kind === "exited" || kind === "ended";
+}
+
 /** The heading, cause line and action of a session-end notice (#5910). */
 export interface SessionEndNotice {
   kind: SessionEndKind;
