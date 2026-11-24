@@ -145,8 +145,13 @@ const en = {
   "passwordPrompt.description.password": "Enter password for {target}",
   "passwordPrompt.description.keyPassphrase":
     "Enter the passphrase for the SSH key used by {target}",
+  // The key's file name; the full path is the line's tooltip (#5838).
   "passwordPrompt.description.keyPassphraseWithPath":
-    "Enter the passphrase for key {keyPath}, used by {target}",
+    "Enter the passphrase for key {keyName}, used by {target}",
+  // A telnet login (#5838): termiHub answers the server's login prompt, so the
+  // user does not type the password again in the terminal.
+  "passwordPrompt.description.telnet":
+    "Enter the password for {target}. termiHub answers the server's login prompt for you.",
   "passwordPrompt.input.password": "{transport} password",
   "passwordPrompt.input.keyPassphrase": "SSH key passphrase",
   // A telnet password travels in clear text (#5749).

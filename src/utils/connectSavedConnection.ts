@@ -45,6 +45,7 @@
  * `PasswordPrompt` / `UnlockDialog` that the attended flow drives through the
  * store.
  */
+import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { toast } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
 import {
@@ -185,9 +186,13 @@ function persistOnceConnected(
   tabId: string,
   pending: PendingSecret
 ): void {
-  void persistSecretOnceConnected(tabId, () =>
-    storeCredential(connection.id, pending.kind, pending.secret, connection.sourceFile)
-  ).then((outcome) => {
+  // No storage chosen yet: the prompt only ticked locally, so ask where to keep
+  // it now that the connect succeeded (#5867); dismissing saves nothing.
+  void persistSecretOnceConnected(tabId, async () => {
+    await saveAfterStorageChoice(() =>
+      storeCredential(connection.id, pending.kind, pending.secret, connection.sourceFile)
+    );
+  }).then((outcome) => {
     if (outcome === "failed") {
       frontendError(
         "connection_list",

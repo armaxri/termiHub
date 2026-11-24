@@ -188,7 +188,7 @@ describe("UnlockDialog", () => {
 
   // --- #5188: a waiting connect can go on without the vault ---
 
-  it("offers 'Connect without saved password' instead of Skip when a connect waits", async () => {
+  it("offers 'Type password instead' beside a Cancel when a connect waits", async () => {
     const onOpenChange = vi.fn();
     const onConnectWithoutSaved = vi.fn();
     await act(async () => {
@@ -203,9 +203,15 @@ describe("UnlockDialog", () => {
     });
 
     const btn = query("unlock-dialog-connect-without-saved") as HTMLButtonElement;
-    expect(btn.textContent).toBe("Connect without saved password");
+    expect(btn.textContent).toBe("Type password instead");
+    expect(btn.className).toContain("ui-btn--secondary");
     expect(document.body.textContent).not.toMatch(/\bSkip\b/);
-    expect(query("unlock-dialog-cancel")).toBeNull();
+    // #5838: Cancel stays, first in the row; Unlock is the one primary.
+    const cancel = query("unlock-dialog-cancel") as HTMLButtonElement;
+    expect(cancel).not.toBeNull();
+    const actions = cancel.parentElement!;
+    expect(actions.firstElementChild).toBe(cancel);
+    expect(actions.querySelectorAll(".ui-btn--primary").length).toBe(1);
     act(() => btn.click());
 
     expect(onConnectWithoutSaved).toHaveBeenCalledTimes(1);

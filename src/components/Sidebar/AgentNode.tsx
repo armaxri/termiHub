@@ -6,6 +6,7 @@
  * local connections experience).
  */
 
+import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
@@ -1344,9 +1345,13 @@ export function AgentNode({
         await connectRemoteAgent(agent.id, password);
         // Persist the entered password if the user opted in via the prompt checkbox
         if (prompted && !sharedCredential && prompted.shouldSave) {
-          await storeCredential(agent.id, "password", prompted.password).catch((err) => {
-            frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
-          });
+          const typed = prompted.password;
+          // No storage chosen yet: ask where now that it connected (#5867).
+          await saveAfterStorageChoice(() => storeCredential(agent.id, "password", typed)).catch(
+            (err) => {
+              frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
+            }
+          );
         }
       } catch (err) {
         // Gate the DESTRUCTIVE stored-credential discard on the typed,
@@ -1380,9 +1385,12 @@ export function AgentNode({
           await connectRemoteAgent(agent.id, retry.password);
           // Connected: replace the saved password if the user opted in.
           if (!sharedCredential && retry.shouldSave) {
-            await storeCredential(agent.id, "password", retry.password).catch((err) => {
-              frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
-            });
+            const typed = retry.password;
+            await saveAfterStorageChoice(() => storeCredential(agent.id, "password", typed)).catch(
+              (err) => {
+                frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
+              }
+            );
           }
           return;
         }
