@@ -171,7 +171,8 @@ services, HTTP monitors, plugins) shows:
   service's Start / Stop (Retry after an error). It stays visible at rest on the row's
   trailing edge (`SidebarListItem`'s `primaryAction`); the other actions show on hover.
   A status dot names its state in a tooltip and as its accessible name ("Stopped",
-  "Running", "Error").
+  "Running", "Error"; a plugin's "Enabled", "Disabled", "Error"), and so does a leading
+  type icon ("Protocol parser").
 
 Everything else is configuration or history and goes in the row's **tooltip**, the editor or a
 detail view, never on the row: host, user and port, the trigger and its target, step or command
