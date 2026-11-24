@@ -22,9 +22,9 @@ export interface ConnectionsEmptyStateProps {
  *
  * A brand-new user lands on the Connections view with no saved connections; this
  * gives them a clear call-to-action to create their first connection instead of a
- * blank pane, plus a smaller secondary signpost to the experimental feature areas
- * (SSH tunnels, services, network tools, workflows) that are hidden by default —
- * shown only while those features are still gated off.
+ * blank pane, plus a smaller secondary signpost to the feature areas still behind
+ * the experimental switch (workflows) — shown only while that switch is off. SSH
+ * tunnels, services and network tools graduated and are always shown (#5858).
  *
  * When the sidebar already shows other content (remote agents), the card
  * collapses to one line with a link, so it stops dominating the column.
@@ -84,7 +84,7 @@ export function ConnectionsEmptyState({
               className="connections-empty__hint"
               data-testid="connections-empty-experimental-hint"
             >
-              SSH tunnels, services, network tools and workflows are behind{" "}
+              Workflows are behind{" "}
               <ExperimentalSettingLink
                 className="connections-empty__link"
                 data-testid="connections-empty-experimental-link"

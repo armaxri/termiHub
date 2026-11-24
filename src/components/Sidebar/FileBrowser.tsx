@@ -120,7 +120,6 @@ import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { errorMessage } from "@/utils/errorMessage";
 import { parentDir } from "@/utils/paths";
 import { isContextMenuShortcut, openContextMenuFromKeyboard } from "@/utils/contextMenuKey";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
@@ -219,10 +218,8 @@ export function FileMenuItems({
   onShareVia?: (path: string, protocol: "http" | "ftp" | "tftp") => void;
   testIdPrefix: string;
 }) {
-  // "Share via …" switches to the Services sidebar, which is an experimental
-  // view; with experimental features off that view is hidden, so the menu
-  // items are hidden too (#4498) — same gate as the activity-bar Services item.
-  const experimental = useExperimentalFeatures();
+  // "Share via …" switches to the Services sidebar, which is always available
+  // since Services graduated from the experimental switch (#5858).
   return (
     <>
       {entry.isDirectory && (
@@ -230,7 +227,7 @@ export function FileMenuItems({
           <FolderOpen size={14} /> Open
         </MenuItem>
       )}
-      {entry.isDirectory && onShareVia && experimental && (
+      {entry.isDirectory && onShareVia && (
         <>
           <MenuSeparator />
           <MenuItem

@@ -206,9 +206,13 @@ describe("SettingsPanel — search surfaces every settings section (#3308)", () 
       expect(rdpSection()).toBeNull();
       expect(sshSection()).not.toBeNull();
 
+      // "rdp" finds the switch that turns RDP on (its hint names it, #5858),
+      // never the hidden certificate list.
       search("rdp");
       expect(rdpSection()).toBeNull();
-      expect(container.querySelector(".settings-panel__no-results")).not.toBeNull();
+      expect(
+        container.querySelector("[data-testid='settings-experimental-features']")
+      ).not.toBeNull();
 
       search("certificate");
       expect(rdpSection()).toBeNull();

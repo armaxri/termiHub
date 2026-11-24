@@ -1,11 +1,9 @@
 /**
- * Experimental gating of the File Browser "Share via HTTP/FTP/TFTP Server" items
- * (#4498).
+ * The File Browser "Share via HTTP/FTP/TFTP Server" items (#4498, #5858).
  *
- * Sharing a folder switches the sidebar to the Services view, which is an
- * experimental view hidden when experimental features are off. The menu items
- * use the same `useExperimentalFeatures` gate as the activity-bar Services item,
- * so they are absent with the toggle off and present with it on.
+ * Sharing a folder switches the sidebar to the Services view. Services
+ * graduated from the experimental switch (#5858), so the items are offered
+ * whether experimental features are on or off.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -29,7 +27,7 @@ const dirEntry: FileEntry = {
 
 const PROTOCOLS = ["http", "ftp", "tftp"] as const;
 
-describe("FileMenuItems — Share via gating (#4498)", () => {
+describe("FileMenuItems — Share via (#4498, #5858)", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -67,15 +65,15 @@ describe("FileMenuItems — Share via gating (#4498)", () => {
   const shareItem = (proto: string) =>
     container.querySelector<HTMLElement>(`[data-testid="file-menu-share-${proto}"]`);
 
-  it("hides every Share via item when experimental features are off", () => {
+  it("shows every Share via item with experimental features off (#5858)", () => {
     seedSettings({ experimentalFeaturesEnabled: false });
-    renderMenu();
+    const onShareVia = renderMenu();
     for (const proto of PROTOCOLS) {
-      expect(shareItem(proto)).toBeNull();
+      expect(shareItem(proto)).toBeTruthy();
     }
-    // The local-only OS-integration items share the same `onShareVia` local
-    // gate and must stay available regardless of the experimental toggle.
     expect(container.querySelector('[data-testid="file-menu-open-in-explorer"]')).toBeTruthy();
+    act(() => shareItem("http")!.click());
+    expect(onShareVia).toHaveBeenCalledWith(dirEntry.path, "http");
   });
 
   it("shows every Share via item when experimental features are on", () => {

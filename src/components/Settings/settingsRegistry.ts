@@ -1,4 +1,4 @@
-import { EXPERIMENTAL_SETTING_LABEL } from "@/utils/experimentalSetting";
+import { EXPERIMENTAL_SETTING_HINT, EXPERIMENTAL_SETTING_LABEL } from "@/utils/experimentalSetting";
 
 export type SettingsCategory =
   | "general"
@@ -794,10 +794,21 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "experimentalFeaturesEnabled",
     label: EXPERIMENTAL_SETTING_LABEL,
-    description:
-      "Show experimental features that are not guaranteed to be released or long-term supported",
+    description: EXPERIMENTAL_SETTING_HINT,
     category: "general",
-    keywords: ["experimental", "beta", "preview", "unstable", "hidden", "features", "labs"],
+    keywords: [
+      "experimental",
+      "beta",
+      "preview",
+      "unstable",
+      "hidden",
+      "features",
+      "labs",
+      "workflows",
+      "remote agents",
+      "rdp",
+      "vnc",
+    ],
   },
   {
     id: "frontendPluginsEnabled",

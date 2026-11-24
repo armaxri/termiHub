@@ -1,11 +1,10 @@
 """Network Tools sidebar + diagnostic-panel helpers (issue #831, port #810).
 
-``NetworkToolsUi`` opens the experimental Network Tools sidebar and its tool
-panels (ping, port scanner, DNS, open ports, traceroute, Wake-on-LAN, HTTP
-monitor). It builds on :class:`~termihub_harness.ui.SettingsUi` (the sidebar is
-gated behind experimental features) and :class:`~termihub_harness.ui.SidebarUi`
-(to switch the activity-bar view), so suites combine all three alongside
-:class:`~termihub_harness.SystemTest`.
+``NetworkToolsUi`` opens the Network Tools sidebar and its tool panels (ping,
+port scanner, DNS, open ports, traceroute, Wake-on-LAN, HTTP monitor). The view
+graduated from the experimental switch (#5858), so no toggle is needed. It
+builds on :class:`~termihub_harness.ui.SidebarUi` (to switch the activity-bar
+view), so suites combine it alongside :class:`~termihub_harness.SystemTest`.
 """
 
 from __future__ import annotations
@@ -19,12 +18,10 @@ class NetworkToolsUi(HarnessMixin):
     """Open the Network Tools sidebar and its diagnostic tool panels."""
 
     if TYPE_CHECKING:  # borrowed from the mixins suites combine this with
-        def enable_experimental_features(self) -> None: ...
         def _ensure_sidebar(self, view: str, test_id: str) -> None: ...
 
     def open_network_tools_sidebar(self) -> None:
-        """Reveal and show the Network Tools sidebar (idempotent)."""
-        self.enable_experimental_features()
+        """Show the Network Tools sidebar (idempotent)."""
         self._ensure_sidebar("network-tools", "activity-bar-network-tools")
         self.wait(
             lambda: self.driver.exists("network-tools-sidebar"),

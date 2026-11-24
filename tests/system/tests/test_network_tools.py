@@ -1,6 +1,6 @@
 """Network Tools panel UI (ported from network-tools.test.js, NT-01..09).
 
-Drives the experimental Network Tools sidebar and each diagnostic tool's panel:
+Drives the Network Tools sidebar (always on since #5858) and each diagnostic tool's panel:
 open the panel from a sidebar quick-action and assert its controls render and
 are disabled while empty. These are the **portable** cases — they need no
 network and assert on the live DOM (panel/control presence, the `disabled`

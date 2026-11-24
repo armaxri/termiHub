@@ -107,8 +107,7 @@ few protocol limits the editor calls out (an **FTP** badge in the editor toolbar
   and run any command.
 - **Try a tunnel or a network tool** — set up local/remote/dynamic SSH forwarding in the SSH
   connection editor's **Port Forwarding** section, or run ping / traceroute / port scan /
-  DNS / HTTP monitor / Wake-on-LAN from the Network Tools sidebar (experimental: turn on
-  **Settings → General → Allow experimental features** first).
+  DNS / HTTP monitor / Wake-on-LAN from the Network Tools sidebar.
 
 For the full usage guide, SSH options, serial setup, and troubleshooting, see the main
 [README](../../README.md).

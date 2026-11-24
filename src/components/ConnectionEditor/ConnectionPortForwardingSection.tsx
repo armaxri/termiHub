@@ -4,8 +4,6 @@ import { useAppStore } from "@/store/appStore";
 import { Button, Toggle, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { ExperimentalSettingLink } from "@/components/Settings/ExperimentalSettingLink";
 import type { TunnelConfig } from "@/types/tunnel";
 import { tunnelPortMapping, tunnelTypeFlag } from "@/utils/tunnelSummary";
 import { errorMessage } from "@/utils/errorMessage";
@@ -35,8 +33,8 @@ interface ConnectionPortForwardingSectionProps {
  * Changes here apply immediately (tunnels are their own saved objects), not on
  * the connection editor's Save.
  *
- * The SSH Tunnels sidebar is experimental: the hint names it only while
- * experimental features are on, and otherwise links to the toggle (#5363).
+ * The hint names the SSH Tunnels sidebar, which is always available since it
+ * graduated from the experimental switch (#5858).
  */
 export function ConnectionPortForwardingSection({
   connectionId,
@@ -45,7 +43,6 @@ export function ConnectionPortForwardingSection({
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
-  const experimental = useExperimentalFeatures();
 
   const bound = useMemo(
     () => (connectionId ? tunnels.filter((t) => t.sshConnectionId === connectionId) : []),
@@ -75,23 +72,11 @@ export function ConnectionPortForwardingSection({
         </p>
       ) : (
         <>
-          {experimental ? (
-            <p className="settings-form__hint" data-testid="connection-port-forwarding-hint">
-              Forwards bound to this connection. They are the same tunnels listed in the SSH Tunnels
-              sidebar, and changes here apply immediately. Forwards marked “Start with connection”
-              come up whenever a terminal to this host connects.
-            </p>
-          ) : (
-            // The SSH Tunnels sidebar is experimental and hidden while the gate is off,
-            // so point at the toggle instead of a sidebar the user cannot see (#5363).
-            <p className="settings-form__hint" data-testid="connection-port-forwarding-hint">
-              Forwards bound to this connection. Changes here apply immediately. Forwards marked
-              “Start with connection” come up whenever a terminal to this host connects. To also see
-              all tunnels in an SSH Tunnels sidebar, turn on{" "}
-              <ExperimentalSettingLink data-testid="connection-port-forwarding-experimental-link" />
-              .
-            </p>
-          )}
+          <p className="settings-form__hint" data-testid="connection-port-forwarding-hint">
+            Forwards bound to this connection. They are the same tunnels listed in the SSH Tunnels
+            sidebar, and changes here apply immediately. Forwards marked “Start with connection”
+            come up whenever a terminal to this host connects.
+          </p>
           {bound.length === 0 ? (
             <EmptyState
               title="No port forwards are attached to this connection yet."
