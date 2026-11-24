@@ -421,9 +421,13 @@ describe("AppearanceSettings — font family (#5561)", () => {
       byId("settings-font-family-default")?.closest(".settings-form__label-row")
     ).not.toBeNull();
     expect(byId("settings-font-family-reset")).toBeNull();
-    // The full chain is readable in the hint instead of crammed into the input.
+    // The hint stays one line; the full chain sits behind the "?" (#5843).
     const hint = input.closest(".settings-form__field")?.textContent ?? "";
-    expect(hint).toContain("MesloLGS Nerd Font Mono");
+    expect(hint).not.toContain("MesloLGS Nerd Font Mono");
+    const help = byId("settings-font-family-help");
+    expect(help?.getAttribute("aria-label")).toBe("More about font family");
+    act(() => help?.focus());
+    expect(document.body.textContent).toContain("MesloLGS Nerd Font Mono");
     expect(hint).not.toContain("'");
   });
 

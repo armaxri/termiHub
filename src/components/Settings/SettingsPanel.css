@@ -24,6 +24,16 @@
   min-height: 0;
 }
 
+/* #5843: the search bar, nav and content share one centred max width, so on a
+   wide window the whole page sits in the middle instead of the content
+   floating left beside a full-width nav and search bar. */
+.settings-search,
+.settings-panel__body {
+  width: 100%;
+  max-width: var(--settings-page-max-width);
+  margin-inline: auto;
+}
+
 .settings-panel__body--compact {
   flex-direction: column;
 }
@@ -37,7 +47,7 @@
      every page and in every theme whether or not this page scrolls. */
   scrollbar-gutter: stable;
   padding: var(--spacing-lg);
-  max-width: 640px;
+  max-width: var(--settings-content-max-width);
 }
 
 /* === Search bar === */

@@ -17,8 +17,9 @@ export interface SettingDefaultMarkerProps {
 
 /**
  * The label-row marker of a setting that follows a built-in default (#5632).
- * At the default it is a small, non-interactive "Default" tag; once the value
- * is overridden it becomes an explicit "Reset to default" button. It sits on
+ * At the default it is plain, muted "Default" text — not a pill, so it never
+ * looks clickable (#5843); once the value is overridden it becomes an explicit
+ * "Reset to default" button. It sits on
  * the label row (via `SettingsField`'s `labelAccessory`), so the control below
  * spans the same width as every other control on the page.
  */

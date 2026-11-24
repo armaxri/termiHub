@@ -545,9 +545,13 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     <div
       ref={containerRef}
       className={`settings-panel ${isVisible ? "" : "settings-panel--hidden"}`}
+      data-testid="settings-panel"
     >
       <SettingsSearch query={searchQuery} onQueryChange={setSearchQuery} />
-      <div className={`settings-panel__body ${isCompact ? "settings-panel__body--compact" : ""}`}>
+      <div
+        className={`settings-panel__body ${isCompact ? "settings-panel__body--compact" : ""}`}
+        data-testid="settings-panel-body"
+      >
         <SettingsNav
           categories={CATEGORIES}
           iconMap={SETTINGS_ICONS}

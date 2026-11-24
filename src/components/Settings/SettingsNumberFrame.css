@@ -1,0 +1,26 @@
+/* Compact numeric settings input (#5843): sized to the widest value its range
+   allows (--settings-number-chars, set inline per field), plus the input's own
+   padding, border and spin buttons, and followed by a muted unit label. It never
+   stretches to the column width, so a 2-digit font size reads as a short value. */
+.settings-number {
+  --settings-number-chars: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.settings-number__input.ui-input {
+  width: calc(var(--settings-number-chars) * 1ch + var(--settings-number-chrome));
+  max-width: 100%;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-number__unit {
+  flex: 0 0 auto;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
