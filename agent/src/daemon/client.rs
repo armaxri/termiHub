@@ -2565,6 +2565,31 @@ mod tests {
         wire(&JsonRpcNotification::new(method, params))
     }
 
+    /// #5990: where a buffer ends counts from the last replay of this connection.
+    #[test]
+    fn a_buffer_end_counts_from_the_last_replay_of_the_connection() {
+        let features = FeatureChannels::default();
+        let end = |features: &FeatureChannels| {
+            let BufferEnd {
+                replay_id,
+                position,
+            } = features.sent.end();
+            (replay_id, position)
+        };
+        features.sent.live(5);
+        assert_eq!(end(&features), (None, 5));
+        let first = features.sent.replay(7);
+        features.sent.live(3);
+        assert_eq!(end(&features), (Some(first), 10));
+        let second = features.sent.replay(4);
+        assert!(second > first);
+        assert_eq!(end(&features), (Some(second), 4));
+        // A new connection that has nothing to send again counts from its start.
+        features.reset();
+        features.sent.live(2);
+        assert_eq!(end(&features), (None, 2));
+    }
+
     /// #5990: only the first chunk of a replay is marked, and live output never.
     #[test]
     fn a_replay_is_marked_on_its_first_chunk_only() {

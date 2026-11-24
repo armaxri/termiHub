@@ -5345,6 +5345,21 @@ mod tests {
         let n: ConnectionOutputNotification = serde_json::from_value(replay.clone()).unwrap();
         assert_eq!(n.replay_id, Some(7));
         assert_eq!(serde_json::to_value(&n).unwrap(), replay);
+        // A desktop from before 0.45.0 reads both without the new keys.
+        #[derive(Deserialize)]
+        struct Before45 {
+            session_id: String,
+            data: String,
+        }
+        let buffer =
+            json!({ "session_id": "s-1", "data": "aGk=", "replay_id": 7, "end_position": 2 });
+        for new in [replay, buffer] {
+            let old: Before45 = serde_json::from_value(new).unwrap();
+            assert_eq!(
+                (old.session_id.as_str(), old.data.as_str()),
+                ("s-1", "aGk=")
+            );
+        }
 
         let evicted = json!({ "session_id": "s-1", "reason": "takeover" });
         let n: ConnectionEvictedNotification = serde_json::from_value(evicted.clone()).unwrap();

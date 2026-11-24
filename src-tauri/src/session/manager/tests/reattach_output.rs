@@ -224,23 +224,23 @@ async fn a_re_forward_that_stalls_is_still_shown_once() {
     }
 }
 
-/// A full agent buffer larger than the capture, read 14 bytes before the rest
-/// of the re-forward and more output arrived: every line alike, so only the
-/// position can tell where the two meet.
+/// A full agent ring larger than the capture: it has dropped the start of what
+/// it sent again, so its length says nothing about where it ends. Every line is
+/// alike, so only the position can tell where the two meet, and the capture is
+/// 14 bytes behind when the buffer is read.
 #[tokio::test]
 async fn a_full_agent_buffer_is_joined_by_position() {
     let line = b"heartbeat OK\r\n";
     let capacity = termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
-    let mut history = line.repeat(capacity / line.len());
-    history.extend_from_slice(b"ERROR disk full\r\n");
-    history.extend(line.repeat(capacity / line.len()));
-    // The agent keeps the last part of it, read before the last two lines.
-    let (read, ring) = (history.len() - 2 * line.len(), capacity + 100_000);
-    let buffer = &history[read - ring..read];
-    // It had sent this buffer again, and 2 lines since: the replay is `sent`.
-    let sent = &history[read - ring..];
-    let (manager, emitter, agent) = attached_to(buffer_reply_at(buffer, ring)).await;
-    let here = ring - 14;
+    // What the agent sent since the attach: 3 MiB, one odd line in the middle.
+    let mut sent = line.repeat(3 * capacity / line.len() / 2);
+    sent.extend_from_slice(b"ERROR disk full\r\n");
+    sent.extend(line.repeat(3 * capacity / line.len() / 2));
+    // Its ring keeps the last 2 MiB of it.
+    let ring = 2 * capacity;
+    let buffer = &sent[sent.len() - ring..];
+    let (manager, emitter, agent) = attached_to(buffer_reply_at(buffer, sent.len())).await;
+    let here = sent.len() - 14;
     agent
         .send_replay_start(REPLAY, sent[..here].to_vec())
         .unwrap();
@@ -254,11 +254,9 @@ async fn a_full_agent_buffer_is_joined_by_position() {
     agent.send(sent[here..].to_vec()).unwrap();
 
     let repaint = reading.await.unwrap().unwrap();
-    let chunks = chunks_until(&emitter, "sess-1", sent.len()).await;
-    let all = shown(&repaint, &chunks);
-    assert_eq!(all.len(), sent.len());
-    assert!(all == sent);
     assert_eq!(repaint.end_offset, sent.len() as u64);
+    assert_eq!(repaint.data.len(), ring, "the agent's whole buffer, once");
+    assert!(repaint.data == buffer);
 }
 
 /// An agent from before 0.45.0 says neither where a replay starts nor where its
