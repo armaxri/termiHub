@@ -533,6 +533,15 @@
 /* Agent node — the connection-state dot now renders via the shared StatusDot
    primitive (src/components/ui/StatusDot.tsx); see the `connected`/`connecting`/
    `disconnected` tones there (UISF-003 follow-up). */
+/* The session an open tab shows (#5960): a quiet icon after the name. */
+.agent-node__open-marker {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  margin-left: var(--spacing-xs);
+  color: var(--text-secondary);
+}
+
 .agent-node__hint {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
