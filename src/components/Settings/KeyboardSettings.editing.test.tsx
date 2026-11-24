@@ -161,7 +161,7 @@ describe("KeyboardSettings editing (#5842)", () => {
     expect(byTestId("keybinding-reset-new-terminal")).not.toBeNull();
     expect(byTestId("keybinding-reset-next-tab")).not.toBeNull();
 
-    const [message, opts] = toastSuccess.mock.calls.at(-1)!;
+    const [message, opts] = toastSuccess.mock.lastCall!;
     expect(message).toBe("Ctrl+Tab moved from Next tab to New terminal");
     expect(opts.testId).toBe("keybinding-reassign-toast");
     await act(async () => opts.action.onClick());
@@ -223,7 +223,7 @@ describe("KeyboardSettings editing (#5842)", () => {
     await clickChange("toggle-sidebar");
     press("Backspace");
     expect(isUnboundCombo(getEffectiveCombo("toggle-sidebar"))).toBe(true);
-    const [message, opts] = toastSuccess.mock.calls.at(-1)!;
+    const [message, opts] = toastSuccess.mock.lastCall!;
     expect(message).toBe("Shortcut for Toggle sidebar cleared");
     await act(async () => opts.action.onClick());
     expect(getEffectiveCombo("toggle-sidebar")).toEqual(before);

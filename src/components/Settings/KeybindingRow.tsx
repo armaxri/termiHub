@@ -338,10 +338,8 @@ export function KeybindingRow({
                 onReset={onReset}
                 name={binding.label}
                 defaultText={defaultText}
-                testIds={{
-                  default: `keybinding-default-${binding.action}`,
-                  reset: `keybinding-reset-${binding.action}`,
-                }}
+                defaultTestId={`keybinding-default-${binding.action}`}
+                resetTestId={`keybinding-reset-${binding.action}`}
               />
             </>
           )}

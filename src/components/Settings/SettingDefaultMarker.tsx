@@ -13,8 +13,10 @@ export interface SettingDefaultMarkerProps {
   defaultText?: string;
   /** Prefix for the `-default` tag and `-reset` button test ids. */
   "data-testid"?: string;
-  /** Exact test ids, for markers whose ids put the prefix first (e.g. `keybinding-reset-<action>`). */
-  testIds?: { default?: string; reset?: string };
+  /** Exact id of the Default tag, for ids that put the prefix first (`keybinding-default-<action>`). */
+  defaultTestId?: string;
+  /** Exact id of the reset button (e.g. `keybinding-reset-<action>`). */
+  resetTestId?: string;
 }
 
 /**
@@ -31,10 +33,11 @@ export function SettingDefaultMarker({
   name,
   defaultText,
   "data-testid": testId,
-  testIds,
+  defaultTestId,
+  resetTestId,
 }: SettingDefaultMarkerProps) {
-  const defaultId = testIds?.default ?? (testId ? `${testId}-default` : undefined);
-  const resetId = testIds?.reset ?? (testId ? `${testId}-reset` : undefined);
+  const defaultId = defaultTestId ?? (testId ? `${testId}-default` : undefined);
+  const resetId = resetTestId ?? (testId ? `${testId}-reset` : undefined);
   if (isDefault) {
     return (
       <span className="settings-default-marker__tag" data-testid={defaultId}>
