@@ -6,8 +6,9 @@ import {
   clampCooldownMs,
   clampMaxFires,
   compileOutputTriggers,
+  cooldownInRange,
+  maxFiresInRange,
   validateOutputPattern,
-  workflowTriggersValid,
   type OutputTriggerDeps,
 } from "./workflowOutputTriggers";
 
@@ -68,12 +69,14 @@ describe("limits", () => {
     expect(clampMaxFires(10_000)).toBe(OUTPUT_TRIGGER_LIMITS.maxMaxFiresPerSession);
   });
 
-  it("gates saving on valid patterns and in-range limits", () => {
-    expect(workflowTriggersValid([{ kind: "manual" }, match("ok")])).toBe(true);
-    expect(workflowTriggersValid([match("(a+)+", { isRegex: true })])).toBe(false);
-    expect(workflowTriggersValid([match("ok", { cooldownMs: 10 })])).toBe(false);
-    expect(workflowTriggersValid([match("ok", { maxFiresPerSession: 0 })])).toBe(false);
-    expect(workflowTriggersValid([match("ok", { maxFiresPerSession: 1.5 })])).toBe(false);
+  it("says which authored limits are in range", () => {
+    expect([cooldownInRange(undefined), cooldownInRange(1000), cooldownInRange(10)]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect([maxFiresInRange(undefined), maxFiresInRange(1)]).toEqual([true, true]);
+    expect([maxFiresInRange(0), maxFiresInRange(1.5)]).toEqual([false, false]);
   });
 });
 

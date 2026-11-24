@@ -1,9 +1,9 @@
-"""The Automations sidebar (#5818, slice 6): one list for every automation.
+"""The Automations sidebar (#5818): one list, and one editor, for every automation.
 
 It replaced the Macros and Workflows sidebars. :class:`AutomationSidebarUi`
-shows it, creates automations in the two editors (until slice 7 merges them),
-runs them, reaches a row's "…" menu and opens the Schedules and History
-sections, which start closed.
+shows it, creates automations that type keys, runs them, reaches a row's "…"
+menu and opens the Schedules and History sections, which start closed. The rest
+of the editor is :class:`~.workflow.WorkflowUi`.
 """
 
 from __future__ import annotations
@@ -20,8 +20,9 @@ TOOLBAR_OVERFLOW = "automation-toolbar-overflow"
 NEW_BUTTON = "automation-new-btn"
 NEW_STEPS = "automation-new-steps"
 NEW_KEYS = "automation-new-keys"
-KEYS_EDITOR = "macro-editor-dialog"
-STEPS_EDITOR = "workflow-editor-dialog"
+#: The one automation editor (slice 7), and its Save.
+EDITOR = "automation-editor-dialog"
+EDITOR_SAVE = "automation-editor-save"
 SCHEDULES_TOGGLE = "schedules-section-toggle"
 HISTORY_TOGGLE = "automation-history-toggle"
 
@@ -91,13 +92,13 @@ class AutomationSidebarUi(HarnessMixin):
         self.wait(lambda: self.driver.exists(start), what="the automation's Run button")
         self.driver.click(start)
 
-    def edit_automation(self, automation_id: str, editor: str) -> None:
-        """Open an automation's editor (``editor``: the dialog's testid) from its row."""
+    def edit_automation(self, automation_id: str) -> None:
+        """Open an automation's editor from its row."""
         self.show_automations()
         button = f"automation-edit-{automation_id}"
         self.wait(lambda: self.driver.exists(button), what="the automation's Edit button")
         self.driver.click(button)
-        self.wait(lambda: self.driver.exists(editor), what=f"the editor {editor}")
+        self.wait(lambda: self.driver.exists(EDITOR), what="the automation editor")
 
     def automation_menu(self, automation_id: str, entry: str) -> None:
         """Choose ``entry`` (``run-on``, ``schedule``, ``history``, …) of a row's "…" menu."""
@@ -125,45 +126,75 @@ class AutomationSidebarUi(HarnessMixin):
             self.driver.force_hover(None)
 
     # ── creating ─────────────────────────────────────────────────────────────
-    def open_new_automation(self, entry: str, editor: str) -> None:
-        """New ▾: choose ``entry`` and wait for its ``editor``."""
+    def open_new_automation(self, entry: str) -> None:
+        """New ▾: choose ``entry`` and wait for the editor."""
         self.show_automations()
         # "New" is the toolbar's primary action (inline beside the "…" menu); at a
         # width too narrow even for that it becomes a sub-menu of "…" (#4824).
         self.invoke_toolbar_action(NEW_BUTTON, overflow=TOOLBAR_OVERFLOW)
         self.wait(lambda: self.driver.exists(entry), what="the New-automation menu")
         self.driver.click(entry)
-        self.wait(lambda: self.driver.exists(editor), what=f"the editor {editor}")
+        self.wait(lambda: self.driver.exists(EDITOR), what="the automation editor")
 
     def open_new_keystrokes(self) -> None:
         """New ▾ → Typed keystrokes…"""
-        self.open_new_automation(NEW_KEYS, KEYS_EDITOR)
+        self.open_new_automation(NEW_KEYS)
 
-    def fill_keystrokes(self, steps: list[str]) -> None:
-        """Type ``steps`` into the open keystroke editor, adding rows as needed.
+    def expand_step(self, path: int | str) -> None:
+        """Open the step row at ``path`` (``1``, ``"0-then-1"``) to its fields (idempotent).
 
-        A new automation opens pre-seeded with one empty step; a row is only added
-        when the form lacks it, or a blank extra step keeps Save disabled (#4017).
+        A stored automation's steps start as one summary line each (#5637); a
+        step's fields only exist once its row is open.
         """
+        toggle = f"automation-editor-step-toggle-{path}"
+        self.wait(lambda: self.driver.exists(toggle), what=f"step {path} in the editor")
+        if self.driver.get_attribute(toggle, "aria-expanded") != "true":
+            self.driver.click(toggle)
         self.wait(
-            lambda: self.driver.exists("macro-editor-step-data-0")
-            or self.driver.exists("macro-editor-no-steps"),
-            what="the keystroke editor's steps",
+            lambda: self.driver.exists(f"automation-editor-step-body-{path}"),
+            what=f"step {path} to open",
         )
-        for index, data in enumerate(steps):
-            field = f"macro-editor-step-data-{index}"
+
+    def open_editor_section(self, section: str) -> None:
+        """Open the editor's ``when``, ``values`` or ``tags`` section (idempotent)."""
+        toggle = f"automation-editor-{section}-toggle"
+        self.wait(lambda: self.driver.exists(toggle), what=f"the editor's {section} section")
+        if self.driver.get_attribute(toggle, "aria-expanded") != "true":
+            self.driver.click(toggle)
+        self.wait(
+            lambda: self.driver.get_attribute(toggle, "aria-expanded") == "true",
+            what=f"the editor's {section} section to open",
+        )
+
+    def set_tags(self, tags: str) -> None:
+        """Set the open editor's tags (a section that starts closed)."""
+        self.open_editor_section("tags")
+        self.driver.type("automation-editor-tags", tags)
+
+    def fill_keystrokes(self, keys: list[str], step: int = 0) -> None:
+        """Type ``keys`` (escape notation) into a Type keys step, one row each.
+
+        A new one opens with one empty row; a row is only added when the step
+        lacks it, or a blank extra row keeps Save disabled (#4017).
+        """
+        self.expand_step(step)
+        for index, data in enumerate(keys):
+            field = f"automation-editor-keys-text-{step}-{index}"
             if not self.driver.exists(field):
-                self.driver.click("macro-editor-add-step")
-                self.wait(lambda f=field: self.driver.exists(f), what=f"keystroke step {index}")
+                self.driver.click(f"automation-editor-keys-add-{step}")
+                self.wait(lambda f=field: self.driver.exists(f), what=f"key row {index}")
             self.driver.type(field, data)
 
-    def save_keystrokes(self) -> None:
-        """Save the open keystroke editor and wait for it to close."""
-        self.wait(lambda: not self.is_blocked("macro-editor-save"), what="Save to enable")
-        self.driver.click("macro-editor-save")
-        self.wait(
-            lambda: not self.driver.exists(KEYS_EDITOR), what="the keystroke editor to close"
-        )
+    def set_typing_speed(self, speed: str, step: int = 0) -> None:
+        """Choose ``recorded``, ``fixed`` or ``instant`` for a Type keys step (#5820)."""
+        self.expand_step(step)
+        self.driver.select(f"automation-editor-step-speed-{step}", speed)
+
+    def save_editor(self) -> None:
+        """Save the open editor and wait for it to close."""
+        self.wait(lambda: not self.is_blocked(EDITOR_SAVE), what="Save to enable")
+        self.driver.click(EDITOR_SAVE)
+        self.wait(lambda: not self.driver.exists(EDITOR), what="the automation editor to close")
 
     def stored_automation(self, name: str) -> Optional[dict[str, Any]]:
         """The stored automation called ``name``, or ``None``."""
@@ -173,9 +204,9 @@ class AutomationSidebarUi(HarnessMixin):
     def create_typed_automation(self, name: str, steps: list[str]) -> str:
         """Write an automation that types ``steps`` by hand; return its id."""
         self.open_new_keystrokes()
-        self.driver.type("macro-editor-name", name)
+        self.driver.type("automation-editor-name", name)
         self.fill_keystrokes(steps)
-        self.save_keystrokes()
+        self.save_editor()
         found = self.wait(
             lambda: self.stored_automation(name), what=f"the saved automation {name!r}"
         )

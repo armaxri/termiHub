@@ -208,15 +208,15 @@ export function remapWorkspaceTabGroups(
 
 /**
  * Re-point the connections of every connection-bound trigger — on-connect,
- * on-disconnect and on-output-match (#3791) — (mirrors the backend's
- * workflow-trigger follow, #3596). Returns the input array itself when nothing
+ * on-disconnect and on-output-match (#3791) — (mirrors the backend's trigger
+ * follow, #3596). Returns the input array itself when nothing
  * changed.
  */
-export function remapWorkflowTriggers(
-  triggers: WorkflowTrigger[],
+export function remapTriggerConnections<T extends WorkflowTrigger>(
+  triggers: T[],
   remap: ConnectionIdRemap
-): WorkflowTrigger[] {
-  let next: WorkflowTrigger[] | null = null;
+): T[] {
+  let next: T[] | null = null;
   triggers.forEach((trigger, i) => {
     if (
       trigger.kind !== "on-connect" &&

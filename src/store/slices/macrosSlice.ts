@@ -5,7 +5,6 @@ import { saveAutomation as apiSaveAutomation } from "@/services/automationApi";
 import { parseMacroEnvelope, resolveImportCollisions } from "@/services/macroIo";
 import {
   getTerminalInputInjector,
-  type MacroTimingMode,
   type MacroInjector,
   type MacroPlaybackStatus,
 } from "@/services/macroPlayback";
@@ -21,7 +20,6 @@ import { filterConnectedTerminalTabIds } from "../tabQueries";
 import { automationToMacro, isMacroShaped, macroToAutomation } from "./automationViews";
 import { createTargetInjector, describeMacroFanoutOutcome, tallyMacroTargets } from "./macroFanout";
 import {
-  effectiveTimingMode,
   playAutomationKeys,
   playAutomationKeysOnTargets,
   type MacroKeysPlayback,
@@ -38,8 +36,6 @@ export interface MacroPlaybackState {
   macroName: string;
   /** The terminal tab receiving the injected input. */
   tabId: string;
-  /** The timing mode this run is using. */
-  timingMode: MacroTimingMode;
   /** Total number of steps in the macro. */
   total: number;
   /** Steps injected so far. */
@@ -74,10 +70,6 @@ export interface PlayMacroOptions {
    * default) or, when `false`, one after another.
    */
   parallel?: boolean;
-  /** Timing override; defaults to the macro's saved typing speed (#5818). */
-  timingMode?: MacroTimingMode;
-  /** Per-step delay (ms) for the `"fixed"` timing mode. */
-  fixedDelayMs?: number;
   /** What launched the playback, for the run history (#3543); defaults to `"manual"`. */
   origin?: MacroRunOrigin;
   /**
@@ -245,7 +237,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     }
     stopActivePlayback();
 
-    const timingMode = effectiveTimingMode(get(), macro, opts ?? {});
     const inject = createTargetInjector(
       getTerminalInputInjector(),
       (tabId) => filterConnectedTerminalTabIds(get(), [tabId]).length > 0
@@ -263,7 +254,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         macroId: macro.id,
         macroName: macro.name,
         tabId: firstTab,
-        timingMode,
         total,
         played: 0,
         targetTabIds: targets,
@@ -283,10 +273,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       macro,
       targets,
       inject,
-      {
-        override: { timingMode: opts?.timingMode, fixedDelayMs: opts?.fixedDelayMs },
-        parallel: opts?.parallel,
-      },
+      { parallel: opts?.parallel },
       {
         onProgress: (tabId, played) => {
           if (!isCurrent()) return;
@@ -560,7 +547,6 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       // Only one playback at a time — cancel any in-flight run first.
       stopActivePlayback();
 
-      const timingMode = effectiveTimingMode(get(), macro, opts ?? {});
       const injector = getTerminalInputInjector();
       const inject: MacroInjector = (data) => {
         if (!injector) return false;
@@ -580,33 +566,26 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           macroId,
           macroName: macro.name,
           tabId: targetTabId,
-          timingMode,
           total,
           played: 0,
         },
       });
 
-      const handle = playAutomationKeys(
-        get(),
-        macro,
-        inject,
-        { timingMode: opts?.timingMode, fixedDelayMs: opts?.fixedDelayMs },
-        {
-          onProgress: (played, stepTotal) => {
-            set((s) =>
-              s.macroPlayback &&
-              s.macroPlayback.macroId === macroId &&
-              s.macroPlayback.tabId === targetTabId
-                ? { macroPlayback: { ...s.macroPlayback, played } }
-                : {}
-            );
-            toast.loading(`Playing macro "${macro.name}"…`, {
-              id: toastId,
-              description: `${played} / ${stepTotal} steps`,
-            });
-          },
-        }
-      );
+      const handle = playAutomationKeys(get(), macro, inject, {
+        onProgress: (played, stepTotal) => {
+          set((s) =>
+            s.macroPlayback &&
+            s.macroPlayback.macroId === macroId &&
+            s.macroPlayback.tabId === targetTabId
+              ? { macroPlayback: { ...s.macroPlayback, played } }
+              : {}
+          );
+          toast.loading(`Playing macro "${macro.name}"…`, {
+            id: toastId,
+            description: `${played} / ${stepTotal} steps`,
+          });
+        },
+      });
       activePlayback = { kind: "single", tabId: targetTabId, handle };
 
       const result = await handle.done;

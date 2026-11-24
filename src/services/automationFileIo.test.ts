@@ -6,7 +6,7 @@ import {
   serializeWorkflows,
 } from "@/services/workflowIo";
 import type { Macro } from "@/types/macro";
-import type { Workflow } from "@/types/workflow";
+import type { Workflow, WorkflowStep } from "@/types/workflow";
 import { inspectAutomationFile, serializeAutomationLibrary } from "./automationFileIo";
 
 const macro: Macro = {
@@ -37,6 +37,26 @@ describe("automation files (#5818, slice 6)", () => {
     expect(parseMacroEnvelope(json).map((m) => m.name)).toEqual(["Login"]);
     expect(parseWorkflowEnvelope(json).map((w) => w.name)).toEqual(["Deploy"]);
     expect(inspectAutomationFile(json)).toEqual({ macros: true, workflows: true });
+  });
+
+  it("reads back an automation with keys beside other steps or a trigger (#5818, slice 7)", () => {
+    const keys = {
+      kind: "type-keys",
+      chunks: [{ data: "sudo -v\r", delayMs: 12 }],
+      timing: "fixed",
+      fixedDelayMs: 25,
+      recorded: true,
+      retry: { count: 2 },
+    } as unknown as WorkflowStep;
+    const mixed: Workflow = {
+      ...workflow,
+      steps: [keys, { kind: "loop", loop: { kind: "count", count: 2 }, body: [keys] }],
+      triggers: [{ kind: "hotkey", binding: "F8" }],
+    };
+    const json = serializeAutomationLibrary({ macros: [], workflows: [mixed] });
+    expect(parseWorkflowEnvelope(json)).toEqual([{ ...mixed, parameters: undefined }]);
+    const broken = json.replace('"fixed"', '"warp"');
+    expect(() => parseWorkflowEnvelope(broken)).toThrow(/type-keys\) has an invalid "timing"/);
   });
 
   it("recognises a file either old sidebar wrote", () => {

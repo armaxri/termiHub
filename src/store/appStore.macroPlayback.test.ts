@@ -116,7 +116,7 @@ describe("appStore — macro playback slice (#1675)", () => {
       ],
     });
 
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
 
     expect(injected).toEqual(["l", "s", "\r"]);
     // Playback state is cleared once the run finishes.
@@ -134,7 +134,7 @@ describe("appStore — macro playback slice (#1675)", () => {
     seedConnectedTerminal("tab-xyz", "sess-xyz");
     useAppStore.setState({ macros: [macro("m1", [{ data: "hi", delayMs: 0 }])] });
 
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
 
     expect(tabIds).toEqual(["tab-xyz"]);
   });
@@ -151,7 +151,7 @@ describe("appStore — macro playback slice (#1675)", () => {
       ],
     });
 
-    const done = layoutState().playMacro("m1", { timingMode: "real-time" });
+    const done = layoutState().playMacro("m1");
 
     await vi.advanceTimersByTimeAsync(0);
     expect(injected).toEqual(["a"]);
@@ -177,7 +177,7 @@ describe("appStore — macro playback slice (#1675)", () => {
       ],
     });
 
-    const done = layoutState().playMacro("m1", { timingMode: "real-time" });
+    const done = layoutState().playMacro("m1");
     await vi.advanceTimersByTimeAsync(0);
     expect(injected).toEqual(["a"]);
     expect(useAppStore.getState().macroPlayback).not.toBeNull();
@@ -287,10 +287,10 @@ describe("appStore — macro playback slice (#1675)", () => {
       ],
     });
 
-    const done1 = layoutState().playMacro("m1", { timingMode: "instant" });
+    const done1 = layoutState().playMacro("m1");
     await started;
     // A second playback while the first is in flight cancels the first.
-    const done2 = layoutState().playMacro("m2", { timingMode: "instant" });
+    const done2 = layoutState().playMacro("m2");
     release();
     await Promise.all([done1, done2]);
 

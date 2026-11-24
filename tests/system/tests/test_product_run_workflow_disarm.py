@@ -171,4 +171,4 @@ class TestProductRunWorkflowDisarm(
 
     def assert_no_editor_open(self) -> None:
         """The switch must not open the workflow editor."""
-        assert not self.driver.exists("workflow-editor-dialog"), "the switch opened the editor"
+        assert not self.driver.exists("automation-editor-dialog"), "the switch opened the editor"

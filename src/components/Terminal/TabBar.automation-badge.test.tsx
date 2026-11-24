@@ -66,7 +66,6 @@ function playback(overrides: Partial<MacroPlaybackState> = {}): MacroPlaybackSta
     macroId: "m1",
     macroName: "deploy",
     tabId: "a",
-    timingMode: "real-time",
     total: 5,
     played: 2,
     targetTabIds: ["a", "c", "d"],

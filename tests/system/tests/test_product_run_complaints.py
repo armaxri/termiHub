@@ -116,7 +116,7 @@ SORT_SUBMENU = "file-browser-sort-submenu"
 SORT_KEYS = ("name", "modified", "size")
 COPY_PATH = "file-browser-copy-path"
 EDITOR_FOOTER = "connection-editor-actions"
-WORKFLOW_DIALOG = "workflow-editor-dialog"
+WORKFLOW_DIALOG = "automation-editor-dialog"
 
 
 def _center_y(box: dict[str, float]) -> float:
