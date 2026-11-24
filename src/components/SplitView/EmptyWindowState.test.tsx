@@ -91,13 +91,13 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
   });
 
   it("launches a local shell into this window via New Terminal", () => {
-    const addTab = vi.fn();
-    useAppStore.setState({ addTab });
+    const addLocalShellTab = vi.fn();
+    useAppStore.setState({ addLocalShellTab });
     act(() => root.render(<EmptyWindowState />));
 
     clickTestId(container, "empty-window-new-terminal");
 
-    expect(addTab).toHaveBeenCalledWith("Terminal", "local");
+    expect(addLocalShellTab).toHaveBeenCalledWith();
   });
 
   it("opens a connection picker (command palette) when saved connections exist", () => {
