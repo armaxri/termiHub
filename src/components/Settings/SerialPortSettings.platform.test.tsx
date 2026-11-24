@@ -70,6 +70,8 @@ describe("SerialPortSettings per platform (#5712)", () => {
     expect(prefixToggles()).toHaveLength(4);
     expect(q("settings-serial-prefixes-note")).toBeNull();
     expect(q("settings-serial-prefixes-disclosure")).toBeNull();
+    // The count describes the scan that runs here.
+    expect(q("settings-serial-prefixes-count")?.textContent).toBe("3 / 4 enabled");
   });
 
   it.each<Platform>(["macos", "windows"])(
@@ -80,9 +82,12 @@ describe("SerialPortSettings per platform (#5712)", () => {
       expect(note?.textContent).toContain("Prefix scanning only runs on Linux");
       expect(prefixToggles()).toHaveLength(0);
       expect(q("settings-serial-prefixes-list")).toBeNull();
-      // The section badge still summarises the shared settings.
-      expect(container.querySelector(".settings-panel__section-badge")?.textContent).toBe(
-        "3 / 4 enabled"
+      // No "n / m enabled" count for a scan that does not run here (#5844)…
+      expect(q("settings-serial-prefixes-count")).toBeNull();
+      expect(container.textContent).not.toMatch(/\d+ \/ \d+ enabled/);
+      // …and the note points at where the serial line settings live.
+      expect(q("settings-serial-connection-settings-note")?.textContent).toContain(
+        "set on each serial connection"
       );
       const disclosure = q("settings-serial-prefixes-disclosure");
       expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
