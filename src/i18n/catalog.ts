@@ -366,6 +366,8 @@ const en = {
     "— reconnected {time} — new remote shell; running programs were lost",
   "drop.separator.reconnectedSession":
     "— reconnected {time} — new session; running programs were lost",
+  // A local process is started again, not reconnected (#5955).
+  "drop.separator.restarted": "— restarted {time} —",
   "drop.separator.reconnectedTelnet":
     "— reconnected {time} — new telnet session; the remote state was not restored",
   "drop.overlay.scrollbackKept": "Scrollback is kept.",

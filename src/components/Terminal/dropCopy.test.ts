@@ -187,8 +187,11 @@ describe("scrollback separators", () => {
     expect(reconnectedMarker(AT, "telnet")).toBe(
       "— reconnected 09:05:07 — new telnet session; the remote state was not restored"
     );
-    expect(reconnectedMarker(AT)).toBe(
+    expect(reconnectedMarker(AT, "agent")).toBe(
       "— reconnected 09:05:07 — new session; running programs were lost"
     );
+    // #5955: a local process is restarted, not reconnected.
+    expect(reconnectedMarker(AT)).toBe("— restarted 09:05:07 —");
+    expect(reconnectedMarker(AT, "other")).not.toContain("reconnected");
   });
 });
