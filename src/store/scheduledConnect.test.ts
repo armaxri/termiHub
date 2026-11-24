@@ -25,13 +25,13 @@ vi.mock("@/services/storage", () => ({
   getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn((m: unknown) => Promise.resolve(m)),
-  deleteMacro: vi.fn(() => Promise.resolve()),
-  listMacroRuns: vi.fn(() => Promise.resolve([])),
-  recordMacroRun: vi.fn(() => Promise.resolve([])),
-  clearMacroRunHistory: vi.fn(() => Promise.resolve([])),
+vi.mock("@/services/automationApi", () => ({
+  listAutomations: vi.fn(() => Promise.resolve([])),
+  saveAutomation: vi.fn((a: unknown) => Promise.resolve(a)),
+  deleteAutomation: vi.fn(() => Promise.resolve()),
+  listAutomationRuns: vi.fn(() => Promise.resolve([])),
+  recordAutomationRun: vi.fn(() => Promise.resolve([])),
+  clearAutomationRunHistory: vi.fn(() => Promise.resolve([])),
 }));
 
 import type { SavedConnection } from "@/types/connection";

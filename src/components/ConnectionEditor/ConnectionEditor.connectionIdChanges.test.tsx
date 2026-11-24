@@ -232,7 +232,7 @@ describe("ConnectionEditor — follows its own connection's id change (#3622)", 
     resetRuntimeCache();
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "save_connection") return Promise.resolve();
-      if (cmd === "list_workflows") return Promise.resolve([]);
+      if (cmd === "list_automations") return Promise.resolve([]);
       return Promise.resolve(null);
     });
     useAppStore.setState({
