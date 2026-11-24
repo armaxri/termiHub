@@ -358,12 +358,14 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       {show("fontFamily") && (
         <SettingsField
           label="Font family"
-          hint={
+          hint="Terminal font, as a CSS font list. Empty uses the default chain."
+          help={
             <>
-              Terminal font, as a CSS font list. Empty uses the default chain:{" "}
+              Default chain:{" "}
               <span className="appearance-settings__font-chain">{DEFAULT_FONT_CHAIN_TEXT}</span>
             </>
           }
+          helpTestId="settings-font-family-help"
           labelAccessory={
             <SettingDefaultMarker
               isDefault={!settings.fontFamily}
@@ -385,7 +387,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       {show("fontSize") && (
         <SettingsField
           label="Font size"
-          hint="Terminal font size in pixels (8–32)."
+          hint="Terminal font size (8–32)."
           labelAccessory={
             <SettingDefaultMarker
               isDefault={isAtDefault(settings.fontSize, DEFAULT_FONT_SIZE)}
@@ -399,6 +401,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           <DefaultNumberInput
             min={8}
             max={32}
+            unit="px"
             value={settings.fontSize}
             defaultValue={DEFAULT_FONT_SIZE}
             onChange={(v) => onChange({ ...settings, fontSize: v })}
@@ -409,7 +412,9 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       {show("lineHeight") && (
         <SettingsField
           label="Line height"
-          hint="Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters."
+          hint="Terminal line height (0.8–2.0)."
+          help="Use 1.0 for seamless box-drawing characters."
+          helpTestId="settings-line-height-help"
           labelAccessory={
             <SettingDefaultMarker
               isDefault={isAtDefault(settings.lineHeight, DEFAULT_LINE_HEIGHT)}
