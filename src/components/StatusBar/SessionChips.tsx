@@ -23,6 +23,8 @@ import { t } from "@/i18n/catalog";
 import { UnencryptedBadge } from "@/components/UnencryptedBadge";
 import { useTabSshHostKeyTrust } from "@/store/sshHostKeyTrustBridge";
 import { useSshAlgorithms } from "@/hooks/useSshAlgorithms";
+import { useAgentSetupStatus } from "@/store/agentSetupStatus";
+import { agentSetupTabOutcome } from "@/components/Terminal/AgentSetupTabStrip";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 
 /** The chip icon per trust level: a check once the key is remembered. */
@@ -38,7 +40,10 @@ const TRUST_ICON: Record<SshTrustLevel, typeof ShieldCheck> = {
  * and that the session is encrypted (#5839); clicking opens a popover with the
  * host, encryption, sign-in method and host key, plus a link to manage
  * trusted keys. Opening it asks for the negotiated cipher, MAC, key exchange
- * and host-key algorithm (#5896), which only the popover names. The tooltip (#5669) stays for hover. Hidden for non-SSH tabs.
+ * and host-key algorithm (#5896), which only the popover names. The tooltip (#5669) stays for hover. Hidden for non-SSH tabs,
+ * and for an agent setup tab once its setup is over (#5980): its SSH session
+ * ended with an outcome (#5992), and nothing in that tab reconnects it. A setup
+ * whose link dropped without one keeps the greyed chip.
  */
 export function SshStatus() {
   const config = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
@@ -47,13 +52,15 @@ export function SshStatus() {
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const hostKeys = useTabSshHostKeyTrust(tabId);
   const { algorithms, request: requestAlgorithms } = useSshAlgorithms(sessionId);
+  const setupTab = useAgentSetupStatus((s) => (tabId ? s.tabs[tabId] : undefined));
   // The chip greys while the tab's session is down (#5955), so a dropped
   // session never reads as a live secure one — nor names the algorithms of
   // a transport that is gone (#5896).
   const lifecycle = useProjectedSessionLifecycle(tabId ?? "");
   const down = !!tabId && (lifecycle.exited || lifecycle.reconnecting);
   const chip = sshSecurityChip(config, hostKeys, down, down ? null : algorithms);
-  if (!chip) return null;
+  const setupOver = lifecycle.exited && agentSetupTabOutcome(setupTab, lifecycle.exitInfo) !== null;
+  if (!chip || setupOver) return null;
   const TrustIcon = TRUST_ICON[chip.trust];
   return (
     <DropdownMenuRoot onOpenChange={(open) => open && !down && requestAlgorithms()}>

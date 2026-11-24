@@ -83,7 +83,7 @@ def _row(**over: Any) -> dict[str, Any]:
         "buttons": [_button("Connect")],
         "dot_class": "status-dot status-dot--disabled",
         "dot_label": "Not connected",
-        "empty_text": "Not connected. Connect",
+        "empty_text": "Not connected.",
         "has_reconnect": False,
         "has_setup": False,
         "has_more": False,
@@ -129,6 +129,9 @@ def test_grade_empty_states():
                                  host="build-01")
     assert any("name the host" in p for p in vague)
     assert empty_state_problems(None, state="disconnected") != []
+    # #5980: one connect affordance, the row's action; no second link.
+    assert empty_state_problems("Not connected.", state="disconnected") == []
+    assert empty_state_problems("Not connected. Connect", state="disconnected") != []
 
 
 def test_grade_not_installed_row():

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   recordAutomationRun: vi.fn(),
   ensureWorkflowSubscribed: vi.fn(),
   settings: {
+    experimentalFeaturesEnabled: true as boolean | undefined,
     workflowLocalProcessEnabled: true,
     workflowLocalProcessAllowlist: undefined as string[] | undefined,
   },
@@ -66,9 +67,11 @@ vi.mock("./workflowRunBridge", async (importOriginal) => ({
   dispatchWorkflowRunSettled: vi.fn(() => Promise.resolve()),
 }));
 
+import { dispatchWorkflowRunStarted } from "./workflowRunBridge";
 import { useAppStore, type AppState } from "./appStore";
 import type { Macro } from "@/types/macro";
 import type { Workflow, WorkflowStep } from "@/types/workflow";
+import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import {
   activeWorkflowRunCount,
   cancelWorkflowRunById,
@@ -129,6 +132,8 @@ beforeEach(() => {
   mocks.getTerminalInputInjector.mockReset().mockReturnValue(mocks.injector);
   mocks.recordAutomationRun.mockReset().mockResolvedValue([]);
   mocks.ensureWorkflowSubscribed.mockReset().mockResolvedValue(undefined);
+  vi.mocked(dispatchWorkflowRunStarted).mockClear();
+  mocks.settings.experimentalFeaturesEnabled = true;
   mocks.settings.workflowLocalProcessEnabled = true;
   mocks.settings.workflowLocalProcessAllowlist = undefined;
   mocks.frontendLog.mockReset();
@@ -360,6 +365,32 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
     expect(set).not.toHaveBeenCalledWith(
       expect.objectContaining({ localProcessPrompt: expect.anything() })
     );
+  });
+
+  it("refuses a whole run before its first step while experimental is off (#5988)", async () => {
+    mocks.settings.workflowLocalProcessAllowlist = ["make"];
+    for (const off of [undefined, false]) {
+      mocks.settings.experimentalFeaturesEnabled = off;
+      const result = await run(workflow([{ kind: "send-command", command: "ls" }, lp]));
+      expect(result).toEqual({ status: "failed", stepsCompleted: 0, error: LOCAL_PROCESS_REASON });
+    }
+    expect(mocks.injector).not.toHaveBeenCalled();
+    // No history record and no projected run, so no tab badge.
+    expect(mocks.recordAutomationRun).not.toHaveBeenCalled();
+    expect(dispatchWorkflowRunStarted).not.toHaveBeenCalled();
+  });
+
+  it("never reuses a fan-out decision made while experimental was on (#5988)", async () => {
+    const authDecisions = new Map([[JSON.stringify(["make", "test"]), Promise.resolve(true)]]);
+    mocks.injector.mockImplementation(() => {
+      mocks.settings.experimentalFeaturesEnabled = false;
+      return true;
+    });
+    const result = await run(workflow([{ kind: "send-command", command: "ls" }, lp]), {
+      fanout: { authDecisions },
+    });
+    expect(result).toMatchObject({ status: "failed", failedStepIndex: 1 });
+    expect(result.error).toContain("not authorized");
   });
 
   it("refuses an un-allowlisted program in an unattended run without prompting", async () => {

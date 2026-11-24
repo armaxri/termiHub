@@ -216,7 +216,8 @@ export interface TerminalSessionStateSlice {
    * End a tab because the user disconnected or shut down its agent (#4309): a
    * user end (`killed` → region `disconnected`, reason `user`), never a drop, so
    * no reconnect loop is armed. The tab stays on the view-mode banner with a
-   * manual Reconnect, which re-establishes the agent and starts a new session.
+   * manual Reconnect, which re-establishes the agent and resumes the tab's session
+   * if the agent still runs it, or else starts a new one (#5953).
    */
   setTerminalAgentDisconnected: (tabId: string) => void;
   /** Tag a session as intentionally killed by the user (e.g. Open Connections) (#1121). */

@@ -3,7 +3,7 @@ import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 /**
  * Settings → Schedules (#4623): an always-available place to view, pause and
- * resume, delete and create (#5633) scheduled workflow/macro runs. The
+ * resume, delete and create (#5633) scheduled automation runs. The
  * Workflows sidebar, where schedules are also edited, is experimental and hidden
  * when experimental features are off, but scheduled runs still type into
  * remote hosts unattended, so they must stay manageable from here.
@@ -13,8 +13,8 @@ export function SchedulesSettings() {
     <div className="settings-panel__section" data-testid="schedules-settings">
       <SettingsSectionHeading>Schedules</SettingsSectionHeading>
       <p className="settings-panel__description">
-        Scheduled workflows and macros send input to their target hosts automatically while termiHub
-        is running. Create a schedule, turn one off, pause them all, or delete one here.
+        Scheduled automations send input to their target hosts automatically while termiHub is
+        running. Create a schedule, turn one off, pause them all, or delete one here.
       </p>
       <SchedulesSection editable={false} creatable showTitle={false} />
     </div>

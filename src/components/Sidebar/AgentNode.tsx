@@ -2466,21 +2466,15 @@ export function AgentNode({
               </button>
             </p>
           ) : (
+            // One connect affordance (#5980): the row's own Connect action.
+            // A second "Connect" link here made the expanded row differ from
+            // the collapsed one for the same state.
             <p
               className="agent-node__hint"
               style={{ paddingLeft: 32 }}
               data-testid={`agent-empty-${agent.id}`}
             >
-              Not connected.{" "}
-              <button
-                type="button"
-                className="agent-node__link"
-                onClick={() => void handleConnect()}
-                disabled={isConnecting}
-                data-testid={`agent-empty-connect-${agent.id}`}
-              >
-                Connect
-              </button>
+              Not connected.
             </p>
           )}
         </AgentRootDropZone>

@@ -61,11 +61,14 @@ One primary button per footer. Cancel is on the left; the primary action is on t
 - **OK** only confirms a choice the dialog made for the user, and only where no specific verb
   fits. Prefer the verb: "Restore", "Apply", "Continue".
 - Do not use **Done**, **Dismiss**, **Got it** or **Okay** for the same role.
+- **Later** puts off an offer whose text itself talks about closing something, so
+  **Close** would read as "close that". The agent update strip says "Waits for 1 session
+  (bash) to close." and offers **Later** beside "Restart agent and update" (#5980).
 
 | Do                                                 | Don't                                             |
 | -------------------------------------------------- | ------------------------------------------------- |
 | Import finished. 12 connections added. · **Close** | Import finished. 12 connections added. · **Done** |
-| Agent update available · **Close**                 | Agent update available · **Dismiss**              |
+| Agent update available · **Later**                 | Agent update available · **Dismiss**              |
 
 ## Toasts: only what the screen does not show
 

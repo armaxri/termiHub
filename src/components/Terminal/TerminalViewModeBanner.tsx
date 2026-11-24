@@ -48,8 +48,10 @@ export const VIEW_MODE_RESTART_HINT = ENTER_TO_RESTART_HINT;
  */
 export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewModeBannerProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
-  // The user disconnected or shut down this tab's agent (#4309): say so, since
-  // Reconnect will bring the agent back before starting a new session.
+  // The user disconnected or shut down this tab's agent (#4309): say so.
+  // Reconnect brings the agent back and resumes the session if the agent still
+  // runs it (#5953). Only the reconnect finds that out, so no text here promises
+  // a resume or a new session (#5989); the tab's marker then says which it was.
   const agentDisconnected = useAppStore((s) => s.terminalAgentDisconnected[tabId] ?? false);
 
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -73,18 +75,16 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
   const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
   const hint = restart ? VIEW_MODE_RESTART_HINT : VIEW_MODE_ENTER_HINT;
   const reconnectTitle = agentDisconnected
-    ? "Reconnect the agent and start a new session (Enter)"
+    ? "Reconnect the agent (Enter)"
     : restart
       ? "Start the process again (Enter)"
       : "Start a new session (Enter)";
   // The agent heading already says what happened; every other end states its
   // cause (#5831).
   const causeLine = agentDisconnected ? undefined : (cause ?? notice?.causeLine);
-  const announcement = agentDisconnected
-    ? "Agent disconnected. Press Enter or click Reconnect to reconnect it and start a new session."
-    : `${heading}${causeLine ? ` ${causeLine}` : ""} Press Enter or click ${actionLabel} to ${
-        restart ? "start it again" : "start a new session"
-      }.`;
+  // One string for the eye and the screen reader (#5980): the announcement is
+  // the banner's own visible text.
+  const announcement = [heading, hint, causeLine].filter(Boolean).join(" ");
   // The same icon as the strip for the same end (#5955); the user disconnecting
   // the agent is a user end.
   const Icon = SESSION_END_ICONS[agentDisconnected ? "user" : (notice?.kind ?? "link")];
@@ -98,10 +98,10 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
     >
       {/* The banner can appear without the disconnect overlay (the user ended
           the agent, #4309), so announce its state politely (#4331). */}
-      <LiveRegion message={announcement} />
+      <LiveRegion message={announcement} data-testid="terminal-view-mode-announcement" />
       <Icon size={12} className="terminal-view-mode-banner__icon" aria-hidden />
       <span className="terminal-view-mode-banner__text">
-        <span className="terminal-view-mode-banner__label">
+        <span className="terminal-view-mode-banner__label" data-testid="terminal-view-mode-label">
           <span className="terminal-view-mode-banner__heading">{heading}</span>{" "}
           <span className="terminal-view-mode-banner__hint">{hint}</span>
         </span>

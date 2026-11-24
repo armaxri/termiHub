@@ -102,3 +102,16 @@ describe("tabSerialPort / tabTooltipTitle (#5827)", () => {
     expect(tabTooltipTitle("web", null)).toBe("web");
   });
 });
+
+describe("agent setup tabs (#5980)", () => {
+  it("shortens the agent name from its end, like an agent shell tab", () => {
+    expect(splitTabTitle("Setup: sys-pr-agent-24ef8dc4")).toEqual({
+      head: "Setup: sys-pr-agent-24ef8dc4",
+      tail: "",
+    });
+    expect(splitTabTitle("Setup: sys-pr-agent-24ef8dc4 (2)")).toEqual({
+      head: "Setup: sys-pr-agent-24ef8dc4",
+      tail: " (2)",
+    });
+  });
+});

@@ -162,7 +162,7 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
             what=f"the saved schedule {name!r}",
         )
         assert schedule["rule"] == {"kind": "interval", "everyMinutes": 1}
-        assert schedule["action"] == {"kind": "macro", "macroId": macro_id}
+        assert schedule["action"] == {"kind": "automation", "automationId": macro_id}
         assert schedule["targets"] == {"kind": "connections", "connectionIds": [connection_id]}
         assert not schedule["enabled"], "a new schedule must start disabled"
         return schedule["id"]
@@ -199,7 +199,7 @@ class TestScheduledRuns(ConnectionsUi, TabsUi, SidebarUi, SettingsUi, SystemTest
         started = _parse_ts(attempt["startedAt"])
         # The tick fires a due slot on or after it, never early.
         assert started >= due - timedelta(seconds=1), (started, due)
-        run_ids = attempt.get("macroRunIds") or []
+        run_ids = attempt.get("runIds") or []
         assert len(run_ids) == 1, attempt
         runs = {r.get("id"): r for r in self.driver.get_state("macroRuns") or []}
         assert runs.get(run_ids[0], {}).get("origin") == "scheduled", runs.get(run_ids[0])

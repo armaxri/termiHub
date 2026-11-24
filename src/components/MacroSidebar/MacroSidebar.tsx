@@ -44,7 +44,8 @@ export function MacroSidebar() {
   const playMacro = useAppStore((s) => s.playMacro);
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
   const handleSchedule = useCallback(
-    (macroId: string) => openScheduleEditor({ action: { kind: "macro", macroId } }),
+    (macroId: string) =>
+      openScheduleEditor({ action: { kind: "automation", automationId: macroId } }),
     [openScheduleEditor]
   );
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);

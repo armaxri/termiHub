@@ -91,4 +91,25 @@ describe("TerminalViewModeBanner", () => {
     expect(region?.getAttribute("aria-live")).toBe("polite");
     expect(region?.textContent).toContain("Agent disconnected");
   });
+
+  describe("one string for the eye and the screen reader (#5980)", () => {
+    it("promises neither a resume nor a new session after an agent disconnect (#5989)", () => {
+      agentDisconnected["tab-9"] = true;
+      render("tab-9");
+      const region = container.querySelector("[role='status']");
+      expect(region?.textContent).toBe("Agent disconnected. Press Enter to reconnect.");
+      expect(region?.textContent).not.toMatch(/resume|new session/);
+      const label = container.querySelector(".terminal-view-mode-banner__label");
+      expect(region?.textContent).toBe(label?.textContent);
+      expect(query("terminal-view-mode-reconnect-btn")?.getAttribute("title")).toBe(
+        "Reconnect the agent (Enter)"
+      );
+    });
+
+    it("announces exactly the visible heading and hint of a plain session end", () => {
+      render("tab-10");
+      const region = container.querySelector("[role='status']");
+      expect(region?.textContent).toBe("Session ended. Press Enter to reconnect.");
+    });
+  });
 });

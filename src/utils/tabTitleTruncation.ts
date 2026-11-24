@@ -21,6 +21,9 @@ export const TAB_TITLE_TAIL_CHARS = 8;
  */
 export const AGENT_SHELL_SUFFIX_MAX_CHARS = 16;
 
+/** How an agent setup tab's title starts (`Setup: <agent>`). */
+const SETUP_TAB_PREFIX = "Setup: ";
+
 /** A duplicate counter suffix such as ` (2)` (see `getTabDisplayTitle`). */
 const COUNTER_SUFFIX = /\s\(\d+\)$/u;
 
@@ -63,6 +66,8 @@ export function splitTabTitle(title: string): TabTitleParts {
   const base = counter ? title.slice(0, -counter.length) : title;
   const agent = splitAgentShellTitle(base);
   if (agent) return { head: agent.name, tail: agent.shell + counter };
+  // A setup tab follows the agent tab's rule (#5980): the name is cut from its end.
+  if (base.startsWith(SETUP_TAB_PREFIX)) return { head: base, tail: counter };
   const chars = Array.from(base);
   // Only split a base that leaves a meaningful head before the tail.
   if (chars.length <= TAB_TITLE_TAIL_CHARS * 2) {

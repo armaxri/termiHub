@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { AgentSetupTabStrip, agentSetupTabNotice } from "./AgentSetupTabStrip";
+import { AgentSetupTabStrip, agentSetupTabNotice, withSetupOutcome } from "./AgentSetupTabStrip";
 import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
@@ -39,6 +39,54 @@ function setupTab(overrides: Partial<AgentSetupTab> = {}): AgentSetupTab {
 const exit = (code: number | null): TerminalExitInfo => ({
   code,
   reason: code === null ? "dropped" : "clean",
+});
+
+describe("withSetupOutcome (#5980, #5992)", () => {
+  const windows = (progress: AgentSetupTab["progress"] = { kind: "running" }) =>
+    setupTab({ reportsExit: false, progress });
+  const ended = ["disconnected", "exited"] as const;
+
+  it.each(ended)("POSIX, %s: exit 0 is finished, any other code the red plug", (s) => {
+    expect(withSetupOutcome(s, setupTab(), exit(0))).toBe("finished");
+    // Also after the user closed the strip.
+    expect(withSetupOutcome(s, setupTab({ dismissed: true }), exit(0))).toBe("finished");
+    expect(withSetupOutcome(s, setupTab(), exit(2))).toBe("disconnected");
+  });
+
+  it.each(ended)("a %s setup that failed or was cancelled keeps the red plug", (s) => {
+    for (const reportsExit of [true, false]) {
+      const failed = setupTab({ reportsExit, progress: { kind: "failed", message: "no" } });
+      const cancelled = setupTab({ reportsExit, progress: { kind: "cancelled" } });
+      expect(withSetupOutcome(s, failed, exit(0))).toBe("disconnected");
+      expect(withSetupOutcome(s, cancelled, exit(0))).toBe("disconnected");
+    }
+  });
+
+  it.each(ended)("Windows, %s: exit 0 alone is being checked, never finished", (s) => {
+    expect(withSetupOutcome(s, windows(), exit(0))).toBe("checking");
+    expect(withSetupOutcome(s, windows(), exit(null))).toBe("checking");
+  });
+
+  it.each(ended)("Windows, %s: the checked outcome decides, whatever the exit code", (s) => {
+    for (const code of [0, 5, null]) {
+      const unknown = windows({ kind: "unknown", message: "?" });
+      expect(withSetupOutcome(s, windows({ kind: "installed" }), exit(code))).toBe("finished");
+      expect(withSetupOutcome(s, unknown, exit(code))).toBe("unknown");
+      expect(withSetupOutcome(s, windows({ kind: "failed", message: "" }), exit(code))).toBe(
+        "disconnected"
+      );
+    }
+  });
+
+  it("keeps the status of a dropped POSIX link, a live setup and other tabs", () => {
+    expect(withSetupOutcome("disconnected", setupTab(), exit(null))).toBe("disconnected");
+    expect(withSetupOutcome("connected", setupTab(), undefined)).toBe("connected");
+    expect(withSetupOutcome("connected", windows({ kind: "installed" }), undefined)).toBe(
+      "connected"
+    );
+    expect(withSetupOutcome("exited", undefined, exit(0))).toBe("exited");
+    expect(withSetupOutcome("disconnected", undefined, exit(0))).toBe("disconnected");
+  });
 });
 
 describe("agentSetupTabNotice (#5865)", () => {
