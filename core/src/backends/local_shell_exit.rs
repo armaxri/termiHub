@@ -68,6 +68,40 @@ impl ExitStatusSlot {
     }
 }
 
+/// How long the child-exit watcher, on Unix, lets the output reader drain the
+/// PTY before it ends the output itself (#5955). The PTY can still hold the
+/// shell's last lines when the child is reaped; ending the output first lost
+/// them, or let them arrive after the exit line. A reader that reaches EOF ends
+/// the wait at once; the bound only covers a child that left a background job
+/// holding the terminal open.
+#[cfg(unix)]
+pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Set once the output reader has forwarded everything it read and stopped.
+#[derive(Debug, Default)]
+pub(super) struct ReaderDone {
+    done: Mutex<bool>,
+    finished: Condvar,
+}
+
+impl ReaderDone {
+    /// The reader has stopped: wake a watcher waiting in [`Self::wait`].
+    pub(super) fn finish(&self) {
+        let mut done = self.done.lock().unwrap_or_else(|e| e.into_inner());
+        *done = true;
+        self.finished.notify_all();
+    }
+
+    /// Block until the reader has stopped, or `timeout` passes.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(super) fn wait(&self, timeout: Duration) {
+        let done = self.done.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = self
+            .finished
+            .wait_timeout_while(done, timeout, |done| !*done);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,6 +136,27 @@ mod tests {
         assert_eq!(slot.get(), Some(0));
         assert!(started.elapsed() < Duration::from_secs(5));
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn reader_done_wakes_a_waiting_watcher() {
+        let done = Arc::new(ReaderDone::default());
+        let reader = done.clone();
+        let started = Instant::now();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            reader.finish();
+        });
+        done.wait(Duration::from_secs(10));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn reader_done_wait_gives_up_after_the_timeout() {
+        let started = Instant::now();
+        ReaderDone::default().wait(Duration::from_millis(30));
+        assert!(started.elapsed() >= Duration::from_millis(30));
     }
 
     #[test]
