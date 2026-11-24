@@ -139,6 +139,17 @@ describe("WorkflowSidebar", () => {
     await flushAsync();
   }
 
+  // #5954: the experimental note lives here, in the view it is about. The
+  // switch defaults to off in this harness, so the note shows above the toolbar.
+  it("shows the experimental note at the top while experimental features are off", async () => {
+    await render();
+    const sidebar = query("workflow-sidebar")!;
+    const notice = query("workflow-experimental-notice")!;
+    expect(notice).not.toBeNull();
+    expect(sidebar.firstElementChild).toBe(notice);
+    expect(query("workflow-experimental-action")!.tagName).toBe("BUTTON");
+  });
+
   it("shows the empty message when no workflows exist", async () => {
     await render();
     expect(query("workflow-empty-message")).not.toBeNull();

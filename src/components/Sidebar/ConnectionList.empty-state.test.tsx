@@ -122,25 +122,19 @@ describe("ConnectionList — first-run empty state", () => {
     ).not.toBeNull();
   });
 
-  it("shows the experimental-features signpost while the flag is off", async () => {
-    await render(root);
+  // #5954: with experimental features off or on, the card never carries
+  // the workflows note — connections need no switch.
+  it.each([false, true])(
+    "shows no experimental note with experimental features %s",
+    async (experimentalFeaturesEnabled) => {
+      seedSettings({ ...baseSettings, experimentalFeaturesEnabled });
+      await render(root);
 
-    expect(
-      container.querySelector('[data-testid="connections-empty-experimental-action"]')
-    ).not.toBeNull();
-  });
-
-  it("hides the experimental signpost when experimental features are enabled", async () => {
-    seedSettings({ ...baseSettings, experimentalFeaturesEnabled: true });
-    await render(root);
-
-    // The empty state still shows (still zero connections)...
-    expect(container.querySelector('[data-testid="connections-empty-state"]')).not.toBeNull();
-    // ...but the "enable experimental" signpost is gone.
-    expect(
-      container.querySelector('[data-testid="connections-empty-experimental-action"]')
-    ).toBeNull();
-  });
+      const card = container.querySelector('[data-testid="connections-empty-state"]')!;
+      expect(card).not.toBeNull();
+      expect(card.textContent).not.toMatch(/experimental|workflow/i);
+    }
+  );
 
   it("CTA opens the new-connection editor", async () => {
     const openConnectionEditorTab = vi.fn();
@@ -153,19 +147,6 @@ describe("ConnectionList — first-run empty state", () => {
     click(cta);
 
     expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
-  });
-
-  it("signpost button deep-links to the General settings category", async () => {
-    const openSettingsTab = vi.fn();
-    useAppStore.setState({ openSettingsTab });
-    await render(root);
-
-    const link = container.querySelector(
-      '[data-testid="connections-empty-experimental-action"]'
-    ) as HTMLButtonElement;
-    click(link);
-
-    expect(openSettingsTab).toHaveBeenCalledWith({ category: "general" });
   });
 
   it("does NOT render the empty state once a connection exists", async () => {
@@ -183,23 +164,17 @@ describe("ConnectionList — first-run empty state", () => {
     expect(container.querySelector('[data-testid="connections-empty-state"]')).toBeNull();
   });
 
-  // R-077 / R-122 (#5702): the first-run card is one sentence + the button,
-  // with the experimental signpost as a smaller secondary line.
-  it("keeps the full card to one sentence, a button and a secondary hint", async () => {
+  // R-077 / R-122 (#5702): the first-run card is one sentence + the button.
+  // The experimental note moved to the Workflows view (#5954).
+  it("keeps the full card to one sentence and a button, with no experimental note", async () => {
     await render(root);
 
     const card = container.querySelector('[data-testid="connections-empty-state"]')!;
     expect(card.querySelector(".ui-empty__description")?.textContent).toBe(
       "Create your first connection to get started."
     );
-    const hint = card.querySelector('[data-testid="connections-empty-experimental-hint"]');
-    expect(hint).not.toBeNull();
-    expect(hint!.className).toContain("connections-empty__hint");
-    expect(
-      hint!.contains(card.querySelector('[data-testid="connections-empty-experimental-action"]'))
-    ).toBe(true);
-    // The hint ends on its button: no orphaned period (#5621).
-    expect(hint!.textContent!.trim().endsWith(".")).toBe(false);
+    expect(card.querySelector('[data-testid="connections-empty-experimental-hint"]')).toBeNull();
+    expect(card.textContent).not.toMatch(/experimental/i);
   });
 
   describe("when Remote agents has content", () => {
