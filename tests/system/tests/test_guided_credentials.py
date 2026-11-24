@@ -113,7 +113,7 @@ class TestGuidedCredentials(
             "In Settings > Security click Export vault…, enter a passphrase, touch the "
             "sensor and save. Export again and click Cancel in the system sheet. Export "
             "once more and choose Use Password… with your login password. Then Settings "
-            "> Backup > Back up everything… with Credentials, confirming with Touch ID.",
+            "> Backup > Back up… with Credentials, confirming with Touch ID.",
             "A system sheet appears on every export and backup; Touch ID or the login "
             "password lets the save go through; Cancel shows 'System authentication was "
             "cancelled' and writes no file.",
@@ -126,7 +126,7 @@ class TestGuidedCredentials(
         self.open_settings_category("security")
         self.manual_step(
             "Click Export vault…, verify in the Windows Hello dialog and save. Then "
-            "Settings > Backup > Back up everything… with Credentials and verify.",
+            "Settings > Backup > Back up… with Credentials and verify.",
             "The Hello dialog appears in front of termiHub each time and both saves succeed.",
         )
         self.setup_master_password_store(_MASTER_PASSWORD)
@@ -147,7 +147,7 @@ class TestGuidedCredentials(
         self.manual_step(
             "Click Export vault…, enter your own password in the polkit dialog and save. "
             "Export again and click Cancel in the polkit dialog. Then Settings > Backup > "
-            "Back up everything… with Credentials and authenticate.",
+            "Back up… with Credentials and authenticate.",
             "The desktop polkit dialog asks every time; export and backup save after "
             "authenticating; Cancel shows 'System authentication was cancelled' and "
             "writes no file.",
