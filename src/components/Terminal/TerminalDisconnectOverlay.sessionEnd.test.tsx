@@ -213,11 +213,11 @@ describe("TerminalViewModeBanner — process exits restart (#5910)", () => {
     expect(container.querySelector("[data-testid='terminal-view-mode-cause']")).toBeNull();
   });
 
-  it("a dropped SSH link keeps 'Session ended.' with Reconnect and its cause", () => {
+  it("a dropped SSH link says 'Session disconnected.' like its strip (#5955)", () => {
     seedTab(SSH);
     const notice = sessionEndNoticeForTab(TAB, { code: null, reason: "dropped" }, "io_error");
     act(() => root.render(<TerminalViewModeBanner tabId={TAB} notice={notice} />));
-    expect(label()).toBe("Session ended. Press Enter to reconnect.");
+    expect(label()).toBe("Session disconnected. Press Enter to reconnect.");
     expect(button()).toBe("Reconnect");
     expect(container.querySelector("[data-testid='terminal-view-mode-cause']")?.textContent).toBe(
       "The network connection was lost."

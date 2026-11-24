@@ -61,13 +61,13 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
   }, [tabId, reconnectTerminal]);
 
   // A process exit is not a lost connection (#5910): it says so and restarts.
-  // Only the process kinds change the heading; any other end keeps the short
-  // "Session ended." of #5823.
-  const processEnd = !agentDisconnected && notice?.kind === "exited";
+  // The banner names the end exactly as the strip did (#5955), so dismissing
+  // the strip never changes what the tab says happened; without a notice it
+  // keeps the short "Session ended." of #5823.
   const restart = !agentDisconnected && notice?.action === "restart";
   const heading = agentDisconnected
     ? "Agent disconnected."
-    : processEnd
+    : notice
       ? `${notice.heading}.`
       : "Session ended.";
   const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
