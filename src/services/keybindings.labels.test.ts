@@ -58,7 +58,9 @@ describe("withActionAccelerator", () => {
       "Log session output"
     );
     setOverride("play-macro", { key: "F5", ctrl: true });
-    expect(withActionAccelerator("Play macro…", "play-macro")).toBe("Play macro… (Ctrl+F5)");
+    expect(withActionAccelerator("Run automation…", "play-macro")).toBe(
+      "Run automation… (Ctrl+F5)"
+    );
   });
 
   it("reflects a user override", () => {

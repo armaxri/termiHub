@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   CONTEXT_COMMANDS,
-  OPEN_MACRO_PLAYBACK_EVENT,
+  OPEN_RUN_AUTOMATION_EVENT,
   TOGGLE_SESSION_LOGGING_EVENT,
 } from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
@@ -442,7 +442,7 @@ describe("play-macro (#5779)", () => {
 
   it("opens the macro picker when nothing is playing", () => {
     expect(cmd.isAvailable()).toBe(true);
-    expect(captureEvents(OPEN_MACRO_PLAYBACK_EVENT, cmd.run)).toHaveLength(1);
+    expect(captureEvents(OPEN_RUN_AUTOMATION_EVENT, cmd.run)).toHaveLength(1);
   });
 
   it("stops a running playback instead, like the menu row", () => {
@@ -451,7 +451,7 @@ describe("play-macro (#5779)", () => {
       macroPlayback: {} as ReturnType<typeof useAppStore.getState>["macroPlayback"],
       cancelMacroPlayback: cancel,
     });
-    expect(captureEvents(OPEN_MACRO_PLAYBACK_EVENT, cmd.run)).toHaveLength(0);
+    expect(captureEvents(OPEN_RUN_AUTOMATION_EVENT, cmd.run)).toHaveLength(0);
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 });

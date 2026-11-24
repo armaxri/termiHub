@@ -146,6 +146,16 @@ describe("what is typed at a password prompt", () => {
     expect(recorder.finish().secrets).toEqual([]);
   });
 
+  it("never gets in the way of typing when the screen cannot be read", () => {
+    const recorder = new InputRecorder(() => 0);
+    const broken = () => {
+      throw new Error("disposed");
+    };
+    recorder.push("a", broken);
+    recorder.push("b", broken);
+    expect(recorder.finish().chunks.map((c) => c.data)).toEqual(["a", "b"]);
+  });
+
   it("is not looked for without a screen to read", () => {
     const recorder = new InputRecorder(() => 0);
     recorder.push("a");

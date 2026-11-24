@@ -1,9 +1,12 @@
 /** What recordings say about themselves (#5818, slice 8). All **pure**. */
-import { macroPreviewLines } from "@/components/AutomationEditor/keysFormat";
 import type { TypeKeysChunk } from "@/types/generated/TypeKeysChunk";
 
 /** The longest default name taken from what was typed. */
 const MAX_NAME = 40;
+
+const ESC = String.fromCharCode(0x1b);
+/** A key or paste marker as a terminal sends it: CSI, SS3, or a bare escape. */
+const ESCAPE_SEQUENCE = new RegExp(`${ESC}(?:\\[[0-9;?]*[ -/]*[@-~]|O.|)`, "g");
 
 /** "1 key" / "14 keys". */
 export function recordedKeys(count: number): string {
@@ -26,6 +29,17 @@ export function uniqueName(base: string, taken: readonly string[]): string {
   return `${base} ${n}`;
 }
 
+/** The text a typed line leaves behind: no control keys, backspaces applied. */
+function typedText(line: string): string {
+  const kept: string[] = [];
+  for (const char of line.replace(ESCAPE_SEQUENCE, "")) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code === 0x7f || code === 0x08) kept.pop();
+    else if (code >= 0x20) kept.push(char);
+  }
+  return kept.join("").trim();
+}
+
 /**
  * The name a recording is offered: the first line it types, or the terminal it
  * was made in. `chunks` must not hold what was typed at a password prompt.
@@ -35,6 +49,13 @@ export function recordingName(
   tabTitle: string,
   taken: readonly string[]
 ): string {
-  const [line] = macroPreviewLines([...chunks], MAX_NAME);
-  return uniqueName(line?.trim() || `Recording in ${tabTitle}`, taken);
+  const lines = chunks
+    .map((chunk) => chunk.data)
+    .join("")
+    .split(/[\r\n]/)
+    .map(typedText);
+  const chars = Array.from(lines.find(Boolean) ?? `Recording in ${tabTitle}`);
+  const name =
+    chars.length > MAX_NAME ? `${chars.slice(0, MAX_NAME - 1).join("")}…` : chars.join("");
+  return uniqueName(name, taken);
 }

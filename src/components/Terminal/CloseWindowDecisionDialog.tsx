@@ -120,6 +120,7 @@ export function CloseWindowDecisionDialog() {
   const liveCount = count - startingCount;
   const dirtyEditors = request.dirtyEditors ?? [];
   const dirtyCount = dirtyEditors.length;
+  const { recording } = request;
   const movableCount = dirtyEditors.filter((editor) => editor.movable).length;
   const blockedEditors = dirtyEditors.filter((editor) => !editor.movable);
   // Move is offered when there is somewhere to go and something to carry; it
@@ -127,7 +128,6 @@ export function CloseWindowDecisionDialog() {
   const showMove = canMove && (count > 0 || movableCount > 0);
   const moveBlocked = blockedEditors.length > 0 || recording !== undefined;
   const otherTabs = request.otherTabs ?? [];
-  const { recording } = request;
   // Movable form editors whose typed secrets stay behind (#4500).
   const secretEditors = dirtyEditors.filter(
     (editor) => editor.movable && (editor.clearedSecrets?.length ?? 0) > 0

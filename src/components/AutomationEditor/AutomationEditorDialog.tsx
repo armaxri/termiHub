@@ -130,6 +130,7 @@ export function AutomationEditorDialog({
   const startRecording = useAppStore((s) => s.startRecording);
   const takeForEditor = useAppStore((s) => s.takeForEditor);
   const [recorded, setRecorded] = useState<{ take: RecordedTake; uid: string | null } | null>(null);
+  const [wentRecording, setWentRecording] = useState(false);
   const lastStepUid = useRef<string | null>(null);
   const recordRef = useRef<HTMLButtonElement>(null);
 
@@ -245,6 +246,7 @@ export function AutomationEditorDialog({
   const handleRecord = (tabId: string) => {
     if (!startRecording({ tabId, intoEditor: draft.name.trim() })) return;
     setRecorded(null);
+    setWentRecording(true);
     showTerminal(tabId);
   };
 
@@ -264,7 +266,7 @@ export function AutomationEditorDialog({
     <Modal
       open
       // Back from a recording, start where it was asked for.
-      initialFocusRef={recorded ? recordRef : undefined}
+      initialFocusRef={wentRecording ? recordRef : undefined}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}

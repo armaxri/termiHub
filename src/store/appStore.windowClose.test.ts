@@ -67,6 +67,65 @@ function seedLiveTab(opts: {
 
 const OTHERS: WindowInfo[] = [{ label: "win-1" }];
 
+describe("appStore — closing a window with a recording (#5818)", () => {
+  const store = () => useAppStore.getState();
+  const AGENT = {
+    title: "agent",
+    connectionType: "remote-session",
+    sessionId: "s1",
+    persistentConnectionId: "p1",
+  };
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    detachPersistentTab.mockReset().mockResolvedValue(undefined);
+    seedLiveTab(AGENT);
+  });
+
+  it.each<[string, () => void]>([
+    [
+      "runs",
+      () => {
+        store().startRecording();
+        store().recordInput(store().recording!.tabId, "ls\r");
+      },
+    ],
+    [
+      "waits to be saved",
+      () => {
+        store().startRecording();
+        store().recordInput(store().recording!.tabId, "ls\r");
+        store().stopRecording();
+        store().setRecordingSaveOpen(false);
+      },
+    ],
+  ])("asks first when one %s, on close and on quit", async (_name, arrange) => {
+    arrange();
+    expect(await store().prepareWindowClose(OTHERS)).toBe("prompt");
+    expect(store().pendingWindowClose?.recording).toEqual({ tabTitle: "agent", keys: 1 });
+    expect(detachPersistentTab).not.toHaveBeenCalled();
+    store().setPendingWindowClose(null);
+    expect(store().prepareAppQuit()).toBe("prompt");
+    expect(store().pendingWindowClose).toMatchObject({
+      mode: "quit",
+      recording: { tabTitle: "agent", keys: 1 },
+    });
+    if (store().recording) store().stopRecording();
+  });
+
+  it("asks first while the editor waits hidden for one, though nothing was typed", async () => {
+    store().startRecording({ intoEditor: "Deploy" });
+    expect(await store().prepareWindowClose(OTHERS)).toBe("prompt");
+    store().stopRecording();
+  });
+
+  it("does not ask for one nothing was typed into", async () => {
+    store().startRecording();
+    expect(store().prepareAppQuit()).toBe("ready");
+    expect(await store().prepareWindowClose(OTHERS)).toBe("proceed");
+    store().stopRecording();
+  });
+});
+
 describe("appStore — close-with-live-tabs decision (#1903)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());

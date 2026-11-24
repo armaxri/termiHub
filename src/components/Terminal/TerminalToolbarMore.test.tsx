@@ -23,10 +23,10 @@ function props(overrides: Partial<TerminalToolbarMoreProps> = {}): TerminalToolb
     onToggleBroadcast: vi.fn(),
     loggingActive: false,
     onToggleLogging: vi.fn(),
-    macroRecording: false,
+    recordingLabel: null,
     onToggleRecording: vi.fn(),
-    macroPlayback: null,
-    onPlayMacro: vi.fn(),
+    playback: null,
+    onRunAutomation: vi.fn(),
     onStopPlayback: vi.fn(),
     ...overrides,
   };
@@ -96,11 +96,11 @@ describe("TerminalToolbarMore (#5756)", () => {
     expect(rows.map((r) => r.id)).toEqual([
       "terminal-view-broadcast",
       "terminal-view-toggle-logging",
-      "terminal-view-record-macro",
-      "terminal-view-play-macro",
+      "terminal-view-record",
+      "terminal-view-run-automation",
     ]);
     expect(rows[0].text).toContain("Broadcast input…");
-    expect(rows[3].text).toContain("Play macro…");
+    expect(rows[3].text).toContain("Run automation…");
     expect(menu.getAttribute("data-align")).toBe("end");
   });
 
@@ -111,10 +111,10 @@ describe("TerminalToolbarMore (#5756)", () => {
     await openMenu();
     const shortcut = (id: string) => q(id)!.querySelector(".ui-menu__shortcut")?.textContent;
     expect(shortcut("terminal-view-broadcast")).toBe("F6");
-    expect(shortcut("terminal-view-record-macro")).toBe("Ctrl+F4");
+    expect(shortcut("terminal-view-record")).toBe("Ctrl+F4");
     // Logging and playback ship unbound (#5779), so nothing is invented.
     expect(shortcut("terminal-view-toggle-logging")).toBeUndefined();
-    expect(shortcut("terminal-view-play-macro")).toBeUndefined();
+    expect(shortcut("terminal-view-run-automation")).toBeUndefined();
   });
 
   it("names the logging and play shortcuts once the user binds them (#5779)", async () => {
@@ -124,18 +124,18 @@ describe("TerminalToolbarMore (#5756)", () => {
     await openMenu();
     const shortcut = (id: string) => q(id)!.querySelector(".ui-menu__shortcut")?.textContent;
     expect(shortcut("terminal-view-toggle-logging")).toBe("Shift+Alt+L");
-    expect(shortcut("terminal-view-play-macro")).toBe("Ctrl+F5");
+    expect(shortcut("terminal-view-run-automation")).toBe("Ctrl+F5");
   });
 
   it("names the bound shortcut on the logging and playback chips (#5779)", () => {
     setOverride("toggle-session-logging", { key: "L", alt: true, shift: true });
     setOverride("play-macro", { key: "F5", ctrl: true });
-    render(props({ loggingActive: true, macroPlayback: { played: 1, total: 3 } }));
+    render(props({ loggingActive: true, playback: { played: 1, total: 3 } }));
     expect(q("terminal-view-active-logging")!.getAttribute("aria-label")).toBe(
       "Stop logging output (Shift+Alt+L)"
     );
     expect(q("terminal-view-active-playback")!.getAttribute("aria-label")).toBe(
-      "Stop macro playback (1/3) (Ctrl+F5)"
+      "Stop automation (1/3) (Ctrl+F5)"
     );
   });
 
@@ -143,24 +143,24 @@ describe("TerminalToolbarMore (#5756)", () => {
     render(props());
     let menu = await openMenu();
     const row = (id: string) => q(id)!;
-    for (const id of ["terminal-view-toggle-logging", "terminal-view-record-macro"]) {
+    for (const id of ["terminal-view-toggle-logging", "terminal-view-record"]) {
       expect(row(id).getAttribute("role")).toBe("menuitemcheckbox");
       expect(row(id).getAttribute("aria-checked")).toBe("false");
       expect(row(id).querySelector(".lucide-check")).toBeNull();
     }
     // Broadcast and play are actions with a dialog, not on/off rows.
     expect(row("terminal-view-broadcast").getAttribute("role")).toBe("menuitem");
-    expect(row("terminal-view-play-macro").getAttribute("role")).toBe("menuitem");
+    expect(row("terminal-view-run-automation").getAttribute("role")).toBe("menuitem");
     // Every row has the tick column, so the labels line up.
     expect(menu.querySelectorAll(".ui-menu__indicator")).toHaveLength(4);
     act(() => root.unmount());
     root = createRoot(container);
 
-    render(props({ loggingActive: true, macroRecording: true }));
+    render(props({ loggingActive: true, recordingLabel: "Recording" }));
     menu = await openMenu();
     for (const [id, label] of [
       ["terminal-view-toggle-logging", "Log session output"],
-      ["terminal-view-record-macro", "Record macro"],
+      ["terminal-view-record", "Record automation"],
     ]) {
       expect(row(id).getAttribute("aria-checked")).toBe("true");
       expect(row(id).querySelector(".lucide-check")).not.toBeNull();
@@ -181,8 +181,8 @@ describe("TerminalToolbarMore (#5756)", () => {
     const p = props();
     render(p);
     await openMenu();
-    await act(async () => q("terminal-view-play-macro")!.click());
-    expect(p.onPlayMacro).toHaveBeenCalledTimes(1);
+    await act(async () => q("terminal-view-run-automation")!.click());
+    expect(p.onRunAutomation).toHaveBeenCalledTimes(1);
   });
 
   it("shows a chip per running action and the count on the trigger", () => {
@@ -190,8 +190,8 @@ describe("TerminalToolbarMore (#5756)", () => {
       props({
         broadcastActive: true,
         loggingActive: true,
-        macroRecording: true,
-        macroPlayback: { played: 2, total: 4 },
+        recordingLabel: "Recording",
+        playback: { played: 2, total: 4 },
       })
     );
     const chips = Array.from(

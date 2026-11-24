@@ -48,6 +48,15 @@ interface OpenRun {
   prompt: string;
 }
 
+/** The screen must never get in the way of typing: what cannot be read is no prompt. */
+function readSafely(readPrompt: ReadPrompt): string {
+  try {
+    return readPrompt();
+  } catch {
+    return "";
+  }
+}
+
 /** Whether `now` is still the prompt `prompt`, with nothing or a mask after it. */
 function stillHidden(prompt: string, now: string): boolean {
   return now.startsWith(prompt) && MASK.test(now.slice(prompt.length).trim());
@@ -123,7 +132,7 @@ export class InputRecorder {
     this.readPrompt = readPrompt ?? null;
     this.dropEchoedRun();
     if (!this.open && readPrompt) {
-      const before = readPrompt();
+      const before = readSafely(readPrompt);
       if (isPasswordPrompt(before)) this.open = { prompt: before };
     }
     return this.open;
@@ -132,7 +141,7 @@ export class InputRecorder {
   /** Keys that show up behind the "prompt" were echoed: it was no password. */
   private dropEchoedRun(): void {
     const { open, readPrompt } = this;
-    if (!open || !readPrompt || stillHidden(open.prompt, readPrompt())) return;
+    if (!open || !readPrompt || stillHidden(open.prompt, readSafely(readPrompt))) return;
     for (const entry of this.entries) if (entry.secret === open) entry.secret = null;
     this.open = null;
   }
