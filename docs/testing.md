@@ -308,6 +308,25 @@ flowchart LR
 - **Hover grades:** `with self.hovered(testid):` renders the hover for real — the OS pointer when global input is allowed (`--real-pointer`; refused while any other termiHub, the installed app included, is running), else the bridge's `forceHover` verb paints the app's own `:hover` rules. The evidence says which.
 - **UI review (#5538):** after every run the script writes `review/` — `review-brief.md` (product context, per surface every screenshot with what it should show and the step's grade), `review-request.json` (one reviewer entry per surface with a self-contained prompt, theme and window size) and `contact/<surface>.png`. The coordinator spawns one read-only reviewer agent per entry; each writes `review/findings/<surface>.json` (schema: `termihub_harness/product_run/review_schema.py`). `scripts/internal/product-run-review.py merge <run>` validates them, dedupes into `review/findings.{md,json}` and the page shows a **UI review** section.
 
+- **Grades and the review loop (#5817):** each reviewer also grades its surface 1–5, usability first (task success, understandability, recognisability, error recovery, then looks), and every finding carries the user `task` it gets in the way of and a concrete `recommendation`. Older findings files without a `grade` still merge (`suggestion` counts as the recommendation). `merge` writes `review/grades.json` (lowest grade per surface, previous grade and change), `review/history.json` (grade per round across linked runs) and a grade table at the top of `findings.md`; the page shows each surface's grade trend. To loop a weak surface after its fix landed:
+
+  ```bash
+  ./scripts/internal/product-run.sh --loop chooser,settings --dry-run   # decision + selected tests
+  ./scripts/internal/product-run.sh --loop chooser,settings [--target-grade 4] [--max-rounds 3]
+  ```
+
+  The loop starts from the newest graded run (or `--previous DIR`) and re-runs only the tests behind the surfaces still below the target, plus the tests holding steps they `require`. Each step records its pytest node id; older runs fall back to a scan of `tests/system/tests/test_product_run*.py`. The new run dir links back through `review/previous-run` and `loop.json`. Its review request covers only the looped surfaces, and each prompt carries the previous grade, findings and trend: the reviewer gives a `fixed` / `still-present` / `regressed` / `unclear` verdict on each previous finding. It also lists the PRs that touched the surface since the previous run (`git log --first-parent` between the runs' commits from `run-info.json`, on the surface's test files and the app files named after it; best effort). Stop rule: `done` once every looped surface reaches the target (exit 0), `escalate` once `--max-rounds` loop rounds ran (exit 4); a round whose grades are not merged yet cannot be planned (exit 2). The decision is also printed by `merge` and stored in `history.json`.
+
+  ```mermaid
+  flowchart LR
+      A[full run] --> B[prepare] --> C[independent reviewers] --> D[merge: grades + history]
+      D -->|below target| E[fix] --> F["product-run.sh --loop"] --> B
+      D -->|target reached| G[done]
+      D -->|rounds used up| H[escalate]
+  ```
+
+  Coordinator note: the scripts only prepare requests; the coordinator spawns the reviewers. A reviewer must not have built or fixed the surface, so pick one who authored none of the PRs in its `touched_prs`, and use a fresh reviewer every round.
+
 - **Writing a phase:** a `SystemTest` suite with `ProductRunUi` first in its bases (`termihub_harness/product_run`) wraps each check in `with self.step(id, title, expect=...)`. A failed step fails only that step; the test fails at the end of its call phase. See `tests/system/tests/test_product_run.py`.
 
 ## 2. Component Integration Tests
