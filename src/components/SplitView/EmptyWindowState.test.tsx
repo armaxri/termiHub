@@ -134,12 +134,11 @@ describe("EmptyWindowState (#1902, UX-003)", () => {
 
     it("opens the restore dialog from Restore from backup…", () => {
       act(() => root.render(<EmptyWindowState />));
-      expect(document.querySelector('[data-testid="backup-restore-dialog"]')).toBeNull();
+      expect(document.querySelector('[data-testid="backup-restore-title"]')).toBeNull();
 
       clickTestId(container, "empty-window-restore");
 
-      expect(document.body.textContent).toContain("Restore from backup");
-      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(document.querySelector('[data-testid="backup-restore-title"]')).not.toBeNull();
     });
   });
 
