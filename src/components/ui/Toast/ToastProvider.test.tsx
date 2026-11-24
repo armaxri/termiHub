@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { drainSonnerRemovalTimers } from "@/test/sonnerTimers";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
@@ -51,6 +52,9 @@ function activateWithKey(el: HTMLButtonElement, key: string) {
   const upOk = el.dispatchEvent(new KeyboardEvent("keyup", init));
   if (downOk && upOk) el.click();
 }
+
+// A toast dismissed by the last test must not outlive jsdom (see the helper).
+afterAll(drainSonnerRemovalTimers);
 
 describe("ToastProvider close button", () => {
   beforeEach(() => {

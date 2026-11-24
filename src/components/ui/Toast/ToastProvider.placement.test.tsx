@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
+import { drainSonnerRemovalTimers } from "@/test/sonnerTimers";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
@@ -88,6 +89,9 @@ afterEach(() => {
   Object.defineProperty(window, "innerWidth", { value: original.width, configurable: true });
   Object.defineProperty(window, "innerHeight", { value: original.height, configurable: true });
 });
+
+// A toast dismissed by the last test must not outlive jsdom (see the helper).
+afterAll(drainSonnerRemovalTimers);
 
 describe("toast stack keep-clear at 800x600 (#5830)", () => {
   it("starts the stack above the status bar, clear of its lock indicator", async () => {

@@ -6,7 +6,8 @@
  * again, with the lifetime it had left, once the dialog closes. Plain
  * confirmations still go for good (#5830).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { drainSonnerRemovalTimers } from "@/test/sonnerTimers";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider } from "./ToastProvider";
@@ -48,6 +49,9 @@ function openDialog(): HTMLElement {
   dialogs.push(dialog);
   return dialog;
 }
+
+// A toast dismissed by the last test must not outlive jsdom (see the helper).
+afterAll(drainSonnerRemovalTimers);
 
 describe("undo offers survive a dialog opening (#5914)", () => {
   beforeEach(() => {
