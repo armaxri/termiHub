@@ -520,6 +520,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         ...original,
         id: newId("conn"),
         name: `Copy of ${original.name}`,
+        // A copy has never connected: it ranks as unused (#5940).
+        lastUsedAt: undefined,
       };
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
       // A rejected persist drops the overlay, so a never-persisted duplicate

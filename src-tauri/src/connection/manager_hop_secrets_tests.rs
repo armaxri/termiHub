@@ -41,6 +41,7 @@ fn ssh(id: &str, hops: Vec<Value>) -> SavedConnection {
         icon_color: None,
         icon_emoji: None,
         description: None,
+        last_used_at: None,
         id: id.to_string(),
         name: "Target".to_string(),
         config: ConnectionConfig {
