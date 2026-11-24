@@ -36,12 +36,14 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.round2_polish import ssh_popover_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 
 LOCK = "credential-store-indicator"
 SSH_CHIP = "status-bar-ssh"
 SSH_DETAILS = "status-bar-ssh-details"
 SSH_MANAGE = "status-bar-ssh-manage-trust"
+SSH_DETAILS_TITLE = "status-bar-ssh-details-title"
 LOCAL_CHIP = "status-bar-local-shell"
 DETAIL_ROWS = ("endpoint", "encryption", "auth", "hostKey")
 TRUST_LEVELS = ("trusted", "once", "pending")
@@ -309,6 +311,14 @@ class TestProductRunStatusBarChips(
             self.shot(label="details")
             self.evidence(f"details: {rows}")
             problems += ssh_details_problems(rows, self.driver.exists(SSH_MANAGE))
+            # Sentence-case title, key file name with the full path on hover (#5956).
+            title_text = self._text(SSH_DETAILS_TITLE)
+            transform = self.driver.get_computed_style("text-transform", SSH_DETAILS_TITLE)
+            auth_title = self._attr("status-bar-ssh-details-auth", "title") or ""
+            self.evidence(f"title {title_text!r} ({transform}); key tooltip {auth_title!r}")
+            problems += ssh_popover_problems(
+                title_text, transform, rows.get("auth", ""), auth_title, str(native.client_key)
+            )
             self.driver.press_key("Escape")
             assert not problems, problems
         self.close_all_tabs()

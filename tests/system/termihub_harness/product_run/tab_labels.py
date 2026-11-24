@@ -21,11 +21,25 @@ COUNTER = re.compile(r"\s\((\d+)\)$")
 EPS = 1.0
 
 
+#: Twin of ``AGENT_TAB_SEPARATOR`` / ``AGENT_SHELL_SUFFIX_MAX_CHARS`` (#5956).
+AGENT_SEPARATOR = " · "
+AGENT_SHELL_MAX_CHARS = 16
+
+
 def expected_tail(title: str) -> str:
-    """The tail the app keeps visible for ``title`` (twin of ``splitTabTitle``)."""
+    """The tail the app keeps visible for ``title`` (twin of ``splitTabTitle``).
+
+    An agent tab (``<agent> · <shell>``) keeps its shell suffix as the tail and
+    the whole agent name in the head (#5956).
+    """
     match = COUNTER.search(title)
     counter = match.group(0) if match else ""
     base = title[: len(title) - len(counter)] if counter else title
+    at = base.rfind(AGENT_SEPARATOR)
+    if at > 0:
+        shell = base[at + len(AGENT_SEPARATOR):]
+        if shell.strip() and len(shell) <= AGENT_SHELL_MAX_CHARS:
+            return base[at:] + counter
     if len(base) <= TAIL_CHARS * 2:
         return counter
     return base[-TAIL_CHARS:] + counter

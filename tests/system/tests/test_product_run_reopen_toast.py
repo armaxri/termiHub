@@ -194,7 +194,8 @@ class TestProductRunReopenToast(
         with self.step(
             "toasts.reopen.single",
             "Closing one tab shows one toast naming it, and Reopen brings it back (#5828)",
-            expect="one toast reading 'Closed “sys-pr-reopen-…”' with a Reopen button",
+            expect="one toast reading 'Closed “sys-pr-reopen-…”' with a Reopen button "
+            "(the '--reopened' capture shows the tab back after Reopen)",
         ):
             self.switch_to_connections_sidebar()
             name = unique_name("pr-reopen")
@@ -203,8 +204,12 @@ class TestProductRunReopenToast(
             items = self._wait_for_toast([name])
             self.evidence(f"toast items {[(i['text'] or i.get('label'), i['rect']) for i in items]}")
             problems = reopen_toast_problems(items, [name])
+            # The step's main capture shows the toast, before Reopen takes it
+            # down (#5956, R-017); a second capture shows the reopened tab.
+            self.shot()
             assert not problems, problems
             self._reopen([name])
+            self.shot(label="reopened")
         self.close_all_tabs()
 
     def test_20_several_closes_share_one_toast(self):
