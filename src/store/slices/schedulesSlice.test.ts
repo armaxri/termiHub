@@ -17,7 +17,7 @@ function view(id: string, over: Partial<ScheduleView> = {}): ScheduleView {
   return {
     id,
     name: id,
-    action: { kind: "workflow", workflowId: "wf" },
+    action: { kind: "automation", automationId: "wf" },
     targets: { kind: "connections", connectionIds: ["c"] },
     rule: { kind: "daily", time: "09:00" },
     missedRuns: "skip",
@@ -56,7 +56,7 @@ describe("schedulesSlice (PROD-043)", () => {
     await useAppStore.getState().saveSchedule({
       id: "b",
       name: "b",
-      action: { kind: "workflow", workflowId: "wf" },
+      action: { kind: "automation", automationId: "wf" },
       targets: { kind: "connections", connectionIds: ["c"] },
       rule: { kind: "daily", time: "09:00" },
       missedRuns: "skip",
@@ -81,9 +81,11 @@ describe("schedulesSlice (PROD-043)", () => {
   });
 
   it("opens the editor with a minted draft id, or the edited schedule's id", () => {
-    useAppStore.getState().openScheduleEditor({ action: { kind: "macro", macroId: "m" } });
+    useAppStore
+      .getState()
+      .openScheduleEditor({ action: { kind: "automation", automationId: "m" } });
     const draft = useAppStore.getState().scheduleEditor;
-    expect(draft?.action).toEqual({ kind: "macro", macroId: "m" });
+    expect(draft?.action).toEqual({ kind: "automation", automationId: "m" });
     expect(draft?.draftId).toMatch(/schedule/);
     useAppStore.getState().openScheduleEditor({ scheduleId: "a" });
     expect(useAppStore.getState().scheduleEditor?.draftId).toBe("a");

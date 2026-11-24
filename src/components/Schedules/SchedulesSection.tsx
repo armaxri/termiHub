@@ -58,7 +58,7 @@ export function scheduleTone(s: ScheduleView, paused: boolean): StatusTone {
 }
 
 /**
- * The schedules list (PROD-043): every scheduled workflow/macro run by name,
+ * The schedules list (PROD-043): every scheduled automation run by name,
  * with its state dot and a marker when the state needs attention; its rule,
  * targets, next run and last result are in the name's tooltip (#5757). A row
  * expands to its recent attempts (#3528); per-schedule enable (the first
@@ -217,7 +217,7 @@ export function SchedulesSection({
       {schedules.length === 0 ? (
         <EmptyState
           title="No schedules yet"
-          description="Schedule a workflow or macro to run it on saved connections at set times."
+          description="Schedule an automation to run it on saved connections at set times."
           action={
             creatable ? (
               <Button
@@ -240,9 +240,11 @@ export function SchedulesSection({
             const attempts = s.history ?? [];
             const open = expanded.has(s.id);
             const status = scheduleStatus(s, paused);
+            const blocked = labels.blockedReason(s.action);
             const lastFailed = result?.outcome === "failed";
             const tooltip = [
               status,
+              blocked ?? "",
               `${describeRule(s.rule)} · ${labels.actionLabel(s.action)} on ${
                 labels.targets(s.targets).label
               }`,
@@ -327,11 +329,16 @@ export function SchedulesSection({
                   </>
                 }
                 details={
-                  showStatus || lastFailed || (open && attempts.length > 0) ? (
+                  showStatus || blocked || lastFailed || (open && attempts.length > 0) ? (
                     <>
                       {showStatus ? (
                         <span className="schedules__meta" data-testid={`schedule-status-${s.id}`}>
                           {status}
+                        </span>
+                      ) : null}
+                      {blocked ? (
+                        <span className="schedules__meta" data-testid={`schedule-blocked-${s.id}`}>
+                          {blocked}
                         </span>
                       ) : null}
                       {lastFailed ? (

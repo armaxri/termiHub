@@ -10,14 +10,14 @@ import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { withTooltip } from "@/test/tooltip";
 import { flushAsync } from "@/test/flushAsync";
 import { click, clickScrim, pressEscape, typeInto, unsavedPromptOpen } from "@/test/dirtyDismiss";
-import type { Workflow } from "@/types/workflow";
+import type { Automation } from "@/types/generated/Automation";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
 let container: HTMLDivElement;
 let root: Root;
 
-const workflows: Workflow[] = [
+const automations: Automation[] = [
   {
     id: "wf-1",
     name: "Health check",
@@ -38,9 +38,8 @@ async function render() {
           open
           scheduleId="schedule-new"
           schedule={null}
-          initialAction={{ kind: "workflow", workflowId: "wf-1" }}
-          workflows={workflows}
-          macros={[]}
+          initialAction={{ kind: "automation", automationId: "wf-1" }}
+          automations={automations}
           connections={[]}
           groups={[]}
           onOpenChange={onOpenChange}

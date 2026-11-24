@@ -14,13 +14,13 @@ import {
   ModalClose,
   NumberInput,
   Select,
+  type SelectOption,
 } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
-import type { Macro } from "@/types/macro";
+import type { Automation } from "@/types/generated/Automation";
 import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
 import { SCHEDULE_WEEKDAYS } from "@/types/schedule";
 import type { BroadcastGroup } from "@/types/terminal";
-import type { Workflow } from "@/types/workflow";
 import {
   blankScheduleForm,
   formToScheduleInput,
@@ -32,10 +32,10 @@ import {
   type ScheduleFormValues,
 } from "./scheduleForm";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { t } from "@/i18n/catalog";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { scheduleBlockedReason } from "@/utils/scheduleLocalProcessGate";
 import { remapConnectionIdList } from "@/utils/connectionIdChanges";
-import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import "./Schedules.css";
 
 export interface ScheduleEditorDialogProps {
@@ -45,10 +45,10 @@ export interface ScheduleEditorDialogProps {
   scheduleId: string;
   /** The schedule being edited, or `null` for a new one. */
   schedule: ScheduleInput | null;
-  /** Pre-selected action for a new schedule (from a workflow/macro row). */
+  /** Pre-selected action for a new schedule (from an automation row). */
   initialAction?: ScheduleAction;
-  workflows: Workflow[];
-  macros: Macro[];
+  /** Every stored automation, offered in the one automation picker. */
+  automations: Automation[];
   connections: SavedConnection[];
   groups: BroadcastGroup[];
   onOpenChange: (open: boolean) => void;
@@ -56,12 +56,6 @@ export interface ScheduleEditorDialogProps {
   onSave: (input: ScheduleInput) => void | Promise<void>;
 }
 
-const ACTION_OPTIONS = [
-  { value: "workflow", label: "Workflow" },
-  { value: "macro", label: "Macro" },
-];
-/** Workflows are experimental: with the toggle off only macros are offered (#4629). */
-const NON_EXPERIMENTAL_ACTION_OPTIONS = ACTION_OPTIONS.filter((o) => o.value !== "workflow");
 const TARGET_OPTIONS = [
   { value: "connections", label: "Saved connections" },
   { value: "broadcast-group", label: "Broadcast group" },
@@ -77,36 +71,47 @@ const MISSED_OPTIONS = [
 ];
 
 /**
- * Create/edit a schedule (PROD-043): what to run (a workflow or a macro), on
- * which saved connections (or broadcast group), and when (every N minutes,
- * daily, or on chosen weekdays at a local time). New schedules are saved
- * **disabled**; they are enabled from the schedules list, which asks for
+ * The picker's options: every automation by name, plus the stored id when it
+ * no longer resolves, so an edit keeps (and shows) a deleted automation. One
+ * that a schedule must not run (#5818) is listed disabled, with the reason.
+ */
+function automationOptions(
+  automations: readonly Automation[],
+  selected: string,
+  blockedReason: (id: string) => string | null
+): SelectOption[] {
+  const options: SelectOption[] = automations.map((a) =>
+    blockedReason(a.id)
+      ? { value: a.id, label: `${a.name} (experimental: runs a local process)`, disabled: true }
+      : { value: a.id, label: a.name }
+  );
+  if (selected && !automations.some((a) => a.id === selected)) {
+    options.push({ value: selected, label: "Deleted automation" });
+  }
+  return options;
+}
+
+/**
+ * Create/edit a schedule (PROD-043): which automation to run (one picker,
+ * #5818), on which saved connections (or broadcast group), and when (every N
+ * minutes, daily, or on chosen weekdays at a local time). New schedules are
+ * saved **disabled**; they are enabled from the schedules list, which asks for
  * confirmation of the target hosts first.
  *
- * Workflows are experimental, so the Workflow action is offered only while
- * experimental features are on (#4629). An existing workflow schedule opened
- * with the toggle off keeps its action, shown read-only, so saving it never
- * drops or rewrites the workflow.
+ * A schedule whose automation was deleted keeps its id: the picker shows it
+ * as "Deleted automation" so saving never rewrites the action silently.
  */
 export function ScheduleEditorDialog({
   open,
   scheduleId,
   schedule,
   initialAction,
-  workflows,
-  macros,
+  automations,
   connections,
   groups,
   onOpenChange,
   onSave,
 }: ScheduleEditorDialogProps) {
-  const experimental = useExperimentalFeatures();
-  // An existing workflow schedule opened with experimental features off: its
-  // action stays as-is and is shown read-only rather than dropped (#4629).
-  const workflowActionLocked = !experimental && schedule?.action.kind === "workflow";
-  const actionOptions =
-    experimental || workflowActionLocked ? ACTION_OPTIONS : NON_EXPERIMENTAL_ACTION_OPTIONS;
-
   // The shared RHF + zod scaffold (UISF2-003): `watched` is a complete, stable
   // snapshot of the form, and `errors` / `canSave` update on the same render as
   // the edit.
@@ -133,19 +138,15 @@ export function ScheduleEditorDialog({
   // — keyed on the ids, not the objects, so a refresh of the schedules list (a
   // run, or the backend following a connection rename) never clobbers the
   // unsaved edits (#3603).
-  const latest = useRef({ schedule, initialAction, experimental });
+  const latest = useRef({ schedule, initialAction });
   // The loaded values, to tell an edited form from an untouched one (UX2-004).
   const [baselineKey, setBaselineKey] = useState<string | null>(null);
-  latest.current = { schedule, initialAction, experimental };
+  latest.current = { schedule, initialAction };
   const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
-    const { schedule: current, initialAction: action, experimental: exp } = latest.current;
-    let initial = current ? scheduleToForm(current) : blankScheduleForm(action);
-    // A new schedule must not start on the hidden experimental Workflow action.
-    if (!current && !exp && initial.actionKind === "workflow") {
-      initial = { ...initial, actionKind: "macro", workflowId: "" };
-    }
+    const { schedule: current, initialAction: action } = latest.current;
+    const initial = current ? scheduleToForm(current) : blankScheduleForm(action);
     reset(initial);
     rebaseline(initial);
     setBaselineKey(draftKey(initial));
@@ -160,6 +161,20 @@ export function ScheduleEditorDialog({
   }, open);
 
   const isDirty = baselineKey !== null && draftKey(watched) !== baselineKey;
+
+  // With experimental features off, an automation that can run a local process
+  // cannot be scheduled (#5818). A schedule that already runs one keeps it, and
+  // the picker says why it will not run; picking another one is not possible.
+  const experimental = useExperimentalFeatures();
+  const blockedReason = (id: string): string | null => {
+    const find = (x: string) => automations.find((a) => a.id === x);
+    const automation = find(id);
+    return automation ? scheduleBlockedReason(automation, find, experimental) : null;
+  };
+  const blockedPick = blockedReason(watched.automationId);
+  const storedPick = watched.automationId === schedule?.action.automationId;
+  const pickRefused = blockedPick !== null && !storedPick;
+
   const errorFor = (path: keyof ScheduleFormValues): string | undefined => errors[path];
 
   const handleSave = () => {
@@ -167,6 +182,10 @@ export function ScheduleEditorDialog({
     // activating it then points at the problem instead of saving.
     if (!canSave) {
       revealAndFocus();
+      return;
+    }
+    if (pickRefused) {
+      document.getElementById("schedule-editor-automation")?.focus();
       return;
     }
     return onSave(formToScheduleInput(scheduleId, getValues()));
@@ -178,11 +197,7 @@ export function ScheduleEditorDialog({
       onOpenChange={onOpenChange}
       dirty={isDirty}
       title={schedule ? "Edit schedule" : "New schedule"}
-      description={
-        experimental || workflowActionLocked
-          ? "Run a workflow or macro on saved connections at set times, while termiHub is running"
-          : "Run a macro on saved connections at set times, while termiHub is running"
-      }
+      description="Run an automation on saved connections at set times, while termiHub is running"
       size="md"
       data-testid="schedule-editor-dialog"
       footer={
@@ -196,8 +211,8 @@ export function ScheduleEditorDialog({
           <Button
             variant="primary"
             onClick={handleSave}
-            aria-disabled={!canSave}
-            data-invalid={!canSave || undefined}
+            aria-disabled={!canSave || pickRefused}
+            data-invalid={!canSave || pickRefused || undefined}
             errorToast={false}
             data-testid="schedule-editor-save"
           >
@@ -245,72 +260,31 @@ export function ScheduleEditorDialog({
           )}
         />
 
-        <div className="schedule-editor__row">
-          <Controller
-            name="actionKind"
-            control={control}
-            render={({ field }) => (
-              <Field
-                label="Run"
-                htmlFor="schedule-editor-action-kind"
-                hint={
-                  workflowActionLocked
-                    ? `Workflows are experimental. Turn on ${EXPERIMENTAL_SETTING_PATH} to change this action.`
-                    : undefined
+        <Controller
+          name="automationId"
+          control={control}
+          render={({ field }) => (
+            <Field
+              label="Automation"
+              htmlFor="schedule-editor-automation"
+              error={pickRefused ? (blockedPick ?? undefined) : errorFor("automationId")}
+              hint={storedPick ? (blockedPick ?? undefined) : undefined}
+              hintVariant="warning"
+            >
+              <Select
+                id="schedule-editor-automation"
+                value={field.value || undefined}
+                onChange={field.onChange}
+                placeholder={
+                  automations.length === 0 ? "No saved automations" : "Pick an automation"
                 }
-              >
-                <Select
-                  id="schedule-editor-action-kind"
-                  value={field.value}
-                  onChange={field.onChange}
-                  options={actionOptions}
-                  disabled={workflowActionLocked}
-                  data-testid="schedule-editor-action-kind"
-                />
-              </Field>
-            )}
-          />
-          {watched.actionKind === "workflow" ? (
-            <Controller
-              name="workflowId"
-              control={control}
-              render={({ field }) => (
-                <Field
-                  label="Workflow"
-                  htmlFor="schedule-editor-workflow"
-                  error={errorFor("workflowId")}
-                >
-                  <Select
-                    id="schedule-editor-workflow"
-                    value={field.value || undefined}
-                    onChange={field.onChange}
-                    placeholder="Pick a workflow"
-                    disabled={workflowActionLocked}
-                    options={workflows.map((w) => ({ value: w.id, label: w.name }))}
-                    data-testid="schedule-editor-workflow"
-                  />
-                </Field>
-              )}
-            />
-          ) : (
-            <Controller
-              name="macroId"
-              control={control}
-              render={({ field }) => (
-                <Field label="Macro" htmlFor="schedule-editor-macro" error={errorFor("macroId")}>
-                  <Select
-                    id="schedule-editor-macro"
-                    value={field.value || undefined}
-                    onChange={field.onChange}
-                    placeholder="Pick a macro"
-                    options={macros.map((m) => ({ value: m.id, label: m.name }))}
-                    data-testid="schedule-editor-macro"
-                  />
-                </Field>
-              )}
-            />
+                disabled={automations.length === 0}
+                options={automationOptions(automations, field.value, blockedReason)}
+                data-testid="schedule-editor-automation"
+              />
+            </Field>
           )}
-        </div>
+        />
 
         <Controller
           name="targetsKind"

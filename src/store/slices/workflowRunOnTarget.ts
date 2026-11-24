@@ -252,6 +252,16 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // other untrusted program.
   const askAuthorization = async (program: string, args: string[]): Promise<boolean> => {
     const settings = currentSettingsView();
+    // The step is experimental and a scheduled run is unattended (#5818). The
+    // schedule was checked before it started; this catches an automation or a
+    // setting that changed while it runs. The backend checks it once more.
+    if (triggeredBy === "scheduled" && settings.experimentalFeaturesEnabled !== true) {
+      frontendLog(
+        "workflow",
+        `scheduled run refused local program (experimental features are off): ${program}`
+      );
+      return false;
+    }
     if (!settings.workflowLocalProcessEnabled) {
       toast.error("Local process execution is disabled", {
         description:
@@ -353,6 +363,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
         runId: processRunId,
         program,
         args,
+        scheduled: triggeredBy === "scheduled",
         timeoutMs: LOCAL_PROCESS_TIMEOUT_MS,
       });
       frontendLog(

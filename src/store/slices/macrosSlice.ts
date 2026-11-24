@@ -81,10 +81,11 @@ export interface PlayMacroOptions {
   /** What launched the playback, for the run history (#3543); defaults to `"manual"`. */
   origin?: MacroRunOrigin;
   /**
-   * Id for the playback's run-history record, so a caller (a scheduled run) can
-   * reference it. Generated when omitted.
+   * Called with each run-history record the playback writes (one per terminal
+   * it started on, #5818), before {@link AppState.playMacro} resolves, so a
+   * caller (a scheduled run) can reference them.
    */
-  runId?: string;
+  onRecorded?: (run: MacroRun) => void;
 }
 
 /**
@@ -354,23 +355,20 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     // its own outcome. A target that never started has no run to record.
     outcomes
       .filter((outcome) => outcome.status !== undefined)
-      .forEach((outcome, index) => {
+      .forEach((outcome) => {
         const status = outcome.status ?? "cancelled";
-        recordMacroRun(
-          set,
-          buildMacroRun({
-            // The caller's pre-generated id names the first terminal's record.
-            id: index === 0 ? opts?.runId : undefined,
-            macro,
-            startedAt: outcome.startedAt ?? startedAt,
-            endedAt: outcome.endedAt ?? new Date(),
-            status,
-            stepsPlayed: outcome.stepsPlayed,
-            targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
-            origin: opts?.origin ?? "manual",
-            error: status === "error" ? "The terminal stopped accepting input" : undefined,
-          })
-        );
+        const record = buildMacroRun({
+          macro,
+          startedAt: outcome.startedAt ?? startedAt,
+          endedAt: outcome.endedAt ?? new Date(),
+          status,
+          stepsPlayed: outcome.stepsPlayed,
+          targetLabels: [targetLabels[targets.indexOf(outcome.tabId)]],
+          origin: opts?.origin ?? "manual",
+          error: status === "error" ? "The terminal stopped accepting input" : undefined,
+        });
+        recordMacroRun(set, record);
+        opts?.onRecorded?.(record);
       });
     return tally.status;
   };
@@ -633,20 +631,18 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           id: toastId,
         });
       }
-      recordMacroRun(
-        set,
-        buildMacroRun({
-          id: opts?.runId,
-          macro,
-          startedAt,
-          endedAt: new Date(),
-          status: result.status,
-          stepsPlayed: result.stepsPlayed,
-          targetLabels: [targetLabel],
-          origin: opts?.origin ?? "manual",
-          error: result.status === "error" ? "The terminal stopped accepting input" : undefined,
-        })
-      );
+      const record = buildMacroRun({
+        macro,
+        startedAt,
+        endedAt: new Date(),
+        status: result.status,
+        stepsPlayed: result.stepsPlayed,
+        targetLabels: [targetLabel],
+        origin: opts?.origin ?? "manual",
+        error: result.status === "error" ? "The terminal stopped accepting input" : undefined,
+      });
+      recordMacroRun(set, record);
+      opts?.onRecorded?.(record);
       return result.status;
     },
 

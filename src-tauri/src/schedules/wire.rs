@@ -73,14 +73,10 @@ pub struct WindowRunReport {
     /// Terminals the run was started on in that window.
     #[serde(default)]
     pub targets_run: u32,
-    /// Workflow run-history record ids the run produced in that window.
+    /// Automation run-history record ids the run produced in that window.
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
-    pub workflow_run_ids: Vec<String>,
-    /// Macro run-history record ids the run produced in that window (#3543).
-    #[serde(default)]
-    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
-    pub macro_run_ids: Vec<String>,
+    pub run_ids: Vec<String>,
 }
 
 /// A schedule plus its live scheduling state, as the UI shows it.
@@ -182,14 +178,8 @@ pub(crate) fn validate_input(input: &ScheduleInput) -> Result<(), TerminalError>
             )));
         }
     }
-    match &input.action {
-        ScheduleAction::Workflow { workflow_id } if workflow_id.trim().is_empty() => {
-            return Err(err("Pick a workflow to run"));
-        }
-        ScheduleAction::Macro { macro_id } if macro_id.trim().is_empty() => {
-            return Err(err("Pick a macro to run"));
-        }
-        _ => {}
+    if input.action.automation_id().trim().is_empty() {
+        return Err(err("Pick an automation to run"));
     }
     match &input.targets {
         ScheduleTargets::Connections { connection_ids }
@@ -272,17 +262,12 @@ pub(crate) fn aggregate(
             (ScheduleRunOutcome::Completed, Some(summary))
         }
     };
-    let workflow_run_ids = reports
+    let run_ids = reports
         .iter()
-        .flat_map(|r| r.workflow_run_ids.iter().cloned())
-        .collect();
-    let macro_run_ids = reports
-        .iter()
-        .flat_map(|r| r.macro_run_ids.iter().cloned())
+        .flat_map(|r| r.run_ids.iter().cloned())
         .collect();
     ScheduleRunResult {
-        workflow_run_ids,
-        macro_run_ids,
+        run_ids,
         ..fired_result(fired_at, at, outcome, message, catch_up)
     }
 }
@@ -301,8 +286,7 @@ fn fired_result(
         at: at.to_rfc3339(),
         started_at: Some(fired_at.to_rfc3339()),
         duration_ms: Some(duration_ms),
-        workflow_run_ids: Vec::new(),
-        macro_run_ids: Vec::new(),
+        run_ids: Vec::new(),
         outcome,
         message,
         catch_up,
@@ -318,8 +302,7 @@ pub(crate) fn skipped(
         at: at.to_rfc3339(),
         started_at: None,
         duration_ms: None,
-        workflow_run_ids: Vec::new(),
-        macro_run_ids: Vec::new(),
+        run_ids: Vec::new(),
         outcome: ScheduleRunOutcome::Skipped,
         message: Some(message.into()),
         catch_up,

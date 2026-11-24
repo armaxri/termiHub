@@ -228,7 +228,19 @@ class AutomationPhaseUi(HarnessMixin):
     ) -> str:
         """Macro row "Schedule": every minute on one connection; return the id."""
         self.show_macros()
-        self.driver.click(f"macro-schedule-{macro_id}")
+        return self.schedule_from_row(f"macro-schedule-{macro_id}", name, connection_id, description)
+
+    def schedule_workflow(self, workflow_id: str, name: str, connection_id: str) -> str:
+        """Workflow row "Schedule": every minute on one connection; return the id."""
+        self.open_workflows_sidebar()
+        return self.schedule_from_row(f"workflow-schedule-{workflow_id}", name, connection_id)
+
+    def schedule_from_row(
+        self, row_button: str, name: str, connection_id: str, description: Optional[str] = None
+    ) -> str:
+        """A row's "Schedule" opens the editor with that automation picked (#5818);
+        save it every minute on one connection and return the schedule id."""
+        self.driver.click(row_button)
         self.wait(lambda: self.driver.exists(SCHEDULE_EDITOR), what="the schedule editor")
         self.driver.type("schedule-editor-name", name)
         if description is not None:
