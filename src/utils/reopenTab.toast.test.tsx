@@ -69,6 +69,19 @@ describe("reopen toast in the toast host (#5828)", () => {
     expect(reopenToasts()[0].textContent).toContain("Reopen");
   });
 
+  it("is an undo offer in the neutral info style, not a green success (#5956)", async () => {
+    act(() => showReopenToast(payload("web-2")));
+    await waitFor(() => reopenToasts().length === 1);
+    const host = reopenToasts()[0].closest("[data-sonner-toast]") ?? reopenToasts()[0];
+    expect(host.getAttribute("data-type")).toBe("info");
+  });
+
+  it("names the first three closed tabs, then '+N more' (#5956)", async () => {
+    for (const title of ["a", "b", "c", "d", "e"]) act(() => showReopenToast(payload(title)));
+    await waitFor(() => (reopenToasts()[0]?.textContent ?? "").includes("Closed 5 tabs"));
+    expect(reopenToasts()[0].textContent).toContain("a, b, c +2 more");
+  });
+
   it("three closes show one toast whose Reopen all restores all three in order", async () => {
     act(() => showReopenToast(payload("a")));
     await tick();

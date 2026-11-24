@@ -77,7 +77,9 @@ none of these toast. Toasts are for:
 - **Failures** — always, and they stay until dismissed.
 - **Background events** — a transfer, a scheduled or automatic run, a reconnect, anything that
   finishes off-screen or outside termiHub (the clipboard, a file on disk).
-- **Undo offers** — "Closed “web” · Reopen", "Deleted folder “prod” · Undo".
+- **Undo offers** — "Closed “web” · Reopen", "Deleted folder “prod” · Undo". They use the
+  neutral info style, never the green success one: the action button is the point of the toast.
+  A toast for several items names the first three, then "+N more".
 - **Why nothing happened** — an info toast when an action changed nothing visible ("No dead agents
   to prune").
 

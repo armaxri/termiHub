@@ -12,7 +12,7 @@ import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/set
 import { UNDO_WINDOW_MS } from "@/utils/undoableDelete";
 import { AppearanceSettings } from "./AppearanceSettings";
 
-const toastSuccess = vi.fn((_message: string, _opts?: ToastOptions) => "toast-id");
+const toastInfo = vi.fn((_message: string, _opts?: ToastOptions) => "toast-id");
 const mockRestoreTheme = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
@@ -26,7 +26,7 @@ vi.mock("@/themes", async (orig) => ({
 vi.mock("@/components/ui", async (orig) => ({
   ...(await orig<typeof import("@/components/ui")>()),
   toast: {
-    success: (message: string, opts?: ToastOptions) => toastSuccess(message, opts),
+    info: (message: string, opts?: ToastOptions) => toastInfo(message, opts),
     error: vi.fn(),
     loading: vi.fn(),
   },
@@ -109,7 +109,7 @@ describe("AppearanceSettings — custom theme delete (#5158)", () => {
       expect.objectContaining({ theme: "dark", customThemes: [settings.customThemes![0]] })
     );
     expect(onChange.mock.calls[0][0]).not.toHaveProperty("confirmUndoableDelete");
-    const [message, opts] = toastSuccess.mock.calls[0];
+    const [message, opts] = toastInfo.mock.calls[0];
     expect(message).toContain("Ocean");
     expect(opts?.duration).toBe(UNDO_WINDOW_MS);
     expect(opts?.action?.label).toBe("Undo");
@@ -140,6 +140,6 @@ describe("AppearanceSettings — custom theme delete (#5158)", () => {
     click("appearance-theme-delete");
     expect(dialog()).toBeNull();
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ theme: "dark" }));
-    expect(toastSuccess.mock.calls[0][1]?.action?.label).toBe("Undo");
+    expect(toastInfo.mock.calls[0][1]?.action?.label).toBe("Undo");
   });
 });

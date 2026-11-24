@@ -20,14 +20,14 @@ interface ShownToast {
 
 /** A toast host that shows one toast per id, like sonner: a reused id replaces it. */
 const shown = new Map<string, ShownToast>();
-const success = vi.fn((message: string, opts: ShownToast["opts"]) => {
+const info = vi.fn((message: string, opts: ShownToast["opts"]) => {
   shown.set(opts.id, { message, opts });
   return opts.id;
 });
 
 vi.mock("@/components/ui", () => ({
   toast: {
-    success: (message: string, opts: ShownToast["opts"]) => success(message, opts),
+    info: (message: string, opts: ShownToast["opts"]) => info(message, opts),
     isActive: (id: string) => shown.has(id),
   },
 }));
@@ -69,7 +69,7 @@ describe("showReopenToast (#5828)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-24T10:00:00Z"));
     shown.clear();
-    success.mockClear();
+    info.mockClear();
     addTab.mockClear();
     resetReopenToastBatch();
   });
@@ -80,7 +80,7 @@ describe("showReopenToast (#5828)", () => {
 
   it("does nothing without a reopenable payload", () => {
     showReopenToast(null);
-    expect(success).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
   });
 
   it("names a single closed tab and reopens it", () => {
@@ -107,8 +107,8 @@ describe("showReopenToast (#5828)", () => {
     vi.advanceTimersByTime(500);
     showReopenToast(payload("build-server"));
 
-    expect(success).toHaveBeenCalledTimes(3);
-    for (const call of success.mock.calls) expect(call[1].id).toBe(REOPEN_TOAST_ID);
+    expect(info).toHaveBeenCalledTimes(3);
+    for (const call of info.mock.calls) expect(call[1].id).toBe(REOPEN_TOAST_ID);
     const t = theToast();
     expect(t.message).toBe("Closed 3 tabs");
     expect(t.opts.description).toBe("Terminal, Terminal, build-server");
@@ -175,7 +175,7 @@ describe("reopen toast copy", () => {
   it("lists at most three titles, then a count of the rest", () => {
     const closed = ["a", "b", "c", "d", "e"].map(payload);
     expect(reopenToastMessage(closed)).toBe("Closed 5 tabs");
-    expect(reopenToastDescription(closed)).toBe("a, b, c and 2 more");
+    expect(reopenToastDescription(closed)).toBe("a, b, c +2 more");
     expect(reopenToastDescription([payload("a")])).toBeUndefined();
   });
 });
