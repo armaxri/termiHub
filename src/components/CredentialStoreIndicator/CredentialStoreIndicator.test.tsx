@@ -187,7 +187,7 @@ describe("CredentialStoreIndicator", () => {
     expect(mockedLock).toHaveBeenCalled();
   });
 
-  it("shows a success toast after locking the store", async () => {
+  it("locks the store without a toast: the indicator shows it (#5859)", async () => {
     mockedLock.mockResolvedValueOnce(undefined);
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",
@@ -204,7 +204,7 @@ describe("CredentialStoreIndicator", () => {
       indicator.click();
     });
 
-    expect(mockedToast.success).toHaveBeenCalledWith(expect.stringContaining("locked"));
+    expect(mockedToast.success).not.toHaveBeenCalled();
   });
 
   it("shows an error toast when locking fails", async () => {

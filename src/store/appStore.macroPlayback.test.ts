@@ -118,7 +118,7 @@ describe("appStore — macro playback slice (#1675)", () => {
     expect(injected).toEqual(["l", "s", "\r"]);
     // Playback state is cleared once the run finishes.
     expect(useAppStore.getState().macroPlayback).toBeNull();
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("defaults the target to the active terminal tab", async () => {

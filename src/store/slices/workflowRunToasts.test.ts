@@ -2,6 +2,7 @@
  * Repeated workflow runs collapse into one visible outcome toast (#5675): a
  * clean outcome replaces the previous clean outcome, a failure is never
  * replaced, and a run that restarts on an id is never dismissed by another.
+ * A clean single-target run raises no toast at all (#5859).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -31,11 +32,18 @@ describe("workflow run outcome toasts (#5675)", () => {
     resetWorkflowRunToasts();
   });
 
-  it("replaces the previous run's 'Ran workflow' toast with the next one", () => {
+  it("raises no success toast for a clean single-target run (#5859)", () => {
     toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t1");
-    toastRunOutcome("cleanup", OK, 3, "workflow-run-w2-t1");
-    toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t2");
-    expect(mocks.toast.success).toHaveBeenCalledTimes(3);
+    // The terminal output and the run history show it; its loading toast goes.
+    expect(mocks.toast.success).not.toHaveBeenCalled();
+    expect(mocks.toast.dismiss.mock.calls).toEqual([["workflow-run-w1-t1"]]);
+  });
+
+  it("replaces the previous run's canceled toast with the next one", () => {
+    toastRunOutcome("deploy", CANCELLED, 3, "workflow-run-w1-t1");
+    toastRunOutcome("cleanup", CANCELLED, 3, "workflow-run-w2-t1");
+    toastRunOutcome("deploy", CANCELLED, 3, "workflow-run-w1-t2");
+    expect(mocks.toast.info).toHaveBeenCalledTimes(3);
     expect(mocks.toast.dismiss.mock.calls).toEqual([
       ["workflow-run-w1-t1"],
       ["workflow-run-w2-t1"],
@@ -43,40 +51,34 @@ describe("workflow run outcome toasts (#5675)", () => {
   });
 
   it("reuses the toast in place when the same workflow reruns on the same tab", () => {
-    toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t1");
+    toastRunOutcome("deploy", CANCELLED, 3, "workflow-run-w1-t1");
     claimWorkflowRunToast("workflow-run-w1-t1");
-    toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t1");
-    expect(mocks.toast.success.mock.calls.map(([, opts]) => opts.id)).toEqual([
+    toastRunOutcome("deploy", CANCELLED, 3, "workflow-run-w1-t1");
+    expect(mocks.toast.info.mock.calls.map(([, opts]) => opts.id)).toEqual([
       "workflow-run-w1-t1",
       "workflow-run-w1-t1",
     ]);
     expect(mocks.toast.dismiss).not.toHaveBeenCalled();
   });
 
-  it("never dismisses a failure for a later success", () => {
+  it("never dismisses a failure for a later outcome", () => {
     toastRunOutcome("deploy", FAILED, 3, "workflow-run-w1-t1");
-    toastRunOutcome("cleanup", OK, 3, "workflow-run-w2-t1");
-    toastRunOutcome("cleanup", OK, 3, "workflow-run-w2-t2");
+    toastRunOutcome("cleanup", CANCELLED, 3, "workflow-run-w2-t1");
+    toastRunOutcome("cleanup", CANCELLED, 3, "workflow-run-w2-t2");
     expect(mocks.toast.error).toHaveBeenCalledTimes(1);
     expect(mocks.toast.dismiss.mock.calls).toEqual([["workflow-run-w2-t1"]]);
   });
 
   it("does not dismiss a run that restarted on the last outcome's id", () => {
-    toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t1");
+    toastRunOutcome("deploy", CANCELLED, 3, "workflow-run-w1-t1");
     // The same workflow runs again on that tab: its loading toast takes the id.
     claimWorkflowRunToast("workflow-run-w1-t1");
-    toastRunOutcome("cleanup", OK, 3, "workflow-run-w2-t1");
+    toastRunOutcome("cleanup", CANCELLED, 3, "workflow-run-w2-t1");
     expect(mocks.toast.dismiss).not.toHaveBeenCalled();
   });
 
-  it("collapses a canceled run like a success", () => {
-    toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t1");
-    toastRunOutcome("cleanup", CANCELLED, 3, "workflow-run-w2-t1");
-    expect(mocks.toast.dismiss.mock.calls).toEqual([["workflow-run-w1-t1"]]);
-  });
-
   it("collapses a clean fan-out summary with a single run's outcome", () => {
-    toastRunOutcome("deploy", OK, 3, "workflow-run-w1-t1");
+    toastRunOutcome("deploy", CANCELLED, 3, "workflow-run-w1-t1");
     toastFanoutSummary(
       "deploy",
       [
@@ -92,7 +94,7 @@ describe("workflow run outcome toasts (#5675)", () => {
 
   it("keeps a failed fan-out summary", () => {
     toastFanoutSummary("deploy", [{ title: "a", result: FAILED }], 1, 0, "workflow-run-w1-fanout");
-    toastRunOutcome("cleanup", OK, 3, "workflow-run-w2-t1");
+    toastRunOutcome("cleanup", CANCELLED, 3, "workflow-run-w2-t1");
     expect(mocks.toast.dismiss).not.toHaveBeenCalled();
   });
 });

@@ -52,13 +52,13 @@ describe("useTransferControls", () => {
     return api!;
   }
 
-  it("cancels via transfer_cancel and toasts success on a real state change", async () => {
+  it("cancels via transfer_cancel without a toast on a real state change", async () => {
     const { handleCancel } = await renderHook();
     await act(async () => {
       await handleCancel("t1");
     });
     expect(vi.mocked(transferCancel)).toHaveBeenCalledWith("t1");
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith("Transfer cancelled");
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
     expect(vi.mocked(toast.info)).not.toHaveBeenCalled();
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
   });

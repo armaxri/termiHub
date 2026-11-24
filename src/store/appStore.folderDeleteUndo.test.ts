@@ -136,7 +136,8 @@ describe("appStore — deleteFolderWithUndo (#5158)", () => {
     vi.advanceTimersByTime(UNDO_WINDOW_MS * 2);
     expect(removeFolder).not.toHaveBeenCalled();
     expect(toastMock.error).not.toHaveBeenCalled();
-    expect(toastMock.success).toHaveBeenLastCalledWith(expect.stringContaining("Restored"));
+    // The restored folder is the confirmation: only the Undo toast showed (#5859).
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
   });
 
   it("reports an Undo that came too late", async () => {

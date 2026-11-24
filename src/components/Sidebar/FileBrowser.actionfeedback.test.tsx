@@ -193,7 +193,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
 
   // --- Rename (feedback landed with #1348; locked in here) ---
 
-  it("shows a success toast when a rename succeeds", async () => {
+  it("raises no success toast when a rename succeeds: the row shows it (#5859)", async () => {
     await renderLocal();
     await startRenameOnReport();
     await commitRenameTo("renamed.pdf");
@@ -203,8 +203,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
       newPath: "/home/renamed.pdf",
       overwrite: false,
     });
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    expect(String(toastSuccess.mock.calls[0][0])).toContain("renamed.pdf");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -237,13 +236,12 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await flushAsync();
   }
 
-  it("shows a success toast when a new folder is created", async () => {
+  it("raises no success toast when a new folder is created (#5859)", async () => {
     await renderLocal();
     await createFolderNamed("newdir");
 
     expect(mockedInvoke).toHaveBeenCalledWith("local_mkdir", { path: "/home/newdir" });
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    expect(String(toastSuccess.mock.calls[0][0])).toContain("newdir");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -275,7 +273,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await flushAsync();
   }
 
-  it("shows a success toast when a new file is created", async () => {
+  it("raises no success toast when a new file is created (#5859)", async () => {
     await renderLocal();
     await createFileNamed("notes.txt");
 
@@ -284,8 +282,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
       content: "",
       exclusive: true,
     });
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    expect(String(toastSuccess.mock.calls[0][0])).toContain("notes.txt");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 

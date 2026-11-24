@@ -93,7 +93,7 @@ describe("HttpMonitorPanel — stop feedback (#1147 gap #10)", () => {
     vi.clearAllMocks();
   });
 
-  it("shows a success toast when the active monitor stops", async () => {
+  it("raises no toast when the active monitor stops (#5859)", async () => {
     await act(async () => {
       root.render(withTooltip(<HttpMonitorPanel />));
     });
@@ -105,7 +105,7 @@ describe("HttpMonitorPanel — stop feedback (#1147 gap #10)", () => {
     });
     await flush();
 
-    expect(toast.success).toHaveBeenCalledWith("Monitor stopped");
+    expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -126,7 +126,7 @@ describe("HttpMonitorPanel — stop feedback (#1147 gap #10)", () => {
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("shows a success toast when stopping a listed running monitor", async () => {
+  it("raises no toast when stopping a listed running monitor (#5859)", async () => {
     vi.mocked(networkHttpMonitorList).mockResolvedValue([makeMonitor("mon-2")]);
     await act(async () => {
       root.render(withTooltip(<HttpMonitorPanel />));
@@ -142,7 +142,7 @@ describe("HttpMonitorPanel — stop feedback (#1147 gap #10)", () => {
     });
     await flush();
 
-    expect(toast.success).toHaveBeenCalledWith("Monitor stopped");
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("shows an error toast when stopping a listed running monitor fails", async () => {

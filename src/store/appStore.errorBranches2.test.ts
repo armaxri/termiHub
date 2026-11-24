@@ -360,13 +360,14 @@ describe("appStore — agent CRUD error/guard branches (#2983)", () => {
       expect(mockToast.error).not.toHaveBeenCalled();
     });
 
-    it("toasts a success only for a rename (name present) success", async () => {
+    it("toasts no success for a rename: the folder row shows it (#5859)", async () => {
       mockUpdateAgentFolder.mockResolvedValueOnce({ id: "f3", name: "Done", parentId: null });
       seedAgentsRegion({ agentFolders: { [AGENT_ID]: [makeFolder({ id: "f3" })] } });
 
       await useAppStore.getState().updateAgentFolder(AGENT_ID, { id: "f3", name: "Done" });
 
-      expect(mockToast.success.mock.calls[0][0]).toMatch(/Renamed folder to Done/);
+      expect(mockToast.success).not.toHaveBeenCalled();
+      expect(mockToast.error).not.toHaveBeenCalled();
     });
   });
 

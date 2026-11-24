@@ -38,6 +38,7 @@ vi.mock("@/themes", () => ({
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
+const toastInfo = vi.fn();
 
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
@@ -46,6 +47,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
     toast: {
       ...actual.toast,
       success: (...args: unknown[]) => toastSuccess(...args),
+      info: (...args: unknown[]) => toastInfo(...args),
       error: (...args: unknown[]) => toastError(...args),
     },
   };
@@ -328,7 +330,7 @@ describe("WorkflowSidebar", () => {
     expect(query("workflow-targets-workflow-1")).toBeNull();
   });
 
-  it("duplicates a workflow through the backend and reports success", async () => {
+  it("duplicates a workflow through the backend without a toast", async () => {
     const saveWorkflowToBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workflows: sampleWorkflows, saveWorkflowToBackend });
     await render();
@@ -341,7 +343,8 @@ describe("WorkflowSidebar", () => {
     expect(saved.name).toBe("Copy of Prod login");
     expect(saved.id).not.toBe("workflow-1");
     expect(saved.steps).toEqual(sampleWorkflows[0].steps);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    // The copy's row is the confirmation (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("asks for confirmation before deleting and does not delete on click alone", async () => {
@@ -373,7 +376,7 @@ describe("WorkflowSidebar", () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
 
-  it("imports workflows and reports the count on success", async () => {
+  it("imports workflows without a toast when nothing needs a second look", async () => {
     dialogOpen.mockResolvedValue("/tmp/workflows.json");
     fsReadTextFile.mockResolvedValue("{}");
     const importWorkflows = vi.fn().mockResolvedValue({
@@ -389,11 +392,9 @@ describe("WorkflowSidebar", () => {
     await flush();
 
     expect(importWorkflows).toHaveBeenCalledWith("{}");
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    const [message, opts] = toastSuccess.mock.calls[0] as [string, Record<string, unknown>?];
-    expect(message).toBe("Imported 2 workflows");
-    // A clean import carries no security warning.
-    expect(opts?.description).toBeUndefined();
+    // A clean import shows in the list; it raises no toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
   });
 
   it("flags imported run-local-process steps as needing authorization", async () => {
@@ -411,8 +412,8 @@ describe("WorkflowSidebar", () => {
     act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
     await flush();
 
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    const [message, opts] = toastSuccess.mock.calls[0] as [string, Record<string, unknown>?];
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    const [message, opts] = toastInfo.mock.calls[0] as [string, Record<string, unknown>?];
     expect(message).toBe("Imported 1 workflow");
     // The security warning is surfaced persistently and never auto-authorizes.
     expect(String(opts?.description)).toMatch(/2 local-process steps/);
@@ -435,8 +436,8 @@ describe("WorkflowSidebar", () => {
     act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
     await flush();
 
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    const [message, opts] = toastSuccess.mock.calls[0] as [string, Record<string, unknown>?];
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    const [message, opts] = toastInfo.mock.calls[0] as [string, Record<string, unknown>?];
     expect(message).toBe("Imported 1 workflow");
     const description = String(opts?.description);
     expect(description).toMatch(/1 run-script step referenced a local file/);
@@ -511,8 +512,8 @@ describe("WorkflowSidebar", () => {
         vi.advanceTimersByTime(1);
       });
       expect(query("workflow-item-workflow-2")?.hasAttribute("data-just-saved")).toBe(false);
-      // The mark adds no toast of its own: the save keeps its single "Saved" toast.
-      expect(toastSuccess).toHaveBeenCalledTimes(1);
+      // The mark is the save's feedback: no "Saved" toast (#5859).
+      expect(toastSuccess).not.toHaveBeenCalled();
       expect(scrolled).toHaveLength(1);
     });
 

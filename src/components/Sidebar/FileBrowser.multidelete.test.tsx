@@ -193,7 +193,7 @@ describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
     expect(message).toContain("b.txt");
   });
 
-  it("reports success when every item in the batch deletes", async () => {
+  it("raises no toast when every item in the batch deletes (#5859)", async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === "local_list_dir") return Promise.resolve(entries);
       return Promise.resolve(undefined);
@@ -220,8 +220,7 @@ describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
     await flushAsync();
 
     expect(toastError).not.toHaveBeenCalled();
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    expect(String(toastSuccess.mock.calls[0][0])).toContain("2");
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("surfaces a single-delete failure via an error toast instead of failing silently", async () => {

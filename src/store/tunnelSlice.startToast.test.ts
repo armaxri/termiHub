@@ -6,7 +6,8 @@
  * only confirms the start was *accepted*) — a premature green "Started" would
  * appear a beat before the real handshake, sometimes just ahead of a failure
  * toast. These tests pin that the pending `loading` toast is held across the ack
- * and only resolves in place: to success on the actual `connected` transition,
+ * and only settles then: it is dismissed on the actual `connected` transition
+ * (the tunnel's status dot shows it; no success toast, #5859),
  * or to error on a `→ error` transition (the #2169 first-connect failure path).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -118,7 +119,7 @@ describe("tunnelSlice — start/reconnect toast resolves on connected, not on ac
     vi.clearAllMocks();
   });
 
-  it("holds the toast pending on ack and resolves to success only on connected", async () => {
+  it("holds the toast pending on ack and dismisses it only on connected", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
@@ -132,10 +133,13 @@ describe("tunnelSlice — start/reconnect toast resolves on connected, not on ac
     pushView({ t1: makeState("t1", "connecting") }, [t1]);
     expect(toastMock.success).not.toHaveBeenCalled();
 
-    // Actually connected — the pending toast resolves in place to success.
+    // Still pending while connecting.
+    expect(toastMock.dismiss).not.toHaveBeenCalled();
+
+    // Actually connected — the pending toast goes; the status dot shows it (#5859).
     pushView({ t1: makeState("t1", "connected") }, [t1]);
-    expect(toastMock.success).toHaveBeenCalledTimes(1);
-    expect(toastMock.success).toHaveBeenCalledWith("Started db", { id: "toast-id" });
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
   });
 
   it("resolves the same pending toast to error when the first connect fails", async () => {
@@ -155,7 +159,7 @@ describe("tunnelSlice — start/reconnect toast resolves on connected, not on ac
     });
   });
 
-  it("resolves a reconnect toast to 'Reconnected' on connected", async () => {
+  it("dismisses a reconnect toast on connected", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "connected") }, [t1]);
@@ -167,22 +171,25 @@ describe("tunnelSlice — start/reconnect toast resolves on connected, not on ac
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
     pushView({ t1: makeState("t1", "connecting") }, [t1]);
     pushView({ t1: makeState("t1", "connected") }, [t1]);
-    expect(toastMock.success).toHaveBeenCalledWith("Reconnected db", { id: "toast-id" });
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
   });
 
-  it("does not resolve success again on a later mid-session reconnect blip", async () => {
+  it("does not toast on a later mid-session reconnect blip", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
 
     await useAppStore.getState().startTunnel("t1");
     pushView({ t1: makeState("t1", "connected") }, [t1]);
-    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.dismiss).toHaveBeenCalledTimes(1);
 
     // A later disconnect/reconnect the user never initiated is a badge, not a toast.
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
     pushView({ t1: makeState("t1", "connected") }, [t1]);
-    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.dismiss).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("dismisses a still-pending toast when the session re-subscribes", async () => {

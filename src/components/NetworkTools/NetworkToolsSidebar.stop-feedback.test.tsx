@@ -71,7 +71,7 @@ describe("NetworkToolsSidebar — stop feedback (#1147 gap #10)", () => {
     useAppStore.setState({ httpMonitors: [] });
   });
 
-  it("shows a success toast when a monitor is stopped from the sidebar", async () => {
+  it("raises no toast when a monitor is stopped from the sidebar (#5859)", async () => {
     vi.mocked(networkHttpMonitorList).mockResolvedValue([makeMonitor("mon-1")]);
     await act(async () => {
       root.render(withTooltip(<NetworkToolsSidebar />));
@@ -87,7 +87,7 @@ describe("NetworkToolsSidebar — stop feedback (#1147 gap #10)", () => {
     });
     await flush();
 
-    expect(toast.success).toHaveBeenCalledWith("Monitor stopped");
+    expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 

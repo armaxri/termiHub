@@ -247,7 +247,7 @@ describe("appStore — plugins (#1993)", () => {
     resetLoadedFrontendPlugins();
   });
 
-  it("installPlugin installs, refreshes, and toasts success", async () => {
+  it("installPlugin installs and refreshes without a success toast", async () => {
     const installed = makePlugin("new-plugin", "active");
     vi.mocked(apiInstallPlugin).mockResolvedValueOnce({ status: "installed", plugin: installed });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
@@ -265,7 +265,8 @@ describe("appStore — plugins (#1993)", () => {
       false
     );
     expect(toastLoading).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledWith("Installed Plugin new-plugin", { id: "toast-id" });
+    // The plugin list shows the change; no success toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(useAppStore.getState().plugins).toHaveLength(1);
   });
 
@@ -374,14 +375,16 @@ describe("appStore — plugins (#1993)", () => {
     expect(apiListPlugins).not.toHaveBeenCalled();
   });
 
-  it("uninstallPlugin removes, refreshes, and toasts success", async () => {
+  it("uninstallPlugin removes and refreshes without a success toast", async () => {
     useAppStore.setState({ plugins: [makePlugin("gone", "active")] });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([]);
 
     await useAppStore.getState().uninstallPlugin("gone");
 
     expect(apiUninstallPlugin).toHaveBeenCalledWith("gone");
-    expect(toastSuccess).toHaveBeenCalledWith("Uninstalled Plugin gone", { id: "toast-id" });
+    // The plugin list shows the change; no success toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastLoading).toHaveBeenCalledWith(expect.stringContaining("Plugin gone"));
     expect(useAppStore.getState().plugins).toEqual([]);
     expect(useAppStore.getState().pluginBackendTypes).toEqual([]);
   });
@@ -399,14 +402,16 @@ describe("appStore — plugins (#1993)", () => {
     expect(useAppStore.getState().plugins.map((p) => p.manifest.id)).toEqual(["gone"]);
   });
 
-  it("enablePlugin enables, refreshes, and toasts success with the plugin name", async () => {
+  it("enablePlugin enables and refreshes without a success toast", async () => {
     useAppStore.setState({ plugins: [makePlugin("toggle", "disabled")] });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([makePlugin("toggle", "active")]);
 
     await useAppStore.getState().enablePlugin("toggle");
 
     expect(apiEnablePlugin).toHaveBeenCalledWith("toggle");
-    expect(toastSuccess).toHaveBeenCalledWith("Enabled Plugin toggle", { id: "toast-id" });
+    // The plugin list shows the change; no success toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastLoading).toHaveBeenCalledWith(expect.stringContaining("Plugin toggle"));
     // The now-active backend appears in the projection.
     expect(useAppStore.getState().pluginBackendTypes).toEqual([
       { pluginId: "toggle", connectionType: "toggle", displayName: "Backend toggle" },
@@ -424,14 +429,16 @@ describe("appStore — plugins (#1993)", () => {
     });
   });
 
-  it("disablePlugin disables, refreshes, and toasts success", async () => {
+  it("disablePlugin disables and refreshes without a success toast", async () => {
     useAppStore.setState({ plugins: [makePlugin("toggle", "active")] });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([makePlugin("toggle", "disabled")]);
 
     await useAppStore.getState().disablePlugin("toggle");
 
     expect(apiDisablePlugin).toHaveBeenCalledWith("toggle");
-    expect(toastSuccess).toHaveBeenCalledWith("Disabled Plugin toggle", { id: "toast-id" });
+    // The plugin list shows the change; no success toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastLoading).toHaveBeenCalledWith(expect.stringContaining("Plugin toggle"));
     expect(useAppStore.getState().pluginBackendTypes).toEqual([]);
   });
 
@@ -450,7 +457,9 @@ describe("appStore — plugins (#1993)", () => {
     vi.mocked(apiListPlugins).mockResolvedValueOnce([]);
     await useAppStore.getState().enablePlugin("unknown-id");
     expect(toastLoading).toHaveBeenCalledWith("Enabling unknown-id…");
-    expect(toastSuccess).toHaveBeenCalledWith("Enabled unknown-id", { id: "toast-id" });
+    // The plugin list shows the change; no success toast (#5859).
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastLoading).toHaveBeenCalledWith(expect.stringContaining("unknown-id"));
   });
 
   describe("plugin settings (#2000)", () => {
@@ -549,7 +558,9 @@ describe("appStore — plugins (#1993)", () => {
       vi.mocked(apiListPlugins).mockResolvedValueOnce([]);
       await useAppStore.getState().disablePlugin("unknown-id");
       expect(toastLoading).toHaveBeenCalledWith("Disabling unknown-id…");
-      expect(toastSuccess).toHaveBeenCalledWith("Disabled unknown-id", { id: "toast-id" });
+      // The plugin list shows the change; no success toast (#5859).
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(toastLoading).toHaveBeenCalledWith(expect.stringContaining("unknown-id"));
     });
 
     it("getPluginSettings tolerates a non-Error rejection (String(err) guard) and rethrows", async () => {

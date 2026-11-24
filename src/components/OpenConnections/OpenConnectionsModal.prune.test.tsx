@@ -13,6 +13,7 @@ import { TooltipProvider } from "@/components/ui";
 
 const pruneDeadAgents = vi.fn(() => Promise.resolve<string[]>([]));
 const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 const toastError = vi.fn();
 
 vi.mock("@/services/api", () => ({
@@ -41,7 +42,11 @@ vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
   return {
     ...actual,
-    toast: { success: (m: string) => toastSuccess(m), error: (m: string) => toastError(m) },
+    toast: {
+      success: (m: string) => toastSuccess(m),
+      info: (m: string) => toastInfo(m),
+      error: (m: string) => toastError(m),
+    },
   };
 });
 
@@ -66,6 +71,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
     useAppStore.setState(useAppStore.getInitialState());
     pruneDeadAgents.mockClear();
     toastSuccess.mockClear();
+    toastInfo.mockClear();
     toastError.mockClear();
   });
 
@@ -97,7 +103,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
     expect(pruneButton().textContent).toContain("Prune dead agents");
   });
 
-  it("calls pruneDeadAgents and reports the swept count", async () => {
+  it("calls pruneDeadAgents; the pruned rows leaving are the feedback (#5859)", async () => {
     pruneDeadAgents.mockResolvedValueOnce(["dead-1", "dead-2"]);
     await render();
 
@@ -107,7 +113,8 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
     await flush();
 
     expect(pruneDeadAgents).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledWith("Pruned 2 dead agents");
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -120,7 +127,7 @@ describe("OpenConnectionsModal — Prune dead agents footer action", () => {
     });
     await flush();
 
-    expect(toastSuccess).toHaveBeenCalledWith("No dead agents to prune");
+    expect(toastInfo).toHaveBeenCalledWith("No dead agents to prune");
   });
 
   it("surfaces a failure as an error toast", async () => {
