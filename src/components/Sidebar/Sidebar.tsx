@@ -43,7 +43,9 @@ export function Sidebar({ width }: SidebarProps) {
       style={width != null ? { width } : undefined}
     >
       <div className="sidebar__header">
-        <span className="sidebar__title">{VIEW_TITLES[sidebarView]}</span>
+        <span className="sidebar__title" data-testid="sidebar-title">
+          {VIEW_TITLES[sidebarView]}
+        </span>
       </div>
       <div className="sidebar__content">
         {sidebarView === "connections" && <ConnectionList />}
