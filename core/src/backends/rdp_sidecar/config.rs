@@ -1245,6 +1245,7 @@ mod tests {
             vec![
                 "connection",
                 "sshTunnel",
+                "authentication",
                 "display",
                 "features",
                 "rdp",
@@ -1312,7 +1313,7 @@ mod tests {
         let schema = rdp_settings_schema();
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.groups.len(), 6);
+        assert_eq!(back.groups.len(), 7);
     }
 
     /// The connect timeout reaches the sidecar from the unified

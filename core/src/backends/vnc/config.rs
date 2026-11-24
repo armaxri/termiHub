@@ -843,6 +843,7 @@ mod tests {
             vec![
                 "connection",
                 "sshTunnel",
+                "authentication",
                 "display",
                 "features",
                 "vnc",
@@ -878,7 +879,7 @@ mod tests {
 
     #[test]
     fn username_deserializes_from_shared_field() {
-        // The shared "connection" group already exposes a username field; VeNCrypt
+        // The shared "authentication" group already exposes a username field; VeNCrypt
         // Plain reuses it.
         let cfg: VncConfig = serde_json::from_value(serde_json::json!({
             "host": "h", "username": "alice", "tlsVerify": "insecure"
@@ -1633,7 +1634,7 @@ mod tests {
         let schema = vnc_settings_schema();
         let json = serde_json::to_string(&schema).unwrap();
         let back: SettingsSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.groups.len(), 7);
+        assert_eq!(back.groups.len(), 8);
     }
 
     /// #4348: VNC's `fileTransfer` opt-in is what makes the side channel offered.
