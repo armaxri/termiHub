@@ -17,7 +17,10 @@ import { SerialPortField } from "./SerialPortField";
 import { EnableCredentialStorageButton } from "@/components/CredentialStorage";
 import {
   CREDENTIAL_STORAGE_OFF_TEXT,
+  TURN_ON_SAVING_LABEL,
+  TYPED_PASSWORD_USE_TEXT,
   credentialStorageChosenText,
+  storageOffPromptText,
 } from "@/utils/credentialStorageCopy";
 import { chooseCredentialStorageForSave } from "@/utils/credentialStorageChoice";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
@@ -51,6 +54,17 @@ interface DynamicFieldProps {
    * one-time storage chooser. It only turns on once a store is set up.
    */
   credentialStorageChoose?: boolean;
+  /**
+   * With credential storage off or not yet chosen, the password field says a
+   * typed password is not saved and is used only for Test and this connect,
+   * with a "Turn on saving…" link (#5835).
+   */
+  passwordNotSaved?: boolean;
+  /**
+   * Keeps a storage-off save toggle disabled but drops its own note and action,
+   * because the password field above it already says so (#5835).
+   */
+  hideStorageOffNote?: boolean;
   /**
    * A schema secret other than `password` that is stored in the credential
    * store for this saved connection (#4431). An empty password field then
@@ -128,6 +142,8 @@ export function DynamicField({
   credentialSaved,
   credentialStorageOff: credentialStorageOffProp = false,
   credentialStorageChoose: credentialStorageChooseProp = false,
+  passwordNotSaved = false,
+  hideStorageOffNote = false,
   storedSecret,
   availablePorts,
   serialPortAgentId,
@@ -168,7 +184,9 @@ export function DynamicField({
   const platformNoteId = platformNote ? `${controlId}-platform-note` : undefined;
   // Only a boolean "save" toggle has a meaningful disabled/unticked state.
   const credentialStorageOff = credentialStorageOffProp && field.fieldType.type === "boolean";
-  const storageOffId = credentialStorageOff ? `${controlId}-storage-off` : undefined;
+  const storageOffId =
+    credentialStorageOff && !hideStorageOffNote ? `${controlId}-storage-off` : undefined;
+  const notSavedId = passwordNotSaved ? `${controlId}-not-saved` : undefined;
   const credentialStorageChoose =
     !credentialStorageOff && credentialStorageChooseProp && field.fieldType.type === "boolean";
   // Turning the toggle on asks where to store first (#5187); it only turns on
@@ -210,7 +228,14 @@ export function DynamicField({
   const chosenNote = storageChosenNote && value === true ? storageChosenNote : null;
   const chosenNoteId = chosenNote ? `${controlId}-storage-chosen` : undefined;
   const describedBy =
-    [hasError ? errorId : null, descriptionId, platformNoteId, storageOffId, chosenNoteId]
+    [
+      hasError ? errorId : null,
+      descriptionId,
+      platformNoteId,
+      storageOffId,
+      notSavedId,
+      chosenNoteId,
+    ]
       .filter(Boolean)
       .join(" ") || undefined;
   const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
@@ -243,12 +268,18 @@ export function DynamicField({
       hintTestId={`${testIdBase}-hint`}
       labelTestId={`${testIdBase}-label`}
       details={
-        platformNote || credentialStorageOff || credentialSaved || storedSecret || chosenNote ? (
+        platformNote ||
+        storageOffId ||
+        notSavedId ||
+        credentialSaved ||
+        storedSecret ||
+        chosenNote ? (
           <FieldStatusNotes
             testIdBase={testIdBase}
             platformNote={platformNote}
             platformNoteId={platformNoteId}
-            storageOffId={credentialStorageOff ? storageOffId : undefined}
+            storageOffId={storageOffId}
+            notSavedId={notSavedId}
             credentialSaved={credentialSaved}
             storedSecret={storedSecret}
             storageChosen={chosenNote}
@@ -288,6 +319,8 @@ interface FieldStatusNotesProps {
   platformNoteId?: string;
   /** Set while credential storage is off: id of the "storage off" note. */
   storageOffId?: string;
+  /** Set on a password field nothing will save (#5835): id of its "not saved" line. */
+  notSavedId?: string;
   credentialSaved?: boolean;
   storedSecret?: StoredSecretState;
   /** Where the chooser just set storage up from this toggle (#5825), or null. */
@@ -305,6 +338,7 @@ function FieldStatusNotes({
   platformNote,
   platformNoteId,
   storageOffId,
+  notSavedId,
   credentialSaved,
   storedSecret,
   storageChosen,
@@ -327,6 +361,19 @@ function FieldStatusNotes({
             {CREDENTIAL_STORAGE_OFF_TEXT}
           </p>
           <EnableCredentialStorageButton data-testid={`${testIdBase}-enable-storage`} />
+        </div>
+      )}
+      {notSavedId && (
+        // The same line and link as the connect-time prompt (#5838), plus what
+        // the typed password is still for (#5835).
+        <div className="settings-form__storage-off" data-testid={`${testIdBase}-not-saved`}>
+          <p id={notSavedId} className="settings-form__hint">
+            {storageOffPromptText("password")} {TYPED_PASSWORD_USE_TEXT}
+          </p>
+          <EnableCredentialStorageButton
+            label={TURN_ON_SAVING_LABEL}
+            data-testid={`${testIdBase}-turn-on-saving`}
+          />
         </div>
       )}
       {storageChosen && (

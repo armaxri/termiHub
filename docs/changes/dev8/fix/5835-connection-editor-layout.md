@@ -18,8 +18,10 @@
 
 - Connection editor: the password field no longer disappears while credential
   storage is off or not yet chosen, so "Save password" never shows without a
-  password to save. A typed password is used for Test and Save and connect and
-  is never written to disk (#5835).
+  password to save. While storage is off or not yet chosen, the field says
+  "Passwords aren't saved. This one is used only for Test and this connect."
+  with a "Turn on saving…" link, the same one the connect prompt offers. A typed
+  password is never written to disk (#5835).
 - Connection editor: the inline Test result ("Reached …") clears as soon as a
   connection setting changes, so it only describes the settings in the form
   (#5879).

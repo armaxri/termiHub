@@ -361,6 +361,12 @@ export function ConnectionSettingsForm({
     onValidityChange?.(validity.valid, validity.errors);
   }, [validity, onValidityChange]);
 
+  // While nothing can save it, the shown password field says so and offers
+  // "Turn on saving…" (#5835); its save toggle then drops its own copy of it.
+  const passwordNotSaved =
+    (credentialStorageOff || credentialStorageChoose) === true &&
+    schema.groups.some((g) => g.fields.some((f) => f.key === PASSWORD_KEY && isShown(f)));
+
   // The lead note goes to the first group that renders at all.
   let leadNoteShown = false;
   return (
@@ -426,6 +432,8 @@ export function ConnectionSettingsForm({
                           credentialStorageChoose={
                             credentialStorageChoose && field.key === SAVE_PASSWORD_KEY
                           }
+                          passwordNotSaved={passwordNotSaved && field.key === PASSWORD_KEY}
+                          hideStorageOffNote={passwordNotSaved}
                           storedSecret={
                             field.fieldType.type === "password" && field.key !== PASSWORD_KEY
                               ? storedSecretState(storedFieldSecrets, field.key, rhfField.value)

@@ -81,27 +81,55 @@ describe("ConnectionSettingsForm credential storage modes (#5186)", () => {
     container.remove();
   });
 
-  it("shows the save row disabled and unticked with an enable action in None mode", () => {
+  it("keeps the password field in None mode and says it is not saved (#5835)", () => {
     render("none", { savePassword: true });
     const toggle = query("field-savePassword")!;
     expect(toggle.hasAttribute("disabled")).toBe(true);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
+    // The password field stays beside its save toggle, empty.
+    expect((query("field-password") as HTMLInputElement | null)?.value).toBe("");
+    // It says plainly what a typed password is for, with #5838's line and link.
+    expect(query("field-password-not-saved")?.textContent).toContain(
+      "Passwords aren't saved. This one is used only for Test and this connect."
+    );
+    expect(query("field-password-turn-on-saving")?.textContent).toBe("Turn on saving…");
+    expect(query("field-password")!.getAttribute("aria-describedby")).toContain("not-saved");
+    // One note, not two: the save row drops its own storage-off copy.
+    expect(query("field-savePassword-storage-off")).toBeNull();
+  });
+
+  it("opens Settings ▸ Security from Turn on saving…", () => {
+    render("none");
+    act(() => {
+      query("field-password-turn-on-saving")!.click();
+    });
+    expect(useAppStore.getState().pendingSettingsCategory).toBe("security");
+  });
+
+  it("keeps the save row's own note when no password field is shown", () => {
+    act(() => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={filterCredentialFields(SCHEMA, "none")}
+          settings={{}}
+          onChange={() => {}}
+          credentialStorageOff
+          hiddenFieldKeys={["password"]}
+        />
+      );
+    });
+    expect(query("field-password-not-saved")).toBeNull();
     expect(query("field-savePassword-storage-off")?.textContent).toContain(
       "Credential storage is off"
     );
     expect(query("field-savePassword-enable-storage")?.textContent).toBe(
       "Enable credential storage…"
     );
-    // The password field stays beside its save toggle (#5835), empty.
-    expect((query("field-password") as HTMLInputElement | null)?.value).toBe("");
   });
 
-  it("opens Settings ▸ Security from the enable action", () => {
-    render("none");
-    act(() => {
-      query("field-savePassword-enable-storage")!.click();
-    });
-    expect(useAppStore.getState().pendingSettingsCategory).toBe("security");
+  it("says nothing about saving once storage is on", () => {
+    render("os_keychain");
+    expect(query("field-password-not-saved")).toBeNull();
   });
 
   it("does not rewrite the stored save flag while storage is off", () => {

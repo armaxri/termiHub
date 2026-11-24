@@ -42,6 +42,13 @@ export function storageOffPromptText(secretNoun: "password" | "passphrase"): str
   return secretNoun === "passphrase" ? "Passphrases aren't saved." : "Passwords aren't saved.";
 }
 
+/**
+ * Under the editor's password field while credential storage is off or not yet
+ * chosen (#5835), after {@link storageOffPromptText}: what a typed password is
+ * still for. Followed by {@link TURN_ON_SAVING_LABEL}.
+ */
+export const TYPED_PASSWORD_USE_TEXT = "This one is used only for Test and this connect.";
+
 /** The link after {@link storageOffPromptText}: opens the storage setting. */
 export const TURN_ON_SAVING_LABEL = "Turn on saving…";
 
