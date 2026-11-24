@@ -12,6 +12,12 @@ REM   --no-open        do not open the progress page in the browser
 REM   --unattended     nobody is watching: human steps become "not tested" at once
 REM   --keep-serving   keep serving the progress page after the run until Ctrl-C
 REM   --real-pointer   hover grades use the real OS pointer (moves your mouse)
+REM   --loop S[,S...]  review loop (#5817): re-run only the tests behind those
+REM                    surfaces into a new run linked to the previous one
+REM   --target-grade N grade 1-5 a looped surface must reach (default 4)
+REM   --max-rounds N   loop rounds after the full run (default 3)
+REM   --previous DIR   the merged run to loop from (default: newest graded run)
+REM   --dry-run        with --loop: print the decision and the tests, run nothing
 REM   --help, -h       Show the help message
 REM
 REM Prerequisites: Git for Windows (Git Bash) or WSL to provide bash; uv; the
