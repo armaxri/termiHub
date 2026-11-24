@@ -13,6 +13,8 @@ export interface SettingDefaultMarkerProps {
   defaultText?: string;
   /** Prefix for the `-default` tag and `-reset` button test ids. */
   "data-testid"?: string;
+  /** Exact test ids, for markers whose ids put the prefix first (e.g. `keybinding-reset-<action>`). */
+  testIds?: { default?: string; reset?: string };
 }
 
 /**
@@ -29,13 +31,13 @@ export function SettingDefaultMarker({
   name,
   defaultText,
   "data-testid": testId,
+  testIds,
 }: SettingDefaultMarkerProps) {
+  const defaultId = testIds?.default ?? (testId ? `${testId}-default` : undefined);
+  const resetId = testIds?.reset ?? (testId ? `${testId}-reset` : undefined);
   if (isDefault) {
     return (
-      <span
-        className="settings-default-marker__tag"
-        data-testid={testId ? `${testId}-default` : undefined}
-      >
+      <span className="settings-default-marker__tag" data-testid={defaultId}>
         Default
       </span>
     );
@@ -49,7 +51,7 @@ export function SettingDefaultMarker({
       icon={<RotateCcw size={12} aria-hidden="true" />}
       onClick={onReset}
       aria-label={`Reset ${name.toLowerCase()} to the default${suffix}`}
-      data-testid={testId ? `${testId}-reset` : undefined}
+      data-testid={resetId}
     >
       Reset to default
     </Button>
