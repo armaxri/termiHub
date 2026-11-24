@@ -1,4 +1,4 @@
-//! Tauri commands for scheduled workflows and macros (PROD-043).
+//! Tauri commands for scheduled automations (PROD-043).
 
 use std::sync::Arc;
 

@@ -33,6 +33,7 @@ import {
   type SavedPasswordCount,
   type SwitchResultView,
 } from "./credentialSwitchCopy";
+import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SecuritySettingsProps {
@@ -587,7 +588,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           <SettingsField
             label="Allow workflows to run local programs"
-            hint="Master switch. While off, any run-local-process step is refused."
+            hint={`Master switch. While off, any run-local-process step is refused. The step is experimental: ${EXPERIMENTAL_SETTING_PATH} must be on too.`}
           >
             <Toggle
               checked={localProcessEnabled}

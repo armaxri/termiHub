@@ -29,7 +29,7 @@ function view(over: Partial<ScheduleView> = {}): ScheduleView {
   return {
     id: "s1",
     name: "Nightly backup",
-    action: { kind: "macro", macroId: "m-1" },
+    action: { kind: "automation", automationId: "m-1" },
     targets: { kind: "connections", connectionIds: ["c1"] },
     rule: { kind: "interval", everyMinutes: 30 },
     missedRuns: "skip",

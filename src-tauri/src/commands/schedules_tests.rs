@@ -96,8 +96,9 @@ fn input() -> ScheduleInput {
         id: String::new(),
         name: "Health check".to_string(),
         description: None,
-        action: ScheduleAction::Workflow {
-            workflow_id: "wf-1".to_string(),
+        action: ScheduleAction::Automation {
+            automation_id: "wf-1".to_string(),
+            legacy_source: None,
         },
         targets: ScheduleTargets::Connections {
             connection_ids: vec!["conn-a".to_string()],
@@ -113,8 +114,7 @@ fn completed() -> WindowRunReport {
         outcome: ScheduleRunOutcome::Completed,
         message: None,
         targets_run: 1,
-        workflow_run_ids: Vec::new(),
-        macro_run_ids: Vec::new(),
+        run_ids: Vec::new(),
     }
 }
 

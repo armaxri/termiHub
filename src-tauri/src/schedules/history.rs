@@ -58,7 +58,7 @@ mod tests {
 
     fn schedule() -> Schedule {
         serde_json::from_value(json!({"id":"s","name":"n",
-            "action":{"kind":"macro","macroId":"m"},
+            "action":{"kind":"automation","automationId":"m"},
             "targets":{"kind":"connections","connectionIds":["c"]},
             "rule":{"kind":"interval","everyMinutes":5}}))
         .unwrap()
@@ -69,8 +69,7 @@ mod tests {
             at: format!("t{i}"),
             started_at: None,
             duration_ms: None,
-            workflow_run_ids: Vec::new(),
-            macro_run_ids: Vec::new(),
+            run_ids: Vec::new(),
             outcome: ScheduleRunOutcome::Skipped,
             message: Some(format!("skip {i}")),
             catch_up: false,
@@ -122,7 +121,7 @@ mod tests {
             panic!("a v1 file loads");
         };
         assert_eq!(migrated_from, Some(1));
-        assert_eq!(data.version, "2");
+        assert_eq!(data.version, "3");
         let a = &data.schedules[0];
         assert_eq!(a.history.len(), 1);
         assert_eq!(Some(&a.history[0]), a.last_result.as_ref());

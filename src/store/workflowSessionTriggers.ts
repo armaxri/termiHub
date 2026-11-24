@@ -32,6 +32,7 @@ import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "./appStore";
 import { collectLiveTabs } from "./layoutHelpers";
+import { localProcessRefusal, localProcessRefusalToastId } from "./localProcessRefusal";
 import { unattendedParamValues } from "./scheduledRuns";
 import { currentSessionView, regionExited } from "./sessionBridge";
 import { resolveConnectedTargets } from "./slices/workflowFanout";
@@ -93,6 +94,15 @@ function launchTriggeredRun(
     return false;
   }
   if (workflow.steps.length === 0) return false;
+  const refusal = localProcessRefusal(store.get(), workflow);
+  if (refusal) {
+    frontendLog("workflow", `${triggeredBy} trigger for "${workflow.name}" refused: ${refusal}`);
+    toast.error(`Workflow "${workflow.name}" was not run`, {
+      id: localProcessRefusalToastId(workflow.id),
+      description: refusal,
+    });
+    return false;
+  }
   const params = unattendedParamValues(workflow.parameters ?? []);
   if ("missing" in params) {
     // toast-policy: explains-outcome — an automatic trigger did not run, and this says why

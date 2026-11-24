@@ -45,29 +45,56 @@ export interface AutomationCycle {
   stepIndex: number;
 }
 
+/** Visit every step, nested ones included, depth first, in step order. */
+function visitSteps(steps: readonly RunnableStep[], visit: (step: RunnableStep) => void): void {
+  for (const step of steps) {
+    visit(step);
+    if (step.kind === "conditional") {
+      visitSteps(step.then, visit);
+      visitSteps(step.else ?? [], visit);
+    } else if (step.kind === "loop") {
+      visitSteps(step.body, visit);
+    }
+  }
+}
+
 /** Every automation id a step list references, depth first, in step order. */
 function referencedAutomations(steps: readonly RunnableStep[]): string[] {
   const ids: string[] = [];
-  const visit = (list: readonly RunnableStep[]): void => {
-    for (const step of list) {
-      switch (step.kind) {
-        case "run-automation":
-          ids.push(step.automationId);
-          break;
-        case "conditional":
-          visit(step.then);
-          visit(step.else ?? []);
-          break;
-        case "loop":
-          visit(step.body);
-          break;
-        default:
-          break;
-      }
-    }
-  };
-  visit(steps);
+  visitSteps(steps, (step) => {
+    if (step.kind === "run-automation") ids.push(step.automationId);
+    // The legacy spelling, still accepted on read.
+    else if (step.kind === "run-macro") ids.push(step.macroId);
+  });
   return ids;
+}
+
+/**
+ * Whether running `root` can reach a `run-local-process` step: its own, one
+ * nested in a conditional branch or a loop, or one of an automation it calls
+ * (#5818). Every branch counts. Each automation is visited once, so a cycle
+ * ends the walk; missing automations are skipped. A **pure** helper.
+ */
+export function reachesLocalProcess(
+  root: Automation,
+  resolve: (id: string) => Automation | undefined
+): boolean {
+  const seen = new Set<string>([root.id]);
+  const queue: Automation[] = [root];
+  for (let next = queue.pop(); next; next = queue.pop()) {
+    let found = false;
+    visitSteps(next.steps, (step) => {
+      if (step.kind === "run-local-process") found = true;
+    });
+    if (found) return true;
+    for (const id of referencedAutomations(next.steps)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const called = resolve(id);
+      if (called) queue.push(called);
+    }
+  }
+  return false;
 }
 
 /**

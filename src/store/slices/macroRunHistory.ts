@@ -18,15 +18,8 @@ export function macroTargetLabel(state: AppState, tabId: string): string {
   return collectLiveTabs(state).find((t) => t.id === tabId)?.title || "Terminal";
 }
 
-/** Generate a fresh macro run-history record id. */
-export function newMacroRunId(): string {
-  return newId("mrun");
-}
-
 /** Everything needed to describe one finished playback. */
 export interface MacroRunDescription {
-  /** Record id; pre-generated when the caller needs to reference the record. */
-  id?: string;
   macro: Pick<Macro, "id" | "name" | "steps">;
   startedAt: Date;
   endedAt: Date;
@@ -41,7 +34,7 @@ export interface MacroRunDescription {
 /** Build the persisted record for a finished playback. */
 export function buildMacroRun(desc: MacroRunDescription): MacroRun {
   const run: MacroRun = {
-    id: desc.id ?? newMacroRunId(),
+    id: newId("mrun"),
     macroId: desc.macro.id,
     macroName: desc.macro.name,
     startedAt: desc.startedAt.toISOString(),
