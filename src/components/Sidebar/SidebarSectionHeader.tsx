@@ -8,7 +8,7 @@ import "./SidebarSectionHeader.css";
  * optional label from its controls when the sidebar is narrow.
  */
 export interface SidebarSectionHeaderProps {
-  /** Section title text (rendered uppercased via CSS). */
+  /** Section title text (sentence case, #5848). */
   title: string;
   /** Optional leading icon (decorative). */
   icon?: React.ReactNode;
@@ -22,7 +22,7 @@ export interface SidebarSectionHeaderProps {
 
 /**
  * The in-sidebar section header (#4709) shared by the History and Schedules
- * sections: an uppercase title that takes the leftover width and ellipsizes
+ * sections: a sentence-case title that takes the leftover width and ellipsizes
  * (full title in a tooltip), followed by controls that keep their size. The
  * title never wraps and the controls never clip, whatever the sidebar width.
  */
