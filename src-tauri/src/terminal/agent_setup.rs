@@ -1012,8 +1012,13 @@ fn inject_error_script(
 /// `rm -f`/`rmdir` the user has to read past (#5822). `upload_dir` was
 /// validated by [`agent_install::parse_prepared_upload_dir`], so
 /// single-quoting it is safe.
+///
+/// The script replaces the tab's shell (`exec`), so the session ends when the
+/// setup does and its exit code says how it went: 0 installed, non-zero
+/// failed. The setup tab reads that exit to show its finished state (#5865)
+/// instead of staying open as a plain shell.
 fn setup_exec_command(upload_dir: &str) -> String {
-    format!("sh '{upload_dir}/{SETUP_SCRIPT_NAME}'\n")
+    format!("exec sh '{upload_dir}/{SETUP_SCRIPT_NAME}'\n")
 }
 
 /// The plain failure lines shared by the error script and its inline
@@ -1044,12 +1049,15 @@ fn inject_error_inline(
 }
 
 /// Generate a small POSIX error script matching the setup script's `fail()`
-/// output. Like the setup script it removes itself and its upload dir on exit.
+/// output. Like the setup script it removes itself and its upload dir on exit,
+/// and it exits 1: it ends the tab's shell like the setup script does
+/// ([`setup_exec_command`]), so its exit code must say the setup failed.
 fn generate_error_script(message: &str) -> String {
     format!(
         "#!/bin/sh\n\
          trap 'rm -f \"$0\"; rmdir \"${{0%/*}}\" 2>/dev/null || true' EXIT\n\
-         {}",
+         {}\
+         exit 1\n",
         failure_printf(message)
     )
 }
@@ -1110,7 +1118,7 @@ mod tests {
     #[test]
     fn setup_runs_its_script_from_the_private_dir_with_one_short_command() {
         let cmd = setup_exec_command(TEST_UPLOAD_DIR);
-        assert_eq!(cmd, format!("sh '{TEST_UPLOAD_DIR}/setup.sh'\n"));
+        assert_eq!(cmd, format!("exec sh '{TEST_UPLOAD_DIR}/setup.sh'\n"));
         assert!(!cmd.contains("/tmp"));
         // The cleanup moved into the script's exit trap (#5822).
         let script = generate_setup_script("/usr/local/bin/termihub-agent", false, TEST_BINARY_SRC);

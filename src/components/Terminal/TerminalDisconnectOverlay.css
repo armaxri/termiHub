@@ -151,6 +151,11 @@
   color: var(--color-error);
 }
 
+/* A finished agent setup (#5865). */
+.terminal-disconnect-overlay__icon--success {
+  color: var(--color-success);
+}
+
 /* Busy-state tone for the shared Spinner (which owns the rotation). */
 .terminal-disconnect-overlay__icon--busy {
   color: var(--text-accent);

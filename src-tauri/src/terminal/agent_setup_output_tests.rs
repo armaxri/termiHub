@@ -267,7 +267,8 @@ mod executed {
             let upload = scratch.path().join("upload.Ab12Cd");
             let script = generate_error_script("Architecture mismatch: it's arm64\nnot x86_64");
             let run = run(shell, scratch.path(), &upload, &script);
-            assert_eq!(run.status, 0, "{shell}");
+            // It ends the tab's shell (`exec`), so its status says "failed" (#5865).
+            assert_eq!(run.status, 1, "{shell}");
             assert_plain(shell, &run.stdout);
             assert_eq!(
                 run.stdout,

@@ -178,3 +178,42 @@ describe("AgentSetupDialog — the agent row's setup phase (#5906)", () => {
     expect(phase()).toBeUndefined();
   });
 });
+
+describe("AgentSetupDialog — the setup tab (#5865)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    onOpenChange = vi.fn<(open: boolean) => void>();
+    progressCallback = null;
+    vi.clearAllMocks();
+    addTab.mockReturnValue("tab-setup");
+    useAgentSetupStatus.setState({ phases: {}, tabs: {} });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    addTab.mockReset();
+  });
+
+  it("records the tab it opened, reporting through the script's exit on POSIX", async () => {
+    await startSetup();
+    expect(useAgentSetupStatus.getState().tabs["tab-setup"]).toEqual({
+      agentId: "agent-1",
+      agentName: "Test Host",
+      reportsExit: true,
+      progress: { kind: "running" },
+      dismissed: false,
+    });
+  });
+
+  it("marks the tab failed with the backend's message", async () => {
+    await startSetup();
+    act(() => progressCallback?.("agent-1", "error", "upload failed"));
+    expect(useAgentSetupStatus.getState().tabs["tab-setup"].progress).toEqual({
+      kind: "failed",
+      message: "upload failed",
+    });
+  });
+});
