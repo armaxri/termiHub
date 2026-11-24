@@ -100,7 +100,7 @@ function pressAbort(): void {
 /** Abort was acknowledged and nothing was opened or saved. */
 function expectCleanCancel(result: ConnectSavedConnectionResult): void {
   expect(result).toEqual({ status: "canceled" });
-  expect(infoSpy).toHaveBeenCalledWith("Connect canceled");
+  expect(infoSpy).toHaveBeenCalledWith('Connect to "web-1" canceled.', expect.anything());
   expect(addTabSpy).not.toHaveBeenCalled();
   expect(vi.mocked(storeCredential)).not.toHaveBeenCalled();
   expect(useAppStore.getState().passwordPromptOpen).toBe(false);
@@ -162,7 +162,10 @@ describe("connectSavedConnection — abortable pre-connect (#5180)", () => {
     const result = await connectSavedConnection(sshPassword());
     expect(result).toEqual({ status: "canceled" });
     expect(loadingSpy).not.toHaveBeenCalled();
-    expect(infoSpy).toHaveBeenCalledWith("Connect canceled");
+    expect(infoSpy).toHaveBeenCalledWith(
+      'Connect to "web-1" canceled. Its saved password stays locked.',
+      expect.anything()
+    );
   });
 
   it("aborts while the stored credential resolves and ignores the late secret", async () => {

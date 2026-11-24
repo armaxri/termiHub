@@ -21,12 +21,12 @@ interface UnlockDialogProps {
   /** Closing the dialog any other way than unlocking cancels the request. */
   onOpenChange: (open: boolean) => void;
   /**
-   * Offer "Connect without saved password" (#5188): a connect is waiting that
-   * can go on by prompting for its secret, with the store left locked.
-   * Without it the secondary action is a plain Cancel.
+   * Offer "Type password instead" (#5188, #5838) beside Cancel: a connect is
+   * waiting that can go on by prompting for its secret, with the store left
+   * locked.
    */
   connectFallback?: boolean;
-  /** "Connect without saved password" was chosen (only with `connectFallback`). */
+  /** "Type password instead" was chosen (only with `connectFallback`). */
   onConnectWithoutSaved?: () => void;
   /**
    * The connects waiting on the unlock (#5684): the dialog names the first
@@ -39,6 +39,12 @@ interface UnlockDialogProps {
 const UNLOCK_ERROR_ID = "unlock-dialog-password-error";
 
 const NO_WAITERS: readonly UnlockWaiter[] = [];
+
+/**
+ * The unlock dialog's "go on without the vault" action (#5838): short, and
+ * secondary beside Cancel, so it never competes with Unlock.
+ */
+const TYPE_PASSWORD_INSTEAD_LABEL = "Type password instead";
 
 /** Type guard for the backend's unlock error shape (see `UnlockCredentialStoreError`). */
 function isCorruptStoreError(err: unknown): boolean {
@@ -72,10 +78,11 @@ function isCorruptStoreError(err: unknown): boolean {
  * to prod-db (SSH) with its saved password." — so the dialog says why it is up.
  *
  * A connect waiting on the dialog can go on without the vault (#5188):
- * "Connect without saved password" leaves the store locked and lets that
- * connect ask for its password. Escape/×/Cancel cancel the connect instead.
- * The guarded "Forgot password?" reset sits under the actions, away from the
- * error line, so it is never the next thing after a wrong password.
+ * "Type password instead" (#5838) leaves the store locked and lets that
+ * connect ask for its password. Cancel (always shown, #5838), Escape and ×
+ * cancel the connect instead. The guarded "Forgot master password?" link sits
+ * under the actions, away from the error line, so it is never the next thing
+ * after a wrong password; its own confirm says it deletes every saved password.
  */
 export function UnlockDialog({
   open,
@@ -221,19 +228,18 @@ export function UnlockDialog({
       title="Unlock credential store"
       footer={
         <div className="unlock-dialog__footer" data-testid="unlock-dialog-footer">
-          {/* eslint-disable-next-line copy/copy-style -- Cancel is first; the fallback replaces it */}
           <div className="unlock-dialog__actions">
-            {connectFallback && onConnectWithoutSaved ? (
+            {/* Always a Cancel (#5838): it stops the waiting connect, if any. */}
+            <Button variant="secondary" onClick={handleCancel} data-testid="unlock-dialog-cancel">
+              Cancel
+            </Button>
+            {connectFallback && onConnectWithoutSaved && (
               <Button
                 variant="secondary"
                 onClick={onConnectWithoutSaved}
                 data-testid="unlock-dialog-connect-without-saved"
               >
-                Connect without saved password
-              </Button>
-            ) : (
-              <Button variant="secondary" onClick={handleCancel} data-testid="unlock-dialog-cancel">
-                Cancel
+                {TYPE_PASSWORD_INSTEAD_LABEL}
               </Button>
             )}
             {corrupt ? (
@@ -266,7 +272,7 @@ export function UnlockDialog({
                 onClick={() => setConfirmReset(true)}
                 data-testid="unlock-dialog-forgot"
               >
-                Forgot password? Reset credential store…
+                Forgot master password?
               </Button>
             </div>
           )}
@@ -312,7 +318,6 @@ export function UnlockDialog({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Master password"
             autoFocus={!biometricAvailable}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? UNLOCK_ERROR_ID : undefined}
@@ -335,12 +340,14 @@ export function UnlockDialog({
         title="Reset credential store?"
         message={
           <p className="unlock-dialog__description">
-            This <strong>permanently deletes all saved credentials</strong> and cannot be undone.
-            You&apos;ll set a new master password and re-enter your credentials from scratch.
+            Resetting the credential store{" "}
+            <strong>permanently deletes all saved passwords and passphrases</strong>. It cannot be
+            undone. You&apos;ll set a new master password and type each password again the next time
+            you connect.
           </p>
         }
-        confirmLabel={resetting ? "Resetting…" : "Delete all credentials"}
-        cancelLabel="Keep credentials"
+        confirmLabel={resetting ? "Resetting…" : "Delete all saved passwords"}
+        cancelLabel="Keep saved passwords"
         confirmVariant="danger"
         onConfirm={handleReset}
         onCancel={() => setConfirmReset(false)}

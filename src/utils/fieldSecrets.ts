@@ -23,6 +23,7 @@
  * missing secret is refused with a reason. Secrets go only into the returned
  * in-memory settings; they are never logged.
  */
+import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { resolveFieldSecrets as fetchStoredFieldSecrets, storeFieldSecrets } from "@/services/api";
 import type { FieldSecrets } from "@/services/api";
 import { t } from "@/i18n/catalog";
@@ -392,7 +393,11 @@ async function saveEntered(
   if (Object.keys(toSave.fields).length > 0) secrets.fields = toSave.fields;
   if (Object.keys(toSave.hops).length > 0) secrets.hops = toSave.hops;
   if (opts.connectionId === null || (!secrets.fields && !secrets.hops)) return;
-  await storeFieldSecrets(opts.connectionId, secrets, opts.sourceFile ?? null).catch((err) =>
+  // No storage chosen yet: ask where first (#5867); the prompt is closed by now.
+  const connectionId = opts.connectionId;
+  await saveAfterStorageChoice(() =>
+    storeFieldSecrets(connectionId, secrets, opts.sourceFile ?? null)
+  ).catch((err) =>
     frontendLog("field_secrets", `Failed to store field secrets: ${errorMessage(err)}`)
   );
 }

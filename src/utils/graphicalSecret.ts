@@ -14,6 +14,7 @@
  * The secret only ever goes into the in-memory tab config handed to this
  * computer's remote-desktop backend; it is never logged.
  */
+import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { resolveCredential, storeCredential } from "@/services/api";
 import { holdGraphicalSecretUntilConnected } from "@/utils/graphicalSecretOnceConnected";
 import type { RequestPassword } from "@/store/slices/passwordPromptSlice";
@@ -140,7 +141,12 @@ export async function resolveGraphicalSettings({
   const result = withPassword(entered);
   if (entered && answer.shouldSave) {
     // Held, not written: a typo must never replace or create the saved entry.
-    result.saveOnceConnected = () => storeCredential(credentialId, "password", entered, sourceFile);
+    // No storage chosen yet: ask where once it has connected (#5867).
+    result.saveOnceConnected = async () => {
+      await saveAfterStorageChoice(() =>
+        storeCredential(credentialId, "password", entered, sourceFile)
+      );
+    };
   }
   return result;
 }

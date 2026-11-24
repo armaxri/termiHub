@@ -18,6 +18,7 @@
  * Retry), never when a session starts; unattended paths never call it. The
  * secret is never logged.
  */
+import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { storeCredential } from "@/services/api";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import type { LinkedSecretRequest } from "@/types/generated/LinkedSecretRequest";
@@ -90,7 +91,12 @@ export async function askLinkedSshSecret(
     return {
       status: "entered",
       secret: entered,
-      saveOnceReady: () => storeCredential(connectionId, kind, entered, sourceFile),
+      // No storage chosen yet: ask where once the channel is up (#5867).
+      saveOnceReady: async () => {
+        await saveAfterStorageChoice(() =>
+          storeCredential(connectionId, kind, entered, sourceFile)
+        );
+      },
     };
   }
   return { status: "entered", secret: entered };

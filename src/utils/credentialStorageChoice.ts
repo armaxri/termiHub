@@ -59,6 +59,23 @@ export async function chooseCredentialStorageForSave(): Promise<{
 }
 
 /**
+ * Run `save` once a store is active (#5867). A connect-time password prompt
+ * ticked "Save password" before any storage choice exists does not open the
+ * chooser over itself: the box ticks locally, and the save path calls this
+ * once the connect has succeeded. It asks where to keep passwords then (the
+ * one-time chooser, purpose `"save"`) and saves into the chosen store.
+ * Dismissing the chooser, or choosing "none" in it, saves nothing and
+ * resolves `false`. Once a choice exists it just saves, as before.
+ */
+export async function saveAfterStorageChoice(save: () => Promise<void>): Promise<boolean> {
+  if (credentialStorageNeedsChoice(useAppStore.getState().credentialStoreStatus)) {
+    if (!(await ensureCredentialStorageForSave())) return false;
+  }
+  await save();
+  return true;
+}
+
+/**
  * The credential-store state a "save" control renders from: whether a store is
  * active, and whether ticking the control first asks where to store (#5187).
  */
