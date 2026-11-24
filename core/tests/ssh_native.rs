@@ -1437,8 +1437,40 @@ async fn native_05f_prompt_probe_recognises_the_login_shells_prompt() {
     reader.abort();
 }
 
+/// The `exit-status` the server sends for an interactive shell (with a PTY)
+/// that ran `line`, read off a plain SSH channel without termiHub's backend.
+async fn server_shell_exit_status(sshd: &common::NativeSshd, line: &str) -> Option<u32> {
+    let (session, _) = connect_and_authenticate(&sshd.key_config())
+        .await
+        .expect("key auth");
+    let mut channel = session.channel_open_session().await.expect("channel");
+    channel
+        .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+        .await
+        .expect("pty");
+    channel.request_shell(true).await.expect("shell");
+    channel.data(line.as_bytes()).await.expect("write");
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut status = None;
+        // To the close: OpenSSH sends the status after the EOF.
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                russh::ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+                russh::ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        status
+    })
+    .await
+    .expect("the plain shell channel never closed")
+}
+
 /// #5801: a shell the user exits with a status reports it from `exit_code`,
-/// once the session's output ended — OpenSSH sends it after the EOF.
+/// once the session's output ended — OpenSSH sends it after the EOF. On a
+/// Win32-OpenSSH host the reported status is the server's own: it runs a PTY
+/// shell under `conhost.exe --headless` and sends what that returned (`0`), so
+/// the expected value is read off a plain channel there, not assumed.
 #[tokio::test]
 async fn native_05m_exit_reports_the_remote_shell_status() {
     let sshd = require_native_sshd!();
@@ -1462,7 +1494,13 @@ async fn native_05m_exit_reports_the_remote_shell_status() {
     .await;
     assert!(ended.is_ok(), "the session never ended after `exit 5`");
 
-    assert_eq!(ssh.exit_code(), Some(5), "the remote shell's status");
+    let sent = server_shell_exit_status(&sshd, line).await;
+    eprintln!("[5801] the server sent exit-status {sent:?} for {line:?}");
+    if !cfg!(windows) {
+        assert_eq!(sent, Some(5), "the server's exit-status for `exit 5`");
+    }
+    let sent = sent.expect("the server sends an exit-status") as i32;
+    assert_eq!(ssh.exit_code(), Some(sent), "the remote shell's status");
     assert_eq!(
         ssh.end_cause(),
         Some(SessionEndCause::RemoteClosed),
@@ -1627,9 +1665,16 @@ async fn native_06b_sftp_upload_relaunch_trims_the_remote_partial() {
     )
     .await;
 
+    // First: a transfer that did not complete can leave the file open, and on
+    // Windows the read below then only says "Failure".
+    assert_eq!(
+        handle.state().tag(),
+        TransferStateTag::Completed,
+        "{:?}",
+        handle.snapshot()
+    );
     let landed = browser.read_file(&remote).await.expect("read the upload");
     browser.delete(&remote).await.expect("delete the upload");
-    assert_eq!(handle.state().tag(), TransferStateTag::Completed);
     assert_eq!(landed.len(), data.len(), "trimmed, then completed");
     assert!(
         landed[..checkpoint].iter().all(|&b| b == 0xEE),
