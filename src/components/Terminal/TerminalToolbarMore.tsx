@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
-import { CircleDot, MoreHorizontal, Play, Radio, ScrollText, Square } from "lucide-react";
+import { Check, CircleDot, MoreHorizontal, Play, Radio, ScrollText, Square } from "lucide-react";
 import {
   Button,
   DropdownMenuContent,
   DropdownMenuRoot,
   DropdownMenuTrigger,
+  MenuCheckboxItem,
   MenuItem,
+  MenuItemIndicator,
   MenuSeparator,
   Tooltip,
 } from "@/components/ui";
@@ -39,6 +41,12 @@ export interface TerminalToolbarMoreProps {
  * session logging, macro record and macro play are entries of one "…" menu,
  * each with its keyboard shortcut right-aligned (from the keybinding registry,
  * so it follows the platform and any user override).
+ *
+ * Session logging and macro recording are on/off states, so their rows are
+ * checkbox rows (#5849, R-066): the label stays put ("Log session output") and
+ * a tick plus `aria-checked` say whether it is on, instead of a row whose
+ * wording flips and says nothing while off. Every row keeps a tick column so
+ * the labels line up.
  *
  * An action that is running stays visible without opening the menu: it shows
  * as a labelled chip beside the layout icons ("Broadcasting", "Recording", …),
@@ -179,7 +187,7 @@ function MoreMenuItems({
   return (
     <>
       <MenuItem
-        icon={<Radio size={14} />}
+        icon={<RowIcon icon={<Radio size={14} />} />}
         shortcut={getActionAccelerator("toggle-broadcast")}
         onSelect={onToggleBroadcast}
         data-active={broadcastActive}
@@ -189,27 +197,33 @@ function MoreMenuItems({
           ? t("terminalToolbar.broadcast.stop")
           : t("terminalToolbar.broadcast.start")}
       </MenuItem>
-      <MenuItem
-        icon={<ScrollText size={14} />}
+      <MenuCheckboxItem
+        icon={<RowIcon toggle icon={<ScrollText size={14} />} />}
         shortcut={getActionAccelerator("toggle-session-logging")}
+        checked={loggingActive}
         onSelect={onToggleLogging}
         data-active={loggingActive}
         data-testid="terminal-view-toggle-logging"
       >
-        {loggingActive ? t("terminalToolbar.logging.stop") : t("terminalToolbar.logging.start")}
-      </MenuItem>
+        {t("terminalToolbar.logging.start")}
+      </MenuCheckboxItem>
       <MenuSeparator />
-      <MenuItem
-        icon={macroRecording ? <Square size={12} fill="currentColor" /> : <CircleDot size={14} />}
+      <MenuCheckboxItem
+        icon={<RowIcon toggle icon={<CircleDot size={14} />} />}
         shortcut={getActionAccelerator("toggle-macro-recording")}
+        checked={macroRecording}
         onSelect={onToggleRecording}
         data-active={macroRecording}
         data-testid="terminal-view-record-macro"
       >
-        {macroRecording ? t("terminalToolbar.record.stop") : t("terminalToolbar.record.start")}
-      </MenuItem>
+        {t("terminalToolbar.record.start")}
+      </MenuCheckboxItem>
       <MenuItem
-        icon={macroPlayback ? <Square size={12} fill="currentColor" /> : <Play size={14} />}
+        icon={
+          <RowIcon
+            icon={macroPlayback ? <Square size={12} fill="currentColor" /> : <Play size={14} />}
+          />
+        }
         shortcut={getActionAccelerator("play-macro")}
         onSelect={macroPlayback ? onStopPlayback : onPlayMacro}
         data-active={macroPlayback !== null}
@@ -222,6 +236,26 @@ function MoreMenuItems({
             })
           : t("terminalToolbar.play.start")}
       </MenuItem>
+    </>
+  );
+}
+
+/**
+ * A row's leading column: the tick slot, then the action's icon. The slot is
+ * filled only on a checked toggle row; on every other row it stays empty so
+ * all labels line up.
+ */
+function RowIcon({ icon, toggle = false }: { icon: ReactNode; toggle?: boolean }) {
+  return (
+    <>
+      <span className="ui-menu__indicator" aria-hidden>
+        {toggle && (
+          <MenuItemIndicator>
+            <Check size={14} />
+          </MenuItemIndicator>
+        )}
+      </span>
+      {icon}
     </>
   );
 }
