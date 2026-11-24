@@ -39,6 +39,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.monitoring import STOP_DESCRIPTION, menu_item_label
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 
@@ -142,7 +143,7 @@ class TestProductRunMonitoringDefaults(
             self.require("monitoring.defaults.remote")
             self.open_monitoring_dropdown()
             self.shot(label="menu")
-            label = self.driver.get_text("monitoring-stop").strip()
+            label = menu_item_label(self.driver.get_text("monitoring-stop"), STOP_DESCRIPTION)
             self.evidence(f"menu item {label!r}")
             assert label == STOP_LABEL, label
             menu = self.driver.get_text("monitoring-menu")

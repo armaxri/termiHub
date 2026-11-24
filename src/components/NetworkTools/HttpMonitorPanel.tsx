@@ -12,6 +12,7 @@ import {
   EmptyState,
 } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
+import { useAppStore } from "@/store/appStore";
 import { useListenerGroup } from "@/hooks/useTauriListener";
 import {
   networkHttpMonitorStart,
@@ -72,6 +73,7 @@ export function HttpMonitorPanel() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [monitors, setMonitors] = useState<HttpMonitorState[]>([]);
+  const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const [history, setHistory] = useState<HttpCheckResult[]>([]);
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,11 +113,14 @@ export function HttpMonitorPanel() {
     try {
       const list = await networkHttpMonitorList();
       setMonitors(list);
+      // Keep the sidebar's shared slice current too (#5814): a stop, pause or
+      // resume from this panel emits no check event the sidebar could react to.
+      setHttpMonitors(list);
     } catch (err) {
       frontendLog("http_monitor", `Failed to list monitors: ${errorMessage(err)}`);
       toast.error(`Failed to refresh monitors: ${errorMessage(err)}`);
     }
-  }, []);
+  }, [setHttpMonitors]);
 
   useEffect(() => {
     void loadMonitors();

@@ -24,6 +24,7 @@ from termihub_harness import (
     TerminalUi,
     unique_name,
 )
+from termihub_harness.ui.monitoring import STOP_DESCRIPTION, menu_item_label
 
 pytestmark = pytest.mark.integration
 
@@ -160,7 +161,8 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
         self.open_monitoring_dropdown()
         assert self.driver.exists("monitoring-stop")
         # It stops the readings, not the session, so it is not "Disconnect" (#5750).
-        assert self.driver.get_text("monitoring-stop").strip() == "Stop monitoring"
+        text = self.driver.get_text("monitoring-stop")
+        assert menu_item_label(text, STOP_DESCRIPTION) == "Stop monitoring", text
 
     # ── Hide on non-SSH tab ───────────────────────────────────────────────────
     def test_hides_on_settings_tab(self):

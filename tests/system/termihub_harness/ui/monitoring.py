@@ -13,6 +13,26 @@ from ..systemtest import DEFAULT_WAIT_TIMEOUT
 from .base import HarnessMixin
 
 
+#: Host-menu lifecycle items and the line under each (#5840); mirrors
+#: ``PAUSE_DESCRIPTION`` / ``STOP_DESCRIPTION`` in ``src/components/StatusBar/StatusBar.tsx``.
+PAUSE_LABEL = "Pause monitoring"
+PAUSE_DESCRIPTION = "Keep the numbers, stop updating them"
+STOP_LABEL = "Stop monitoring"
+STOP_DESCRIPTION = "Remove the numbers until you start it again"
+
+
+def menu_item_label(text: str, description: str) -> str:
+    """The label of a menu item whose text also carries its description line.
+
+    The bridge reads an element's whole text, so a described item reads as
+    label plus description (with or without a line break between them).
+    """
+    text = text.strip()
+    if description and text.endswith(description):
+        text = text[: -len(description)]
+    return text.strip()
+
+
 class MonitoringUi(HarnessMixin):
     """Read monitoring stats and drive the host refresh / stop-monitoring dropdown."""
 

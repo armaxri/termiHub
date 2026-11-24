@@ -8,6 +8,12 @@ import { isMetricUnavailable, statsSourceLabel } from "./monitoringAvailability"
 interface MonitoringHostInfoProps {
   /** The latest sample of the active monitor. */
   stats: SystemStats;
+  /**
+   * The name the user knows the host by — the host as configured, which heads
+   * the menu (#5840). The host's own resolved hostname is then shown muted, and
+   * only when it differs.
+   */
+  configuredHost?: string | null;
 }
 
 /** Placeholder rendered for a metric the sample could not supply (#3202). */
@@ -27,16 +33,22 @@ function formatUptime(seconds: number): string {
 function InfoRow({
   label,
   testId,
+  muted = false,
   children,
 }: {
   label: string;
   testId: string;
+  /** Secondary detail (e.g. the resolved hostname): value in the muted colour. */
+  muted?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="monitoring-menu__row">
       <span className="monitoring-menu__label">{label}</span>
-      <span className="monitoring-menu__value" data-testid={testId}>
+      <span
+        className={`monitoring-menu__value${muted ? " monitoring-menu__value--muted" : ""}`}
+        data-testid={testId}
+      >
         {children}
       </span>
     </div>
@@ -44,12 +56,12 @@ function InfoRow({
 }
 
 /**
- * Host-info block of the monitoring dropdown: host, OS, uptime and load, plus
+ * Host-info block of the monitoring dropdown: resolved hostname, OS, uptime and load, plus
  * — for a Docker-stats-sourced sample (#3202) — the source label, PID count and
  * block I/O. Metrics the sample lists as unavailable render "Unavailable"
  * instead of a misleading zero.
  */
-export function MonitoringHostInfo({ stats }: MonitoringHostInfoProps) {
+export function MonitoringHostInfo({ stats, configuredHost }: MonitoringHostInfoProps) {
   const source = statsSourceLabel(stats);
   const orUnavailable = (metric: StatsMetric, value: string) =>
     isMetricUnavailable(stats, metric) ? UNAVAILABLE : value;
@@ -63,9 +75,13 @@ export function MonitoringHostInfo({ stats }: MonitoringHostInfoProps) {
           {source}
         </InfoRow>
       )}
-      <InfoRow label="Host" testId="monitoring-info-host">
-        {stats.hostname}
-      </InfoRow>
+      {/* The menu is headed by the configured host (#5840); the machine's own
+          name is a muted detail, left out when it is the same name. */}
+      {stats.hostname && stats.hostname !== configuredHost && (
+        <InfoRow label="Hostname" testId="monitoring-info-host" muted={!!configuredHost}>
+          {stats.hostname}
+        </InfoRow>
+      )}
       <InfoRow label="OS" testId="monitoring-info-os">
         {orUnavailable("osInfo", stats.osInfo)}
       </InfoRow>
