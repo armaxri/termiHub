@@ -595,3 +595,7 @@ mod connect_tests;
 #[cfg(test)]
 #[path = "manager_description_tests.rs"]
 mod description_tests;
+
+#[cfg(test)]
+#[path = "manager_edit_tests.rs"]
+mod edit_tests;
