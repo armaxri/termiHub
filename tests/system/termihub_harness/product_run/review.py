@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from . import review_loop
+from .capture_guard import HARNESS_ERROR
 from .recorder import _write_atomic, safe_step_id
 from .review_images import contact_sheet_file
 from .review_schema import (
@@ -142,6 +143,16 @@ def _shot_entry(shot: dict[str, Any], step: dict[str, Any], run_dir: Path) -> di
     }
 
 
+def is_wrong_screen_failure(shot: dict[str, Any], step: dict[str, Any]) -> bool:
+    """A failure capture of a step the wrong-screen guard failed (#5857).
+
+    It shows a screen the step is not about, so it is kept for debugging but
+    never sent to a reviewer.
+    """
+    reason = str(step.get("reason") or "")
+    return shot.get("label") == "failure" and reason.startswith(HARNESS_ERROR)
+
+
 def group_shots(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
     """Screenshots of the run, grouped by surface in run order (with their step's grade)."""
     manifest = _read_json(run_dir / "shots" / "manifest.json") or {"shots": []}
@@ -153,7 +164,10 @@ def group_shots(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
             continue
         if not (run_dir / shot["file"]).is_file():
             continue
-        entry = _shot_entry(shot, steps.get(shot.get("step"), {}), run_dir)
+        step = steps.get(shot.get("step"), {})
+        if is_wrong_screen_failure(shot, step):
+            continue
+        entry = _shot_entry(shot, step, run_dir)
         groups.setdefault(surface_of(shot), []).append(entry)
     return groups
 

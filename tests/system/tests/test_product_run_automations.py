@@ -539,6 +539,7 @@ class TestProductRunAutomations(
             expect="the Edit workflow dialog at 800x600: Name, Description and Tags spaced "
             "apart, the Triggers chips fully visible above the Cancel/Save footer, the five "
             "steps as one-line summaries, a single scrollbar (#5637)",
+            expect_testid="workflow-editor-dialog",
         ):
             self.require("automations.workflow.create")
             self.driver.resize_window(800, 600)
@@ -547,8 +548,10 @@ class TestProductRunAutomations(
                 self.driver.click(f"workflow-edit-{self.ids['workflow']}")
                 self.wait(lambda: self.driver.exists("workflow-editor-dialog"),
                           what="the workflow editor")
-                self.shot(label="editor-800x600")
                 self._grade_workflow_editor_layout()
+                # The step's capture, at 800x600 with the editor open: the
+                # cancel below closes it (#5857).
+                self.shot()
                 self.cancel_clean_editor()
             finally:
                 self.driver.resize_window(1280, 800)

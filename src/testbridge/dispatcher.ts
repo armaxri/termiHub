@@ -797,6 +797,13 @@ export async function dispatchCommand(
       return ok("measureElement", measureElement(el, command.descendants));
     }
 
+    case "scrollIntoView": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("scrollIntoView", `no element with data-testid="${command.testId}"`);
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+      return ok("scrollIntoView");
+    }
+
     case "renderSettled": {
       try {
         return ok("renderSettled", await renderSettled(deps.root, command));

@@ -156,6 +156,25 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("scrollIntoView", () => {
+    it("scrolls the element into view with the nearest alignment (#5857)", async () => {
+      const { deps, container } = setup(`<section data-testid="group">Command marks</section>`);
+      const el = container.querySelector("section") as HTMLElement;
+      const scroll = vi.fn();
+      el.scrollIntoView = scroll;
+      const res = await dispatchCommand({ action: "scrollIntoView", testId: "group" }, deps);
+      expect(res).toEqual({ ok: true, action: "scrollIntoView" });
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest", inline: "nearest" });
+    });
+
+    it("fails for a missing element", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "scrollIntoView", testId: "ghost" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
+    });
+  });
+
   describe("measureElement", () => {
     /** Give an element a fake box and scroll/client widths (jsdom lays out nothing). */
     function fakeBox(el: Element, width: number, scrollWidth = width): void {

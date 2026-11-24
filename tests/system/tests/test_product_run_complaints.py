@@ -753,6 +753,7 @@ class TestProductRunComplaints(
             "when it opens (#5686, #5830)",
             expect="#5686/#5830 complaint: with the workflow editor open, no toast covers the "
             "dialog ('Add parameter…' visible) and the stale 'Ran workflow' toast is gone",
+            expect_testid=WORKFLOW_DIALOG,
         ):
             workflow = self._create_workflow(f"Toast clear {tag}", [f"echo PR_TOAST_DLG_{tag}"])
             self.ensure_terminal()
@@ -775,6 +776,8 @@ class TestProductRunComplaints(
                         f"toast {item['text'] or item['label']!r} {item['rect']} covers the "
                         f"open dialog {dialog}"
                     )
+                # Capture with the editor still open; the cancel closes it (#5857).
+                self.shot()
             finally:
                 self.cancel_clean_editor()
         self.close_all_tabs()

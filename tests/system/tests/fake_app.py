@@ -30,6 +30,7 @@ UNHANDLED_ACTIONS: frozenset[str] = frozenset(
         "getText",
         "getAttribute",
         "measureElement",
+        "scrollIntoView",
         "renderSettled",
         "sampleCanvas",
         "editorCursor",
