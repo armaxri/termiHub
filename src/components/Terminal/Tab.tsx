@@ -29,6 +29,7 @@ import {
   ListVideo,
   ArrowLeft,
   ArrowRight,
+  CircleDashed,
   SquareSplitHorizontal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -60,6 +61,7 @@ import { splitTabTitle, tabTooltipTitle } from "@/utils/tabTitleTruncation";
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
   connecting: "Connecting",
+  starting: "Waiting for the shell's first prompt",
   connected: "Connected",
   failed: "Connection failed",
   disconnected: "Disconnected",
@@ -76,6 +78,7 @@ const STATUS_LABELS: Record<TabStatus, string> = {
  */
 const STATUS_ICON: Record<TabStatus, LucideIcon> = {
   connecting: LoaderCircle,
+  starting: CircleDashed,
   connected: Circle,
   failed: TriangleAlert,
   disconnected: Unplug,

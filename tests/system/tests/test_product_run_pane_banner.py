@@ -185,12 +185,14 @@ class TestProductRunPaneBanner(
             try:
                 other = self._exited_connection_tab(unique_name("pr-banner-b"))
                 tab = self._exited_connection_tab(unique_name("pr-banner"))
-                self.wait(lambda: self.driver.exists(VIEW_SCROLLBACK), what="the disconnect card")
-                self.driver.click(VIEW_SCROLLBACK)
-                self.wait(lambda: self.driver.exists(BANNER), what="the view-mode banner")
-                # A toast on screen: closing the other exited tab offers Reopen.
+                # A toast on screen: closing the other exited tab offers Reopen. Close
+                # it first: its hidden pane carries the same end-strip test ids, and
+                # the bridge clicks the first match in the DOM.
                 self.close_tab(other)
                 self.wait(lambda: self._toast_items() or None, timeout=5.0, what="a toast")
+                self.wait(lambda: self.driver.exists(VIEW_SCROLLBACK), what="the end strip")
+                self.driver.click(VIEW_SCROLLBACK)
+                self.wait(lambda: self.driver.exists(BANNER), what="the view-mode banner")
                 time.sleep(0.3)  # let the stack lay out around keep-clear zones
                 banner = self.driver.measure_element(BANNER, "buttons")
                 text = self.driver.measure_element(BANNER, "text")
