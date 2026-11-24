@@ -3,9 +3,10 @@
  *
  * After a setup the tab stayed open as a plain shell, with no sign whether
  * the agent was installed. The tab now shows the session-end strip of #5908:
- * installed, failed, cancelled, or (Windows) commands sent, each with Close
- * tab. The outcome comes from the progress events and the exit code of the
- * shell the setup script ends, never from the terminal output.
+ * installed, failed, cancelled, or (a tab that cannot report) commands sent,
+ * each with Close tab. The outcome comes from the progress events and the
+ * exit code of the shell the setup ends (POSIX `exec`, Windows `exit`, #5946),
+ * never from the terminal output.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -75,10 +76,10 @@ describe("agentSetupTabNotice (#5865)", () => {
     });
   });
 
-  it("a Windows run only says its commands were sent, even after an exit", () => {
-    const windows = setupTab({ reportsExit: false, progress: { kind: "sent" } });
-    expect(agentSetupTabNotice(windows, undefined)).toEqual({ kind: "sent" });
-    expect(agentSetupTabNotice(windows, exit(0))).toEqual({ kind: "sent" });
+  it("a tab that cannot report only says its commands were sent, even after an exit", () => {
+    const silent = setupTab({ reportsExit: false, progress: { kind: "sent" } });
+    expect(agentSetupTabNotice(silent, undefined)).toEqual({ kind: "sent" });
+    expect(agentSetupTabNotice(silent, exit(0))).toEqual({ kind: "sent" });
   });
 });
 
@@ -172,7 +173,23 @@ describe("AgentSetupTabStrip (#5865)", () => {
     expect(document.activeElement).toBe(before);
   });
 
-  it("a cancelled setup and a Windows run say so", () => {
+  it("a Windows setup reads Installed or Failed from its commands' exit (#5946)", () => {
+    // The Windows commands are sent ("done"), then end the shell with `exit`.
+    useAgentSetupStatus
+      .getState()
+      .applyProgress("agent-1", "done", "Setup commands sent to terminal");
+    let strip = render(exit(0));
+    expect(strip.dataset.variant).toBe("agent-setup-installed");
+    expect(strip.textContent).toContain("Agent installed");
+    expect(strip.textContent).not.toContain("Setup commands sent");
+    strip = render(exit(1));
+    expect(strip.dataset.variant).toBe("agent-setup-failed");
+    expect(strip.textContent).toContain("Agent setup failed");
+    expect(q("agent-setup-tab-reason")?.textContent).toBe("The setup script exited with code 1.");
+    expect(q("agent-setup-tab-close-btn")).not.toBeNull();
+  });
+
+  it("a cancelled setup and a tab that cannot report say so", () => {
     useAgentSetupStatus.setState({
       tabs: { [TAB]: setupTab({ progress: { kind: "cancelled" } }) },
     });
