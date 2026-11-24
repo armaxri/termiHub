@@ -51,14 +51,12 @@ describe("getJumpHosts", () => {
 });
 
 describe("jumpHostTooltip", () => {
-  it("joins hops with arrows", () => {
-    expect(jumpHostTooltip([hop("edge"), hop("bastion")])).toBe("Via: edge → bastion");
+  it("names a single gateway (#5850)", () => {
+    expect(jumpHostTooltip([hop("bastion")])).toBe("Connects via bastion");
   });
 
-  it("appends the target name when provided", () => {
-    expect(jumpHostTooltip([hop("edge"), hop("bastion")], "db-server")).toBe(
-      "Via: edge → bastion → db-server"
-    );
+  it("joins a chain of gateways with arrows", () => {
+    expect(jumpHostTooltip([hop("edge"), hop("bastion")])).toBe("Connects via edge → bastion");
   });
 
   it("is empty for no hops", () => {

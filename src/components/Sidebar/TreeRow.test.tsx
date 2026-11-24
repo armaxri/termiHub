@@ -9,7 +9,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
+import {
+  TREE_CHEVRON_COLUMN_PX,
+  TreeFolderRow,
+  TreeItemRow,
+  treeItemPaddingLeft,
+  treeRowPaddingLeft,
+} from "./TreeRow";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -39,6 +45,14 @@ describe("treeRowPaddingLeft", () => {
   });
 });
 
+describe("treeItemPaddingLeft (#5855)", () => {
+  it("reserves the folder chevron column so item icons line up with folder icons", () => {
+    expect(TREE_CHEVRON_COLUMN_PX).toBe(20);
+    expect(treeItemPaddingLeft(0)).toBe(28);
+    expect(treeItemPaddingLeft(1)).toBe(44);
+  });
+});
+
 describe("TreeFolderRow", () => {
   it("renders the shared folder shell with tree ARIA, indent, and label", () => {
     act(() =>
@@ -64,6 +78,29 @@ describe("TreeFolderRow", () => {
     expect(btn.getAttribute("data-testid")).toBe("folder-toggle-f1");
     expect(btn.querySelector(".connection-tree__label")?.textContent).toBe("Servers");
     expect(btn.querySelector(".connection-tree__chevron")).not.toBeNull();
+  });
+
+  it("leads with the chevron, like the section headers (#5855)", () => {
+    act(() =>
+      root.render(
+        <TreeFolderRow
+          buttonRef={() => {}}
+          label="Servers"
+          expanded={true}
+          indentPx={8}
+          ariaLevel={1}
+          tabIndex={0}
+          testId="folder-toggle-f1"
+        />
+      )
+    );
+    const children = Array.from(treeitem().children);
+    expect(children[0].classList.contains("connection-tree__chevron")).toBe(true);
+    expect(children[0].getAttribute("data-testid")).toBe("folder-toggle-f1-chevron");
+    expect(children[0].getAttribute("aria-hidden")).toBe("true");
+    const labelIdx = children.findIndex((el) => el.classList.contains("connection-tree__label"));
+    expect(labelIdx).toBe(2);
+    expect(children[labelIdx].getAttribute("data-testid")).toBe("folder-toggle-f1-label");
   });
 
   it("applies the drop-over modifier and omits data-testid when not provided", () => {
@@ -125,6 +162,7 @@ describe("TreeFolderRow", () => {
     render();
     expect(treeitem().classList.contains("connection-tree__folder--contains-active")).toBe(false);
     expect(container.querySelector(".connection-tree__active-marker")).toBeNull();
+    expect(treeitem().hasAttribute("title")).toBe(false);
 
     render("Contains the active connection");
     const btn = treeitem();
@@ -132,6 +170,28 @@ describe("TreeFolderRow", () => {
     const marker = container.querySelector('[data-testid="folder-toggle-lab-active-marker"]');
     expect(marker?.getAttribute("role")).toBe("img");
     expect(marker?.getAttribute("aria-label")).toBe("Contains the active connection");
+    // #5855: the row explains the dot, which sits right after the name.
+    expect(btn.getAttribute("title")).toBe("Contains the active connection");
+    expect(marker?.previousElementSibling?.classList.contains("connection-tree__label")).toBe(true);
+    expect(marker?.nextElementSibling).toBeNull();
+  });
+
+  it("keeps a caller's own title over the contains-active tooltip", () => {
+    act(() =>
+      root.render(
+        <TreeFolderRow
+          buttonRef={() => {}}
+          label="Lab"
+          expanded={false}
+          indentPx={8}
+          ariaLevel={1}
+          tabIndex={0}
+          title="Custom"
+          containsActiveLabel="Contains the active connection"
+        />
+      )
+    );
+    expect(treeitem().getAttribute("title")).toBe("Custom");
   });
 });
 

@@ -61,7 +61,7 @@ class TestProductRunTypeIcons(
         with self.step(
             "type-icons.sidebar",
             "SSH, VNC and local-shell rows show three different type glyphs (#5622)",
-            expect="#5622: the SSH row shows a key (not Wi-Fi), the VNC row a "
+            expect="#5622/#5850: the SSH row shows a framed terminal (not Wi-Fi), the VNC row a "
             "remote-desktop screen (not '>_'), the local row the terminal '>_'",
         ):
             self.enable_experimental_features()
