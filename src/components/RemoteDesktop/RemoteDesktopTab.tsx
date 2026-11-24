@@ -577,7 +577,11 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         )}
 
       {!evicted && (
-        <RemoteDesktopCertPrompt prompt={session.certPrompt} onDecision={session.respondCert} />
+        <RemoteDesktopCertPrompt
+          prompt={session.certPrompt}
+          connectionName={title}
+          onDecision={session.respondCert}
+        />
       )}
 
       {!evicted && clipboardOpen && (

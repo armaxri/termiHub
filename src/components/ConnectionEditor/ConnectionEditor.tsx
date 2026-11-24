@@ -2338,7 +2338,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         onSaveAndClose={handleDialogSaveAndClose}
       />
 
-      <RemoteDesktopCertPrompt prompt={testCertPrompt} onDecision={handleTestCertDecision} />
+      <RemoteDesktopCertPrompt
+        prompt={testCertPrompt}
+        connectionName={name}
+        onDecision={handleTestCertDecision}
+      />
 
       <GitBashSetupDialog
         open={gitBashSetupOpen}
