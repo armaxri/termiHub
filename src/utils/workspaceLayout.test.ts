@@ -1054,3 +1054,122 @@ describe("imported workspace confirmations (#4434)", () => {
     expect(captured.tabs[0].inlineConfigUnconfirmed).toBe(true);
   });
 });
+
+describe("default titles of untitled workspace tabs (#5899)", () => {
+  const conns: SavedConnection[] = [
+    {
+      id: "conn-zsh",
+      name: "zsh",
+      folderId: null,
+      config: { type: "ssh", config: { host: "a" } },
+    },
+    {
+      id: "conn-dev",
+      name: "Dev Server",
+      folderId: null,
+      config: { type: "ssh", config: { host: "b" } },
+    },
+  ];
+  const agentContext = {
+    agents: [{ id: "agent-1", name: "pi", connected: true }],
+    definitions: {},
+  };
+
+  function titlesOf(node: PanelNode): string[] {
+    if (node.type === "leaf") return node.tabs.map((t) => t.title);
+    return node.children.flatMap(titlesOf);
+  }
+
+  it("numbers two untitled default-shell tabs after the shell, not 'Terminal'", () => {
+    const tree = buildPanelTreeFromWorkspace(leaf({}, {}), [], "zsh");
+    expect(titlesOf(tree)).toEqual(["zsh", "zsh 2"]);
+  });
+
+  it("names an untitled local inline config after its own shell", () => {
+    const tree = buildPanelTreeFromWorkspace(
+      leaf(
+        { inlineConfig: { type: "local", config: { shell: "/usr/bin/fish" } } },
+        { inlineConfig: { type: "local", config: { shell: "fish" } } },
+        { inlineConfig: { type: "local", config: {} } }
+      ),
+      [],
+      "pwsh"
+    );
+    expect(titlesOf(tree)).toEqual(["fish", "fish 2", "pwsh"]);
+  });
+
+  it("numbers across the panels of a split layout", () => {
+    const tree = buildPanelTreeFromWorkspace(
+      hsplit(leaf({}), vsplit(leaf({}), leaf({}))),
+      [],
+      "bash"
+    );
+    expect(titlesOf(tree)).toEqual(["bash", "bash 2", "bash 3"]);
+  });
+
+  it("numbers across every tab group of the workspace", () => {
+    const groups = buildTabGroupsFromWorkspace(
+      [
+        { name: "A", layout: leaf({}) },
+        { name: "B", layout: leaf({}, {}) },
+      ],
+      [],
+      "zsh"
+    );
+    expect(groups.flatMap((g) => titlesOf(g.rootPanel))).toEqual(["zsh", "zsh 2", "zsh 3"]);
+  });
+
+  it("never renames a titled tab and steps around its title", () => {
+    const tree = buildPanelTreeFromWorkspace(
+      leaf({}, { title: "zsh" }, { title: "Terminal" }, {}),
+      [],
+      "zsh"
+    );
+    expect(titlesOf(tree)).toEqual(["zsh 2", "zsh", "Terminal", "zsh 3"]);
+  });
+
+  it("keeps a saved connection's name and steps around it", () => {
+    const tree = buildPanelTreeFromWorkspace(
+      leaf({ connectionRef: "conn-dev" }, {}, { connectionRef: "conn-zsh" }),
+      conns,
+      "zsh"
+    );
+    expect(titlesOf(tree)).toEqual(["Dev Server", "zsh 2", "zsh"]);
+  });
+
+  it("names an untitled agent shell inline config '<agent> · <shell>'", () => {
+    const shellOnPi = {
+      inlineConfig: {
+        type: "remote-session",
+        config: { agentId: "agent-1", sessionType: "shell", shell: "/bin/bash" },
+      },
+    };
+    const tree = buildPanelTreeFromWorkspace(leaf(shellOnPi, shellOnPi), [], "zsh", agentContext);
+    expect(titlesOf(tree)).toEqual(["pi · bash", "pi · bash 2"]);
+  });
+
+  it("keeps 'Terminal' for an untitled inline config that is not a shell", () => {
+    const tree = buildPanelTreeFromWorkspace(
+      leaf(
+        { inlineConfig: { type: "ssh", config: { host: "x" } } },
+        {
+          inlineConfig: {
+            type: "remote-session",
+            config: { agentId: "unknown-agent", sessionType: "shell" },
+          },
+        }
+      ),
+      [],
+      "zsh",
+      agentContext
+    );
+    expect(titlesOf(tree)).toEqual(["Terminal", "Terminal"]);
+  });
+
+  it("round-trips: a captured default title is saved and reopens unchanged", () => {
+    const tree = buildPanelTreeFromWorkspace(leaf({}, {}), [], "zsh");
+    const captured = captureCurrentLayout(tree, []);
+    const reopened = buildPanelTreeFromWorkspace(captured, [], "bash");
+    expect(titlesOf(reopened)).toEqual(["zsh", "zsh 2"]);
+  });
+});

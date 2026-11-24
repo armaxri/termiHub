@@ -31,6 +31,7 @@ from termihub_harness.product_run.tab_names import (
     local_tab_name_problems,
     numbered,
     shell_tab_name,
+    workspace_titles,
 )
 
 #: How many local terminals the grade opens.
@@ -83,6 +84,27 @@ def test_grade_old_agent_tab_fails():
     assert any("does not name the agent" in p for p in problems)
     assert any("want 'pi · bash'" in p for p in problems)
     assert any("'local'" in p for p in agent_tab_name_problems("local session", "pi", "bash"))
+
+
+def test_grade_untitled_workspace_tabs_are_numbered_by_shell():
+    # #5899: two untitled workspace tabs open as "zsh", "zsh 2", not "Terminal".
+    titles = workspace_titles([None, None], "zsh")
+    assert titles == ["zsh", "zsh 2"]
+    assert local_tab_name_problems(titles, "zsh") == []
+
+
+def test_grade_workspace_keeps_saved_titles():
+    assert workspace_titles([None, "zsh", "Terminal", None], "/bin/zsh") == [
+        "zsh 2",
+        "zsh",
+        "Terminal",
+        "zsh 3",
+    ]
+
+
+def test_grade_old_workspace_terminal_tabs_fail():
+    problems = local_tab_name_problems(["Terminal", "Terminal"], "zsh")
+    assert any("want ['zsh', 'zsh 2']" in p for p in problems)
 
 
 def test_grade_reopen_toast_names_the_numbered_tab():
