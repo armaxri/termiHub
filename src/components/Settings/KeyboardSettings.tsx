@@ -323,12 +323,10 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const handleReassign = useCallback(
     (binding: KeyBinding, combo: KeyCombo | KeyCombo[], other: KeyBinding) => {
       const snapshot = getOverrides();
-      // Release it from every action that holds it (normally just `other`).
-      for (
-        let owner = checkConflict(combo, binding.action), n = 0;
-        owner && n < bindings.length;
-        n++
-      ) {
+      // Release it from every action that holds it (normally just `other`);
+      // bounded by the number of actions, so it always terminates.
+      let owner = checkConflict(combo, binding.action);
+      for (let left = bindings.length; owner && left > 0; left--) {
         releaseBindingFrom(owner, combo);
         owner = checkConflict(combo, binding.action);
       }
