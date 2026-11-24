@@ -12,7 +12,7 @@ vi.mock("@/hooks/useElementWidth", () => ({
 }));
 
 import { TooltipProvider } from "@/components/ui";
-import { openFileBrowserMoreMenu } from "@/test/fileBrowserMenu";
+import { openFileBrowserMenuButton, openFileBrowserMoreMenu } from "@/test/fileBrowserMenu";
 import { FileBrowserActions, fitInlineActions, type FileBrowserAction } from "./FileBrowserActions";
 import { buildFileBrowserActions, type FileBrowserActionsInput } from "./fileBrowserHeaderActions";
 
@@ -47,16 +47,17 @@ function input(overrides: Partial<FileBrowserActionsInput> = {}): FileBrowserAct
     onNewFolder: noop,
     onCopyPath: noop,
     sort: { key: "name", dir: "asc" },
+    sortInMenu: false,
     onSort: noop,
     ...overrides,
   };
 }
 
-function render(actions: FileBrowserAction[]) {
+function render(actions: FileBrowserAction[], folder?: string) {
   act(() => {
     root.render(
       <TooltipProvider>
-        <FileBrowserActions actions={actions} />
+        <FileBrowserActions actions={actions} folder={folder} />
       </TooltipProvider>
     );
   });
@@ -113,12 +114,7 @@ describe("fitInlineActions", () => {
 describe("buildFileBrowserActions", () => {
   it("keeps only the most-used local actions as icons", () => {
     render(buildFileBrowserActions(input()));
-    expect(inlineIds()).toEqual([
-      "file-browser-up",
-      "file-browser-refresh",
-      "file-browser-new-file",
-      "file-browser-new-folder",
-    ]);
+    expect(inlineIds()).toEqual(["file-browser-up", "file-browser-refresh", "file-browser-new"]);
   });
 
   it("adds Upload for a remote session and Paste only while the clipboard holds entries", () => {
@@ -126,8 +122,7 @@ describe("buildFileBrowserActions", () => {
     expect(inlineIds()).toEqual([
       "file-browser-up",
       "file-browser-refresh",
-      "file-browser-new-file",
-      "file-browser-new-folder",
+      "file-browser-new",
       "file-browser-upload",
       "file-browser-paste",
     ]);
@@ -144,11 +139,10 @@ describe("buildFileBrowserActions", () => {
     render(buildFileBrowserActions(input()));
     await openFileBrowserMoreMenu();
     expect(menuLabels()).toEqual([
-      "Follow terminal folder",
+      "Go to terminal folder",
       "Copy path",
       "Open this folder in terminal",
       "Paste",
-      "Sort by",
       "Show hidden files",
       "Open dual-pane transfer view",
       "Reveal in Finder",
@@ -157,10 +151,8 @@ describe("buildFileBrowserActions", () => {
     const menu = document.querySelector('[data-testid="file-browser-more-menu"]')!;
     expect(menu.getAttribute("role")).toBe("menu");
     expect(menu.querySelectorAll('[role="separator"]').length).toBe(4);
-    // The sort choice is a sub-menu, reachable at every width (#5671).
-    expect(
-      document.querySelector('[data-testid="file-browser-sort-menu"]')?.getAttribute("role")
-    ).toBe("menuitem");
+    // The column headers sort while they all show: no second control (#5832).
+    expect(document.querySelector('[data-testid="file-browser-sort-menu"]')).toBeNull();
     // The hidden-files toggle is a checkbox entry.
     const toggle = document.querySelector('[data-testid="file-browser-toggle-hidden"]')!;
     expect(toggle.getAttribute("role")).toBe("menuitemcheckbox");
@@ -181,12 +173,16 @@ describe("buildFileBrowserActions", () => {
 
   it("collapses the lowest-priority icons into the menu at a narrow width", async () => {
     // Fallback icon 28px + 2px gaps: trigger + Up + Refresh + one more = 118.
-    width.value = 118;
+    // The first unpinned icon also brings the divider (1px + 2px gap): 121.
+    width.value = 121;
     render(buildFileBrowserActions(input({ mode: "session" })));
     expect(inlineIds()).toEqual(["file-browser-up", "file-browser-refresh", "file-browser-upload"]);
     await openFileBrowserMoreMenu();
-    // Collapsed icons lead the menu, in display order.
-    expect(menuLabels().slice(0, 2)).toEqual(["New file", "New folder"]);
+    // Collapsed icons lead the menu: "New" becomes a sub-menu of File / Folder.
+    expect(menuLabels()[0]).toBe("New");
+    expect(
+      document.querySelector('[data-testid="file-browser-new"]')?.getAttribute("aria-haspopup")
+    ).toBe("menu");
   });
 
   it("keeps Up and Refresh inline however narrow the row is", () => {
@@ -255,7 +251,7 @@ describe("file sort sub-menu (#5671)", () => {
 
   it("sorts by modified or size and flips the direction", async () => {
     const onSort = vi.fn();
-    render(buildFileBrowserActions(input({ onSort })));
+    render(buildFileBrowserActions(input({ onSort, sortInMenu: true })));
     await openSortMenu();
     const modified = document.querySelector<HTMLElement>(
       '[data-testid="file-browser-sort-by-modified"]'
@@ -280,5 +276,139 @@ describe("file sort sub-menu (#5671)", () => {
       document.querySelector<HTMLElement>('[data-testid="file-browser-sort-by-size"]')!.click();
     });
     expect(onSort).toHaveBeenLastCalledWith({ key: "size", dir: "asc" });
+  });
+});
+
+describe("file browser menu state and grouping (#5832)", () => {
+  /** Let a menu close and a deferred entry (`opensField`) run. */
+  const settle = () =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+  const el = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+  it("groups New file / New folder as one 'New ▾' menu button", async () => {
+    const onNewFile = vi.fn();
+    const onNewFolder = vi.fn();
+    render(buildFileBrowserActions(input({ onNewFile, onNewFolder })));
+    const trigger = el("file-browser-new")!;
+    expect(trigger.getAttribute("aria-label")).toBe("New");
+    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(el("file-browser-new-file")).toBeNull();
+    await openFileBrowserMenuButton("file-browser-new");
+    const menu = el("file-browser-new-menu")!;
+    expect(
+      Array.from(menu.querySelectorAll('[role="menuitem"]')).map((m) => m.textContent?.trim())
+    ).toEqual(["File", "Folder"]);
+    await act(async () => {
+      el("file-browser-new-file")!.click();
+    });
+    await settle();
+    expect(onNewFile).toHaveBeenCalledTimes(1);
+    await openFileBrowserMenuButton("file-browser-new");
+    await act(async () => {
+      el("file-browser-new-folder")!.click();
+    });
+    await settle();
+    expect(onNewFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers New ▸ File / Folder as a sub-menu once 'New' collapses into '…'", async () => {
+    const onNewFolder = vi.fn();
+    width.value = 20;
+    render(buildFileBrowserActions(input({ onNewFolder })));
+    await openFileBrowserMenuButton("file-browser-new");
+    expect(el("file-browser-new-menu")).not.toBeNull();
+    await act(async () => {
+      el("file-browser-new-folder")!.click();
+    });
+    await settle();
+    expect(onNewFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus on the field 'New ▸ File' opens, inline or from '…'", async () => {
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    for (const w of [null, 20]) {
+      width.value = w;
+      render(buildFileBrowserActions(input({ onNewFile: () => field.focus() })));
+      await openFileBrowserMenuButton("file-browser-new");
+      await act(async () => {
+        el("file-browser-new-file")!.click();
+      });
+      await settle();
+      expect(document.activeElement, String(w)).toBe(field);
+      field.blur();
+    }
+  });
+
+  it("sets the pinned navigation apart from the create / upload icons", () => {
+    render(buildFileBrowserActions(input({ mode: "session" })));
+    const row = el("file-browser-actions")!;
+    const kids = Array.from(row.children).map((c) =>
+      c.classList.contains("file-browser__actions-divider")
+        ? "|"
+        : ((c as HTMLElement).dataset.testid ?? "")
+    );
+    expect(kids.slice(0, 5)).toEqual([
+      "file-browser-up",
+      "file-browser-refresh",
+      "|",
+      "file-browser-new",
+      "file-browser-upload",
+    ]);
+    width.value = 20;
+    render(buildFileBrowserActions(input({ mode: "session" })));
+    expect(row.querySelector(".file-browser__actions-divider")).toBeNull();
+  });
+
+  it("ticks 'Show hidden files' only while it is on", async () => {
+    render(buildFileBrowserActions(input({ showHiddenFiles: true })));
+    await openFileBrowserMoreMenu();
+    const on = el("file-browser-toggle-hidden")!;
+    expect(on.getAttribute("role")).toBe("menuitemcheckbox");
+    expect(on.getAttribute("aria-checked")).toBe("true");
+    expect(on.querySelector(".file-browser__menu-tick svg")).not.toBeNull();
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(buildFileBrowserActions(input({ showHiddenFiles: false })));
+    await openFileBrowserMoreMenu();
+    const off = el("file-browser-toggle-hidden")!;
+    expect(off.getAttribute("aria-checked")).toBe("false");
+    // The tick slot keeps its room, so the label does not shift.
+    expect(off.querySelector(".file-browser__menu-tick")).not.toBeNull();
+    expect(off.querySelector(".file-browser__menu-tick svg")).toBeNull();
+  });
+
+  it("names 'Go to terminal folder' as a command, not a toggle", async () => {
+    render(buildFileBrowserActions(input()));
+    await openFileBrowserMoreMenu();
+    const cwd = el("file-browser-go-to-cwd")!;
+    expect(cwd.getAttribute("role")).toBe("menuitem");
+    expect(cwd.textContent?.trim()).toBe("Go to terminal folder");
+  });
+
+  it("opens the menu with a muted line naming the folder it acts on", async () => {
+    render(buildFileBrowserActions(input()), "/home/user/projects");
+    await openFileBrowserMoreMenu();
+    const menu = el("file-browser-more-menu")!;
+    const heading = el("file-browser-more-menu-folder")!;
+    expect(menu.firstElementChild).toBe(heading);
+    expect(heading.textContent?.trim()).toBe("projects");
+    expect(heading.getAttribute("title")).toBe("/home/user/projects");
+    expect(heading.getAttribute("role") ?? "").not.toMatch(/^menuitem/);
+    expect(menu.querySelectorAll('[role="separator"]').length).toBe(5);
+  });
+
+  it("shows the current column and direction on 'Sort by'", async () => {
+    render(
+      buildFileBrowserActions(input({ sortInMenu: true, sort: { key: "size", dir: "desc" } }))
+    );
+    await openFileBrowserMoreMenu();
+    const trigger = el("file-browser-sort-menu")!;
+    expect(trigger.getAttribute("aria-label")).toBe("Sort by: Size, descending");
+    expect(el("file-browser-sort-current")?.textContent).toBe("Size");
+    expect(el("file-browser-sort-current")?.querySelector(".lucide-chevron-down")).not.toBeNull();
   });
 });
