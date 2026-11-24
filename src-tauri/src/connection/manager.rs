@@ -702,6 +702,31 @@ impl ConnectionManager {
         Ok(true)
     }
 
+    /// Stamp `at_ms` as the last successful connect of the main-store saved
+    /// connection `connection_id` (#5940). Edits the stored entry in place —
+    /// every other field, the unknown on-disk ones included, is untouched — and
+    /// persists only when the stamp moves forward. Returns whether it changed.
+    ///
+    /// An id the main store does not hold — an ad-hoc session, a connection
+    /// deleted since, or one in an external connection file — is a no-op:
+    /// external files are often shared or version-controlled, so a connect never
+    /// rewrites them; their connections rank by session history instead.
+    pub fn record_connection_used(&self, connection_id: &str, at_ms: u64) -> Result<bool> {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        self.sync_from_disk(&mut store);
+        let Some(conn) = store.connections.iter_mut().find(|c| c.id == connection_id) else {
+            return Ok(false);
+        };
+        if conn.last_used_at.is_some_and(|prev| prev >= at_ms) {
+            return Ok(false);
+        }
+        conn.last_used_at = Some(at_ms);
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist the connection's last-used time")?;
+        Ok(true)
+    }
+
     /// Delete a remote agent by ID.
     pub fn delete_agent(&self, id: &str) -> Result<()> {
         // Best-effort credential cleanup: if the store is locked (e.g. master-password
@@ -748,6 +773,8 @@ impl ConnectionManager {
         // folder + name and deduplicate sibling names (which may rename it or a
         // sibling). A move by drag-and-drop only updates `folder_id`, not `id`.
         let previous = connections.iter().find(|c| c.id == connection.id).cloned();
+        // The editor's copy may predate a connect: never move the stamp back.
+        let connection = keep_newest_last_used(connection, previous.as_ref());
         let placement = place_connection(
             connections,
             folders,
@@ -1087,6 +1114,7 @@ impl ConnectionManager {
                 let scope = self.external_scope(&file_path);
                 let pruning = self.hop_prune.lock().unwrap_or_else(|e| e.into_inner());
                 let previous = self.read_connection(&conn_id, Some(&file_path)).ok();
+                let connection = keep_newest_last_used(connection, previous.as_ref());
                 let mut conn =
                     prepare_for_storage(connection, Some(&scope), &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
@@ -1623,6 +1651,20 @@ fn recompute_descendant_ids(
 
 /// Parse an import JSON string and return a summary of its contents
 /// without actually performing the import.
+/// `incoming` with the newer of its own and `stored`'s last-used time (#5940).
+///
+/// A save carries the frontend's copy of the connection, which may have been
+/// taken before a connect stamped it; the backend owns the stamp, so a save
+/// never moves it back (nor drops it when the copy has none).
+pub(crate) fn keep_newest_last_used(
+    mut incoming: SavedConnection,
+    stored: Option<&SavedConnection>,
+) -> SavedConnection {
+    let stored_at = stored.and_then(|s| s.last_used_at);
+    incoming.last_used_at = incoming.last_used_at.max(stored_at);
+    incoming
+}
+
 pub fn preview_import_json(json: &str) -> Result<ImportPreview> {
     let export: EncryptedConnectionExport =
         serde_json::from_str(json).context("Failed to parse import data")?;
@@ -3448,3 +3490,7 @@ mod secret_fields_tests;
 #[cfg(test)]
 #[path = "manager_agent_install_path_tests.rs"]
 mod agent_install_path_tests;
+
+#[cfg(test)]
+#[path = "manager_last_used_tests.rs"]
+mod last_used_tests;

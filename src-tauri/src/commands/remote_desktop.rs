@@ -296,6 +296,12 @@ pub async fn remote_desktop_connect(
         manager
             .bind_saved_connection(&session_id, &connection_id)
             .await;
+        // A successful connect stamps the saved connection's last use (#5940).
+        let stamp_app = app_handle.clone();
+        let stamp_id = connection_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::commands::connection::record_connection_used(&stamp_app, &stamp_id);
+        });
         crate::files::transfer::relaunch_auto::spawn_resume_waiting(
             &app_handle,
             crate::files::transfer::relaunch_auto::WaitTrigger::GraphicalSessionActive(
