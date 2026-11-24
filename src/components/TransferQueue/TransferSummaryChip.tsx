@@ -1,10 +1,12 @@
 import { useEffect } from "react";
-import { ArrowDownUp } from "lucide-react";
-import { Tooltip } from "@/components/ui";
+import { ArrowDownUp, FolderOpen } from "lucide-react";
+import { Button, Tooltip } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
+import { getBasename } from "@/utils/paths";
 import { showTransferSummary } from "./transferSummaryVisibility";
+import { latestRevealableDownload, revealDownload, revealDownloadLabel } from "./revealDownload";
 import "./TransferQueue.css";
 
 /** Props for {@link TransferSummaryChip}. */
@@ -37,6 +39,11 @@ function summarizeSessionTransfers(entries: TransferEntry[]): string {
  * used to repeat that list for the browsed session, which squeezed the file
  * list; it now shows only this summary of the session's transfers (read from
  * the same authoritative `transfers` region), and clicking it opens the panel.
+ *
+ * It is the one place a finished transfer is reported (#5834): the "Downloaded
+ * …" toast and the status-bar count stay away while it is on screen. Once
+ * nothing is running, the download that just finished offers "Reveal in Finder"
+ * (worded per platform) beside the line.
  */
 export function TransferSummaryChip({ sessionId }: TransferSummaryChipProps) {
   const { queue } = useProjectedTransfers();
@@ -56,6 +63,9 @@ export function TransferSummaryChip({ sessionId }: TransferSummaryChipProps) {
   const pending = entries.some((e) => !isTerminalTransferState(e.state));
   const failed = !pending && entries.some((e) => e.state === "failed");
   const tone = pending ? "pending" : failed ? "failed" : "settled";
+  const revealPath = pending ? null : (latestRevealableDownload(entries)?.localPath ?? null);
+  const revealName = revealPath ? getBasename(revealPath) : "";
+  const revealLabel = revealDownloadLabel();
 
   return (
     <div className="transfer-summary-chip__bar">
@@ -70,6 +80,21 @@ export function TransferSummaryChip({ sessionId }: TransferSummaryChipProps) {
           <span className="transfer-summary-chip__label">{summarizeSessionTransfers(entries)}</span>
         </button>
       </Tooltip>
+      {revealPath && (
+        <Tooltip content={`${revealLabel}: ${revealName}`} side="top">
+          <Button
+            variant="ghost"
+            size="xs"
+            className="transfer-summary-chip__reveal"
+            data-testid="file-browser-transfer-reveal"
+            aria-label={`${revealLabel}: ${revealName}`}
+            icon={<FolderOpen size={12} aria-hidden="true" />}
+            onClick={() => revealDownload(revealPath)}
+          >
+            {revealLabel}
+          </Button>
+        </Tooltip>
+      )}
     </div>
   );
 }
