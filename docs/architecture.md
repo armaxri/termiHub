@@ -1683,6 +1683,12 @@ a persisted storage mode or an active store counts as chosen (`storage_choice_ma
 users are never asked. The frontend's whole-document settings save never changes the storage
 mode or the choice. Both stay changeable under Settings → Security → Credential storage.
 
+A later switch there that moves or deletes saved passwords asks first (#5837): the confirmation
+names how many and from where, using `count_saved_credentials`, which lists the current store's
+keys without reading a secret. A switch with nothing saved runs at once. An OS Keychain count
+comes from termiHub's key index, which can miss items saved before the index existed, so an
+empty keychain count still asks before a switch to Don't save passwords.
+
 #### Credential vault export / import
 
 Settings → Security → **Credential vault backup** exports every saved credential to an encrypted

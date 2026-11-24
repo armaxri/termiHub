@@ -1,9 +1,14 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import type { CredentialStorageMode, SwitchCredentialStoreResult } from "@/types/credential";
-import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
+import type { CredentialStorageMode } from "@/types/credential";
+import {
+  countSavedCredentials,
+  switchCredentialStore,
+  changeMasterPassword,
+  setAutoLockTimeout,
+} from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, RadioGroup, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
@@ -15,8 +20,19 @@ import { MasterPasswordSetupFields } from "@/components/CredentialStorage/Master
 import { credentialStorageRadioOptions } from "@/components/CredentialStorage/credentialStorageOptions";
 import { validateNewMasterPassword } from "@/utils/masterPasswordValidation";
 import { errorMessage } from "@/utils/errorMessage";
-import { tf } from "@/i18n/catalog";
-import { switchConfirmCopy } from "./credentialSwitchCopy";
+import { CREDENTIAL_STORAGE_CHOICES } from "@/utils/credentialStorageCopy";
+import {
+  needsSwitchConfirm,
+  remainingTitle,
+  switchConfirmCopy,
+  switchProgressLabel,
+  switchResultSummary,
+  trustedSavedCount,
+  SWITCH_RESULT_FADE_MS,
+  SWITCH_RESULT_VISIBLE_MS,
+  type SavedPasswordCount,
+  type SwitchResultView,
+} from "./credentialSwitchCopy";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
 interface SecuritySettingsProps {
@@ -38,79 +54,20 @@ function storageModeTestId(mode: CredentialStorageMode): string {
   return STORAGE_MODE_TEST_IDS.find((o) => o.mode === mode)?.testId ?? mode;
 }
 
-/**
- * Short name of a storage mode for sentences in the switch dialogs and
- * migration messages ("Switch to None?"), where the option label would not read.
- */
-const STORAGE_MODE_NAMES: Record<CredentialStorageMode, string> = {
-  os_keychain: "OS Keychain",
-  master_password: "Master password",
-  none: "None",
-};
-
-/** Human-readable label for a credential storage mode, used in dialog copy. */
+/** The option card's name of a storage mode ("Don't save passwords", #5685). */
 function modeLabel(mode: CredentialStorageMode): string {
-  return STORAGE_MODE_NAMES[mode] ?? mode;
-}
-
-/** Pluralize "credential" for a count. */
-function credentials(count: number): string {
-  return tf(count === 1 ? "credentialSwitch.count.one" : "credentialSwitch.count.other", {
-    count,
-  });
-}
-
-/** A completed switch plus the modes involved, for truthful result messaging. */
-interface MigrationResultView extends SwitchCredentialStoreResult {
-  targetMode: CredentialStorageMode;
-  targetLabel: string;
-  previousLabel: string;
+  return CREDENTIAL_STORAGE_CHOICES.find((c) => c.mode === mode)?.label ?? mode;
 }
 
 /**
- * Human-readable summary of a completed store switch, driven by the backend's
- * structured `status` (#2839) — never inferred from the free-text warnings. A
- * partial or failed migration must not read as a clean success. A failed switch
- * was rolled back, so it reads "nothing changed"; a switch to `none` removes the
- * credentials, so it says "removed", never "migrated" (#3323).
+ * How many passwords the current store holds, for the switch confirmation
+ * (#5837). Unknown (`null`) when the count cannot be read.
  */
-function migrationSummary(view: MigrationResultView): string {
-  const { status, migratedCount, removedCount, failedCount, targetLabel, previousLabel } = view;
-  const target = targetLabel;
-  const previous = previousLabel;
-  const removing = view.targetMode === "none";
-  const done = removing ? removedCount : migratedCount;
-  const total = done + failedCount;
-  switch (status) {
-    case "partial":
-      return removing
-        ? tf("credentialSwitch.removed.partial", {
-            target,
-            previous,
-            removed: removedCount,
-            total,
-            failed: credentials(failedCount),
-          })
-        : tf("credentialSwitch.migrated.partial", {
-            target,
-            previous,
-            migrated: migratedCount,
-            total,
-            failed: credentials(failedCount),
-          });
-    case "failed":
-      return tf(removing ? "credentialSwitch.removed.failed" : "credentialSwitch.migrated.failed", {
-        target,
-        previous,
-        credentials: credentials(failedCount),
-      });
-    case "success":
-    default:
-      if (done === 0) return tf("credentialSwitch.switched", { target });
-      return tf(
-        removing ? "credentialSwitch.removed.success" : "credentialSwitch.migrated.success",
-        { target, credentials: credentials(done) }
-      );
+async function readSavedCount(from: CredentialStorageMode): Promise<SavedPasswordCount> {
+  try {
+    return trustedSavedCount(from, await countSavedCredentials());
+  } catch {
+    return null;
   }
 }
 
@@ -149,7 +106,14 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const [migrationResult, setMigrationResult] = useState<MigrationResultView | null>(null);
+  const [migrationResult, setMigrationResult] = useState<SwitchResultView | null>(null);
+  const [resultFading, setResultFading] = useState(false);
+  /** Saved passwords in the current store, read when a switch starts (#5837). */
+  const [savedCount, setSavedCount] = useState<SavedPasswordCount>(null);
+  /** The mode being switched to: the cards show it at once while the switch runs (#5837). */
+  const [pendingMode, setPendingMode] = useState<CredentialStorageMode | null>(null);
+  /** A switch that needed no confirmation failed; shown under the cards. */
+  const [directSwitchError, setDirectSwitchError] = useState("");
 
   const [changingPassword, setChangingPassword] = useState(false);
   const [currentPasswordInput, setCurrentPasswordInput] = useState("");
@@ -158,7 +122,11 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const [changePasswordError, setChangePasswordError] = useState("");
 
   const currentMode = credentialStoreStatus?.mode ?? "none";
-  const switchCopy = confirmSwitch ? switchConfirmCopy(currentMode, confirmSwitch) : null;
+  const shownMode = pendingMode ?? currentMode;
+  const switchCopy = confirmSwitch
+    ? switchConfirmCopy(currentMode, confirmSwitch, savedCount)
+    : null;
+  const progressLabel = switchProgressLabel(currentMode, pendingMode ?? currentMode, savedCount);
 
   const show = (field: string): boolean => !visibleFields || visibleFields.has(field);
 
@@ -168,8 +136,25 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     setNewPassword("");
     setConfirmPassword("");
     setPasswordError("");
+    setDirectSwitchError("");
     setMigrationResult(null);
   }, []);
+
+  // A clean success is news for a few seconds, then fades out (#5837). A
+  // partial or failed switch stays until the next switch: it needs action.
+  useEffect(() => {
+    setResultFading(false);
+    if (migrationResult?.status !== "success") return;
+    const fade = window.setTimeout(() => setResultFading(true), SWITCH_RESULT_VISIBLE_MS);
+    const clear = window.setTimeout(
+      () => setMigrationResult(null),
+      SWITCH_RESULT_VISIBLE_MS + SWITCH_RESULT_FADE_MS
+    );
+    return () => {
+      window.clearTimeout(fade);
+      window.clearTimeout(clear);
+    };
+  }, [migrationResult]);
 
   const resetChangePasswordDialog = useCallback(() => {
     setChangingPassword(false);
@@ -180,16 +165,49 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   }, []);
 
   /**
+   * Runs the switch to `targetMode`. The cards show the target at once and a
+   * progress line says what is happening (#5837); a failure puts the cards
+   * back on the current mode and rethrows for the caller to show.
+   */
+  const runSwitch = useCallback(
+    async (targetMode: CredentialStorageMode, masterPassword?: string) => {
+      const previousMode = currentMode;
+      setSwitching(true);
+      setPendingMode(targetMode);
+      setPasswordError("");
+      setDirectSwitchError("");
+      setMigrationResult(null);
+      try {
+        const result = await switchCredentialStore(targetMode, masterPassword);
+        setMigrationResult({ ...result, targetMode, previousMode });
+        setConfirmSwitch(null);
+        setMasterPasswordSetup(false);
+        setNewPassword("");
+        setConfirmPassword("");
+        await loadCredentialStoreStatus();
+        // The outcome is confirmed once, by the inline result banner
+        // (status/alert role by outcome) — never a toast on top of it (#5629).
+      } finally {
+        setPendingMode(null);
+        setSwitching(false);
+      }
+    },
+    [currentMode, loadCredentialStoreStatus]
+  );
+
+  /**
    * Begins a storage-mode switch. Switching *away* from an existing master-password
    * store touches encrypted data (it must be decrypted to migrate/discard), so when
    * that store is locked this routes through the shared unlock flow first — the same
-   * gate the change-password flow uses (audit G4) — and only opens the confirm once
-   * the unlock succeeds. Without this gate the destructive switch would proceed against
-   * a locked store with no password check.
+   * gate the change-password flow uses (audit G4).
+   *
+   * A switch that moves or deletes saved passwords asks first, naming how many and
+   * from where (#5837); one with nothing saved switches at once. A master password
+   * always shows its setup form.
    */
   const handleModeSelect = useCallback(
     async (mode: CredentialStorageMode) => {
-      if (mode === currentMode) return;
+      if (mode === currentMode || switching) return;
       if (
         currentMode === "master_password" &&
         mode !== "master_password" &&
@@ -199,21 +217,37 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         if (!unlocked) return;
       }
       resetSwitchDialogs();
+      // Nothing is stored without storage, so the count needs no backend
+      // call there and the setup form opens in the same tick.
+      const count = currentMode === "none" ? 0 : await readSavedCount(currentMode);
+      setSavedCount(count);
       if (mode === "master_password") {
         setMasterPasswordSetup(true);
         setConfirmSwitch(mode);
-      } else {
+        return;
+      }
+      if (needsSwitchConfirm(currentMode, mode, count)) {
         setConfirmSwitch(mode);
+        return;
+      }
+      try {
+        await runSwitch(mode);
+      } catch (err) {
+        setDirectSwitchError(errorMessage(err));
       }
     },
-    [currentMode, credentialStoreStatus?.status, requestUnlock, resetSwitchDialogs]
+    [
+      currentMode,
+      switching,
+      credentialStoreStatus?.status,
+      requestUnlock,
+      resetSwitchDialogs,
+      runSwitch,
+    ]
   );
 
   const handleConfirmSwitch = useCallback(async () => {
     if (!confirmSwitch) return;
-    const targetMode = confirmSwitch;
-    const previousMode = currentMode;
-
     if (confirmSwitch === "master_password") {
       // Reject (rather than return) on invalid input so the submit Button's async
       // lifecycle returns to idle instead of flashing success; the inline
@@ -224,36 +258,14 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         throw new Error(validationError);
       }
     }
-
-    setSwitching(true);
-    setPasswordError("");
     try {
-      const result = await switchCredentialStore(
-        confirmSwitch,
-        confirmSwitch === "master_password" ? newPassword : undefined
-      );
-      const view: MigrationResultView = {
-        ...result,
-        targetMode,
-        targetLabel: modeLabel(targetMode),
-        previousLabel: modeLabel(previousMode),
-      };
-      setMigrationResult(view);
-      setConfirmSwitch(null);
-      setMasterPasswordSetup(false);
-      setNewPassword("");
-      setConfirmPassword("");
-      await loadCredentialStoreStatus();
-      // The outcome is confirmed once, by the inline migration-result banner
-      // (status/alert role by outcome) — never a toast on top of it (#5629).
+      await runSwitch(confirmSwitch, confirmSwitch === "master_password" ? newPassword : undefined);
     } catch (err) {
       // Shown inline in the still-open confirmation; no toast on top (#5629).
       setPasswordError(errorMessage(err));
       throw err; // keep the async Button in its error path (no success flash)
-    } finally {
-      setSwitching(false);
     }
-  }, [confirmSwitch, currentMode, newPassword, confirmPassword, loadCredentialStoreStatus]);
+  }, [confirmSwitch, newPassword, confirmPassword, runSwitch]);
 
   const handleChangePassword = useCallback(async () => {
     // Reject (rather than return) on invalid input so the submit Button's async
@@ -347,7 +359,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           <RadioGroup
             variant="cards"
             className="settings-panel__radio-group"
-            value={currentMode}
+            value={shownMode}
             onValueChange={(v) => void handleModeSelect(v as CredentialStorageMode)}
             disabled={switching}
             aria-label="Storage mode"
@@ -379,7 +391,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   disabled={switching}
                   onClick={handleConfirmSwitch}
                   errorToast={false}
-                  pendingLabel="Switching…"
+                  pendingLabel={progressLabel}
                   data-testid="master-password-confirm-btn"
                 >
                   {switchCopy?.action}
@@ -410,7 +422,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   onClick={handleConfirmSwitch}
                   disabled={switching}
                   errorToast={false}
-                  pendingLabel="Switching…"
+                  pendingLabel={progressLabel}
                   data-testid="confirm-switch-confirm-btn"
                 >
                   {switchCopy?.action}
@@ -419,21 +431,37 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             </div>
           )}
 
+          {switching && !confirmSwitch && (
+            <p
+              className="settings-panel__description"
+              role="status"
+              data-testid="storage-switch-progress"
+            >
+              {progressLabel}
+            </p>
+          )}
+
+          {directSwitchError && (
+            <p
+              className="settings-panel__inline-dialog-error"
+              role="alert"
+              data-testid="storage-switch-error"
+            >
+              {directSwitchError}
+            </p>
+          )}
+
           {migrationResult && (
             <div
-              className={`settings-panel__migration-result settings-panel__migration-result--${migrationResult.status}`}
+              className={`settings-panel__migration-result settings-panel__migration-result--${migrationResult.status}${resultFading ? " settings-panel__migration-result--fading" : ""}`}
               data-testid="migration-result"
               data-status={migrationResult.status}
               role={migrationResult.status === "success" ? "status" : "alert"}
             >
-              <p>{migrationSummary(migrationResult)}</p>
+              <p>{switchResultSummary(migrationResult)}</p>
               {migrationResult.remaining.length > 0 && (
                 <>
-                  <p>
-                    {tf("credentialSwitch.remaining.title", {
-                      previous: migrationResult.previousLabel,
-                    })}
-                  </p>
+                  <p>{remainingTitle(migrationResult.previousMode)}</p>
                   <ul
                     className="settings-panel__migration-warnings"
                     data-testid="migration-remaining"
@@ -456,7 +484,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         </div>
       )}
 
-      {currentMode === "master_password" && (
+      {shownMode === "master_password" && currentMode === "master_password" && (
         <>
           {show("credentialAutoLockMinutes") && (
             <div className="settings-panel__section">

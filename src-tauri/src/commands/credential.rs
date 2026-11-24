@@ -276,6 +276,27 @@ pub fn get_credential_store_status(
     Ok(build_status_info(&manager))
 }
 
+/// Count the credentials termiHub has recorded in the current store (#5837).
+///
+/// Settings ▸ Security names this count in the confirmation before a store
+/// switch that moves or deletes them, and skips the confirmation when there
+/// is nothing to move or delete. It only lists keys and never reads a secret:
+/// the OS Keychain lists them from termiHub's key index, so no keychain prompt
+/// appears. That index can miss items saved before it existed, so the
+/// frontend treats an OS Keychain count of 0 as unknown. A locked
+/// master-password store fails, and the frontend then shows the confirmation
+/// without a count.
+#[tauri::command]
+pub fn count_saved_credentials(manager: State<'_, Arc<CredentialManager>>) -> Result<u32, String> {
+    count_listed(manager.list_keys().map(|keys| keys.len()))
+}
+
+/// The listed-key count as the command returns it (see [`count_saved_credentials`]).
+fn count_listed(listed: anyhow::Result<usize>) -> Result<u32, String> {
+    let count = listed.map_err(|e| e.to_string())?;
+    Ok(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
 /// Error returned to the frontend by [`unlock_credential_store`].
 ///
 /// The `corrupted` flag (G8, #1144) lets the UnlockDialog choose the right
@@ -1902,5 +1923,24 @@ mod tests {
         assert!(result.rolled_back);
         assert_eq!(mgr.get_mode(), StorageMode::None);
         assert!(!dir.path().join("credentials.enc").exists());
+    }
+
+    // --- #5837: the switch confirmation names how many credentials it touches. ---
+
+    #[test]
+    fn count_listed_returns_the_number_of_listed_keys() {
+        assert_eq!(count_listed(Ok(0)), Ok(0));
+        assert_eq!(count_listed(Ok(3)), Ok(3));
+    }
+
+    #[test]
+    fn count_listed_reports_a_locked_store_as_an_error() {
+        let err = count_listed(Err(anyhow::anyhow!("Store is locked"))).unwrap_err();
+        assert!(err.contains("locked"), "{err}");
+    }
+
+    #[test]
+    fn count_listed_saturates_instead_of_wrapping() {
+        assert_eq!(count_listed(Ok(usize::MAX)), Ok(u32::MAX));
     }
 }
