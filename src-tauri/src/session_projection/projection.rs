@@ -35,7 +35,8 @@
 //! | `session.reconnectFailed`   | `{ sessionId, error? }`     | the attempt failed (back off or give up)       |
 //! | `session.cancelReconnect`   | `{ sessionId }`             | user stopped the retry loop                    |
 //! | `session.reconnectTrigger`  | `{ sessionId, error? }`     | record/clear the reconnect-trigger cause       |
-//! | `session.exited`            | `{ sessionId, reason, code? }` | record the exit cause; a *clean* exit also folds status → disconnected (#2637) |
+//! | `session.exited`            | `{ sessionId, reason, code?, endCause? }` | record the exit cause (and the link's end cause, #5831); a *clean* exit also folds status → disconnected (#2637) |
+//! | `session.reconnectNow`      | `{ sessionId }`             | Retry now: run the waiting attempt at once (#5831) |
 //! | `session.remove`            | `{ sessionId }`             | session/tab gone; drop it from the region      |
 //!
 //! The SM-003 `evicted` fold ([`fold_agent_session_evicted`]) and its explicit
@@ -60,6 +61,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use termihub_core::connection::SessionEndCause;
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::commands::projection::ProjectionState;
@@ -626,6 +628,18 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
     });
 
     let handle = app_handle.clone();
+    registry.route("session.reconnectNow", move |intent, _projector| {
+        let id = required_str(intent, "sessionId")?;
+        // Retry now (#5831): collapse the waiting backoff window. The attempt
+        // itself runs on the timer's task — it advances the store and
+        // publishes — so this route publishes nothing of its own.
+        if let Some(driver) = handle.try_state::<Arc<ReconnectTimerDriver>>() {
+            (*driver).retry_now(&id);
+        }
+        Ok(Vec::new())
+    });
+
+    let handle = app_handle.clone();
     registry.route("session.reconnectTrigger", move |intent, projector| {
         let store = store_of(&handle)?;
         let id = required_str(intent, "sessionId")?;
@@ -640,6 +654,7 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         let exit = required_exit(intent)?;
         let clean = exit.reason == TerminalExitReason::Clean;
         store.set_exit(&id, Some(exit));
+        store.set_end_cause(&id, optional_end_cause(intent));
         let produced = publish_sessions(projector, &store);
         // A dropped / killed exit is a pure metadata write (like
         // `session.reconnectTrigger`): its status is folded by the accompanying
@@ -744,6 +759,16 @@ fn required_exit(intent: &Intent) -> Result<TerminalExit, (String, String)> {
     // `code` is optional: absent or explicit `null` both mean "no code known".
     let code = intent.payload.get("code").and_then(Value::as_i64);
     Ok(TerminalExit { reason, code })
+}
+
+/// The optional `endCause` of a `session.exited` intent (#5831): the backend's
+/// `terminal-exit` `end_cause` (`remote_closed` | `io_error` | `timeout` |
+/// `device_gone`). Absent, `null` or an unknown value all mean "no cause".
+fn optional_end_cause(intent: &Intent) -> Option<SessionEndCause> {
+    intent
+        .payload
+        .get("endCause")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
 #[cfg(test)]

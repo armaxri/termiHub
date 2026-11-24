@@ -15,6 +15,7 @@
  * when the transport cannot subscribe) the hook reports no active loop.
  */
 
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { onReconnectCommandForTabId } from "@/store/appStore";
@@ -151,6 +152,9 @@ export interface ProjectedSessionLifecycleSlice {
   /** Why the session's sandboxed plugin process failed, while it is ended
    * (#4188) — the plugin crash overlay's source ({@link effectivePluginExit}). */
   pluginExit: PluginSessionExit | undefined;
+  /** Why the session's link last ended on its own (#5831): kept while the
+   * reconnect loop runs and after it gives up, unlike {@link exitInfo}. */
+  endCause: SessionEndCause | undefined;
 }
 
 /**
@@ -216,6 +220,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
       exited: effectiveExited(p),
       filesOnly: effectiveFilesOnly(p),
       pluginExit: effectivePluginExit(p),
+      endCause: p?.endCause,
     };
   }, [projected]);
 }

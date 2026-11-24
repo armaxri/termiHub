@@ -45,6 +45,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use termihub_core::connection::SessionEndCause;
 
 use termihub_core::reconnect_backoff::{
     policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
@@ -213,6 +214,15 @@ pub struct SessionLifecycle {
     /// (re)connect, like [`exit`](Self::exit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin_exit: Option<PluginSessionExit>,
+    /// Why the session's link last ended on its own (#5831): the server closed
+    /// it, the network failed, it timed out or the device went away. Recorded
+    /// with the exit by [`SessionLifecycleStore::set_end_cause`] from the
+    /// backend's `terminal-exit` `end_cause`. Unlike [`exit`](Self::exit) it is
+    /// **kept** while the reconnect loop runs and after it gives up, so the
+    /// reconnect strip and the final overlay can still say why the session
+    /// dropped. Cleared by a fresh connect and a successful (re)connect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_cause: Option<SessionEndCause>,
 }
 
 impl SessionLifecycle {
@@ -229,6 +239,7 @@ impl SessionLifecycle {
             exit: None,
             files_only: false,
             plugin_exit: None,
+            end_cause: None,
         }
     }
 }
@@ -385,6 +396,7 @@ impl SessionLifecycleStore {
             // never carries an exit for a connected tab.
             entry.exit = None;
             entry.plugin_exit = None;
+            entry.end_cause = None;
         }
     }
 
@@ -856,6 +868,24 @@ impl SessionLifecycleStore {
             entry.files_only = false;
         }
         entry.exit = exit;
+    }
+
+    /// Record why the session's link ended (#5831), alongside its
+    /// [`set_exit`](Self::set_exit): `None` for an exit the backend gave no
+    /// cause for (a process exit, a user kill), which also clears the cause of
+    /// an earlier drop. A no-op for an unknown session.
+    pub fn set_end_cause(&self, session_id: &str, cause: Option<SessionEndCause>) {
+        let mut inner = self.lock();
+        let changed = match inner.sessions.get_mut(session_id) {
+            Some(entry) if entry.end_cause != cause => {
+                entry.end_cause = cause;
+                true
+            }
+            _ => false,
+        };
+        if changed {
+            inner.dirty.insert(session_id.to_string());
+        }
     }
 
     /// The session's sandboxed plugin process failed (#4188): record why, for
