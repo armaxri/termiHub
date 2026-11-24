@@ -27,6 +27,18 @@ function sonnerAction(action: ToastAction | undefined) {
   };
 }
 
+/** `action` with `forget` run before its own handler (it closes the toast). */
+function forgetting(action: ToastAction | undefined, forget: () => void): ToastAction | undefined {
+  if (!action) return action;
+  return {
+    ...action,
+    onClick: () => {
+      forget();
+      action.onClick();
+    },
+  };
+}
+
 /** Options accepted by the toast helpers. A thin, intentional subset of sonner. */
 export interface ToastOptions {
   /** Secondary line rendered under the title. */
@@ -221,8 +233,10 @@ function showTransient(spec: TransientSpec): string | number {
     id,
     description: spec.opts.description,
     duration: spec.opts.duration,
-    action: sonnerAction(spec.opts.action),
-    cancel: sonnerAction(spec.opts.cancel),
+    // Pressing either button closes the toast without sonner's onDismiss, so
+    // forget it here too: otherwise it would count as on screen for good.
+    action: sonnerAction(forgetting(spec.opts.action, forget)),
+    cancel: sonnerAction(forgetting(spec.opts.cancel, forget)),
     testId: spec.opts.testId,
     onDismiss: forget,
     onAutoClose: forget,
@@ -316,6 +330,12 @@ export interface ToastApi {
    * "Saved" confirmation never sits beside the error (#5618).
    */
   dismissTransient(): void;
+  /**
+   * Whether the success/info toast `id` is still on screen, or queued to show
+   * while the stack is docked (#5715). False once it auto-closed or was
+   * dismissed (by its close button, a dialog opening, or by id).
+   */
+  isActive(id: string | number): boolean;
 }
 
 /**
@@ -398,5 +418,9 @@ export const toast: ToastApi = {
     transientIds.clear();
     deferredTransient.clear();
     for (const id of ids) dismissById(id);
+  },
+
+  isActive(id) {
+    return shownTransient.has(id) || deferredTransient.has(id);
   },
 };
