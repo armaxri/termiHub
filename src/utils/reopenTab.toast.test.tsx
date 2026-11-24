@@ -141,4 +141,15 @@ describe("reopen toast when the closed tab's keep-clear notice goes with it (#59
     expect(reopenToasts()).toHaveLength(1);
     expect(reopenToasts()[0].textContent).toContain("Closed “exited-1”");
   });
+
+  it("shows the coalesced toast while a keep-clear box still docks the stack", async () => {
+    act(() => showReopenToast(payload("a")));
+    await tick();
+    act(() => showReopenToast(payload("b")));
+    await tick();
+    act(() => showReopenToast(payload("c")));
+    await waitFor(() => (reopenToasts()[0]?.textContent ?? "").includes("Closed 3 tabs"));
+    expect(document.documentElement.classList.contains("th-toast-docked")).toBe(true);
+    expect(reopenToasts()).toHaveLength(1);
+  });
 });

@@ -282,6 +282,21 @@ describe("toast API", () => {
       );
     });
 
+    it("never holds back an undo offer (a toast with a button, #5904)", () => {
+      const undo = { label: "Reopen", onClick: () => {} };
+      toast.success("Closed “up”", { id: "undo-shown", action: undo });
+      vi.clearAllMocks();
+      setTransientDeferred(true);
+      expect(dismiss).not.toHaveBeenCalled();
+
+      toast.success("Closed “web”", { id: "undo-new", action: undo });
+      expect(success).toHaveBeenCalledWith(
+        "Closed “web”",
+        expect.objectContaining({ id: sonnerId("undo-new") })
+      );
+      expect(toast.isActive("undo-new")).toBe(true);
+    });
+
     it("keeps errors and loading toasts visible while deferring", () => {
       setTransientDeferred(true);
       toast.error("Save failed");
