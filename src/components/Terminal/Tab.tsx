@@ -5,7 +5,7 @@ import {
   Settings as SettingsIcon,
   FileEdit,
   SquarePen,
-  ScrollText,
+  FileText,
   ArrowLeftRight,
   Puzzle,
   Columns2,
@@ -262,7 +262,7 @@ export function Tab({
     tab.contentType === "settings"
       ? SettingsIcon
       : tab.contentType === "log-viewer"
-        ? ScrollText
+        ? FileText
         : tab.contentType === "editor"
           ? FileEdit
           : tab.contentType === "connection-editor"

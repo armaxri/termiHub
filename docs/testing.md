@@ -1855,10 +1855,11 @@ migrates the password into the OS store.
 ### Shell-integration artifacts in the harness (#4963)
 
 [`test_shell_integration_artifacts.py`](../tests/system/tests/test_shell_integration_artifacts.py)
-seeds four shell-integration entries, clicks **Settings → File manager integration →
-Install**, and reads back what the OS file manager reads
+seeds four shell-integration entries, clicks **Settings → Open in termiHub → Add to
+Finder** (File Explorer / your file manager on the other platforms), and reads back
+what the OS file manager reads
 ([`termihub_harness/shell_artifacts.py`](../tests/system/termihub_harness/shell_artifacts.py)).
-**Uninstall** must then remove every artifact and leave foreign entries
+**Remove from Finder** must then remove every artifact and leave foreign entries
 byte-for-byte.
 
 | OS      | Asserted artifacts                                                                                                                       | Isolation                                                   | Replaces  |

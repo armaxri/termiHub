@@ -24,7 +24,6 @@ import {
   Server,
   ArrowLeftRight,
   Route,
-  FileInput,
   Link,
   Square,
   Puzzle,
@@ -104,6 +103,7 @@ import {
 } from "./useConnectionFolderRename";
 import { TreeFolderRow, TreeItemRow, treeItemPaddingLeft, treeRowPaddingLeft } from "./TreeRow";
 import { SidebarGroupHeader } from "./SidebarGroupHeader";
+import { ConnectionsNewMenu } from "./ConnectionsNewMenu";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 import { isImeComposing } from "@/utils/imeComposition";
@@ -1727,37 +1727,16 @@ export function ConnectionList() {
             onToggle={() => setLocalCollapsed((v) => !v)}
             headerTestId="sidebar-group-header-connections"
             toggleTestId="connection-list-group-toggle"
-            actionsLabel="Connection actions"
-            actions={[
-              {
-                id: "new-folder",
-                label: "New folder",
-                icon: <FolderPlus size={16} />,
-                onClick: () => {
+            actions={
+              <ConnectionsNewMenu
+                onNewConnection={handleNewConnection}
+                onNewFolder={() => {
                   setLocalCollapsed(false);
                   setCreatingFolder(true);
-                },
-                iconOnly: true,
-                testId: "connection-list-new-folder",
-              },
-              {
-                id: "new-connection",
-                label: "New connection",
-                icon: <Plus size={16} />,
-                onClick: handleNewConnection,
-                iconOnly: true,
-                primary: true,
-                testId: "connection-list-new-connection",
-              },
-              {
-                id: "import",
-                label: "Import connections…",
-                icon: <FileInput size={16} />,
-                onClick: handleOpenImportSettings,
-                iconOnly: true,
-                testId: "connection-list-open-import-settings",
-              },
-            ]}
+                }}
+                onImport={handleOpenImportSettings}
+              />
+            }
           />
           {!localCollapsed && (
             <div className="connection-list__filter">

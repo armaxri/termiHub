@@ -14,6 +14,7 @@ import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarn
 import { TooltipProvider } from "@/components/ui";
 import { flushAsync } from "@/test/flushAsync";
 import type { RemoteAgentDefinition } from "@/types/connection";
+import { openConnectionsNewMenu, pickConnectionsNewMenuItem } from "@/test/connectionsNewMenu";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -57,12 +58,6 @@ async function render(root: Root) {
   await flushAsync();
 }
 
-function click(el: Element) {
-  act(() => {
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-}
-
 setupConnectionsRegion();
 setupSettingsRegion();
 
@@ -85,11 +80,12 @@ describe("ConnectionList — import entry point (#5195)", () => {
 
   it("no longer renders the dedicated SSH-config and CSV import actions", async () => {
     await render(root);
+    await openConnectionsNewMenu();
 
-    expect(container.querySelector('[data-testid="connection-list-import-ssh-config"]')).toBeNull();
-    expect(container.querySelector('[data-testid="connection-list-import-csv"]')).toBeNull();
+    expect(document.querySelector('[data-testid="connection-list-import-ssh-config"]')).toBeNull();
+    expect(document.querySelector('[data-testid="connection-list-import-csv"]')).toBeNull();
     expect(
-      container.querySelectorAll('[data-testid="connection-list-open-import-settings"]')
+      document.querySelectorAll('[data-testid="connection-list-open-import-settings"]')
     ).toHaveLength(1);
   });
 
@@ -97,12 +93,11 @@ describe("ConnectionList — import entry point (#5195)", () => {
     const openSettingsTab = vi.fn();
     useAppStore.setState({ openSettingsTab });
     await render(root);
+    await openConnectionsNewMenu();
 
-    const entry = container.querySelector(
-      '[data-testid="connection-list-open-import-settings"]'
-    ) as HTMLButtonElement;
-    expect(entry.getAttribute("aria-label")).toBe("Import connections…");
-    click(entry);
+    const entry = document.querySelector('[data-testid="connection-list-open-import-settings"]');
+    expect(entry?.textContent).toBe("Import connections…");
+    await pickConnectionsNewMenuItem("connection-list-open-import-settings");
     expect(openSettingsTab).toHaveBeenCalledWith({ category: "import" });
   });
 });

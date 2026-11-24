@@ -14,6 +14,10 @@ so every output line stays readable and selectable. A process exit reads
 "Session ended" with Restart; only a dropped link says "Session disconnected".
 The live grade uses no servers: a local shell exits with code 3, another with 0.
 
+The plugin crash notice (#5916) is the same strip; its grade
+(:func:`plugin_exit_problems`) is app-free only, as the product run has no
+crashing plugin fixture yet.
+
 The ``test_grade_*`` functions grade fixed measurements without an app and run
 in the normal lane.
 """
@@ -36,6 +40,7 @@ from termihub_harness import (
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.session_end_strip import (
     end_copy_problems,
+    plugin_exit_problems,
     strip_layout_problems,
 )
 
@@ -110,6 +115,42 @@ def test_grade_a_dropped_link_keeps_the_network_wording():
     assert end_copy_problems(
         text="Session ended", cause="network", buttons=["Reconnect"], local=False
     )
+
+
+def _plugin(**overrides: Any) -> list[str]:
+    args: dict[str, Any] = {
+        "variant": "plugin-exit",
+        "classes": ["terminal-disconnect-strip", "terminal-disconnect-strip--error"],
+        "text": "The plugin stopped unexpectedly “Acme” ran in its own sandboxed process. "
+        "Plugin process exited: signal SIGSEGV Restart session Close tab",
+        "buttons": ["Restart session", "Close tab"],
+        "keep_clear": 1,
+    }
+    args.update(overrides)
+    return plugin_exit_problems(**args)
+
+
+def test_grade_the_plugin_crash_strip_passes():
+    # #5916: the plugin crash notice is the same top strip.
+    assert _plugin() == []
+
+
+def test_grade_the_old_full_pane_plugin_overlay_fails():
+    problems = _plugin(
+        variant=None,
+        classes=["terminal-disconnect-overlay", "terminal-disconnect-overlay--error"],
+        keep_clear=0,
+    )
+    assert any("not 'plugin-exit'" in p for p in problems)
+    assert any("not the session-end strip" in p for p in problems)
+    assert any("full-pane overlay" in p for p in problems)
+    assert any("keep-clear" in p for p in problems)
+
+
+def test_grade_a_plugin_strip_without_its_actions_fails():
+    problems = _plugin(buttons=["Restart session"], keep_clear=2)
+    assert any("'Close tab'" in p for p in problems)
+    assert any("2 toast keep-clear zones" in p for p in problems)
 
 
 # ── live grade ────────────────────────────────────────────────────────────

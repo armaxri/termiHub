@@ -150,7 +150,8 @@ class TestPortableMarker(_PortableChecks):
         self.open_settings_category("shell-integration")
         self.wait(
             lambda: self.driver.exists("shell-integration-status-text")
-            and self.driver.get_text("shell-integration-status-text") == "Registered",
+            and self.driver.get_attribute("shell-integration-status-text", "data-registered")
+            == "true",
             what="the seeded shell-integration registration",
         )
         assert not self.driver.exists("shell-integration-stale-badge")

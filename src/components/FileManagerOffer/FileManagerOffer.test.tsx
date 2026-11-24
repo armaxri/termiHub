@@ -106,7 +106,7 @@ describe("FileManagerOffer (#5753)", () => {
     vi.clearAllMocks();
   });
 
-  it("offers Install and Not now in one persistent toast once nothing crashed", async () => {
+  it("offers Add to your file manager and Not now in one persistent toast once nothing crashed", async () => {
     await render();
     crashChecks();
     const opts = offerOptions();
@@ -114,9 +114,23 @@ describe("FileManagerOffer (#5753)", () => {
     expect(opts.id).toBe(FILE_MANAGER_OFFER_TOAST_ID);
     expect(opts.testId).toBe("file-manager-offer");
     expect(opts.duration).toBe(Infinity);
-    expect(opts.action?.label).toBe("Install");
+    // One vocabulary with Settings (#5845): the button says what the status says.
+    expect(opts.action?.label).toBe("Add to your file manager");
     expect(opts.cancel?.label).toBe("Not now");
-    expect(opts.description).toContain("Settings › File manager integration");
+    expect(opts.description).toContain("Settings ▸ Open in termiHub");
+    expect(opts.description).not.toContain("›");
+  });
+
+  it("says where to find it later once the user presses Not now (#5845)", async () => {
+    await render();
+    crashChecks();
+    const opts = offerOptions();
+    act(() => opts.cancel?.onClick());
+    expect(mockedToast.info).toHaveBeenCalledTimes(2);
+    const [message, laterOpts] = mockedToast.info.mock.calls[1];
+    expect(message).toBe("You can add it any time in Settings ▸ Open in termiHub.");
+    expect(laterOpts?.testId).toBe("file-manager-offer-later");
+    expect(laterOpts?.action).toBeUndefined();
   });
 
   it("persists that it was shown, so a later launch never offers it again", async () => {

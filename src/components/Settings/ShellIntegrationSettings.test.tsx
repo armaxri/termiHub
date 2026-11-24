@@ -76,16 +76,20 @@ describe("ShellIntegrationSettings", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the registration status card as Not registered", async () => {
+  it("renders the status card as not added to the file manager (#5845)", async () => {
     await render();
     expect(byTestId("shell-integration-status-card")).not.toBeNull();
-    expect(byTestId("shell-integration-status-text")?.textContent).toBe("Not registered");
+    expect(byTestId("shell-integration-status-text")?.textContent).toBe(
+      "Not added to your file manager"
+    );
   });
 
-  it("shows Registered when the status reports it", async () => {
+  it("shows Added when the status reports it is registered", async () => {
     mockedApi.getShellIntegrationStatus.mockResolvedValue(status({ registered: true }));
     await render();
-    expect(byTestId("shell-integration-status-text")?.textContent).toBe("Registered");
+    expect(byTestId("shell-integration-status-text")?.textContent).toBe(
+      "Added to your file manager"
+    );
   });
 
   it("surfaces the staleness banner when the executable moved", async () => {
@@ -101,45 +105,45 @@ describe("ShellIntegrationSettings", () => {
     expect(byTestId("shell-integration-stale-banner")).not.toBeNull();
   });
 
-  it("offers only Install when nothing is registered (#5616)", async () => {
+  it("offers only Add when nothing is registered (#5616, #5845)", async () => {
     await render();
     const primary = byTestId("shell-integration-reinstall");
-    expect(primary?.textContent).toBe("Install");
+    expect(primary?.textContent).toBe("Add to your file manager");
     expect(byTestId("shell-integration-uninstall")).toBeNull();
   });
 
-  it("offers Reinstall / update and Uninstall once registered (#5616)", async () => {
+  it("offers Update and Remove once registered (#5616, #5845)", async () => {
     mockedApi.getShellIntegrationStatus.mockResolvedValue(status({ registered: true }));
     await render();
-    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Reinstall / update");
+    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Update");
     const uninstall = byTestId("shell-integration-uninstall") as HTMLButtonElement | null;
-    expect(uninstall?.textContent).toBe("Uninstall");
+    expect(uninstall?.textContent).toBe("Remove from your file manager");
     expect(uninstall?.disabled).toBe(false);
   });
 
-  it("switches the actions after Install and after Uninstall (#5616)", async () => {
+  it("switches the actions after Add and after Remove (#5616)", async () => {
     await render();
     await act(async () => {
       byTestId("shell-integration-reinstall")?.click();
     });
-    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Reinstall / update");
+    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Update");
     expect(byTestId("shell-integration-uninstall")).not.toBeNull();
     await act(async () => {
       byTestId("shell-integration-uninstall")?.click();
     });
     expect(mockedApi.uninstallShellIntegration).toHaveBeenCalledTimes(1);
-    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Install");
+    expect(byTestId("shell-integration-reinstall")?.textContent).toBe("Add to your file manager");
     expect(byTestId("shell-integration-uninstall")).toBeNull();
   });
 
-  it("titles the section File manager integration, not shell integration (#5616)", async () => {
+  it("titles the section Open in termiHub, the menu entry it adds (#5616, #5845)", async () => {
     await render();
     const title = document.querySelector(".settings-section__heading");
-    expect(title?.textContent).toBe("File manager integration");
+    expect(title?.textContent).toBe("Open in termiHub");
     expect(byTestId("settings-shell-integration")?.textContent).toContain("right-click menu");
   });
 
-  it("triggers registration when Install is clicked", async () => {
+  it("triggers registration when Add is clicked", async () => {
     await render();
     await act(async () => {
       byTestId("shell-integration-reinstall")?.click();
@@ -176,7 +180,7 @@ describe("ShellIntegrationSettings", () => {
     await act(async () => {
       byTestId("shell-integration-entry-save")?.click();
     });
-    expect(errorSpy).toHaveBeenCalledWith("Failed to save file manager integration settings", {
+    expect(errorSpy).toHaveBeenCalledWith("Could not save the “Open in termiHub” settings", {
       description: "registry key is locked",
     });
     errorSpy.mockRestore();
@@ -202,6 +206,64 @@ describe("ShellIntegrationSettings", () => {
     });
     expect(mockedApi.saveShellIntegrationSettings).toHaveBeenCalledTimes(1);
     expect(mockedApi.saveShellIntegrationSettings.mock.calls[0][0].entries).toHaveLength(0);
+  });
+
+  describe("plain wording (#5845)", () => {
+    const entry = (id: string) => ({
+      id,
+      name: `Entry ${id}`,
+      visibility: "always" as const,
+      showFor: { folders: true, files: false, folderBackground: false },
+    });
+
+    it("hides the reorder hint while the list is empty", async () => {
+      await render();
+      expect(byTestId("shell-integration-entries-empty")).not.toBeNull();
+      expect(byTestId("shell-integration-entries-hint")).toBeNull();
+      expect(byTestId("settings-shell-integration")?.textContent).not.toContain("Drag the handle");
+    });
+
+    it("names only the default with one entry, and how to reorder from two", async () => {
+      seedSettings({
+        shellIntegration: { ...defaultShellIntegrationSettings(), entries: [entry("e1")] },
+      });
+      await render();
+      expect(byTestId("shell-integration-entries-hint")?.textContent).toBe(
+        "The first “Always” entry is the default."
+      );
+      act(() => root.unmount());
+      root = createRoot(container);
+      seedSettings({
+        shellIntegration: {
+          ...defaultShellIntegrationSettings(),
+          entries: [entry("e1"), entry("e2")],
+        },
+      });
+      await render();
+      expect(byTestId("shell-integration-entries-hint")?.textContent).toContain(
+        "Drag the handle or use the arrow buttons to reorder."
+      );
+    });
+
+    it("asks what opens a folder instead of naming a fallback", async () => {
+      await render();
+      const section = byTestId("settings-shell-integration")?.textContent ?? "";
+      expect(section).toContain("When opening a folder");
+      expect(section).not.toContain("Fallback");
+      const select = byTestId("shell-integration-fallback");
+      expect(select?.getAttribute("aria-label")).toBe("When opening a folder");
+      expect(select?.textContent).toContain("Ask which session");
+      expect(byTestId("shell-integration-fallback-help")).not.toBeNull();
+    });
+
+    it("says the same place in the status and its button", async () => {
+      await render();
+      const statusText = byTestId("shell-integration-status-text")?.textContent ?? "";
+      const button = byTestId("shell-integration-reinstall")?.textContent ?? "";
+      expect(statusText).toBe("Not added to your file manager");
+      expect(button).toBe("Add to your file manager");
+      expect(byTestId("shell-integration-status-text")?.dataset.registered).toBe("false");
+    });
   });
 
   describe("reordering without a pointer (A11Y2-003, #4329)", () => {
@@ -285,7 +347,9 @@ describe("ShellIntegrationSettings", () => {
       })
     );
     await render();
-    expect(byTestId("shell-integration-status-text")?.textContent).toBe("Registered");
+    expect(byTestId("shell-integration-status-text")?.textContent).toBe(
+      "Added to your file manager"
+    );
     expect(byTestId("shell-integration-stale-banner")).toBeNull();
     expect(byTestId("shell-integration-stale-badge")).toBeNull();
   });

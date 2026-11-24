@@ -208,7 +208,7 @@ describe("ConnectionList — first-run empty state", () => {
       seedAgentsRegion({ remoteAgents: [makeAgent()] });
     });
 
-    it("collapses to one compact line with a New connection link", async () => {
+    it("collapses to one compact line that points at the header's New menu", async () => {
       await render(root);
 
       const empty = container.querySelector('[data-testid="connections-empty-state"]');
@@ -218,20 +218,14 @@ describe("ConnectionList — first-run empty state", () => {
       expect(empty!.className).toContain("ui-empty--inline");
       expect(empty!.querySelector(".ui-empty__icon")).toBeNull();
       expect(empty!.querySelector(".ui-btn")).toBeNull();
-      const cta = empty!.querySelector('[data-testid="connections-empty-new-connection"]');
-      expect(cta?.className).toContain("connections-empty__link");
-      expect(cta?.textContent).toBe("New connection");
-      expect(empty!.textContent).toBe("No saved connections. New connection");
-    });
-
-    it("the compact link opens the new-connection editor", async () => {
-      const openConnectionEditorTab = vi.fn();
-      useAppStore.setState({ openConnectionEditorTab });
-      await render(root);
-
-      click(container.querySelector('[data-testid="connections-empty-new-connection"]')!);
-
-      expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
+      // One entry point to create from (#5848, R-096): no inline link beside
+      // the header's "New ▾" menu.
+      expect(empty!.querySelector('[data-testid="connections-empty-new-connection"]')).toBeNull();
+      expect(empty!.querySelector("button")).toBeNull();
+      expect(empty!.textContent).toBe("No saved connections. Add one with “New” above.");
+      expect(
+        container.querySelector('[data-testid="connection-list-new-menu"]')?.textContent
+      ).toContain("New");
     });
   });
 

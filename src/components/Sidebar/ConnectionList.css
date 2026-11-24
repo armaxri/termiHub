@@ -99,9 +99,10 @@
   border: none;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-label);
+  /* Sentence case at a muted secondary weight (#5848, R-088): the copy style
+     has no all-caps labels, and the section titles must not compete with the
+     connection names below them. */
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   padding: 0;
   min-width: 0;
@@ -143,11 +144,10 @@
   gap: var(--spacing-xxs);
 }
 
-/* The agent name is user data (#5621): show it exactly as entered. Only the
-   section titles (LOCAL / REMOTE AGENTS) keep the uppercase label style. */
+/* The agent name is user data (#5621), shown exactly as entered; it keeps
+   the stronger weight that sets an agent apart from the section titles. */
 .connection-list__group-header--agent .connection-list__group-toggle {
-  text-transform: none;
-  letter-spacing: normal;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Row 2: indent the buttons to sit under the agent name (past chevron + state
@@ -583,8 +583,6 @@
   gap: var(--spacing-xs);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
   padding: var(--spacing-xs-sm) 0 var(--spacing-xxs);
   user-select: none;
 }
@@ -682,4 +680,10 @@
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* The Saved header's "New ▾" (#5848): text, icon and caret, kept compact. */
+.connection-list__new-menu {
+  gap: var(--spacing-xxs);
+  padding: 0 var(--spacing-xs);
 }

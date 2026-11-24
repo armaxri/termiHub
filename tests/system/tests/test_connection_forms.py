@@ -58,7 +58,7 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.close_all_tabs()
         self.switch_to_connections_sidebar()
         self.wait(
-            lambda: self.driver.exists("connection-list-new-connection"),
+            lambda: self.driver.exists("connection-list-new-menu"),
             what="the connections sidebar",
         )
         yield

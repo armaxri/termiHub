@@ -171,14 +171,17 @@ describe("AgentNode — row state + name presentation (#5621)", () => {
     expect(byTestId(`agent-name-${AGENT_ID}`)?.textContent).toBe("sys-pr-agent-MiXeD");
   });
 
-  it("never text-transforms the agent header (only section titles may be uppercase)", () => {
+  it("never text-transforms the agent header (no group header is uppercased, #5848)", () => {
     const css = readFileSync("src/components/Sidebar/ConnectionList.css", "utf8");
-    const rule = css.match(
-      /\.connection-list__group-header--agent \.connection-list__group-toggle\s*\{([^}]*)\}/
+    const toggleRules = Array.from(
+      css.matchAll(/([^{}]*\.connection-list__group-toggle[^{}]*)\{([^}]*)\}/g),
+      (m) => m[2]
     );
-    expect(rule, "agent header toggle rule").not.toBeNull();
-    expect(rule![1]).toMatch(/text-transform:\s*none/);
-    expect(rule![1]).toMatch(/letter-spacing:\s*normal/);
+    expect(toggleRules.length, "group toggle rules").toBeGreaterThan(0);
+    for (const body of toggleRules) {
+      expect(body).not.toMatch(/text-transform:\s*uppercase/);
+      expect(body).not.toMatch(/letter-spacing/);
+    }
   });
 
   it("shows a never-connected agent as neutral with a Connect action", () => {
