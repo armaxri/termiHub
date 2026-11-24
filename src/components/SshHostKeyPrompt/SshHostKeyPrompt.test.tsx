@@ -33,6 +33,7 @@ vi.mock("@/services/api", () => ({
 
 import { SshHostKeyPrompt } from "./SshHostKeyPrompt";
 import { useAppStore } from "@/store/appStore";
+import { collectLiveTabs } from "@/store/layoutHelpers";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -356,6 +357,75 @@ describe("SshHostKeyPrompt — stale prompts (#5185)", () => {
     await fire(unknownPrompt);
     act(() => emitClosed?.({ prompt_id: "unknown" }));
     expect(modal()).not.toBeNull();
+  });
+});
+
+describe("SshHostKeyPrompt — connection name and comparison aid (#5862)", () => {
+  const q = (testid: string) => document.querySelector(`[data-testid="${testid}"]`);
+  let tabId = "";
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    tabId = useAppStore.getState().addTab("prod web", "ssh", {
+      type: "ssh",
+      config: { host: "server.example", port: 2222, username: "me", authMethod: "agent" },
+    } as Parameters<ReturnType<typeof useAppStore.getState>["addTab"]>[2]);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    const panel = collectLiveTabs(useAppStore.getState()).find((t) => t.id === tabId)?.panelId;
+    if (panel) useAppStore.getState().closeTab(tabId, panel);
+    vi.clearAllMocks();
+  });
+
+  it("names the connection of the tab that raised a first-contact prompt", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...unknownPrompt, owner: `${tabId}:0` });
+    expect(q("ssh-hostkey-connection")?.textContent).toBe("prod web");
+    // Listed first, before the host it connects to.
+    expect(q("ssh-hostkey-connection")!.compareDocumentPosition(q("ssh-hostkey-host")!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+  });
+
+  it("names the connection on a changed-key prompt too", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire({ ...changedWithPriorPrompt, owner: `${tabId}:1` });
+    expect(q("ssh-hostkey-connection")?.textContent).toBe("prod web");
+  });
+
+  it("shows no connection line for a prompt without an owning tab", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    expect(q("ssh-hostkey-connection")).toBeNull();
+    expect(q("ssh-hostkey-host")).not.toBeNull();
+  });
+
+  it("draws distinct glyphs, says what changed and offers to copy the new fingerprint", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(changedWithPriorPrompt);
+    const prev = q("ssh-hostkey-prev-fingerprint-glyph")?.getAttribute("data-glyph");
+    const next = q("ssh-hostkey-fingerprint-glyph")?.getAttribute("data-glyph");
+    expect(prev).toBeTruthy();
+    expect(next).toBeTruthy();
+    expect(prev).not.toBe(next);
+    expect(q("ssh-hostkey-changes")?.textContent).toContain("The fingerprint is different");
+    expect(q("ssh-hostkey-changes")?.textContent).toContain("key type is the same (ssh-ed25519)");
+    expect(q("ssh-hostkey-fingerprint-copy")?.getAttribute("aria-label")).toBe(
+      "Copy new fingerprint"
+    );
+  });
+
+  it("keeps first contact free of the comparison aid", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    expect(q("ssh-hostkey-fingerprint-glyph")).toBeNull();
+    expect(q("ssh-hostkey-changes")).toBeNull();
+    expect(q("ssh-hostkey-fingerprint-copy")?.getAttribute("aria-label")).toBe("Copy fingerprint");
   });
 });
 

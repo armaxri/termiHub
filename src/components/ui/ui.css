@@ -1584,6 +1584,38 @@
   white-space: nowrap;
 }
 
+/* Display groups of a long fingerprint chunk (#5862): spaced by CSS only, so
+   an old and a new fingerprint stacked under each other line up group by
+   group while the text (copy, screen reader) stays the original value. */
+.ui-trust-prompt__fact-group + .ui-trust-prompt__fact-group {
+  margin-left: var(--spacing-xs);
+}
+
+/* The mirrored block glyph drawn from a fingerprint (#5862): two different
+   keys give two visibly different shapes. */
+.ui-trust-prompt__glyph {
+  flex: 0 0 auto;
+  align-self: center;
+  box-sizing: content-box;
+  width: calc(var(--spacing-xl) + var(--spacing-xs));
+  height: calc(var(--spacing-xl) + var(--spacing-xs));
+  padding: var(--spacing-xxs);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+/* What changed on a changed identity (#5862): plain sentences under the
+   facts. */
+.ui-trust-prompt__changes {
+  margin: 0;
+  padding-left: var(--spacing-lg);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
 /* A secondary line above a fact's value, e.g. a fingerprint's key type (#5627). */
 .ui-trust-prompt__fact-detail {
   display: block;

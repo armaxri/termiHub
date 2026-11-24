@@ -25,6 +25,7 @@ import {
 } from "@/utils/connectTimeout";
 import type { ConnectionErrorKind } from "@/utils/connectionErrorHints";
 import { errorMessage } from "@/utils/errorMessage";
+import { parsePromptOwner } from "@/utils/promptOwner";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import {
   currentSessionView,
@@ -61,18 +62,6 @@ export function connectDeadlineFiresAt(deadline: ConnectDeadline): number {
   return deadline.pausedAt === undefined
     ? deadline.at
     : deadline.at + CONNECT_PROMPT_LIMIT_MS + CONNECT_PROMPT_GRACE_MS;
-}
-
-/**
- * Split a prompt owner (`connect_id = ${tabId}:${retryCount}`) into its tab id
- * and attempt number; `null` when it is not a terminal tab's connect id.
- */
-function parsePromptOwner(owner: string): { tabId: string; attempt: number } | null {
-  const sep = owner.lastIndexOf(":");
-  if (sep <= 0) return null;
-  const attempt = Number(owner.slice(sep + 1));
-  if (!Number.isInteger(attempt) || attempt < 0) return null;
-  return { tabId: owner.slice(0, sep), attempt };
 }
 
 /**

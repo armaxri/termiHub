@@ -5,6 +5,7 @@ import { Modal } from "./Modal";
 import { Button } from "./Button";
 import { toast } from "./Toast";
 import { errorMessage } from "@/utils/errorMessage";
+import { FingerprintGlyph } from "./FingerprintGlyph";
 import "./ui.css";
 
 /**
@@ -32,6 +33,40 @@ export interface TrustFact {
   detail?: string;
   /** `data-testid` forwarded to the {@link detail} line. */
   detailTestId?: string;
+  /**
+   * What the copy button calls the value, e.g. `new fingerprint` (#5862): its
+   * accessible name reads "Copy new fingerprint" and the toast "Copied new
+   * fingerprint to clipboard". Defaults to the lower-cased {@link label}.
+   */
+  copyNoun?: string;
+  /**
+   * Draw a {@link FingerprintGlyph} beside the value (#5862, R-109), so two
+   * fingerprints shown together are told apart at a glance.
+   */
+  glyph?: boolean;
+  /** `data-testid` forwarded to the glyph (when {@link glyph}). */
+  glyphTestId?: string;
+}
+
+/** The length of one display group of a long fingerprint chunk (#5862). */
+const FINGERPRINT_GROUP = 4;
+
+/**
+ * Split one fingerprint chunk into display groups of
+ * {@link FINGERPRINT_GROUP} characters (#5862, R-109), so an old and a new
+ * fingerprint stacked under each other line up group by group and the eye can
+ * compare them piece by piece. Short chunks (a hex byte, `SHA256:`) stay one
+ * group. Joining the groups gives back the chunk unchanged; the groups are
+ * spaced by CSS only, so the text a copy or a screen reader gets is the
+ * original value.
+ */
+export function fingerprintGroups(chunk: string): string[] {
+  if (chunk.length <= FINGERPRINT_GROUP * 2 || chunk.includes(":")) return [chunk];
+  const groups: string[] = [];
+  for (let i = 0; i < chunk.length; i += FINGERPRINT_GROUP) {
+    groups.push(chunk.slice(i, i + FINGERPRINT_GROUP));
+  }
+  return groups;
 }
 
 /**
@@ -72,6 +107,14 @@ export interface TrustPromptProps {
   changedWarningSubject: string;
   /** Host / identity facts rendered in order. */
   facts: TrustFact[];
+  /**
+   * For a *changed* identity: plain sentences saying what changed (#5862,
+   * R-109), e.g. "The fingerprint is different" and the key type change.
+   * Rendered as a list under the facts; ignored for a new identity.
+   */
+  changes?: string[];
+  /** `data-testid` for the {@link changes} list. */
+  changesTestId?: string;
   /** Reject the identity and abort — also the ESC / scrim / close default. */
   onReject: () => void;
   /** Accept for this session only. */
@@ -138,6 +181,8 @@ export function TrustPrompt({
   changedLead,
   changedWarningSubject,
   facts,
+  changes,
+  changesTestId,
   onReject,
   onAcceptOnce,
   onAcceptForHost,
@@ -168,7 +213,7 @@ export function TrustPrompt({
   };
 
   const copyFact = (fact: TrustFact): Promise<void> => {
-    const noun = fact.label.toLowerCase();
+    const noun = fact.copyNoun ?? fact.label.toLowerCase();
     return writeClipboard(fact.value)
       .then(() => {
         // toast-policy: no-in-place-surface — the value is on the clipboard
@@ -277,6 +322,7 @@ export function TrustPrompt({
                 className={fact.mono ? "ui-trust-prompt__fact-value--mono" : undefined}
                 data-testid={fact.testId}
               >
+                {fact.glyph && <FingerprintGlyph value={fact.value} testId={fact.glyphTestId} />}
                 <span className="ui-trust-prompt__fact-text">
                   {fact.detail && (
                     <span className="ui-trust-prompt__fact-detail" data-testid={fact.detailTestId}>
@@ -288,7 +334,13 @@ export function TrustPrompt({
                         // `<wbr>` marks the only places the line may break.
                         <Fragment key={j}>
                           {j > 0 && <wbr />}
-                          <span className="ui-trust-prompt__fact-chunk">{chunk}</span>
+                          <span className="ui-trust-prompt__fact-chunk">
+                            {fingerprintGroups(chunk).map((group, k) => (
+                              <span key={k} className="ui-trust-prompt__fact-group">
+                                {group}
+                              </span>
+                            ))}
+                          </span>
                         </Fragment>
                       ))
                     : fact.value}
@@ -299,7 +351,7 @@ export function TrustPrompt({
                     size="xs"
                     variant="ghost"
                     className="ui-trust-prompt__copy"
-                    aria-label={`Copy ${fact.label.toLowerCase()}`}
+                    aria-label={`Copy ${fact.copyNoun ?? fact.label.toLowerCase()}`}
                     data-testid={fact.copyTestId}
                     icon={<Copy size={13} aria-hidden="true" />}
                     onClick={() => copyFact(fact)}
@@ -309,6 +361,13 @@ export function TrustPrompt({
             </Fragment>
           ))}
         </dl>
+        {changed && changes && changes.length > 0 && (
+          <ul className="ui-trust-prompt__changes" data-testid={changesTestId}>
+            {changes.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        )}
         <p className="ui-trust-prompt__hint" id={hintId}>
           {changed && changedHint ? (
             changedHint

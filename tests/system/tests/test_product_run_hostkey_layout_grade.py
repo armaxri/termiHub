@@ -36,6 +36,24 @@ def test_a_mid_string_break_is_named():
     assert problems == ["fingerprint piece 'nThbg6kXUpJWGl7E1IGOCsp' breaks mid-string"]
 
 
+def test_grouped_pieces_on_one_line_pass():
+    # #5862: the long piece renders as groups of four on the prefix's line.
+    groups = [_item(g, 70 + 40 * i, 34) for i, g in enumerate(["nThb", "g6kX", "UpJW", "Gl7E"])]
+    assert fingerprint_layout_problems([TYPE_LINE, _item("SHA256:", 20, 50), *groups], COPY) == []
+
+
+def test_a_break_after_the_prefix_passes():
+    text = [_item("SHA256:", 20, 50), _item("nThb", 20, 34, y=120), _item("g6kX", 60, 34, y=120)]
+    assert fingerprint_layout_problems(text, COPY) == []
+
+
+def test_a_break_between_two_groups_is_named():
+    text = [_item("SHA256:", 20, 50), _item("nThb", 70, 34), _item("g6kX", 20, 34, y=120)]
+    assert fingerprint_layout_problems(text, COPY) == [
+        "fingerprint breaks mid-string between 'nThb' and 'g6kX'"
+    ]
+
+
 def test_text_running_into_the_copy_button_is_named():
     text = [_item("SHA256:", 20, 50), _item("nThbg6kXUpJWGl7E1IGOCsp", 70, 328)]
     problems = fingerprint_layout_problems(text, COPY)

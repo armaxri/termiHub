@@ -160,6 +160,19 @@ class TestProductRunSsh(
         type(self)._hostkey_safe[screen] = problems
         self.evidence(f"{screen} safe layout: {problems or 'ok'}")
 
+    #: Connection-name + comparison-aid problems per host-key screen, graded by
+    #: ``test_10e_hostkey_compare`` (#5862).
+    _hostkey_compare: ClassVar[dict[str, list[str]]] = {}
+
+    def _measure_hostkey_compare(self, screen: str, measure: Callable[[], list[str]]) -> None:
+        """Record ``screen``'s comparison problems; a slip never fails the step itself."""
+        try:
+            problems = measure()
+        except Exception as exc:  # noqa: BLE001 - graded later, never fails this step
+            problems = [f"could not measure: {exc}"]
+        type(self)._hostkey_compare[screen] = problems
+        self.evidence(f"{screen} compare: {problems or 'ok'}")
+
     def _trusted(self, port: int) -> list[str]:
         """Fingerprints termiHub remembered for ``127.0.0.1:<port>`` (Accept for host)."""
         path = self.config_dir / "ssh_known_hosts.json"
@@ -174,8 +187,12 @@ class TestProductRunSsh(
         name = unique_name("pr-ssh-key")
         with self.step(
             "ssh.hostkey.prompt",
-            "First connect asks to trust the host key, showing host, type and the server's fingerprint",
-            expect="the 'trust this host' dialog naming 127.0.0.1 and its port, ED25519 and a SHA256 fingerprint",
+            "First connect asks to trust the host key, showing the connection, host, type and the"
+            " server's fingerprint",
+            expect=(
+                "the 'trust this host' dialog naming the connection, 127.0.0.1 and its port,"
+                " ED25519 and a SHA256 fingerprint in groups of four"
+            ),
             screenshot=False,
         ):
             native = self.need_native()
@@ -191,6 +208,10 @@ class TestProductRunSsh(
             self._measure_hostkey_layout("first-contact prompt", self.hostkey_layout_problems)
             self._measure_hostkey_emphasis(
                 "first-contact prompt", lambda: self.hostkey_emphasis_problems(changed=False)
+            )
+            self._measure_hostkey_compare(
+                "first-contact prompt",
+                lambda: self.hostkey_compare_problems(connection=name, changed=False),
             )
             self.evidence(f"prompt: {shown}")
             self.evidence(f"server fingerprint (ssh-keygen): {want}")
@@ -243,9 +264,10 @@ class TestProductRunSsh(
             "ssh.hostkey.changed",
             "A changed host key shows the warning with both fingerprints; Reject connects nothing",
             expect=(
-                "the host-key dialog with the red 'key has changed' warning, the previously"
-                " trusted and the now presented fingerprint with their key types, and a"
-                " 'Replace trusted key' button"
+                "the host-key dialog with the red 'key has changed' warning, the connection's"
+                " name, the previously trusted and the now presented fingerprint with their"
+                " key types, grouped in fours and each with a different block glyph, a line"
+                " saying what changed, and a 'Replace trusted key' button"
             ),
             screenshot=False,
         ):
@@ -284,6 +306,10 @@ class TestProductRunSsh(
                 )
                 self._measure_hostkey_safe(
                     "changed-key prompt", self.hostkey_changed_safe_problems
+                )
+                self._measure_hostkey_compare(
+                    "changed-key prompt",
+                    lambda: self.hostkey_compare_problems(connection=name, changed=True),
                 )
                 # Reject is the default (#5751): Enter on the focused element
                 # answers the prompt as Reject. Fall back to clicking Reject so
@@ -676,6 +702,24 @@ class TestProductRunSsh(
             self.evidence(f"{screen}: {measured.get(screen, 'not measured')}")
             assert screen in measured, f"not measured: {screen}"
             assert not measured[screen], measured[screen]
+
+    def test_10e_hostkey_compare(self):
+        with self.step(
+            "ssh.hostkey.compare",
+            "Host-key prompts name the connection; a changed key shows grouped fingerprints with"
+            " different glyphs, says what changed and offers \"Copy new fingerprint\" (#5862)",
+            expect="no new screen: graded on the ssh.hostkey.prompt / changed captures",
+            screenshot=False,
+        ):
+            self.require("ssh.hostkey.prompt", "ssh.hostkey.changed")
+            measured = type(self)._hostkey_compare
+            screens = ("first-contact prompt", "changed-key prompt")
+            for screen in screens:
+                self.evidence(f"{screen}: {measured.get(screen, 'not measured')}")
+            missing = [screen for screen in screens if screen not in measured]
+            assert not missing, f"not measured: {missing}"
+            problems = [f"{screen}: {p}" for screen, ps in measured.items() for p in ps]
+            assert not problems, problems
 
     # ── editor layout ────────────────────────────────────────────────────────
     def test_11_editor_layout(self):
