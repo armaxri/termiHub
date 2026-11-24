@@ -1,10 +1,16 @@
-/* Per-agent deferred-update banner (issue 1352). Tokens only. */
+/* Per-agent deferred-update strip (issues 1352, 5821). Tokens only.
+   A full-width strip under the agent row: the title, a short note and the
+   actions stack, so the narrow sidebar never squeezes the text into a column
+   of single words beside the buttons. */
 
 .agent-update-banner {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-lg);
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
   background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-secondary));
   border-top: 1px solid var(--border-primary);
   border-bottom: 1px solid var(--border-primary);
@@ -12,33 +18,42 @@
   color: var(--text-primary);
 }
 
-.agent-update-banner__icon {
-  display: inline-flex;
+.agent-update-banner__head {
+  display: flex;
   align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.agent-update-banner__icon {
   color: var(--text-accent);
   flex-shrink: 0;
 }
 
-.agent-update-banner__text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xxs);
+.agent-update-banner__title {
   min-width: 0;
-  flex: 1;
-}
-
-.agent-update-banner__text strong {
   font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
 }
 
-.agent-update-banner__text span {
+.agent-update-banner__note {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 
 .agent-update-banner__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: var(--spacing-sm);
+}
+
+/* The compact marker on the agent row itself (5821). */
+.agent-update-marker {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
+  color: var(--text-accent);
 }
