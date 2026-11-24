@@ -8,13 +8,14 @@ switch until the Automations merge (#5818); remote agents and RDP/VNC stay too.
 A view the user hid from the activity bar stays hidden.
 
 :func:`activity_bar_problems` grades which activity-bar items are present;
-:func:`empty_hint_problems` the Connections empty-state signpost;
-:func:`experimental_hint_problems` the switch's hint text.
+:func:`experimental_hint_problems` the switch's hint text. The Connections
+empty state no longer carries an experimental signpost (#5954); the workflows
+note is graded in ``test_product_run_workflows_experimental_note.py``.
 """
 
 from __future__ import annotations
 
-from typing import Collection, Optional
+from typing import Collection
 
 #: The graduated views: sidebar view id → activity-bar item testId.
 GRADUATED_VIEWS: dict[str, str] = {
@@ -74,20 +75,6 @@ def activity_bar_problems(
 def _names_graduated(text: str) -> list[str]:
     lower = text.lower()
     return [w for w in GRADUATED_WORDS if w in lower]
-
-
-def empty_hint_problems(hint: Optional[str]) -> list[str]:
-    """What is wrong with the Connections empty-state experimental signpost.
-
-    With experimental off and workflows still gated, the signpost names only
-    what is still behind the switch, never a graduated feature.
-    """
-    if hint is None:
-        return ["no experimental signpost on the empty Connections sidebar"]
-    problems = [f"the signpost still names '{w}'" for w in _names_graduated(hint)]
-    if "workflows" not in hint.lower():
-        problems.append(f"the signpost does not name workflows: {hint!r}")
-    return problems
 
 
 def experimental_hint_problems(hint: str) -> list[str]:
