@@ -73,7 +73,7 @@ import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
 import { ScheduleStatus } from "./ScheduleStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
-import { SerialStatus, SshStatus, TelnetStatus } from "./SessionChips";
+import { LocalShellStatus, SerialStatus, SshStatus, TelnetStatus } from "./SessionChips";
 import { MonitoringMetricRows } from "./MonitoringMetricRows";
 import { MonitoringRefreshSubmenu } from "./MonitoringRefreshSubmenu";
 
@@ -156,6 +156,7 @@ export function StatusBar() {
         <SshStatus />
         <SerialStatus />
         <TelnetStatus />
+        <LocalShellStatus />
         <RemoteDesktopStatus />
         <MonitoringStatus />
         <PersistentSessionsIndicator />

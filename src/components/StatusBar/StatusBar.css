@@ -539,3 +539,39 @@
 .process-table__sort:hover {
   color: var(--text-primary);
 }
+
+/* SSH chip trust cue (#5839): a shield after the endpoint. A remembered key
+   gets the success hue; trusted-once the warning hue; not checked yet stays
+   in the chip's own colour. The hue is a second cue — the shape and the
+   chip's accessible name carry the state. */
+.status-bar__ssh-trust--trusted {
+  color: var(--color-success);
+}
+
+.status-bar__ssh-trust--once {
+  color: var(--color-warning);
+}
+
+/* The SSH details popover: label / value rows. */
+.status-bar__ssh-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--spacing-xxs) var(--spacing-sm);
+  margin: 0;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.status-bar__ssh-row {
+  display: contents;
+}
+
+.status-bar__ssh-row dt {
+  color: var(--text-secondary);
+}
+
+.status-bar__ssh-row dd {
+  margin: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
