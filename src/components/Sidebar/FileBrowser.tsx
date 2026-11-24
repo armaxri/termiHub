@@ -1144,7 +1144,7 @@ function FileBrowserErrorActions({
 
 export function FileBrowser() {
   const { navigateToCwd, hasCwd, cdToCurrentPath, canCd, placeholder } = useFileBrowserSync();
-  const addTab = useAppStore((s) => s.addTab);
+  const addLocalShellTab = useAppStore((s) => s.addLocalShellTab);
   // The refresh spinner is static under reduced motion (#4039); the refresh
   // button then carries a steady "Refreshing…" label instead.
   const reducedMotion = usePrefersReducedMotion();
@@ -1955,7 +1955,7 @@ export function FileBrowser() {
                 size="sm"
                 icon={<Plus size={14} />}
                 onClick={() => {
-                  addTab("Terminal", "local");
+                  addLocalShellTab();
                 }}
                 data-testid="file-browser-placeholder-new-terminal"
               >

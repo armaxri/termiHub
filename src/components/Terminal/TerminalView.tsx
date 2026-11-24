@@ -77,7 +77,7 @@ export function TerminalView() {
     "terminal_view"
   );
 
-  const addTab = useAppStore((s) => s.addTab);
+  const addLocalShellTab = useAppStore((s) => s.addLocalShellTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
   const rootPanel = useLayoutRenderTree();
   const activePanelId = useActivePanelId();
@@ -151,7 +151,7 @@ export function TerminalView() {
   const isActiveSessionLogging = activeSessionId ? loggingSessions.has(activeSessionId) : false;
 
   const handleNewTerminal = () => {
-    addTab("Terminal", "local");
+    addLocalShellTab();
   };
 
   // Session output logging toggle (#1960): start/stop writing the active
