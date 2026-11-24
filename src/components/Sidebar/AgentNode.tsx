@@ -85,7 +85,12 @@ import { connectionStateLabel } from "@/utils/statusLabel";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
-import { AgentUpdateBanner } from "@/components/AgentUpdateBanner";
+import {
+  AgentUpdateBanner,
+  AgentUpdateMarker,
+  countAgentSessionTabs,
+} from "@/components/AgentUpdateBanner";
+import { collectLiveTabs } from "@/store/layoutHelpers";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
@@ -1052,6 +1057,8 @@ export function AgentNode({
     agentFolders: projectedFolders,
   } = useProjectedAgents();
   const agentSessions = projectedSessions[agent.id] ?? EMPTY_SESSIONS;
+  // Open terminal tabs on this agent: the update strip names them (#5821).
+  const openSessionTabs = useAppStore((s) => countAgentSessionTabs(collectLiveTabs(s), agent.id));
   const agentDefinitions = projectedDefinitions[agent.id] ?? EMPTY_DEFINITIONS;
   const agentFolders = projectedFolders[agent.id] ?? EMPTY_FOLDERS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
@@ -1836,6 +1843,9 @@ export function AgentNode({
                     data-testid={`agent-version-badge-${agent.id}`}
                   />
                 )}
+                {/* A staged self-update: only a marker on the row; the words and
+                    the action are in the strip under it (#5821). */}
+                {isConnected && <AgentUpdateMarker agentId={agent.id} />}
               </button>
               {isConnecting && (
                 // Inline Cancel so a stuck connect is abortable without opening the
@@ -2080,9 +2090,16 @@ export function AgentNode({
         </ContextMenuContent>
       </ContextMenuRoot>
 
-      {/* Deferred-update banner: only for a connected agent with a staged update
-          (the banner self-gates on the store's staged/dismissed state, #1352). */}
-      {isConnected && <AgentUpdateBanner agentId={agent.id} agentName={agent.name} />}
+      {/* Deferred-update strip: only for a connected agent with a staged update
+          (it self-gates on the store's staged/dismissed state, #1352). Full width
+          under the row, never inside it (#5821). */}
+      {isConnected && (
+        <AgentUpdateBanner
+          agentId={agent.id}
+          agentName={agent.name}
+          openSessions={openSessionTabs}
+        />
+      )}
 
       {confirmingDelete && (
         <ConfirmDeleteDialog
