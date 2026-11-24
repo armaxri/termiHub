@@ -158,7 +158,45 @@ describe("AgentUpdateBanner", () => {
   it("labels the apply button with what it does", async () => {
     await render();
     expect(byTestId(applyId)?.textContent).toBe("Restart agent and update");
-    expect(byTestId(dismissId)?.textContent).toBe("Close");
+    // #5980: "Close" beside "Waits for 1 session … to close." read as
+    // closing the session; the strip is put off for later instead.
+    expect(byTestId(dismissId)?.textContent).toBe("Later");
+  });
+
+  describe("round-3 wording (#5980)", () => {
+    const consequenceId = `agent-update-banner-consequence-${AGENT_ID}`;
+
+    it("says under the apply button that the open sessions keep running", async () => {
+      await render(1);
+      expect(byTestId(consequenceId)?.textContent).toBe("Your session keeps running.");
+      await render(2);
+      expect(byTestId(consequenceId)?.textContent).toBe("Your 2 sessions keep running.");
+      // It sits after the actions, under the primary button.
+      const actions = byTestId(applyId)?.parentElement;
+      expect(actions?.nextElementSibling).toBe(byTestId(consequenceId));
+    });
+
+    it("shows no consequence line when no session is open", async () => {
+      await render(0);
+      expect(byTestId(consequenceId)).toBeNull();
+    });
+
+    it("keeps each session name on one line, with its full name as tooltip", async () => {
+      const name = "sys-pr-agent-24ef8dc4 · bash";
+      await act(async () => {
+        root.render(
+          <AgentUpdateBanner agentId={AGENT_ID} agentName={AGENT_NAME} sessionNames={[name]} />
+        );
+      });
+      const note = byTestId(`agent-update-banner-note-${AGENT_ID}`);
+      expect(note?.textContent).toBe(`Waits for 1 session (${name}) to close.`);
+      const session = note?.querySelector(".agent-update-banner__session");
+      expect(session?.textContent).toBe(name);
+      expect(session?.getAttribute("title")).toBe(name);
+      const rule = cssRule(".agent-update-banner__session");
+      expect(rule["white-space"]).toBe("nowrap");
+      expect(rule["max-width"]).toBe("100%");
+    });
   });
 
   describe("narrow sidebar (#5821)", () => {
