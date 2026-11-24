@@ -12,8 +12,8 @@
 //! 2. `automations.json` present: for each legacy file whose hash moved,
 //!    merge entry by entry. An entry the older build added is added. An entry
 //!    it changed replaces the automation when the new build left that
-//!    automation alone, and is kept as a copy named "<name> (from older
-//!    version)" when both sides changed it. Deletions on the legacy side are
+//!    automation alone, and is kept as a copy whose name ends in
+//!    [`CONFLICT_SUFFIX`] when both sides changed it. Deletions on the legacy side are
 //!    not followed (no step lists are merged and nothing is ever lost).
 //!
 //! The legacy files are never written. A newer or corrupt `automations.json`
@@ -86,7 +86,9 @@ pub fn migrate_library(dir: &Path) -> Result<LibraryReport> {
     }
 
     let raw = fs::read_to_string(file.path()).context("Failed to read automations.json")?;
-    let LoadOutcome::Loaded { data: mut store, .. } = load_versioned::<AutomationStore>(&raw)
+    let LoadOutcome::Loaded {
+        data: mut store, ..
+    } = load_versioned::<AutomationStore>(&raw)
     else {
         // Newer or corrupt: the manager reports it; never write over it here.
         return Ok(LibraryReport::default());
@@ -121,7 +123,9 @@ fn first_migration(
     let (converted_macros, converted_workflows) = automations.split_at(macro_list.len());
 
     let macro_entries = fingerprint(
-        macro_list.iter().map(|m| (m.id.as_str(), &m.updated_at, entry_hash(m))),
+        macro_list
+            .iter()
+            .map(|m| (m.id.as_str(), &m.updated_at, entry_hash(m))),
         converted_macros,
     );
     let workflow_entries = fingerprint(
@@ -204,7 +208,14 @@ fn reconcile(
     let macro_entries = legacy_entries(macros, |s: &MacroStore| {
         s.macros
             .iter()
-            .map(|m| (m.id.clone(), m.updated_at.clone(), entry_hash(m), from_macro(m)))
+            .map(|m| {
+                (
+                    m.id.clone(),
+                    m.updated_at.clone(),
+                    entry_hash(m),
+                    from_macro(m),
+                )
+            })
             .collect()
     });
     provenance.macros = reconcile_file(
@@ -227,7 +238,12 @@ fn reconcile(
             .map(|w| {
                 let mut automation = from_workflow(w);
                 follow_macro_ids(&mut automation.steps, &macro_ids);
-                (w.id.clone(), w.updated_at.clone(), entry_hash(w), automation)
+                (
+                    w.id.clone(),
+                    w.updated_at.clone(),
+                    entry_hash(w),
+                    automation,
+                )
             })
             .collect()
     });

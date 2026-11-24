@@ -19,7 +19,7 @@ use crate::utils::fs::write_atomic;
 use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
 
 /// One versioned JSON store file in the config directory, named by the
-/// store's [`VersionedStore::STORE_NAME`].
+/// store's `VersionedStore::STORE_NAME`.
 pub struct StoreFile<T> {
     file_path: PathBuf,
     _store: PhantomData<fn() -> T>,

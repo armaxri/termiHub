@@ -27,3 +27,9 @@ pub mod store;
 mod config_tests;
 #[cfg(test)]
 mod convert_tests;
+#[cfg(test)]
+mod history_tests;
+#[cfg(test)]
+mod manager_tests;
+#[cfg(test)]
+mod migrate_tests;

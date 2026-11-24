@@ -1679,33 +1679,36 @@ fn init_automations<R: tauri::Runtime>(
 ) {
     use crate::automations::{history_manager, manager, migrate};
 
-    match crate::utils::config_paths::resolve_app_config_dir(app.handle()) {
-        Ok(dir) => match migrate::run_boot_migration(&dir, chrono::Utc::now()) {
-            Ok(report) => {
-                // The legacy files are still the live stores until slice 4,
-                // so merged-back edits are this build's own: log them only.
-                if let Some(merged) = migrate::merge_warning(&report.library) {
-                    tracing::info!("{}", merged.message);
-                }
-                tracing::debug!("Automation boot migration: {report:?}");
+    // A failed migration is reported only when the store itself loads: an
+    // unusable config dir is already reported once, by the manager below.
+    let migration_warning = match crate::utils::config_paths::resolve_app_config_dir(app.handle())
+        .and_then(|dir| migrate::run_boot_migration(&dir, chrono::Utc::now()))
+    {
+        Ok(report) => {
+            // The legacy files are still the live stores until slice 4, so
+            // merged-back edits are this build's own: log them only.
+            if let Some(merged) = migrate::merge_warning(&report.library) {
+                tracing::info!("{}", merged.message);
             }
-            Err(e) => {
-                tracing::error!("Automation boot migration failed: {e:#}");
-                recovery_warnings.push(RecoveryWarning {
-                    file_name: "automations.json".to_string(),
-                    message: "Could not migrate macros and workflows to automations. Your \
-                              macros and workflows are unchanged; the migration runs again \
-                              on the next start."
-                        .to_string(),
-                    details: Some(format!("{e:#}")),
-                });
-            }
-        },
-        Err(e) => tracing::error!("Automation boot migration skipped: {e}"),
-    }
+            tracing::debug!("Automation boot migration: {report:?}");
+            None
+        }
+        Err(e) => {
+            tracing::error!("Automation boot migration failed: {e:#}");
+            Some(RecoveryWarning {
+                file_name: "automations.json".to_string(),
+                message: "Could not migrate macros and workflows to automations. Your macros \
+                          and workflows are unchanged; the migration runs again on the next \
+                          start."
+                    .to_string(),
+                details: Some(format!("{e:#}")),
+            })
+        }
+    };
 
     match manager::AutomationManager::new(app.handle()) {
         Ok(manager) => {
+            recovery_warnings.extend(migration_warning);
             recovery_warnings.extend(manager.take_recovery_warnings());
             app.manage(manager);
         }
@@ -1742,4 +1745,3 @@ mod phases_tests;
 #[cfg(test)]
 #[path = "later_phases_tests.rs"]
 mod later_phases_tests;
-

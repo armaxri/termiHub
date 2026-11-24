@@ -67,8 +67,9 @@ pub fn migrate_runs(
     }
 
     let raw = fs::read_to_string(file.path()).context("Failed to read automation-runs.json")?;
-    let LoadOutcome::Loaded { data: mut store, .. } =
-        load_versioned::<AutomationRunHistoryStore>(&raw)
+    let LoadOutcome::Loaded {
+        data: mut store, ..
+    } = load_versioned::<AutomationRunHistoryStore>(&raw)
     else {
         return Ok(RunsReport::default());
     };
