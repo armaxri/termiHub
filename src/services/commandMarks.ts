@@ -25,6 +25,7 @@
  */
 import type { IDecoration, IDisposable, IMarker, Terminal } from "@xterm/xterm";
 import { errorMessage } from "@/utils/errorMessage";
+import { formatElapsed } from "@/utils/formatters";
 import { frontendWarn } from "@/utils/frontendLog";
 
 /** The OSC identifier xterm hands the payload for. */
@@ -82,6 +83,10 @@ interface CommandRecord {
   end?: AnchoredPosition;
   /** Exit code from `D`; `undefined` when unknown. */
   exitCode?: number;
+  /** Clock time the output started (`C`), for the run time in the tooltip (#5854). */
+  startedAt?: number;
+  /** How long the command ran (`C` to `D`), in ms; `undefined` when unknown. */
+  durationMs?: number;
   state: CommandState;
   /** Success/failure gutter decoration, when rendered. */
   decoration?: IDecoration;
@@ -107,6 +112,8 @@ export interface SnapshotCommand {
   end?: SnapshotPosition;
   /** Exit code of a finished command; `undefined` when unknown or unfinished. */
   exitCode?: number;
+  /** Run time of a finished command in ms, when it was measured (#5854). */
+  durationMs?: number;
 }
 
 /**
@@ -172,6 +179,31 @@ export interface CommandMarkTrackerOptions {
   decorations?: boolean;
   /** Most records kept before the oldest are disposed (default {@link DEFAULT_MAX_COMMAND_RECORDS}). */
   maxRecords?: number;
+  /** Clock for command run times, in ms (default `Date.now`); a seam for tests. */
+  now?: () => number;
+}
+
+/**
+ * A command's run time for the mark's tooltip (#5854): `"240ms"` under a
+ * second, `"2.3s"` under ten seconds, then {@link formatElapsed} (`"5m 03s"`).
+ */
+export function formatCommandDuration(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  if (ms < 10_000) return `${(Math.floor(ms / 100) / 10).toFixed(1)}s`;
+  return formatElapsed(Math.floor(ms / 1000));
+}
+
+/**
+ * The hover text and accessible name of a command mark (#5563, #5854): the
+ * outcome, the exit code and, when it was measured, how long the command ran.
+ */
+export function commandMarkLabel(exitCode: number, durationMs?: number): string {
+  const outcome = exitCode === 0 ? "Command succeeded" : "Command failed";
+  const parts = [outcome, `exit code ${exitCode}`];
+  if (durationMs !== undefined && Number.isFinite(durationMs)) {
+    parts.push(`took ${formatCommandDuration(durationMs)}`);
+  }
+  return parts.join(" · ");
 }
 
 /** Tracks OSC 133 command marks for one terminal. See the module docs. */
@@ -180,6 +212,7 @@ export class CommandMarkTracker implements IDisposable {
   private records: CommandRecord[] = [];
   private decorationsEnabled: boolean;
   private readonly maxRecords: number;
+  private readonly now: () => number;
   /** Prompt last jumped to, and the viewport position that jump produced. */
   private nav: { marker: IMarker; viewportY: number } | null = null;
   private flash: { decoration: IDecoration; timer: ReturnType<typeof setTimeout> } | null = null;
@@ -189,6 +222,7 @@ export class CommandMarkTracker implements IDisposable {
     this.term = term;
     this.decorationsEnabled = options.decorations ?? true;
     this.maxRecords = Math.max(1, Math.floor(options.maxRecords ?? DEFAULT_MAX_COMMAND_RECORDS));
+    this.now = options.now ?? Date.now;
   }
 
   /**
@@ -375,6 +409,7 @@ export class CommandMarkTracker implements IDisposable {
       if (end) command.end = end;
       if (record.state === "finished" && record.exitCode !== undefined) {
         command.exitCode = record.exitCode;
+        if (record.durationMs !== undefined) command.durationMs = record.durationMs;
       }
       commands.push(command);
     }
@@ -408,6 +443,7 @@ export class CommandMarkTracker implements IDisposable {
         // command that actually ran (had output start and end marks).
         if (command.exitCode !== undefined && record.output && record.end) {
           record.exitCode = command.exitCode;
+          if (command.durationMs !== undefined) record.durationMs = command.durationMs;
         }
         restored.push(record);
       }
@@ -497,6 +533,7 @@ export class CommandMarkTracker implements IDisposable {
     const position = this.anchorAtCursor();
     if (!position) return;
     current.output = position;
+    current.startedAt = this.now();
     current.state = "running";
   }
 
@@ -520,6 +557,8 @@ export class CommandMarkTracker implements IDisposable {
     const end = this.anchorAtCursor();
     if (end) record.end = end;
     record.exitCode = exitCode;
+    record.durationMs =
+      record.startedAt !== undefined ? Math.max(0, this.now() - record.startedAt) : undefined;
     record.state = "finished";
     this.decorate(record);
   }
@@ -555,6 +594,8 @@ export class CommandMarkTracker implements IDisposable {
     record.output = undefined;
     record.end = undefined;
     record.exitCode = undefined;
+    record.startedAt = undefined;
+    record.durationMs = undefined;
     record.state = "prompt";
   }
 
@@ -743,16 +784,17 @@ export class CommandMarkTracker implements IDisposable {
     const decoration = this.term.registerDecoration({ marker: record.prompt });
     if (!decoration) return;
     const failed = record.exitCode !== 0;
-    // Hover text (#5563): the exit code, for success too, so the bar answers
-    // "what did it return?" without re-running the command.
-    const title = failed
-      ? `Command failed (exit code ${record.exitCode})`
-      : "Command succeeded (exit code 0)";
+    // Hover text (#5563, #5854): the exit code, for success too, and the run
+    // time, so the mark answers "what did it return, how long did it take?"
+    // without re-running the command. It is also the mark's accessible name.
+    const title = commandMarkLabel(record.exitCode, record.durationMs);
     decoration.onRender((el) => {
       el.classList.add(COMMAND_MARK_CLASS);
       el.classList.toggle(COMMAND_MARK_SUCCESS_CLASS, !failed);
       el.classList.toggle(COMMAND_MARK_FAILURE_CLASS, failed);
       el.title = title;
+      el.setAttribute("role", "img");
+      el.setAttribute("aria-label", title);
     });
     record.decoration = decoration;
   }
