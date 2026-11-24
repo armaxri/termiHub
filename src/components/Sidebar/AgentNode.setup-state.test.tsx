@@ -128,6 +128,14 @@ const reconnectButton = () => byTestId<HTMLButtonElement>(`agent-reconnect-${AGE
 const setupButton = () => byTestId<HTMLButtonElement>(`agent-setup-${AGENT_ID}`);
 const installingMarker = () => byTestId(`agent-installing-${AGENT_ID}`);
 
+async function settle() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 const NOT_INSTALLED = "[thub-code:agent_missing] termihub-agent: not found";
 
 function setPhase(phase: "installing" | "installed" | null): void {
