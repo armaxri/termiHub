@@ -61,8 +61,8 @@
   flex-shrink: 0;
   align-self: stretch;
   width: 1px;
-  margin: var(--spacing-xs) 0;
-  background-color: var(--border-secondary);
+  margin: var(--spacing-xs) var(--spacing-xxs);
+  background-color: var(--border-primary);
 }
 
 /* "New ▾" (#5832): icon plus caret, tighter than a labelled button. */
@@ -552,7 +552,8 @@
 .file-browser__menu-tick {
   display: inline-flex;
   flex-shrink: 0;
-  width: var(--spacing-lg);
+  /* The menu's icon size, so ticked and iconned labels start on one line. */
+  width: 14px;
   color: var(--text-accent);
 }
 
@@ -566,7 +567,7 @@
 /* First, muted line of the "…" menu: the folder its actions act on (#5832).
    `contain: inline-size` keeps a long name from widening the menu; it ends
    in an ellipsis instead, with the full path as the tooltip. */
-.file-browser__menu-folder {
+.ui-menu__label.file-browser__menu-folder {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);

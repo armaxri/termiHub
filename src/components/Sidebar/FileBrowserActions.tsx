@@ -121,8 +121,8 @@ const FALLBACK_GAP = 2;
 const CHAR_WIDTH = 7;
 /** Extra width of a menu button's "▾" caret beside its icon. */
 const MENU_BUTTON_EXTRA = 12;
-/** Width of the divider between the pinned navigation and the other icons. */
-const DIVIDER_WIDTH = 1;
+/** Width of the divider between the pinned navigation and the other icons (with its margins). */
+const DIVIDER_WIDTH = 5;
 /** Gap the overflow menu keeps to the window's top, right and bottom edges. */
 const MENU_EDGE_PADDING = 8;
 

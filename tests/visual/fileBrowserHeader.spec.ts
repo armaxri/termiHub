@@ -143,6 +143,10 @@ test("the file browser header keeps long paths legible and its actions on one ro
       .toBeGreaterThanOrEqual(5);
     for (const text of items) expect.soft(text.trim(), `${theme}: menu entry label`).not.toBe("");
     await expect(menu.locator("[role^=menuitem]").first()).toBeFocused();
+    // #5832: the menu's first line names the folder it acts on (the cell's leaf).
+    await expect
+      .soft(menu.locator("[data-testid=file-browser-more-menu-folder]"), `${theme}: folder line`)
+      .toHaveText("img");
     const menuFile = join(SCREENS, "file-browser-header", `overflow-menu-${theme}.png`);
     await page.screenshot({ path: menuFile });
     await testInfo.attach(`file browser overflow menu (${theme})`, {

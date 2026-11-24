@@ -173,8 +173,8 @@ describe("buildFileBrowserActions", () => {
 
   it("collapses the lowest-priority icons into the menu at a narrow width", async () => {
     // Fallback icon 28px + 2px gaps: trigger + Up + Refresh + one more = 118.
-    // The first unpinned icon also brings the divider (1px + 2px gap): 121.
-    width.value = 121;
+    // The first unpinned icon also brings the divider (5px + 2px gap): 125.
+    width.value = 125;
     render(buildFileBrowserActions(input({ mode: "session" })));
     expect(inlineIds()).toEqual(["file-browser-up", "file-browser-refresh", "file-browser-upload"]);
     await openFileBrowserMoreMenu();
