@@ -25,6 +25,15 @@ const archInfo: RemoteArchInfo = {
   buildBranch: null,
 };
 
+const windowsArchInfo: RemoteArchInfo = {
+  arch: "AMD64",
+  os: "Windows_NT",
+  archSuffix: "windows-x64",
+  downloadBaseUrl: baseUrl,
+  downloadUrl: `${baseUrl}windows-x64.exe`,
+  buildBranch: null,
+};
+
 const detectAgentArch = vi.fn(async (): Promise<RemoteArchInfo> => archInfo);
 const setupRemoteAgent = vi.fn(async () => ({ sessionId: "setup-session" }));
 const cancelAgentSetup = vi.fn(async (_agentId: string): Promise<void> => undefined);
@@ -205,6 +214,17 @@ describe("AgentSetupDialog — the setup tab (#5865)", () => {
       reportsExit: true,
       progress: { kind: "running" },
       dismissed: false,
+    });
+  });
+
+  it("a Windows setup's tab reports through the exit of its commands too (#5946)", async () => {
+    detectAgentArch.mockResolvedValueOnce(windowsArchInfo);
+    await startSetup();
+    expect(useAgentSetupStatus.getState().tabs["tab-setup"].reportsExit).toBe(true);
+    // Its "done" (commands sent) waits for the exit instead of reading as "sent".
+    act(() => progressCallback?.("agent-1", "done", "Setup commands sent to terminal"));
+    expect(useAgentSetupStatus.getState().tabs["tab-setup"].progress).toEqual({
+      kind: "running",
     });
   });
 

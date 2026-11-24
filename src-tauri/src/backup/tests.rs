@@ -104,6 +104,10 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
             json!({"version": "1", "workflows": [{"id": "wf1", "name": "Nightly"}]}),
         ),
         (
+            "automations.json",
+            json!({"version": "1", "automations": [{"id": "a1", "name": "Rotate logs"}]}),
+        ),
+        (
             "schedules.json",
             json!({"version": "1", "paused": false, "schedules": [schedule_doc("sch1", "Health")]}),
         ),
@@ -1208,6 +1212,10 @@ fn every_section_version_is_its_stores_current_version() {
         ),
         ("macros", MacroStore::CURRENT_VERSION),
         (
+            "automations",
+            crate::automations::store::AutomationStore::CURRENT_VERSION,
+        ),
+        (
             "workflows",
             <WorkflowStore as VersionedStore>::CURRENT_VERSION,
         ),
@@ -1380,4 +1388,22 @@ fn macros_and_tunnels_sections_keep_unknown_top_level_fields() {
             "{id}: {normalized}"
         );
     }
+}
+
+/// The automations section never carries this machine's migration
+/// provenance (#5818): a restored store adopts the local legacy files instead
+/// of merging them against another machine's fingerprints.
+#[test]
+fn automations_section_drops_the_migration_provenance() {
+    let spec = sections::spec("automations").unwrap();
+    let doc = json!({
+        "version": "1",
+        "automations": [{"id": "a1", "name": "Rotate logs"}],
+        "migratedFrom": {"macros.json": {"version": 1, "sha256": "abc", "entries": []}},
+        "idRemaps": [{"source": "macro", "oldId": "x", "newId": "automation-x"}]
+    });
+    let normalized = spec.normalize(doc).unwrap();
+    assert!(normalized.get("migratedFrom").is_none());
+    assert_eq!(normalized["idRemaps"][0]["newId"], "automation-x");
+    assert_eq!(normalized["automations"][0]["id"], "a1");
 }

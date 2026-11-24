@@ -199,6 +199,18 @@ describe("scrollback separators", () => {
     );
   });
 
+  it("says the user ended a link session, not that it was lost (#5959)", () => {
+    for (const transport of ["agent", "ssh", "telnet", "serial"] as const) {
+      expect(sessionEndSeparator({ transport, exitCode: null, reason: "killed", at: AT })).toBe(
+        "— disconnected by you 09:05:07 —"
+      );
+    }
+    // A local process the user stopped still reads as a process exit.
+    expect(
+      sessionEndSeparator({ transport: "other", exitCode: null, reason: "killed", at: AT })
+    ).toBe("[Process exited]");
+  });
+
   it("says an agent session that was re-attached was resumed (#5953)", () => {
     expect(resumedMarker(AT)).toBe("— reconnected 09:05:07 — session resumed —");
   });
