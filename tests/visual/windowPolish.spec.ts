@@ -98,7 +98,7 @@ test("settings pages share one content column width in every theme (#5562)", asy
   expect(distinct, `column widths per page/theme: ${JSON.stringify(widths)}`).toHaveLength(1);
 });
 
-test("the window toolbar shows the layout icons, then the … menu (#5559, #5756)", async ({
+test("the window toolbar shows the layout icons, the sidebar toggle, then the … menu (#5559, #5756, #5849)", async ({
   page,
 }, testInfo) => {
   await boot(page);
@@ -108,7 +108,11 @@ test("the window toolbar shows the layout icons, then the … menu (#5559, #5756
     Array.from(root.children).map((el) => {
       const r = el.getBoundingClientRect();
       return {
-        kind: el.getAttribute("role") === "separator" ? "|" : el.getAttribute("aria-label"),
+        // The sidebar toggle's label carries its shortcut, e.g. "Toggle sidebar (Cmd+B)".
+        kind:
+          el.getAttribute("role") === "separator"
+            ? "|"
+            : (el.getAttribute("aria-label") ?? "").replace(/ \([^()]*\)$/, ""),
         left: r.left,
         right: r.right,
         width: r.width,
@@ -116,7 +120,14 @@ test("the window toolbar shows the layout icons, then the … menu (#5559, #5756
       };
     })
   );
-  expect(layout.map((l) => l.kind)).toEqual(["Layout", "|", "More terminal actions"]);
+  // #5849: the sidebar toggle sits apart from the split icons, between two dividers.
+  expect(layout.map((l) => l.kind)).toEqual([
+    "Layout",
+    "|",
+    "Toggle sidebar",
+    "|",
+    "More terminal actions",
+  ]);
   for (let i = 1; i < layout.length; i++) {
     expect(layout[i].left, `${layout[i].kind} starts after its neighbour`).toBeGreaterThanOrEqual(
       layout[i - 1].right
