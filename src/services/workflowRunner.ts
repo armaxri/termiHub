@@ -31,9 +31,27 @@
  * authorize seam, or when authorization is refused, the process is **never
  * spawned** and the step fails. Only an explicit `true` from the authorize seam
  * lets the run seam spawn the program.
+ *
+ * Automation steps (#5818, slice 3). The runner also executes the two step kinds
+ * an {@link AutomationStep} adds, so automations and workflows share one engine:
+ *  - `type-keys` — the recorded chunks are typed byte for byte through the same
+ *    `send` seam (no newline, no `${param}` substitution), scheduled by the
+ *    macro-playback scheduler with the step's saved timing (see
+ *    {@link typeKeysTiming}); delays sleep through the `wait` seam.
+ *  - `run-automation` — runs another automation's steps inline, on the same
+ *    target, looked up through {@link WorkflowRunnerDeps.resolveAutomation}. The
+ *    chain of automations being run is threaded down so a cycle fails with the
+ *    path, and nesting is capped at {@link MAX_AUTOMATION_DEPTH}.
  */
 
-import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
+import {
+  DEFAULT_FIXED_DELAY_MS,
+  MAX_STEP_DELAY_MS,
+  runMacroPlayback,
+  type MacroPlaybackOptions,
+} from "@/services/macroPlayback";
+import type { Automation } from "@/types/generated/Automation";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { WorkflowCondition, WorkflowStep, WorkflowStepRetry } from "@/types/workflow";
 import { frontendWarn } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -58,6 +76,52 @@ export const MAX_CONDITIONAL_DEPTH = 10;
  * check): the two bounds may diverge later.
  */
 export const MAX_LOOP_DEPTH = MAX_CONDITIONAL_DEPTH;
+
+/**
+ * Maximum number of nested `run-automation` calls in one run (#5818). The top
+ * automation calling another is 1. A deeper chain fails with a clear error
+ * rather than recursing further. Shares the value of the conditional bound.
+ *
+ * @alias Deliberately a separate name for the same value (knip duplicate-export
+ * check): the bounds may diverge later.
+ */
+export const MAX_AUTOMATION_DEPTH = MAX_CONDITIONAL_DEPTH;
+
+/**
+ * A step the runner can execute: any workflow step or any automation step
+ * (#5818). The two unions share every kind except `run-macro` (workflow only)
+ * and `type-keys` / `run-automation` (automation only).
+ */
+export type RunnableStep = WorkflowStep | AutomationStep;
+
+/** The `type-keys` automation step. */
+export type TypeKeysStep = Extract<AutomationStep, { kind: "type-keys" }>;
+
+/**
+ * The macro-playback options a `type-keys` step's saved timing maps to
+ * (#5818). `recorded` (the default) replays each chunk's recorded delay,
+ * clamped like macro playback; `fixed` waits `fixedDelayMs` (default
+ * {@link DEFAULT_FIXED_DELAY_MS}) between chunks; `instant` waits not at all.
+ * As in macro playback, the first chunk is always typed at once. A **pure**
+ * helper.
+ */
+export function typeKeysTiming(step: TypeKeysStep): MacroPlaybackOptions {
+  switch (step.timing ?? "recorded") {
+    case "instant":
+      return { timingMode: "instant" };
+    case "fixed":
+      return {
+        timingMode: "fixed",
+        fixedDelayMs:
+          step.fixedDelayMs !== undefined && Number.isFinite(step.fixedDelayMs)
+            ? step.fixedDelayMs
+            : DEFAULT_FIXED_DELAY_MS,
+      };
+    case "recorded":
+    default:
+      return { timingMode: "real-time" };
+  }
+}
 
 /**
  * Maximum number of iterations a single `loop` step will run (PROD-044). A
@@ -251,6 +315,12 @@ export type WorkflowSendSeam = (data: string) => Promise<boolean> | boolean;
 export type WorkflowRunMacroSeam = (macroId: string) => Promise<boolean> | boolean;
 
 /**
+ * Looks up a stored automation by id for a `run-automation` step (#5818).
+ * Returns `undefined` when no automation has that id.
+ */
+export type WorkflowResolveAutomationSeam = (automationId: string) => Automation | undefined;
+
+/**
  * Sleeps for `ms` milliseconds before resolving — the scheduler timer both the
  * `wait` step and the `run-script` inter-line delay route through. Injectable so
  * tests can assert the (already clamped) delay without real time passing.
@@ -354,6 +424,11 @@ export interface WorkflowRunnerDeps {
   send: WorkflowSendSeam;
   /** Replays a stored macro by id (the `run-macro` seam). */
   runMacro?: WorkflowRunMacroSeam;
+  /**
+   * Looks up an automation by id (the `run-automation` seam, #5818). Absent →
+   * a `run-automation` step fails loudly.
+   */
+  resolveAutomation?: WorkflowResolveAutomationSeam;
   /** Sleeps for a (clamped) number of ms (the `wait` / inter-line-delay seam). */
   wait?: WorkflowWaitSeam;
   /** Reads a script body from disk (the `run-script` `sourcePath` seam). */
@@ -395,7 +470,7 @@ export interface WorkflowStepRetryEvent {
   /** The 0-based index of the top-level step this (possibly nested) step is in. */
   stepIndex: number;
   /** The step that failed and will be retried. */
-  step: WorkflowStep;
+  step: RunnableStep;
   /** The attempt that just failed (1-based). */
   failedAttempt: number;
   /** The total attempts the policy allows (1 + effective retries). */
@@ -411,7 +486,7 @@ export interface WorkflowStepContinuedEvent {
   /** The 0-based index of the top-level step this (possibly nested) step is in. */
   stepIndex: number;
   /** The step whose failure was tolerated. */
-  step: WorkflowStep;
+  step: RunnableStep;
   /** The failure reason of the final attempt. */
   error: string;
   /** How many times the step was attempted. */
@@ -421,7 +496,7 @@ export interface WorkflowStepContinuedEvent {
 /** Optional lifecycle hooks fired as a run advances. */
 export interface WorkflowRunHooks {
   /** Fired after each step completes, with the 1-based count, total, and step. */
-  onProgress?: (completed: number, total: number, step: WorkflowStep) => void;
+  onProgress?: (completed: number, total: number, step: RunnableStep) => void;
   /** Fired before a failing step is retried (PROD-045). */
   onStepRetry?: (event: WorkflowStepRetryEvent) => void;
   /** Fired when a failing step is tolerated via `continueOnError` (PROD-045). */
@@ -609,11 +684,20 @@ export function interpolateParams(
  * `run-local-process.program`/`args`; `run-macro`, `wait`, and the non-text
  * fields of the others are returned unchanged.
  */
-export function resolveStepParams(
-  step: WorkflowStep,
+export function resolveStepParams<S extends RunnableStep>(
+  step: S,
   paramValues: WorkflowParamValues,
   onUnknownParam?: (name: string) => void
-): WorkflowStep {
+): S {
+  return resolveAnyStepParams(step, paramValues, onUnknownParam) as S;
+}
+
+/** {@link resolveStepParams} over the whole {@link RunnableStep} union. */
+function resolveAnyStepParams(
+  step: RunnableStep,
+  paramValues: WorkflowParamValues,
+  onUnknownParam?: (name: string) => void
+): RunnableStep {
   // Identity fast-path: no declared parameters → no interpolation at all.
   if (Object.keys(paramValues).length === 0) return step;
   const sub = (text: string): string => interpolateParams(text, paramValues, onUnknownParam);
@@ -650,11 +734,158 @@ export function resolveStepParams(
     case "run-macro":
     case "wait":
       return step;
+    case "type-keys":
+      // Recorded bytes are typed exactly: a `${` in a chunk stays literal.
+      return step;
+    case "run-automation":
+      // The callee resolves its own steps against its own parameter values.
+      return step;
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
     }
   }
+}
+
+/** Options of a whole run (#5818). */
+export interface WorkflowRunOptions {
+  /** Ids of the automations already being run, outermost first. */
+  callChain?: readonly string[];
+}
+
+/** A human-readable name of an automation id for error messages. */
+function automationLabel(id: string, deps: Pick<WorkflowRunnerDeps, "resolveAutomation">): string {
+  const name = deps.resolveAutomation?.(id)?.name;
+  return name ? `"${name}"` : `"${id}"`;
+}
+
+/**
+ * Describe an automation call chain that closes a cycle, e.g.
+ * `"Deploy" → "Build" → "Deploy"` (#5818).
+ */
+export function describeAutomationCycle(
+  chain: readonly string[],
+  deps: Pick<WorkflowRunnerDeps, "resolveAutomation">
+): string {
+  return chain.map((id) => automationLabel(id, deps)).join(" → ");
+}
+
+/**
+ * The parameter values a called automation runs with (#5818): each parameter
+ * it declares takes the caller's value of the same name, else its own default.
+ * Parameters with neither are left out, so a `${name}` reference to them stays
+ * literal exactly as in a top-level run. A **pure** helper.
+ */
+export function calleeParamValues(
+  callee: Automation,
+  callerValues: WorkflowParamValues | undefined
+): WorkflowParamValues {
+  const values: WorkflowParamValues = {};
+  for (const param of callee.parameters ?? []) {
+    if (callerValues && Object.prototype.hasOwnProperty.call(callerValues, param.name)) {
+      values[param.name] = callerValues[param.name];
+    } else if (param.default !== undefined) {
+      values[param.name] = param.default;
+    }
+  }
+  return values;
+}
+
+/**
+ * Type a `type-keys` step's chunks through the `send` seam (#5818). Reuses the
+ * macro-playback scheduler with the step's saved timing; its delays sleep
+ * through the `wait` seam. Each chunk's `data` is sent exactly as stored. A
+ * cancel stops before the next chunk; a target that stops accepting input fails
+ * the step, saying how many chunks were typed.
+ */
+async function typeKeys(
+  step: TypeKeysStep,
+  deps: WorkflowRunnerDeps,
+  signal?: WorkflowStepSignal
+): Promise<StepOutcome> {
+  if (signal?.isCancelled()) return { ok: true, cancelled: true };
+  const handle = runMacroPlayback(step.chunks, (data) => deps.send(data), {
+    ...typeKeysTiming(step),
+    sleep: deps.wait,
+  });
+  void signal?.whenCancelled?.then(() => handle.cancel());
+  const result = await handle.done;
+  switch (result.status) {
+    case "completed":
+      return { ok: true };
+    case "cancelled":
+      return { ok: true, cancelled: true };
+    case "error":
+    default:
+      return {
+        ok: false,
+        error:
+          `${SESSION_GONE} (typed ${result.stepsPlayed} of ${step.chunks.length} ` +
+          `chunk${step.chunks.length === 1 ? "" : "s"})`,
+      };
+  }
+}
+
+/**
+ * Run another automation's steps inline for a `run-automation` step (#5818),
+ * on the same target and under the same cancel signal and error-handling
+ * bookkeeping. Fails when the lookup seam is absent, the automation is missing,
+ * it is already on the call chain (a cycle), or the chain is already
+ * {@link MAX_AUTOMATION_DEPTH} calls deep.
+ */
+async function runNestedAutomation(
+  automationId: string,
+  deps: WorkflowRunnerDeps,
+  signal: WorkflowStepSignal | undefined,
+  paramValues: WorkflowParamValues | undefined,
+  policy: WorkflowPolicyContext | undefined,
+  callChain: readonly string[]
+): Promise<StepOutcome> {
+  if (!deps.resolveAutomation) {
+    return { ok: false, error: 'the "run-automation" step requires an automation lookup' };
+  }
+  if (callChain.includes(automationId)) {
+    return {
+      ok: false,
+      error: `automation calls itself: ${describeAutomationCycle([...callChain, automationId], deps)}`,
+    };
+  }
+  // The outermost automation is not a call, so a chain of N ids makes this the
+  // N-th call (the first call when the run was started without a chain).
+  const calls = Math.max(1, callChain.length);
+  if (calls > MAX_AUTOMATION_DEPTH) {
+    return {
+      ok: false,
+      error: `automations call each other more than ${MAX_AUTOMATION_DEPTH} levels deep`,
+    };
+  }
+  const callee = deps.resolveAutomation(automationId);
+  if (!callee) return { ok: false, error: `automation "${automationId}" was not found` };
+
+  const chain = [...callChain, automationId];
+  const values = calleeParamValues(callee, paramValues);
+  for (let i = 0; i < callee.steps.length; i++) {
+    if (signal?.isCancelled()) return { ok: true, cancelled: true };
+    const outcome = await executeStepWithPolicy(
+      callee.steps[i],
+      deps,
+      signal,
+      values,
+      // Each automation counts its own conditional/loop nesting from 0; the
+      // call depth itself is capped above, so the stack stays bounded.
+      0,
+      policy,
+      chain
+    );
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        error: `in automation "${callee.name}", step ${i + 1}: ${outcome.error}`,
+      };
+    }
+    if (outcome.cancelled) return { ok: true, cancelled: true };
+  }
+  return { ok: true };
 }
 
 /**
@@ -670,14 +901,19 @@ export function resolveStepParams(
  * before the dispatch switch: `${name}` references in the step's text fields are
  * resolved against it. It is optional and defaults to empty, which makes the
  * pass a strict identity so a parameter-free workflow is unaffected.
+ *
+ * `callChain` (#5818) is the ids of the automations being run, outermost first.
+ * A `run-automation` step fails when its target is already on the chain (a
+ * cycle) or the chain is already {@link MAX_AUTOMATION_DEPTH} calls deep.
  */
 export async function executeStep(
-  step: WorkflowStep,
+  step: RunnableStep,
   deps: WorkflowRunnerDeps,
   signal?: WorkflowStepSignal,
   paramValues?: WorkflowParamValues,
   depth = 0,
-  policy?: WorkflowPolicyContext
+  policy?: WorkflowPolicyContext,
+  callChain: readonly string[] = []
 ): Promise<StepOutcome> {
   const cancelled = (): boolean => signal?.isCancelled() ?? false;
 
@@ -723,6 +959,17 @@ export async function executeStep(
       await sleepFor(clampDelay(resolved.delayMs), deps);
       return { ok: true };
     }
+    case "type-keys":
+      return typeKeys(resolved, deps, signal);
+    case "run-automation":
+      return runNestedAutomation(
+        resolved.automationId,
+        deps,
+        signal,
+        paramValues,
+        policy,
+        callChain
+      );
     case "run-local-process": {
       // Guarded, security-critical (#1857). Fail-closed at every gate.
       if (!deps.runLocalProcess) {
@@ -776,7 +1023,8 @@ export async function executeStep(
           signal,
           paramValues,
           depth + 1,
-          policy
+          policy,
+          callChain
         );
         if (!outcome.ok) return outcome;
         if (outcome.cancelled) return { ok: true, cancelled: true };
@@ -803,7 +1051,8 @@ export async function executeStep(
             signal,
             augmented,
             depth + 1,
-            policy
+            policy,
+            callChain
           );
           if (!outcome.ok) return outcome;
           if (outcome.cancelled) return { ok: true, cancelled: true };
@@ -912,12 +1161,13 @@ export async function executeStep(
  * A step with neither option behaves exactly like {@link executeStep}.
  */
 export async function executeStepWithPolicy(
-  step: WorkflowStep,
+  step: RunnableStep,
   deps: WorkflowRunnerDeps,
   signal?: WorkflowStepSignal,
   paramValues?: WorkflowParamValues,
   depth = 0,
-  policy?: WorkflowPolicyContext
+  policy?: WorkflowPolicyContext,
+  callChain: readonly string[] = []
 ): Promise<StepOutcome> {
   const maxRetries = effectiveRetryCount(step.retry);
   const maxAttempts = maxRetries + 1;
@@ -925,7 +1175,7 @@ export async function executeStepWithPolicy(
   let lastError = "";
   for (;;) {
     attempt += 1;
-    const outcome = await executeStep(step, deps, signal, paramValues, depth, policy);
+    const outcome = await executeStep(step, deps, signal, paramValues, depth, policy, callChain);
     if (outcome.ok) return outcome;
     lastError = outcome.error;
     if (attempt >= maxAttempts) break;
@@ -994,13 +1244,18 @@ export async function executeStepWithPolicy(
  * before the run fails, and a step marked `continueOnError` records its failure
  * in {@link WorkflowRunResult.continuedFailures} and lets the run carry on. A
  * cancel interrupts a retry back-off wait immediately.
+ *
+ * `options.callChain` (#5818) seeds the `run-automation` cycle check with the
+ * id of the automation being run, so it cannot call itself.
  */
 export function runWorkflow(
-  steps: WorkflowStep[],
+  steps: readonly RunnableStep[],
   deps: WorkflowRunnerDeps,
   hooks?: WorkflowRunHooks,
-  paramValues?: WorkflowParamValues
+  paramValues?: WorkflowParamValues,
+  options?: WorkflowRunOptions
 ): WorkflowRunHandle {
+  const callChain = options?.callChain ?? [];
   let cancelled = false;
   let resolveCancelled: () => void = () => {};
   const whenCancelled = new Promise<void>((resolve) => {
@@ -1030,7 +1285,15 @@ export function runWorkflow(
       if (cancelled) return withFailures({ status: "cancelled", stepsCompleted: i });
 
       policy.stepIndex = i;
-      const outcome = await executeStepWithPolicy(steps[i], deps, signal, paramValues, 0, policy);
+      const outcome = await executeStepWithPolicy(
+        steps[i],
+        deps,
+        signal,
+        paramValues,
+        0,
+        policy,
+        callChain
+      );
       if (!outcome.ok) {
         return withFailures({
           status: "failed",
