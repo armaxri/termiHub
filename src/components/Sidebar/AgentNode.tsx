@@ -122,7 +122,7 @@ import { useOpenAfterMenuClose } from "./useOpenAfterMenuClose";
 import { folderRenameError } from "@/utils/folderRename";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { AgentNewSerialSessionItem } from "./AgentNewSerialSessionItem";
-import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
+import { TreeFolderRow, TreeItemRow, treeItemPaddingLeft, treeRowPaddingLeft } from "./TreeRow";
 import { errorMessage } from "@/utils/errorMessage";
 import { tf } from "@/i18n/catalog";
 
@@ -388,7 +388,7 @@ function AgentConnectionItem({
       <ContextMenuTrigger asChild>
         <TreeItemRow
           buttonRef={setRowNode}
-          indentPx={treeRowPaddingLeft(depth)}
+          indentPx={treeItemPaddingLeft(depth)}
           ariaLevel={depth}
           tabIndex={rowIndex === activeIndex ? 0 : -1}
           ariaSelected={isSelected}
