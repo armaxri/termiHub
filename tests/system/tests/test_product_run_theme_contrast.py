@@ -1,4 +1,4 @@
-"""Product run: selected rows, activity bar, links and switches per theme (#5853).
+"""Product run: selected rows, activity bar, links and switches per theme (#5853, #5888).
 
 The live grade is hand-triggered only (``scripts/internal/product-run.sh``;
 deselected without ``--product-run``). The UI review of run
@@ -11,9 +11,12 @@ deselected without ``--product-run``). The UI review of run
   sidebar and editor;
 - R-145: Solarized Dark links sat at exactly 4.50:1;
 - R-146: the Solarized Light off knob was 4.13:1 on its track, and on/off
-  differed mainly by colour.
+  differed mainly by colour;
+- #5888: Dark and Light marked a selected row only with an accent tint near
+  1.2:1 on the sidebar, with no bar or outline.
 
 Now an opaque selected row carries a 1px outline at >=3:1 against the sidebar,
+a tinted one (Dark, Light) an accent left bar at >=3:1 on the sidebar and row,
 Light's secondary text reaches 5.8:1 on the sidebar, Solarized activity bars sit
 on the theme's own light/dark side, links reach 5:1 on every text surface, and
 the on knob draws a check glyph (the off knob reaches 4.5:1 in Solarized Light).
@@ -31,7 +34,7 @@ import sys
 import pytest
 
 from termihub_harness import ConnectionsUi, SettingsUi, SidebarUi, SystemTest, unique_name
-from termihub_harness.colors import Rgba, contrast, parse_color, relative_luminance
+from termihub_harness.colors import Rgba, composite, contrast, parse_color, relative_luminance
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.ui.lookups import connection_item_testid
 from termihub_harness.ui.theme import BUILTIN_THEMES, ThemeUi
@@ -65,6 +68,26 @@ def selected_row_problems(sidebar: Rgba, row: Rgba, outline: Rgba, bar: Rgba) ->
     if contrast(bar, sidebar) < UI_COMPONENT_MIN:
         problems.append(f"selection bar only {contrast(bar, sidebar):.2f}:1 on the sidebar")
     return problems
+
+
+def tinted_row_problems(sidebar: Rgba, row: Rgba, bar: Rgba) -> list[str]:
+    """A translucent tint row is a faint band: its bar must reach 3:1 on both sides (#5888)."""
+    band = composite(row, sidebar)
+    problems = []
+    if not bar.opaque:
+        problems.append("selection bar is not drawn; the row is marked by its tint alone")
+        return problems
+    for where, under in (("sidebar", sidebar), ("selected row", band)):
+        if contrast(bar, under) < UI_COMPONENT_MIN:
+            problems.append(f"selection bar only {contrast(bar, under):.2f}:1 on the {where}")
+    return problems
+
+
+def row_problems(sidebar: Rgba, row: Rgba, outline: Rgba, bar: Rgba) -> list[str]:
+    """Grade an opaque row by its boundary, a translucent (tint) row by its bar."""
+    if row.opaque:
+        return selected_row_problems(sidebar, row, outline, bar)
+    return tinted_row_problems(sidebar, row, bar)
 
 
 def link_problems(link: Rgba, surfaces: dict[str, Rgba]) -> list[str]:
@@ -134,6 +157,39 @@ def test_grade_faint_bar_is_named():
     assert problems == ["selection bar only 2.48:1 on the sidebar"]
 
 
+DARK_SIDEBAR = parse_color("#161b24")
+DARK_ACCENT = parse_color("#2d72e6")
+LIGHT_SIDEBAR = parse_color("#f3f3f3")
+LIGHT_ACCENT = parse_color("#0366d6")
+
+
+def _tint(accent: Rgba, alpha: float = 0.18) -> Rgba:
+    """``color-mix(in srgb, accent 18%, transparent)``, as the WebView computes it."""
+    return Rgba(accent.r, accent.g, accent.b, alpha)
+
+
+def test_grade_tint_row_without_bar_fails():
+    problems = row_problems(DARK_SIDEBAR, _tint(DARK_ACCENT), NONE, NONE)
+    assert problems == ["selection bar is not drawn; the row is marked by its tint alone"]
+
+
+def test_grade_tint_row_with_accent_bar_passes():
+    for sidebar, accent in ((DARK_SIDEBAR, DARK_ACCENT), (LIGHT_SIDEBAR, LIGHT_ACCENT)):
+        for alpha in (0.18, 0.10):  # resting and hovered tints
+            assert row_problems(sidebar, _tint(accent, alpha), NONE, accent) == []
+
+
+def test_grade_tint_row_with_faint_bar_is_named():
+    problems = row_problems(LIGHT_SIDEBAR, _tint(LIGHT_ACCENT), NONE, parse_color("#79b8ff"))
+    assert len(problems) == 2
+    assert "on the sidebar" in problems[0] and "on the selected row" in problems[1]
+
+
+def test_grade_opaque_row_still_needs_a_boundary():
+    problems = row_problems(BASE3, BEIGE, NONE, BLUE)
+    assert len(problems) == 1 and "boundary only 1.44:1" in problems[0]
+
+
 def test_grade_link_at_the_aa_edge_fails():
     surfaces = {"--sidebar-bg": parse_color("#073642"), "--bg-primary": parse_color("#002b36")}
     problems = link_problems(parse_color("#4b9fda"), surfaces)
@@ -193,12 +249,17 @@ class TestProductRunThemeContrast(
         self.switch_to_connections_sidebar()
         self.create_local_connection(name)
         item = connection_item_testid(self.require_connection(name)["id"])
-        for theme in SOLARIZED_THEMES:
+        for theme in BUILTIN_THEMES:
+            tinted = theme not in SOLARIZED_THEMES
             with self.step(
                 f"themes.{theme}.selected-row-boundary",
-                f"{theme}: the selected row is outlined at >=3:1 on the sidebar (#5853 R-059)",
-                expect=f"{theme} with one connection row selected: an outlined band with a "
-                "blue left bar, easy to spot at a glance",
+                f"{theme}: the selected row has a >=3:1 cue on the sidebar (#5853 R-059, #5888)",
+                expect=f"{theme} with one connection row selected: "
+                + (
+                    "an accent-tinted band with an accent left bar, easy to spot at a glance"
+                    if tinted
+                    else "an outlined band with a blue left bar, easy to spot at a glance"
+                ),
             ):
                 self.set_theme(theme)
                 self.switch_to_connections_sidebar()
@@ -208,15 +269,18 @@ class TestProductRunThemeContrast(
                     what="the row to be selected",
                 )
                 sidebar = self._token("--sidebar-bg")
-                row = self._token("--selected-row-bg")
+                # The painted row, not the token: a tint resolves to a translucent colour.
+                row = self.style_color("background-color", item)
                 outline = self._token("--selected-row-outline")
                 bar = self._token("--selected-row-indicator")
+                band = composite(row, sidebar)
                 self.evidence(
-                    f"row {row.hex()} {contrast(row, sidebar):.2f}:1, outline {outline.hex()} "
+                    f"row {band.hex()} {contrast(band, sidebar):.2f}:1, outline {outline.hex()} "
                     f"{contrast(outline, sidebar):.2f}:1, bar {bar.hex()} "
-                    f"{contrast(bar, sidebar):.2f}:1 on sidebar {sidebar.hex()}"
+                    f"{contrast(bar, sidebar):.2f}:1 on sidebar {sidebar.hex()}, "
+                    f"{contrast(bar, band):.2f}:1 on the row"
                 )
-                problems = selected_row_problems(sidebar, row, outline, bar)
+                problems = row_problems(sidebar, row, outline, bar)
                 assert not problems, problems
 
     def test_20_links_and_hints(self):
