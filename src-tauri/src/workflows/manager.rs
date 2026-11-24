@@ -5,7 +5,6 @@ use tauri::{AppHandle, Runtime};
 
 use super::config::{Workflow, WorkflowStore};
 use super::storage::WorkflowStorage;
-use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 
@@ -46,36 +45,6 @@ impl WorkflowManager {
             storage,
             recovery_warnings: Mutex::new(Vec::new()),
         }
-    }
-
-    /// Re-point every connection-bound trigger's connections along `remap` (#3596):
-    /// on-connect, on-disconnect and on-output-match (#3791).
-    /// A rename or move keeps the connection, so `updatedAt` is left alone. The
-    /// store is persisted (atomically) only when a trigger changed, and memory
-    /// is updated only after the write succeeded. Returns whether it changed.
-    pub fn follow_connection_id_changes(
-        &self,
-        remap: &ConnectionIdRemap,
-    ) -> Result<bool, TerminalError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| TerminalError::WorkflowError(e.to_string()))?;
-        let mut next = store.clone();
-        let ids = next
-            .workflows
-            .iter_mut()
-            .flat_map(|w| w.triggers.iter_mut())
-            .filter_map(|t| t.connection_ids_mut().map(|ids| ids.iter_mut()))
-            .flatten();
-        if !remap.apply_all(ids) {
-            return Ok(false);
-        }
-        self.storage
-            .save(&next)
-            .map_err(|e| TerminalError::WorkflowError(e.to_string()))?;
-        *store = next;
-        Ok(true)
     }
 
     /// Take ownership of any recovery warnings (only the first call returns them).
@@ -342,52 +311,9 @@ mod tests {
         assert!(!raw.contains("triggersEnabled"), "{raw}");
     }
 
-    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
-        let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
-            .iter()
-            .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
-            .collect();
-        ConnectionIdRemap::new(&changes)
-    }
-
     fn on_connect(ids: &[&str]) -> WorkflowTrigger {
         WorkflowTrigger::OnConnect {
             connection_ids: ids.iter().map(|s| s.to_string()).collect(),
         }
-    }
-
-    /// #3596: on-connect triggers follow a chain of id changes simultaneously,
-    /// persist, and keep the workflow's `updatedAt`.
-    #[test]
-    fn on_connect_triggers_follow_connection_id_changes() {
-        let dir = TempDir::new().unwrap();
-        let mgr = create_test_manager(&dir);
-        let mut wf = sample_workflow("wf-1", "Deploy");
-        wf.triggers = vec![WorkflowTrigger::Manual, on_connect(&["Work/a", "b", "x"])];
-        let saved = mgr.save_workflow(wf).unwrap();
-
-        assert!(mgr
-            .follow_connection_id_changes(&remap(&[("Work/a", "b"), ("b", "c")]))
-            .unwrap());
-
-        let reloaded = WorkflowManager::new_for_test(dir.path())
-            .get_workflow("wf-1")
-            .unwrap();
-        assert_eq!(
-            reloaded.triggers,
-            vec![WorkflowTrigger::Manual, on_connect(&["b", "c", "x"])]
-        );
-        assert_eq!(reloaded.updated_at, saved.updated_at);
-    }
-
-    #[test]
-    fn workflows_without_matching_triggers_report_no_change() {
-        let dir = TempDir::new().unwrap();
-        let mgr = create_test_manager(&dir);
-        mgr.save_workflow(sample_workflow("wf-1", "Manual only"))
-            .unwrap();
-        assert!(!mgr
-            .follow_connection_id_changes(&remap(&[("a", "b")]))
-            .unwrap());
     }
 }

@@ -621,12 +621,14 @@ fn the_switch_over_keeps_automations_created_in_the_new_store() {
 fn a_restored_store_without_provenance_follows_no_deletion() {
     let dir = TempDir::new().unwrap();
     seed(dir.path());
-    let mut restored = AutomationStore::default();
-    restored.automations = vec![serde_json::from_value(json!({
-        "id": "gone", "name": "Restored",
-        "legacy": { "from": "macro", "version": 1 }
-    }))
-    .unwrap()];
+    let restored = AutomationStore {
+        automations: vec![serde_json::from_value(json!({
+            "id": "gone", "name": "Restored",
+            "legacy": { "from": "macro", "version": 1 }
+        }))
+        .unwrap()],
+        ..AutomationStore::default()
+    };
     StoreFile::<AutomationStore>::in_dir(dir.path())
         .save(&restored)
         .unwrap();
