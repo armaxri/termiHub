@@ -24,6 +24,11 @@
   --selected-row-bg: var(--bg-selected);
   --selected-row-hover-bg: var(--bg-selected-hover);
   --selected-row-indicator: transparent;
+  /* #5853: a 1px outline for a theme whose opaque selected row sits below 3:1
+     on the sidebar (Solarized). The shadow paints the left bar over it. */
+  --selected-row-outline: transparent;
+  --selected-row-shadow:
+    inset 2px 0 0 0 var(--selected-row-indicator), inset 0 0 0 1px var(--selected-row-outline);
   --selected-row-secondary-bg: var(--selected-row-bg);
   --selected-row-secondary-hover-bg: var(--selected-row-hover-bg);
   /* Form controls (#5639): placeholders, the off toggle and the secondary
@@ -41,12 +46,11 @@
   --activity-bar-inactive: #545f70;
   --activity-bar-indicator: #3d7de8;
   --activity-bar-width: 48px;
-  /* Hover/active tint on activity-bar items. The activity bar stays dark in
-     every theme (see light.ts), so a subtle white overlay is the correct
-     lightening technique on both — kept as static :root values like the other
-     translucent-white chrome tokens (--scrollbar-thumb). */
-  --activity-bar-item-hover-bg: rgba(255, 255, 255, 0.06);
-  --activity-bar-item-active-bg: rgba(255, 255, 255, 0.1);
+  /* Hover/active tint on activity-bar items: a faint wash of the active icon
+     colour. On the dark bars (Dark, Light, Solarized Dark) that is the old
+     near-white overlay; on Solarized Light's light bar (#5853) it darkens. */
+  --activity-bar-item-hover-bg: color-mix(in srgb, var(--activity-bar-active) 6%, transparent);
+  --activity-bar-item-active-bg: color-mix(in srgb, var(--activity-bar-active) 10%, transparent);
 
   /* Sidebar */
   --sidebar-bg: #161b24;

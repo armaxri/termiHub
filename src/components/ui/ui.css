@@ -629,6 +629,7 @@
 }
 
 .ui-toggle__thumb {
+  position: relative;
   display: block;
   width: 14px;
   height: 14px;
@@ -644,6 +645,22 @@
 .ui-toggle[data-state="checked"] .ui-toggle__thumb {
   transform: translateX(16px);
   background: var(--text-on-accent);
+}
+
+/* #5853: a check mark on the on knob, so on and off differ by more than colour
+   and knob position (WCAG 1.4.1). Accent on the white knob reaches >=4.5:1 in
+   every built-in theme (graded by themeStateContrast.test.ts). */
+.ui-toggle[data-state="checked"] .ui-toggle__thumb::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 7px;
+  border-style: solid;
+  border-color: var(--accent-color);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 /* ── Checkbox (Radix skin) ──────────────────────────────────────────── */

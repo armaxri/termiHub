@@ -46,7 +46,9 @@ export const solarizedDarkTheme: ThemeDefinition = {
     // along its hue (mixed towards white in 1% steps) just until it reaches AA
     // on every text surface; locked by contrast.test.ts.
     textAccent: "#4b9fda",
-    textLink: "#4b9fda",
+    // #5853: links sat at exactly 4.50:1 on base02 and read faint at 12-13px.
+    // Same derivation with a 5:1 target.
+    textLink: "#5ca8dd",
 
     // Borders
     borderPrimary: "#586e75", // base01
@@ -111,9 +113,12 @@ export const solarizedDarkTheme: ThemeDefinition = {
   // base2 text: 12.25:1 selected, 9.34:1 hovered. Bar: 4.08:1 on base03,
   // 3.11:1 on the hover tone, 3.53:1 against the base02 sidebar.
   // (accentColor #227bba is darkened for button labels: 3.30 / 2.51 / 2.85:1.)
+  // #5853: base03 sits ~1.1:1 from the base02 sidebar, so the row takes a base0
+  // outline (4.11:1 on the sidebar) as its WCAG 1.4.11 boundary.
   selection: {
     bg: "#002b36", // base03
     bgHover: "#0d3f4d", // bgHover
     indicator: "#268bd2", // blue, canonical (activityBarIndicator)
+    outline: "#839496", // base0
   },
 };

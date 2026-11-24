@@ -32,11 +32,15 @@ export const lightTheme: ThemeDefinition = {
 
     // Text
     textPrimary: "#383a42",
-    textSecondary: "#5e6670",
-    // #5249: secondary labels on hovered/selected rows. #5e6670 measures
-    // 4.00:1 on bgActive; deriveTextSecondaryOnSelection nudges it towards
-    // black (5.37:1 on bgHover, 4.53:1 on bgActive). Locked by contrast.test.ts.
-    textSecondaryOnSelection: "#565e67",
+    // #5853: hints and empty-state body copy read weak at 5.24:1 on the
+    // #f3f3f3 sidebar. #5e6670 darkened along its hue to 5.8:1 there (6.19:1;
+    // 5.81:1 on tabBg); muted stays the lighter level for timestamps and counts.
+    textSecondary: "#545b64",
+    // #5249: secondary labels on hovered/selected rows. #5853's darker
+    // textSecondary already reaches AA there (5.61:1 on bgHover, 4.73:1 on
+    // bgActive), so deriveTextSecondaryOnSelection keeps it. Locked by
+    // contrast.test.ts.
+    textSecondaryOnSelection: "#545b64",
     textMuted: "#686d74",
     // #5200: muted hints on hovered/selected rows. #686d74 measures 4.25:1 on
     // bgHover and 3.59:1 on bgActive; deriveTextMutedOnSelection nudges it 14%
@@ -44,7 +48,8 @@ export const lightTheme: ThemeDefinition = {
     textMutedOnSelection: "#595e64",
     textDisabled: "#a0a0a0",
     textAccent: "#0366d6",
-    textLink: "#0366d6",
+    // #5853: links reach 5:1 on the #f3f3f3 sidebar (was 4.88:1).
+    textLink: "#0364d2",
 
     // Borders
     borderPrimary: "#d1d5da",

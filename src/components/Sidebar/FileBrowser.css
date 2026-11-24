@@ -122,7 +122,7 @@
   --text-secondary: var(--text-secondary-on-selection);
   --text-muted: var(--text-muted-on-selection);
   background-color: var(--selected-row-bg);
-  box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
+  box-shadow: var(--selected-row-shadow);
 }
 
 .file-browser__row-wrapper--selected:hover {

@@ -361,7 +361,13 @@ describe("status tints keep their labels at AA in every built-in theme (#5740)",
         composite(theme.colors.colorWarning, theme.colors[base], 0.12)
       );
     expect(on12(darkTheme, "--text-secondary", "terminalBg")).toBeLessThan(AA_NORMAL_TEXT);
-    expect(on12(lightTheme, "--text-secondary", "bgSecondary")).toBeLessThan(AA_NORMAL_TEXT);
+    // Light's textSecondary before #5853 darkened it (now 5.30:1 here).
+    expect(
+      contrastRatio(
+        "#5e6670",
+        composite(lightTheme.colors.colorWarning, lightTheme.colors.bgSecondary, 0.12)
+      )
+    ).toBeLessThan(AA_NORMAL_TEXT);
     for (const theme of BUILT_IN_THEMES) {
       expect(on12(theme, "--text-link", "bgSecondary"), theme.id).toBeLessThan(AA_NORMAL_TEXT);
       expect(on12(theme, "--text-link-on-tint", "bgSecondary"), theme.id).toBeGreaterThanOrEqual(

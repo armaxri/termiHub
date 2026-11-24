@@ -15,11 +15,13 @@ export const solarizedLightTheme: ThemeDefinition = {
     bgInput: "#fdf6e3",
     bgDropdown: "#fdf6e3",
 
-    // Activity bar (kept dark for visual anchor, same as light theme pattern)
-    activityBarBg: "#073642",
-    activityBarActive: "#eee8d5",
-    activityBarInactive: "#677d85", // base01, lifted to 3:1 (#5192)
-    activityBarIndicator: "#268bd2",
+    // Activity bar — #5853: base2 with dark icons, like the cream sidebar and
+    // editor beside it (the dark teal bar pulled the eye to the icon column).
+    // Inactive base00 3.64:1, active base03 12.25:1, bar = accentColor 4.41:1.
+    activityBarBg: "#eee8d5", // base2
+    activityBarActive: "#002b36", // base03
+    activityBarInactive: "#657b83", // base00
+    activityBarIndicator: "#1f6fa6", // accentColor
 
     // Sidebar — #5457: base3, like the editor, so the text levels keep their
     // contrast (on base2 they all had to collapse to near-black base02/base03).
@@ -52,7 +54,9 @@ export const solarizedLightTheme: ThemeDefinition = {
     // along its hue (mixed towards black in 1% steps) just until it reaches AA
     // on every text surface; locked by contrast.test.ts.
     textAccent: "#1e6ca4",
-    textLink: "#1e6ca4",
+    // #5853: links take a little more margin (5:1, was 4.59:1 on base2): thin
+    // 12-13px underlined text. Same derivation, 5:1 target.
+    textLink: "#1c6599",
 
     // Borders
     borderPrimary: "#cac4b3",
@@ -117,10 +121,13 @@ export const solarizedLightTheme: ThemeDefinition = {
   // left bar instead. #5639: base2 was only 1.14:1 on the base3 sidebar, so
   // the bar alone marked the row; selected rows take the theme's active tone
   // (1.44:1, bar 3.47:1) and hovering one steps darker again (1.12:1).
+  // #5853: no fill with base03 text on it can reach 3:1 against base3, so the
+  // row takes a base01 outline (4.99:1 on the sidebar, 4.39:1 on base2 panes).
   selection: {
     bg: "#d5cfbd", // bgActive
     bgHover: "#cac4b3", // borderPrimary tone
     indicator: "#1f6fa6", // accentColor
+    outline: "#586e75", // base01
     // #5591: transfer panes paint base2 (bgSecondary), so a base2 selection
     // would vanish there. Rows on those panes step up to base3, the editor
     // surface (1.14:1 against the pane, base03 text 13.92:1, bar 5.01:1),
@@ -134,11 +141,12 @@ export const solarizedLightTheme: ThemeDefinition = {
   // #5639: textSecondary is base02 (AA on base2 chrome), which made
   // placeholders look like entered base03 text and drew a dark, "on"-looking
   // knob on the off toggle. Placeholders take muted base01 (4.99:1 on the
-  // base3 input); the off toggle a base3 knob on a base00 track (4.13:1 each);
-  // secondary buttons a base1 border so they read as buttons.
+  // base3 input); the off toggle a base3 knob on a base01 track (#5853: 4.99:1,
+  // was base00 at 4.13:1); secondary buttons a base1 border so they read as
+  // buttons.
   controls: {
     placeholder: "#586e75", // base01
-    toggleOffTrack: "#657b83", // base00
+    toggleOffTrack: "#586e75", // base01
     toggleOffThumb: "#fdf6e3", // base3
     secondaryButtonBorder: "#93a1a1", // base1
   },

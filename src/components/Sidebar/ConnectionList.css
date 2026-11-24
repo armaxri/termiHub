@@ -360,8 +360,9 @@
   --text-secondary: var(--text-secondary-on-selection);
   --text-muted: var(--text-muted-on-selection);
   background-color: var(--selected-row-bg);
-  /* #5562: the 2px left bar; transparent unless the theme sets one. */
-  box-shadow: inset 2px 0 0 0 var(--selected-row-indicator);
+  /* #5562: the 2px left bar, #5853: a 1px outline; each transparent unless
+     the theme sets one. */
+  box-shadow: var(--selected-row-shadow);
 }
 
 .connection-tree__item--selected:hover {
