@@ -26,6 +26,14 @@ export function backendRedriveSuppliesScrollback(tabId: string): boolean {
   return currentSessionView()[tabId]?.status === "reconnecting";
 }
 
+/** What {@link repaintIfResumed} did. */
+export interface ResumedRepaint {
+  /** Whether the backend resumed the tab's own session. */
+  resumed: boolean;
+  /** Where the repaint ends in the session's output stream (#5990). */
+  replayEnd: number;
+}
+
 /**
  * After an agent tab's client reconnect, whether the backend resumed the tab's
  * own session instead of starting a new one (#5953) — and if so, repaint the
@@ -33,36 +41,38 @@ export function backendRedriveSuppliesScrollback(tabId: string): boolean {
  * mark the resume below it.
  *
  * The session daemon also re-forwards that buffer as live output on the
- * attach; the caller discards it before subscribing (`clearPendingOutput`), as
- * a persistent re-attach does. Returns whether the session was resumed.
+ * attach; the caller skips what the repaint holds (`replayEnd`), as a
+ * persistent re-attach does.
  */
 export async function repaintIfResumed(
   xterm: XTerm,
   sessionId: string,
   resetCommandMarks: () => void,
   isCanceled: () => boolean
-): Promise<boolean> {
+): Promise<ResumedRepaint> {
   let resumed = false;
+  let replayEnd = 0;
   try {
     resumed = await takeResumedAgentSession(sessionId);
   } catch (err) {
     frontendLog("terminal", `resume check failed for ${sessionId}: ${errorMessage(err)}`);
-    return false;
+    return { resumed: false, replayEnd };
   }
-  if (!resumed || isCanceled()) return resumed;
+  if (!resumed || isCanceled()) return { resumed, replayEnd };
   try {
-    const buffer = await getAgentSessionBuffer(sessionId);
-    if (isCanceled()) return resumed;
-    if (buffer.length > 0) {
+    const { data, endOffset } = await getAgentSessionBuffer(sessionId);
+    if (isCanceled()) return { resumed, replayEnd };
+    if (data.length > 0) {
       // The raw buffer carries the OSC 133 marks: rebuild them, not duplicate.
       resetCommandMarks();
       xterm.reset();
-      await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+      await new Promise<void>((resolve) => xterm.write(data, resolve));
+      replayEnd = endOffset;
     }
   } catch (err) {
     // The tab keeps its own scrollback; only the detached output is missing.
     frontendLog("terminal", `resumed-session buffer failed: ${errorMessage(err)}`);
   }
   xterm.writeln(`\r\n\x1b[90m${resumedMarker(new Date())}\x1b[0m`);
-  return resumed;
+  return { resumed, replayEnd };
 }

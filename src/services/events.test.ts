@@ -238,11 +238,11 @@ describe("events service", () => {
 
       // Emit event for sess-1
       handlers["terminal-output"]({
-        payload: { session_id: "sess-1", data: b64([65, 66]) },
+        payload: { session_id: "sess-1", data: b64([65, 66]), offset: 7 },
       });
 
       expect(cb1).toHaveBeenCalledTimes(1);
-      expect(cb1).toHaveBeenCalledWith(expect.any(Uint8Array));
+      expect(cb1).toHaveBeenCalledWith(expect.any(Uint8Array), 7);
       expect(Array.from(cb1.mock.calls[0][0] as Uint8Array)).toEqual([65, 66]);
       expect(cb2).not.toHaveBeenCalled();
     });
@@ -873,52 +873,87 @@ describe("events service", () => {
     });
   });
 
-  describe("TerminalOutputDispatcher.clearPendingOutput", () => {
-    it("discards buffered output so a subsequent subscriber does not see stale chunks", async () => {
-      mockedListen.mockResolvedValue(vi.fn());
+  describe("TerminalOutputDispatcher.holdOutput (#5990)", () => {
+    const CAP = 256 * 1024;
+    let emit: (text: string, sessionId?: string) => void;
+    let dispatcher: TerminalOutputDispatcher;
 
-      const dispatcher = new TerminalOutputDispatcher();
+    beforeEach(async () => {
+      let handler: ((event: unknown) => void) | undefined;
+      const ends = new Map<string, number>();
+      mockedListen.mockImplementation((name, cb) => {
+        if (name === "terminal-output") handler = cb as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+      emit = (text, sessionId = "sess-1") => {
+        const data = new TextEncoder().encode(text);
+        const offset = ends.get(sessionId) ?? 0;
+        ends.set(sessionId, offset + data.length);
+        handler!({ payload: { session_id: sessionId, data: bytesToBase64(data), offset } });
+      };
+      dispatcher = new TerminalOutputDispatcher();
       await dispatcher.init();
-
-      // Simulate buffered output by subscribing, then unsubscribing to leave
-      // the dispatcher with a closed session but pending data.
-      // We can't call the internal Tauri handler directly, so we verify the
-      // contract via subscribeOutput flush behaviour instead.
-
-      // Put data into pendingOutput by calling the handler while no subscriber is registered.
-      // Access the internal pendingOutput via subscribeOutput flush:
-      // 1. Register a subscriber that captures flushed chunks.
-      const received: Uint8Array[] = [];
-      const unsub = dispatcher.subscribeOutput("sess-1", (chunk) => received.push(chunk));
-      unsub(); // Unsubscribe — session has no subscriber now.
-
-      // Re-subscribe: any pending output buffered after unsub would be flushed here.
-      // Since we never actually buffered anything (no Tauri event was fired), this
-      // is a baseline test that clearPendingOutput does not throw and leaves state clean.
-      dispatcher.clearPendingOutput("sess-1");
-
-      const received2: Uint8Array[] = [];
-      dispatcher.subscribeOutput("sess-1", (chunk) => received2.push(chunk));
-
-      // No data should have been delivered (nothing was pending after clear).
-      expect(received2).toHaveLength(0);
-
-      dispatcher.destroy();
     });
 
-    it("does not affect other sessions when clearing one session", async () => {
-      mockedListen.mockResolvedValue(vi.fn());
+    const texts = (chunks: { data: Uint8Array; offset: number }[]) =>
+      chunks.map((c) => `${c.offset}:${new TextDecoder().decode(c.data)}`);
 
-      const dispatcher = new TerminalOutputDispatcher();
-      await dispatcher.init();
+    it("takes over waiting output and collects what comes, with positions", () => {
+      emit("ab");
+      const hold = dispatcher.holdOutput("sess-1");
+      emit("cd");
+      emit("other", "sess-2");
+      expect(texts(hold.drain())).toEqual(["0:ab", "2:cd"]);
+      // Drained: the next output waits for a subscriber again, and only that.
+      emit("ef");
+      const seen: string[] = [];
+      dispatcher.subscribeOutput("sess-1", (data, offset) =>
+        seen.push(...texts([{ data, offset }]))
+      );
+      expect(seen).toEqual(["4:ef"]);
+      expect(hold.drain()).toEqual([]);
+    });
 
-      // Verify clearing one session ID does not remove entries for another.
-      // Since we cannot inject data without the Tauri handler, we verify the
-      // method is idempotent and does not throw for unknown sessions.
-      expect(() => dispatcher.clearPendingOutput("unknown-session")).not.toThrow();
-      expect(() => dispatcher.clearPendingOutput("another-session")).not.toThrow();
+    it("collects for each holder, also while another tab shows the session", () => {
+      const shown: string[] = [];
+      dispatcher.subscribeOutput("sess-1", (data, offset) =>
+        shown.push(...texts([{ data, offset }]))
+      );
+      const first = dispatcher.holdOutput("sess-1");
+      const second = dispatcher.holdOutput("sess-1");
+      emit("x");
+      expect(texts(first.drain())).toEqual(["0:x"]);
+      emit("y");
+      expect(texts(second.drain())).toEqual(["0:x", "1:y"]);
+      expect(shown).toEqual(["0:x", "1:y"]);
+    });
 
-      dispatcher.destroy();
+    it("has no cap while it holds", () => {
+      const hold = dispatcher.holdOutput("sess-1");
+      for (let i = 0; i < 4; i += 1) emit("z".repeat(CAP / 2));
+      expect(hold.drain().reduce((n, c) => n + c.data.length, 0)).toBe(2 * CAP);
+    });
+
+    it("gives a released hold back to the next subscriber, capped again", () => {
+      const hold = dispatcher.holdOutput("sess-1");
+      for (let i = 0; i < 4; i += 1) emit(`${i}`.repeat(CAP / 2));
+      hold.release();
+      hold.release();
+      const starts: number[] = [];
+      dispatcher.subscribeOutput("sess-1", (_, offset) => starts.push(offset));
+      expect(starts).toEqual([CAP, (3 * CAP) / 2]);
+    });
+
+    it("drops a released hold when another tab shows the session", () => {
+      const seen = vi.fn();
+      dispatcher.subscribeOutput("sess-1", seen);
+      const hold = dispatcher.holdOutput("sess-1");
+      emit("x");
+      hold.release();
+      const late = vi.fn();
+      dispatcher.subscribeOutput("sess-1", late);
+      expect(seen).toHaveBeenCalledTimes(1);
+      expect(late).not.toHaveBeenCalled();
     });
   });
 

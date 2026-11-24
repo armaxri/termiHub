@@ -29,7 +29,7 @@
 use std::collections::{HashMap, HashSet};
 
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use termihub_core::connection::ConnectionType;
 
@@ -41,6 +41,7 @@ use super::manager::{
     EventEmitter, PersistentAttach, PersistentRecord, PersistentSessionStateEvent, SessionEntry,
     SessionInfo, SessionManager, SessionOrigin, TabBinding,
 };
+use super::output_capture::{extend_back, ScrollbackReplay};
 use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 
 /// Borrowing facade exposing the manager's persistent-session operations.
@@ -481,15 +482,32 @@ impl<'a> PersistentController<'a> {
             .collect()
     }
 
-    /// Fetch the scrollback buffer from the agent for a persistent session.
+    /// The scrollback of an agent-hosted session, for a repaint, and where it
+    /// ends in the session's output stream.
     ///
-    /// Sends `session.getBuffer` over JSON-RPC to the agent, which queries
-    /// the daemon's ring buffer non-destructively and returns a base64-encoded
-    /// snapshot.
+    /// What this desktop captured is the replay; the agent's own buffer, which
+    /// may be configured larger, only adds what came before it. A failed fetch
+    /// is an error only when nothing was captured either.
     pub(super) async fn get_remote_session_buffer(
         &self,
         session_id: &str,
-    ) -> Result<Vec<u8>, TerminalError> {
+    ) -> Result<ScrollbackReplay, TerminalError> {
+        let older = self.fetch_remote_buffer(session_id).await;
+        // The capture, not the agent's buffer, decides where the replay ends
+        // (#5990): only it knows which live output it already holds. Read after
+        // the round trip, so the daemon's re-forward of an attach is in it.
+        let mut replay = self.manager.replay_scrollback(session_id).await;
+        match older {
+            Ok(older) => replay.data = extend_back(&older, replay.data),
+            Err(e) if replay.data.is_empty() => return Err(e),
+            Err(e) => warn!(session_id, error = %e, "agent buffer not read; using the capture"),
+        }
+        Ok(replay)
+    }
+
+    /// The agent's own buffer of `session_id`: `session.getBuffer` over
+    /// JSON-RPC, which reads the daemon's ring buffer non-destructively.
+    async fn fetch_remote_buffer(&self, session_id: &str) -> Result<Vec<u8>, TerminalError> {
         let (agent_id, remote_sid) = {
             let sessions = self.manager.sessions.lock().await;
             let entry = sessions

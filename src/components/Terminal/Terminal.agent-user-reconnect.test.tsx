@@ -70,7 +70,9 @@ vi.mock("@/themes", () => ({
 }));
 
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
-const mockGetAgentSessionBuffer = vi.fn().mockResolvedValue(new Uint8Array());
+const mockGetAgentSessionBuffer = vi
+  .fn()
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
 const mockTakeResumed = vi.fn().mockResolvedValue(false);
 vi.mock("@/services/api", () => ({
   createTerminal: (...a: unknown[]) => mockCreateTerminal(...a),
@@ -82,14 +84,14 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: (...a: unknown[]) => mockGetAgentSessionBuffer(...a),
   takeResumedAgentSession: (...a: unknown[]) => mockTakeResumed(...a),
-  replaySessionScrollback: vi.fn().mockResolvedValue(new Uint8Array()),
+  replaySessionScrollback: vi.fn().mockResolvedValue({ data: new Uint8Array(), endOffset: 0 }),
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
 }));
 
 // Capture the live-output callback the terminal subscribes with, keyed by session
 // id, so a test can deliver the agent's re-forwarded ring buffer as output.
-const outputCallbacks: Record<string, (data: Uint8Array) => void> = {};
-const mockSubscribeOutput = vi.fn((sid: string, cb: (data: Uint8Array) => void) => {
+const outputCallbacks: Record<string, (data: Uint8Array, offset: number) => void> = {};
+const mockSubscribeOutput = vi.fn((sid: string, cb: (data: Uint8Array, offset: number) => void) => {
   outputCallbacks[sid] = cb;
   return vi.fn();
 });
@@ -101,7 +103,6 @@ const mockSubscribeExit = vi.fn(
     return vi.fn();
   }
 );
-const mockClearPendingOutput = vi.fn();
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
@@ -109,7 +110,7 @@ vi.mock("@/services/events", () => ({
     subscribeExit: (...a: unknown[]) =>
       mockSubscribeExit(...(a as [string, (code: number | null) => void])),
     clearPendingExit: vi.fn(),
-    clearPendingOutput: (...a: unknown[]) => mockClearPendingOutput(...(a as [])),
+    holdOutput: () => ({ drain: () => [], release: vi.fn() }),
   },
 }));
 vi.mock("@/services/keybindings", () => ({
@@ -137,12 +138,11 @@ beforeEach(() => {
   mockCreateTerminal.mockClear();
   mockCreateTerminal.mockResolvedValue("fresh-session");
   mockGetAgentSessionBuffer.mockClear();
-  mockGetAgentSessionBuffer.mockResolvedValue(new Uint8Array());
+  mockGetAgentSessionBuffer.mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
   mockTakeResumed.mockReset();
   mockTakeResumed.mockResolvedValue(false);
   mockSubscribeOutput.mockClear();
   mockSubscribeExit.mockClear();
-  mockClearPendingOutput.mockClear();
   for (const key of Object.keys(outputCallbacks)) delete outputCallbacks[key];
   xtermInstances.length = 0;
   transport = new FakeSessionTransport();
@@ -250,7 +250,7 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
     const tabId = await mountConnected();
     const buffer = new TextEncoder().encode("$ echo before\r\nbefore\r\n");
     mockTakeResumed.mockResolvedValue(true);
-    mockGetAgentSessionBuffer.mockResolvedValue(buffer);
+    mockGetAgentSessionBuffer.mockResolvedValue({ data: buffer, endOffset: buffer.length });
 
     await disconnectAndReconnect(tabId);
 
@@ -261,8 +261,17 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
     const lines = written(fresh);
     expect(lines.some((line) => line.includes("session resumed"))).toBe(true);
     expect(lines.some((line) => line.includes("new remote shell"))).toBe(false);
-    // The daemon's live re-forward of the same buffer is dropped.
-    expect(mockClearPendingOutput).toHaveBeenCalledWith("fresh-session");
+    // The daemon's live re-forward of the same buffer is dropped, what comes
+    // after it is not (#5990).
+    const before = written(fresh).length;
+    act(() => {
+      outputCallbacks["fresh-session"]?.(buffer, 0);
+      outputCallbacks["fresh-session"]?.(new TextEncoder().encode("later"), buffer.length);
+    });
+    await act(async () => {
+      await wait(40);
+    });
+    expect(written(fresh).slice(before)).toEqual(["later"]);
   });
 });
 

@@ -36,6 +36,7 @@ fn terminal_output_event_serializes_data_as_base64() {
         let event = TerminalOutputEvent {
             session_id: "s1".to_string(),
             data: bytes.clone(),
+            offset: 0,
         };
         let json: Value = serde_json::to_value(&event).unwrap();
 
@@ -171,8 +172,8 @@ impl ConnectionType for LocalBrowserConnection {
 
 /// Helper to create a sessions map and insert a mock session.
 /// A fresh, empty scrollback capture buffer for `run_output_reader` tests (#1900).
-fn new_capture() -> Arc<StdMutex<RingBuffer>> {
-    Arc::new(StdMutex::new(RingBuffer::new(DEFAULT_BUFFER_CAPACITY)))
+fn new_capture() -> Arc<StdMutex<OutputCapture>> {
+    Arc::new(StdMutex::new(OutputCapture::default()))
 }
 
 /// A fresh, empty `output_buffers` map for the cleanup path (#1900).
@@ -515,7 +516,8 @@ async fn replay_scrollback_returns_captured_history_without_touching_session() {
 
     // A move: the destination replays the history verbatim...
     let replayed = manager.replay_scrollback("sess-move").await;
-    assert_eq!(replayed, b"line-1\r\nline-2\r\n");
+    assert_eq!(replayed.data, b"line-1\r\nline-2\r\n");
+    assert_eq!(replayed.end_offset, 16);
     // ...and the backend session survives the move entirely.
     assert!(manager.sessions.lock().await.contains_key("sess-move"));
 
@@ -523,6 +525,7 @@ async fn replay_scrollback_returns_captured_history_without_touching_session() {
     assert!(manager
         .replay_scrollback("no-such-session")
         .await
+        .data
         .is_empty());
 }
 
@@ -729,7 +732,8 @@ async fn run_output_reader_emits_chunks_and_exit() {
         let captured = capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .read_all();
+            .snapshot()
+            .data;
         assert!(
             captured.windows(5).any(|w| w == b"hello"),
             "expected streamed output to be captured for replay"
@@ -3891,6 +3895,9 @@ mod telnet_drop;
 
 /// An agent-hosted session ends with the cause the agent reported (#5732).
 mod agent_end_cause;
+
+/// Live output and scrollback snapshots share one stream position (#5990).
+mod reattach_output;
 
 /// A direct SSH tab reports the remote shell's exit status (#5801).
 mod ssh_exit_status;

@@ -102,6 +102,7 @@ import type { SessionLogStatus } from "@/types/generated/SessionLogStatus";
 import type { ShellSpawn } from "@/types/generated/ShellSpawn";
 import type { SpawnOptions } from "@/types/generated/SpawnOptions";
 import type { SshKeyValidation } from "@/types/generated/SshKeyValidation";
+import type { ScrollbackReplay } from "@/types/generated/ScrollbackReplay";
 import type { SshTrustedHost } from "@/types/generated/SshTrustedHost";
 import type { TransferProgress } from "@/types/generated/TransferProgress";
 import type { TransferQueueState } from "@/types/generated/TransferQueueState";
@@ -735,6 +736,20 @@ export async function takePendingWindowRestore(): Promise<WindowRestorePayload |
   return await invoke<WindowRestorePayload | null>("take_pending_window_restore");
 }
 
+/** A session's scrollback for a repaint. */
+export interface SessionScrollback {
+  data: Uint8Array;
+  /**
+   * Where `data` ends in the session's output stream: live output before this
+   * position is already part of it (#5990).
+   */
+  endOffset: number;
+}
+
+function decodeScrollback({ data, endOffset }: ScrollbackReplay): SessionScrollback {
+  return { data: base64ToBytes(data), endOffset };
+}
+
 /**
  * Fetch a session's captured scrollback so a freshly-created xterm in a
  * destination window can repaint history after a re-parent. Empty when nothing
@@ -746,9 +761,10 @@ export async function takePendingWindowRestore(): Promise<WindowRestorePayload |
  * them so callers still get raw bytes, byte-for-byte including high/non-UTF8
  * bytes (PERF-009).
  */
-export async function replaySessionScrollback(sessionId: string): Promise<Uint8Array> {
-  const b64 = await invoke<string>("replay_session_scrollback", { sessionId });
-  return base64ToBytes(b64);
+export async function replaySessionScrollback(sessionId: string): Promise<SessionScrollback> {
+  return decodeScrollback(
+    await invoke<ScrollbackReplay>("replay_session_scrollback", { sessionId })
+  );
 }
 
 /**
@@ -1291,7 +1307,8 @@ export async function detachPersistentTab(sessionId: SessionId, tabId: string): 
 }
 
 /**
- * Fetch the scrollback buffer for a persistent session from the agent daemon.
+ * Fetch the scrollback of an agent-hosted session: what this desktop received,
+ * extended back with the agent daemon's own buffer.
  *
  * The backend ships the bytes as a compact base64 string over IPC (instead of a
  * JSON number-array — ~4–6x wire bloat plus a per-byte array allocation on a
@@ -1299,9 +1316,10 @@ export async function detachPersistentTab(sessionId: SessionId, tabId: string): 
  * them so callers still get raw bytes, byte-for-byte including high/non-UTF8
  * bytes (PERF-009).
  */
-export async function getAgentSessionBuffer(sessionId: string): Promise<Uint8Array> {
-  const b64 = await invoke<string>("get_agent_session_buffer", { sessionId });
-  return base64ToBytes(b64);
+export async function getAgentSessionBuffer(sessionId: string): Promise<SessionScrollback> {
+  return decodeScrollback(
+    await invoke<ScrollbackReplay>("get_agent_session_buffer", { sessionId })
+  );
 }
 
 /**

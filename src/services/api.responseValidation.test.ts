@@ -73,36 +73,39 @@ describe("api response-validation (TFE-004)", () => {
     const b64 = "AEF/gMD+/w==";
 
     it("replaySessionScrollback decodes base64 into an exact Uint8Array", async () => {
-      mockedInvoke.mockResolvedValue(b64);
+      mockedInvoke.mockResolvedValue({ data: b64, endOffset: 9 });
 
       const result = await replaySessionScrollback("sess-1");
 
       expect(mockedInvoke).toHaveBeenCalledWith("replay_session_scrollback", {
         sessionId: "sess-1",
       });
-      expect(result).toBeInstanceOf(Uint8Array);
-      expect(Array.from(result)).toEqual(bytes);
+      expect(result.data).toBeInstanceOf(Uint8Array);
+      expect(Array.from(result.data)).toEqual(bytes);
+      expect(result.endOffset).toBe(9);
     });
 
     it("replaySessionScrollback yields an empty Uint8Array for an empty buffer", async () => {
-      mockedInvoke.mockResolvedValue("");
+      mockedInvoke.mockResolvedValue({ data: "", endOffset: 0 });
 
       const result = await replaySessionScrollback("sess-empty");
 
-      expect(result).toBeInstanceOf(Uint8Array);
-      expect(result.length).toBe(0);
+      expect(result.data).toBeInstanceOf(Uint8Array);
+      expect(result.data.length).toBe(0);
+      expect(result.endOffset).toBe(0);
     });
 
     it("getAgentSessionBuffer decodes base64 into an exact Uint8Array", async () => {
-      mockedInvoke.mockResolvedValue(b64);
+      mockedInvoke.mockResolvedValue({ data: b64, endOffset: 9 });
 
       const result = await getAgentSessionBuffer("agent-sess-1");
 
       expect(mockedInvoke).toHaveBeenCalledWith("get_agent_session_buffer", {
         sessionId: "agent-sess-1",
       });
-      expect(result).toBeInstanceOf(Uint8Array);
-      expect(Array.from(result)).toEqual(bytes);
+      expect(result.data).toBeInstanceOf(Uint8Array);
+      expect(Array.from(result.data)).toEqual(bytes);
+      expect(result.endOffset).toBe(9);
     });
   });
 
