@@ -5,7 +5,13 @@
  * for every tab — including background/inactive ones — without needing the tab
  * to be focused.
  */
-export type TabStatus = "connecting" | "connected" | "failed" | "disconnected" | "evicted";
+export type TabStatus =
+  | "connecting"
+  | "starting"
+  | "connected"
+  | "failed"
+  | "disconnected"
+  | "evicted";
 
 /**
  * The subset of the app store's tab-lifecycle maps needed to derive a tab's
@@ -37,6 +43,14 @@ export interface TabStatusMaps {
    * single-attach). Region-only, so optional like `terminalSessionLost`.
    */
   terminalEvicted?: Record<string, boolean>;
+  /**
+   * True while a tab with shell integration on has not yet received its
+   * shell's first OSC 133 command mark (#5891): the shell is still starting or
+   * waits for input (a startup question) before its first prompt. Optional:
+   * consumers that only ask "is this session live?" (broadcast, macros) omit it,
+   * so a starting shell still receives input.
+   */
+  terminalAwaitingFirstPrompt?: Record<string, boolean>;
 }
 
 /**
@@ -52,7 +66,9 @@ export interface TabStatusMaps {
  *  2. `connecting`   — a connect or reconnect attempt is in flight.
  *  3. `failed`       — a spawn or reconnect attempt errored out.
  *  4. `disconnected` — the session exited without a recorded error.
- *  5. `connected`    — no lifecycle flags set (the live, healthy state).
+ *  5. `starting`     — live, but shell integration is on and the shell has not
+ *     reached its first prompt yet (#5891); a neutral dot, not green.
+ *  6. `connected`    — no lifecycle flags set (the live, healthy state).
  *
  * @param maps  The tab-lifecycle maps (typically a slice of the app store).
  * @param tabId The tab whose status to derive.
@@ -75,6 +91,9 @@ export function deriveTabStatus(maps: TabStatusMaps, tabId: string): TabStatus {
   }
   if (maps.terminalExitedTabs[tabId]) {
     return "disconnected";
+  }
+  if (maps.terminalAwaitingFirstPrompt?.[tabId]) {
+    return "starting";
   }
   return "connected";
 }
