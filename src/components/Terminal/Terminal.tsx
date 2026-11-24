@@ -19,6 +19,7 @@ import {
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
+import { backendRedriveSuppliesScrollback, repaintIfResumed } from "./agentReconnectScrollback";
 import { applyCombineEmoji } from "./unicodeWidth";
 import { waitForUsableDimensions } from "./waitForUsableDimensions";
 import { createHscrollProbe, syncHscrollBar, horizontalScrollElementWidth } from "./hscrollBar";
@@ -911,10 +912,27 @@ export function Terminal({
         sessionIdRef.current = sessionId;
         registerSession(tabId, sessionId);
 
+        // An agent tab's client reconnect may have resumed the tab's own
+        // session (#5953): repaint its scrollback and say so.
+        const resumedAgentSession =
+          isReconnect &&
+          isAgentSession &&
+          plan.kind === "freshCreate" &&
+          (await repaintIfResumed(
+            xterm,
+            sessionId,
+            () => commandMarksRef.current?.reset(),
+            isCanceled
+          ));
+        if (isCanceled()) return;
+
         // A reconnect marks where the old session ends and the new one starts
         // (#5660), below the replayed scrollback. Skipped when the agent
-        // re-forwards the buffer as live output: the marker would land above it.
-        if (isReconnect && !isBackendDrivenAgentReconnectTabId(tabId)) {
+        // re-forwards the buffer as live output (the backend redrive): the
+        // marker would land above it.
+        const redriveReattached =
+          plan.kind === "awaitBackendRedrive" && isBackendDrivenAgentReconnectTabId(tabId);
+        if (isReconnect && !redriveReattached && !resumedAgentSession) {
           xterm.writeln(
             `\r\n\x1b[90m${reconnectedMarker(new Date(), dropTransportOf(connectOverlayIdentity(config)))}\x1b[0m`
           );
@@ -1111,7 +1129,8 @@ export function Terminal({
         // this synchronously immediately before subscribeOutput ensures no
         // additional chunks slip into pendingOutput between the clear and
         // the subscription registration.
-        if (persistentConnectionId) {
+        // A resumed agent session (#5953) was repainted the same way.
+        if (persistentConnectionId || resumedAgentSession) {
           terminalDispatcher.clearPendingOutput(sessionId);
         }
 
@@ -1748,7 +1767,7 @@ export function Terminal({
     commandMarksSnapshotRef.current = null;
     if (scrollbackSnapshotRef.current) {
       const serverWillSupplyBuffer =
-        !!persistentConnectionIdRef.current || isBackendDrivenAgentReconnectTabId(tabId);
+        !!persistentConnectionIdRef.current || backendRedriveSuppliesScrollback(tabId);
       if (!serverWillSupplyBuffer) {
         xterm.write(scrollbackSnapshotRef.current, () =>
           commandMarks.restoreSnapshot(savedCommandMarks)

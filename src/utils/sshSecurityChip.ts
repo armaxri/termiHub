@@ -38,6 +38,28 @@ export interface SshDetailRow {
   id: "endpoint" | "encryption" | "auth" | "hostKey";
   label: string;
   value: string;
+  /** Hover text with the full detail when `value` is shortened (the key's full path). */
+  title?: string;
+}
+
+/**
+ * The file name of a key path (#5956): the popover is narrow, and a full
+ * absolute path wrapped over several lines buried the file users recognise.
+ * Splits on both separators so a Windows path reads right too.
+ */
+export function keyFileName(keyPath: string): string {
+  const trimmed = keyPath.trim().replace(/[\\/]+$/u, "");
+  return trimmed.split(/[\\/]/u).pop() || trimmed;
+}
+
+/** The "Signed in with" row: a key shows its file name, the full path on hover. */
+function authRow(method: string | undefined, keyPath: string | undefined): SshDetailRow {
+  const label = t("statusBar.ssh.row.auth");
+  const path = keyPath?.trim();
+  if (method === "key" && path) {
+    return { id: "auth", label, value: `key ${keyFileName(path)}`, title: path };
+  }
+  return { id: "auth", label, value: authDescription(method, keyPath) };
 }
 
 /** The SSH chip plus its trust cue and details popover. */
@@ -93,11 +115,7 @@ export function sshSecurityChip(
       label: t("statusBar.ssh.row.encryption"),
       value: t("statusBar.ssh.encrypted"),
     },
-    {
-      id: "auth",
-      label: t("statusBar.ssh.row.auth"),
-      value: authDescription(fields.authMethod, fields.keyPath),
-    },
+    authRow(fields.authMethod, fields.keyPath),
     { id: "hostKey", label: t("statusBar.ssh.row.hostKey"), value: hostKeyValue },
   ];
   const ariaLabel = tf("statusBar.ssh.ariaLabel", { label: chip.label, trust: trustLabel });

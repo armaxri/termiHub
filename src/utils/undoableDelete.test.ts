@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ToastOptions } from "@/components/ui";
 
-const toastSuccess = vi.fn((_message: string, _opts?: ToastOptions) => "t");
+const toastInfo = vi.fn((_message: string, _opts?: ToastOptions) => "t");
 vi.mock("@/components/ui", () => ({
-  toast: { success: (m: string, o?: ToastOptions) => toastSuccess(m, o) },
+  toast: { info: (m: string, o?: ToastOptions) => toastInfo(m, o) },
 }));
 
 import {
@@ -17,14 +17,14 @@ import {
 describe("undoableDelete (#5158)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    toastSuccess.mockClear();
+    toastInfo.mockClear();
   });
   afterEach(() => vi.useRealTimers());
 
-  it("shows a 10 s success toast whose Undo runs once", () => {
+  it("shows a 10 s info toast whose Undo runs once", () => {
     const onUndo = vi.fn();
     showUndoToast("Deleted x", { onUndo, id: "loading-1", testId: "tid" });
-    const opts = toastSuccess.mock.calls[0][1]!;
+    const opts = toastInfo.mock.calls[0][1]!;
     expect(opts).toMatchObject({ id: "loading-1", duration: UNDO_WINDOW_MS, testId: "tid" });
     expect(opts.action?.label).toBe("Undo");
     expect(opts.action?.testId).toBe("tid-undo");

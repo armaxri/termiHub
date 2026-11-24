@@ -10,7 +10,11 @@ lane. The product run itself is hand-triggered.
 
 from __future__ import annotations
 
-from termihub_harness.product_run.grades import OCTAL_ESCAPE, setup_output_problems
+from termihub_harness.product_run.grades import (
+    OCTAL_ESCAPE,
+    SETUP_INSTALLED_WANT,
+    setup_output_problems,
+)
 
 #: The setup tab as it reads after #5822 (CRLF, as a PTY writes it).
 GOOD = (
@@ -24,7 +28,7 @@ GOOD = (
     "[..] Installing the agent to /home/me/.local/bin/termihub-agent\r\n"
     "[..] Verifying the installed agent\r\n"
     "[ok] termihub-agent 0.1.0\r\n\r\n"
-    "Agent installed (v0.1.0) at /home/me/.local/bin/termihub-agent. "
+    "Agent v0.1.0 installed at ~/.local/bin/termihub-agent. "
     "You can close this tab.\r\n$ "
 )
 
@@ -53,16 +57,24 @@ def test_a_plain_successful_setup_passes():
 
 
 def test_a_dev_build_version_with_its_branch_passes():
-    # A dev build reports "0.1.0 (branch: develop)" (run 20261124T080801Z).
-    dev = GOOD.replace("(v0.1.0)", "(v0.1.0 (branch: develop))")
+    # A dev build reports "0.1.0 (branch: develop)"; the summary reads it flat (#5956).
+    dev = GOOD.replace("Agent v0.1.0 installed", "Agent v0.1.0 (develop) installed")
     assert setup_output_problems(dev) == []
+
+
+def test_the_nested_branch_summary_of_run_20261124T122947Z_fails():
+    # R-006: "Agent installed (v0.1.0 (branch: develop)) at …" nested its parentheses.
+    nested = GOOD.replace(
+        "Agent v0.1.0 installed at", "Agent installed (v0.1.0 (branch: develop)) at"
+    )
+    assert setup_output_problems(nested) == [SETUP_INSTALLED_WANT]
 
 
 def test_the_run_before_the_fix_is_named_on_every_count():
     problems = setup_output_problems(BEFORE)
     assert problems[0] == "raw octal escape '\\\\360' in the setup output"
     assert any(p.startswith("shell cleanup commands in the setup output") for p in problems)
-    assert "no 'Agent installed (v<x>) at <path>.' summary line" in problems
+    assert SETUP_INSTALLED_WANT in problems
     assert len(problems) == 3
 
 
@@ -86,7 +98,5 @@ def test_an_expected_failure_needs_its_summary_line():
 
 
 def test_an_installed_line_without_a_version_does_not_count():
-    unversioned = GOOD.replace("(v0.1.0)", "(v)")
-    assert setup_output_problems(unversioned) == [
-        "no 'Agent installed (v<x>) at <path>.' summary line"
-    ]
+    unversioned = GOOD.replace("Agent v0.1.0 installed", "Agent v installed")
+    assert setup_output_problems(unversioned) == [SETUP_INSTALLED_WANT]

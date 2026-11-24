@@ -81,12 +81,16 @@ export function SshStatus() {
         width="wide"
         data-testid="status-bar-ssh-details"
       >
-        <MenuLabel>{t("statusBar.ssh.title")}</MenuLabel>
+        <MenuLabel className="status-bar__ssh-title" data-testid="status-bar-ssh-details-title">
+          {t("statusBar.ssh.title")}
+        </MenuLabel>
         <dl className="status-bar__ssh-details">
           {chip.rows.map((row) => (
             <div key={row.id} className="status-bar__ssh-row">
               <dt>{row.label}</dt>
-              <dd data-testid={`status-bar-ssh-details-${row.id}`}>{row.value}</dd>
+              <dd data-testid={`status-bar-ssh-details-${row.id}`} title={row.title}>
+                {row.value}
+              </dd>
             </div>
           ))}
         </dl>

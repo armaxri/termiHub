@@ -12,12 +12,12 @@ import {
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { flushAsync } from "@/test/flushAsync";
 
-const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
   return {
     ...actual,
-    toast: { ...actual.toast, success: (m: string, o?: unknown) => toastSuccess(m, o) },
+    toast: { ...actual.toast, info: (m: string, o?: unknown) => toastInfo(m, o) },
   };
 });
 
@@ -78,7 +78,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  toastSuccess.mockClear();
+  toastInfo.mockClear();
 });
 
 afterEach(() => {
@@ -116,7 +116,7 @@ describe("TabBar — closing a live-session tab via the X", () => {
 
     expect(closeTab).toHaveBeenCalledWith(TAB_ID, PANEL_ID);
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
-    expect(toastSuccess).toHaveBeenCalled();
+    expect(toastInfo).toHaveBeenCalled();
   });
 
   it("does not confirm when the tab's session has already exited", async () => {

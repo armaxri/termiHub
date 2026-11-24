@@ -74,7 +74,6 @@ vi.mock("./InlineFolderInput", () => ({ InlineFolderInput: () => null }));
 vi.mock("@/components/AgentUpdateBanner", () => ({
   AgentUpdateBanner: () => null,
   AgentUpdateMarker: () => null,
-  countAgentSessionTabs: () => 0,
 }));
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();

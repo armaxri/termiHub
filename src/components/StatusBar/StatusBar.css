@@ -372,7 +372,7 @@
 .ui-menu__label.monitoring-menu__interval-label,
 .ui-menu__label.monitoring-menu__label {
   text-transform: none;
-  letter-spacing: normal;
+  letter-spacing: var(--letter-spacing-ui);
 }
 
 /* Radio-style interval items: reserve space for the leading tick indicator. */
@@ -560,6 +560,16 @@
 
 .status-bar__item--down .status-bar__ssh-trust {
   color: inherit;
+}
+
+/* The SSH details popover's heading reads in sentence case, "Connection
+   security" (#5956): it is a title, not one of a menu's uppercase group
+   labels. Two classes outrank the shared `.ui-menu__label`. */
+.ui-menu__label.status-bar__ssh-title {
+  text-transform: none;
+  letter-spacing: var(--letter-spacing-ui);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
 }
 
 /* The SSH details popover: label / value rows. */

@@ -9,8 +9,8 @@ was cut off (R-001), and "Apply now" did not say what it does (R-012).
 Now the row carries only a compact marker and the notice is a full-width
 strip under it: "Update to v<x> available", a short note, Close and "Restart
 agent and update". With session tabs open on the agent the button asks first
-and names the count; the agent does not interrupt them, it waits for the last
-one to close before it restarts.
+and names them (#5953: the sessions the agent lists); the agent does not
+interrupt them, it waits for the last one to close before it restarts.
 
 The grade deploys and connects the dev agent on the run's native sshd, shrinks
 the window to its 800x600 minimum and the sidebar to its narrowest width,
@@ -24,6 +24,7 @@ in the normal lane.
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import Any
 
@@ -256,14 +257,15 @@ class TestProductRunAgentUpdateNotice(
             self.wait_agent_update_banner(agent_id)
             note = self.driver.get_text(f"{self.UPDATE_BANNER_NOTE}-{agent_id}")
             self.evidence(f"note: {note!r}")
-            assert note.strip() == "Waits for 1 session to close.", note
+            # The strip names the session the agent lists (#5953).
+            assert re.fullmatch(r"Waits for 1 session \(.+\) to close\.", note.strip()), note
             self.driver.click(f"{self.UPDATE_BANNER_APPLY}-{agent_id}")
             dialog = f"{self.UPDATE_CONFIRM}-{agent_id}"
             self.wait(lambda: self.driver.exists(dialog), what="the apply confirm")
             text = self.driver.get_text(dialog)
             self.shot(label="confirm")
             self.evidence(f"confirm: {text!r}")
-            assert "1 session is open on this agent" in text, text
+            assert re.search(r"1 session \(.+\) is open on this agent", text), text
             assert "not interrupted" in text, text
             self.driver.click(f"{dialog}-cancel")
             self.wait(lambda: not self.driver.exists(dialog), what="the confirm to close")

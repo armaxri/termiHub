@@ -67,7 +67,6 @@ vi.mock("./InlineFolderInput", () => ({ InlineFolderInput: () => null }));
 vi.mock("@/components/AgentUpdateBanner", () => ({
   AgentUpdateBanner: () => null,
   AgentUpdateMarker: () => null,
-  countAgentSessionTabs: () => 0,
 }));
 
 const AGENT_ID = "agent-shell-title-test";

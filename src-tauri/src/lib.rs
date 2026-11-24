@@ -720,6 +720,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::attach_persistent_tab,
             commands::session::detach_persistent_tab,
             commands::session::get_agent_session_buffer,
+            commands::session::take_resumed_agent_session,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,

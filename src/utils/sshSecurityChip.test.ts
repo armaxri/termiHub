@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sshSecurityChip, sshTrustLevel } from "./sshSecurityChip";
+import { keyFileName, sshSecurityChip, sshTrustLevel } from "./sshSecurityChip";
 import type { SshHostKeyTrustedEvent } from "@/types/generated/SshHostKeyTrustedEvent";
 import type { ConnectionConfig } from "@/types/terminal";
 
@@ -41,6 +41,16 @@ describe("sshTrustLevel (#5839)", () => {
   });
 });
 
+describe("keyFileName (#5956)", () => {
+  it("keeps only the file name of a POSIX, home-relative or Windows path", () => {
+    expect(keyFileName("/Users/me/work/run/sshd/keys/pr_ed25519")).toBe("pr_ed25519");
+    expect(keyFileName("~/.ssh/id_rsa")).toBe("id_rsa");
+    expect(keyFileName("C:\\Users\\me\\.ssh\\id_ed25519")).toBe("id_ed25519");
+    expect(keyFileName("id_ed25519")).toBe("id_ed25519");
+    expect(keyFileName("/keys/dir/")).toBe("dir");
+  });
+});
+
 describe("sshSecurityChip (#5839)", () => {
   it("returns null for non-SSH configs and SSH configs without a host", () => {
     expect(sshSecurityChip({ type: "local", config: { shell: "zsh" } })).toBeNull();
@@ -59,9 +69,11 @@ describe("sshSecurityChip (#5839)", () => {
     expect(rows).toEqual({
       endpoint: "arne@127.0.0.1:22400",
       encryption: "Encrypted (SSH)",
-      auth: "key ~/.ssh/pr_ed25519",
+      auth: "key pr_ed25519",
       hostKey: "trusted · ssh-ed25519 SHA256:abc",
     });
+    // The full key path stays reachable on hover (#5956).
+    expect(chip.rows.find((r) => r.id === "auth")!.title).toBe("~/.ssh/pr_ed25519");
     // The hover tooltip of #5669 is kept.
     expect(chip.tooltip).toContain("Host key: trusted (SHA256:abc)");
   });

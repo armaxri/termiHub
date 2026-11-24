@@ -75,7 +75,7 @@ const conn: SavedConnection = {
 };
 
 function undo(): void {
-  const opts = toastMock.success.mock.calls[0][1] as {
+  const opts = toastMock.info.mock.calls[0][1] as {
     action: { label: string; onClick: () => void };
     duration: number;
   };
@@ -110,10 +110,7 @@ describe("appStore — deleteFolderWithUndo (#5158)", () => {
     expect(view.folders.map((f) => f.id)).toEqual(["Work", "Work/Dev/Db"]);
     expect(view.folders.find((f) => f.id === "Work/Dev/Db")?.parentId).toBe("Work");
     expect(view.connections[0].folderId).toBe("Work");
-    expect(toastMock.success).toHaveBeenCalledWith(
-      expect.stringContaining("Dev"),
-      expect.anything()
-    );
+    expect(toastMock.info).toHaveBeenCalledWith(expect.stringContaining("Dev"), expect.anything());
     expect(removeFolder).not.toHaveBeenCalled();
   });
 
@@ -137,7 +134,7 @@ describe("appStore — deleteFolderWithUndo (#5158)", () => {
     expect(removeFolder).not.toHaveBeenCalled();
     expect(toastMock.error).not.toHaveBeenCalled();
     // The restored folder is the confirmation: only the Undo toast showed (#5859).
-    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.info).toHaveBeenCalledTimes(1);
   });
 
   it("reports an Undo that came too late", async () => {
@@ -160,6 +157,6 @@ describe("appStore — deleteFolderWithUndo (#5158)", () => {
 
   it("is a no-op for an unknown folder", () => {
     useAppStore.getState().deleteFolderWithUndo("nope");
-    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.info).not.toHaveBeenCalled();
   });
 });
