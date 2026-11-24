@@ -15,7 +15,7 @@ toasts still showing. Feedback raised inside a dialog shows in its inline
 status line (component-tested; no product action routes through it yet).
 
 The live steps run at the 800x600 minimum window, where the stack has the
-least room. No servers needed: local shells and a workflow are enough.
+least room. No servers needed: local shells and the workflow editor are enough.
 
 The ``test_grade_*`` functions grade fixed measurements without an app and run
 in the normal lane.
@@ -36,7 +36,6 @@ from termihub_harness import (
     TabsUi,
     TerminalUi,
     WorkflowUi,
-    unique_name,
 )
 from termihub_harness.product_run import ProductRunUi
 
@@ -246,35 +245,31 @@ class TestProductRunToastPlacement(
         self.close_all_tabs()
 
     def test_30_dialog_dismisses_stale_toasts(self):
-        tag = unique_name("pr").split("-")[-1]
         with self.step(
             "toasts.placement.modal-open",
             "Opening a dialog dismisses the success toasts still showing, so old feedback "
             "never sits beside a new decision (#5830)",
-            expect="#5830 complaint: after a workflow run, the 'Ran workflow' toast is gone "
-            "as soon as the workflow editor opens, and does not come back after Cancel",
+            expect="#5830 complaint: after a tab was closed, its 'Closed … / Reopen' toast is "
+            "gone as soon as the workflow editor opens, and does not come back after Cancel",
         ):
+            # A workflow run raises no toast since #5859, so the stale toast is
+            # the tab-close undo, which still toasts.
             self.enable_experimental_features()
-            self.open_workflows_sidebar()
-            self.open_new_workflow()
-            self.add_step("send-command")
-            self.set_command(0, f"echo PR_TOAST_PLACE_{tag}")
-            self.set_name(f"Toast placement {tag}")
-            self.save_workflow()
-            workflow = self.workflow_id(f"Toast placement {tag}")
-            self.ensure_terminal()
-            self.open_workflows_sidebar()
-            self.run_workflow(workflow)
-            self.wait_for_output(f"PR_TOAST_PLACE_{tag}")
+            self.switch_to_connections_sidebar()
+            before = self.tab_ids()
+            self.open_new_terminal()
+            self.wait(lambda: len(self.tab_ids()) == len(before) + 1, what="a local terminal")
+            self.close_tab(next(t for t in self.tab_ids() if t not in before))
             self.wait(
-                lambda: any(i["text"].startswith("Ran workflow") for i in self._toast_items()) or None,
-                what="the run's toast",
+                lambda: any(i["text"].startswith("Closed") for i in self._toast_items()) or None,
+                what="the 'Closed' toast",
             )
+            self.open_workflows_sidebar()
             self.open_new_workflow()
             try:
                 self.wait(
-                    lambda: not stale_toast_problems(self._toast_items(), ["Ran workflow"]),
-                    what="the stale 'Ran workflow' toast to go",
+                    lambda: not stale_toast_problems(self._toast_items(), ["Closed"]),
+                    what="the stale 'Closed' toast to go",
                     timeout=3.0,
                 )
                 dialog = self._rect_of(WORKFLOW_DIALOG)
@@ -286,6 +281,6 @@ class TestProductRunToastPlacement(
             finally:
                 self.cancel_clean_editor()
             time.sleep(0.5)
-            problems = stale_toast_problems(self._toast_items(), ["Ran workflow"])
+            problems = stale_toast_problems(self._toast_items(), ["Closed"])
             assert not problems, f"after the editor closed: {problems}"
         self.close_all_tabs()
