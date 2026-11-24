@@ -64,11 +64,13 @@ export async function chooseCredentialStorageForSave(): Promise<{
  * chooser over itself: the box ticks locally, and the save path calls this
  * once the connect has succeeded. It asks where to keep passwords then (the
  * one-time chooser, purpose `"save"`) and saves into the chosen store.
- * Dismissing the chooser, or a store that stays off, saves nothing and
- * resolves `false`. With a store already active it just saves.
+ * Dismissing the chooser, or choosing "none" in it, saves nothing and
+ * resolves `false`. Once a choice exists it just saves, as before.
  */
 export async function saveAfterStorageChoice(save: () => Promise<void>): Promise<boolean> {
-  if (!(await ensureCredentialStorageForSave())) return false;
+  if (credentialStorageNeedsChoice(useAppStore.getState().credentialStoreStatus)) {
+    if (!(await ensureCredentialStorageForSave())) return false;
+  }
   await save();
   return true;
 }

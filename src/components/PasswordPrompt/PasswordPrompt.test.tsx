@@ -123,7 +123,7 @@ describe("PasswordPrompt", () => {
     expect(notice?.textContent).toContain("Saved password was rejected");
   });
 
-  it("shows the save row disabled with an enable action when storage is off (#5186)", async () => {
+  it("shows one storage-off line with a real link when storage is off (#5186, #5838)", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
@@ -132,14 +132,15 @@ describe("PasswordPrompt", () => {
     });
     render();
 
-    const checkbox = query("password-prompt-save-checkbox");
-    expect(checkbox).not.toBeNull();
-    expect(checkbox?.hasAttribute("disabled")).toBe(true);
-    expect(checkbox?.getAttribute("aria-checked")).toBe("false");
-    expect(query("password-prompt-storage-off")?.textContent).toContain(
-      "Credential storage is off"
-    );
-    expect(query("password-prompt-enable-storage")?.textContent).toBe("Enable credential storage…");
+    // #5838: no disabled box, no separate sentence and action: one line.
+    expect(query("password-prompt-save-checkbox")).toBeNull();
+    const line = query("password-prompt-storage-off")!;
+    expect(line.textContent).toBe("Passwords aren't saved. Turn on saving…");
+    const link = query("password-prompt-enable-storage")!;
+    expect(line.contains(link)).toBe(true);
+    expect(link.tagName).toBe("BUTTON");
+    expect(link.className).toBe("password-prompt__link");
+    expect(link.textContent).toBe("Turn on saving…");
     // The success-only hint belongs to an active store, not this row.
     expect(query("password-prompt-save-hint")).toBeNull();
     expect(document.body.textContent).not.toMatch(/master password/i);
@@ -560,7 +561,36 @@ describe("PasswordPrompt", () => {
       render();
 
       expect(query("password-prompt-description")?.textContent).toBe(
-        "Enter the passphrase for key ~/.ssh/id_ed25519, used by arne@127.0.0.1"
+        "Enter the passphrase for key id_ed25519, used by arne@127.0.0.1"
+      );
+    });
+
+    it("names a long key by its file name, with the full path in a tooltip (#5838)", async () => {
+      const keyPath = "/Users/someone/work/projects/deploy/keys/prod-db-ed25519";
+      await act(async () => {
+        void useAppStore.getState().requestPassword("db.example", "ops", "", "key_passphrase", {
+          keyPath,
+        });
+      });
+      render();
+
+      const description = query("password-prompt-description")!;
+      expect(description.textContent).toBe(
+        "Enter the passphrase for key prod-db-ed25519, used by ops@db.example"
+      );
+      expect(description.textContent).not.toContain("/Users/");
+      expect(description.getAttribute("title")).toBe(keyPath);
+    });
+
+    it("names a Windows key path by its file name too", async () => {
+      await act(async () => {
+        void useAppStore.getState().requestPassword("h", "u", "", "key_passphrase", {
+          keyPath: "C:\\Users\\me\\.ssh\\id_rsa",
+        });
+      });
+      render();
+      expect(query("password-prompt-description")?.textContent).toBe(
+        "Enter the passphrase for key id_rsa, used by u@h"
       );
     });
 
@@ -610,6 +640,30 @@ describe("PasswordPrompt", () => {
       expect(line()?.textContent).toBe("Telnet sends this password unencrypted.");
       // #5740: primary text on the warning tint, never warning text on it.
       expect(line()?.classList.contains("password-prompt__unencrypted")).toBe(true);
+    });
+
+    it("says termiHub answers the telnet login prompt (#5838)", async () => {
+      await act(async () => {
+        void useAppStore
+          .getState()
+          .requestPassword("10.0.0.7", "pi", "", "password", { transport: "Telnet" });
+      });
+      render();
+
+      expect(query("password-prompt-description")?.textContent).toBe(
+        "Enter the password for pi@10.0.0.7. termiHub answers the server's login prompt for you."
+      );
+    });
+
+    it("keeps the plain description for an SSH password", async () => {
+      await act(async () => {
+        void useAppStore
+          .getState()
+          .requestPassword("example.com", "alice", "", "password", { transport: "SSH" });
+      });
+      render();
+
+      expect(query("password-prompt-description")?.textContent).not.toContain("login prompt");
     });
 
     it("shows no unencrypted line for an SSH password", async () => {

@@ -97,6 +97,13 @@ export interface ConnectSavedConnectionOptions {
    * prompt, never show connect toasts; refuse with a reason instead.
    */
   unattended?: boolean;
+  /**
+   * Skip the saved credential and prompt for it, leaving a locked store
+   * locked (#5838): the "Type password instead" action on the "Connect to …
+   * canceled" toast, after the unlock dialog was canceled. Same as choosing
+   * "Type password instead" in that dialog.
+   */
+  skipStoredCredential?: boolean;
 }
 
 /** How a {@link connectSavedConnection} call ended. */
@@ -114,11 +121,57 @@ export type ConnectSavedConnectionResult =
   | { status: "failed"; reason: string };
 
 /**
- * The one toast every attended cancel of a saved-connection connect shows
- * (#5188): a dismissed unlock dialog, a dismissed password prompt and the
- * "Connecting…" toast's Abort all acknowledge the cancel with it.
+ * The toast every attended cancel of a saved-connection connect shows (#5188):
+ * a dismissed unlock dialog, a dismissed password prompt and the
+ * "Connecting…" toast's Abort all acknowledge the cancel with it. It names the
+ * connection (#5838): the dialog that was canceled is gone, so nothing else on
+ * screen says which connect stopped.
  */
-export const CONNECT_CANCELED_MESSAGE = "Connect canceled";
+export function connectCanceledText(name: string): string {
+  return `Connect to "${name}" canceled.`;
+}
+
+/** After a canceled unlock: the saved password stays locked (#5838). */
+export function connectCanceledLockedText(name: string): string {
+  return `${connectCanceledText(name)} Its saved password stays locked.`;
+}
+
+/** The action on a canceled unlock's toast (#5838), as in the unlock dialog. */
+export const CONNECT_CANCELED_TYPE_PASSWORD_LABEL = "Type password instead";
+
+/** The action on a canceled prompt's or aborted connect's toast (#5838). */
+export const CONNECT_CANCELED_RETRY_LABEL = "Retry";
+
+/**
+ * Acknowledge an attended cancel (#5188) and say what to do next (#5838):
+ * the toast names the connection and offers to start it again: "Retry",
+ * or after a canceled unlock "Type password instead" (the store stays
+ * locked and the connect asks for its password).
+ */
+function toastConnectCanceled(
+  connection: SavedConnection,
+  options: ConnectSavedConnectionOptions,
+  after: "unlock" | "prompt"
+): void {
+  const unlock = after === "unlock";
+  // toast-policy: the canceled dialog is gone; nothing in place says which connect stopped.
+  toast.info(
+    unlock ? connectCanceledLockedText(connection.name) : connectCanceledText(connection.name),
+    {
+      testId: "connect-canceled-toast",
+      action: {
+        label: unlock ? CONNECT_CANCELED_TYPE_PASSWORD_LABEL : CONNECT_CANCELED_RETRY_LABEL,
+        testId: "connect-canceled-retry",
+        onClick: () => {
+          void connectSavedConnection(
+            connection,
+            unlock ? { ...options, skipStoredCredential: true } : options
+          );
+        },
+      },
+    }
+  );
+}
 
 /**
  * The resolution of a connect that skips the stored credential: "Connect
@@ -298,7 +351,7 @@ export async function connectSavedConnection(
       );
     }
     dismissConnecting();
-    toast.info(CONNECT_CANCELED_MESSAGE);
+    toastConnectCanceled(connection, options, "prompt");
   };
 
   // Open a tab for this saved connection, always stamping its `connectionId`
@@ -385,7 +438,7 @@ export async function connectSavedConnection(
       ...(transport ? { transport } : {}),
     });
     if (resolved.status === "canceled") {
-      toast.info(CONNECT_CANCELED_MESSAGE);
+      toastConnectCanceled(connection, options, "prompt");
       return { status: "canceled" };
     }
     const opened = openTab({ ...config, config: resolved.settings } as typeof config, {
@@ -466,7 +519,9 @@ export async function connectSavedConnection(
         testId: "connect-preconnect-toast",
       });
     };
-    const unlockFirst = credentialStoreNeedsUnlock({ authMethod, savePassword, credentialRef });
+    const skipStored = options.skipStoredCredential === true;
+    const unlockFirst =
+      !skipStored && credentialStoreNeedsUnlock({ authMethod, savePassword, credentialRef });
     if (!unlockFirst) showConnecting();
 
     // Before attempting credential resolution, check whether the credential store
@@ -477,21 +532,24 @@ export async function connectSavedConnection(
     // locked: no stored credential is read and the prompt below offers no Save.
     const unlock = unattended
       ? "unlocked"
-      : await untilAborted(
-          ensureCredentialStoreUnlockedForConnect({
-            authMethod,
-            savePassword,
-            credentialRef,
-            // The dialog names the connect it holds up (#5684).
-            waitingConnection: { name: connection.name, transport },
-          }),
-          preconnect.signal
-        );
+      : skipStored
+        ? "skipped"
+        : await untilAborted(
+            ensureCredentialStoreUnlockedForConnect({
+              authMethod,
+              savePassword,
+              credentialRef,
+              // The dialog names the connect it holds up (#5684).
+              waitingConnection: { name: connection.name, transport },
+            }),
+            preconnect.signal
+          );
     if (unlock === PRECONNECT_ABORTED) return { status: "canceled" };
     if (unlock === "canceled") {
-      // Escape/× on the unlock dialog: acknowledge it like every other cancel.
+      // Cancel/Escape/× on the unlock dialog: acknowledge it like every other
+      // cancel, and offer to go on with a typed password (#5838).
       dismissConnecting();
-      toast.info(CONNECT_CANCELED_MESSAGE);
+      toastConnectCanceled(connection, options, "unlock");
       return { status: "canceled" };
     }
     const storeStaysLocked = unlock === "skipped";
@@ -648,7 +706,7 @@ export async function connectSavedConnection(
       if (answer === null) {
         // Acknowledge the cancel so the click isn't silently dropped (UX-012),
         // matching the editor path's toast.info on connect-cancel.
-        toast.info(CONNECT_CANCELED_MESSAGE);
+        toastConnectCanceled(connection, options, "prompt");
         return { status: "canceled" };
       }
       const password = answer.password;
@@ -676,7 +734,7 @@ export async function connectSavedConnection(
       );
       if (answer === null) {
         // Acknowledge the cancel (UX-012), matching the editor path.
-        toast.info(CONNECT_CANCELED_MESSAGE);
+        toastConnectCanceled(connection, options, "prompt");
         return { status: "canceled" };
       }
       const passphrase = answer.password;
