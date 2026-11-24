@@ -403,12 +403,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           frontendLog("tunnel_editor", `Failed to start tunnel after save: ${errorMessage(err)}`);
           toast.error("Failed to start tunnel");
         });
-      } else {
-        // Plain Save gave no feedback before (UX-022) — the only signal was the
-        // tab closing. Confirm it, matching Duplicate/Delete/Start. Save & Start
-        // skips this: `startTunnel` owns the feedback for that path.
-        toast.success(`Saved tunnel "${config.name}"`);
       }
+      // A plain save closes the editor and the tunnel's row shows in the
+      // sidebar; that is the confirmation (#5859, superseding UX-022).
       // Find panelId for this tab and close it
       const { findLeafByTab } = await import("@/utils/panelTree");
       const leaf = findLeafByTab(rootPanel, tabId);
@@ -527,7 +524,6 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       // order (the backend's ordered pair lifecycle, #2597).
       await saveTunnel(parent);
       await saveTunnel(companion);
-      toast.success(`Chained ${parent.name} to this computer`);
       if (chainStartNow) {
         startTunnel(parent.id).catch((err) => {
           frontendLog("tunnel_editor", `Failed to start chained pair: ${errorMessage(err)}`);

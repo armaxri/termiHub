@@ -1455,6 +1455,7 @@ export function AgentNode({
       clearUserEnded();
       throw err;
     }
+    // toast-policy: off-screen — the agent's sessions stop, most of them not open in a tab
     toast.success(
       detached > 0
         ? `Agent shut down — ${detached} session${detached === 1 ? "" : "s"} stopped`
@@ -1510,7 +1511,6 @@ export function AgentNode({
     markUserEnded();
     try {
       await cancelConnectAgent(agent.id);
-      toast.success("Connect canceled");
     } catch (err) {
       frontendLog("agent_node", `Failed to cancel agent connect: ${errorMessage(err)}`);
       toast.error(`Failed to cancel: ${errorMessage(err)}`);
@@ -1579,6 +1579,7 @@ export function AgentNode({
           transport: connectionTypeDisplayName(def.sessionType),
         }).then((resolved) => {
           if (resolved.status === "canceled") {
+            // toast-policy: explains-outcome — no tab opens, and this says it was canceled
             toast.info("Connect canceled");
             return;
           }

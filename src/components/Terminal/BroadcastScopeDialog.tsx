@@ -182,7 +182,6 @@ export function BroadcastScopeDialog({
     if (!selectedGroup) return;
     try {
       await deleteBroadcastGroup(selectedGroup.id);
-      toast.success(`Deleted broadcast group "${selectedGroup.name}"`);
       setScopeValue("custom");
     } catch (err) {
       toast.error(`Failed to delete broadcast group: ${errorMessage(err)}`);

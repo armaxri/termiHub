@@ -277,7 +277,8 @@ describe("TerminalView — stopping logging across tabs (#5172)", () => {
       "sess-t2",
       "sess-t3",
     ]);
-    expect(toast.success).toHaveBeenCalledTimes(2);
+    // A stop shows as the released toggle; no success toast (#5859).
+    expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error).toHaveBeenCalledWith("Failed to stop logging: disk full");
 

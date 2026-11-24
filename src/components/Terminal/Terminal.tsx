@@ -61,7 +61,6 @@ import {
 import { resolveLineEnding } from "@/utils/lineEndings";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
-import { showConnectedToast } from "./connectedToast";
 import { dropTransportOf, reconnectedMarker, sessionEndSeparator } from "./dropCopy";
 import { connectOverlayIdentity } from "@/utils/connectStages";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
@@ -133,11 +132,6 @@ function setClassifiedSpawnError(tabId: string, err: unknown): void {
   useAppStore
     .getState()
     .setTerminalSpawnError(tabId, parsed.message, connectionErrorKindFromCode(parsed.code));
-}
-
-function resolveTabTitle(tabId: string): string {
-  const tab = getAllTabsAcrossGroupTrees().find((t) => t.id === tabId);
-  return tab?.title?.trim() || "Session";
 }
 
 /** The saved connection a tab was opened from, if any (#3876). */
@@ -808,15 +802,11 @@ export function Terminal({
                 return;
               }
               useAppStore.getState().setConnectStarting(tabId, null);
-              // Success — clear all pre-connect overlay state and give the user
-              // a brief, non-intrusive confirmation that the session is live so
-              // the connect does not resolve silently (#1127).
+              // Success — clear all pre-connect overlay state. The green tab dot
+              // and the remote prompt confirm the connect; no toast (#5859).
               useAppStore.getState().setTerminalConnecting(tabId, false);
               useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
               useAppStore.getState().setTerminalSpawnError(tabId, null);
-              // One toast per tab (replaced on reconnect, dismissed when the tab
-              // drops) and none for local shells (#5618).
-              showConnectedToast(tabId, resolveTabTitle(tabId), config.type);
               break;
             } catch (err) {
               useAppStore.getState().setConnectStarting(tabId, null);

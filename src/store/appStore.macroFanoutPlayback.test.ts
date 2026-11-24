@@ -325,7 +325,8 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     await useAppStore.getState().playMacro("m1", { timingMode: "instant", targetTabIds: ["b"] });
 
     expect(injected).toEqual([["b", "x"]]);
-    expect(toast.success).toHaveBeenCalledWith('Played macro "Macro m1"', expect.anything());
+    // One visible terminal: the typed output is the feedback (#5859).
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });
 

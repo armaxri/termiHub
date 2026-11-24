@@ -90,6 +90,7 @@ export function showReopenToast(payload: ReopenTabPayload | null): void {
   lastCloseAt = now;
   const closed = [...closedBatch, payload];
   closedBatch = closed;
+  // toast-policy: undo — offers Reopen for the tabs just closed
   toast.success(reopenToastMessage(closed), {
     id: REOPEN_TOAST_ID,
     description: reopenToastDescription(closed),

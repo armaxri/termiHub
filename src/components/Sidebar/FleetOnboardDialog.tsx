@@ -100,6 +100,7 @@ export function FleetOnboardDialog({
       { dedupe }
     );
     if (built.length === 0) {
+      // toast-policy: explains-outcome — nothing is added, and this says why
       toast.info(
         skipped.length > 0
           ? `All ${skipped.length} host${skipped.length === 1 ? "" : "s"} already exist here — nothing to add.`
@@ -110,6 +111,7 @@ export function FleetOnboardDialog({
     }
     bulkAddConnections(built);
     if (skipped.length > 0) {
+      // toast-policy: explains-outcome — says which hosts were left out
       toast.info(
         `Skipped ${skipped.length} host${skipped.length === 1 ? "" : "s"} already present in this folder.`
       );

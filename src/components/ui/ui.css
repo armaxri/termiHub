@@ -2343,3 +2343,41 @@
   .ui-connect-progress__step-label {
   color: var(--text-secondary);
 }
+
+/* --- InlineStatus (#5859): an action's result shown beside it --- */
+.ui-inline-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  margin-right: auto;
+  align-self: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+.ui-inline-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ui-inline-status__icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+.ui-inline-status[data-kind="success"] .ui-inline-status__icon {
+  color: var(--color-success);
+}
+.ui-inline-status[data-kind="info"] .ui-inline-status__icon {
+  color: var(--color-info);
+}
+.ui-inline-status__text {
+  min-width: 0;
+}
+.ui-inline-status__detail {
+  color: var(--text-secondary);
+}

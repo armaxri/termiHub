@@ -50,6 +50,7 @@ export function useHttpMonitorNotifications(): void {
       } else {
         const detail = result.statusCode ? `HTTP ${result.statusCode}` : "OK";
         frontendLog("http_monitor_notify", `monitor ${result.monitorId} recovered: ${detail}`);
+        // toast-policy: background — a background monitor recovered
         toast.success(`Monitor recovered: ${detail}`);
       }
     })

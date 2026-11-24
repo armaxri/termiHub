@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
-import { Button, toast } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
@@ -59,9 +59,6 @@ export function ImportedItemsSection({ tabGroupDefs }: ImportedItemsSectionProps
       ...settings,
       workspaceImportAllowlist: withImportConfirmed(settings.workspaceImportAllowlist, key),
     });
-    toast.success(
-      item.kind === "command" ? "Command confirmed on this machine" : "Connection confirmed"
-    );
   };
 
   return (

@@ -95,6 +95,7 @@ export const createBroadcastSlice: StateCreator<AppState, [], [], BroadcastSlice
     const state = get();
     const source = getActiveTab(state);
     if (!source || source.contentType !== "terminal") {
+      // toast-policy: explains-outcome — nothing starts, and this says why
       toast.info("Focus a terminal to start broadcasting input");
       return;
     }

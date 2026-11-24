@@ -156,7 +156,7 @@ describe("workspaces slice (TFE-006)", () => {
   });
 
   describe("duplicateWorkspaceInBackend", () => {
-    it("duplicates, refreshes, and toasts success", async () => {
+    it("duplicates and refreshes without a success toast", async () => {
       vi.mocked(apiGetWorkspaces).mockResolvedValueOnce([
         summary("ws-1", "A"),
         summary("ws-copy", "A copy"),
@@ -165,7 +165,7 @@ describe("workspaces slice (TFE-006)", () => {
       await useAppStore.getState().duplicateWorkspaceInBackend("ws-1");
 
       expect(apiDuplicateWorkspace).toHaveBeenCalledWith("ws-1");
-      expect(toastSuccess).toHaveBeenCalledWith("Duplicated workspace");
+      expect(toastSuccess).not.toHaveBeenCalled();
       expect(useAppStore.getState().workspaces.map((w) => w.id)).toEqual(["ws-1", "ws-copy"]);
     });
 

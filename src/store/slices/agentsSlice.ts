@@ -189,6 +189,7 @@ function manualReconnectAction(
       get()
         .connectRemoteAgent(agentId)
         .then(() => {
+          // toast-policy: background — the agent reconnects after a background update
           toast.success(`${agentDisplayName(agentId)} reconnected.`, {
             id: agentUpdateToastId(agentId),
           });
@@ -260,11 +261,13 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
         // Only claim the updated version when the agent reports it: a deferred
         // update may not have been applied yet.
         if (agentVersion && agentVersion === requestedByVersion) {
+          // toast-policy: background — the agent reconnects after a background update
           toast.success(`${agentName} reconnected to the updated version.`, {
             id: toastId,
             description: `Agent version ${agentVersion}.`,
           });
         } else {
+          // toast-policy: background — the agent reconnects after a background update
           toast.success(`${agentName} reconnected.`, {
             id: toastId,
             description: agentVersion
@@ -286,6 +289,7 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
         });
         return;
       case "cancelled":
+        // toast-policy: explains-outcome — says the sessions are kept and offers a reconnect
         toast.info(`Stopped reconnecting to ${agentName}.`, {
           id: toastId,
           description: "Its sessions are kept and resume when you reconnect.",
@@ -660,7 +664,6 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
       const folder = await apiCreateAgentFolder(agentId, name, parentId);
       // Optimistically append the folder to the region (#2409).
       mirrorAgentIntent("agent.createFolder", { id: agentId, folder });
-      toast.success(`Created folder ${folder.name}`);
     } catch (err) {
       frontendLog("app_store", `Failed to create agent folder on ${agentId}: ${errorMessage(err)}`);
       toast.error(`Failed to create folder: ${errorMessage(err)}`);
@@ -675,7 +678,6 @@ export const createAgentsSlice: StateCreator<AppState, [], [], AgentsSlice> = (s
       const updated = await apiUpdateAgentFolder(agentId, params);
       // Optimistically replace the folder by id in the region (#2409).
       mirrorAgentIntent("agent.updateFolder", { id: agentId, folder: updated });
-      if (isRename) toast.success(`Renamed folder to ${updated.name}`);
     } catch (err) {
       frontendLog("app_store", `Failed to update agent folder on ${agentId}: ${errorMessage(err)}`);
       if (isRename) {

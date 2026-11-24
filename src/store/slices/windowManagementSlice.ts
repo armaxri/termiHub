@@ -483,6 +483,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
       // just a toast instead of a dialog (concept: "All-persistent → no
       // dialog").
       await get().endWindowSessions();
+      // toast-policy: explains-outcome — the window closes, the sessions keep running elsewhere
       toast.success(
         `${sessions.length} session${sessions.length === 1 ? "" : "s"} detached — still running`
       );

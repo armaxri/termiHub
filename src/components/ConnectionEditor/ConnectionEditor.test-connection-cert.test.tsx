@@ -284,7 +284,7 @@ describe("ConnectionEditor — Test connection certificate review (#4510)", () =
       pendingTest!.resolve();
     });
     await flush();
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(mockedInvoke.mock.calls.some((c) => c[0] === "save_connection")).toBe(false);
   });
 

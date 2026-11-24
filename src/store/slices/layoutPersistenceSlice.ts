@@ -411,6 +411,7 @@ export const createLayoutPersistenceSlice: StateCreator<
             "workspace",
             `launchWorkspace(${workspaceId}): "${definition.name}" produced no launchable tabs`
           );
+          // toast-policy: explains-outcome — nothing opens, and this says why
           toast.info(`Workspace "${definition.name}" had no launchable tabs`);
           return;
         }
@@ -639,6 +640,7 @@ export const createLayoutPersistenceSlice: StateCreator<
             "workspace",
             "restoreLastSession: stored session produced no launchable tabs"
           );
+          // toast-policy: explains-outcome — nothing opens, and this says why
           toast.info("Previous session had no launchable tabs");
           return false;
         }

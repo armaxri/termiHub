@@ -64,6 +64,7 @@ function copyLocal(srcPath: string, destPath: string): Promise<boolean> {
         direction: "download",
         remotePath: fileSrcPath,
       }),
+    // toast-policy: explains-outcome — says which items were skipped
     (skipped) => toast.info(describeSkipped(skipped))
   );
 }

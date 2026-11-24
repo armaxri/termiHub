@@ -94,6 +94,7 @@ export function UpdateAgentDialog({
     if (result.kind === "coordinated") {
       const n = result.notifiedClients;
       if (result.applied) {
+        // toast-policy: background — the update runs on after the dialog closes
         toast.success(
           n > 0
             ? `Updating agent on ${agentName} — ${n} other host${n === 1 ? "" : "s"} notified. Reconnecting…`
@@ -101,6 +102,7 @@ export function UpdateAgentDialog({
         );
       } else {
         const s = result.activeSessions;
+        // toast-policy: background — the update waits for sessions after the dialog closes
         toast.info(
           `Update deferred on ${agentName} — it will apply automatically when the last of ` +
             `${s} active session${s === 1 ? "" : "s"} disconnects.`
@@ -131,6 +133,7 @@ export function UpdateAgentDialog({
       );
     }
 
+    // toast-policy: background — the update runs on after the dialog closes
     toast.success(`Updating agent on ${agentName}…`);
     onUpdated?.(result);
     onOpenChange(false);

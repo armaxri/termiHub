@@ -163,7 +163,7 @@ describe("ConnectionEditor — agent-definition save feedback (#1342)", () => {
     vi.clearAllMocks();
   });
 
-  it("shows a success toast when the agent-definition save succeeds", async () => {
+  it("raises no success toast when the agent-definition save succeeds (#5859)", async () => {
     const saveAgentDef = vi.fn(() => Promise.resolve());
     useAppStore.setState({ saveAgentDef });
 
@@ -176,7 +176,7 @@ describe("ConnectionEditor — agent-definition save feedback (#1342)", () => {
     await flush();
 
     expect(saveAgentDef).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 

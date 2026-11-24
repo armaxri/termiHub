@@ -102,7 +102,7 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
     ).not.toBeNull();
   });
 
-  it("Pause calls the pause API and toasts", async () => {
+  it("Pause calls the pause API without a toast", async () => {
     vi.mocked(networkHttpMonitorList).mockResolvedValue([makeMonitor("mon-1")]);
     await renderPanel();
 
@@ -114,7 +114,7 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
     await flush();
 
     expect(networkHttpMonitorPause).toHaveBeenCalledWith("mon-1");
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("a paused monitor exposes a Resume control that calls the resume API", async () => {
@@ -170,7 +170,7 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
     expect(networkHttpMonitorRemove).toHaveBeenCalledWith("mon-1");
   });
 
-  it("Remove calls the remove API (not stop) and toasts", async () => {
+  it("Remove calls the remove API (not stop) without a toast", async () => {
     vi.mocked(networkHttpMonitorList).mockResolvedValue([makeMonitor("mon-1")]);
     await renderPanel();
 
@@ -182,6 +182,6 @@ describe("HttpMonitorPanel — pause/resume + stop vs remove (#1147 gaps #5, #6)
     await flush();
 
     expect(networkHttpMonitorRemove).toHaveBeenCalledWith("mon-1");
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

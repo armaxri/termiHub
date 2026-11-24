@@ -58,16 +58,6 @@ import { deferDelete, isDeleteUndone, showUndoToast } from "@/utils/undoableDele
  * purely through the composed `AppState` via `get()` / `set()`, so it stays local
  * to this slice without importing those domains directly.
  */
-/** Options for the connection save actions. */
-export interface SaveConnectionOptions {
-  /**
-   * Skip the "Saved …" success toast (#5665): the save is one step of a flow
-   * whose own result is the feedback — Save and connect opens the tab (or a
-   * prompt / trust dialog) at once. A failed save is still toasted.
-   */
-  quiet?: boolean;
-}
-
 export interface ConnectionTreeSlice {
   reloadExternalConnections: () => Promise<void>;
   /** Reload connections from the backend using the versioned reload guard. */
@@ -79,10 +69,7 @@ export interface ConnectionTreeSlice {
    * when the persist failed (already toasted). Callers may ignore the promise;
    * Save and connect awaits it to bind its tab to the saved connection (#5257).
    */
-  addConnection: (
-    connection: SavedConnection,
-    opts?: SaveConnectionOptions
-  ) => Promise<string | null>;
+  addConnection: (connection: SavedConnection) => Promise<string | null>;
   bulkAddConnections: (connections: SavedConnection[]) => void;
   /**
    * Persist an imported folder tree (#4850): `folders` (parents first) are
@@ -100,10 +87,7 @@ export interface ConnectionTreeSlice {
    * it is stored under now (a rename changes it), or `null` when the persist
    * failed (already toasted). See {@link addConnection}.
    */
-  updateConnection: (
-    connection: SavedConnection,
-    opts?: SaveConnectionOptions
-  ) => Promise<string | null>;
+  updateConnection: (connection: SavedConnection) => Promise<string | null>;
   deleteConnection: (connectionId: string) => void;
   bulkDeleteConnections: (connectionIds: string[]) => void;
   addFolder: (folder: ConnectionFolder) => void;
@@ -140,8 +124,7 @@ export interface ConnectionTreeSlice {
    */
   saveConnectionToFile: (
     connection: SavedConnection,
-    currentSource: string | null,
-    opts?: SaveConnectionOptions
+    currentSource: string | null
   ) => Promise<SavedConnection | null>;
   /**
    * Re-point open tabs at their connections' new ids after a rename or move
@@ -338,7 +321,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       });
     },
 
-    addConnection: (connection, opts) => {
+    addConnection: (connection) => {
       // Optimistic overlay, then persist. The persist command recomputes the
       // name-derived id and folds the authoritative view into the region (#2389),
       // echoing the optimistic `conn-<ulid>` id in the region's `savedAs` map, so
@@ -351,7 +334,6 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         { previewId: connection.id }
       )
         .then((persistedId): string | null => {
-          if (!opts?.quiet) toast.success(`Saved ${connection.name}`);
           return persistedId || connection.id;
         })
         .catch((err): string | null => {
@@ -377,6 +359,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         )
       )
         .then(() => {
+          // toast-policy: off-screen — the import runs from Settings, off the connection tree
           toast.success(
             `Imported ${newConnections.length} ${newConnections.length === 1 ? "connection" : "connections"}`
           );
@@ -404,7 +387,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       get().bulkAddConnections(connections);
     },
 
-    updateConnection: (connection, opts) => {
+    updateConnection: (connection) => {
       // Optimistic overlay, then persist. A rename changes the name-derived
       // persisted id; the persist command's fold (#2389) lands it in the region
       // under the new id before the overlay settles, so a connect fired after the
@@ -415,7 +398,6 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         persistConnection(stripPassword(connection))
       )
         .then((persistedId): string | null => {
-          if (!opts?.quiet) toast.success(`Saved ${connection.name}`);
           return persistedId || connection.id;
         })
         .catch((err): string | null => {
@@ -439,7 +421,6 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
           // durable — so a rejected persist (rolled back per FES-005) never tears
           // down a live session for a connection that is coming back.
           sweepDeletedConnectionRefs([connectionId]);
-          toast.success(`Deleted ${conn?.name ?? "connection"}`);
         })
         .catch((err) => {
           frontendLog("app_store", `Failed to persist connection deletion: ${errorMessage(err)}`);
@@ -475,9 +456,6 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       )
         .then(() => {
           frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed`);
-          toast.success(
-            `Deleted ${toDelete.length} ${toDelete.length === 1 ? "connection" : "connections"}`
-          );
         })
         .catch((err) => {
           frontendLog(
@@ -528,9 +506,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       showUndoToast(`Deleted folder "${folder.name}"`, {
         testId: "folder-delete-undo-toast",
         onUndo: () => {
-          if (deferred.cancel()) {
-            toast.success(`Restored folder "${folder.name}"`);
-          } else {
+          if (!deferred.cancel()) {
             toast.error(`Folder "${folder.name}" was already deleted`);
           }
         },
@@ -576,7 +552,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       }
     },
 
-    saveConnectionToFile: async (connection, currentSource, opts) => {
+    saveConnectionToFile: async (connection, currentSource) => {
       frontendLog(
         "connection_sync",
         `saveConnectionToFile: persisting ${connection.id} from ${currentSource ?? "main"}`
@@ -587,7 +563,6 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         const saved = await persistWithOverlay(replaceConnection(connection), () =>
           apiSaveConnectionToFile(stripPassword(connection), currentSource)
         );
-        if (!opts?.quiet) toast.success(`Saved ${saved.name}`);
         return saved;
       } catch (err) {
         frontendLog("app_store", `Failed to save connection to file: ${errorMessage(err)}`);

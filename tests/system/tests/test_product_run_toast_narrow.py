@@ -8,11 +8,11 @@ covered the dialog's edge.
 
 Now the stack docks at the top edge in its compact form: errors stay visible
 as one line over the dialog head, while success/info toasts wait until the
-dialog closes. The grade runs a workflow (raising the "Ran workflow" success
-toast), shrinks the window to 800x600, opens the workflow editor and checks no
-toast covers the dialog. Since #5830 the dialog opening dismisses the stale
-"Ran workflow" toast outright, so it must not come back after the editor
-closes either. No sshd: a local shell is enough.
+dialog closes. The grade runs a workflow, shrinks the window to 800x600, opens
+the workflow editor and checks no toast covers the dialog. Since #5859 a run in
+the visible terminal raises no "Ran workflow" toast at all (the output and the
+run history show it), and none may appear beside the dialog or after the
+editor closes. No sshd: a local shell is enough.
 """
 
 from __future__ import annotations
@@ -102,11 +102,11 @@ class TestProductRunToastNarrow(
         tag = unique_name("pr").split("-")[-1]
         with self.step(
             "complaints.toasts.dialog-narrow",
-            "At 800x600 a toast never covers the open workflow editor; the stale success "
-            "toast is dismissed when it opens (#5715, #5830)",
+            "At 800x600 a toast never covers the open workflow editor, and no run success "
+            "toast shows at all (#5715, #5830, #5859)",
             expect="#5715/#5830 complaint: in an 800x600 window with the workflow editor open, "
             "no toast sits on the dialog (errors would dock as one line at the top edge); the "
-            "stale 'Ran workflow' toast is gone and does not come back after Cancel",
+            "run raised no 'Ran workflow' toast, before or after Cancel",
         ):
             workflow = self._create_workflow(f"Toast narrow {tag}", f"echo PR_TOAST_NARROW_{tag}")
             self.ensure_terminal()
@@ -115,7 +115,6 @@ class TestProductRunToastNarrow(
             try:
                 self.run_workflow(workflow)
                 self.wait_for_output(f"PR_TOAST_NARROW_{tag}")
-                self.wait(lambda: self._ran_toasts() or None, what="the run's toast")
                 self.open_new_workflow()
                 try:
                     time.sleep(0.5)  # let the stack re-lay out around the dialog
@@ -132,14 +131,14 @@ class TestProductRunToastNarrow(
                             f"the open dialog {dialog}"
                         )
                     assert not self._ran_toasts(), (
-                        "the stale 'Ran workflow' success toast shows beside the dialog; "
-                        "a dialog opening should dismiss it (#5830)"
+                        "a 'Ran workflow' success toast shows beside the dialog; a run in the "
+                        "visible terminal raises none (#5859)"
                     )
                 finally:
                     self.cancel_clean_editor()
                 time.sleep(0.5)
                 assert not self._ran_toasts(), (
-                    "the dismissed 'Ran workflow' toast came back after the editor closed"
+                    "a 'Ran workflow' toast showed after the editor closed"
                 )
             finally:
                 self.driver.resize_window(*NORMAL_WINDOW)

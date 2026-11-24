@@ -141,6 +141,7 @@ export function DiagnosticsExportDialog() {
         selectedAgentReports(agentReports, excluded),
         selectedAgentLogs(agentLogs, excludedLogs)
       );
+      // toast-policy: no-in-place-surface — the bundle is a file on disk
       toast.success(`Diagnostics saved (${result.fileCount} files)`, { description: result.path });
       setOpen(false);
     } catch (err) {

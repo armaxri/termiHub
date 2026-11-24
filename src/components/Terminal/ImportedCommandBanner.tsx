@@ -1,6 +1,6 @@
 import { ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, toast } from "@/components/ui";
+import { Button } from "@/components/ui";
 import "./ImportedTabConfirmation.css";
 
 interface ImportedCommandBannerProps {
@@ -25,7 +25,6 @@ export function ImportedCommandBanner({ tabId }: ImportedCommandBannerProps) {
 
   const handleConfirm = async () => {
     await confirmCommand(tabId);
-    toast.success("Command confirmed on this machine and run");
   };
 
   return (

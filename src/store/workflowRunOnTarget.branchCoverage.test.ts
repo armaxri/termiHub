@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     info: vi.fn(),
     error: vi.fn(),
     loading: vi.fn(),
+    dismiss: vi.fn(),
   },
   outputListeners: [] as Array<(sessionId: string, data: Uint8Array) => void>,
   onTerminalOutput: vi.fn(),
@@ -155,7 +156,9 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
     expect(result.status).toBe("completed");
     // The listener is detached once the wait settles.
     expect(mocks.outputListeners).toHaveLength(0);
-    expect(mocks.toast.success).toHaveBeenCalledWith('Ran workflow "wf"', expect.anything());
+    // The terminal and the run history show a clean run; no toast (#5859).
+    expect(mocks.toast.success).not.toHaveBeenCalled();
+    expect(mocks.toast.dismiss).toHaveBeenCalled();
   });
 
   it("strips OSC 133 marks split across chunks before a $-anchored match (#4355)", async () => {

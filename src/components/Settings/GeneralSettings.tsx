@@ -21,16 +21,6 @@ import { SettingsField } from "./SettingsField";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
 
-/** Human-readable labels for the file-log verbosity levels (OBS-009). */
-const LOG_LEVEL_LABELS: Record<string, string> = {
-  off: "Off",
-  error: "Error",
-  warn: "Warning",
-  info: "Info",
-  debug: "Debug",
-  trace: "Trace",
-};
-
 type FileLogLevel = NonNullable<AppSettings["fileLogLevel"]>;
 
 /** Sentinel value for the "platform default" shell option (Radix Select forbids empty-string item values). */
@@ -73,13 +63,12 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
   const handleLogLevelChange = useCallback(
     (value: FileLogLevel) => {
       onChange((prev) => ({ ...prev, fileLogLevel: value }));
-      setFileLogLevel(value)
-        .then(() => toast.success(`Log verbosity set to ${LOG_LEVEL_LABELS[value] ?? value}`))
-        .catch((err) => {
-          const message = errorMessage(err);
-          frontendError("general_settings", `failed to set log level: ${message}`);
-          toast.error(`Failed to change log verbosity: ${message}`);
-        });
+      // The select shows the new level (#5859).
+      setFileLogLevel(value).catch((err) => {
+        const message = errorMessage(err);
+        frontendError("general_settings", `failed to set log level: ${message}`);
+        toast.error(`Failed to change log verbosity: ${message}`);
+      });
     },
     [onChange]
   );
@@ -116,6 +105,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
       // Tauri clipboard plugin: navigator.clipboard rejects on macOS/WKWebView
       // when the window is not focused (#4327).
       await writeText(info);
+      // toast-policy: no-in-place-surface — the debug info is on the clipboard
       toast.success("Debug info copied to clipboard");
     } catch (err) {
       const message = errorMessage(err);

@@ -164,14 +164,14 @@ describe("OpenConnectionsModal — monitoring row actions reach the backend (COV
     await click(`monitor-interval-${key}-${ms}`);
   }
 
-  it("setting the interval reconfigures the backend loop and confirms it", async () => {
+  it("setting the interval reconfigures the backend loop without a toast", async () => {
     seed([monitorEntry(KEY)]);
     await renderModal();
 
     await pickInterval(KEY, 5000);
 
     expect(sessionMonitoringSetInterval).toHaveBeenCalledWith(`mon-${KEY}`, 5000);
-    expect(toastSuccess).toHaveBeenCalledWith("Refresh interval set to 5s");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -187,13 +187,13 @@ describe("OpenConnectionsModal — monitoring row actions reach the backend (COV
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
-  it("Pause reaches the backend and confirms; a failed Resume toasts the reason", async () => {
+  it("Pause reaches the backend without a toast; a failed Resume toasts the reason", async () => {
     seed([monitorEntry(KEY), monitorEntry(OTHER, { paused: true, status: "paused" })]);
     await renderModal();
 
     await click(`monitor-pause-${KEY}`);
     expect(sessionMonitoringSetPaused).toHaveBeenCalledWith(`mon-${KEY}`, true);
-    expect(toastSuccess).toHaveBeenCalledWith("Monitoring paused");
+    expect(toastSuccess).not.toHaveBeenCalled();
 
     sessionMonitoringSetPaused.mockRejectedValueOnce(new Error("busy"));
     await click(`monitor-resume-${OTHER}`);
@@ -209,7 +209,7 @@ describe("OpenConnectionsModal — monitoring row actions reach the backend (COV
 
     expect(sessionMonitoringClose).toHaveBeenCalledWith(`mon-${KEY}`);
     expect(sessionMonitoringOpen).toHaveBeenCalledWith(KEY, KEY, 2000, expect.anything());
-    expect(toastSuccess).toHaveBeenCalledWith("Retrying monitor");
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("a failed Retry reopen toasts the reason", async () => {
@@ -247,7 +247,7 @@ describe("OpenConnectionsModal — monitoring row actions reach the backend (COV
 
     expect(sessionMonitoringClose).toHaveBeenCalledTimes(1);
     expect(sessionMonitoringClose).toHaveBeenCalledWith(`mon-${KEY}`);
-    expect(toastSuccess).toHaveBeenCalledWith("Monitoring stopped");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
     // No confirmation step for a single-host kill, matching the other rows.
     expect(document.querySelector('[data-testid="confirm-dialog-confirm"]')).toBeNull();

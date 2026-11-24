@@ -111,10 +111,9 @@ export function SchedulesSection({
     });
   }, []);
 
-  const scheduleDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+  const scheduleDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
       await deleteSchedule(id);
-      toast.success(`Deleted schedule "${name}"`);
     } catch (err) {
       toast.error(`Failed to delete schedule: ${errorMessage(err)}`);
     }
@@ -124,7 +123,6 @@ export function SchedulesSection({
     async (s: ScheduleView, enabled: boolean, confirmed: boolean) => {
       try {
         await setScheduleEnabled(s.id, enabled, confirmed);
-        toast.success(`${enabled ? "Enabled" : "Disabled"} schedule "${s.name}"`);
       } catch (err) {
         toast.error(`Failed to update schedule: ${errorMessage(err)}`);
       }
@@ -145,7 +143,6 @@ export function SchedulesSection({
     async (next: boolean) => {
       try {
         await setSchedulesPaused(next);
-        toast.success(next ? "Paused all schedules" : "Resumed schedules");
       } catch (err) {
         toast.error(`Failed to ${next ? "pause" : "resume"} schedules: ${errorMessage(err)}`);
       }

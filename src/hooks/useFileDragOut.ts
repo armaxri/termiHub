@@ -74,6 +74,7 @@ function reportStagingFailure(err: unknown, label: string, toastId: string | num
     // The transfer-progress event path already surfaced it (quiet on cancel).
     toast.dismiss(toastId);
   } else if (err instanceof DragOutLimitError) {
+    // toast-policy: explains-outcome — the drag-out is refused, and this says why
     toast.info(`Can't drag ${label} out: ${err.message}`, { id: toastId });
   } else {
     toast.error(`Preparing ${label} failed: ${errorMessage(err)}`, { id: toastId });
@@ -163,6 +164,7 @@ export function useFileDragOut(
   return useCallback((entries: FileEntry[], control: DragOutControl) => {
     const plan = planDragOut(entries, sourceRef.current);
     if (plan.kind === "refuse") {
+      // toast-policy: explains-outcome — the drag-out is refused, and this says why
       toast.info(plan.message);
       return;
     }
@@ -187,6 +189,7 @@ export function useFileDragOut(
         if (control.isStillDragging()) {
           void startNativeDrag(paths, control);
         } else {
+          // toast-policy: background — the download for the drag finished after the drag ended
           toast.success(
             `${describeEntries(plan.entries)} ready — drag ${plan.entries.length === 1 ? "it" : "them"} out of the window again to save`
           );

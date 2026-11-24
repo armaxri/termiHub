@@ -84,6 +84,7 @@ SAVE_COPY_INPUT = "save-copy-input"
 SAVE_COPY_SUBMIT = "save-copy-submit"
 #: The terminal success toast of a transfer ("Downloaded …" / "Uploaded …").
 TRANSFER_DONE_TOAST = "transfer-done-toast"
+TRANSFER_SUMMARY = "file-browser-transfer-summary"
 #: The file browser's Download context-menu item and Upload toolbar button.
 CTX_FILE_DOWNLOAD = "context-file-download"
 FILE_BROWSER_UPLOAD = "file-browser-upload"
@@ -235,6 +236,16 @@ class TestSftpOnlyHostLive(
 
         self.wait(written, what=f"the remote contents to be downloaded to {path}")
 
+    def _download_done_text(self) -> str | None:
+        """The finished download's one report: the toast, or the sidebar summary."""
+        if self.driver.exists(TRANSFER_DONE_TOAST):
+            return self.driver.get_text(TRANSFER_DONE_TOAST)
+        if self.driver.exists(TRANSFER_SUMMARY):
+            text = self.driver.get_text(TRANSFER_SUMMARY)
+            if "done" in text:
+                return text
+        return None
+
     def test_read_only_banner_download_saves_the_file_locally(self):
         """MT-EDIT-01: Download a read-only file through the native Save dialog."""
         self._connect_files_only("sftp-only-download")
@@ -247,12 +258,10 @@ class TestSftpOnlyHostLive(
         target = Path(tempfile.mkdtemp(prefix="thub-sftp-download-")) / ROOT_OWNED_NAME
         self.driver.stub_native_dialog("save", target)
         self.driver.click(self.DOWNLOAD)
-        toast = self.wait(
-            lambda: self.driver.exists(TRANSFER_DONE_TOAST)
-            and self.driver.get_text(TRANSFER_DONE_TOAST),
-            what="the Downloaded toast",
-        )
-        assert f"Downloaded {ROOT_OWNED_NAME}" in toast, f"unexpected toast: {toast!r}"
+        # One place reports the finished download (#5859): the file browser's
+        # transfer summary while it is on screen, else the "Downloaded …" toast.
+        done = self.wait(lambda: self._download_done_text(), what="the finished download")
+        assert f"Downloaded {ROOT_OWNED_NAME}" in done or "done" in done, f"unexpected: {done!r}"
         self._wait_local_file(target, _container_read(ROOT_OWNED_PATH))
 
     def test_file_browser_download_saves_the_file_locally(self):

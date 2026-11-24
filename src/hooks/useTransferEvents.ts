@@ -5,6 +5,7 @@ import { toast } from "@/components/ui";
 import { LOCAL_TRANSFER_SESSION, type TransferProgress } from "@/services/api";
 import { isBatchTransfer } from "@/hooks/batchTransferToasts";
 import { subscribeGuarded } from "@/hooks/useTauriListener";
+import { isTransferSummaryShown } from "@/components/TransferQueue/transferSummaryVisibility";
 
 /**
  * Raise the single terminal-phase toast for a settled transfer (#1286).
@@ -27,6 +28,10 @@ import { subscribeGuarded } from "@/hooks/useTauriListener";
  *
  * A transfer that belongs to a graphical-session upload batch stays quiet
  * too: that batch raises one summary toast for the whole drop (#4348).
+ *
+ * A finished transfer whose session's summary line is on screen (the file
+ * browser's "1 transfer done", #5859) stays quiet as well: that line already
+ * says it, so the toast would only be a second copy. A failure still toasts.
  */
 function toastTerminalPhase(progress: TransferProgress): void {
   const { phase, direction, fileName, message } = progress;
@@ -35,7 +40,9 @@ function toastTerminalPhase(progress: TransferProgress): void {
   // A queued local-disk copy (#3567) is neither a download nor an upload.
   const isLocalCopy = progress.sessionId === LOCAL_TRANSFER_SESSION;
   if (phase === "done") {
+    if (isTransferSummaryShown(progress.sessionId)) return;
     const verb = isLocalCopy ? "Copied" : direction === "download" ? "Downloaded" : "Uploaded";
+    // toast-policy: background — the transfer finished while no summary of it was on screen
     toast.success(`${verb} ${fileName}`, { testId: "transfer-done-toast" });
   } else if (phase === "error") {
     const verb = isLocalCopy ? "Copy" : direction === "download" ? "Download" : "Upload";

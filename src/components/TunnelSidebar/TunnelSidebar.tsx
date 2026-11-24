@@ -73,13 +73,12 @@ export function TunnelSidebar() {
         name: `Copy of ${original.name}`,
         autoStart: false,
       };
-      saveTunnel(duplicate)
-        .then(() => toast.success(`Duplicated "${original.name}"`))
-        .catch((err: unknown) =>
-          toast.error(`Failed to duplicate "${original.name}"`, {
-            description: errorMessage(err),
-          })
-        );
+      // The copy's row is the confirmation (#5859).
+      saveTunnel(duplicate).catch((err: unknown) =>
+        toast.error(`Failed to duplicate "${original.name}"`, {
+          description: errorMessage(err),
+        })
+      );
     },
     [tunnels, saveTunnel]
   );

@@ -58,7 +58,6 @@ export function FileBookmarksDialog({
     if (!name || name === b.name) return;
     try {
       await rename(b.id, name);
-      toast.success(`Renamed bookmark to "${name}"`);
     } catch (err) {
       toast.error(`Could not rename bookmark: ${errorMessage(err)}`);
     }
@@ -67,7 +66,6 @@ export function FileBookmarksDialog({
   const handleRemove = async (b: FileBookmark) => {
     try {
       await remove(b.id);
-      toast.success(`Removed bookmark "${b.name}"`);
     } catch (err) {
       toast.error(`Could not remove bookmark: ${errorMessage(err)}`);
     }

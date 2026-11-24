@@ -111,7 +111,7 @@ describe("BiometricUnlockSettings", () => {
     await click("biometric-unlock-enable-btn");
 
     expect(mockedEnable).toHaveBeenCalledWith("master-pw");
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
     expect(query("biometric-unlock-enable-form")).toBeNull();
     expect(query("biometric-unlock-toggle")?.getAttribute("aria-checked")).toBe("true");
   });
@@ -150,7 +150,7 @@ describe("BiometricUnlockSettings", () => {
     mockedInfo.mockResolvedValue(OS_AUTH_AVAILABLE);
     await click("biometric-unlock-toggle");
     expect(mockedDisable).toHaveBeenCalledTimes(1);
-    expect(toast.success).toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
     expect(query("biometric-unlock-toggle")?.getAttribute("aria-checked")).toBe("false");
   });
 

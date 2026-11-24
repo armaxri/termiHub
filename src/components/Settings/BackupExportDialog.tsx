@@ -234,6 +234,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
         filters: [{ name: "termiHub backup", extensions: ["json"] }],
       });
       if (!filePath) {
+        // toast-policy: explains-outcome — no file was written, and this says so
         toast.info("Backup canceled — no file was written.");
         return;
       }
@@ -248,12 +249,14 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
       if (result.warnings.length > 0) {
         // Something was left out (e.g. a plugin over the size cap): keep the
         // explanation on screen long enough to read.
+        // toast-policy: no-in-place-surface — the backup is a file on disk; says what was left out
         toast.info(`${message} Some items were left out.`, {
           description: result.warnings.join("\n"),
           duration: WARNING_TOAST_MS,
           action,
         });
       } else {
+        // toast-policy: no-in-place-surface — the backup is a file on disk; offers to reveal it
         toast.success(message, { action });
       }
       onOpenChange(false);

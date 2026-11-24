@@ -34,6 +34,7 @@ export async function startSavedPersistentSession(connectionId: string): Promise
     label: conn.name,
   });
   if (fieldSecrets.status !== "resolved") {
+    // toast-policy: explains-outcome — no session starts, and this says why
     toast.info(fieldSecrets.reason);
     return;
   }

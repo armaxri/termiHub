@@ -168,12 +168,12 @@ describe("OpenConnectionsModal — failed agent disconnect through the real stor
     expect(rowsMatching("edge")).toHaveLength(1);
   });
 
-  it("a successful reconnect stop keeps its success toast", async () => {
+  it("a successful reconnect stop raises no toast (#5859)", async () => {
     await renderWith([agent("a2", "edge", "reconnecting")]);
 
     await click(killButton("edge"));
 
-    expect(toastSuccess).toHaveBeenCalledWith("Reconnect stopped");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 

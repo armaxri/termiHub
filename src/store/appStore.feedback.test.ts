@@ -81,10 +81,10 @@ describe("appStore — CRUD feedback wiring", () => {
     vi.mocked(removeConnection).mockResolvedValue(undefined);
   });
 
-  it("addConnection emits a success toast naming the connection", async () => {
+  it("addConnection raises no success toast: the row shows it (#5859)", async () => {
     useAppStore.getState().addConnection(makeConnection({ name: "prod-gateway" }));
     await flush();
-    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("prod-gateway"));
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -96,12 +96,12 @@ describe("appStore — CRUD feedback wiring", () => {
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("disk full"));
   });
 
-  it("deleteConnection emits a success toast on backend confirm", async () => {
+  it("deleteConnection raises no success toast on backend confirm (#5859)", async () => {
     const conn = makeConnection({ name: "old-box" });
     seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().deleteConnection(conn.id);
     await flush();
-    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("old-box"));
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("deleteConnection emits an error toast when the backend rejects", async () => {

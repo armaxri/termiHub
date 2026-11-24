@@ -143,7 +143,6 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
                 data-testid="settings-clear-session-history"
                 onClick={async () => {
                   await clearSessionHistory();
-                  toast.success("Cleared session history");
                 }}
               >
                 Clear all history
@@ -180,6 +179,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
               data-testid="settings-clear-network-tool-history"
               onClick={async () => {
                 await Promise.all([clearNetworkToolHistory(), clearHttpMonitorHistory()]);
+                // toast-policy: off-screen — the cleared history lives in the network tools view
                 toast.success("Cleared network tool history");
               }}
             >

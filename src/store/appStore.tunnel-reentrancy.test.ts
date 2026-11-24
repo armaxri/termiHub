@@ -69,6 +69,7 @@ vi.mock("@/components/ui", async () => {
       loading: vi.fn(() => "toast-id"),
       success: vi.fn(),
       error: vi.fn(),
+      dismiss: vi.fn(),
     },
   };
 });

@@ -87,7 +87,6 @@ export function BiometricUnlockSettings() {
       setEnabling(false);
       try {
         await disableBiometricUnlock();
-        toast.success(`Unlock with ${label} turned off`);
       } catch (err) {
         toast.error(`Could not turn off unlock with ${label}: ${errorMessage(err)}`);
       } finally {
@@ -106,7 +105,6 @@ export function BiometricUnlockSettings() {
     try {
       await enableBiometricUnlock(password);
       setEnabling(false);
-      toast.success(`Unlock with ${label} turned on`);
     } catch (err) {
       setError(enableErrorMessage(err, label));
       setPassword("");

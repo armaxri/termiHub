@@ -79,6 +79,7 @@ export function ImportMigrationSettings() {
     try {
       const hosts = await importInventoryHosts(selected);
       if (hosts.length === 0) {
+        // toast-policy: explains-outcome — nothing is imported, and this says why
         toast.info("No hosts found in that file.");
         return;
       }

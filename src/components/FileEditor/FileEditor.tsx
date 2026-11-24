@@ -1152,7 +1152,6 @@ export function FileEditor({
       setElevated(true);
       if (remember) sudoPasswordRef.current = password;
       frontendLog("file_editor", `elevated save succeeded for ${meta.filePath}`);
-      toast.success(`Saved ${getBasename(meta.filePath)} with sudo`);
     },
     [meta.filePath]
   );
@@ -1321,6 +1320,7 @@ export function FileEditor({
       const toastId = toast.loading(`Saving a copy to ${destPath}…`);
       try {
         await advancedOps.writeContent(destPath, content);
+        // toast-policy: no-in-place-surface — the copy is a file the editor does not show
         toast.success(`Saved a copy to ${destPath}`, { id: toastId });
         setSaveCopyDialogOpen(false);
         frontendLog("file_editor", `saved a copy of ${meta.filePath} to ${destPath}`);

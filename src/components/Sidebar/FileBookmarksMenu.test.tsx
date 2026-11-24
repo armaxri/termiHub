@@ -135,7 +135,7 @@ describe("FileBookmarksMenu", () => {
     await openMenu();
     await select("file-bookmarks-add");
     expect(api.addFileBookmark).toHaveBeenCalledWith("connection:c1", "/srv/app", undefined);
-    expect(toastSuccess).toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(useFileBookmarksStore.getState().bookmarks.some((b) => b.id === "n")).toBe(true);
   });
 

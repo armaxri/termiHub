@@ -41,6 +41,7 @@ vi.mock("@/themes", () => ({
 }));
 
 const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 const toastError = vi.fn();
 
 // Keep the real UI primitives (Modal/Button/Input) so the SaveWorkspaceDialog
@@ -52,6 +53,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
     toast: {
       ...actual.toast,
       success: (...args: unknown[]) => toastSuccess(...args),
+      info: (...args: unknown[]) => toastInfo(...args),
       error: (...args: unknown[]) => toastError(...args),
     },
   };
@@ -178,7 +180,7 @@ describe("WorkspaceSidebar", () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
-  it("closes the save dialog and surfaces success when the save resolves", async () => {
+  it("closes the save dialog without a toast when the save resolves", async () => {
     const saveCurrentAsWorkspace = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workspaces: [], saveCurrentAsWorkspace });
 
@@ -191,7 +193,7 @@ describe("WorkspaceSidebar", () => {
 
     expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined, undefined);
     expect(query("save-workspace-dialog")).toBeNull();
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -245,7 +247,7 @@ describe("WorkspaceSidebar", () => {
     expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("Dev Setup", "all", undefined, "ws-1");
     expect(query("confirm-overwrite-workspace-dialog")).toBeNull();
     expect(query("save-workspace-dialog")).toBeNull();
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -287,7 +289,7 @@ describe("WorkspaceSidebar", () => {
     expect(deleteWorkspaceFromBackend).not.toHaveBeenCalled();
   });
 
-  it("deletes and surfaces success when the user confirms and the backend resolves", async () => {
+  it("deletes without a toast when the user confirms and the backend resolves", async () => {
     const deleteWorkspaceFromBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workspaces: [sampleWorkspaces[0]], deleteWorkspaceFromBackend });
 
@@ -301,7 +303,7 @@ describe("WorkspaceSidebar", () => {
 
     expect(deleteWorkspaceFromBackend).toHaveBeenCalledWith("ws-1");
     expect(query("confirm-delete-dialog")).toBeNull();
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -324,7 +326,7 @@ describe("WorkspaceSidebar", () => {
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
-  it("surfaces a success toast with the imported count when import succeeds", async () => {
+  it("imports without a toast when nothing needs a second look", async () => {
     const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ workspaces: [], loadWorkspaces });
     dialogOpen.mockResolvedValue("/tmp/workspaces.json");
@@ -340,8 +342,7 @@ describe("WorkspaceSidebar", () => {
 
     expect(apiImportWorkspaces).toHaveBeenCalledWith("{}");
     expect(loadWorkspaces).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledWith("Imported 3 workspaces");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -359,7 +360,7 @@ describe("WorkspaceSidebar", () => {
     act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
     await flush();
 
-    expect(toastSuccess).toHaveBeenCalledWith("Imported 1 workspace");
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("surfaces a warning toast per dangling connection reference and still imports", async () => {
@@ -382,9 +383,9 @@ describe("WorkspaceSidebar", () => {
     act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
     await flush();
 
-    // The workspace still imports (success toast + reload) …
+    // The workspace still imports (reload; its row is the confirmation) …
     expect(loadWorkspaces).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledWith("Imported 1 workspace");
+    expect(toastSuccess).not.toHaveBeenCalled();
     // … and each dangling-ref warning is surfaced, naming workspace + connection.
     expect(toastError).toHaveBeenCalledTimes(2);
     expect(toastError).toHaveBeenNthCalledWith(1, warnings[0]);
@@ -422,8 +423,9 @@ describe("WorkspaceSidebar", () => {
     act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
     await flush();
 
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
-    const [summary, options] = toastSuccess.mock.calls[0] as [
+    // Only the trust notice toasts; the imported rows show the rest (#5859).
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    const [summary, options] = toastInfo.mock.calls[0] as [
       string,
       { description: string; duration: number },
     ];

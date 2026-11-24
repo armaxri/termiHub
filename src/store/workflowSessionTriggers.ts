@@ -95,6 +95,7 @@ function launchTriggeredRun(
   if (workflow.steps.length === 0) return false;
   const params = unattendedParamValues(workflow.parameters ?? []);
   if ("missing" in params) {
+    // toast-policy: explains-outcome — an automatic trigger did not run, and this says why
     toast.info(`Workflow "${workflow.name}" was not run`, {
       description: `Parameter "${params.missing}" needs a default value to run from a trigger`,
     });

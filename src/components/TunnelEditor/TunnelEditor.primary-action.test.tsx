@@ -202,7 +202,7 @@ describe("TunnelEditor — primary footer action (#5810)", () => {
       const { saveTunnel, startTunnel } = useAppStore.getState();
       expect(saveTunnel).toHaveBeenCalledTimes(1);
       expect(startTunnel).not.toHaveBeenCalled();
-      expect(toastMock.success).toHaveBeenCalledWith('Saved tunnel "Dev DB 2"');
+      expect(toastMock.success).not.toHaveBeenCalled();
     });
 
     it("on a new tunnel with an invalid form, Enter neither saves nor starts", async () => {

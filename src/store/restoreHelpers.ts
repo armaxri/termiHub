@@ -209,6 +209,7 @@ export function raiseRestoreSummary(
   const { total, restored, failed, toastId } = summary;
   if (failed === 0) {
     // Resolve the pending bulk-retry toast in place when present.
+    // toast-policy: background — the automatic restore at startup finished
     toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`, { id: toastId });
     return;
   }
@@ -216,6 +217,7 @@ export function raiseRestoreSummary(
   // one-tap bulk retry when there are reconnectable failed tabs.
   const action =
     retryTabIds.length > 0 ? { label: "Reconnect failed tabs", onClick: onReconnect } : undefined;
+  // toast-policy: background — the automatic restore at startup partly failed
   toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`, {
     id: toastId,
     action,

@@ -272,7 +272,7 @@ describe("ConnectionEditor — Save and connect binds the tab to its connection 
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("disk full"));
   });
 
-  it("keeps the 'Saved' toast for a plain Save", async () => {
+  it("raises no 'Saved' toast for a plain Save either (#5859)", async () => {
     await render(EXISTING.id);
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="connection-editor-save"]')!.click();
@@ -280,6 +280,6 @@ describe("ConnectionEditor — Save and connect binds the tab to its connection 
     await flush();
     await flushAsync();
 
-    expect(toast.success).toHaveBeenCalledWith("Saved Lab switch");
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

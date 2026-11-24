@@ -22,14 +22,12 @@ export function heldNoticeCopy({
 }: Pick<HeldNotice, "setup" | "initialCommand">): {
   text: string;
   label: string;
-  sent: string;
   already: string;
 } {
   if (setup && initialCommand) {
     return {
       text: "Waiting for the shell prompt — command marks and initial command not sent yet",
       label: "Command marks and initial command not sent",
-      sent: "Command marks set up and initial command sent",
       already: "The initial command was already sent",
     };
   }
@@ -37,14 +35,12 @@ export function heldNoticeCopy({
     return {
       text: "Waiting for the shell prompt — command marks not set up yet",
       label: "Command marks not set up",
-      sent: "Command marks set up",
       already: "Command marks were already set up",
     };
   }
   return {
     text: "Waiting for the shell prompt — initial command not sent yet",
     label: "Initial command not sent",
-    sent: "Initial command sent",
     already: "The initial command was already sent",
   };
 }
@@ -84,8 +80,9 @@ export function InitialCommandHeldNotice({ tabId }: InitialCommandHeldNoticeProp
       throw err;
     }
     clearInitialCommandHeld(sessionId);
-    if (sent) toast.success(copy.sent);
-    else toast.info(copy.already);
+    // Sent: the terminal shows it run, and the notice goes away (#5859).
+    // toast-policy: explains-outcome — nothing was sent, and this says why
+    if (!sent) toast.info(copy.already);
   };
 
   return (

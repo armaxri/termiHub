@@ -96,7 +96,7 @@ describe("WolPanel — Save Current modal (#1348)", () => {
     promptSpy.mockRestore();
   });
 
-  it("saves the device from the modal name field and toasts success", async () => {
+  it("saves the device from the modal name field without a toast", async () => {
     await renderPanel();
     await fillMac("AA:BB:CC:DD:EE:FF");
 
@@ -120,7 +120,7 @@ describe("WolPanel — Save Current modal (#1348)", () => {
     expect(networkWolDeviceSave).toHaveBeenCalledWith(
       expect.objectContaining({ name: "My NAS", mac: "AA:BB:CC:DD:EE:FF" })
     );
-    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("My NAS"));
+    expect(toast.success).not.toHaveBeenCalled();
     // Modal closes after a successful save.
     expect(q('[data-testid="wol-save-modal"]')).toBeNull();
   });

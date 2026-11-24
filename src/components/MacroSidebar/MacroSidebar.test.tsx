@@ -272,7 +272,7 @@ describe("MacroSidebar", () => {
     expect(playMacro).toHaveBeenCalledWith("macro-1");
   });
 
-  it("duplicates a macro through the backend and reports success", async () => {
+  it("duplicates a macro through the backend without a toast", async () => {
     const saveMacroToBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: sampleMacros, saveMacroToBackend });
     await render();
@@ -285,7 +285,7 @@ describe("MacroSidebar", () => {
     expect(saved.name).toBe("Copy of Deploy sequence");
     expect(saved.id).not.toBe("macro-1");
     expect(saved.steps).toEqual(sampleMacros[0].steps);
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("asks for confirmation before deleting and does not delete on click alone", async () => {
@@ -299,7 +299,7 @@ describe("MacroSidebar", () => {
     expect(deleteMacroFromBackend).not.toHaveBeenCalled();
   });
 
-  it("deletes and reports success when the user confirms", async () => {
+  it("deletes without a toast when the user confirms", async () => {
     const deleteMacroFromBackend = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ macros: [sampleMacros[0]], deleteMacroFromBackend });
     await render();
@@ -309,7 +309,7 @@ describe("MacroSidebar", () => {
     await flush();
 
     expect(deleteMacroFromBackend).toHaveBeenCalledWith("macro-1");
-    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 
@@ -345,7 +345,7 @@ describe("MacroSidebar", () => {
     expect(saved.steps).toEqual([{ data: "sudo systemctl restart app\r", delayMs: 0 }]);
     // The backend stamps authoritative timestamps.
     expect(saved.createdAt).toBe("");
-    expect(toastSuccess).toHaveBeenCalledWith('Created macro "Restart service"');
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(query("macro-editor-dialog")).toBeNull();
   });
 
@@ -431,7 +431,7 @@ describe("MacroSidebar", () => {
     await flush();
 
     expect(importMacros).toHaveBeenCalledWith('{"version":1,"macros":[]}');
-    expect(toastSuccess).toHaveBeenCalledWith("Imported 3 macros");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 

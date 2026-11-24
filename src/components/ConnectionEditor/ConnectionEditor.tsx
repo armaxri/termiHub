@@ -81,6 +81,7 @@ import {
   SelectLabel,
   Toggle,
   UnsavedChangesDialog,
+  InlineStatus,
   toast,
   TOAST_AVOID_PROPS,
   TOAST_AVOID_FORM_PROPS,
@@ -1092,20 +1093,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   ]);
 
   /**
-   * Set while Save and connect saves (#5665): the tab — or the prompt or
-   * host-key dialog — that opens at once is the feedback, so the store's
-   * "Saved …" toast is skipped. A failed save is still toasted.
-   */
-  const quietSaveRef = useRef(false);
-
-  /**
    * Save the connection (or agent transport) and return the saved entry, with
    * the id the backend stores it under (`persistedId`, #5257): it is
    * recomputed from folder + name, so a new connection's optimistic `conn-<ulid>`
    * id and a renamed connection's old id are not it. Resolves `null` when the
    * persist failed (the store already toasted it).
-   *
-   * While {@link quietSaveRef} is set the store's "Saved …" toast is skipped.
    */
   const saveConnection = useCallback(async (): Promise<SavedEntry | null> => {
     if (!name.trim()) return null;
@@ -1145,6 +1137,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       hasFieldSecretsToSave(currentTypeInfo?.schema, connSettings) &&
       !(await ensureCredentialStoreUnlocked({ authMethod: "", fieldSecrets: true }))
     ) {
+      // toast-policy: explains-outcome — nothing is saved, and this says why
       toast.info("Save canceled — unlock the credential store to keep this connection's secrets.");
       return null;
     }
@@ -1154,6 +1147,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // carries only what is left. A locked store is unlocked first.
     if (storedSecrets.hasPendingClears) {
       if (!(await ensureCredentialStoreUnlocked({ authMethod: "", fieldSecrets: true }))) {
+        // toast-policy: explains-outcome — nothing is saved, and this says why
         toast.info("Save canceled — unlock the credential store to remove the cleared secrets.");
         return null;
       }
@@ -1186,15 +1180,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // connection lands in the target exactly once, with the edit (#3590).
       const originalSource = existingConnection.sourceFile ?? null;
       if (originalSource !== sourceFile) {
-        const moved = await (quietSaveRef.current
-          ? saveConnectionToFile(saved, originalSource, { quiet: true })
-          : saveConnectionToFile(saved, originalSource));
+        const moved = await saveConnectionToFile(saved, originalSource);
         return moved ? { entry: moved, persistedId: Promise.resolve(moved.id) } : null;
       }
 
-      const persistedId = quietSaveRef.current
-        ? updateConnection(saved, { quiet: true })
-        : updateConnection(saved);
+      const persistedId = updateConnection(saved);
       return { entry: saved, persistedId };
     } else {
       const saved: SavedConnection = {
@@ -1209,9 +1199,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         iconEmoji,
         sourceFile,
       };
-      const persistedId = quietSaveRef.current
-        ? addConnection(saved, { quiet: true })
-        : addConnection(saved);
+      const persistedId = addConnection(saved);
       return { entry: saved, persistedId };
     }
   }, [
@@ -1282,25 +1270,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       focusFirstInvalidField();
       return false;
     }
-    if (isAgentDefinitionMode) {
-      const ok = await saveAgentDefinition();
-      if (ok) toast.success(`Saved "${name.trim()}"`);
-      return ok;
-    }
-    const ok = (await saveConnection()) !== null;
-    if (ok && isAgentTransportMode) {
-      toast.success(`Saved "${name.trim()}"`);
-    }
-    return ok;
-  }, [
-    canSave,
-    focusFirstInvalidField,
-    isAgentDefinitionMode,
-    isAgentTransportMode,
-    saveAgentDefinition,
-    saveConnection,
-    name,
-  ]);
+    // The editor closes and the saved row shows in the sidebar (#5859).
+    if (isAgentDefinitionMode) return saveAgentDefinition();
+    return (await saveConnection()) !== null;
+  }, [canSave, focusFirstInvalidField, isAgentDefinitionMode, saveAgentDefinition, saveConnection]);
 
   const handleSave = useCallback(async () => {
     if (await handleSaveOnly()) {
@@ -1354,6 +1327,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           transport: currentTypeInfo?.displayName,
         });
         if (resolved.status === "canceled") {
+          // toast-policy: explains-outcome — no tab opens; says the edit was still saved
           toast.info("Connect canceled — your changes were saved.");
           throw new PromptCanceledError();
         }
@@ -1391,13 +1365,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
 
-    quietSaveRef.current = true;
-    let result: SavedEntry | null;
-    try {
-      result = await saveConnection();
-    } finally {
-      quietSaveRef.current = false;
-    }
+    const result = await saveConnection();
     if (!result || "connectionState" in result.entry) return;
     const saved = result.entry;
     // Bind the tab to the saved connection the way a sidebar connect does
@@ -1421,6 +1389,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       label: saved.name,
     });
     if (fieldSecrets.status !== "resolved") {
+      // toast-policy: explains-outcome — no tab opens; says the edit was still saved
       toast.info(`${fieldSecrets.reason} Your changes were saved.`);
       throw new PromptCanceledError();
     }
@@ -1445,6 +1414,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // The connection was saved; only the connect step was aborted. Surface a
       // recoverable state (rather than silently resolving, which would flash a
       // false success on the Button) and stop here — see #1344.
+      // toast-policy: explains-outcome — no tab opens; says the edit was still saved
       toast.info("Connect canceled — your changes were saved.");
       throw new PromptCanceledError();
     }
@@ -1521,6 +1491,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // `data-test-outcome` (#5175): the toasts carry no stable hook, so this is
   // what the system harness reads. Cleared while a new test runs.
   const [testOutcome, setTestOutcome] = useState<"success" | "failed" | "canceled" | null>(null);
+  // The name the last successful test reached, for the footer's result line.
+  const [testReached, setTestReached] = useState("");
 
   const handleTest = useCallback(async () => {
     if (!canSave) {
@@ -1565,6 +1537,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         label: testLabel,
       });
       if (fieldSecrets.status !== "resolved") {
+        // toast-policy: explains-outcome — no test runs, and this says why
         toast.info(fieldSecrets.reason);
         throw new PromptCanceledError();
       }
@@ -1586,6 +1559,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (secret.status === "canceled") {
         // Cancel cleanly: no probe ran, so no auth-failure toast. Rethrow so the
         // async Button returns to idle rather than flashing success.
+        // toast-policy: explains-outcome — no test runs, and this says why
         toast.info("Connection test canceled.");
         throw new PromptCanceledError();
       }
@@ -1614,13 +1588,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     try {
       await testTerminal(config, connectId, { reviewCert: unlistenCertPrompt !== null });
       setTestOutcome("success");
-      toast.success("Connection successful", {
-        description: `Reached ${name.trim() || "the target"} — nothing was saved.`,
-      });
+      setTestReached(name.trim() || "the target");
     } catch (err) {
       setTestOutcome(testCanceledRef.current ? "canceled" : "failed");
       if (testCanceledRef.current) {
-        toast.info("Connection test canceled.");
+        // The footer's test line says it (#5859).
       } else if (isSecondFactorFailure(err)) {
         // A mistyped one-time code after an accepted password (#3376) — not a
         // credential problem, so don't send the user to check their password.
@@ -2268,6 +2240,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         data-testid="connection-editor-actions"
         {...TOAST_AVOID_PROPS}
       >
+        {/* The test's result shows beside its button, not in a toast (#5859). */}
+        <InlineStatus
+          kind={testOutcome === "success" ? "success" : "info"}
+          message={
+            testOutcome === "success"
+              ? `Reached ${testReached}`
+              : testOutcome === "canceled"
+                ? "Test canceled"
+                : null
+          }
+          detail={testOutcome === "success" ? "Nothing was saved." : undefined}
+          testId="connection-editor-test-result"
+        />
         <Button variant="secondary" onClick={handleCancel} data-testid="connection-editor-cancel">
           Cancel
         </Button>

@@ -292,7 +292,6 @@ export function HttpMonitorPanel() {
       // Keep the stopped monitor displayed: its checks stay visible (#3462).
       await networkHttpMonitorStop(activeMonitorIdRef.current);
       await loadMonitors();
-      toast.success("Monitor stopped");
     } catch (err) {
       setError(errorMessage(err));
       toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
@@ -304,7 +303,6 @@ export function HttpMonitorPanel() {
       try {
         await networkHttpMonitorStop(id);
         await loadMonitors();
-        toast.success("Monitor stopped");
       } catch (err) {
         setError(errorMessage(err));
         toast.error(`Failed to stop monitor: ${errorMessage(err)}`);
@@ -318,7 +316,6 @@ export function HttpMonitorPanel() {
       try {
         await networkHttpMonitorPause(id);
         await loadMonitors();
-        toast.success("Monitor paused");
       } catch (err) {
         setError(errorMessage(err));
         toast.error(`Failed to pause monitor: ${errorMessage(err)}`);
@@ -332,7 +329,6 @@ export function HttpMonitorPanel() {
       try {
         await networkHttpMonitorResume(id);
         await loadMonitors();
-        toast.success("Monitor resumed");
         // Show the resumed monitor with its past checks rehydrated (#3462).
         if (id !== activeMonitorIdRef.current) await showMonitor(id);
       } catch (err) {
@@ -349,7 +345,6 @@ export function HttpMonitorPanel() {
         await networkHttpMonitorRemove(id);
         if (id === activeMonitorIdRef.current) clearActiveMonitor();
         await loadMonitors();
-        toast.success("Monitor removed");
       } catch (err) {
         setError(errorMessage(err));
         toast.error(`Failed to remove monitor: ${errorMessage(err)}`);
