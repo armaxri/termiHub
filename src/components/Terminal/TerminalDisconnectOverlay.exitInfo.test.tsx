@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,6 +19,9 @@ import type { TerminalExitInfo } from "@/types/terminal";
 
 // Stub lucide-react icons used in the overlay.
 vi.mock("lucide-react", () => ({
+  RotateCcw: () => null,
+  SquareTerminal: () => null,
+  Usb: () => null,
   WifiOff: () => null,
   RefreshCw: () => null,
   X: () => null,
@@ -85,8 +91,9 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
 
   it("renders the dropped wording with a non-zero exit code from the region", async () => {
     const overlay = await renderWithExit({ reason: "dropped", code: 137 });
-    expect(overlay?.textContent).toContain("Session disconnected");
-    expect(overlay?.textContent).toContain("The process exited with code 137");
+    // #5910: a process exit is not a lost connection.
+    expect(overlay?.textContent).toContain("Process exited (code 137)");
+    expect(overlay?.textContent).not.toContain("Session disconnected");
   });
 
   it("renders the codeless dropped wording when the region carries no exit code", async () => {
@@ -119,15 +126,34 @@ describe("TerminalDisconnectOverlay — region-derived exit cause (#2615)", () =
     expect(lost?.textContent).toContain("Session lost");
   });
 
-  // #5904: the overlay spans the whole pane, so marking it as a toast keep-clear
-  // zone docked the toast stack and held back every success toast (the tab's
-  // "Closed … · Reopen" undo among them) while an ended session showed. Only the
-  // notice card keeps the stack off.
-  it("marks only the notice card, not the pane-sized overlay, as a toast keep-clear zone", async () => {
-    const overlay = await renderWithExit({ reason: "clean", code: 0 });
-    expect(overlay?.hasAttribute("data-toast-avoid")).toBe(false);
+  // #5904: a pane-sized keep-clear zone docked the toast stack and held back
+  // every success toast (the tab's "Closed … · Reopen" undo among them) while
+  // an ended session showed. #5908 made the notice a strip across the pane
+  // top: the strip itself is the one keep-clear zone, and it is only as tall as
+  // its content, never pane-sized.
+  it("marks only the strip, never a pane-sized element, as a toast keep-clear zone", async () => {
+    const strip = await renderWithExit({ reason: "clean", code: 0 });
     const avoid = container.querySelectorAll("[data-toast-avoid]");
     expect(avoid).toHaveLength(1);
-    expect(avoid[0].classList.contains("terminal-disconnect-overlay__card")).toBe(true);
+    expect(avoid[0]).toBe(strip);
+    expect(avoid[0].classList.contains("terminal-disconnect-strip")).toBe(true);
+
+    const here = dirname(fileURLToPath(import.meta.url));
+    const css = readFileSync(join(here, "TerminalDisconnectOverlay.css"), "utf8");
+    const rule = css.match(/\n\.terminal-disconnect-strip \{([^}]*)\}/)?.[1] ?? "";
+    // Pinned to the top edge only: no bottom / inset that would stretch it
+    // over the pane.
+    expect(rule).toMatch(/top:\s*0/);
+    expect(rule).not.toMatch(/(^|\s)(bottom|inset|height):/);
+  });
+
+  it("the failed strip is the one keep-clear zone too", async () => {
+    transport.setSession(TAB, failed("host unreachable"));
+    act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
+    await flush();
+    const avoid = container.querySelectorAll("[data-toast-avoid]");
+    expect(avoid).toHaveLength(1);
+    expect((avoid[0] as HTMLElement).dataset.variant).toBe("failed");
+    expect(avoid[0].classList.contains("terminal-disconnect-strip")).toBe(true);
   });
 });

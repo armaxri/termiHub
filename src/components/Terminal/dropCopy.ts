@@ -230,3 +230,79 @@ export function reconnectedMarker(at: Date, transport: DropTransport = "other"):
   if (transport === "ssh") return tf("drop.separator.reconnectedShell", { time });
   return tf("drop.separator.reconnectedSession", { time });
 }
+
+/**
+ * What kind of end a session-end notice shows (#5910), which picks its icon
+ * and tone: a process that exited with a code, a session that ended normally,
+ * a session the user disconnected, an unplugged device, or a dropped link.
+ */
+export type SessionEndKind = "exited" | "ended" | "user" | "device" | "link";
+
+/** The heading, cause line and action of a session-end notice (#5910). */
+export interface SessionEndNotice {
+  kind: SessionEndKind;
+  /** The notice heading, without a trailing stop. */
+  heading: string;
+  /** Why the session ended, when the heading does not already say it. */
+  causeLine: string | undefined;
+  /** The primary action: start the process again, or reconnect the link. */
+  action: "restart" | "reconnect";
+}
+
+/**
+ * The session-end notice for `cause` (#5910). A process that exits is not a
+ * lost connection: it reads "Process exited (code N)", a normal end reads
+ * "Session ended", and only a dropped link says "Session disconnected". A
+ * local process (transport `other`) offers Restart; a session over a link
+ * offers Reconnect, since starting it again reconnects first.
+ */
+export function sessionEndNoticeFor(
+  cause: DisconnectCause | undefined,
+  details: { transport: DropTransport; code?: number | null; device?: string }
+): SessionEndNotice {
+  const { transport, code, device } = details;
+  const local = transport === "other";
+  const line = disconnectCauseLine(cause ?? "lost", { code, device });
+  switch (cause) {
+    case "exited":
+      return {
+        kind: "exited",
+        heading: tf("drop.end.exited", { code: code ?? "?" }),
+        causeLine: undefined,
+        action: local ? "restart" : "reconnect",
+      };
+    case "ended":
+      return {
+        kind: "ended",
+        heading: t("drop.end.ended"),
+        causeLine: line,
+        action: local ? "restart" : "reconnect",
+      };
+    case "user":
+      return {
+        kind: "user",
+        heading: t("drop.end.ended"),
+        causeLine: line,
+        action: local ? "restart" : "reconnect",
+      };
+    case "device":
+      return {
+        kind: "device",
+        heading: t("drop.end.device"),
+        causeLine: line,
+        action: "reconnect",
+      };
+    default:
+      return {
+        kind: "link",
+        heading: t("drop.end.disconnected"),
+        causeLine: line,
+        action: "reconnect",
+      };
+  }
+}
+
+/** The label of a session-end notice's primary action (#5910). */
+export function sessionEndActionLabel(action: SessionEndNotice["action"]): string {
+  return action === "restart" ? t("drop.end.restart") : t("drop.end.reconnect");
+}

@@ -20,7 +20,7 @@ from typing import Any, Mapping, Sequence
 EPS = 3.0
 
 #: The heading the banner starts with, per cause.
-HEADINGS = ("Agent disconnected.", "Session ended.")
+HEADINGS = ("Agent disconnected.", "Session ended.", "Process exited (code ")
 
 Rect = Mapping[str, float]
 

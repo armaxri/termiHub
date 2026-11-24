@@ -11,9 +11,9 @@ place: a single close names the tab ("Closed “web”" · Reopen), several read
 closed. The toast still stays clear of the editor's Save / Cancel footer.
 
 The grade uses local-shell connections with distinct names, exits each shell
-first (closing a live session raises its confirm dialog, and a dialog opening
-takes the reopen toast down, #5665), then closes the tabs with the connection
-editor open. No servers needed.
+first (an exited tab closes at once, without a live session's confirm dialog,
+which would hide the reopen toast until it closes, #5914), then closes the
+tabs with the connection editor open. No servers needed.
 
 The ``test_grade_*`` functions grade fixed measurements without an app and run
 in the normal lane.

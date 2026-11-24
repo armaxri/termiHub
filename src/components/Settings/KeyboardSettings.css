@@ -32,14 +32,32 @@
   font-size: var(--font-size-xs);
 }
 
+/* A refused or conflicting recording, in a line under the recorded row
+   (#5842), with its resolution buttons on the right. */
 .keyboard-settings__conflict {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
   padding: var(--spacing-sm) var(--spacing-md);
-  margin-bottom: var(--spacing-md);
   background-color: var(--bg-warning);
   border: 1px solid var(--border-warning);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
+}
+
+.keyboard-settings__conflict > span:first-child {
+  flex: 1;
+}
+
+.keyboard-settings__conflict-actions {
+  display: inline-flex;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
+.keyboard-settings__notice-row td {
+  padding-top: 0;
 }
 
 .keyboard-settings__group {
@@ -75,12 +93,19 @@
 }
 
 .keyboard-settings__action-cell {
-  width: 42%;
+  width: 40%;
   color: var(--text-primary);
 }
 
+/* Where a yields-to-terminal action does not fire (#5842). */
+.keyboard-settings__scope-note {
+  display: block;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
 .keyboard-settings__binding-cell {
-  width: 42%;
+  width: 36%;
 }
 
 /* The binding display is a real button (#4330) so it is reachable and
@@ -88,7 +113,9 @@
    value rather than a labelled action. Doubled class for specificity over the
    shared .ui-btn base. */
 .ui-btn.keyboard-settings__binding-btn {
-  justify-content: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
   height: auto;
   min-height: var(--control-height-sm);
   padding: var(--spacing-xxs) var(--spacing-sm);
@@ -98,6 +125,14 @@
   color: var(--text-primary);
   white-space: normal;
   text-align: left;
+}
+
+/* The visible "Change" affordance of the binding button (#5842). */
+.keyboard-settings__binding-change {
+  flex-shrink: 0;
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  color: var(--text-accent);
 }
 
 .ui-btn.keyboard-settings__binding-btn--unbound {
@@ -113,9 +148,13 @@
 }
 
 .keyboard-settings__row-actions {
-  width: 16%;
+  width: 24%;
   text-align: right;
   white-space: nowrap;
+}
+
+.keyboard-settings__row-actions > * {
+  vertical-align: middle;
 }
 
 .keyboard-settings__row-actions > * + * {

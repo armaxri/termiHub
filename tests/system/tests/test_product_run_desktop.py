@@ -62,6 +62,10 @@ from termihub_harness.product_run.editor_mappings import (
     measure_editor_mappings,
 )
 from termihub_harness.product_run.grades import connection_editor_layout_problems, editor_layout_problems
+from termihub_harness.product_run.keyboard_shortcuts import (
+    keyboard_shortcut_problems,
+    measure_keyboard_editing,
+)
 from termihub_harness.product_run.settings_dependencies import (
     PROVIDE,
     measure_safety_prompts,
@@ -1118,7 +1122,37 @@ class TestProductRunSettingsThemes(
             problems = editor_mappings_problems(measured)
             assert not problems, "; ".join(problems)
 
-    def test_14_settings_dependencies(self):
+    def test_14_keyboard_shortcut_editing(self):
+        """Settings ▸ Keyboard shortcuts can be edited without guessing (#5842).
+
+        Rows show a visible "Change" and a plain "Default" marker; recording a
+        chord offers "Reset to default"; Escape cancels; a taken chord names its
+        owner with Cancel · Reassign; a plain F5 on a global action is refused
+        (terminal programs keep plain function keys); clearing offers Undo.
+        Every change is reset again, so later steps see the defaults.
+        """
+        with self.step(
+            "settings.keyboard.editing",
+            "Settings ▸ Keyboard shortcuts records a new chord via Change, cancels with "
+            "Escape, explains conflicts with Cancel · Reassign, refuses a plain function "
+            "key and offers Undo after a clear (#5842)",
+            expect="Keyboard shortcut rows with a 'Change' label, grey 'Default' text and, "
+            "after a conflict, a warning line under the row with Cancel and Reassign",
+        ):
+            self.open_settings_category("keyboard")
+            self.wait(lambda: self.driver.exists("keybinding-row-toggle-sidebar"),
+                      what="the keyboard shortcut rows")
+            self.shot(label="keyboard-rows", expect="settings-panel-content")
+            measured = measure_keyboard_editing(self.driver)
+            self.evidence(
+                f"rows {measured.get('rows')}; labels {measured.get('labels')}; "
+                f"record {measured.get('record')}; conflict {measured.get('conflict')}; "
+                f"function key {measured.get('function_key')}; undo {measured.get('undo')}"
+            )
+            problems = keyboard_shortcut_problems(measured)
+            assert not problems, "; ".join(problems)
+
+    def test_15_settings_dependencies(self):
         """Settings show dependencies and per-platform pages honestly (#5844).
 
         X server: only this platform's hint, and "Stop X server when idle"

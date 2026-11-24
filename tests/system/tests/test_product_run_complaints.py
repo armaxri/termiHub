@@ -34,7 +34,8 @@ fails until its fix lands; the grade is never weakened to pass.
    editor is open covers none of the dialog; three runs of two workflows
    leave no "Ran workflow" toast (#5859: the terminal output and the run
    history show it); Save and connect raises no "Saved" toast; a
-   "Closed … / Reopen" toast goes away when a dialog opens.
+   "Closed … / Reopen" toast hides while a dialog is open and comes back
+   once it closes (#5914).
 
 Geometry comes from the test bridge's ``measureElement`` verb (viewport CSS
 pixels).
@@ -521,9 +522,9 @@ class TestProductRunComplaints(
                 tab = next(t for t in self.tab_ids() if t not in before)
                 self.wait(lambda t=tab: self.driver.read_terminal(t).strip(), what="the prompt")
                 # End the shell first: closing a live session raises its confirm
-                # dialog, and a dialog opening dismisses the earlier tab's
-                # "Closed … / Reopen" toast (#5665). An exited tab closes at
-                # once, so both closes join one toast (#5828).
+                # dialog, which hides the earlier tab's "Closed … / Reopen"
+                # toast until it closes (#5914). An exited tab closes at once,
+                # so both closes join one toast (#5828).
                 self.run_command("exit")
                 self.wait(lambda t=tab: self.terminal_session_exited(t), what="the shell to exit")
                 terminals.append(tab)
@@ -835,9 +836,10 @@ class TestProductRunComplaints(
     def test_63_reopen_toast_leaves_for_dialog(self):
         with self.step(
             "complaints.toasts.closed-dialog",
-            "A 'Closed … / Reopen' toast goes away when a dialog opens (#5665)",
-            expect="#5665 complaint: the workflow editor dialog open with no 'Closed …' toast "
-            "beside it (the toast from the tab closed just before is gone)",
+            "A 'Closed … / Reopen' toast hides while a dialog is open and comes back after "
+            "(#5665, #5914)",
+            expect="#5665/#5914 complaint: the workflow editor dialog open with no 'Closed …' "
+            "toast beside it; once the editor is cancelled the toast is back",
         ):
             self.switch_to_connections_sidebar()
             before = self.tab_ids()
@@ -858,4 +860,11 @@ class TestProductRunComplaints(
                 assert gone, "the 'Closed … / Reopen' toast stays beside the open dialog"
             finally:
                 self.cancel_clean_editor()
+            # The undo is only hidden, never lost to the dialog (#5914).
+            back = self.wait(
+                lambda: self._toast_titles("Closed") or None,
+                timeout=3.0,
+                what="the 'Closed' toast to come back after the dialog closed",
+            )
+            self.evidence(f"'Closed' toasts after the dialog closed: {[t['text'] for t in back]}")
         self.close_all_tabs()

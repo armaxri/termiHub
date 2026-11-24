@@ -15,6 +15,11 @@ import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 // Stub lucide-react icons used in the overlay.
 vi.mock("lucide-react", () => ({
+  RotateCcw: () => null,
+  SquareTerminal: () => null,
+  Usb: () => null,
+  Unplug: () => null,
+  Plus: () => null,
   WifiOff: () => null,
   RefreshCw: () => null,
   X: () => null,

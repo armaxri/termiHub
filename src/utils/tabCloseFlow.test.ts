@@ -98,13 +98,14 @@ describe.each(TRIGGERS)("close decision — %s trigger", (trigger) => {
     expect(lastToastAction()).toBe("Reopen");
   });
 
-  it("the Reopen toast goes away when a dialog opens (#5665)", () => {
+  it("the Reopen toast is not dismissed by a dialog opening (#5914)", () => {
     useAppStore.setState({ terminalSpawnErrors: { failed: "boom" } });
     requestTabClose(terminal("failed"), PANEL, trigger);
     const opts = toastSuccess.mock.calls[toastSuccess.mock.calls.length - 1]?.[1] as
       | { dismissOnModal?: boolean }
       | undefined;
-    expect(opts?.dismissOnModal).toBe(true);
+    // A dialog only hides it until it closes, so the undo is never lost.
+    expect(opts?.dismissOnModal).toBeUndefined();
   });
 
   it("a terminal that failed to spawn closes at once with a Reopen toast", () => {

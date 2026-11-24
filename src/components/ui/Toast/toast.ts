@@ -220,6 +220,8 @@ interface TransientSpec {
   kind: "success" | "info";
   message: string;
   opts: ToastOptions & { id: string | number };
+  /** When it went on screen (`Date.now()`), for its remaining lifetime (#5914). */
+  shownAt?: number;
 }
 
 /**
@@ -240,6 +242,35 @@ const MAX_DEFERRED = 10;
 
 /** Whether success/info toasts are deferred right now (#5715). */
 let deferring = false;
+
+/**
+ * sonner's lifetime for a toast raised without a duration (its
+ * `TOAST_LIFETIME`; the `Toaster` sets none of its own).
+ */
+const SONNER_DEFAULT_DURATION = 4000;
+
+/**
+ * The shortest lifetime an undo offer gets when it comes back after a dialog
+ * (#5914): one that was about to expire as the dialog opened still stays up
+ * long enough to read and press, rather than flashing.
+ */
+export const MIN_RESTORED_OFFER_MS = 2000;
+
+/** An undo offer hidden while a dialog is open (#5914). */
+interface HiddenOffer {
+  spec: TransientSpec;
+  /** The lifetime it had left when it was hidden, in ms. */
+  remaining: number;
+  /** How many dialogs were open before the one that hid it. */
+  level: number;
+}
+
+/**
+ * Undo offers taken off screen while a dialog is open, by id (#5914). They are
+ * still on offer: {@link restoreOffersAfterDialog} shows each again, with its
+ * remaining lifetime, once the dialogs above it close.
+ */
+const hiddenOffers = new Map<string | number, HiddenOffer>();
 
 /**
  * A success/info message an open dialog shows in its own inline status line
@@ -307,6 +338,12 @@ function offersAction(spec: TransientSpec): boolean {
   return Boolean(spec.opts.action || spec.opts.cancel);
 }
 
+/** Whether `id` is an undo offer on screen or hidden behind a dialog (#5914). */
+function isOffer(id: string | number): boolean {
+  const spec = shownTransient.get(id);
+  return hiddenOffers.has(id) || (spec !== undefined && offersAction(spec));
+}
+
 /** Show `spec` in the innermost dialog's status line, if it can go there. */
 function showInline(spec: TransientSpec): boolean {
   const sink = inlineSinks[inlineSinks.length - 1];
@@ -336,6 +373,16 @@ function showTransient(spec: TransientSpec): string | number {
   cancelRedismiss(id);
   trackTransient(id, true);
   trackModalStale(id, spec.opts.dismissOnModal);
+  const hidden = hiddenOffers.get(id);
+  if (hidden) {
+    hiddenOffers.delete(id);
+    // An offer updated while its dialog is up (a tab closed from a confirm
+    // dialog joins the reopen toast) stays hidden with it, at full lifetime.
+    if (offersAction(spec)) {
+      hiddenOffers.set(id, { ...hidden, spec, remaining: lifetimeOf(spec) });
+      return id;
+    }
+  }
   if (showInline(spec)) return id;
   if (deferring && !offersAction(spec)) {
     deferredTransient.delete(id);
@@ -349,9 +396,10 @@ function showTransient(spec: TransientSpec): string | number {
     dismissById(id);
     return id;
   }
-  shownTransient.set(id, spec);
+  const shown: TransientSpec = { ...spec, shownAt: Date.now() };
+  shownTransient.set(id, shown);
   const forget = () => {
-    if (shownTransient.get(id) === spec) shownTransient.delete(id);
+    if (shownTransient.get(id) === shown) shownTransient.delete(id);
   };
   const show = spec.kind === "success" ? sonnerToast.success : sonnerToast.info;
   show(spec.message, {
@@ -375,6 +423,7 @@ function forgetTransientSpec(id: string | number | undefined): void {
   clearInline(id);
   deferredTransient.delete(id);
   shownTransient.delete(id);
+  hiddenOffers.delete(id);
 }
 
 /**
@@ -401,6 +450,47 @@ export function setTransientDeferred(on: boolean): void {
   for (const spec of queued) showTransient(spec);
 }
 
+/** The lifetime `spec` asks for, in ms (`Infinity` when it persists). */
+function lifetimeOf(spec: TransientSpec): number {
+  return spec.opts.duration ?? SONNER_DEFAULT_DURATION;
+}
+
+/** The lifetime `spec`, on screen, has left now. */
+function remainingLifetime(spec: TransientSpec): number {
+  const lifetime = lifetimeOf(spec);
+  if (!Number.isFinite(lifetime)) return lifetime;
+  return lifetime - (Date.now() - (spec.shownAt ?? Date.now()));
+}
+
+/**
+ * Take the undo offers on screen down while a dialog is open (#5914), keeping
+ * them on offer. `level` is how many dialogs were open before this one, so a
+ * nested dialog closing brings back only the offers it hid. Called by the toast
+ * hub when a dialog opens; the plain confirmations go for good (#5830).
+ */
+export function hideOffersForDialog(level: number): void {
+  for (const [id, spec] of Array.from(shownTransient)) {
+    if (!offersAction(spec)) continue;
+    hiddenOffers.set(id, { spec, remaining: remainingLifetime(spec), level });
+    dismissById(id);
+  }
+}
+
+/**
+ * Show again the undo offers hidden by the dialogs that just closed (#5914):
+ * those hidden at `open` dialogs or more, `open` being how many are still
+ * open. Each gets the lifetime it had left when its dialog opened, at least
+ * {@link MIN_RESTORED_OFFER_MS}: time spent in the dialog does not count.
+ */
+export function restoreOffersAfterDialog(open: number): void {
+  for (const [id, hidden] of Array.from(hiddenOffers)) {
+    if (hidden.level < open) continue;
+    hiddenOffers.delete(id);
+    const duration = Math.max(MIN_RESTORED_OFFER_MS, hidden.remaining);
+    showTransient({ ...hidden.spec, opts: { ...hidden.spec.opts, duration } });
+  }
+}
+
 /**
  * Dismiss every toast raised with {@link ToastOptions.dismissOnModal}. Called
  * by the toast hub when a dialog opens (#5665).
@@ -424,7 +514,9 @@ export function dismissModalStaleToasts(): void {
  *   inline status line (#5830) unless they carry a button; while the stack is
  *   docked over a tall dialog, those without a button wait until it closes
  *   (#5715) — an undo offer shows at once (#5904).
- *   Those still showing are dismissed when a dialog opens (#5830).
+ *   Those still showing are dismissed when a dialog opens (#5830), except
+ *   undo offers: they are hidden while it is open and come back, with their
+ *   remaining lifetime, once it closes (#5914).
  * - `error` persists until dismissed.
  * - `loading` resolves in place into success/error via `loading().then(...)`
  *   or the {@link ToastApi.promise} helper — ideal for agent deploy, tunnel
@@ -455,15 +547,18 @@ export interface ToastApi {
    */
   dismiss(id?: string | number): void;
   /**
-   * Dismiss every success/info toast still showing, leaving errors and loading
-   * toasts. Called whenever a dialog opens (#5618, #5830), so a stale
-   * "Connected" or "Saved" confirmation never sits beside a new decision.
+   * Dismiss every success/info toast still showing, leaving errors, loading
+   * toasts and undo offers (a toast with a button, #5914; the toast hub hides
+   * those while a dialog is open). Called whenever a dialog opens (#5618,
+   * #5830), so a stale "Connected" or "Saved" confirmation never sits beside a
+   * new decision.
    */
   dismissTransient(): void;
   /**
-   * Whether the success/info toast `id` is still on screen, or queued to show
-   * while the stack is docked (#5715). False once it auto-closed or was
-   * dismissed (by its close button, a dialog opening, or by id).
+   * Whether the success/info toast `id` is still on screen, queued to show
+   * while the stack is docked (#5715), or an undo offer hidden while a dialog
+   * is open (#5914). False once it auto-closed or was dismissed (by its close
+   * button, by id, or — not being an offer — by a dialog opening).
    */
   isActive(id: string | number): boolean;
 }
@@ -538,6 +633,7 @@ export const toast: ToastApi = {
       modalStaleIds.clear();
       deferredTransient.clear();
       shownTransient.clear();
+      hiddenOffers.clear();
       clearInline();
       sonnerToast.dismiss();
       return;
@@ -549,14 +645,19 @@ export const toast: ToastApi = {
   },
 
   dismissTransient() {
-    const ids = Array.from(transientIds);
-    transientIds.clear();
+    const ids = Array.from(transientIds).filter((id) => !isOffer(id));
+    for (const id of ids) transientIds.delete(id);
     deferredTransient.clear();
     clearInline();
     for (const id of ids) dismissById(id);
   },
 
   isActive(id) {
-    return shownTransient.has(id) || deferredTransient.has(id) || inlineShown?.id === id;
+    return (
+      shownTransient.has(id) ||
+      deferredTransient.has(id) ||
+      hiddenOffers.has(id) ||
+      inlineShown?.id === id
+    );
   },
 };
