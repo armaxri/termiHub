@@ -164,6 +164,7 @@ import {
   setWorkflowTransportForTest,
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
+import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import {
   connected,
@@ -184,6 +185,7 @@ import { activeWorkflowRunCount } from "./slices/workflowRunOnTarget";
 import type { ScheduleFire } from "@/types/schedule";
 
 setupSettingsRegion();
+setupConnectionsRegion();
 
 // ── In-memory twin of the Rust WorkflowRunStore (client-scoped) ────────────────
 
@@ -2296,6 +2298,29 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       );
       expect(report.message).toBe(LOCAL_PROCESS_REASON);
       expect(connectMissing).not.toHaveBeenCalled();
+    });
+
+    it("types and records nothing when the switch goes off while a target connects", async () => {
+      allowProgram(true);
+      useAppStore.setState(automationLibraryState(libraries[0][1]));
+      const connectMissing = vi.fn(async () => {
+        allowProgram(false);
+        return { status: "refused" as const, reason: "needs a password" };
+      });
+      // conn-a is connected here; only conn-b2 is connected unattended first.
+      seedConnectionsRegion({
+        connections: [{ id: "conn-b2", name: "b2", config: {} as never, folderId: null }],
+      });
+      const report = await executeScheduledRun(
+        fire({ targets: { kind: "connections", connectionIds: ["conn-a", "conn-b2"] } }),
+        store,
+        { connectMissing }
+      );
+      expect(connectMissing).toHaveBeenCalledTimes(1);
+      expect(report).toEqual({ outcome: "skipped", message: LOCAL_PROCESS_REASON, targetsRun: 0 });
+      expect(injected).toEqual([]);
+      expect(recordedRuns).toEqual([]);
+      expect(useAppStore.getState().automationRuns).toEqual([]);
     });
 
     it.each([libraries[0], libraries[1], libraries[3]])(

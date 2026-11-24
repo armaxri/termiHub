@@ -67,6 +67,7 @@ vi.mock("./workflowRunBridge", async (importOriginal) => ({
   dispatchWorkflowRunSettled: vi.fn(() => Promise.resolve()),
 }));
 
+import { dispatchWorkflowRunStarted } from "./workflowRunBridge";
 import { useAppStore, type AppState } from "./appStore";
 import type { Macro } from "@/types/macro";
 import type { Workflow, WorkflowStep } from "@/types/workflow";
@@ -131,6 +132,7 @@ beforeEach(() => {
   mocks.getTerminalInputInjector.mockReset().mockReturnValue(mocks.injector);
   mocks.recordAutomationRun.mockReset().mockResolvedValue([]);
   mocks.ensureWorkflowSubscribed.mockReset().mockResolvedValue(undefined);
+  vi.mocked(dispatchWorkflowRunStarted).mockClear();
   mocks.settings.experimentalFeaturesEnabled = true;
   mocks.settings.workflowLocalProcessEnabled = true;
   mocks.settings.workflowLocalProcessAllowlist = undefined;
@@ -373,6 +375,9 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
       expect(result).toEqual({ status: "failed", stepsCompleted: 0, error: LOCAL_PROCESS_REASON });
     }
     expect(mocks.injector).not.toHaveBeenCalled();
+    // No history record and no projected run, so no tab badge.
+    expect(mocks.recordAutomationRun).not.toHaveBeenCalled();
+    expect(dispatchWorkflowRunStarted).not.toHaveBeenCalled();
   });
 
   it("never reuses a fan-out decision made while experimental was on (#5988)", async () => {

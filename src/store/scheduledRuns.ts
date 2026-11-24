@@ -348,9 +348,13 @@ export async function executeScheduledRun(
     );
     closeRunTabs(store.getState, connected.abandoned, false);
     try {
+      // Connecting can take a while: the automation or the experimental switch
+      // may have changed, and nothing has been typed yet (#5988).
+      const current = await resolveAction(fire, store);
+      if ("refused" in current) return skip(current.refused);
       const report = await runAction(
         fire,
-        automation,
+        current.automation,
         targetTabIds(store.getState(), connectionIds),
         store
       );
