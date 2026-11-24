@@ -52,6 +52,7 @@ from termihub_harness.product_run.agent_deploy import (
 )
 from termihub_harness.product_run.grades import setup_output_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
+from termihub_harness.product_run.tab_names import agent_tab_name_problems
 from termihub_harness.ui.theme import ThemeUi
 
 pytestmark = [
@@ -236,6 +237,18 @@ class TestProductRunAgent(
             self.wait(lambda: f"PR_AGENT_HOME={home}" in self.driver.read_terminal(tab),
                       timeout=20.0, what="the agent shell's HOME")
             self.evidence(f"agent shell HOME = {home}")
+        with self.step(
+            "agent.shell.name",
+            "The agent's shell tab names the agent and the shell, not 'Shell: /bin/bash' (#5829)",
+            expect="the agent shell tab titled '<agent name> · bash' (or the agent's shell)",
+        ):
+            self.require("agent.shell")
+            tab = self.state["shell_tab"]
+            title = next(t.get("title") or "" for t in self._all_tabs() if t["id"] == tab)
+            shell = (self.agent_available_shells(self.name) or [None])[0]
+            self.evidence(f"agent shell tab {title!r} (shell {shell!r})")
+            problems = agent_tab_name_problems(title, self.name, shell)
+            assert not problems, problems
 
     def test_20_files_via_agent(self):
         with self.step(

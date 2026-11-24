@@ -92,6 +92,7 @@ import {
   countAgentSessionTabs,
 } from "@/components/AgentUpdateBanner";
 import { collectLiveTabs } from "@/store/layoutHelpers";
+import { agentShellTabTitle, numberedTabTitle } from "@/utils/defaultTabTitle";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
@@ -1527,13 +1528,20 @@ export function AgentNode({
 
   const handleNewShellSession = useCallback(() => {
     const defaultShell = agent.capabilities?.availableShells?.[0];
-    addTab(defaultShell ? `Shell: ${defaultShell}` : "Shell", "remote-session", {
+    // `<agent> · bash`, numbered when taken (#5829). The session on the agent
+    // takes the same title, so its sidebar entry names the agent too.
+    const title = numberedTabTitle(
+      agentShellTabTitle(agent.name, defaultShell),
+      collectLiveTabs(useAppStore.getState()).map((t) => t.title)
+    );
+    addTab(title, "remote-session", {
       type: "remote-session",
       config: {
         agentId: agent.id,
         sessionType: "shell",
         shell: defaultShell,
         persistent: false,
+        title,
       },
     });
   }, [agent, addTab]);

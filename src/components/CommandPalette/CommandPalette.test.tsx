@@ -153,11 +153,11 @@ describe("CommandPalette", () => {
   });
 
   it("runs the highlighted command on Enter and closes", () => {
-    const addTab = vi.fn(() => "tab-1");
-    setStore({ addTab });
+    const addLocalShellTab = vi.fn(() => "tab-1");
+    setStore({ addLocalShellTab });
     typeInto("new terminal");
     keydown("Enter");
-    expect(addTab).toHaveBeenCalledWith("Terminal", "local");
+    expect(addLocalShellTab).toHaveBeenCalledWith();
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
     expect(connectSpy).not.toHaveBeenCalled();
   });

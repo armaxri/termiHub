@@ -1159,7 +1159,7 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
             ));
         }
 
-        let title = p.title.unwrap_or_else(|| format!("{type_id} session"));
+        let title = p.title.unwrap_or_else(|| default_session_title(type_id));
 
         // Scope this session's agent-side logs under the desktop's correlation
         // id (#3085, OBS-004) so they join the desktop's `termihub.log` lines.
@@ -3555,6 +3555,14 @@ fn normalize_type_id(raw: &str) -> &str {
     }
 }
 
+/// Title for a session created without one. A shell on the agent's host is
+/// a "shell session": the registry calls it `local`, but to the desktop the
+/// agent is a remote machine, so "local session" misleads (#5829).
+fn default_session_title(type_id: &str) -> String {
+    let kind = if type_id == "local" { "shell" } else { type_id };
+    format!("{kind} session")
+}
+
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -4463,6 +4471,12 @@ mod tests {
         )
         .await;
         assert_eq!(result["error"]["code"], errors::INVALID_CONFIGURATION);
+    }
+
+    #[test]
+    fn default_session_title_never_calls_a_shell_local() {
+        assert_eq!(default_session_title("local"), "shell session");
+        assert_eq!(default_session_title("serial"), "serial session");
     }
 
     #[test]

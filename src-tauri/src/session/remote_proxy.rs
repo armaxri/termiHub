@@ -596,8 +596,13 @@ impl RemoteProxy {
             .cloned()
             .unwrap_or_else(|| settings.clone());
 
+        // The frontend puts the tab's title inside the connection settings,
+        // which `SessionManager::create_connection` wraps under `config` (like
+        // `definitionId` below), so look there too. Without it the agent named
+        // every session "local session" (#5829).
         let title = settings
             .get("title")
+            .or_else(|| config.get("title"))
             .and_then(|v| v.as_str())
             .map(String::from);
 
@@ -2342,6 +2347,30 @@ mod tests {
 
         let ids = created_definition_ids(&mock);
         assert_eq!(ids.as_slice(), &[Some("def-42".to_string())]);
+    }
+
+    /// #5829: the tab's title rides inside the wrapped settings too, and must
+    /// reach the agent, or the agent names the session "local session".
+    #[tokio::test]
+    async fn connect_forwards_title_from_wrapped_settings() {
+        let mock = Arc::new(proxy_agent(serde_json::Value::Null));
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let settings = json!({
+            "type": "local",
+            "config": { "shell": "/bin/bash", "title": "pi · bash 2" },
+        });
+        proxy
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
+
+        let titles: Vec<String> = mock
+            .calls_to("create_session")
+            .into_iter()
+            .map(|args| args[2].clone())
+            .collect();
+        assert_eq!(titles, ["pi · bash 2"]);
     }
 
     #[tokio::test]

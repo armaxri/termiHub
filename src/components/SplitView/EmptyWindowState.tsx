@@ -30,7 +30,7 @@ import "./EmptyWindowState.css";
  * with the normal tab UI.
  */
 export function EmptyWindowState() {
-  const addTab = useAppStore((s) => s.addTab);
+  const addLocalShellTab = useAppStore((s) => s.addLocalShellTab);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const { connections } = useProjectedConnections();
@@ -41,7 +41,7 @@ export function EmptyWindowState() {
 
   /** Launch a local shell into this window. */
   const handleNewTerminal = () => {
-    addTab("Terminal", "local");
+    addLocalShellTab();
   };
 
   /**

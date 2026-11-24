@@ -38,7 +38,7 @@ const STORE_RUNNERS: Record<string, () => void> = {
   "open-settings": () => useAppStore.getState().openSettingsTab(),
   "show-shortcuts": () => useAppStore.getState().setShortcutsOverlayOpen(true),
   "new-terminal": () => {
-    useAppStore.getState().addTab("Terminal", "local");
+    useAppStore.getState().addLocalShellTab();
   },
   "new-window": () => {
     void useAppStore.getState().openNewWindow();

@@ -121,7 +121,7 @@ export function useKeyboardShortcuts() {
 
         case "new-terminal":
           e.preventDefault();
-          useAppStore.getState().addTab("Terminal", "local");
+          useAppStore.getState().addLocalShellTab();
           break;
 
         case "new-window":
