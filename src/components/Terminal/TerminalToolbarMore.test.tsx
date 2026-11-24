@@ -89,7 +89,7 @@ describe("TerminalToolbarMore (#5756)", () => {
   it("lists broadcast, logging, record and play, end-aligned to the trigger", async () => {
     render(props());
     const menu = await openMenu();
-    const rows = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((r) => ({
+    const rows = Array.from(menu.querySelectorAll('[role^="menuitem"]')).map((r) => ({
       id: r.getAttribute("data-testid"),
       text: r.textContent,
     }));
@@ -137,6 +137,44 @@ describe("TerminalToolbarMore (#5756)", () => {
     expect(q("terminal-view-active-playback")!.getAttribute("aria-label")).toBe(
       "Stop macro playback (1/3) (Ctrl+F5)"
     );
+  });
+
+  it("shows logging and recording as checkbox rows, ticked only while on (#5849)", async () => {
+    render(props());
+    let menu = await openMenu();
+    const row = (id: string) => q(id)!;
+    for (const id of ["terminal-view-toggle-logging", "terminal-view-record-macro"]) {
+      expect(row(id).getAttribute("role")).toBe("menuitemcheckbox");
+      expect(row(id).getAttribute("aria-checked")).toBe("false");
+      expect(row(id).querySelector(".lucide-check")).toBeNull();
+    }
+    // Broadcast and play are actions with a dialog, not on/off rows.
+    expect(row("terminal-view-broadcast").getAttribute("role")).toBe("menuitem");
+    expect(row("terminal-view-play-macro").getAttribute("role")).toBe("menuitem");
+    // Every row has the tick column, so the labels line up.
+    expect(menu.querySelectorAll(".ui-menu__indicator")).toHaveLength(4);
+    act(() => root.unmount());
+    root = createRoot(container);
+
+    render(props({ loggingActive: true, macroRecording: true }));
+    menu = await openMenu();
+    for (const [id, label] of [
+      ["terminal-view-toggle-logging", "Log session output"],
+      ["terminal-view-record-macro", "Record macro"],
+    ]) {
+      expect(row(id).getAttribute("aria-checked")).toBe("true");
+      expect(row(id).querySelector(".lucide-check")).not.toBeNull();
+      expect(row(id).textContent).toBe(label);
+    }
+    expect(menu).not.toBeNull();
+  });
+
+  it("toggles logging from its checkbox row", async () => {
+    const p = props({ loggingActive: true });
+    render(p);
+    await openMenu();
+    await act(async () => q("terminal-view-toggle-logging")!.click());
+    expect(p.onToggleLogging).toHaveBeenCalledTimes(1);
   });
 
   it("fires the row's action on select", async () => {

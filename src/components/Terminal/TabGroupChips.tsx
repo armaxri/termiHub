@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Layers, X } from "lucide-react";
 import { DndContext, DragEndEvent, useSensor, useSensors } from "@dnd-kit/core";
 import { ReleaseScopedPointerSensor } from "@/utils/releaseScopedPointerSensor";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -22,8 +22,14 @@ import "./TabGroupChips.css";
 
 /**
  * Toolbar chip area for workspace-level tab groups.
- * Hidden when only one group exists (returns null).
+ *
  * Chips are pill-shaped to distinguish them from file-tab-shaped terminal tabs.
+ * With a single group there is nothing to switch to, so no chip renders: a lone
+ * "Main" pill read as a tab above an empty tab row (#5849, R-023). The add
+ * control then reads "New tab group" in words, and once chips show it is an
+ * icon after them. Either way its glyph is a stack, never a "+": the toolbar's
+ * only "+" opens a new terminal. The control stays rendered in both states
+ * because dropping a dragged tab on it moves the tab into a new group.
  */
 export function TabGroupChips() {
   const tabGroups = useLayoutTabGroups();
@@ -35,7 +41,9 @@ export function TabGroupChips() {
   const draggingTabId = useAppStore((s) => s.draggingTabId);
 
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
-  const newTabGroupLabel = withActionAccelerator("New Tab Group", "new-tab-group");
+  const newTabGroupText = "New tab group";
+  const newTabGroupLabel = withActionAccelerator(newTabGroupText, "new-tab-group");
+  const showChips = tabGroups.length > 1;
 
   const sensors = useSensors(
     useSensor(ReleaseScopedPointerSensor, { activationConstraint: { distance: 5 } })
@@ -64,39 +72,45 @@ export function TabGroupChips() {
   const renameGroup = tabGroups.find((g) => g.id === renameGroupId);
 
   return (
-    <div className="tab-group-chips">
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        <SortableContext
-          items={tabGroups.map((g) => g.id)}
-          strategy={horizontalListSortingStrategy}
-        >
-          {tabGroups.map((group, index) => (
-            <TabGroupChip
-              key={group.id}
-              group={group}
-              isActive={group.id === activeTabGroupId}
-              canClose={tabGroups.length > 1}
-              isDropTarget={!!draggingTabId && group.id !== activeTabGroupId}
-              onClick={() => setActiveTabGroup(group.id)}
-              onClose={(e) => handleClose(group.id, e)}
-              onRename={() => setRenameGroupId(group.id)}
-              onMoveLeft={index > 0 ? () => reorderTabGroups(index, index - 1) : undefined}
-              onMoveRight={
-                index < tabGroups.length - 1 ? () => reorderTabGroups(index, index + 1) : undefined
-              }
-            />
-          ))}
-        </SortableContext>
-      </DndContext>
+    <div className="tab-group-chips" data-testid="tab-group-chips">
+      {showChips && (
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <SortableContext
+            items={tabGroups.map((g) => g.id)}
+            strategy={horizontalListSortingStrategy}
+          >
+            {tabGroups.map((group, index) => (
+              <TabGroupChip
+                key={group.id}
+                group={group}
+                isActive={group.id === activeTabGroupId}
+                canClose={tabGroups.length > 1}
+                isDropTarget={!!draggingTabId && group.id !== activeTabGroupId}
+                onClick={() => setActiveTabGroup(group.id)}
+                onClose={(e) => handleClose(group.id, e)}
+                onRename={() => setRenameGroupId(group.id)}
+                onMoveLeft={index > 0 ? () => reorderTabGroups(index, index - 1) : undefined}
+                onMoveRight={
+                  index < tabGroups.length - 1
+                    ? () => reorderTabGroups(index, index + 1)
+                    : undefined
+                }
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+      )}
       <Tooltip content={newTabGroupLabel} side="bottom">
         <button
-          className={`tab-group-chips__add${draggingTabId ? " tab-group-chips__add--drop-target" : ""}`}
+          className={`tab-group-chips__add${showChips ? "" : " tab-group-chips__add--labelled"}${draggingTabId ? " tab-group-chips__add--drop-target" : ""}`}
           onClick={() => addTabGroup()}
           aria-label={newTabGroupLabel}
           data-testid="tab-group-add"
           data-new-group-btn="true"
+          data-icon="tab-group"
         >
-          <Plus size={14} />
+          <Layers size={14} aria-hidden />
+          {!showChips && <span className="tab-group-chips__add-text">{newTabGroupText}</span>}
         </button>
       </Tooltip>
       <RenameDialog

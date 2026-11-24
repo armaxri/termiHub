@@ -55,12 +55,33 @@ interface MockMenuItemProps {
 /** A menu row as a button; the shortcut renders in a `ui-menu__shortcut` span. */
 function MenuItem({ icon, shortcut, children, onSelect, ...rest }: MockMenuItemProps) {
   return (
-    <button role="menuitem" onClick={() => onSelect?.()} {...rest}>
+    <button role="menuitem" {...rest} onClick={() => onSelect?.()}>
       {icon}
       {children}
       {shortcut ? <span className="ui-menu__shortcut">{shortcut}</span> : null}
     </button>
   );
+}
+
+/**
+ * A checkbox menu row as a button: `aria-checked` carries the state, and the
+ * tick (`MenuItemIndicator`) renders only while checked, as Radix does.
+ */
+function MenuCheckboxItem({ checked, children, icon, ...rest }: MockMenuItemProps) {
+  return (
+    <CheckedContext.Provider value={checked === true}>
+      <MenuItem role="menuitemcheckbox" aria-checked={checked === true} icon={icon} {...rest}>
+        {children}
+      </MenuItem>
+    </CheckedContext.Provider>
+  );
+}
+
+const CheckedContext = React.createContext(false);
+
+function MenuItemIndicator({ children }: { children?: React.ReactNode }) {
+  const checked = React.useContext(CheckedContext);
+  return checked ? <span data-menu-tick="true">{children}</span> : null;
 }
 
 /** Children-only pass-through for roots, triggers and tooltips. */
@@ -92,6 +113,8 @@ export function terminalViewUiMock() {
     DropdownMenuTrigger: PassThrough,
     DropdownMenuContent,
     MenuItem,
+    MenuCheckboxItem,
+    MenuItemIndicator,
     MenuSeparator: () => <hr />,
     toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
   };

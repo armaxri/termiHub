@@ -360,8 +360,11 @@ describe("TerminalView — toolbar layout icons and the … menu (#5559, #5756)"
       "terminal-view-split-horizontal",
       "terminal-view-split-vertical",
       "terminal-view-close-panel",
-      "terminal-view-toggle-sidebar",
     ]);
+    // #5849: the sidebar toggle sits behind a divider, apart from the split icons.
+    const sidebar = button("terminal-view-toggle-sidebar")!;
+    expect(sidebar.closest('[data-testid="terminal-view-toolbar-layout"]')).toBeNull();
+    expect(sidebar.previousElementSibling?.getAttribute("role")).toBe("separator");
     expect(button("terminal-view-more-actions")).not.toBeNull();
     expect(ids('[data-testid="terminal-view-more-menu"]')).toEqual([
       "terminal-view-broadcast",
@@ -407,11 +410,46 @@ describe("TerminalView — toolbar layout icons and the … menu (#5559, #5756)"
     expect(svg.getAttribute("class")).toContain("lucide-circle-dot");
   });
 
+  it("draws each layout icon with its own glyph, and only new terminal as a plus (#5849)", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    const glyph = (id: string) =>
+      (button(id)!.querySelector("svg")!.getAttribute("class") ?? "")
+        .split(/\s+/)
+        .find((c) => c.startsWith("lucide-"));
+    const glyphs = [
+      "terminal-view-new-terminal",
+      "terminal-view-split-horizontal",
+      "terminal-view-split-vertical",
+      "terminal-view-toggle-sidebar",
+    ].map(glyph);
+    expect(glyphs).toEqual([
+      "lucide-plus",
+      "lucide-square-split-horizontal",
+      "lucide-square-split-vertical",
+      "lucide-panel-left",
+    ]);
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+    expect(container.querySelectorAll(".terminal-view__toolbar svg.lucide-plus")).toHaveLength(1);
+  });
+
+  it("reports the sidebar toggle's state through aria-pressed (#5849)", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    const sidebar = () => button("terminal-view-toggle-sidebar")!;
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
+    expect(sidebar().getAttribute("aria-pressed")).toBe("true");
+    expect(sidebar().className).toContain("terminal-view__toolbar-action--active");
+    act(() => sidebar().click());
+    expect(sidebar().getAttribute("aria-pressed")).toBe("false");
+    expect(sidebar().className).not.toContain("terminal-view__toolbar-action--active");
+  });
+
   it("keeps every icon-only action named for tooltips and assistive tech", async () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     const buttons = container.querySelectorAll(
-      ".terminal-view__toolbar-actions button:not([role='menuitem'])"
+      ".terminal-view__toolbar-actions button:not([role^='menuitem'])"
     );
     expect(buttons.length).toBeGreaterThanOrEqual(5);
     for (const b of buttons) expect(b.getAttribute("aria-label")).toBeTruthy();
