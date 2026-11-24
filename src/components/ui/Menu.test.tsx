@@ -136,6 +136,24 @@ describe("ui/Menu", () => {
     expect(q("row")!.querySelector(".ui-menu__hint")).toBeNull();
   });
 
+  it("stacks a muted description line under the label (#5840)", () => {
+    act(() =>
+      root.render(
+        <OpenDropdown>
+          <MenuItem data-testid="row" description="Freezes the numbers">
+            Pause
+          </MenuItem>
+          <MenuItem data-testid="plain">Stop</MenuItem>
+        </OpenDropdown>
+      )
+    );
+    const row = q("row")!;
+    expect(row.querySelector(".ui-menu__title")!.textContent).toBe("Pause");
+    expect(row.querySelector(".ui-menu__description")!.textContent).toBe("Freezes the numbers");
+    expect(q("plain")!.querySelector(".ui-menu__text")).toBeNull();
+    expect(q("plain")!.textContent).toBe("Stop");
+  });
+
   it("renders a skinned separator and label", () => {
     act(() =>
       root.render(

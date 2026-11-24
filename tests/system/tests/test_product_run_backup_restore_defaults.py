@@ -19,9 +19,9 @@ found the restore preview one click from overwriting the user's settings:
    the master-password vault. The Credentials row now says so.
 
 The class runs in its own fresh profile: it sets a master-password store up,
-backs up connections, settings and the (empty) vault, and previews the
-restore. No sshd and no keychain write: only the master-password vault is
-used. The grades are pure functions, graded without an app in the per-PR lane
+saves one local connection, backs up connections, settings and the (empty)
+vault, and previews the restore. No sshd and no keychain write: only the
+master-password vault is used. The grades are pure functions, graded without an app in the per-PR lane
 by the tests at the bottom of this file.
 """
 
@@ -33,7 +33,14 @@ from pathlib import Path
 
 import pytest
 
-from termihub_harness import CredentialStoreUi, SettingsUi, SidebarUi, SystemTest
+from termihub_harness import (
+    ConnectionsUi,
+    CredentialStoreUi,
+    SettingsUi,
+    SidebarUi,
+    SystemTest,
+    unique_name,
+)
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.creds_steps import CredsPhaseUi
 
@@ -100,6 +107,7 @@ class TestProductRunBackupRestoreDefaults(
     CredsPhaseUi,
     CredentialStoreUi,
     SettingsUi,
+    ConnectionsUi,
     SidebarUi,
     SystemTest,
 ):
@@ -130,6 +138,10 @@ class TestProductRunBackupRestoreDefaults(
             "password …'; no replace warning; a filled blue 'Restore and restart'",
         ):
             self.setup_master_password_store(MASTER_PASSWORD)
+            # A fresh profile has no connections, and the preview lists only the
+            # sections the backup holds: save one so Connections is there to grade.
+            self.switch_to_connections_sidebar()
+            self.create_local_connection(unique_name("pr-restore-defaults"))
             self.back_up(
                 target, BACKUP_PASSPHRASE, credentials=True, master_password=MASTER_PASSWORD
             )

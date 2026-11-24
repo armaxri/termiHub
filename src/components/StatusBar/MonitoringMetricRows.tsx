@@ -1,6 +1,6 @@
 import { formatRate } from "@/utils/formatters";
 import { MetricSparkline } from "./MetricSparkline";
-import { latestValue, type MetricBlock } from "./monitoringHistoryModel";
+import { alignBlockStarts, latestValue, type MetricBlock } from "./monitoringHistoryModel";
 
 /** Inline sparkline geometry for a compact metric row (#5628). */
 const ROW_SPARK_WIDTH = 72;
@@ -22,10 +22,12 @@ function blockValueLabel(block: MetricBlock): string {
 /**
  * One compact row per metric in the host menu (#5628): label, an inline
  * mini-sparkline and the latest value. Replaces the stacked full-width charts,
- * which made the menu ~700 px tall; the larger charts stay in View history.
+ * which made the menu ~700 px tall; the larger charts stay in View history. The
+ * lines share one start so they read on one time axis (#5840).
  */
 export function MonitoringMetricRows({ blocks }: MonitoringMetricRowsProps) {
-  const shown = blocks.filter((b) => b.hasData);
+  // One shared start column for every line (#5840): rate metrics prime a sample late.
+  const shown = alignBlockStarts(blocks.filter((b) => b.hasData));
   if (shown.length === 0) return null;
   return (
     <div className="monitoring-menu__metrics" data-testid="monitoring-sparklines">
