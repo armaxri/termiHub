@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { WifiOff } from "lucide-react";
 import { connectionIdentityForTabId, useAppStore } from "@/store/appStore";
-import { useSessionAutoReconnect } from "@/store/useSessionLifecycle";
+import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, LiveRegion, Spinner, TOAST_AVOID_PROPS } from "@/components/ui";
 import { reconnectAttemptLabel } from "@/utils/reconnectStatus";
+import { t, tf } from "@/i18n/catalog";
 import {
+  disconnectCauseOf,
   dropTransportOf,
   reconnectDetailFor,
   reconnectHeadingFor,
   reconnectStatusFor,
 } from "./dropCopy";
+import { serialDeviceName } from "@/utils/serialDeviceName";
 import { useTopNoticeInset } from "./topNoticeInset";
 import "./TerminalReconnectStrip.css";
 
@@ -62,6 +65,11 @@ export function TerminalReconnectStrip({
 }: TerminalReconnectStripProps) {
   const auto = useSessionAutoReconnect(tabId);
   const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
+  const retryAutoReconnectNow = useAppStore((s) => s.retryAutoReconnectNow);
+  // Why the link dropped (#5831): the region keeps the end cause while the
+  // loop runs, so the heading says "Server closed the connection" rather than
+  // a generic "Connection lost" when the backend knows.
+  const { endCause } = useProjectedSessionLifecycle(tabId);
   const stripRef = useRef<HTMLDivElement>(null);
   // The terminal search bar opens below the strip, not over Cancel / Stop.
   useTopNoticeInset(stripRef);
@@ -90,6 +98,10 @@ export function TerminalReconnectStrip({
   const handleCancel = useCallback(() => {
     cancelAutoReconnect(tabId);
   }, [tabId, cancelAutoReconnect]);
+
+  const handleRetryNow = useCallback(() => {
+    retryAutoReconnectNow(tabId);
+  }, [tabId, retryAutoReconnectNow]);
 
   // Typing into this tab's terminal while the loop runs: flag it so the note is
   // emphasised and announced. Scoped to the strip's own terminal slot
@@ -137,7 +149,18 @@ export function TerminalReconnectStrip({
   const reasonNote =
     reasonNews.speak && lastAttemptError ? `${LAST_ATTEMPT_PREFIX} ${lastAttemptError}` : null;
 
-  const heading = inLoop ? reconnectHeadingFor(transport) : "Reconnecting…";
+  const cause = disconnectCauseOf({ transport, endCause });
+  const heading = inLoop ? reconnectHeadingFor(transport, cause) : "Reconnecting…";
+  // Retry now (#5831, R-164): only while a backoff window is open and the
+  // desktop times the loop — an agent reopening its own port runs its attempts
+  // itself.
+  const canRetryNow = waiting && !identity?.viaAgent;
+  // What happens after the last attempt (#5831, R-164); an unbounded loop has
+  // no last attempt.
+  const afterLastAttempt =
+    inLoop && auto.maxAttempts > 0 ? tf("drop.afterLastAttempt", { max: auto.maxAttempts }) : null;
+  // A serial device reads by its short name, the full path in a tooltip (R-072).
+  const devicePath = transport === "serial" ? identity?.target : undefined;
   const status = !auto
     ? reconnectStatusFor(transport)
     : waiting && secondsLeft > 0
@@ -165,6 +188,7 @@ export function TerminalReconnectStrip({
       {...TOAST_AVOID_PROPS}
       role="region"
       aria-label={heading}
+      data-cause={cause}
     >
       <LiveRegion message={announcement} data-testid="terminal-reconnect-strip-announcement" />
       {waiting ? (
@@ -196,9 +220,14 @@ export function TerminalReconnectStrip({
         )}
         {inLoop && (
           <div className="terminal-reconnect-strip__line terminal-reconnect-strip__note">
-            <span data-testid="terminal-reconnect-detail">
-              {reconnectDetailFor(transport, identity?.target)}
+            <span data-testid="terminal-reconnect-detail" title={devicePath}>
+              {reconnectDetailFor(transport, devicePath && serialDeviceName(devicePath))}
             </span>{" "}
+            {afterLastAttempt && (
+              <>
+                <span data-testid="terminal-reconnect-after-last">{afterLastAttempt}</span>{" "}
+              </>
+            )}
             <span
               className={
                 typedWhilePaused
@@ -229,14 +258,26 @@ export function TerminalReconnectStrip({
       {/* Literal testids per control, so the static testid scan (and the
           system-test harness) sees both. */}
       {waiting ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={handleCancel}
-          data-testid="terminal-auto-reconnect-cancel-btn"
-        >
-          Cancel
-        </Button>
+        <div className="terminal-reconnect-strip__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleCancel}
+            data-testid="terminal-auto-reconnect-cancel-btn"
+          >
+            Cancel
+          </Button>
+          {canRetryNow && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleRetryNow}
+              data-testid="terminal-auto-reconnect-retry-now-btn"
+            >
+              {t("drop.retryNow")}
+            </Button>
+          )}
+        </div>
       ) : (
         <Button
           variant="secondary"

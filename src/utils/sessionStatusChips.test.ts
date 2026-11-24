@@ -79,8 +79,9 @@ describe("serialStatusChip (#5628)", () => {
     const chip = serialStatusChip(
       serial({ port: "/dev/ttyPR0", baudRate: 9600, dataBits: 8, parity: "none", stopBits: 1 })
     );
-    expect(chip?.label).toBe("/dev/ttyPR0 · 9600 8N1");
-    expect(chip?.tooltip).toContain("Serial: /dev/ttyPR0");
+    // #5831 (R-072): the device's short name leads, the full path is in the tooltip.
+    expect(chip?.label).toBe("ttyPR0 · 9600 8N1");
+    expect(chip?.tooltip).toBe("Serial: /dev/ttyPR0 · 9600 8N1");
   });
 
   it("falls back to the backend defaults (115200 8N1) and accepts numeric strings", () => {

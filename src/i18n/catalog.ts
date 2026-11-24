@@ -314,7 +314,33 @@ const en = {
   "drop.separator.network": "— connection lost {time} —",
   "drop.separator.remoteClosed": "— connection closed by server {time} —",
   "drop.separator.reconnected": "— reconnected {time} —",
-  "drop.overlay.scrollbackKept": "Your scrollback is kept — choose View scrollback to read it.",
+  // After a reconnect the marker says what the new session lost (#5831, R-101).
+  "drop.separator.reconnectedShell":
+    "— reconnected {time} — new remote shell; running programs were lost",
+  "drop.separator.reconnectedSession":
+    "— reconnected {time} — new session; running programs were lost",
+  "drop.separator.reconnectedTelnet":
+    "— reconnected {time} — new telnet session; the remote state was not restored",
+  "drop.overlay.scrollbackKept": "Scrollback is kept.",
+  // ── Why a session ended: one cause line everywhere (#5831) ──────────────
+  "drop.cause.user": "You disconnected this session.",
+  "drop.cause.ended": "The session ended normally.",
+  "drop.cause.endedCode": "The session ended normally (exit code {code}).",
+  "drop.cause.exited": "The process exited with code {code}.",
+  "drop.cause.server": "The server closed the connection.",
+  "drop.cause.timeout": "The connection timed out.",
+  "drop.cause.network": "The network connection was lost.",
+  "drop.cause.device": "The device {device} was disconnected.",
+  "drop.cause.deviceUnknown": "The device was disconnected.",
+  "drop.cause.lost": "The connection was lost.",
+  "drop.heading.server": "Server closed the connection — reconnecting…",
+  "drop.heading.timeout": "Connection timed out — reconnecting…",
+  "drop.autoReconnectOff":
+    "Auto-reconnect is off for this connection. Turn it on with “Auto-reconnect” in the connection's settings.",
+  "drop.autoReconnectOffTelnet":
+    "Auto-reconnect is off for this connection: telnet connections start with it off. Turn it on with “Auto-reconnect” in the connection's settings.",
+  "drop.retryNow": "Retry now",
+  "drop.afterLastAttempt": "After attempt {max}, retrying stops and the tab offers Reconnect.",
   // ── Serial port scan prefixes (Settings ▸ Serial, #5712) ───────────────
   // The /dev prefix scan only runs on Linux; elsewhere the list is folded.
   "serialPrefixes.offLinux.note":

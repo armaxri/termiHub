@@ -1,12 +1,21 @@
 import { useCallback, useId } from "react";
 import { WifiOff, RefreshCw, AlertTriangle, CheckCircle2, Unplug, Plus } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { connectionIdentityForTabId, isAutoReconnectOffTabId, useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, ContentOverlay } from "@/components/ui";
+import { Button, ContentOverlay, TOAST_AVOID_PROPS } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
+import type { SessionEndCause } from "@/types/generated/SessionEndCause";
 import { t } from "@/i18n/catalog";
 import { CredentialReentry } from "./CredentialReentry";
 import { DisconnectOverlayCard } from "./DisconnectOverlayCard";
+import {
+  disconnectCauseLine,
+  disconnectCauseOf,
+  dropTransportOf,
+  isLinkDrop,
+  type DisconnectCause,
+  type DropTransport,
+} from "./dropCopy";
 import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import { TerminalReconnectStrip } from "./TerminalReconnectStrip";
@@ -23,8 +32,8 @@ interface TerminalDisconnectOverlayProps {
 }
 
 /**
- * The scrollback sits dimmed behind the overlay, not "below" it (#5666): say it
- * is kept and point at the action that reveals it.
+ * The scrollback stays readable around the notice (#5831, R-028): the overlay
+ * has no scrim, so it only has to say the scrollback is kept.
  */
 const SCROLLBACK_KEPT = t("drop.overlay.scrollbackKept");
 
@@ -37,33 +46,65 @@ interface DisconnectCopy {
 }
 
 /**
- * Derive the overlay's heading/subheading from how the session ended (#1121).
- * Without exit info we fall back to the legacy generic wording.
+ * Derive the overlay's heading/subheading from why the session ended (#1121,
+ * #5831): the cause line is the one the strip and the banner show too.
  */
-function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
-  if (info?.reason === "clean") {
-    const codeSuffix = info.code === null ? "" : ` (exit code ${info.code})`;
-    return {
-      heading: "Session ended",
-      subheading: `The session ended normally${codeSuffix}. ${SCROLLBACK_KEPT}`,
-      clean: true,
-    };
+function disconnectCopyFor(
+  cause: DisconnectCause | undefined,
+  info: TerminalExitInfo | undefined,
+  device: string | undefined
+): DisconnectCopy {
+  const line = disconnectCauseLine(cause ?? "lost", { code: info?.code, device });
+  // Only a clean exit reads as "Session ended"; a non-zero exit keeps the
+  // disconnect heading and says its code in the cause line.
+  if (cause === "ended") {
+    return { heading: "Session ended", subheading: `${line} ${SCROLLBACK_KEPT}`, clean: true };
   }
-
-  if (info?.reason === "dropped") {
-    const subheading =
-      info.code === null
-        ? `The connection was lost. ${SCROLLBACK_KEPT}`
-        : `The process exited with code ${info.code}. ${SCROLLBACK_KEPT}`;
-    return { heading: "Session disconnected", subheading, clean: false };
-  }
-
-  // Legacy fallback: no exit info was recorded.
   return {
     heading: "Session disconnected",
-    subheading: `The remote process has exited. ${SCROLLBACK_KEPT}`,
+    subheading: `${line} ${SCROLLBACK_KEPT}`,
     clean: false,
   };
+}
+
+/** A tab's disconnect cause and what its cause line needs (#5831). */
+interface TabDisconnectCause {
+  transport: DropTransport;
+  cause: DisconnectCause | undefined;
+  /** The serial port path, for a serial tab. */
+  device: string | undefined;
+}
+
+/**
+ * Classify why `tabId`'s session ended (#5831), from its connection's transport,
+ * the region's exit and the link's end cause. Shared by the overlay and the
+ * view-mode banner so both say the same.
+ */
+function disconnectCauseForTab(
+  tabId: string,
+  exit: TerminalExitInfo | undefined,
+  endCause: SessionEndCause | undefined
+): TabDisconnectCause {
+  const identity = connectionIdentityForTabId(tabId);
+  const transport = dropTransportOf(identity);
+  return {
+    transport,
+    cause: disconnectCauseOf({ transport, exit, endCause }),
+    device: transport === "serial" ? identity?.target : undefined,
+  };
+}
+
+/**
+ * The cause line for a tab whose session ended (#5831), or `undefined` when
+ * nothing is known about why.
+ */
+export function disconnectCauseLineForTab(
+  tabId: string,
+  exit: TerminalExitInfo | undefined,
+  endCause: SessionEndCause | undefined
+): string | undefined {
+  const { cause, device } = disconnectCauseForTab(tabId, exit, endCause);
+  return cause ? disconnectCauseLine(cause, { code: exit?.code, device }) : undefined;
 }
 
 /**
@@ -82,8 +123,9 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
  *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
  *   - "disconnected"   — standard disconnect, reconnect + view-scrollback buttons
  *
- * The scrollback buffer is always preserved below the overlay; while
- * reconnecting it stays readable and selectable under the strip.
+ * The scrollback buffer is always preserved: the overlay has no scrim and lets
+ * pointer events through around its card (#5831), so the last lines stay
+ * readable and selectable; while reconnecting it stays readable under the strip.
  */
 export function TerminalDisconnectOverlay({
   tabId,
@@ -115,6 +157,15 @@ export function TerminalDisconnectOverlay({
   // are derived purely from the region's `exit` metadata (the per-client
   // `appStore.terminalExitInfo` slice was deleted).
   const exitInfo = lifecycle.exitInfo;
+  // Why the session ended (#5831): one cause line in every variant. The link's
+  // end cause outlives the exit (a reconnect loop clears the exit), so the
+  // give-up overlay can still say why the session dropped.
+  const { transport, cause, device } = disconnectCauseForTab(tabId, exitInfo, lifecycle.endCause);
+  // A dropped link on a connection with auto-reconnect off says so and where to
+  // turn it on (#5831, R-061/R-062), so the manual overlay is never a surprise.
+  const autoReconnectOff = isLinkDrop(cause) && isAutoReconnectOffTabId(tabId);
+  const autoReconnectOffNote =
+    transport === "telnet" ? t("drop.autoReconnectOffTelnet") : t("drop.autoReconnectOff");
   // The error text is part of each failure overlay's accessible description.
   const errorTextId = useId();
 
@@ -140,8 +191,9 @@ export function TerminalDisconnectOverlay({
   if (isSessionLost) {
     return (
       <div
-        className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
+        className="terminal-disconnect-overlay terminal-disconnect-overlay--clear terminal-disconnect-overlay--error"
         data-testid="terminal-disconnect-overlay"
+        data-variant="session-lost"
       >
         <DisconnectOverlayCard onDismiss={handleDismiss}>
           <ContentOverlay
@@ -220,8 +272,11 @@ export function TerminalDisconnectOverlay({
     const errorHeading = isAuthFailed ? "Authentication failed" : "Reconnect failed";
     return (
       <div
-        className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
+        className="terminal-disconnect-overlay terminal-disconnect-overlay--clear terminal-disconnect-overlay--error"
         data-testid="terminal-disconnect-overlay"
+        data-variant="failed"
+        data-cause={cause}
+        {...TOAST_AVOID_PROPS}
       >
         <DisconnectOverlayCard onDismiss={handleDismiss}>
           <ContentOverlay
@@ -240,7 +295,13 @@ export function TerminalDisconnectOverlay({
             subheading={
               isAuthFailed
                 ? `Check your credentials, then reconnect. ${SCROLLBACK_KEPT}`
-                : `All reconnect attempts were exhausted. ${SCROLLBACK_KEPT}`
+                : [
+                    isLinkDrop(cause) && cause ? disconnectCauseLine(cause, { device }) : null,
+                    "All reconnect attempts were exhausted.",
+                    SCROLLBACK_KEPT,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
             }
             actions={
               <>
@@ -281,10 +342,16 @@ export function TerminalDisconnectOverlay({
     );
   }
 
-  const copy = disconnectCopyFor(exitInfo);
+  const copy = disconnectCopyFor(cause, exitInfo, device);
 
   return (
-    <div className="terminal-disconnect-overlay" data-testid="terminal-disconnect-overlay">
+    <div
+      className="terminal-disconnect-overlay terminal-disconnect-overlay--clear"
+      data-testid="terminal-disconnect-overlay"
+      data-variant="disconnected"
+      data-cause={cause ?? "lost"}
+      {...TOAST_AVOID_PROPS}
+    >
       <DisconnectOverlayCard
         onDismiss={handleDismiss}
         dismissLabel="Dismiss disconnect overlay and view scrollback"
@@ -323,7 +390,16 @@ export function TerminalDisconnectOverlay({
               </Button>
             </>
           }
-        />
+        >
+          {autoReconnectOff && (
+            <p
+              className="terminal-disconnect-overlay__note"
+              data-testid="terminal-disconnect-auto-reconnect-off"
+            >
+              {autoReconnectOffNote}
+            </p>
+          )}
+        </ContentOverlay>
       </DisconnectOverlayCard>
     </div>
   );

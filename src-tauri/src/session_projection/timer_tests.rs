@@ -471,3 +471,41 @@ fn remove_disarms_any_pending_timer() {
         "a removed session has no timer"
     );
 }
+
+// ── Retry now (#5831) ────────────────────────────────────────────────────────
+
+#[test]
+fn retry_now_runs_the_waiting_attempt_without_its_backoff() {
+    let (store, _projector, scheduler, driver, _pub) = harness();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    driver.sync("s1");
+    assert_eq!(scheduler.armed_delay("s1"), Some(1000));
+
+    driver.retry_now("s1");
+    assert_eq!(scheduler.armed_delay("s1"), Some(0), "the window collapses");
+    scheduler.fire("s1");
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Connecting);
+    assert_eq!(s.reconnect.attempt, 1);
+}
+
+#[test]
+fn retry_now_is_a_no_op_outside_a_waiting_window() {
+    let (store, _projector, scheduler, driver, _pub) = harness();
+    // No loop at all.
+    store.connect("s1");
+    store.connected("s1");
+    driver.retry_now("s1");
+    assert_eq!(scheduler.armed_delay("s1"), None);
+    // An attempt already in flight.
+    store.reconnect("s1");
+    driver.sync("s1");
+    scheduler.fire("s1");
+    driver.retry_now("s1");
+    assert_eq!(scheduler.armed_delay("s1"), None, "never a second attempt");
+    // An unknown tab.
+    driver.retry_now("ghost");
+    assert_eq!(scheduler.armed_delay("ghost"), None);
+}

@@ -88,6 +88,7 @@ export {
   isBackendDrivenAgentReconnectTabId,
   onReconnectCommandForTabId,
   connectionIdentityForTabId,
+  isAutoReconnectOffTabId,
 } from "./reconnectHelpers";
 
 export type SidebarView =

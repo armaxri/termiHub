@@ -30,10 +30,24 @@
   flex-shrink: 0;
 }
 
+/* Heading line plus the cause line under it (#5831). */
+.terminal-view-mode-banner__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Wraps instead of clipping (#5823): in a narrow pane the hint drops to a second
    line and the Reconnect button keeps its full size beside it. */
 .terminal-view-mode-banner__label {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Why the session ended (#5831), a step quieter than the heading. */
+.terminal-view-mode-banner__cause {
   min-width: 0;
   overflow-wrap: anywhere;
 }

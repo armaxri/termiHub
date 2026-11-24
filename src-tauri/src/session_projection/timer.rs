@@ -217,6 +217,24 @@ impl ReconnectTimerDriver {
         }
     }
 
+    /// Retry now (#5831): run the next attempt of a waiting backoff loop at
+    /// once instead of at the end of its window, by re-arming the one-shot
+    /// with no delay. A no-op outside the `Waiting` phase (an attempt is
+    /// already running, or the loop ended) and for a loop the agent runs
+    /// itself (#5396), whose attempts the desktop does not time.
+    pub fn retry_now(self: &Arc<Self>, session_id: &str) {
+        let Some(state) = self.store.reconnect_state(session_id) else {
+            return;
+        };
+        if state.phase != ReconnectPhase::Waiting || self.store.agent_owns_reconnect(session_id) {
+            return;
+        }
+        let this = Arc::clone(self);
+        let id = session_id.to_string();
+        self.scheduler
+            .schedule(session_id.to_string(), 0, Box::new(move || this.fire(&id)));
+    }
+
     /// The backoff timer for `session_id` elapsed: advance the store's reconnect
     /// sub-machine one attempt (`Waiting → Connecting`, attempt++) and fan the
     /// diff out. The frontend, reconciling the `Connecting` status, performs the

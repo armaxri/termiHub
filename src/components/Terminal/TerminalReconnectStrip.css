@@ -85,3 +85,10 @@
 .terminal-reconnect-strip .ui-btn {
   flex-shrink: 0;
 }
+
+/* Cancel and Retry now (#5831) side by side, never shrinking the strip's text. */
+.terminal-reconnect-strip__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--spacing-xs);
+}

@@ -99,7 +99,9 @@ fn registry_for(store: Arc<SessionLifecycleStore>) -> HandlerRegistry {
     });
     let s = store.clone();
     registry.route("session.exited", move |intent, projector| {
-        s.set_exit(&required_id(intent)?, Some(required_exit(intent)?));
+        let id = required_id(intent)?;
+        s.set_exit(&id, Some(required_exit(intent)?));
+        s.set_end_cause(&id, super::optional_end_cause(intent));
         Ok(publish_sessions(projector, &s))
     });
     let s = store.clone();
@@ -1074,4 +1076,43 @@ fn incremental_publish_coalesces_multi_entry_changes_identically() {
     store.dropped("s0", Some("dropped".to_string()));
     store.remove("s3");
     assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "coalesced-multi");
+}
+
+// ── The link's end cause (#5831) ─────────────────────────────────────────────
+
+#[test]
+fn a_session_exited_intent_carries_the_links_end_cause() {
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(RecordingSink::new());
+    let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "session.exited",
+        json!({ "sessionId": "s2", "reason": "dropped", "code": null, "endCause": "remote_closed" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    for diff in sink.diffs() {
+        cache.apply(&diff);
+    }
+    assert_eq!(
+        cache.view["sessions"]["s2"]["endCause"],
+        json!("remote_closed")
+    );
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+}
+
+#[test]
+fn an_unknown_or_missing_end_cause_reads_as_none() {
+    let with = |payload: Value| super::optional_end_cause(&intent("session.exited", payload));
+    assert_eq!(
+        with(json!({ "endCause": "device_gone" })),
+        Some(termihub_core::connection::SessionEndCause::DeviceGone)
+    );
+    assert_eq!(with(json!({ "endCause": "gremlins" })), None);
+    assert_eq!(with(json!({ "endCause": null })), None);
+    assert_eq!(with(json!({})), None);
 }

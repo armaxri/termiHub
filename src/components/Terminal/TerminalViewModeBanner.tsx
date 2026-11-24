@@ -7,6 +7,12 @@ import "./TerminalViewModeBanner.css";
 
 interface TerminalViewModeBannerProps {
   tabId: string;
+  /**
+   * Why the session ended, as the one cause line the overlay and the strip
+   * show (#5831): "The server closed the connection.", "You disconnected this
+   * session.". Shown under the heading; omitted when unknown.
+   */
+  cause?: string;
 }
 
 /** The short hint after the banner's heading (#5823). */
@@ -24,7 +30,7 @@ export const VIEW_MODE_ENTER_HINT = "Press Enter to reconnect.";
  * that wraps instead of clipping, keeps Reconnect from shrinking, and is a
  * toast keep-clear zone so the toast stack never covers it.
  */
-export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
+export function TerminalViewModeBanner({ tabId, cause }: TerminalViewModeBannerProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   // The user disconnected or shut down this tab's agent (#4309): say so, since
   // Reconnect will bring the agent back before starting a new session.
@@ -42,9 +48,12 @@ export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
   const reconnectTitle = agentDisconnected
     ? "Reconnect the agent and start a new session (Enter)"
     : "Start a new session (Enter)";
+  // The agent heading already says what happened; every other end states its
+  // cause (#5831).
+  const causeLine = agentDisconnected ? undefined : cause;
   const announcement = agentDisconnected
     ? "Agent disconnected. Press Enter or click Reconnect to reconnect it and start a new session."
-    : "Session ended. Press Enter or click Reconnect to start a new session.";
+    : `Session ended.${causeLine ? ` ${causeLine}` : ""} Press Enter or click Reconnect to start a new session.`;
 
   return (
     <div
@@ -57,9 +66,16 @@ export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
           the agent, #4309), so announce its state politely (#4331). */}
       <LiveRegion message={announcement} />
       <WifiOff size={12} className="terminal-view-mode-banner__icon" aria-hidden />
-      <span className="terminal-view-mode-banner__label">
-        <span className="terminal-view-mode-banner__heading">{heading}</span>{" "}
-        <span className="terminal-view-mode-banner__hint">{VIEW_MODE_ENTER_HINT}</span>
+      <span className="terminal-view-mode-banner__text">
+        <span className="terminal-view-mode-banner__label">
+          <span className="terminal-view-mode-banner__heading">{heading}</span>{" "}
+          <span className="terminal-view-mode-banner__hint">{VIEW_MODE_ENTER_HINT}</span>
+        </span>
+        {causeLine && (
+          <span className="terminal-view-mode-banner__cause" data-testid="terminal-view-mode-cause">
+            {causeLine}
+          </span>
+        )}
       </span>
       <Button
         variant="primary"

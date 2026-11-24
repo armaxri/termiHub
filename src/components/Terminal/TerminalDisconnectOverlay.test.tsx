@@ -225,8 +225,10 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     });
     await flushSessionRegion();
 
+    // #5831: without a recorded exit the cause is unknown — say the link was
+    // lost rather than claim a remote process exited.
     expect(container.textContent).toContain("Session disconnected");
-    expect(container.textContent).toContain("The remote process has exited");
+    expect(container.textContent).toContain("The connection was lost.");
   });
 });
 

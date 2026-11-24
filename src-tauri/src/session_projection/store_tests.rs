@@ -1634,3 +1634,62 @@ fn the_reason_is_published_as_last_attempt_error() {
     let json = serde_json::to_value(store.get("s1").unwrap()).unwrap();
     assert!(json.get("lastAttemptError").is_none(), "omitted when unset");
 }
+
+// ── The link's end cause (#5831) ─────────────────────────────────────────────
+
+#[test]
+fn the_end_cause_survives_the_reconnect_loop_and_its_give_up() {
+    // The strip and the final overlay say why the session dropped, so the cause
+    // outlives `reconnect` (which clears `exit`) and the give-up.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_exit(
+        "s1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Dropped,
+            code: None,
+        }),
+    );
+    store.set_end_cause("s1", Some(SessionEndCause::RemoteClosed));
+    store.reconnect("s1");
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.exit, None, "a restart clears the exit");
+    assert_eq!(s.end_cause, Some(SessionEndCause::RemoteClosed));
+    assert_eq!(
+        store.snapshot()["sessions"]["s1"]["endCause"],
+        serde_json::json!("remote_closed")
+    );
+
+    store.cancel_reconnect("s1");
+    assert_eq!(
+        store.get("s1").unwrap().end_cause,
+        Some(SessionEndCause::RemoteClosed)
+    );
+}
+
+#[test]
+fn a_fresh_or_successful_connect_clears_the_end_cause() {
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_end_cause("s1", Some(SessionEndCause::Timeout));
+    store.connected("s1");
+    assert_eq!(store.get("s1").unwrap().end_cause, None);
+
+    store.set_end_cause("s1", Some(SessionEndCause::IoError));
+    store.connect("s1");
+    assert_eq!(store.get("s1").unwrap().end_cause, None);
+    assert!(store.snapshot()["sessions"]["s1"].get("endCause").is_none());
+}
+
+#[test]
+fn an_exit_without_a_cause_clears_an_earlier_one_and_unknown_tabs_are_ignored() {
+    let store = deterministic_store();
+    store.connect("s1");
+    store.set_end_cause("s1", Some(SessionEndCause::DeviceGone));
+    store.set_end_cause("s1", None);
+    assert_eq!(store.get("s1").unwrap().end_cause, None);
+    store.set_end_cause("ghost", Some(SessionEndCause::IoError));
+    assert!(store.get("ghost").is_none(), "no phantom entry");
+}
