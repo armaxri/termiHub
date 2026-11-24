@@ -9,6 +9,7 @@
  */
 import type { LucideIcon } from "lucide-react";
 import {
+  Binary,
   KeyRound,
   LayoutDashboard,
   Network,
@@ -17,7 +18,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldX,
-  SlidersHorizontal,
 } from "lucide-react";
 import type {
   PluginExtensions,
@@ -89,9 +89,57 @@ export function pluginStatusLabel(state: PluginState): string {
 export function pluginTypeIcon(extensions: PluginExtensions): LucideIcon {
   if (extensions.terminalBackend) return Network;
   if (extensions.theme) return Palette;
-  if (extensions.protocolParser) return SlidersHorizontal;
+  // Not the sliders icon: that one means "settings" elsewhere (#5931).
+  if (extensions.protocolParser) return Binary;
   if (extensions.statusBarWidget) return LayoutDashboard;
   return Puzzle;
+}
+
+/**
+ * The name of a plugin's type icon (#5931), shown as the icon's tooltip and
+ * accessible name on the plugin row: "Terminal backend", "Theme",
+ * "Protocol parser", "Status bar widget" or "Plugin".
+ */
+export function pluginTypeName(extensions: PluginExtensions): string {
+  const label = pluginTypeLabel(extensions);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/**
+ * The label of a plugin row's status dot (#5931), shown as its tooltip and
+ * accessible name: "Enabled", "Disabled" or "Error", matching the dot's three
+ * colours. The words of {@link pluginStatusLabel} collapsed like the dot.
+ */
+export function pluginDotLabel(state: PluginState): string {
+  switch (pluginDotState(state)) {
+    case "enabled":
+      return "Enabled";
+    case "error":
+      return "Error";
+    default:
+      return "Disabled";
+  }
+}
+
+/** The status bar's plugin item: its visible text and its tooltip/accessible name. */
+export interface PluginsIndicatorCopy {
+  /** Visible text, e.g. "1 plugin" or "3 plugins". */
+  text: string;
+  /** Tooltip and accessible name; starts with {@link text} (label in name). */
+  label: string;
+}
+
+/**
+ * The status bar's plugin item (#5931): "N plugin(s)" in words, counting the
+ * installed plugins, with the enabled count and what a click does in the
+ * tooltip. Replaces the cryptic "N · M".
+ */
+export function pluginsIndicatorCopy(installed: number, enabled: number): PluginsIndicatorCopy {
+  const text = `${installed} ${installed === 1 ? "plugin" : "plugins"}`;
+  return {
+    text,
+    label: `${text} installed, ${enabled} enabled — click to open the plugin list`,
+  };
 }
 
 /**
@@ -135,7 +183,7 @@ export function extensionPoints(extensions: PluginExtensions): ExtensionPointInf
   if (extensions.protocolParser) {
     points.push({
       key: "protocolParser",
-      icon: SlidersHorizontal,
+      icon: Binary,
       label: "Protocol parser",
       detail: extensions.protocolParser.name,
     });
