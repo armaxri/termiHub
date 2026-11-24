@@ -3,7 +3,8 @@
  * render ONE "Closed 3 tabs" toast in the DOM, and its "Reopen all" button
  * restores all three tabs in order.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { drainSonnerRemovalTimers } from "@/test/sonnerTimers";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ToastProvider, toast } from "@/components/ui";
@@ -45,6 +46,9 @@ function reopenToasts(): HTMLElement[] {
     document.querySelectorAll<HTMLElement>(`[data-testid="${REOPEN_TOAST_TEST_ID}"]`)
   ).filter((el) => el.getAttribute("data-removed") !== "true");
 }
+
+// A toast dismissed by the last test must not outlive jsdom (see the helper).
+afterAll(drainSonnerRemovalTimers);
 
 describe("reopen toast in the toast host (#5828)", () => {
   beforeEach(() => {
