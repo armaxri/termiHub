@@ -436,7 +436,6 @@ describe("running", () => {
       macroId: "macro-1",
       macroName: "Sudo login",
       tabId: "tab-a",
-      timingMode: "real-time" as const,
       total: 4,
       played: 2,
     };

@@ -116,7 +116,7 @@ describe("appStore — macro run history (#3543)", () => {
   it("records a completed manual playback as metadata only", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: `${SECRET}\r`, delayMs: 0 }])] });
 
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
 
     const run = await lastRecorded();
     expect(run).toMatchObject({
@@ -140,9 +140,7 @@ describe("appStore — macro run history (#3543)", () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
     const onRecorded = vi.fn();
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", origin: "palette", onRecorded });
+    await useAppStore.getState().playMacro("m1", { origin: "palette", onRecorded });
 
     expect(onRecorded).toHaveBeenCalledTimes(1);
     const { id } = onRecorded.mock.calls[0][0];
@@ -153,7 +151,7 @@ describe("appStore — macro run history (#3543)", () => {
     registerTerminalInputInjector(async () => false);
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
 
     const run = await lastRecorded();
     expect(run.status).toBe("error");
@@ -166,7 +164,6 @@ describe("appStore — macro run history (#3543)", () => {
 
     const handed: string[] = [];
     await useAppStore.getState().playMacro("m1", {
-      timingMode: "instant",
       targetTabIds: ["a", "b", "c"],
       origin: "scheduled",
       onRecorded: (run) => handed.push(run.id),
@@ -194,9 +191,7 @@ describe("appStore — macro run history (#3543)", () => {
     registerTerminalInputInjector(async (tabId) => tabId !== "b");
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
 
     await vi.waitFor(() => expect(recorded).toHaveLength(2));
     const byLabel = Object.fromEntries(recorded.map((r) => [r.targetLabel, r]));
@@ -224,7 +219,7 @@ describe("appStore — macro run history (#3543)", () => {
     vi.mocked(apiRecordMacroRun).mockRejectedValueOnce(new Error("disk full"));
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    const status = await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    const status = await useAppStore.getState().playMacro("m1");
 
     expect(status).toBe("completed");
   });
@@ -237,7 +232,7 @@ describe("appStore — macro run history (#3543)", () => {
     });
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
 
     expect((await lastRecorded()).targetLabels).toEqual(["Terminal"]);
   });
@@ -256,7 +251,7 @@ describe("appStore — macro run history (#3543)", () => {
 
   it("loads and clears the history", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
     await lastRecorded();
 
     useAppStore.setState({ macroRuns: [] });
@@ -269,7 +264,7 @@ describe("appStore — macro run history (#3543)", () => {
 
   it("records into the automation history and clears only the macro runs (#5818)", async () => {
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await useAppStore.getState().playMacro("m1");
     await lastRecorded();
     expect(recorded[0]).toMatchObject({
       automationId: "m1",

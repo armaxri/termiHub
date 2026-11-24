@@ -204,27 +204,18 @@ describe("appStore — single automation store (#5818, slice 4)", () => {
     expect(typedInput).toEqual(["echo 1", "\r"]);
   });
 
-  it("lets the play dialog override the saved typing speed for one run", async () => {
-    useAppStore.setState(automationLibraryState([typed("m-recorded", "recorded")]));
+  it.each(["palette", "scheduled", "manual"] as const)(
+    "uses the saved typing speed whatever starts it: %s (#5820)",
+    async (origin) => {
+      useAppStore.setState(automationLibraryState([typed("m-instant", "instant")]));
+      vi.useFakeTimers();
 
-    const started = Date.now();
-    const status = await useAppStore
-      .getState()
-      .playMacro("m-recorded", { timingMode: "fixed", fixedDelayMs: 0 });
+      const status = await useAppStore.getState().playMacro("m-instant", { origin });
 
-    expect(status).toBe("completed");
-    // The recorded 4 s gap was not waited.
-    expect(Date.now() - started).toBeLessThan(2000);
-    expect(typedInput).toEqual(["echo 1", "\r"]);
-  });
-
-  it("reports the saved typing speed as the playback's timing mode", async () => {
-    useAppStore.setState(automationLibraryState([typed("m-fixed", "fixed")]));
-    const playing = useAppStore.getState().playMacro("m-fixed");
-    expect(useAppStore.getState().macroPlayback?.timingMode).toBe("fixed");
-    useAppStore.getState().cancelMacroPlayback();
-    expect(await playing).toBe("cancelled");
-  });
+      expect(status).toBe("completed");
+      expect(typedInput).toEqual(["echo 1", "\r"]);
+    }
+  );
 
   it("runs a workflow's run-automation step through the stored automation", async () => {
     useAppStore.setState(automationLibraryState([typed("m-instant", "instant"), workflow]));

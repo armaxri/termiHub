@@ -293,7 +293,7 @@ export function CommandPalette(): React.ReactElement {
       if (entry.kind === "command") {
         entry.run();
       } else if (entry.kind === "macro") {
-        void playMacro(entry.macroId, { timingMode: "real-time", origin: "palette" });
+        void playMacro(entry.macroId, { origin: "palette" });
       } else if (entry.kind === "workflow") {
         void runWorkflow(entry.workflowId);
       } else if (entry.kind === "broadcast-workflow-pick") {
