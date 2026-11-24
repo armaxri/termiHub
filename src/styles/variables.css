@@ -282,6 +282,10 @@
      ships a 200px square; we constrain it to fit the compact dialog. */
   --color-picker-height: 150px;
 
+  /* Scrolling list inside a searchable picker menu (Settings ▸ Editor
+     language picker, #5841): about ten rows before it scrolls. */
+  --menu-list-max-height: 300px;
+
   /* Overlay / modal scrim (static: a dark scrim + blur reads correctly in all
      four current themes) */
   --overlay-bg: rgba(6, 7, 10, 0.66);

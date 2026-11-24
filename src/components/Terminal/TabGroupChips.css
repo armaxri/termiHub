@@ -85,7 +85,7 @@
   background-color: var(--bg-hover);
 }
 
-/* "+" button after chips */
+/* New-tab-group control after the chips: a stack glyph, never a "+" (#5849) */
 .tab-group-chips__add {
   display: flex;
   align-items: center;
@@ -98,6 +98,15 @@
   transition:
     color var(--transition-fast),
     background-color var(--transition-fast);
+}
+
+/* With one group no chip shows, so the control names itself (#5849). */
+.tab-group-chips__add--labelled {
+  width: auto;
+  gap: var(--spacing-xs);
+  padding: 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
 }
 
 .tab-group-chips__add:hover {
