@@ -118,6 +118,31 @@ describe("CredentialVaultBackup", () => {
     );
   });
 
+  // #5875: with passwords not saved the section is its heading and one muted line.
+  it("collapses to the heading and the storage-off line while passwords are not saved", async () => {
+    await renderLoaded("none");
+    const section = query("credential-vault-backup")!;
+    expect(section.dataset.collapsed).toBe("true");
+    expect(query("credential-vault-description")).toBeNull();
+    const lines = section.querySelectorAll("p");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].classList.contains("settings-panel__description")).toBe(true);
+    expect(lines[0].dataset.testid).toBe("credential-vault-unavailable");
+  });
+
+  it.each(["os_keychain", "master_password"] as const)(
+    "keeps the full description in %s mode",
+    async (mode) => {
+      await renderLoaded(mode);
+      expect(query("credential-vault-backup")!.dataset.collapsed).toBeUndefined();
+      expect(query("credential-vault-description")?.textContent).toMatch(
+        /^Export your saved credentials to a passphrase-protected, encrypted file/
+      );
+      expect(query("credential-vault-unavailable")).toBeNull();
+      expect(query("credential-vault-import-btn")).not.toBeNull();
+    }
+  );
+
   it("keeps both actions disabled, not hidden, before a master password is set", async () => {
     await renderLoaded("master_password", "unavailable");
     expect((query("credential-vault-export-btn") as HTMLButtonElement).disabled).toBe(true);

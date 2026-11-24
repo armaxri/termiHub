@@ -206,6 +206,10 @@ const en = {
     "It gets stronger protection the next time you unlock with {method}.",
   "biometricUnlock.note.osEnforced":
     "Protected by the operating system: the unlock key needs {method} every time.",
+  // The conditions moved out of the toggle's hint into the note (#5876).
+  "biometricUnlock.note.conditions":
+    "Your master password keeps working. You need it again after you change it or your " +
+    "{method} enrollment changes.",
 
   // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
   "tunnel.missingConnection.status": "SSH connection deleted",

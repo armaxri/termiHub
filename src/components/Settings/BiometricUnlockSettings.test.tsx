@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import {
   BiometricUnlockSettings,
+  biometricConditionsText,
   enableErrorMessage,
   protectionNote,
 } from "./BiometricUnlockSettings";
@@ -212,6 +213,45 @@ describe("BiometricUnlockSettings", () => {
     expect(note.dataset.tone).toBe("info");
     expect(note.classList.contains("settings-form__hint--warning")).toBe(false);
     expect(note.querySelector("svg")).toBeNull();
+  });
+
+  // #5876: the toggle's hint is one short line; the conditions live in the note.
+  it("gives the toggle a one-line hint without the conditions while unlock is off", async () => {
+    await renderLoaded();
+    const hint = query("biometric-unlock-hint")!;
+    expect(hint.textContent).toBe("Use Touch ID instead of typing your master password.");
+    expect(hint.textContent).not.toMatch(/enrollment/);
+    expect(query("biometric-unlock-conditions")).toBeNull();
+    // Not while the enable form is open either: the unlock is not on yet.
+    await click("biometric-unlock-toggle");
+    expect(query("biometric-unlock-conditions")).toBeNull();
+  });
+
+  it("shows the conditions with the note once unlock is on", async () => {
+    mockedInfo.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
+    await renderLoaded();
+    expect(query("biometric-unlock-hint")!.textContent).toBe(
+      "Use Touch ID instead of typing your master password."
+    );
+    const conditions = query("biometric-unlock-conditions")!;
+    expect(conditions.textContent).toBe(
+      "Your master password keeps working. You need it again after you change it or your " +
+        "Touch ID enrollment changes."
+    );
+    expect(conditions.classList.contains("settings-form__hint--warning")).toBe(false);
+    expect(biometricConditionsText("Windows Hello")).toContain("Windows Hello enrollment");
+  });
+
+  it("keeps the stronger-protection sentence for a legacy key on an upgradable build", async () => {
+    mockedInfo.mockResolvedValue({
+      ...OS_AUTH_BIOMETRIC_ENABLED,
+      biometricUnlock: { ...OS_AUTH_BIOMETRIC_ENABLED.biometricUnlock, osEnforcedAvailable: true },
+    });
+    await renderLoaded();
+    expect(query("biometric-unlock-protection")!.textContent).toContain(
+      "It gets stronger protection the next time you unlock with Touch ID."
+    );
+    expect(query("biometric-unlock-conditions")).not.toBeNull();
   });
 
   it("picks the note from the key's protection", () => {
