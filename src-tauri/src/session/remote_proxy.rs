@@ -68,7 +68,7 @@ use termihub_core::protocol::methods::{
 
 use crate::session::ssh_keyboard_interactive::current_prompt_owner;
 use crate::terminal::agent_manager::{AgentRpcClient, SessionEndSlot};
-use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
+use crate::terminal::backend::{OutputPosition, OutputSender, OUTPUT_CHANNEL_CAPACITY};
 use crate::utils::errors::TerminalError;
 
 /// A [`ConnectionType`] implementation that proxies all operations to a
@@ -87,6 +87,8 @@ pub struct RemoteProxy {
     remote_capabilities: Mutex<Capabilities>,
     /// std output channel for receiving data from agent_manager.
     std_output_rx: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
+    /// Where the agent's last replay starts in the session's output (#5990).
+    output_position: OutputPosition,
     /// Whether the proxy is connected to a remote session.
     connected: AtomicBool,
     /// File browser proxy (set during connect if supported).
@@ -134,6 +136,7 @@ impl RemoteProxy {
                 tunneling: false,
             }),
             std_output_rx: Mutex::new(None),
+            output_position: OutputPosition::default(),
             connected: AtomicBool::new(false),
             file_browser_proxy: None,
             monitoring_proxy: None,
@@ -177,9 +180,14 @@ impl RemoteProxy {
     ) -> Result<(Self, ReattachOutcome), SessionError> {
         // Unbounded: the I/O task never blocks or drops output (#4416).
         let (std_tx, std_rx) = mpsc::channel::<Vec<u8>>();
+        let output_position = OutputPosition::default();
 
         agent_manager
-            .register_session_output(&agent_id, &remote_session_id, std_tx)
+            .register_session_output(
+                &agent_id,
+                &remote_session_id,
+                OutputSender::new(std_tx, output_position.clone()),
+            )
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         // A files-only session (#4081) says so again on this attach.
@@ -216,6 +224,7 @@ impl RemoteProxy {
                 tunneling: false,
             }),
             std_output_rx: Mutex::new(Some(std_rx)),
+            output_position,
             connected: AtomicBool::new(true),
             file_browser_proxy: None,
             monitoring_proxy: None,
@@ -417,6 +426,10 @@ impl ConnectionType for RemoteProxy {
         self.agent_manager
             .resize_session(self.agent_id(), &remote_sid, cols, rows)
             .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
+    }
+
+    fn output_replay_start(&self) -> Option<u64> {
+        self.output_position.replay_start()
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
@@ -715,12 +728,17 @@ impl RemoteProxy {
         // never blocks or drops on (#4416, see `OutputSender`), bridged into the
         // session's bounded tokio channel in subscribe_output().
         let (std_tx, std_rx) = mpsc::channel::<Vec<u8>>();
+        self.output_position = OutputPosition::default();
 
         // Register the output sender with the agent manager.
         // `register_session_output` does not block on a response — just pushes a
         // command into the io task's channel — so it's safe to call directly here.
         self.agent_manager
-            .register_session_output(self.agent_id(), &remote_sid, std_tx)
+            .register_session_output(
+                self.agent_id(),
+                &remote_sid,
+                OutputSender::new(std_tx, self.output_position.clone()),
+            )
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
         // Route the agent's files-only verdict for this session to us (#4081).
         // The agent may decide before this lands; the route then gets it late.

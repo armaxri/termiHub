@@ -38,7 +38,7 @@ use crate::utils::errors::TerminalError;
 use termihub_core::files::FileEntry;
 
 use super::line_ending::{normalize_line_endings, LineEnding};
-use super::output_capture::{OutputCapture, ScrollbackReplay};
+use super::output_capture::{OutputCapture, ScrollbackReplay, StreamPosition};
 use super::output_sink::TerminalOutputSink;
 use super::persistent_controller::PersistentController;
 use super::remote_proxy::{ReattachOutcome, RemoteProxy, CORRELATION_ID_KEY};
@@ -93,6 +93,10 @@ pub struct TerminalOutputEvent {
     /// skips the part the replay already holds.
     #[cfg_attr(test, ts(type = "number"))]
     pub offset: u64,
+    /// Which output stream of the session `offset` is in: a session created
+    /// again under the same id starts a new one at 0, with a larger epoch.
+    #[cfg_attr(test, ts(type = "number"))]
+    pub epoch: u64,
 }
 
 /// Serialize a byte slice as a base64 (standard alphabet, padded) string.
@@ -950,18 +954,19 @@ impl SessionManager {
         }
     }
 
-    /// Get-or-create the scrollback capture buffer for `session_id` (#1900).
+    /// Start the scrollback capture of a new output stream of `session_id`
+    /// (#1900), replacing that of a stream before it.
     ///
     /// Returns a handle the output reader writes through and
     /// [`Self::replay_scrollback`] reads from.
-    pub(super) fn ensure_output_buffer(&self, session_id: &str) -> Arc<StdMutex<OutputCapture>> {
+    pub(super) fn start_output_buffer(&self, session_id: &str) -> Arc<StdMutex<OutputCapture>> {
         let mut map = self
             .output_buffers
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        map.entry(session_id.to_string())
-            .or_insert_with(|| Arc::new(StdMutex::new(OutputCapture::default())))
-            .clone()
+        let capture = Arc::new(StdMutex::new(OutputCapture::default()));
+        map.insert(session_id.to_string(), capture.clone());
+        capture
     }
 
     /// Replay a session's captured scrollback (#1900).
@@ -972,13 +977,35 @@ impl SessionManager {
     /// nothing has been captured yet. The backend session is never touched —
     /// this is a pure read of the capture buffer.
     pub async fn replay_scrollback(&self, session_id: &str) -> ScrollbackReplay {
-        match self.output_capture(session_id) {
-            Some(capture) => capture
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .snapshot(),
-            None => ScrollbackReplay::default(),
+        self.read_capture(session_id, OutputCapture::snapshot)
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Read `session_id`'s capture, brought up to the last replay its source
+    /// sent (#5990). `None` when it has no capture.
+    pub(super) async fn read_capture<T>(
+        &self,
+        session_id: &str,
+        read: impl FnOnce(&OutputCapture) -> T,
+    ) -> Option<T> {
+        // The capture first: a stream's connection is registered before its
+        // capture starts, so the connection read after it is never an older one,
+        // whose positions would mean nothing in this capture.
+        let capture = self.output_capture(session_id)?;
+        let connection = self
+            .sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|entry| entry.connection.clone());
+        let mut capture = capture
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(start) = connection.and_then(|c| c.output_replay_start()) {
+            capture.history_starts_at(start);
         }
+        Some(read(&capture))
     }
 
     /// The capture of `session_id`, if it has one.
@@ -1532,7 +1559,7 @@ impl SessionManager {
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
-        let capture = self.ensure_output_buffer(&session_id);
+        let capture = self.start_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
@@ -1949,29 +1976,10 @@ impl SessionManager {
             .agent_session_for_tab(tab_id)
             .await
             .ok_or_else(|| TerminalError::SessionNotFound(tab_id.to_string()))?;
-        // The replay that precedes the resumed output holds everything captured
-        // so far (#5990): the capture must not keep that twice.
-        let capture = self
-            .session_of_tab(tab_id)
-            .and_then(|session_id| self.output_capture(&session_id));
-        let mark = capture.as_ref().map(|c| {
-            c.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .end_offset()
-        });
         let client = self.agent_manager.clone();
-        let reclaimed = tokio::task::spawn_blocking(move || {
-            client.reclaim_session(&agent_id, &remote_session_id)
-        })
-        .await
-        .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
-        if let (Ok(()), Some(capture), Some(mark)) = (&reclaimed, capture, mark) {
-            capture
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .forget_before(mark);
-        }
-        reclaimed
+        tokio::task::spawn_blocking(move || client.reclaim_session(&agent_id, &remote_session_id))
+            .await
+            .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
     }
 
     /// Close a session.
@@ -2458,7 +2466,7 @@ impl SessionManager {
         // Stream output for the re-attached session (buffer replay is already
         // in-flight from `attach_session`).
         let sessions_clone = self.sessions.clone();
-        let capture = self.ensure_output_buffer(&session_id);
+        let capture = self.start_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
         let session_tab_ids = self.session_tab_ids.clone();
@@ -2717,9 +2725,10 @@ impl SessionManager {
         let sink = TerminalOutputSink::new(
             session_id.clone(),
             emitter.clone(),
-            capture,
+            capture.clone(),
             session_loggers.clone(),
         );
+        let own_capture = capture;
         let opts = PumpOptions {
             coalesce: true,
             max_coalesce_bytes: MAX_COALESCE_BYTES,
@@ -2737,6 +2746,7 @@ impl SessionManager {
             Vec::new(),
             &emitter,
             &sessions,
+            &own_capture,
             &output_buffers,
             &session_loggers,
             &session_tab_ids,
@@ -2749,8 +2759,8 @@ impl SessionManager {
     /// The write is bounded by the capture's 1 MiB capacity, so long
     /// histories are truncated to the most recent bytes — matching the concept's
     /// stated scrollback-fidelity limit.
-    /// Returns the position `data` starts at in the session's stream (#5990).
-    pub(super) fn capture_bytes(capture: &StdMutex<OutputCapture>, data: &[u8]) -> u64 {
+    /// Returns where `data` starts in the session's stream (#5990).
+    pub(super) fn capture_bytes(capture: &StdMutex<OutputCapture>, data: &[u8]) -> StreamPosition {
         capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2779,21 +2789,18 @@ impl SessionManager {
         data: Vec<u8>,
         emitter: &E,
         sessions: &Arc<Mutex<M>>,
+        capture: &Arc<StdMutex<OutputCapture>>,
         output_buffers: &OutputBuffers,
         session_loggers: &SessionLoggers,
         session_tab_ids: &SessionTabIds,
     ) {
         if !data.is_empty() {
-            let capture = output_buffers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get(session_id)
-                .cloned();
-            let offset = capture.map_or(0, |capture| Self::capture_bytes(&capture, &data));
+            let StreamPosition { epoch, offset } = Self::capture_bytes(capture, &data);
             let event = TerminalOutputEvent {
                 session_id: session_id.to_string(),
                 data,
                 offset,
+                epoch,
             };
             emitter.emit_output(&event);
         }
@@ -2861,10 +2868,18 @@ impl SessionManager {
 
         // Drop the session's scrollback capture buffer (#1900) so a dead
         // session's 1 MiB ring does not linger.
-        output_buffers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id);
+        // Only its own: a new stream of the same session may have started.
+        {
+            let mut buffers = output_buffers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if buffers
+                .get(session_id)
+                .is_some_and(|current| Arc::ptr_eq(current, capture))
+            {
+                buffers.remove(session_id);
+            }
+        }
 
         // (The identity bridge entry for this session was already captured and
         // removed above, where its presence gated the genuine-drop fold — #2439.)

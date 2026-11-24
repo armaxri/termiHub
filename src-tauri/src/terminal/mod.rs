@@ -11,5 +11,6 @@ pub mod agent_setup;
 pub mod agent_update_auth;
 pub mod backend;
 pub mod jsonrpc;
+pub mod output_route;
 pub mod x11_forward;
 pub mod xserver;

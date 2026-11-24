@@ -37,6 +37,7 @@ fn terminal_output_event_serializes_data_as_base64() {
             session_id: "s1".to_string(),
             data: bytes.clone(),
             offset: 0,
+            epoch: 1,
         };
         let json: Value = serde_json::to_value(&event).unwrap();
 
@@ -509,7 +510,7 @@ async fn replay_scrollback_returns_captured_history_without_touching_session() {
 
     // Simulate output having streamed through the reader into the capture.
     manager
-        .ensure_output_buffer("sess-move")
+        .start_output_buffer("sess-move")
         .lock()
         .unwrap()
         .write(b"line-1\r\nline-2\r\n");
@@ -661,6 +662,7 @@ async fn emit_and_cleanup_sends_exit_event() {
         Vec::new(),
         &emitter,
         &sessions,
+        &new_capture(),
         &output_buffers,
         &new_session_loggers(),
         &new_session_tab_ids(),
@@ -687,6 +689,7 @@ async fn emit_and_cleanup_flushes_remaining_data() {
         b"final bytes".to_vec(),
         &emitter,
         &sessions,
+        &new_capture(),
         &output_buffers,
         &new_session_loggers(),
         &new_session_tab_ids(),
@@ -1023,6 +1026,7 @@ async fn emit_and_cleanup_preserves_persistent_session_record() {
         Vec::new(),
         &emitter,
         &sessions,
+        &new_capture(),
         &new_output_buffers(),
         &new_session_loggers(),
         &new_session_tab_ids(),
@@ -1734,6 +1738,7 @@ async fn emit_and_cleanup_clears_the_tab_id_identity_bridge() {
         Vec::new(),
         &emitter,
         &sessions,
+        &new_capture(),
         &new_output_buffers(),
         &new_session_loggers(),
         &session_tab_ids,

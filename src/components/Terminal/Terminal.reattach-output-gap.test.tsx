@@ -51,6 +51,12 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
+const mockNotifySessionStart = vi.hoisted(() => vi.fn());
+vi.mock("@/plugins/sandbox/pluginSandboxHost", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/plugins/sandbox/pluginSandboxHost")>()),
+  sandboxNotifySessionStart: mockNotifySessionStart,
+}));
+
 const handlers = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
@@ -102,24 +108,32 @@ let releaseLineEnding: () => void;
 
 /** The session's output stream so far: every event carries where it starts. */
 let streamed = 0;
-function emitOutput(text: string): void {
-  const data = encoder.encode(text);
+let epoch = 1;
+function emitOutput(text: string | Uint8Array): void {
+  const data = typeof text === "string" ? encoder.encode(text) : text;
   handlers.get("terminal-output")?.({
-    payload: { session_id: SID, data: bytesToBase64(data), offset: streamed },
+    payload: { session_id: SID, data: bytesToBase64(data), offset: streamed, epoch },
   });
   streamed += data.length;
 }
 
+/** The session ended; one under the same id starts a new stream. */
+function endStream(): void {
+  handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null } });
+  streamed = 0;
+  epoch += 1;
+}
+
 /** A snapshot holding everything streamed up to now. */
 function snapshot(text: string, endOffset = streamed) {
-  return { data: encoder.encode(text), endOffset };
+  return { data: encoder.encode(text), endOffset, epoch };
 }
 
 beforeEach(async () => {
   useAppStore.setState(useAppStore.getInitialState());
   mockGetAgentSessionBuffer.mockReset();
   mockReplayScrollback.mockReset();
-  mockReplayScrollback.mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
+  mockReplayScrollback.mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
   mockSetLineEnding.mockReset();
   const held = new Promise<void>((resolve) => {
     releaseLineEnding = resolve;
@@ -127,6 +141,7 @@ beforeEach(async () => {
   mockSetLineEnding.mockReturnValue(held);
   xtermInstances.length = 0;
   streamed = 0;
+  epoch = 1;
   terminalDispatcher.destroy();
   handlers.clear();
   await terminalDispatcher.init();
@@ -266,6 +281,51 @@ describe("Terminal — persistent re-attach keeps the output of the hand-over (#
     expect(shown()).toBe("$ ls\r\n");
   });
 
+  it("shows a new stream that began while the tab repainted the old one", async () => {
+    // Another tab of the session ends it and starts it again under the same id.
+    terminalDispatcher.subscribeOutput(SID, () => {});
+    emitOutput("0123456789");
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("0123456789"));
+    await mountPersistent();
+    act(() => endStream());
+    emitOutput("new");
+    releaseLineEnding();
+    await settle();
+
+    expect(shown()).toContain("new");
+  });
+
+  it("drops output of a stream older than the repaint", async () => {
+    const late = encoder.encode("late");
+    epoch = 2;
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("$ ", 2));
+    await mountPersistent();
+    handlers.get("terminal-output")?.({
+      payload: { session_id: SID, data: bytesToBase64(late), offset: 50, epoch: 1 },
+    });
+    releaseLineEnding();
+    await settle();
+
+    expect(shown()).toBe("$ ");
+  });
+
+  it("gives the hand-over back when the setup fails after the repaint", async () => {
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("", 0));
+    await mountPersistent();
+    emitOutput("kept ");
+    mockNotifySessionStart.mockImplementationOnce(() => {
+      throw new Error("setup failed");
+    });
+    releaseLineEnding();
+    await settle();
+
+    // Nothing collects any more: it all waits for the next subscriber.
+    emitOutput("later");
+    const next: string[] = [];
+    terminalDispatcher.subscribeOutput(SID, (data) => next.push(decoder.decode(data)));
+    expect(next.join("")).toBe("kept later");
+  });
+
   it("leaves the hand-over to the next tab when this one is torn down first", async () => {
     mockGetAgentSessionBuffer.mockResolvedValue(snapshot("", 0));
     await mountPersistent();
@@ -285,10 +345,7 @@ describe("Terminal — persistent re-attach keeps the output of the hand-over (#
     releaseLineEnding();
     await settle();
 
-    act(() => {
-      handlers.get("terminal-exit")?.({ payload: { session_id: SID, exit_code: null } });
-    });
-    streamed = 0;
+    act(() => endStream());
     emitOutput("new");
     await settle();
 
@@ -353,5 +410,75 @@ describe("Terminal — a window that regains a session keeps the repaint's outpu
     });
 
     expect(shown()).toBe("one two three");
+  });
+
+  /** Lose the session to another window and get it back. */
+  function regain(): void {
+    act(() => useAppStore.getState().setSessionOwners({ [SID]: "win-1" }));
+    act(() => useAppStore.getState().setSessionOwners({ [SID]: "main" }));
+  }
+
+  /** A tab on screen, and repaints that are answered by hand. */
+  async function mountWithHeldRepaints() {
+    mockGetAgentSessionBuffer.mockResolvedValue(snapshot("", 0));
+    await mountPersistent();
+    releaseLineEnding();
+    await settle();
+    const answers: ((value: ReturnType<typeof snapshot>) => void)[] = [];
+    mockReplayScrollback.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    return answers;
+  }
+
+  it("writes output that waits for the repaint before the line that ends the session", async () => {
+    const answers = await mountWithHeldRepaints();
+    regain();
+    emitOutput("last words");
+    act(() => endStream());
+    await settle();
+    // The repaint of the ended stream comes too late to wipe the end line.
+    await act(async () => {
+      answers[0]({ data: encoder.encode("stale"), endOffset: 5, epoch: 1 });
+      await wait(60);
+    });
+
+    const text = shown();
+    expect(text.startsWith("last words")).toBe(true);
+    expect(text).toMatch(/last words[^]*connection lost/i);
+    expect(text).not.toContain("stale");
+    expect(text.trimEnd().endsWith("last words")).toBe(false);
+  });
+
+  it("keeps the output between two repaints that overlap", async () => {
+    const answers = await mountWithHeldRepaints();
+    regain();
+    emitOutput("one ");
+    const first = snapshot("one ");
+    regain();
+    emitOutput("two ");
+    const second = snapshot("one two ");
+    await act(async () => {
+      answers[0](first);
+      await wait(30);
+    });
+    emitOutput("three");
+    await settle();
+    await act(async () => {
+      answers[1](second);
+      await wait(60);
+    });
+
+    expect(shown()).toBe("one two three");
+  });
+
+  it("shows output that was not painted yet when the window regained it once", async () => {
+    const answers = await mountWithHeldRepaints();
+    emitOutput("one ");
+    regain();
+    await act(async () => {
+      answers[0](snapshot("one "));
+      await wait(60);
+    });
+
+    expect(shown()).toBe("one ");
   });
 });

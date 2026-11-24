@@ -30,4 +30,9 @@ data: string,
  * repainted a [`ScrollbackReplay`](super::output_capture::ScrollbackReplay)
  * skips the part the replay already holds.
  */
-offset: number, };
+offset: number, 
+/**
+ * Which output stream of the session `offset` is in: a session created
+ * again under the same id starts a new one at 0, with a larger epoch.
+ */
+epoch: number, };

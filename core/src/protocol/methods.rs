@@ -925,6 +925,11 @@ pub struct ConnectionOutputNotification {
     pub session_id: String,
     /// Base64-encoded session output bytes.
     pub data: String,
+    /// This chunk starts a replay of the session's whole buffer, which the
+    /// agent sends on every attach (0.45.0, #5990): everything sent before it is
+    /// part of what follows. Left out when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replay_start: bool,
 }
 
 /// Payload of a [`CONNECTION_EVICTED`] notification (agent → desktop, SM-003).
@@ -2408,6 +2413,9 @@ impl ConnectionOutputNotification {
         let mut map = serde_json::Map::new();
         map.insert("session_id".to_owned(), Value::String(self.session_id));
         map.insert("data".to_owned(), Value::String(self.data));
+        if self.replay_start {
+            map.insert("replay_start".to_owned(), Value::Bool(true));
+        }
         Value::Object(map)
     }
 }
@@ -5309,7 +5317,12 @@ mod tests {
         let output = json!({ "session_id": "s-1", "data": "aGk=" });
         let n: ConnectionOutputNotification = serde_json::from_value(output.clone()).unwrap();
         assert_eq!(n.session_id, "s-1");
+        assert!(!n.replay_start, "an older agent sends no flag");
         assert_eq!(serde_json::to_value(&n).unwrap(), output);
+        let replay = json!({ "session_id": "s-1", "data": "aGk=", "replay_start": true });
+        let n: ConnectionOutputNotification = serde_json::from_value(replay.clone()).unwrap();
+        assert!(n.replay_start);
+        assert_eq!(serde_json::to_value(&n).unwrap(), replay);
 
         let evicted = json!({ "session_id": "s-1", "reason": "takeover" });
         let n: ConnectionEvictedNotification = serde_json::from_value(evicted.clone()).unwrap();
@@ -5383,12 +5396,15 @@ mod tests {
     #[test]
     fn hot_path_into_params_matches_the_derived_serialization() {
         for (sid, data) in [("s-1", "aGk="), ("", ""), ("sess \"q\" é", "AAAA/+==")] {
-            let n = ConnectionOutputNotification {
-                session_id: sid.to_owned(),
-                data: data.to_owned(),
-            };
-            let derived = serde_json::to_string(&serde_json::to_value(&n).unwrap()).unwrap();
-            assert_eq!(n.into_params().to_string(), derived);
+            for replay_start in [false, true] {
+                let n = ConnectionOutputNotification {
+                    session_id: sid.to_owned(),
+                    data: data.to_owned(),
+                    replay_start,
+                };
+                let derived = serde_json::to_string(&serde_json::to_value(&n).unwrap()).unwrap();
+                assert_eq!(n.into_params().to_string(), derived);
+            }
 
             let f = AgentForwardDataParams {
                 stream_id: sid.to_owned(),

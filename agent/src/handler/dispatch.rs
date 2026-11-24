@@ -254,7 +254,11 @@ use termihub_core::monitoring::{
 /// agent-hosted SSH session negotiated, for the desktop's security popover.
 /// An older agent answers method-not-found and the popover says only
 /// "Encrypted (SSH)"; an older desktop never asks.
-const AGENT_PROTOCOL_VERSION: &str = "0.44.0";
+/// Bumped to 0.45.0 for the additive, optional `replay_start` of
+/// `connection.output` (#5990): the first chunk of the buffer an attach sends
+/// again is marked. An older desktop ignores the key; from an older agent the
+/// desktop may keep a re-sent buffer twice in a repaint.
+const AGENT_PROTOCOL_VERSION: &str = "0.45.0";
 
 /// The chmod / chown / symlink operations the agent host's own file system
 /// performs (#4601) — exactly what [`LocalFileBrowser`] answers, which backs
@@ -4116,10 +4120,11 @@ mod tests {
     /// and 0.42.0 the definition `description` with its
     /// `connectionDescription` capability (#5769),
     /// and 0.43.0 the definition `last_used_at` (#5940), and 0.44.0
-    /// `connection.sshAlgorithms` (#5896).
+    /// `connection.sshAlgorithms` (#5896), and 0.45.0 the optional
+    /// `replay_start` of `connection.output` (#5990).
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.44.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.45.0");
     }
 
     /// #3051: a 0.24.0+ client gets the camelCase `initialize` envelope and

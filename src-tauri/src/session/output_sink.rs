@@ -22,7 +22,7 @@ use termihub_core::session::traits::OutputSink;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use super::manager::{EventEmitter, SessionLoggers, SessionManager, TerminalOutputEvent};
-use super::output_capture::OutputCapture;
+use super::output_capture::{OutputCapture, StreamPosition};
 
 /// Desktop output sink: capture + log + emit for one live session.
 ///
@@ -65,12 +65,13 @@ impl<E: EventEmitter> OutputSink for TerminalOutputSink<E> {
     fn send_output(&self, session_id: &str, data: Vec<u8>) -> Result<(), SessionError> {
         // Mirror the exact hot-path triple the reader used to inline: capture
         // for scrollback replay, append to the transcript, then emit.
-        let offset = SessionManager::capture_bytes(&self.capture, &data);
+        let StreamPosition { epoch, offset } = SessionManager::capture_bytes(&self.capture, &data);
         SessionManager::log_output(&self.session_loggers, session_id, &data);
         let event = TerminalOutputEvent {
             session_id: self.session_id.clone(),
             data,
             offset,
+            epoch,
         };
         if self.emitter.emit_output(&event) {
             Ok(())

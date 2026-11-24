@@ -308,14 +308,17 @@ export type TerminalExitCallback = (
   endCause: SessionEndCause | null
 ) => void;
 
-/** A `terminal-output` subscriber: the bytes and where they start in the stream. */
-export type TerminalOutputCallback = (data: Uint8Array, offset: number) => void;
+/** Where a chunk of output starts (#5990): in which stream of the session, and at which byte. */
+export type OutputPosition = Pick<TerminalOutputEvent, "offset" | "epoch">;
+
+/** A `terminal-output` subscriber: the bytes and where they start. */
+export type TerminalOutputCallback = (data: Uint8Array, position: OutputPosition) => void;
 
 /** One output event, kept for a later subscriber. */
 export interface OutputChunk {
   data: Uint8Array;
-  /** Where `data` starts in the session's output stream (#5990). */
-  offset: number;
+  /** Where `data` starts. */
+  position: OutputPosition;
 }
 
 /** A session's output, collected for one tab ({@link TerminalOutputDispatcher.holdOutput}). */
@@ -379,14 +382,15 @@ export class TerminalOutputDispatcher {
     const unlistenOutput = await listen<TerminalOutputEvent>(
       TAURI_EVENT.terminalOutput,
       (event) => {
-        const { session_id, data, offset } = event.payload;
+        const { session_id, data, offset, epoch } = event.payload;
         this.outputTap?.(session_id, data);
         const cbs = this.outputCallbacks.get(session_id);
         const chunk = base64ToBytes(data);
         const holds = this.heldOutput.get(session_id);
-        for (const hold of holds ?? []) hold.push({ data: chunk, offset });
+        const position = { offset, epoch };
+        for (const hold of holds ?? []) hold.push({ data: chunk, position });
         if (cbs && cbs.size > 0) {
-          for (const cb of cbs) cb(chunk, offset);
+          for (const cb of cbs) cb(chunk, position);
         } else if (!holds) {
           // Buffer output for sessions whose subscriber hasn't registered yet
           // (e.g. pre-existing sessions created by agent setup).
@@ -395,7 +399,7 @@ export class TerminalOutputDispatcher {
             buf = [];
             this.pendingOutput.set(session_id, buf);
           }
-          buf.push({ data: chunk, offset });
+          buf.push({ data: chunk, position });
           this.trimPendingOutput(buf);
         }
       }
@@ -459,8 +463,8 @@ export class TerminalOutputDispatcher {
     const buffered = this.pendingOutput.get(sessionId);
     if (buffered) {
       this.pendingOutput.delete(sessionId);
-      for (const { data, offset } of buffered) {
-        callback(data, offset);
+      for (const { data, position } of buffered) {
+        callback(data, position);
       }
     }
     return () => {

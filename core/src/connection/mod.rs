@@ -440,6 +440,14 @@ pub trait ConnectionType: Send + Sync {
         None
     }
 
+    /// Where the source of this session's output last started over with a
+    /// replay of everything it still has (#5990), as a position in the output
+    /// since connecting: what came before it comes once more after it. `None`
+    /// for a backend that never does (the default).
+    fn output_replay_start(&self) -> Option<u64> {
+        None
+    }
+
     /// Why a plugin session served out of process ended on its own (#4184):
     /// the cause of its plugin runner's exit (crash, not responding, out of
     /// memory, invalid data), for the crash overlay. `None` while connected,

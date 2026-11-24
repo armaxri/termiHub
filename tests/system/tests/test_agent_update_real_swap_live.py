@@ -173,6 +173,16 @@ class TestAgentUpdateRealSwapLive(
         )
         self.start_persistent_session(definition["id"])
         self.wait_persistent_running(holder["id"], definition["id"])
+        # Something in its history to look for after the swap. The typed line
+        # does not hold the printed text, so one print is one occurrence.
+        history = f"{unique_name('swap-history')}-42"
+        before = self.tab_count()
+        self.open_persistent_definition(definition["id"])
+        self.wait(lambda: self.tab_count() > before, what="the persistent tab before the swap")
+        self.wait(self.has_terminal, what="the persistent session before the swap")
+        self.run_command(f"echo {history.removesuffix('42')}$((40+2))")
+        assert self.wait_for_output(history).count(history) == 1
+        self.close_all_tabs()
 
         # Busy applier: a live shell session holds up an immediate apply.
         before = self.tab_count()
@@ -247,4 +257,8 @@ class TestAgentUpdateRealSwapLive(
         self.wait(self.has_terminal, what="the re-attached persistent session")
         marker = unique_name("swap-survivor")
         self.run_command(f"echo {marker}")
-        assert marker in self.wait_for_output(marker)
+        # The answer to input typed right after the re-attach is shown, and the
+        # history above it once: neither lost nor repainted twice (#5990).
+        text = self.wait_for_output(marker)
+        assert marker in text
+        assert text.count(history) == 1, f"the history is shown {text.count(history)} times:\n{text}"

@@ -10,6 +10,7 @@ import {
   onCredentialStoreStatusChanged,
   base64ToBytes,
   bytesToBase64,
+  type OutputChunk,
 } from "./events";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -238,11 +239,14 @@ describe("events service", () => {
 
       // Emit event for sess-1
       handlers["terminal-output"]({
-        payload: { session_id: "sess-1", data: b64([65, 66]), offset: 7 },
+        payload: { session_id: "sess-1", data: b64([65, 66]), offset: 7, epoch: 2 },
       });
 
       expect(cb1).toHaveBeenCalledTimes(1);
-      expect(cb1).toHaveBeenCalledWith(expect.any(Uint8Array), 7);
+      expect(cb1).toHaveBeenCalledWith(expect.any(Uint8Array), {
+        offset: 7,
+        epoch: 2,
+      });
       expect(Array.from(cb1.mock.calls[0][0] as Uint8Array)).toEqual([65, 66]);
       expect(cb2).not.toHaveBeenCalled();
     });
@@ -889,14 +893,16 @@ describe("events service", () => {
         const data = new TextEncoder().encode(text);
         const offset = ends.get(sessionId) ?? 0;
         ends.set(sessionId, offset + data.length);
-        handler!({ payload: { session_id: sessionId, data: bytesToBase64(data), offset } });
+        handler!({
+          payload: { session_id: sessionId, data: bytesToBase64(data), offset, epoch: 1 },
+        });
       };
       dispatcher = new TerminalOutputDispatcher();
       await dispatcher.init();
     });
 
-    const texts = (chunks: { data: Uint8Array; offset: number }[]) =>
-      chunks.map((c) => `${c.offset}:${new TextDecoder().decode(c.data)}`);
+    const texts = (chunks: OutputChunk[]) =>
+      chunks.map((c) => `${c.position.offset}:${new TextDecoder().decode(c.data)}`);
 
     it("takes over waiting output and collects what comes, with positions", () => {
       emit("ab");
@@ -907,8 +913,8 @@ describe("events service", () => {
       // Drained: the next output waits for a subscriber again, and only that.
       emit("ef");
       const seen: string[] = [];
-      dispatcher.subscribeOutput("sess-1", (data, offset) =>
-        seen.push(...texts([{ data, offset }]))
+      dispatcher.subscribeOutput("sess-1", (data, position) =>
+        seen.push(...texts([{ data, position }]))
       );
       expect(seen).toEqual(["4:ef"]);
       expect(hold.drain()).toEqual([]);
@@ -916,8 +922,8 @@ describe("events service", () => {
 
     it("collects for each holder, also while another tab shows the session", () => {
       const shown: string[] = [];
-      dispatcher.subscribeOutput("sess-1", (data, offset) =>
-        shown.push(...texts([{ data, offset }]))
+      dispatcher.subscribeOutput("sess-1", (data, position) =>
+        shown.push(...texts([{ data, position }]))
       );
       const first = dispatcher.holdOutput("sess-1");
       const second = dispatcher.holdOutput("sess-1");
@@ -940,7 +946,7 @@ describe("events service", () => {
       hold.release();
       hold.release();
       const starts: number[] = [];
-      dispatcher.subscribeOutput("sess-1", (_, offset) => starts.push(offset));
+      dispatcher.subscribeOutput("sess-1", (_, { offset }) => starts.push(offset));
       expect(starts).toEqual([CAP, (3 * CAP) / 2]);
     });
 

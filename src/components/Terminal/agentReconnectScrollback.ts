@@ -6,6 +6,7 @@ import { currentSessionView } from "@/store/sessionBridge";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { resumedMarker } from "./dropCopy";
+import { NO_REPLAY, type ReplayEnd } from "./scrollbackReplay";
 
 /**
  * Who repaints an agent tab's scrollback after a reconnect (#5953).
@@ -31,7 +32,7 @@ export interface ResumedRepaint {
   /** Whether the backend resumed the tab's own session. */
   resumed: boolean;
   /** Where the repaint ends in the session's output stream (#5990). */
-  replayEnd: number;
+  replayEnd: ReplayEnd;
 }
 
 /**
@@ -51,7 +52,7 @@ export async function repaintIfResumed(
   isCanceled: () => boolean
 ): Promise<ResumedRepaint> {
   let resumed = false;
-  let replayEnd = 0;
+  let replayEnd = NO_REPLAY;
   try {
     resumed = await takeResumedAgentSession(sessionId);
   } catch (err) {
@@ -60,15 +61,15 @@ export async function repaintIfResumed(
   }
   if (!resumed || isCanceled()) return { resumed, replayEnd };
   try {
-    const { data, endOffset } = await getAgentSessionBuffer(sessionId);
+    const { data, ...end } = await getAgentSessionBuffer(sessionId);
     if (isCanceled()) return { resumed, replayEnd };
-    if (data.length > 0) {
-      // The raw buffer carries the OSC 133 marks: rebuild them, not duplicate.
-      resetCommandMarks();
-      xterm.reset();
-      await new Promise<void>((resolve) => xterm.write(data, resolve));
-      replayEnd = endOffset;
-    }
+    // Also when the buffer is not here yet: it then comes as live output, and
+    // the tab's own scrollback above it would be the same history twice.
+    // The raw buffer carries the OSC 133 marks: rebuild them, not duplicate.
+    resetCommandMarks();
+    xterm.reset();
+    if (data.length > 0) await new Promise<void>((resolve) => xterm.write(data, resolve));
+    replayEnd = end;
   } catch (err) {
     // The tab keeps its own scrollback; only the detached output is missing.
     frontendLog("terminal", `resumed-session buffer failed: ${errorMessage(err)}`);

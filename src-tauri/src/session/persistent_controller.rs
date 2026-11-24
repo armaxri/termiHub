@@ -20,13 +20,14 @@
 //! [`stop_persistent_session`](PersistentController::stop_persistent_session)
 //! calls [`SessionManager::close_session`], and
 //! [`attach_persistent_tab`](PersistentController::attach_persistent_tab) reuses
-//! `SessionManager::ensure_output_buffer` and `SessionManager::run_output_reader`
+//! `SessionManager::start_output_buffer` and `SessionManager::run_output_reader`
 //! and re-inserts a `SessionEntry` into the shared `sessions` map. It still
 //! carries no state of its own; the manager constructs one on demand via
 //! `SessionManager::persistent`, and the persistent registry (`persistent_sessions`)
 //! remains a field on the manager.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -43,6 +44,13 @@ use super::manager::{
 };
 use super::output_capture::{extend_back, ScrollbackReplay};
 use super::remote_proxy::{ReattachOutcome, RemoteProxy};
+
+/// How long a repaint waits for the buffer the agent sends again on an attach.
+/// It is on its way already; past this the repaint shows what is here.
+const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How often the wait looks.
+const CATCH_UP_POLL: Duration = Duration::from_millis(5);
 
 /// Borrowing facade exposing the manager's persistent-session operations.
 ///
@@ -340,7 +348,7 @@ impl<'a> PersistentController<'a> {
                     // Spawn output reader for the re-created session.
                     let sessions_clone = self.manager.sessions.clone();
                     let emitter_clone = emitter.clone();
-                    let capture = self.manager.ensure_output_buffer(&session_id);
+                    let capture = self.manager.start_output_buffer(&session_id);
                     let output_buffers = self.manager.output_buffers.clone();
                     let session_loggers = self.manager.session_loggers.clone();
                     let session_tab_ids = self.manager.session_tab_ids.clone();
@@ -492,17 +500,54 @@ impl<'a> PersistentController<'a> {
         &self,
         session_id: &str,
     ) -> Result<ScrollbackReplay, TerminalError> {
-        let older = self.fetch_remote_buffer(session_id).await;
+        let older = match self.fetch_remote_buffer(session_id).await {
+            Ok(older) => older,
+            Err(e) => {
+                let replay = self.manager.replay_scrollback(session_id).await;
+                if replay.data.is_empty() {
+                    return Err(e);
+                }
+                warn!(session_id, error = %e, "agent buffer not read; using the capture");
+                return Ok(replay);
+            }
+        };
         // The capture, not the agent's buffer, decides where the replay ends
-        // (#5990): only it knows which live output it already holds. Read after
-        // the round trip, so the daemon's re-forward of an attach is in it.
-        let mut replay = self.manager.replay_scrollback(session_id).await;
-        match older {
-            Ok(older) => replay.data = extend_back(&older, replay.data),
-            Err(e) if replay.data.is_empty() => return Err(e),
-            Err(e) => warn!(session_id, error = %e, "agent buffer not read; using the capture"),
+        // (#5990): only it knows which live output it already holds. After an
+        // attach the buffer is still arriving as live output, so wait for it:
+        // a replay that ends in the middle would put whatever the tab writes
+        // next, and the older output, in the wrong place.
+        let caught_up = self.wait_caught_up(session_id, older.len()).await;
+        let (mut replay, dropped) = self
+            .manager
+            .read_capture(session_id, |c| (c.snapshot(), c.has_dropped_history()))
+            .await
+            .unwrap_or_default();
+        if caught_up && dropped {
+            replay.data = extend_back(&older, replay.data);
         }
         Ok(replay)
+    }
+
+    /// Wait until `session_id`'s capture holds what the agent's buffer of `len`
+    /// bytes held, up to [`CATCH_UP_TIMEOUT`]. Returns whether it does.
+    async fn wait_caught_up(&self, session_id: &str, len: usize) -> bool {
+        let caught_up = async {
+            loop {
+                let done = self
+                    .manager
+                    .read_capture(session_id, |c| c.has_caught_up_with(len))
+                    .await;
+                match done {
+                    Some(true) => return true,
+                    // The session ended meanwhile.
+                    None => return false,
+                    Some(false) => tokio::time::sleep(CATCH_UP_POLL).await,
+                }
+            }
+        };
+        tokio::time::timeout(CATCH_UP_TIMEOUT, caught_up)
+            .await
+            .unwrap_or(false)
     }
 
     /// The agent's own buffer of `session_id`: `session.getBuffer` over

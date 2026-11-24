@@ -81,16 +81,22 @@ impl ConnectionType for EchoConnection {
 }
 
 /// The bytes of every `connection.output` notification until `needle` is in
-/// them.
+/// them, and how many of them were marked as the start of a replay.
 async fn output_until(
     notifications: &mut mpsc::UnboundedReceiver<crate::protocol::messages::JsonRpcNotification>,
     needle: &[u8],
-) -> Vec<u8> {
+) -> (Vec<u8>, usize) {
     use base64::Engine;
     let mut seen = Vec::new();
+    let mut replay_starts = 0;
     let all = tokio::time::timeout(BOUND, async {
         while !seen.windows(needle.len()).any(|w| w == needle) {
             let note = notifications.recv().await.expect("the worker is attached");
+            if note.params.get("replay_start").is_some() {
+                // Only the first chunk of the buffer an attach sends again.
+                assert!(seen.is_empty(), "a replay start after {seen:?}");
+                replay_starts += 1;
+            }
             if let Some(data) = note.params.get("data").and_then(|d| d.as_str()) {
                 seen.extend(
                     base64::engine::general_purpose::STANDARD
@@ -102,7 +108,7 @@ async fn output_until(
     })
     .await;
     assert!(all.is_ok(), "{needle:?} never reached the worker: {seen:?}");
-    seen
+    (seen, replay_starts)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -135,7 +141,8 @@ async fn input_right_after_an_adoption_reaches_the_session_and_is_answered() {
     let (tx, mut notes) = mpsc::unbounded_channel();
     let mut first = attach(tx).await.expect("attach");
     out_tx.send(b"$ ".to_vec()).await.expect("prompt");
-    assert_eq!(output_until(&mut notes, b"$ ").await, b"$ ");
+    // Nothing was printed before the attach: live output, not a replay.
+    assert_eq!(output_until(&mut notes, b"$ ").await, (b"$ ".to_vec(), 0));
     first.detach().await;
 
     // Adopt it again and again, typing at once each time.
@@ -149,7 +156,7 @@ async fn input_right_after_an_adoption_reaches_the_session_and_is_answered() {
             .expect("write");
         expected.extend_from_slice(&line);
         // The replay, then the answer: nothing lost, nothing twice.
-        assert_eq!(output_until(&mut notes, &line).await, expected);
+        assert_eq!(output_until(&mut notes, &line).await, (expected.clone(), 1));
         client.detach().await;
     }
     assert_eq!(

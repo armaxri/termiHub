@@ -10,6 +10,10 @@ export type ScrollbackReplay = {
 data: string, 
 /**
  * Where `data` ends in the session's output stream. A `terminal-output`
- * byte before this position is already part of `data`.
+ * byte of the same `epoch` before this position is already part of `data`.
  */
-endOffset: number, };
+endOffset: number, 
+/**
+ * Which output stream of the session this is (see [`StreamPosition`]).
+ */
+epoch: number, };

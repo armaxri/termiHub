@@ -1169,7 +1169,7 @@ async fn connect_and_start_reader(
                 MSG_BUFFER_REPLAY => {
                     // Send as connection.output if non-empty
                     if !frame.payload.is_empty() {
-                        send_output_notification(
+                        send_replay_notification(
                             &notification_tx,
                             session_id,
                             &frame.payload,
@@ -1505,7 +1505,7 @@ async fn read_frames(
                     if let Some(sender) = pending {
                         let _ = sender.send(frame.payload);
                     } else if !frame.payload.is_empty() {
-                        send_output_notification(
+                        send_replay_notification(
                             notification_tx,
                             session_id,
                             &frame.payload,
@@ -1662,8 +1662,29 @@ pub(crate) fn send_output_notification(
     data: &[u8],
     budget: Option<&OutputBudget>,
 ) {
+    send_output_chunks(tx, session_id, data, budget, false);
+}
+
+/// [`send_output_notification`] for the session's whole buffer, sent again on
+/// an attach: its first chunk says so (#5990).
+fn send_replay_notification(
+    tx: &NotificationSender,
+    session_id: &str,
+    data: &[u8],
+    budget: Option<&OutputBudget>,
+) {
+    send_output_chunks(tx, session_id, data, budget, true);
+}
+
+fn send_output_chunks(
+    tx: &NotificationSender,
+    session_id: &str,
+    data: &[u8],
+    budget: Option<&OutputBudget>,
+    replay: bool,
+) {
     let b64 = base64::engine::general_purpose::STANDARD;
-    for chunk in data.chunks(65536) {
+    for (i, chunk) in data.chunks(65536).enumerate() {
         // `into_params` moves the encoded chunk into the params object, so
         // this builds no more than the old `json!` did (#3759).
         let notification = charged(
@@ -1672,6 +1693,7 @@ pub(crate) fn send_output_notification(
                 ConnectionOutputNotification {
                     session_id: session_id.to_owned(),
                     data: b64.encode(chunk),
+                    replay_start: replay && i == 0,
                 }
                 .into_params(),
             ),
@@ -2456,6 +2478,20 @@ mod tests {
 
     fn legacy_wire(method: &str, params: serde_json::Value) -> String {
         wire(&JsonRpcNotification::new(method, params))
+    }
+
+    /// #5990: only the first chunk of a replay is marked, and live output never.
+    #[test]
+    fn a_replay_is_marked_on_its_first_chunk_only() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let big = vec![b'x'; 150_000];
+        send_replay_notification(&tx, "s", &big, None);
+        send_output_notification(&tx, "s", &big, None);
+        let mut marks = Vec::new();
+        while let Ok(n) = rx.try_recv() {
+            marks.push(n.params.get("replay_start").is_some());
+        }
+        assert_eq!(marks, [true, false, false, false, false, false]);
     }
 
     #[test]

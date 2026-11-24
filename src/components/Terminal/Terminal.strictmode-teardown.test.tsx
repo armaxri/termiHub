@@ -65,7 +65,7 @@ const mockCloseTerminal = vi.fn().mockResolvedValue(undefined);
 const mockDetachPersistentTab = vi.fn().mockResolvedValue(0);
 const mockGetAgentSessionBuffer = vi
   .fn()
-  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
 
 vi.mock("@/services/api", () => ({
   createTerminal: (...args: unknown[]) => mockCreateTerminal(...args),

@@ -79,7 +79,7 @@ vi.mock("@/themes", () => ({
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
 const mockGetAgentSessionBuffer = vi
   .fn()
-  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
 vi.mock("@/services/api", () => ({
   createTerminal: (...a: unknown[]) => mockCreateTerminal(...a),
   cancelConnecting: vi.fn().mockResolvedValue(undefined),
@@ -89,7 +89,9 @@ vi.mock("@/services/api", () => ({
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: (...a: unknown[]) => mockGetAgentSessionBuffer(...a),
-  replaySessionScrollback: vi.fn().mockResolvedValue({ data: new Uint8Array(), endOffset: 0 }),
+  replaySessionScrollback: vi
+    .fn()
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 }),
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
 }));
 

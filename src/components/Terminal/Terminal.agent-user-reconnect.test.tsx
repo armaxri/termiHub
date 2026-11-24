@@ -15,6 +15,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
+import type { OutputPosition } from "@/services/events";
 import { useAppStore } from "@/store/appStore";
 import {
   clearAgentDisconnectIntent,
@@ -72,7 +73,7 @@ vi.mock("@/themes", () => ({
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
 const mockGetAgentSessionBuffer = vi
   .fn()
-  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
 const mockTakeResumed = vi.fn().mockResolvedValue(false);
 vi.mock("@/services/api", () => ({
   createTerminal: (...a: unknown[]) => mockCreateTerminal(...a),
@@ -84,17 +85,21 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: (...a: unknown[]) => mockGetAgentSessionBuffer(...a),
   takeResumedAgentSession: (...a: unknown[]) => mockTakeResumed(...a),
-  replaySessionScrollback: vi.fn().mockResolvedValue({ data: new Uint8Array(), endOffset: 0 }),
+  replaySessionScrollback: vi
+    .fn()
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 }),
   sessionGetCapabilities: vi.fn().mockResolvedValue({}),
 }));
 
 // Capture the live-output callback the terminal subscribes with, keyed by session
 // id, so a test can deliver the agent's re-forwarded ring buffer as output.
-const outputCallbacks: Record<string, (data: Uint8Array, offset: number) => void> = {};
-const mockSubscribeOutput = vi.fn((sid: string, cb: (data: Uint8Array, offset: number) => void) => {
-  outputCallbacks[sid] = cb;
-  return vi.fn();
-});
+const outputCallbacks: Record<string, (data: Uint8Array, position: OutputPosition) => void> = {};
+const mockSubscribeOutput = vi.fn(
+  (sid: string, cb: (data: Uint8Array, position: OutputPosition) => void) => {
+    outputCallbacks[sid] = cb;
+    return vi.fn();
+  }
+);
 // The exit callback per session, so a test can end a session (#5959).
 const exitCallbacks: Record<string, (code: number | null, cause?: unknown) => void> = {};
 const mockSubscribeExit = vi.fn(
@@ -138,7 +143,7 @@ beforeEach(() => {
   mockCreateTerminal.mockClear();
   mockCreateTerminal.mockResolvedValue("fresh-session");
   mockGetAgentSessionBuffer.mockClear();
-  mockGetAgentSessionBuffer.mockResolvedValue({ data: new Uint8Array(), endOffset: 0 });
+  mockGetAgentSessionBuffer.mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1 });
   mockTakeResumed.mockReset();
   mockTakeResumed.mockResolvedValue(false);
   mockSubscribeOutput.mockClear();
@@ -250,7 +255,11 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
     const tabId = await mountConnected();
     const buffer = new TextEncoder().encode("$ echo before\r\nbefore\r\n");
     mockTakeResumed.mockResolvedValue(true);
-    mockGetAgentSessionBuffer.mockResolvedValue({ data: buffer, endOffset: buffer.length });
+    mockGetAgentSessionBuffer.mockResolvedValue({
+      data: buffer,
+      endOffset: buffer.length,
+      epoch: 1,
+    });
 
     await disconnectAndReconnect(tabId);
 
@@ -265,13 +274,53 @@ describe("Terminal — agent tab Reconnect after a user Disconnect (#5953)", () 
     // after it is not (#5990).
     const before = written(fresh).length;
     act(() => {
-      outputCallbacks["fresh-session"]?.(buffer, 0);
-      outputCallbacks["fresh-session"]?.(new TextEncoder().encode("later"), buffer.length);
+      outputCallbacks["fresh-session"]?.(buffer, { offset: 0, epoch: 1 });
+      outputCallbacks["fresh-session"]?.(new TextEncoder().encode("later"), {
+        offset: buffer.length,
+        epoch: 1,
+      });
     });
     await act(async () => {
       await wait(40);
     });
     expect(written(fresh).slice(before)).toEqual(["later"]);
+  });
+});
+
+/** How often `text` is in what the tab's terminal was given since its reset. */
+function timesShown(instance: (typeof xtermInstances)[number], text: string): number {
+  const resets = instance.reset.mock.invocationCallOrder;
+  const from = resets.length > 0 ? resets[resets.length - 1] : 0;
+  const all = instance.write.mock.calls
+    .filter((_, i) => instance.write.mock.invocationCallOrder[i] > from)
+    .map((call) => (typeof call[0] === "string" ? call[0] : decoder.decode(call[0] as Uint8Array)))
+    .join("");
+  return all.split(text).length - 1;
+}
+
+describe("Terminal — a resumed session shows its history once (#5990)", () => {
+  it("also when its buffer is not here yet and comes as live output", async () => {
+    const tabId = await mountConnected();
+    mockTakeResumed.mockResolvedValue(true);
+    mockGetAgentSessionBuffer.mockResolvedValue({
+      data: new Uint8Array(),
+      endOffset: 0,
+      epoch: 1,
+    });
+
+    await disconnectAndReconnect(tabId);
+    act(() => {
+      outputCallbacks["fresh-session"]?.(new TextEncoder().encode(SERIALIZED_SCROLLBACK), {
+        offset: 0,
+        epoch: 1,
+      });
+    });
+    await act(async () => {
+      await wait(40);
+    });
+
+    const fresh = xtermInstances[xtermInstances.length - 1];
+    expect(timesShown(fresh, SERIALIZED_SCROLLBACK)).toBe(1);
   });
 });
 

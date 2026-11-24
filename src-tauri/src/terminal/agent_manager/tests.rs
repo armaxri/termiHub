@@ -777,7 +777,7 @@ fn preinit_notification_is_buffered_and_replayed() {
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
     let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    session_outputs.insert("sess-1".to_string(), tx);
+    session_outputs.insert("sess-1".to_string(), tx.into());
 
     for (method, params) in &buffered {
         handle_notification(method, params, &session_outputs, &monitoring_outputs, &b64);
@@ -1109,8 +1109,8 @@ fn reconcile_output_senders_drops_non_recovered_sessions() {
 
     let (out_survivor, _r1) = std::sync::mpsc::channel();
     let (out_gone, _r2) = std::sync::mpsc::channel();
-    session_outputs.insert("survivor".to_string(), out_survivor);
-    session_outputs.insert("gone".to_string(), out_gone);
+    session_outputs.insert("survivor".to_string(), out_survivor.into());
+    session_outputs.insert("gone".to_string(), out_gone.into());
 
     let (mon_survivor, _r3) = tokio::sync::mpsc::channel(1);
     let (mon_gone, _r4) = tokio::sync::mpsc::channel(1);
@@ -2664,7 +2664,7 @@ fn handle_notification_routes_connection_output_via_the_dto() {
     let b64 = base64::engine::general_purpose::STANDARD;
     let (tx, rx) = std::sync::mpsc::channel();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    session_outputs.insert("sess-1".to_string(), tx);
+    session_outputs.insert("sess-1".to_string(), tx.into());
     let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
 
     handle_notification(
@@ -2755,8 +2755,8 @@ fn dispatch_agent_notification_preserves_connection_output_order() {
     let (tx1, rx1) = std::sync::mpsc::channel::<Vec<u8>>();
     let (tx2, rx2) = std::sync::mpsc::channel::<Vec<u8>>();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    session_outputs.insert("sess-1".to_string(), tx1);
-    session_outputs.insert("sess-2".to_string(), tx2);
+    session_outputs.insert("sess-1".to_string(), tx1.into());
+    session_outputs.insert("sess-2".to_string(), tx2.into());
     let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
 
     let output = |sid: &str, chunk: &str| {
@@ -3104,5 +3104,44 @@ fn other_disconnects_are_an_unexpected_loss() {
             ("disconnected".to_string(), Some("lost".to_string())),
             ("disconnected".to_string(), Some("lost".to_string())),
         ]
+    );
+}
+
+/// #5990: the first chunk of a buffer the agent sends again on an attach marks
+/// where the session's history starts over, on every path that dispatches
+/// notifications (the live loop, a transport reconnect, the handshake).
+#[test]
+fn a_replay_start_is_recorded_where_it_lands_in_the_stream() {
+    use crate::terminal::backend::OutputPosition;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let position = OutputPosition::default();
+    let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    session_outputs.insert("s".to_string(), OutputSender::new(tx, position.clone()));
+    let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+    let deliver = |data: &[u8], replay_start: bool| {
+        let mut params = json!({ "session_id": "s", "data": b64.encode(data) });
+        if replay_start {
+            params["replay_start"] = json!(true);
+        }
+        handle_notification(
+            "connection.output",
+            &params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
+    };
+    deliver(b"live", false);
+    assert_eq!(position.replay_start(), None);
+    deliver(b"live+", true);
+    deliver(b"more", false);
+    assert_eq!(position.replay_start(), Some(4));
+    deliver(b"live+more", true);
+    assert_eq!(position.replay_start(), Some(13));
+    drop(session_outputs);
+    assert_eq!(
+        rx.iter().collect::<Vec<_>>().concat(),
+        b"livelive+morelive+more"
     );
 }

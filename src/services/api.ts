@@ -740,14 +740,15 @@ export async function takePendingWindowRestore(): Promise<WindowRestorePayload |
 export interface SessionScrollback {
   data: Uint8Array;
   /**
-   * Where `data` ends in the session's output stream: live output before this
-   * position is already part of it (#5990).
+   * Where `data` ends in the session's output stream: live output of the same
+   * `epoch` before this position is already part of it (#5990).
    */
   endOffset: number;
+  epoch: number;
 }
 
-function decodeScrollback({ data, endOffset }: ScrollbackReplay): SessionScrollback {
-  return { data: base64ToBytes(data), endOffset };
+function decodeScrollback({ data, ...end }: ScrollbackReplay): SessionScrollback {
+  return { data: base64ToBytes(data), ...end };
 }
 
 /**
