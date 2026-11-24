@@ -94,6 +94,7 @@ class TestProductRunCredentialFeedback(
             "A wrong master password marks the field invalid; Unlock stays the primary button",
             expect="#5629: the unlock dialog with a red-bordered password field, the error under "
             "it and a filled blue Unlock button (no green outline)",
+            expect_testid="unlock-dialog-error",
         ):
             self.require("cred-feedback.switch-once")
             self.lock_credential_store()
@@ -111,6 +112,8 @@ class TestProductRunCredentialFeedback(
             assert invalid == "true", "the password field is not marked invalid"
             assert "ui-input--error" in field, "the password field has no error border"
             assert self.credential_store_locked(), "a wrong password unlocked the store"
+            # Capture the error state before the right password unlocks (#5857).
+            self.shot()
             self.handle_unlock_dialog(MASTER_PASSWORD)
 
     def test_30_keychain_switch_confirmation(self):

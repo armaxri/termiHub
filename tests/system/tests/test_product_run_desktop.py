@@ -810,20 +810,26 @@ class TestProductRunSettingsThemes(
             "Both command-mark toggles live together under Terminal ▸ Command marks (#5633)",
             expect="Settings ▸ Terminal with a Command marks group: Show command marks and, "
             "nested under it, Add shell hook to new sessions automatically",
+            expect_testid="settings-command-marks",
         ):
+            # General first: the step ends on Terminal ▸ Command marks, the
+            # screen its capture is about (#5857).
+            self.open_settings_category("general")
+            problems = []
+            if self.driver.exists("settings-default-shell-integration"):
+                problems.append("the shell-hook toggle still shows under General")
             self.open_settings_category("terminal")
             self.wait(lambda: self.driver.exists("settings-command-marks"),
                       what="the Command marks group")
             text = self.driver.get_text("settings-command-marks")
             self.evidence(f"group text {text[:200]!r}")
-            problems = [
+            problems += [
                 f"missing {label!r}"
                 for label in ("Show command marks", "Add shell hook to new sessions automatically")
                 if label not in text
             ]
-            self.open_settings_category("general")
-            if self.driver.exists("settings-default-shell-integration"):
-                problems.append("the shell-hook toggle still shows under General")
+            # The group sits below the fold of a long Terminal page.
+            self.driver.scroll_into_view("settings-command-marks")
             assert not problems, "; ".join(problems)
 
     #: Computed properties every settings section heading shares (#5634).
