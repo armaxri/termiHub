@@ -68,6 +68,7 @@ import { useAppStore } from "@/store/appStore";
 import { connectionTypeDisplayName } from "@/utils/connectionTypeDisplayName";
 import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
+import { useAgentSetupStatus, type AgentSetupPhase } from "@/store/agentSetupStatus";
 import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import {
@@ -162,8 +163,11 @@ export interface AgentRowPresentation {
   tone: StatusTone;
   /** Non-colour state word for the dot's accessible name and tooltip. */
   label: string;
-  /** The inline header action a not-connected agent offers, if any. */
-  action: "connect" | "reconnect" | "setup" | null;
+  /**
+   * The inline header action a not-connected agent offers, if any.
+   * `installing` is no action but the "Installing…" marker (#5906).
+   */
+  action: "connect" | "reconnect" | "setup" | "installing" | null;
 }
 
 /**
@@ -175,18 +179,28 @@ export interface AgentRowPresentation {
  * An agent whose host has no termiHub agent yet (`notInstalled`) is an
  * expected first-run state, not a failure (#5851): neutral, "Agent not
  * installed", with "Set up agent" as its action.
+ * While a setup installs the agent (`setupPhase`), the row reads "Installing…";
+ * once it succeeded, the neutral "Not connected" + "Connect", whatever the
+ * connect that offered the setup left behind (#5906).
  * Any unknown state is treated as not connected.
  */
 export function agentRowPresentation(
   connectionState: string,
   failed: boolean,
-  notInstalled = false
+  notInstalled = false,
+  setupPhase?: AgentSetupPhase
 ): AgentRowPresentation {
   if (connectionState === "connected") {
     return { tone: "connected", label: connectionStateLabel("connected"), action: null };
   }
   if (connectionState === "connecting" || connectionState === "reconnecting") {
     return { tone: "connecting", label: connectionStateLabel(connectionState), action: null };
+  }
+  if (setupPhase === "installing") {
+    return { tone: "connecting", label: "Installing…", action: "installing" };
+  }
+  if (setupPhase === "installed") {
+    return { tone: "disabled", label: "Not connected", action: "connect" };
   }
   if (notInstalled) {
     return { tone: "disabled", label: "Agent not installed", action: "setup" };
@@ -1124,10 +1138,19 @@ export function AgentNode({
     () => !!agent.lastError && classifyAgentError(agent.lastError).category === "agent-missing",
     [agent.lastError]
   );
+  // A setup running on (or just finished on) this agent's host (#5906).
+  const setupPhase = useAgentSetupStatus((s) => s.phases[agent.id]);
+  const clearSetupPhase = useAgentSetupStatus((s) => s.clear);
+  // Once the agent connects, the finished setup has served its purpose: a
+  // later drop must read as a failure again.
+  useEffect(() => {
+    if (isConnected && setupPhase === "installed") clearSetupPhase(agent.id);
+  }, [isConnected, setupPhase, clearSetupPhase, agent.id]);
   const rowPresentation = agentRowPresentation(
     agent.connectionState,
     rowFailure.failed || !!agent.lastError,
-    rowFailure.notInstalled || lastErrorNotInstalled
+    rowFailure.notInstalled || lastErrorNotInstalled,
+    setupPhase
   );
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
@@ -1322,6 +1345,9 @@ export function AgentNode({
     });
     if (!proceed) return;
 
+    // A new attempt decides the row's state from here on, not the setup that
+    // preceded it (#5906).
+    useAgentSetupStatus.getState().clear(agent.id);
     setConnecting(true);
     try {
       let password: string | undefined;
@@ -1964,6 +1990,16 @@ export function AgentNode({
                   />
                 </div>
               )}
+              {isDisconnected && rowPresentation.action === "installing" && (
+                // A setup is installing the agent (#5906): say so in words, not
+                // only with the busy dot, and offer no action meanwhile.
+                <span
+                  className="connection-list__group-status"
+                  data-testid={`agent-installing-${agent.id}`}
+                >
+                  Installing…
+                </span>
+              )}
               {isDisconnected && rowPresentation.action === "setup" && (
                 // The host has no agent yet (#5851): the next step, not a retry.
                 <div className="connection-list__group-actions connection-list__group-actions--inline">
@@ -2369,6 +2405,14 @@ export function AgentNode({
                 </p>
               )}
             </>
+          ) : rowPresentation.action === "installing" ? (
+            <p
+              className="agent-node__hint"
+              style={{ paddingLeft: 32 }}
+              data-testid={`agent-empty-${agent.id}`}
+            >
+              Installing the agent on {agent.config.host}…
+            </p>
           ) : rowPresentation.action === "setup" ? (
             // No agent on the host yet (#5851): name the host and the next step.
             <p

@@ -18,6 +18,7 @@ import {
   RemoteArchInfo,
 } from "@/services/api";
 import { onAgentSetupProgress } from "@/services/events";
+import { useAgentSetupStatus } from "@/store/agentSetupStatus";
 import { useListenerGroup } from "@/hooks/useTauriListener";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -244,6 +245,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       const held = await progressListener.attach(() =>
         onAgentSetupProgress((agentId, step, message) => {
           if (agentId !== agent.id) return;
+          // The agent row follows the setup (#5906); the app-wide listener
+          // does the same once this dialog is closed.
+          useAgentSetupStatus.getState().applyProgress(agentId, step);
 
           if (step === "done") {
             // toast-policy: background — the deploy runs on after its dialog closed
@@ -279,6 +283,8 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         return;
       }
 
+      // The agent row reads "Installing…" from here on (#5906).
+      useAgentSetupStatus.getState().markInstalling(agent.id);
       const result = await setupRemoteAgent(agent.id, configRef.current, {
         binarySource: binarySourcePayload,
         remoteOs,
@@ -312,6 +318,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     } catch (err) {
       const message = errorMessage(err);
       stopProgressListener();
+      useAgentSetupStatus.getState().clear(agent.id);
       setSubmitError(message);
       setLoading(false);
       toast.error(`Agent deploy to ${agent.name} failed: ${message}`, { id: toastId });

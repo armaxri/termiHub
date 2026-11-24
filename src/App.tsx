@@ -51,6 +51,7 @@ import { useScheduledRuns } from "@/hooks/useScheduledRuns";
 import { usePluginUpdateSchedule } from "@/hooks/usePluginUpdateSchedule";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useAgentUpdateEvents } from "@/hooks/useAgentUpdateEvents";
+import { useAgentSetupProgressEvents } from "@/hooks/useAgentSetupProgressEvents";
 import { useAgentUpdatePendingEvents } from "@/hooks/useAgentUpdatePendingEvents";
 import { useSpawnChoiceHandler, useSpawnRequests } from "@/hooks/useSpawnRequests";
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
@@ -84,6 +85,7 @@ function App() {
   usePluginUpdateSchedule();
   useCredentialStoreEvents();
   useAgentUpdateEvents();
+  useAgentSetupProgressEvents();
   useAgentUpdatePendingEvents();
   useSpawnRequests();
   useHttpMonitorNotifications();
