@@ -10,7 +10,7 @@
   ],
   "registry": [
     {
-      "globs": ["settings-nav-*"],
+      "globs": ["settings-nav-*", "settings-category-icon-*"],
       "source": "src/components/Settings/settingsRegistry.ts",
       "extract": { "kind": "object-field", "const": "CATEGORIES", "field": "id" }
     },
