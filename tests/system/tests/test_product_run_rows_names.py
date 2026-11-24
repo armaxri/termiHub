@@ -55,10 +55,11 @@ from termihub_harness import (
 )
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.agent_deploy import AgentDeployUi, reap_agents_under
-from termihub_harness.product_run.automation_steps import MACRO_EDITOR, AutomationPhaseUi
+from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.editor_layout import TUNNEL_ACTIONS, measure_editor_footer
 from termihub_harness.product_run.grades import row_leftover_text, tunnel_editor_primary_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
+from termihub_harness.ui.automation_sidebar import KEYS_EDITOR
 
 pytestmark = [
     pytest.mark.product_run,
@@ -114,9 +115,10 @@ class TestProductRunRowsNames(
         with self.step(
             "rows-names.items",
             "A saved connection, a macro, a triggered workflow and a schedule, each named",
-            expect="the Workflows sidebar listing 'Answer rows' (description 'Replies on "
+            expect="the Automations sidebar listing 'Answer rows' (description 'Replies on "
             "match'), with an Armed marker",
         ):
+            # For the remote-agent row later in this class.
             self.enable_experimental_features()
             local = f"pr-rows-local-{t}"
             self.switch_to_connections_sidebar()
@@ -127,11 +129,10 @@ class TestProductRunRowsNames(
             self.ids["macro"] = self.create_macro(
                 f"Rows macro {t}", [f"echo PR_ROWS_MACRO_{t}\\r"]
             )
-            self.driver.click(f"macro-edit-{self.ids['macro']}")
-            self.wait(lambda: self.driver.exists(MACRO_EDITOR), what="the macro editor")
+            self.edit_automation(self.ids["macro"], KEYS_EDITOR)
             self.driver.type("macro-editor-description", "Checks the release")
             self.driver.type("macro-editor-tags", "ops")
-            self._save_macro()
+            self.save_keystrokes()
             self.wait(
                 lambda: (self.macro(self.ids["macro"]) or {}).get("description")
                 == "Checks the release",
@@ -147,11 +148,11 @@ class TestProductRunRowsNames(
             self.save_workflow()
             self.ids["workflow"] = self.workflow_id(f"Answer rows {t}")
 
-            self.ids["schedule"] = self.schedule_macro(
+            self.ids["schedule"] = self.schedule_automation(
                 self.ids["macro"], f"Rows schedule {t}", self.ids["conn"],
                 description="Every minute check",
             )
-            self.open_workflows_sidebar()
+            self.show_automations()
 
     # ── rows ─────────────────────────────────────────────────────────────────
     def test_10_connection_row(self):
@@ -182,18 +183,18 @@ class TestProductRunRowsNames(
             "rows-names.macro",
             "A macro row shows its name and description; what it types and its tags are in "
             "the tooltip",
-            expect="the Macros sidebar: 'Rows macro …' with 'Checks the release' muted under "
+            expect="the Automations sidebar: 'Rows macro …' with 'Checks the release' muted under "
             "it and the Play button; no 'echo …' preview and no tag chips on the row (#5757)",
         ):
             self.require("rows-names.items")
-            self.show_macros()
+            self.show_automations()
             mid = self.ids["macro"]
             self._grade_row(
-                f"macro-item-{mid}",
+                f"automation-item-{mid}",
                 [f"Rows macro {t}", "Checks the release"],
                 [f"echo PR_ROWS_MACRO_{t}", "Tags: ops"],
             )
-            assert self.driver.exists(f"macro-description-{mid}"), "no description line"
+            assert self.driver.exists(f"automation-description-{mid}"), "no description line"
             self.shot(label="macro")
 
     def test_30_workflow_row(self):
@@ -202,17 +203,17 @@ class TestProductRunRowsNames(
             "rows-names.workflow",
             "A workflow row shows its name, description and Armed marker; the trigger, its "
             "target and the tags are in the tooltip",
-            expect="the Workflows sidebar: 'Answer rows …' with 'Replies on match' muted under "
+            expect="the Automations sidebar: 'Answer rows …' with 'Replies on match' muted under "
             "it and an 'Armed' marker with its switch; no 'On output match' text and no tag "
             "chips on the row (#5757)",
         ):
             self.require("rows-names.items")
-            self.open_workflows_sidebar()
+            self.show_automations()
             wid = self.ids["workflow"]
-            marker = self.driver.get_text(f"workflow-armed-{wid}").strip()
+            marker = self.driver.get_text(f"automation-armed-{wid}").strip()
             assert marker == "Armed", f"the marker reads {marker!r}"
             self._grade_row(
-                f"workflow-item-{wid}",
+                f"automation-item-{wid}",
                 [f"Answer rows {t}", "Replies on match", marker],
                 ["On output match", self.ids["conn_name"], "Tags: deploy"],
             )
@@ -229,6 +230,7 @@ class TestProductRunRowsNames(
             "text on the row (#5757)",
         ):
             self.require("rows-names.items")
+            self.close_automation_schedules()  # its rows share Settings' testIds
             self.open_settings_category("schedules")
             sid = self.ids["schedule"]
             row = f"schedule-item-{sid}"

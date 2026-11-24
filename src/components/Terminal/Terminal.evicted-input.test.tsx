@@ -70,7 +70,9 @@ vi.mock("@/themes", () => ({
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
 const mockSendInput = vi.fn().mockResolvedValue(undefined);
 const mockResizeTerminal = vi.fn().mockResolvedValue(undefined);
-const mockReplayScrollback = vi.fn().mockResolvedValue(new Uint8Array());
+const mockReplayScrollback = vi
+  .fn()
+  .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false });
 
 vi.mock("@/services/api", () => ({
   createTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
@@ -78,7 +80,9 @@ vi.mock("@/services/api", () => ({
   resizeTerminal: (...args: unknown[]) => mockResizeTerminal(...args),
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   detachPersistentTab: vi.fn().mockResolvedValue(0),
-  getAgentSessionBuffer: vi.fn().mockResolvedValue(new Uint8Array()),
+  getAgentSessionBuffer: vi
+    .fn()
+    .mockResolvedValue({ data: new Uint8Array(), endOffset: 0, epoch: 1, coming: false }),
   replaySessionScrollback: (...args: unknown[]) => mockReplayScrollback(...args),
 }));
 
@@ -88,7 +92,7 @@ vi.mock("@/services/events", () => ({
     subscribeOutput: vi.fn(() => vi.fn()),
     subscribeExit: vi.fn(() => vi.fn()),
     clearPendingExit: vi.fn(),
-    clearPendingOutput: vi.fn(),
+    holdOutput: () => ({ drain: () => [], release: vi.fn() }),
   },
 }));
 
@@ -260,7 +264,12 @@ describe("Terminal — no input while another window controls the session (#3368
     const xterm = mockXtermInstances[mockXtermInstances.length - 1];
     const trackerReset = vi.spyOn(getCommandMarkTracker("tab-1")!, "reset");
     // The ring buffer (raw bytes, OSC 133 included) the repaint writes.
-    mockReplayScrollback.mockResolvedValueOnce(new Uint8Array([0x24, 0x20]));
+    mockReplayScrollback.mockResolvedValueOnce({
+      data: new Uint8Array([0x24, 0x20]),
+      endOffset: 2,
+      epoch: 1,
+      coming: false,
+    });
 
     act(() => useAppStore.getState().setSessionOwners({ "session-1": "win-1" }));
     act(() => useAppStore.getState().setSessionOwners({ "session-1": "main" }));

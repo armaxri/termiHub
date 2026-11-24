@@ -1527,6 +1527,44 @@ No slice imports `appStore.ts` at runtime, which `sliceImportCycle.test.ts` enfo
 that needs the live store reads it through `appStoreHandle.ts`, which `appStore.ts` binds right
 after `create`.
 
+### Scrollback replay and live output
+
+A tab that shows a session it did not create itself (a re-opened persistent session, a resumed
+agent session, a tab moved to another window, a window that regains a session) repaints the
+session's scrollback and then goes on with live output. The two are joined by **position**, never
+by comparing text, because output may repeat (#5990):
+
+```mermaid
+sequenceDiagram
+    participant A as Agent / backend
+    participant C as OutputCapture (per session)
+    participant D as terminalDispatcher
+    participant T as Terminal tab
+    T->>D: holdOutput (collect everything from here)
+    A->>C: output
+    C->>D: terminal-output {data, epoch, offset}
+    T->>C: scrollback (after it caught up with the agent's buffer)
+    C-->>T: {data, epoch, endOffset}
+    T->>T: repaint
+    T->>D: drain the hold, then subscribe
+    D->>T: chunks, skipping what lies before endOffset
+```
+
+- `OutputCapture` (`src-tauri/src/session/output_capture.rs`) numbers every byte a session emits and
+  keeps the last 1 MiB. A chunk's `offset` and a snapshot's `endOffset` are taken under its lock.
+- `epoch` grows with every new stream, so positions of a session created again under the same id are
+  never compared with those of the one before.
+- Every attach of a daemon-backed session makes the agent send the whole buffer again. Its first
+  chunk names the replay (`replay_id`, see [`connection.output`](remote-protocol.md#connectionoutput));
+  the I/O task records where it lands (`src-tauri/src/terminal/output_route.rs`) and the capture
+  starts the session's history over there, whichever action attached the session.
+- `session.getBuffer` says where the agent's buffer ends in what it sent since that replay. The
+  repaint waits (at most 2 s) until the capture is that far, so it does not end in the middle of a
+  buffer that is still arriving, and takes what came before the capture from a buffer configured
+  larger than it. An agent that does not say (before 0.45.0) gets the capture alone.
+- A resumed tab keeps its own scrollback until something replaces it, and sends what was typed while
+  it read the buffer once it is wired to the session.
+
 ### Terminal Rendering
 
 - **xterm.js** renders to `<canvas>`, not DOM elements
@@ -2061,31 +2099,37 @@ step:
 `src/services/automationRunner.ts` adds two things. `runAutomation` checks for cycles before any
 step runs, so a cyclic automation types nothing. `runAutomationOnTargets` runs one automation on
 several terminals as independent runs, at most 8 at once or one after another. This replaces the
-lock-step macro fan-out. Since slice 4 the Macros and Workflows views run through them (see
-below).
+lock-step macro fan-out. Since slice 4 every run goes through them (see below).
 
 #### Automation store
 
 Since slice 4 of #5818 the frontend keeps one library and one run history
 (`src/store/slices/automationsSlice.ts`), backed by the `*_automation*` commands
 (`src/services/automationApi.ts`, `src-tauri/src/commands/automations.rs`). It is the only writer
-of `automations.json` and `automation-runs.json`. The Macros and Workflows sidebars, editors,
-palette entries and history panels are unchanged. They read `macros`, `workflows`, `macroRuns` and
-`workflowRuns`, which are derived from the store by the pure adapters in
-`src/store/slices/automationViews.ts`, and they write back through them:
+of `automations.json` and `automation-runs.json`. The two editors and the palette entries still
+read `macros` and `workflows`, which are derived from the store by the pure adapters in
+`src/store/slices/automationViews.ts`, and write back through them:
 
 - An automation with only `type-keys` steps, no triggers and no parameters shows as a macro, and
   every other automation shows as a workflow. An empty automation follows its `legacy` provenance.
 - The workflow view reads `run-automation` as `run-macro` and always shows the `manual` trigger.
   Saving maps both back.
-- A run shows in the Macros history when it carries `targetCount` (macro playbacks record it) and
-  in the Workflows history otherwise. Each panel's Clear removes only the runs it shows.
 
 Macro playback runs the stored automation with `runAutomation`
 (`src/store/slices/macroKeysPlayback.ts`). Its `type-keys` step uses its saved typing speed, and
 the Play dialog's timing is a one-run override. Multi-terminal playback stays lock-step until
 slice 5. A workflow run executes the stored automation, so a `run-automation` step runs the
 called automation inline and is recorded once, in the caller's history.
+
+The **Automations sidebar** (`src/components/AutomationSidebar/`, slice 6) reads the store directly:
+one list of every automation, run through `runAutomation`, which sends an automation that only
+types keystrokes to `playMacro` and every other one to `runWorkflow`. Its running markers come from
+the `workflow-run` region and `macroPlayback`, its Failed marker from the run history
+(`automationRowInfo.summarizeRuns`: an unattended run failed and nothing completed since). Until
+slice 7, Edit opens the keystroke editor or the step editor by the same shape rule. It replaced the
+`macros` and `workflows` sidebar views: settings v4 (`migrate_automations_view` in
+`src-tauri/src/connection/settings.rs`) maps the hidden activity-bar views (hidden only when both
+were) and the last open view to `automations`.
 
 The legacy `macros.json`, `workflows.json`, `macro-runs.json` and `runs.json` are frozen. The UI
 never writes them, their commands stay registered for slice 12 to remove, and connection-id
@@ -2199,7 +2243,8 @@ sequenceDiagram
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,
   target count + tab titles, origin. Metadata only — never the macro's recorded input. Capped at
-  the newest 200 records and 90 days; shown in the Macros sidebar's History panel.
+  the newest 200 records and 90 days; merged into `automation-runs.json` and shown in the
+  Automations sidebar's History section (#5818).
 
 #### Unified backup and restore
 

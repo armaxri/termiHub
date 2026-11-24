@@ -73,11 +73,10 @@ class TestProductRunWorkflowDisarm(
         with self.step(
             "workflow-disarm.armed",
             "An on-output-match workflow on a local shell shows Armed and an on switch",
-            expect="#5674: the Workflows sidebar; the 'Disarm check' row reads 'Armed' with a "
+            expect="#5674: the Automations sidebar; the 'Disarm check' row reads 'Armed' with a "
             "lightning icon next to an on (accent) switch; the trigger text ('On output match · "
             "<connection>') is in the row tooltip, not on the row (#5757)",
         ):
-            self.enable_experimental_features()
             local = f"pr-disarm-local-{t}"
             self.switch_to_connections_sidebar()
             self.create_local_connection(local, connect=True)
@@ -91,10 +90,10 @@ class TestProductRunWorkflowDisarm(
             self.set_output_match_trigger(self.ids["conn"], "PR_DISARM_FIRE_")
             self.save_workflow()
             wid = self.ids["workflow"] = self.workflow_id(f"Disarm check {t}")
-            self.open_workflows_sidebar()
-            toggle = f"workflow-arm-toggle-{wid}"
+            self.show_automations()
+            toggle = f"automation-arm-toggle-{wid}"
             self.wait(lambda: self.driver.exists(toggle), what="the row's arm switch")
-            marker = self.driver.get_text(f"workflow-armed-{wid}").strip()
+            marker = self.driver.get_text(f"automation-armed-{wid}").strip()
             checked = self.driver.get_attribute(toggle, "aria-checked")
             self.evidence(f"marker {marker!r}, switch aria-checked={checked!r}")
             assert marker == "Armed", f"the marker reads {marker!r}"
@@ -112,8 +111,8 @@ class TestProductRunWorkflowDisarm(
         ):
             self.require("workflow-disarm.armed")
             wid, tab = self.ids["workflow"], self.ids["tab"]
-            self.open_workflows_sidebar()
-            self.driver.click(f"workflow-arm-toggle-{wid}")
+            self.show_automations()
+            self.driver.click(f"automation-arm-toggle-{wid}")
             saved = self.wait(
                 lambda: (lambda w: w if w and w.get("triggersEnabled") is False else None)(
                     self.workflow(wid)
@@ -127,9 +126,9 @@ class TestProductRunWorkflowDisarm(
             assert trigger and trigger["connectionIds"] == [self.ids["conn"]], (
                 f"disarming changed the trigger bindings: {trigger}"
             )
-            marker = self.driver.get_text(f"workflow-armed-{wid}").strip()
+            marker = self.driver.get_text(f"automation-armed-{wid}").strip()
             assert marker == "Off", f"the disarmed marker reads {marker!r}"
-            assert self.driver.get_attribute(f"workflow-arm-toggle-{wid}", "aria-checked") == (
+            assert self.driver.get_attribute(f"automation-arm-toggle-{wid}", "aria-checked") == (
                 "false"
             )
             self.assert_no_editor_open()
@@ -152,15 +151,15 @@ class TestProductRunWorkflowDisarm(
         ):
             self.require("workflow-disarm.off")
             wid, tab = self.ids["workflow"], self.ids["tab"]
-            self.open_workflows_sidebar()
-            self.driver.click(f"workflow-arm-toggle-{wid}")
+            self.show_automations()
+            self.driver.click(f"automation-arm-toggle-{wid}")
             self.wait(
                 lambda: (lambda w: w is not None and w.get("triggersEnabled", True) is True)(
                     self.workflow(wid)
                 ),
                 what="the workflow to be saved armed",
             )
-            marker = self.driver.get_text(f"workflow-armed-{wid}").strip()
+            marker = self.driver.get_text(f"automation-armed-{wid}").strip()
             assert marker == "Armed", f"the re-armed marker reads {marker!r}"
             self._fire(tab, "ON")
             self.wait_for_output(f"PR_DISARM_ANSWER_42_{t}", tab_id=tab, timeout=30.0)

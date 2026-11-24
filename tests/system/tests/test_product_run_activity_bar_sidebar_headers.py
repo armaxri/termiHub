@@ -45,17 +45,16 @@ REMOTE_TOGGLE = "connection-list-remote-agents-toggle"
 EMPTY = "connections-empty-state"
 EMPTY_LINK = "connections-empty-new-connection"
 
-#: The shipped activity bar with experimental features on.
+#: The shipped activity bar.
 SHIPPED_BAR = [
     {"testId": "activity-bar-connections", "label": "Connections", "icon": "network"},
     {"testId": "activity-bar-file-browser", "label": "File browser", "icon": "folder-open"},
     {"testId": "activity-bar-recent-sessions", "label": "Recent sessions", "icon": "history"},
     {"testId": "activity-bar-workspaces", "label": "Workspaces", "icon": "layout-grid"},
-    {"testId": "activity-bar-macros", "label": "Macros", "icon": "zap"},
+    {"testId": "activity-bar-automations", "label": "Automations", "icon": "zap"},
     {"testId": "activity-bar-ssh-tunnels", "label": "SSH tunnels", "icon": "arrow-left-right"},
     {"testId": "activity-bar-services", "label": "Services", "icon": "server"},
     {"testId": "activity-bar-network-tools", "label": "Network tools", "icon": "stethoscope"},
-    {"testId": "activity-bar-workflows", "label": "Workflows", "icon": "workflow"},
     {"testId": "activity-bar-plugins", "label": "Plugins", "icon": "puzzle"},
     {"testId": "activity-bar-logs", "label": "Log viewer", "icon": "file-text"},
     {"testId": "activity-bar-settings", "label": "Settings", "icon": "settings"},
@@ -78,7 +77,7 @@ def test_grade_unclear_glyphs_fail():
         for i in SHIPPED_BAR
     ]
     problems = activity_bar_problems(bar)
-    assert any("'clapperboard', unclear for macros" in p for p in problems)
+    assert any("'clapperboard', unclear for automations" in p for p in problems)
     assert any("'scroll-text', unclear for the log viewer" in p for p in problems)
 
 

@@ -1890,22 +1890,19 @@ pub async fn detach_persistent_tab(
         .await
 }
 
-/// Fetch the scrollback buffer from the agent for a persistent session.
+/// The scrollback of an agent-hosted session, for a repaint: what this desktop
+/// captured, extended back with the agent's own buffer (`session.getBuffer`),
+/// and where it ends in the session's output stream (#5990).
 ///
-/// Sends a `session.getBuffer` request to the agent, which queries the daemon's
-/// ring buffer non-destructively and returns a base64-encoded snapshot.
-///
-/// Returns the buffer bytes as a base64 (standard alphabet, padded) string; the
-/// frontend decodes them in `src/services/api.ts` and writes the raw bytes into
-/// the xterm. base64 avoids the ~4–6x JSON number-array bloat on a buffer that
-/// can reach the 1 MiB ring-buffer ceiling (PERF-009).
+/// The bytes cross IPC as a base64 (standard alphabet, padded) string, which the
+/// frontend decodes in `src/services/api.ts`: the ~4–6x JSON number-array bloat
+/// on a buffer that can reach the 1 MiB ring-buffer ceiling is avoided (PERF-009).
 #[tauri::command]
 pub async fn get_agent_session_buffer(
     session_id: String,
     manager: State<'_, SessionManager>,
-) -> Result<String, TerminalError> {
-    let bytes = manager.get_remote_session_buffer(&session_id).await?;
-    Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
+) -> Result<crate::session::output_capture::ScrollbackReplay, TerminalError> {
+    manager.get_remote_session_buffer(&session_id).await
 }
 
 /// The agent's own session id of each agent-hosted session among the desktop

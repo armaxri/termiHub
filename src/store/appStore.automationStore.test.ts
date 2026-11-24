@@ -37,7 +37,8 @@ vi.mock("@/services/automationApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import { getAutomation } from "@/services/automationApi";
+import { toast } from "@/components/ui";
+import { getAutomation, saveAutomation } from "@/services/automationApi";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { seedLayoutState } from "@/test/layoutState";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
@@ -118,6 +119,78 @@ describe("appStore — single automation store (#5818, slice 4)", () => {
     expect(state.macros.map((m) => m.id)).toEqual(["m-instant"]);
     expect(state.workflows.map((w) => w.id)).toEqual(["w1"]);
     expect(state.workflows[0].steps).toEqual([{ kind: "run-macro", macroId: "m-instant" }]);
+  });
+
+  describe("runAutomation (slice 6)", () => {
+    const playMacro = vi.fn(() => Promise.resolve(null));
+    const runWorkflow = vi.fn(() => Promise.resolve());
+
+    beforeEach(() => {
+      playMacro.mockClear();
+      runWorkflow.mockClear();
+      useAppStore.setState({
+        ...automationLibraryState([typed("m1", "instant"), workflow]),
+        playMacro,
+        runWorkflow,
+      });
+    });
+
+    it("plays what only types keystrokes, and runs everything else", async () => {
+      await useAppStore.getState().runAutomation("m1");
+      expect(playMacro).toHaveBeenCalledWith("m1", {});
+      await useAppStore.getState().runAutomation("w1");
+      expect(runWorkflow).toHaveBeenCalledWith("w1", undefined);
+    });
+
+    it("hands on the picked terminals and the parallel choice", async () => {
+      const run = useAppStore.getState().runAutomation;
+      await run("m1", { targetTabIds: ["a", "b"], parallel: false });
+      expect(playMacro).toHaveBeenLastCalledWith("m1", {
+        targetTabIds: ["a", "b"],
+        parallel: false,
+      });
+      await run("w1", { targetTabIds: ["a"] });
+      expect(runWorkflow).toHaveBeenLastCalledWith("w1", { targetTabId: "a" });
+      await run("w1", { targetTabIds: ["a", "b"] });
+      expect(runWorkflow).toHaveBeenLastCalledWith("w1", { targetTabIds: ["a", "b"] });
+      await run("w1", { targetTabIds: ["a", "b"], parallel: false });
+      expect(runWorkflow).toHaveBeenLastCalledWith("w1", {
+        targetTabIds: ["a", "b"],
+        concurrency: 1,
+      });
+    });
+
+    it("says so when the automation is gone", async () => {
+      const error = vi.spyOn(toast, "error");
+      await useAppStore.getState().runAutomation("gone");
+      expect(error).toHaveBeenCalledWith("Automation not found");
+      expect(playMacro).not.toHaveBeenCalled();
+      expect(runWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
+  it("duplicates under a fresh id, keeping everything but the provenance (slice 6)", async () => {
+    const original: Automation = {
+      ...typed("m1", "fixed"),
+      triggers: [{ kind: "on-connect", connectionIds: ["c1"] }],
+      triggersEnabled: false,
+      legacy: { from: "macro", version: 1 },
+    };
+    useAppStore.setState(automationLibraryState([original]));
+    vi.mocked(saveAutomation).mockClear();
+    await useAppStore.getState().duplicateAutomation("m1");
+    const saved = vi.mocked(saveAutomation).mock.calls[0][0];
+    const { id, name, createdAt, updatedAt, ...kept } = saved;
+    expect(id).not.toBe("m1");
+    expect([name, createdAt, updatedAt]).toEqual(["Copy of Typed m1", "", ""]);
+    expect(kept).toEqual({
+      tags: original.tags,
+      steps: original.steps,
+      triggers: original.triggers,
+      triggersEnabled: false,
+    });
+    // A copy, not a share: editing one never edits the other.
+    expect(saved.steps).not.toBe(original.steps);
   });
 
   it("plays a macro with its saved typing speed", async () => {

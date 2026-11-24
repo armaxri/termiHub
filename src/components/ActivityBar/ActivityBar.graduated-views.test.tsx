@@ -1,8 +1,7 @@
 /**
- * SSH tunnels, services and network tools graduated from the experimental
- * switch (#5858): their activity-bar items show with experimental features off,
- * while the views still behind the switch (workflows) stay hidden. A view the
- * user hid from the activity bar stays hidden after the graduation.
+ * SSH tunnels, services, network tools (#5858) and Automations (#5818) show in
+ * the activity bar with experimental features off. One Automations item replaces
+ * Macros and Workflows. A view the user hid stays hidden.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -23,8 +22,9 @@ const GRADUATED = {
   tunnels: "activity-bar-ssh-tunnels",
   services: "activity-bar-services",
   "network-tools": "activity-bar-network-tools",
+  automations: "activity-bar-automations",
 } as const;
-const WORKFLOWS = "activity-bar-workflows";
+const REPLACED = ["activity-bar-macros", "activity-bar-workflows"];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -54,24 +54,23 @@ function hideViews(views: string[]): void {
   useAppStore.setState({ layoutConfig: { ...layoutConfig, hiddenActivityBarViews: views } });
 }
 
-describe("ActivityBar — graduated views (#5858)", () => {
-  it("shows SSH tunnels, services and network tools with experimental features off", async () => {
+describe("ActivityBar — graduated views (#5858, #5818)", () => {
+  it("shows every graduated view with experimental features off", async () => {
     seedSettings({ experimentalFeaturesEnabled: false });
     await render();
     for (const testId of Object.values(GRADUATED)) {
       expect(item(testId), testId).not.toBeNull();
     }
-    // Workflows are still behind the switch until #5818 graduates them.
-    expect(item(WORKFLOWS)).toBeNull();
+    for (const testId of REPLACED) expect(item(testId), testId).toBeNull();
   });
 
-  it("shows them with experimental features on, next to workflows", async () => {
+  it("shows the same views with experimental features on", async () => {
     seedSettings({ experimentalFeaturesEnabled: true });
     await render();
     for (const testId of Object.values(GRADUATED)) {
       expect(item(testId), testId).not.toBeNull();
     }
-    expect(item(WORKFLOWS)).not.toBeNull();
+    for (const testId of REPLACED) expect(item(testId), testId).toBeNull();
   });
 
   it("opens a graduated view with experimental features off", async () => {
@@ -81,10 +80,17 @@ describe("ActivityBar — graduated views (#5858)", () => {
     expect(useAppStore.getState().sidebarView).toBe("network-tools");
   });
 
+  it("opens Automations", async () => {
+    await render();
+    act(() => (item(GRADUATED.automations) as HTMLElement).click());
+    expect(useAppStore.getState().sidebarView).toBe("automations");
+  });
+
   it("keeps a view the user hid hidden", async () => {
     seedSettings({ experimentalFeaturesEnabled: false });
-    hideViews(["tunnels", "services"]);
+    hideViews(["tunnels", "services", "automations"]);
     await render();
+    expect(item(GRADUATED.automations)).toBeNull();
     expect(item(GRADUATED.tunnels)).toBeNull();
     expect(item(GRADUATED.services)).toBeNull();
     expect(item(GRADUATED["network-tools"])).not.toBeNull();

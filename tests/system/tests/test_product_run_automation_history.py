@@ -13,7 +13,7 @@ that macro; the macro played from its row (one "Run by you" record) and from
 the command palette (one "Run by you" record that says so), the workflow run
 from its row (one record for the workflow, one "Run by another automation"
 record for the macro); each new row graded at rest and opened; the history
-narrowed to the macro from its row and shown in the Workflows sidebar too; the
+narrowed to the macro from its row and shown in the Automations sidebar too; the
 macro's history cleared after a confirmation while the workflow's run stays.
 
 The ``test_grade_*`` functions grade fixed records without an app and run in
@@ -177,7 +177,6 @@ class TestProductRunAutomationHistory(
             "A local-shell terminal to run on",
             expect="one local-shell terminal tab at a prompt",
         ):
-            self.enable_experimental_features()
             name = f"pr-hist-local-{self.tag}"
             self.switch_to_connections_sidebar()
             self.create_local_connection(name, connect=True)
@@ -223,7 +222,7 @@ class TestProductRunAutomationHistory(
             fresh += self._await_records(before, {mid: "palette"})
 
             before = [r["id"] for r in self._all_runs()]
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.run_workflow(wid)
             self._played(f"PR_HIST_W_{t}", 2)
             self._played(marker, 6)
@@ -234,12 +233,12 @@ class TestProductRunAutomationHistory(
         with self.step(
             "automation-history.panel",
             "One history lists macro and workflow runs; rows show name, dot and time only",
-            expect="the Macros sidebar's History: the four new runs, newest first, each row "
+            expect="the Automations sidebar's History: the four new runs, newest first, each row "
             "only the automation's name, a status dot and 'just now'; the nested run opened, "
             "showing 'Started by: Run by another automation', its steps and the terminal",
         ):
             self.require("automation-history.records")
-            self.show_macros()
+            self.open_automation_history()
             self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
             assert not self.driver.exists("macro-history"), "the old macro history is still shown"
             for run in self.runs:
@@ -271,27 +270,25 @@ class TestProductRunAutomationHistory(
     def test_30_filter(self):
         with self.step(
             "automation-history.filter",
-            "The history narrows to one automation and is the same in the Workflows sidebar",
-            expect="the Macros sidebar's History filtered to 'History macro …' (the filter "
+            "The history narrows to one automation, and × shows every run again",
+            expect="the Automations sidebar's History filtered to 'History macro …' (the filter "
             "select shows its name, an × beside it), only the macro's three runs listed",
         ):
             self.require("automation-history.records")
             mid, wid = self.ids["macro"], self.ids["workflow"]
-            self.show_macros()
-            self.driver.click(f"macro-history-{mid}")
+            self.show_automations()
+            self.automation_menu(mid, "history")
             self.wait(lambda: self.driver.exists("automation-history-show-all"), what="the filter")
             listed = [r["id"] for r in self.runs if self.driver.exists(f"automation-run-{r['id']}")]
             problems = filtered_problems(listed, self.runs, mid)
             self.evidence(f"filtered list {listed}: {problems or 'ok'}")
             assert not problems, problems
             self.shot(label="filtered")
-            self.open_workflows_sidebar()
-            self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
+            self.driver.click("automation-history-show-all")
             assert not self.driver.exists("workflow-history"), "the old workflow history is shown"
             for run in self.runs:
-                assert self.driver.exists(f"automation-run-{run['id']}"), (
-                    f"the Workflows sidebar's history lacks {run['id']} ({run['automationId']})"
-                )
+                row = f"automation-run-{run['id']}"
+                self.wait(lambda tid=row: self.driver.exists(tid), what=f"{row} unfiltered")
             assert any(r["automationId"] == wid for r in self.runs)
 
     def test_40_clear_one_automation(self):
@@ -304,9 +301,9 @@ class TestProductRunAutomationHistory(
         ):
             self.require("automation-history.filter")
             mid, wid = self.ids["macro"], self.ids["workflow"]
-            self.show_macros()
+            self.open_automation_history()
             if not self.driver.exists("automation-history-show-all"):
-                self.driver.click(f"macro-history-{mid}")
+                self.automation_menu(mid, "history")
             self.wait(lambda: self.driver.exists("automation-history-show-all"), what="the filter")
             label = self.driver.get_text("automation-history-clear").strip()
             assert label.startswith("Clear"), f"the clear action has no label: {label!r}"

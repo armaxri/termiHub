@@ -1,6 +1,6 @@
 """Grades for the one Automation history panel (#5818, slice 9).
 
-Since slice 9 the Macros and Workflows sidebars show one history: every run
+Since slice 9 there is one history, in the Automations sidebar since slice 6: every run
 record from ``automation-runs.json``, rows with the name, a status dot and the
 time only, and each run's origin, outcome, steps and terminals behind the row.
 Who started a run reads one of five labels. These pure functions grade what the

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import { CalendarClock, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, StatusDot, Toggle, Tooltip, toast, EmptyState } from "@/components/ui";
@@ -63,8 +63,8 @@ export function scheduleTone(s: ScheduleView, paused: boolean): StatusTone {
  * targets, next run and last result are in the name's tooltip (#5757). A row
  * expands to its recent attempts (#3528); per-schedule enable (the first
  * enable asks for confirmation of the target hosts), edit and delete; and the
- * global pause switch. Lives in the Workflow sidebar, and in Settings →
- * Schedules (#4623), which is reachable with experimental features off.
+ * global pause switch. Lives in the Automations sidebar, where it collapses to
+ * its header (#5818), and in Settings → Schedules (#4623).
  */
 export interface SchedulesSectionProps {
   /**
@@ -83,6 +83,8 @@ export interface SchedulesSectionProps {
    * so the title is not repeated (#5633).
    */
   showTitle?: boolean;
+  /** Make the titled section collapsible (#5818); absent = always open. */
+  collapse?: { expanded: boolean; onChange: (expanded: boolean) => void };
 }
 
 /** Renders the schedules list; see the module notes above. */
@@ -90,7 +92,10 @@ export function SchedulesSection({
   editable = true,
   creatable = editable,
   showTitle = true,
+  collapse,
 }: SchedulesSectionProps) {
+  const contentId = useId();
+  const open = collapse?.expanded ?? true;
   const schedules = useAppStore((s) => s.schedules);
   const paused = useAppStore((s) => s.schedulesPaused);
   const setScheduleEnabled = useAppStore((s) => s.setScheduleEnabled);
@@ -152,20 +157,30 @@ export function SchedulesSection({
 
   const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
 
-  const pauseToggle = (
-    <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
-      <label className="schedules__pause" htmlFor="schedules-pause-toggle">
-        {compactHeader ? null : <span>Pause all</span>}
-        <Toggle
-          id="schedules-pause-toggle"
-          checked={paused}
-          onCheckedChange={(v) => void handlePause(v)}
-          aria-label="Pause all schedules"
-          data-testid="schedules-pause-toggle"
-        />
-      </label>
-    </Tooltip>
-  );
+  // The sidebar's header has nothing to pause without a schedule (R-135); a pause
+  // left on stays reachable.
+  const pauseToggle =
+    collapse && schedules.length === 0 && !paused ? null : (
+      <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
+        <label className="schedules__pause" htmlFor="schedules-pause-toggle">
+          {compactHeader ? null : <span>Pause all</span>}
+          <Toggle
+            id="schedules-pause-toggle"
+            checked={paused}
+            onCheckedChange={(v) => void handlePause(v)}
+            aria-label="Pause all schedules"
+            data-testid="schedules-pause-toggle"
+          />
+        </label>
+      </Tooltip>
+    );
+
+  // A closed section must not hide a schedule that needs attention.
+  const anyFailed = schedules.some((s) => s.enabled && s.lastResult?.outcome === "failed");
+  const openNew = () => {
+    collapse?.onChange(true);
+    openScheduleEditor();
+  };
 
   return (
     <section
@@ -178,9 +193,27 @@ export function SchedulesSection({
           ref={headerRef}
           title="Schedules"
           icon={<CalendarClock size={12} aria-hidden="true" />}
+          suffix={collapse && schedules.length > 0 ? ` (${schedules.length})` : undefined}
+          collapse={
+            collapse
+              ? {
+                  expanded: open,
+                  onToggle: () => collapse.onChange(!open),
+                  controls: contentId,
+                  testId: "schedules-section-toggle",
+                }
+              : undefined
+          }
           data-testid="schedules-header"
           actions={
             <>
+              {!open && anyFailed ? (
+                <StatusDot
+                  tone="error"
+                  label={t("schedule.marker.lastFailed")}
+                  testId="schedules-failed-dot"
+                />
+              ) : null}
               {pauseToggle}
               {creatable ? (
                 <Tooltip content="New schedule" side="top">
@@ -191,7 +224,7 @@ export function SchedulesSection({
                     aria-label="New schedule"
                     data-testid="schedules-new-btn"
                     icon={<Plus size={12} />}
-                    onClick={() => openScheduleEditor()}
+                    onClick={openNew}
                   />
                 </Tooltip>
               ) : null}
@@ -214,31 +247,33 @@ export function SchedulesSection({
           {pauseToggle}
         </div>
       )}
-      {schedules.length === 0 ? (
-        <EmptyState
-          title="No schedules yet"
-          description="Schedule an automation to run it on saved connections at set times."
-          action={
-            creatable ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                data-testid="schedules-empty-new-btn"
-                icon={<Plus size={12} />}
-                onClick={() => openScheduleEditor()}
-              >
-                New schedule
-              </Button>
-            ) : undefined
-          }
-          data-testid="schedules-empty"
-        />
+      {!open ? null : schedules.length === 0 ? (
+        <div id={contentId}>
+          <EmptyState
+            title="No schedules yet"
+            description="Schedule an automation to run it on saved connections at set times."
+            action={
+              creatable ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-testid="schedules-empty-new-btn"
+                  icon={<Plus size={12} />}
+                  onClick={() => openScheduleEditor()}
+                >
+                  New schedule
+                </Button>
+              ) : undefined
+            }
+            data-testid="schedules-empty"
+          />
+        </div>
       ) : (
-        <div className="schedules__list" data-testid="schedules-list">
+        <div id={contentId} className="schedules__list" data-testid="schedules-list">
           {schedules.map((s) => {
             const result = s.lastResult;
             const attempts = s.history ?? [];
-            const open = expanded.has(s.id);
+            const attemptsOpen = expanded.has(s.id);
             const status = scheduleStatus(s, paused);
             const blocked = labels.blockedReason(s.action);
             const lastFailed = result?.outcome === "failed";
@@ -258,7 +293,7 @@ export function SchedulesSection({
                 : "",
             ];
             const showStatus = scheduleStatusNeedsAttention(s, paused);
-            const attemptsLabel = open
+            const attemptsLabel = attemptsOpen
               ? t("schedule.attempts.hide")
               : tf("schedule.attempts.show", { count: attempts.length });
             return (
@@ -295,7 +330,7 @@ export function SchedulesSection({
                           size="sm"
                           iconOnly
                           aria-label={attemptsLabel}
-                          aria-expanded={open}
+                          aria-expanded={attemptsOpen}
                           data-testid={`schedule-attempts-toggle-${s.id}`}
                           icon={<History size={12} />}
                           onClick={() => toggleExpanded(s.id)}
@@ -329,7 +364,7 @@ export function SchedulesSection({
                   </>
                 }
                 details={
-                  showStatus || blocked || lastFailed || (open && attempts.length > 0) ? (
+                  showStatus || blocked || lastFailed || (attemptsOpen && attempts.length > 0) ? (
                     <>
                       {showStatus ? (
                         <span className="schedules__meta" data-testid={`schedule-status-${s.id}`}>
@@ -350,7 +385,7 @@ export function SchedulesSection({
                           {t("schedule.marker.lastFailed")}
                         </span>
                       ) : null}
-                      {open && attempts.length > 0 ? (
+                      {attemptsOpen && attempts.length > 0 ? (
                         <ScheduleAttemptHistory scheduleId={s.id} attempts={attempts} />
                       ) : null}
                     </>

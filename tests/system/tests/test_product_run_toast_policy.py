@@ -190,7 +190,6 @@ class TestProductRunToastPolicy(
             "output are the only feedback; the toast stack shows only the 'Closed … / Reopen' "
             "undo after the tab closes",
         ):
-            self.enable_experimental_features()
             self.switch_to_connections_sidebar()
             self.create_local_connection(f"pr-policy-saved-{tag}")
             self._sample("save a connection", flow)
@@ -208,7 +207,7 @@ class TestProductRunToastPolicy(
             self.wait_for_output(f"PR_POLICY_MACRO_{tag}")
             self._sample("play a macro", flow)
 
-            self.open_workflows_sidebar()
+            self.show_automations()
             self.open_new_workflow()
             self.add_step("send-command")
             self.set_command(0, f"echo PR_POLICY_FLOW_{tag}")

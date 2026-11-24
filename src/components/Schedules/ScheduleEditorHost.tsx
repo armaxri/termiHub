@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useAppStore } from "@/store/appStore";
+import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
 import { toast } from "@/components/ui";
 import type { ScheduleInput } from "@/types/schedule";
 import { errorMessage } from "@/utils/errorMessage";
@@ -41,6 +42,7 @@ export function ScheduleEditorHost() {
       try {
         const saved = await saveSchedule(next);
         closeScheduleEditor();
+        useAutomationSections.getState().setSchedulesOpen(true);
         // The saved row shows in the Schedules list (#5859). A disabled one
         // will not run, which the row alone does not explain.
         if (!saved.enabled) {

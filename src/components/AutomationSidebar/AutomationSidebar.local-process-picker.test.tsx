@@ -45,6 +45,7 @@ import { useAppStore } from "@/store/appStore";
 import { automationLibraryState } from "@/store/slices/automationStoreState";
 import { activeWorkflowRunCount } from "@/store/slices/workflowRunOnTarget";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { openAutomationRowMenu } from "@/test/automationRowMenu";
 import { flushAsync } from "@/test/flushAsync";
 import { seedLayoutState } from "@/test/layoutState";
 import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
@@ -53,7 +54,7 @@ import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { TerminalTab } from "@/types/terminal";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { resetRememberedRunTargetChoice } from "../Automations/runTargetChoice";
-import { WorkflowSidebar } from "./WorkflowSidebar";
+import { AutomationSidebar } from "./AutomationSidebar";
 
 setupSettingsRegion();
 setupConnectionsRegion();
@@ -125,9 +126,10 @@ describe("run picker and the local-process gate (#5988)", () => {
       workflowLocalProcessEnabled: true,
       workflowLocalProcessAllowlist: ["make"],
     });
-    await act(async () => root.render(withTooltip(<WorkflowSidebar />)));
+    await act(async () => root.render(withTooltip(<AutomationSidebar />)));
     await flushAsync();
-    click("workflow-run-on-w1");
+    openAutomationRowMenu("w1");
+    click("automation-menu-run-on-w1");
     if (count === 2) {
       click("run-targets-target-pick");
       click("run-targets-terminal-tab-b");

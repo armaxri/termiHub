@@ -10,6 +10,8 @@ import {
 } from "@/services/automationApi";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
+import { toast } from "@/components/ui";
+import { newId } from "@/services/transport/ids";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -20,6 +22,15 @@ import {
   automationLibraryState,
   automationRunsState,
 } from "./automationStoreState";
+import { isMacroShaped } from "./automationViews";
+
+/** Where {@link AutomationsSlice.runAutomation} runs an automation. */
+export interface RunAutomationOptions {
+  /** The terminals to run on; omitted = the active terminal. */
+  targetTabIds?: string[];
+  /** Run several terminals at the same time (the default) or one after another. */
+  parallel?: boolean;
+}
 
 /**
  * The single automation store (#5818, slice 4): the library and the run
@@ -45,6 +56,19 @@ export interface AutomationsSlice {
    * library when it exists; resolves `undefined` when there is none.
    */
   fetchAutomationForRun: (automationId: string) => Promise<Automation | undefined>;
+  /**
+   * Run an automation by hand (#5818, slice 6). The one entry point of the
+   * Automations sidebar: an automation that only types keystrokes plays through
+   * {@link AppState.playMacro}, every other one through
+   * {@link AppState.runWorkflow}, which own their guards (connected terminal,
+   * experimental local process), progress and history.
+   */
+  runAutomation: (automationId: string, options?: RunAutomationOptions) => Promise<void>;
+  /**
+   * Save a copy named "Copy of …" under a fresh id. The copy keeps everything
+   * but the migration's provenance, which names the original's legacy entry.
+   */
+  duplicateAutomation: (automationId: string) => Promise<void>;
   /** Load the run history from the backend. Logs (never throws) on failure. */
   loadAutomationRuns: () => Promise<void>;
   /**
@@ -98,6 +122,43 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
         frontendLog("app_store", `Automation ${automationId} not found: ${errorMessage(err)}`);
         return undefined;
       }
+    },
+
+    runAutomation: async (automationId, options) => {
+      const automation = await get().fetchAutomationForRun(automationId);
+      if (!automation) {
+        toast.error("Automation not found");
+        return;
+      }
+      const targets = options?.targetTabIds;
+      const parallel = options?.parallel ?? true;
+      if (isMacroShaped(automation)) {
+        await get().playMacro(automationId, targets ? { targetTabIds: targets, parallel } : {});
+        return;
+      }
+      // One terminal runs as a plain run (its own toast); several fan out.
+      await get().runWorkflow(
+        automationId,
+        !targets
+          ? undefined
+          : targets.length === 1
+            ? { targetTabId: targets[0] }
+            : { targetTabIds: targets, ...(parallel ? {} : { concurrency: 1 }) }
+      );
+    },
+
+    duplicateAutomation: async (automationId) => {
+      const original = get().automations.find((a) => a.id === automationId);
+      if (!original) return;
+      const { legacy: _legacy, ...copy } = structuredClone(original);
+      await get().saveAutomationToBackend({
+        ...copy,
+        id: newId("automation"),
+        name: `Copy of ${original.name}`,
+        // The backend stamps authoritative created/updated timestamps.
+        createdAt: "",
+        updatedAt: "",
+      });
     },
 
     loadAutomationRuns: async () => {

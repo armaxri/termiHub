@@ -1,8 +1,8 @@
 /**
  * Recognisable activity-bar glyphs (#5848, R-022): every item names itself
  * (accessible name, which is also its tooltip text) and tags its glyph with
- * `data-icon`; no two items share a glyph; macros and the log viewer no longer
- * draw the clapperboard and the scroll a first-time user could not place.
+ * `data-icon`; no two items share a glyph; Automations and the log viewer do
+ * not draw the clapperboard and the scroll a first-time user could not place.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -65,9 +65,9 @@ describe("ActivityBar — glyphs and names (#5848)", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
-  it("draws a bolt for macros and a text file for the log viewer", async () => {
+  it("draws a bolt for Automations and a text file for the log viewer", async () => {
     await render();
-    expect(icon("activity-bar-macros")).toBe("zap");
+    expect(icon("activity-bar-automations")).toBe("zap");
     expect(icon("activity-bar-logs")).toBe("file-text");
     const all = Array.from(container.querySelectorAll("[data-icon]"), (el) =>
       el.getAttribute("data-icon")
@@ -80,7 +80,7 @@ describe("ActivityBar — glyphs and names (#5848)", () => {
     await render();
     const svg = container.querySelector('[data-testid="activity-bar-logs"] svg');
     expect(svg?.getAttribute("class")).toContain("lucide-file-text");
-    const macro = container.querySelector('[data-testid="activity-bar-macros"] svg');
+    const macro = container.querySelector('[data-testid="activity-bar-automations"] svg');
     expect(macro?.getAttribute("class")).toContain("lucide-zap");
   });
 });

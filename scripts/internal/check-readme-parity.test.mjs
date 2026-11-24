@@ -132,6 +132,18 @@ describe("Activity Bar", () => {
       `README.md: Activity Bar views lists "Macros", which src/components/ActivityBar/ActivityBar.tsx does not have`,
     ]);
   });
+  it("needs no experimental sentence while no view is behind the switch (#5818)", () => {
+    const src = ACTIVITY_SRC.replaceAll(", experimental: true", "");
+    const views = parseActivityBarItems(src).map((i) => i.label);
+    const list = `${views.slice(0, -1).join(", ")} and ${views.at(-1)}`;
+    const bullet = `- **Activity Bar** — The column for the sidebar views: ${list}.`;
+    expect(checkActivityBar(bullet, src)).toEqual([]);
+    // A view that is still behind it must be named.
+    expect(checkActivityBar(bullet, ACTIVITY_SRC)).not.toEqual([]);
+    // And a sentence that outlived its view is caught.
+    expect(checkActivityBar(`${bullet} It also shows Services.`, src)).not.toEqual([]);
+  });
+
   it("catches an experimental flag flip", () => {
     const src = ACTIVITY_SRC.replace('label: "Services", experimental: true', 'label: "Services"');
     expect(checkActivityBar(ACTIVITY_README, src)).toHaveLength(2);

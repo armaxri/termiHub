@@ -243,7 +243,7 @@ async fn other_sessions_stay_responsive(mgr: &SessionManager, healthy: &str, thi
     let buffer = promptly("get_buffer", mgr.get_buffer(healthy))
         .await
         .expect("buffer of the healthy session");
-    assert_eq!(buffer, b"scrollback");
+    assert_eq!(buffer.data, b"scrollback");
     promptly("attach", mgr.attach(healthy))
         .await
         .expect("attach the healthy session");

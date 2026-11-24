@@ -69,12 +69,9 @@
           d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
         />
       </symbol>
-      <symbol id="i-list-video" viewBox="0 0 24 24">
-        <path d="M21 5H3" />
-        <path d="M10 12H3" />
-        <path d="M10 19H3" />
+      <symbol id="i-zap" viewBox="0 0 24 24">
         <path
-          d="M15 12.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997a1 1 0 0 1-1.517-.86z"
+          d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
         />
       </symbol>
       <symbol id="i-settings" viewBox="0 0 24 24">
@@ -933,10 +930,10 @@ History                           [Deploy prep ×]  Clear…
           <div class="mockup-note">
             One <strong>Automations</strong> entry in the Activity Bar
             <span class="callout">A</span> replaces Macros and Workflows. The toolbar
-            <span class="callout">B</span> has New as the primary action and Record and Import as
-            icon buttons. Rows <span class="callout">C</span> show the name, a muted description and
-            state markers only; Play is always visible. Schedules and History
-            <span class="callout">D</span> are collapsible sections under the list.
+            <span class="callout">B</span> has New ▾ and Record, both in text. Rows
+            <span class="callout">C</span> show the name, a muted description and state markers
+            only; Play is always visible. Schedules and History <span class="callout">D</span> are
+            collapsible sections under the list.
           </div>
           <div class="app">
             <div class="app__body">
@@ -949,7 +946,7 @@ History                           [Deploy prep ×]  Clear…
                     <svg class="li"><use href="#i-folder-open" /></svg>
                   </button>
                   <button class="activity-bar__item activity-bar__item--active" title="Automations">
-                    <svg class="li"><use href="#i-list-video" /></svg>
+                    <svg class="li"><use href="#i-zap" /></svg>
                     <span class="activity-bar__indicator"></span>
                   </button>
                 </div>
@@ -962,17 +959,10 @@ History                           [Deploy prep ×]  Clear…
               <aside class="sidebar">
                 <div class="sidebar__header">
                   <span class="sidebar__title">Automations</span>
-                  <div class="sidebar__header-actions">
-                    <button class="sidebar__header-btn" title="New">
-                      <svg class="li"><use href="#i-plus" /></svg>
-                    </button>
-                    <button class="sidebar__header-btn" title="Record">
-                      <svg class="li"><use href="#i-circle-dot" /></svg>
-                    </button>
-                    <button class="sidebar__header-btn" title="Import">
-                      <svg class="li"><use href="#i-download" /></svg>
-                    </button>
-                  </div>
+                </div>
+                <div class="automation-section">
+                  <svg class="li"><use href="#i-plus" /></svg> New ▾
+                  <svg class="li"><use href="#i-circle-dot" /></svg> Record
                 </div>
                 <div class="automation-search">
                   <svg class="li"><use href="#i-search" /></svg> Search automations
@@ -1042,8 +1032,9 @@ History                           [Deploy prep ×]  Clear…
                 Workflows items go away (slice 6).
               </li>
               <li>
-                <span class="callout">B</span> New, Record and Import; Export all lives in the
-                overflow.
+                <span class="callout">B</span> New ▾ (Step by step…, Typed keystrokes…, Import…,
+                Export all…) and Record. No bare icons: the review found the old record, import and
+                export icons unreadable (R-037).
               </li>
               <li>
                 <span class="callout">C</span> Rows follow the copy-style rule "List rows: names,
@@ -1692,6 +1683,29 @@ flowchart LR
                   <code>useRunTargets</code>, <code>runTargetChoice</code>),
                   <code>src/components/Terminal/TabAutomationBadge.tsx</code>,
                   <code>src/utils/automationTabBadge.ts</code>
+                </td>
+              </tr>
+              <tr>
+                <td>6 Automations sidebar</td>
+                <td>
+                  Done. One list and one Activity Bar item (the bolt); the Macros and Workflows
+                  sidebars are deleted. Settings v4 maps the hidden and the last open view. The two
+                  editors stay until slice 7: an automation that only types keystrokes opens in the
+                  keystroke editor, every other one in the step editor. Import reads either old file
+                  format and Export all writes both lists to one file, until slice 11. Differs from
+                  3.3: import and export are text entries of New ▾ (R-037), Schedules and History
+                  start closed and are remembered for the app session only, and without an active
+                  terminal Run opens the run picker instead of failing. "Promote a macro" is now the
+                  row's "New automation from this…". "Run local process" is offered in Add step only
+                  while experimental features are on
+                </td>
+                <td>
+                  <code>src/components/AutomationSidebar/</code>,
+                  <code>src/services/automationFileIo.ts</code>, <code>runAutomation</code> /
+                  <code>duplicateAutomation</code> in <code>automationsSlice.ts</code>,
+                  <code>migrate_automations_view</code> in
+                  <code>src-tauri/src/connection/settings.rs</code>; grade in
+                  <code>test_product_run_automation_sidebar.py</code>
                 </td>
               </tr>
               <tr>

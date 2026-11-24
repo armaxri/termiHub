@@ -1,1 +1,1 @@
-export { HistorySection } from "./HistorySection";
+export { AutomationSidebar } from "./AutomationSidebar";

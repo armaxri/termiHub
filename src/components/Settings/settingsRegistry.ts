@@ -806,6 +806,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "features",
       "labs",
       "workflows",
+      "automations",
+      "run local process",
       "remote agents",
       "rdp",
       "vnc",

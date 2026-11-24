@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
-import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
-import { flushAsync } from "@/test/flushAsync";
+import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import type { ScheduleView } from "@/types/schedule";
 import { ScheduleStatus } from "./ScheduleStatus";
 
@@ -41,6 +41,7 @@ describe("ScheduleStatus (PROD-043)", () => {
     act(() => root.unmount());
     container.remove();
     useAppStore.setState(useAppStore.getInitialState());
+    useAutomationSections.setState(useAutomationSections.getInitialState());
   });
 
   it("renders nothing while no schedule is enabled", () => {
@@ -61,27 +62,20 @@ describe("ScheduleStatus (PROD-043)", () => {
     expect(pill()!.textContent).toBe("Schedules paused");
   });
 
-  it("opens Settings → Schedules, not the hidden Workflows view, when experimental is off (#4623)", async () => {
-    seedSettings({ experimentalFeaturesEnabled: false });
-    const setSidebarView = vi.fn();
-    const openSettingsTab = vi.fn();
-    useAppStore.setState({ schedules: [view("a", true)], setSidebarView, openSettingsTab });
+  it.each([
+    ["another view", { sidebarView: "connections", sidebarCollapsed: false }],
+    ["a closed sidebar", { sidebarView: "automations", sidebarCollapsed: true }],
+    ["Automations already open", { sidebarView: "automations", sidebarCollapsed: false }],
+  ] as const)("opens the Schedules section of Automations from %s (#5818)", (_name, before) => {
+    useAppStore.setState({ schedules: [view("a", true)], ...before });
     render();
-    await flushAsync();
     act(() => pill()!.click());
-    expect(openSettingsTab).toHaveBeenCalledWith({ category: "schedules" });
-    expect(setSidebarView).not.toHaveBeenCalled();
-  });
-
-  it("opens the Workflows sidebar when experimental is on (#4623)", async () => {
-    seedSettings({ experimentalFeaturesEnabled: true });
-    const setSidebarView = vi.fn();
-    const openSettingsTab = vi.fn();
-    useAppStore.setState({ schedules: [view("a", true)], setSidebarView, openSettingsTab });
-    render();
-    await flushAsync();
-    act(() => pill()!.click());
-    expect(setSidebarView).toHaveBeenCalledWith("workflows");
-    expect(openSettingsTab).not.toHaveBeenCalled();
+    // Never closes the sidebar it leads to.
+    const { sidebarView, sidebarCollapsed } = useAppStore.getState();
+    expect({ sidebarView, sidebarCollapsed }).toEqual({
+      sidebarView: "automations",
+      sidebarCollapsed: false,
+    });
+    expect(useAutomationSections.getState().schedulesOpen).toBe(true);
   });
 });

@@ -455,7 +455,7 @@ functions in `termihub_harness.ui` so they remain unit-testable without an app.
 
 #### Sidebar toolbar actions — never click them directly
 
-Sidebar toolbars (Connections header, Workspaces, Macros, Workflows, …) are a
+Sidebar toolbars (Connections header, Workspaces, Automations, …) are a
 width-responsive `ResponsiveToolbar` (#4709, #4824): every action is a labelled
 button while they all fit, otherwise only the `primary` action stays inline and
 the rest move into one overflow "…" menu, whose items are only mounted while it
@@ -476,8 +476,7 @@ opened = self.reveal_toolbar_action("connection-list-new-folder",
 | --------------------------- | ---------------------------- |
 | Saved header (New ▾, #5848) | `connection-list-new-menu`   |
 | Workspaces                  | `workspace-toolbar-overflow` |
-| Macros                      | `macro-toolbar-overflow`     |
-| Workflows                   | `workflow-toolbar-overflow`  |
+| Automations                 | `automation-toolbar-overflow` |
 
 ### Tests that need container fixtures (SSH/serial/telnet)
 

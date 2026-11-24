@@ -24,6 +24,42 @@
   flex-shrink: 0;
 }
 
+/* A collapsible section's title is its disclosure button (#5818). It keeps the
+   title's look; the whole width before the controls is the target. */
+.sidebar-section-header__toggle {
+  min-height: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-section-header__toggle:hover {
+  color: var(--text-primary);
+}
+
+.sidebar-section-header__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.sidebar-section-header__chevron {
+  transition: transform var(--transition-fast);
+}
+
+.sidebar-section-header__chevron--open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-section-header__chevron {
+    transition: none;
+  }
+}
+
 .sidebar-section-header__actions {
   display: inline-flex;
   align-items: center;

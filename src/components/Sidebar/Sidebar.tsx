@@ -3,9 +3,8 @@ import { ConnectionList } from "./ConnectionList";
 import { FileBrowser } from "./FileBrowser";
 import { TunnelSidebar } from "@/components/TunnelSidebar";
 import { WorkspaceSidebar } from "@/components/WorkspaceSidebar";
-import { MacroSidebar } from "@/components/MacroSidebar";
+import { AutomationSidebar } from "@/components/AutomationSidebar";
 import { RecentSessionsSidebar } from "@/components/RecentSessionsSidebar";
-import { WorkflowSidebar } from "@/components/WorkflowSidebar";
 import { NetworkToolsSidebar } from "@/components/NetworkTools/NetworkToolsSidebar";
 import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
 import { PluginManagerView } from "@/components/Plugins";
@@ -17,8 +16,7 @@ const VIEW_TITLES: Record<string, string> = {
   tunnels: "SSH tunnels",
   services: "Services",
   workspaces: "Workspaces",
-  macros: "Macros",
-  workflows: "Workflows",
+  automations: "Automations",
   "network-tools": "Network tools",
   "recent-sessions": "Recent sessions",
   plugins: "Plugins",
@@ -53,9 +51,8 @@ export function Sidebar({ width }: SidebarProps) {
         {sidebarView === "tunnels" && <TunnelSidebar />}
         {sidebarView === "services" && <EmbeddedServerSidebar />}
         {sidebarView === "workspaces" && <WorkspaceSidebar />}
-        {sidebarView === "macros" && <MacroSidebar />}
+        {sidebarView === "automations" && <AutomationSidebar />}
         {sidebarView === "recent-sessions" && <RecentSessionsSidebar />}
-        {sidebarView === "workflows" && <WorkflowSidebar />}
         {sidebarView === "network-tools" && <NetworkToolsSidebar />}
         {sidebarView === "plugins" && <PluginManagerView />}
       </div>

@@ -2346,7 +2346,7 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
             let cont_sid = cont.session_id;
             let (out_tx, out_rx) = std::sync::mpsc::channel::<Vec<u8>>();
             manager
-                .register_session_output(&agent_id, &cont_sid, out_tx)
+                .register_session_output(&agent_id, &cont_sid, out_tx.into())
                 .expect("register continuity output");
             manager
                 .attach_session(&agent_id, &cont_sid)

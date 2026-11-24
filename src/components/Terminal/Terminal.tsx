@@ -23,6 +23,7 @@ import { backendRedriveSuppliesScrollback, repaintIfResumed } from "./agentRecon
 import { sessionEndedByUser } from "./userEnd";
 import { applyCombineEmoji } from "./unicodeWidth";
 import { waitForUsableDimensions } from "./waitForUsableDimensions";
+import { afterReplay, NO_REPLAY } from "./scrollbackReplay";
 import { createHscrollProbe, syncHscrollBar, horizontalScrollElementWidth } from "./hscrollBar";
 import { abortableDelay } from "@/utils/abortableDelay";
 import { ConnectionConfig } from "@/types/terminal";
@@ -37,7 +38,12 @@ import {
   getAgentSessionBuffer,
   replaySessionScrollback,
 } from "@/services/api";
-import { terminalDispatcher } from "@/services/events";
+import {
+  terminalDispatcher,
+  type OutputChunk,
+  type OutputHold,
+  type OutputPosition,
+} from "@/services/events";
 import { sendInputDetached } from "@/services/detachedSessionInput";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import {
@@ -476,6 +482,8 @@ export function Terminal({
         pendingCloseRef.current = null;
       }
 
+      // The output collected for this setup while it repaints (#5990).
+      const outputHold: { current: OutputHold | null } = { current: null };
       try {
         // Ensure the global Tauri event listener is registered before
         // creating the backend session — otherwise early output events
@@ -528,6 +536,21 @@ export function Terminal({
         // ── Connection loop ────────────────────────────────────────────────
         // For workspace-restore the session already exists — skip the loop.
         let sessionId: string;
+
+        // Where the scrollback this tab repainted ends in the session's output
+        // stream (#5990): live output before it is on screen already.
+        let replayEnd = NO_REPLAY;
+        // Set by a resumed session's repaint, see `ResumedRepaint`.
+        let typedDuringRepaint: string[] = [];
+        let beforeFirstOutput: (() => void) | null = null;
+        // Output of a session being repainted is collected until the tab
+        // subscribes below (or is torn down, or fails to set up).
+        const holdOutput = (sid: string) => {
+          const hold = terminalDispatcher.holdOutput(sid);
+          outputHold.current = hold;
+          signal.addEventListener("abort", hold.release, { once: true });
+        };
+        const takeHeldOutput = () => outputHold.current?.drain() ?? [];
 
         // Decide whether to reattach to an existing session or start fresh.
         // On the initial mount we reattach to the session captured at mount
@@ -635,6 +658,7 @@ export function Terminal({
 
         if (reattachSessionId) {
           sessionId = reattachSessionId;
+          holdOutput(sessionId);
           // Clear the pre-connect overlay state that reconnectTerminal set
           // (terminalConnecting=true to show the overlay immediately). Only the
           // createTerminal path below clears these otherwise. This must happen
@@ -657,7 +681,7 @@ export function Terminal({
             terminalDispatcher.clearPendingExit(sessionId);
             frontendLog("terminal", `Reattaching persistent session ${sessionId}, fetching buffer`);
             try {
-              const buffer = await getAgentSessionBuffer(sessionId);
+              const { data: buffer, ...end } = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
               if (buffer.length > 0) {
                 // Drop the reattaching flag BEFORE writing the buffer.
@@ -685,15 +709,12 @@ export function Terminal({
                 commandMarksRef.current?.reset();
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
-                // NOTE: clearPendingOutput is intentionally deferred to right
-                // before subscribeOutput below.  `attach_session` on the agent
-                // (called via reconnect_existing during apiAttachPersistentTab)
-                // triggers the daemon to forward its ring buffer as live
-                // `connection.output` notifications — and those chunks keep
-                // arriving while `xterm.write(buffer)` is still running.
-                // Clearing here would miss the in-flight chunks; they would
-                // accumulate in pendingOutput and get re-drained by
-                // subscribeOutput, duplicating every byte of scrollback.
+                // `attach_session` on the agent (called via reconnect_existing
+                // during apiAttachPersistentTab) makes the daemon forward its
+                // ring buffer as live `connection.output` as well. Those chunks
+                // may still be arriving, next to output that is really new:
+                // the subscription below tells them apart by position.
+                replayEnd = end;
               }
             } catch (err) {
               frontendLog("terminal", `Failed to fetch reattach buffer: ${errorMessage(err)}`);
@@ -712,7 +733,7 @@ export function Terminal({
             useAppStore.getState().setTerminalReattaching(tabId, true);
             frontendLog("terminal", `Replaying scrollback for moved session ${sessionId}`);
             try {
-              const buffer = await replaySessionScrollback(sessionId);
+              const { data: buffer, ...end } = await replaySessionScrollback(sessionId);
               if (isCanceled()) return;
               if (buffer.length > 0) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
@@ -724,6 +745,7 @@ export function Terminal({
                 commandMarksRef.current?.reset();
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+                replayEnd = end;
               }
             } catch (err) {
               frontendLog(
@@ -916,16 +938,20 @@ export function Terminal({
 
         // An agent tab's client reconnect may have resumed the tab's own
         // session (#5953): repaint its scrollback and say so.
-        const resumedAgentSession =
-          isReconnect &&
-          isAgentSession &&
-          plan.kind === "freshCreate" &&
-          (await repaintIfResumed(
+        let resumedAgentSession = false;
+        if (isReconnect && isAgentSession && plan.kind === "freshCreate") {
+          holdOutput(sessionId);
+          const repaint = await repaintIfResumed(
             xterm,
             sessionId,
             () => commandMarksRef.current?.reset(),
             isCanceled
-          ));
+          );
+          resumedAgentSession = repaint.resumed;
+          replayEnd = repaint.replayEnd;
+          typedDuringRepaint = repaint.typed;
+          beforeFirstOutput = repaint.beforeFirstOutput;
+        }
         if (isCanceled()) return;
 
         // A reconnect marks where the old session ends and the new one starts
@@ -1123,19 +1149,6 @@ export function Terminal({
           }
         };
 
-        // Discard any output that landed in pendingOutput while we were
-        // fetching + writing the scrollback buffer.  For persistent reattach,
-        // those chunks are the daemon's MSG_BUFFER_REPLAY (forwarded as live
-        // `connection.output` by the agent in response to attach_session) and
-        // duplicate bytes we just rendered from getAgentSessionBuffer.  Doing
-        // this synchronously immediately before subscribeOutput ensures no
-        // additional chunks slip into pendingOutput between the clear and
-        // the subscription registration.
-        // A resumed agent session (#5953) was repainted the same way.
-        if (persistentConnectionId || resumedAgentSession) {
-          terminalDispatcher.clearPendingOutput(sessionId);
-        }
-
         // Notify sandboxed frontend-plugin protocol parsers that this session
         // started (#1998), so a parser can reset any per-session state before
         // output begins flowing.
@@ -1176,8 +1189,13 @@ export function Terminal({
           void sendInputDetached(sessionId, initialCommandText + "\n", "initial command");
         };
 
-        // Subscribe to output events via singleton dispatcher (O(1) routing)
-        const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+        // Live output that arrives while a repaint of this already subscribed
+        // tab is being read; shown after it (#5990). Only the latest repaint
+        // counts: `repaintRun` tells a superseded one to leave the tab alone.
+        let outputDuringRepaint: OutputChunk[] | null = null;
+        let repaintRun = 0;
+
+        const showOutput = (data: Uint8Array) => {
           redrawWait.notifyOutput();
           // First output chunk for this session is our readiness signal for the
           // workspace-launch initial command (FEC-003). Idempotent via the guard.
@@ -1198,11 +1216,37 @@ export function Terminal({
             outputFlow.push(out);
             scheduleFlush();
           });
-        });
+        };
+        const receiveOutput = (data: Uint8Array, position: OutputPosition) => {
+          if (outputDuringRepaint) {
+            outputDuringRepaint.push({ data, position });
+            return;
+          }
+          const fresh = afterReplay(data, position, replayEnd);
+          if (!fresh) return;
+          beforeFirstOutput?.();
+          beforeFirstOutput = null;
+          showOutput(fresh);
+        };
+        /** End the repaint in progress, if any, and show what waited for it. */
+        const endRepaint = () => {
+          repaintRun += 1;
+          const held = outputDuringRepaint ?? [];
+          outputDuringRepaint = null;
+          for (const { data, position } of held) receiveOutput(data, position);
+        };
+
+        // What came since the repaint began, then the live stream.
+        for (const { data, position } of takeHeldOutput()) receiveOutput(data, position);
+        // Subscribe to output events via singleton dispatcher (O(1) routing)
+        const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, receiveOutput);
 
         // Subscribe to exit events via singleton dispatcher
         frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
         const unsubExit = terminalDispatcher.subscribeExit(sessionId, (exitCode, endCause) => {
+          // Output that waits for a repaint comes before the end line, and the
+          // repaint must not wipe that line (#5990).
+          endRepaint();
           // Classify why the session ended so the disconnect overlay can tailor
           // its wording (#1121). A user-initiated kill (e.g. from the Open
           // Connections panel) was tagged beforehand; otherwise exit code 0 is a
@@ -1242,7 +1286,7 @@ export function Terminal({
         });
 
         // Send user input to backend
-        const onDataDisposable = xterm.onData((data) => {
+        const sendTyped = (data: string) => {
           // SM-003 (single-attach): another desktop/window controls this session
           // — never send it input until the user explicitly reclaims it.
           if (isTabEvicted(tabId)) return;
@@ -1282,7 +1326,9 @@ export function Terminal({
             // recording is active — the store guards on the recording flag.
             store.recordMacroInput(data);
           }
-        });
+        };
+        const onDataDisposable = xterm.onData(sendTyped);
+        typedDuringRepaint.forEach(sendTyped);
 
         // Send resize events after fit — deduplicated to avoid SIGWINCH storms.
         // Multiple fit() calls from TerminalSlot (sync+RAF), ResizeObserver,
@@ -1327,21 +1373,36 @@ export function Terminal({
           lastSentCols = xterm.cols;
           lastSentRows = xterm.rows;
           sendResize(sid, xterm.cols, xterm.rows);
+          // Output that arrives meanwhile is shown after the repaint (#5990):
+          // the reset would wipe what the snapshot does not hold.
+          outputDuringRepaint ??= [];
+          repaintRun += 1;
+          const run = repaintRun;
           replaySessionScrollback(sid)
-            .then((buffer) => {
-              if (isCanceled() || sessionIdRef.current !== sid || buffer.length === 0) return;
+            .then(async ({ data: buffer, ...end }) => {
+              if (run !== repaintRun || isCanceled()) return;
+              if (sessionIdRef.current !== sid || buffer.length === 0) return;
+              // What is still on its way to the screen is in the repaint too:
+              // let it land before the reset instead of after it.
+              flushOutput();
+              await new Promise<void>((resolve) => xterm.write("", resolve));
+              if (run !== repaintRun || isCanceled()) return;
               // The raw ring buffer carries the OSC 133 marks: reset the tracker
               // with the terminal so they are rebuilt, not duplicated (#3420).
               commandMarksRef.current?.reset();
               xterm.reset();
               xterm.write(buffer);
+              replayEnd = end;
             })
             .catch((err) =>
               frontendLog(
                 "multi_window",
                 `Failed to repaint reclaimed session ${sid}: ${errorMessage(err)}`
               )
-            );
+            )
+            .finally(() => {
+              if (run === repaintRun && !isCanceled()) endRepaint();
+            });
         });
 
         // Initial resize after connection.  The ResizeObserver may have
@@ -1461,6 +1522,7 @@ export function Terminal({
         };
       } catch (err) {
         // Unexpected error outside the connection loop (e.g. subscription setup).
+        outputHold.current?.release();
         const store = useAppStore.getState();
         store.setTerminalConnecting(tabId, false);
         store.setTerminalAutoRetrying(tabId, 0);

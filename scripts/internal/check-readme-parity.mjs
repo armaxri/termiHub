@@ -141,18 +141,20 @@ export function checkActivityBar(readme, source) {
   if (!bullet) return [`${README}: no "- **Activity Bar**" bullet found`];
   const always = bullet.match(/sidebar views: ([^.]+)\./);
   const experimental = bullet.match(/also shows ([^.]+)\./);
-  if (!always || !experimental) {
+  const label = (exp) => items.filter((i) => i.experimental === exp).map((i) => i.label);
+  // No view is behind the switch since Automations graduated (#5818); the
+  // sentence is only needed, and only allowed, while one is.
+  if (!always || (!experimental && label(true).length > 0)) {
     return [
       `${README}: the Activity Bar bullet must name its views as "sidebar views: A, B and C." ` +
         `and the experimental ones as "it also shows D and E."`,
     ];
   }
-  const label = (exp) => items.filter((i) => i.experimental === exp).map((i) => i.label);
   return [
     ...diffLists("Activity Bar views", parseProseList(always[1]), label(false), ACTIVITY_BAR),
     ...diffLists(
       "experimental Activity Bar views",
-      parseProseList(experimental[1]),
+      experimental ? parseProseList(experimental[1]) : [],
       label(true),
       ACTIVITY_BAR
     ),

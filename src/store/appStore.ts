@@ -98,8 +98,7 @@ export type SidebarView =
   | "tunnels"
   | "services"
   | "workspaces"
-  | "macros"
-  | "workflows"
+  | "automations"
   | "network-tools"
   | "recent-sessions"
   | "plugins";
