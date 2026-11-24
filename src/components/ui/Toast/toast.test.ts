@@ -344,4 +344,55 @@ describe("toast API", () => {
       expect(success).toHaveBeenCalledWith("Done", expect.objectContaining({ id: "toast-id" }));
     });
   });
+  describe("isActive (#5828)", () => {
+    type SonnerOpts = {
+      onDismiss?: () => void;
+      onAutoClose?: () => void;
+      action?: { onClick: () => void };
+    };
+    const lastSuccessOpts = () =>
+      success.mock.calls[success.mock.calls.length - 1]?.[1] as unknown as SonnerOpts;
+
+    beforeEach(() => {
+      setTransientDeferred(false);
+      toast.dismiss();
+    });
+
+    it("is true while a success toast shows and false once it auto-closes", () => {
+      toast.success("Closed", { id: "reopen" });
+      expect(toast.isActive("reopen")).toBe(true);
+      lastSuccessOpts().onAutoClose?.();
+      expect(toast.isActive("reopen")).toBe(false);
+    });
+
+    it("is false after its close button, a dismiss by id or a dialog opening", () => {
+      toast.success("A", { id: "a" });
+      lastSuccessOpts().onDismiss?.();
+      expect(toast.isActive("a")).toBe(false);
+
+      toast.success("B", { id: "b" });
+      toast.dismiss("b");
+      expect(toast.isActive("b")).toBe(false);
+
+      toast.success("C", { id: "c", dismissOnModal: true });
+      dismissModalStaleToasts();
+      expect(toast.isActive("c")).toBe(false);
+    });
+
+    it("is false once its action was pressed, and the action still runs", () => {
+      const onClick = vi.fn();
+      toast.success("Closed", { id: "reopen", action: { label: "Reopen", onClick } });
+      lastSuccessOpts().action?.onClick();
+      expect(onClick).toHaveBeenCalledTimes(1);
+      expect(toast.isActive("reopen")).toBe(false);
+    });
+
+    it("counts a toast queued while docked as active", () => {
+      setTransientDeferred(true);
+      toast.success("Closed", { id: "reopen" });
+      expect(toast.isActive("reopen")).toBe(true);
+      setTransientDeferred(false);
+      expect(toast.isActive("reopen")).toBe(true);
+    });
+  });
 });
