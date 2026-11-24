@@ -50,7 +50,9 @@ fn reconnect_after_user_disconnect_resumes_the_tabs_session() {
     assert_eq!(rig.agent.host().minted(), vec!["remote-0"]);
     rig.end_agent(AgentEndReason::User);
 
-    let session = rig.reconnect_tab("tab-a", 1).expect("the reconnect connects");
+    let session = rig
+        .reconnect_tab("tab-a", 1)
+        .expect("the reconnect connects");
 
     assert_eq!(
         rig.agent.host().minted(),
@@ -83,7 +85,9 @@ fn reconnect_starts_fresh_when_the_session_is_gone() {
         .session_recoverable
         .store(false, Ordering::SeqCst);
 
-    let session = rig.reconnect_tab("tab-a", 1).expect("the reconnect connects");
+    let session = rig
+        .reconnect_tab("tab-a", 1)
+        .expect("the reconnect connects");
 
     assert_eq!(rig.agent.host().minted(), vec!["remote-0", "remote-1"]);
     assert!(!rig.take_resumed(&session), "a new session is not a resume");
@@ -97,7 +101,10 @@ fn reconnect_while_the_agent_is_down_resumes_once_it_is_back() {
     rig.end_agent(AgentEndReason::User);
     rig.agent.host().connected.store(false, Ordering::SeqCst);
 
-    assert!(rig.reconnect_tab("tab-a", 1).is_err(), "no agent, no session");
+    assert!(
+        rig.reconnect_tab("tab-a", 1).is_err(),
+        "no agent, no session"
+    );
 
     rig.agent.host().connect();
     let session = rig.reconnect_tab("tab-a", 2).expect("the agent is back");

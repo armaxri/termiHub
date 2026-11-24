@@ -84,10 +84,9 @@ impl SessionManager {
         let Some(request) = self.retained_request(tab_id) else {
             return;
         };
-        if let (Some(agent_id), Some(remote_session_id)) = (
-            request.agent_id.clone(),
-            request.agent_session_id.clone(),
-        ) {
+        if let (Some(agent_id), Some(remote_session_id)) =
+            (request.agent_id.clone(), request.agent_session_id.clone())
+        {
             self.user_ended_agent_sessions
                 .park(tab_id, agent_id, remote_session_id);
         }
@@ -117,11 +116,8 @@ impl SessionManager {
         let remote_session_id = self.user_ended_agent_sessions.take(tab_id, agent_id)?;
         let client = self.agent_client();
         if !client.is_connected(agent_id) {
-            self.user_ended_agent_sessions.park(
-                tab_id,
-                agent_id.to_string(),
-                remote_session_id,
-            );
+            self.user_ended_agent_sessions
+                .park(tab_id, agent_id.to_string(), remote_session_id);
             return None;
         }
         // `list_sessions` parks on the agent's reply: blocking pool.
@@ -146,7 +142,10 @@ impl SessionManager {
         .await
         {
             Ok(proxy) => {
-                info!(tab_id, agent_id, remote_session_id, "Resumed user-ended agent session");
+                info!(
+                    tab_id,
+                    agent_id, remote_session_id, "Resumed user-ended agent session"
+                );
                 Some(ResumedAgentSession {
                     proxy,
                     remote_session_id,

@@ -163,11 +163,11 @@ impl RemoteProxy {
                         file_ranges,
                         file_truncate,
                         definition_id: definition_id.clone(),
-                        filesystem: hosted_filesystem(&self.agent_id, &session_type, &config),
+                        filesystem: hosted_filesystem(&self.agent_id, &session_type, config),
                         filesystem_hint: hosted_filesystem_hint(
                             &self.agent_id,
                             &session_type,
-                            &config,
+                            config,
                             definition_id.as_deref(),
                         )
                         .or_else(|| {

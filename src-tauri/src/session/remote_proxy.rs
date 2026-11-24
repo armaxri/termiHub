@@ -858,8 +858,8 @@ pub(crate) fn hosted_attribute_ops(
 
 mod ranged;
 mod session_caps;
-use session_caps::RemoteSessionTarget;
 pub(crate) use ranged::{confirm_truncated, truncate_params};
+use session_caps::RemoteSessionTarget;
 
 /// Message of the `agent_outdated` file-browser failure (#3242).
 const FILES_AGENT_OUTDATED: &str =

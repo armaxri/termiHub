@@ -1260,28 +1260,28 @@ impl SessionManager {
                     resumed = true;
                     (Box::new(resume.proxy), Some(resume.remote_session_id))
                 } else {
-                // Remote: create proxy to agent.
-                let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
-                // Scoped to the connect id so an OTP prompt it raises is owned
-                // by this tab and cancelled when the tab closes (#3437).
-                if let Err(e) = with_prompt_owner(
-                    connect_id,
-                    proxy.connect_cancellable(remote_settings, cancel_token.clone()),
-                )
-                .await
-                {
-                    // An agent connect otherwise auto-retries client-side without a
-                    // source fold, but a rejected credential (typed across the proxy
-                    // since #3089) is terminal: fold `authFailed` so the tab stops
-                    // and offers credential re-entry, exactly like a direct tab.
-                    if matches!(e, termihub_core::errors::SessionError::AuthFailed) {
-                        fold_auth_rejection(&emitter, connect_id, &e.to_string());
-                        return Err(TerminalError::from_session_spawn(e));
+                    // Remote: create proxy to agent.
+                    let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
+                    // Scoped to the connect id so an OTP prompt it raises is owned
+                    // by this tab and cancelled when the tab closes (#3437).
+                    if let Err(e) = with_prompt_owner(
+                        connect_id,
+                        proxy.connect_cancellable(remote_settings, cancel_token.clone()),
+                    )
+                    .await
+                    {
+                        // An agent connect otherwise auto-retries client-side without a
+                        // source fold, but a rejected credential (typed across the proxy
+                        // since #3089) is terminal: fold `authFailed` so the tab stops
+                        // and offers credential re-entry, exactly like a direct tab.
+                        if matches!(e, termihub_core::errors::SessionError::AuthFailed) {
+                            fold_auth_rejection(&emitter, connect_id, &e.to_string());
+                            return Err(TerminalError::from_session_spawn(e));
+                        }
+                        return Err(TerminalError::SpawnFailed(e.to_string()));
                     }
-                    return Err(TerminalError::SpawnFailed(e.to_string()));
-                }
-                let remote_sid = proxy.remote_session_id();
-                (Box::new(proxy), remote_sid)
+                    let remote_sid = proxy.remote_session_id();
+                    (Box::new(proxy), remote_sid)
                 }
             } else {
                 // Local: instantiate from registry. Lock only long enough to run
