@@ -89,6 +89,19 @@ describe("ConnectionSettingsForm first-use storage chooser (#5187)", () => {
     expect(query("field-savePassword-storage-off")).toBeNull();
   });
 
+  it("says the password is not saved yet, with Turn on saving… opening the chooser (#5835)", async () => {
+    render();
+    expect(query("field-password-not-saved")?.textContent).toContain(
+      "Passwords aren't saved. This one is used only for Test and this connect."
+    );
+    const requestStorageChoice = vi.fn().mockResolvedValue(null);
+    useAppStore.setState({ requestStorageChoice });
+    await act(async () => {
+      query("field-password-turn-on-saving")!.click();
+    });
+    expect(requestStorageChoice).toHaveBeenCalledTimes(1);
+  });
+
   it("asks where to store before turning on, and turns on once a store is chosen", async () => {
     render();
     await toggleOn();

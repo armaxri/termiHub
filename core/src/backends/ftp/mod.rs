@@ -349,7 +349,6 @@ fn server_group() -> SettingsGroup {
                 required: true,
                 placeholder: Some("ftp.example.com".to_string()),
                 supports_env_expansion: true,
-                description: Some("Hostname or IP address of the FTP server".to_string()),
                 ..base_field("host", "Host", FieldType::Text)
             },
             SettingsField {

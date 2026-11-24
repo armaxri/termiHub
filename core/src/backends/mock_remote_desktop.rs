@@ -711,7 +711,10 @@ mod tests {
     fn schema_is_shared_field_base() {
         let schema = connected().settings_schema();
         let keys: Vec<&str> = schema.groups.iter().map(|g| g.key.as_str()).collect();
-        assert_eq!(keys, vec!["connection", "display", "features"]);
+        assert_eq!(
+            keys,
+            vec!["connection", "authentication", "display", "features"]
+        );
     }
 
     #[tokio::test]

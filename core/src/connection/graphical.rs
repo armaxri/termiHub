@@ -100,10 +100,11 @@ fn connect_timeout_field() -> SettingsField {
 /// list of groups so a backend can append its protocol-specific group in the
 /// natural position.
 ///
-/// Groups: **Connection** (host, port, username, password + save password,
-/// connect timeout),
-/// **Display** (scale mode), **Features** (view only, clipboard sync,
-/// auto-reconnect).
+/// Groups: **Connection** (host, port), **Authentication** (username, then the
+/// password right after it, then save password — #5835), **Display** (scale
+/// mode), **Features** (view only, clipboard sync, auto-reconnect, connect
+/// timeout). Connection holds only the address, so a backend's SSH tunnel group
+/// lands right after Host / Port (#5626, #5835).
 ///
 /// Color depth and a fixed remote resolution are deliberately **not** shared
 /// (PROD-026): only protocols that actually honor them expose them, by
@@ -128,6 +129,13 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                     default: Some(serde_json::json!(default_port)),
                     ..field("port", "Port", FieldType::Port)
                 },
+            ],
+        },
+        SettingsGroup {
+            collapsed: false,
+            key: "authentication".to_string(),
+            label: "Authentication".to_string(),
+            fields: vec![
                 SettingsField {
                     supports_env_expansion: true,
                     ..field("username", "Username", FieldType::Text)
@@ -148,7 +156,6 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                         FieldType::Boolean,
                     )
                 },
-                connect_timeout_field(),
             ],
         },
         SettingsGroup {
@@ -202,6 +209,7 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                         FieldType::Boolean,
                     )
                 },
+                connect_timeout_field(),
             ],
         },
     ]
@@ -1356,7 +1364,10 @@ mod tests {
     fn shared_field_base_groups_and_keys() {
         let groups = shared_field_base(5900);
         let keys: Vec<&str> = groups.iter().map(|g| g.key.as_str()).collect();
-        assert_eq!(keys, vec!["connection", "display", "features"]);
+        assert_eq!(
+            keys,
+            vec!["connection", "authentication", "display", "features"]
+        );
         // The shared base carries the credential + display + feature rows the
         // concept lists; a protocol backend appends only its own group.
         let all_field_keys: Vec<&str> = groups
@@ -1391,11 +1402,11 @@ mod tests {
         // #4402: the graphical editor exposes the unified connect timeout under
         // the same key and label as SSH/telnet, bounded like the backends.
         let groups = shared_field_base(5900);
-        let field = groups[0]
-            .fields
+        let field = groups
             .iter()
+            .flat_map(|g| g.fields.iter())
             .find(|f| f.key == super::super::CONNECT_TIMEOUT_KEY)
-            .expect("connection group must expose connectTimeoutSecs");
+            .expect("the shared base must expose connectTimeoutSecs");
         assert_eq!(field.key, "connectTimeoutSecs");
         assert_eq!(field.label, "Connect timeout (s)");
         assert!(!field.required);
@@ -1413,6 +1424,17 @@ mod tests {
         );
         assert_eq!(GRAPHICAL_CONNECT_TIMEOUT_DEFAULT_SECS, 30);
         assert_eq!(GRAPHICAL_CONNECT_TIMEOUT_MAX_SECS, 600);
+    }
+
+    #[test]
+    fn shared_field_base_connection_holds_only_the_address() {
+        // #5835: the SSH tunnel group a backend inserts after Connection sits
+        // right after Host / Port; the password follows the username.
+        let groups = shared_field_base(5900);
+        let keys =
+            |i: usize| -> Vec<&str> { groups[i].fields.iter().map(|f| f.key.as_str()).collect() };
+        assert_eq!(keys(0), vec!["host", "port"]);
+        assert_eq!(keys(1), vec!["username", "password", "savePassword"]);
     }
 
     #[test]

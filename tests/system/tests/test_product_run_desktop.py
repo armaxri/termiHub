@@ -55,8 +55,8 @@ from termihub_harness import (
 from termihub_harness.colors import contrast
 from termihub_harness.native_ssh import fixture_argv
 from termihub_harness.product_run import ProductRunUi
-from termihub_harness.product_run.editor_layout import measure_editor_layout
-from termihub_harness.product_run.grades import editor_layout_problems
+from termihub_harness.product_run.editor_layout import measure_connection_editor, measure_editor_layout
+from termihub_harness.product_run.grades import connection_editor_layout_problems, editor_layout_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
 from termihub_harness.product_run.vnc_server import QUADRANTS, ScriptedVncServer
 from termihub_harness.rdp_test_server import find_rdp_test_server
@@ -226,6 +226,12 @@ class TestProductRunRemoteDesktop(
             # #5641: the ${VAR} note is the section's description, not Host's
             # label; hints sit under their fields; the form width is capped.
             layout = editor_layout_problems(measure_editor_layout(self.driver))
+            # #5835: Password right after Username, Save password only with a
+            # password field, the tunnel toggle right after Host / Port, no
+            # Terminal page for VNC.
+            editor = measure_connection_editor(self.driver, remote_desktop=True)
+            self.evidence(f"VNC fields y={ {k: round(r['y']) for k, r in editor['fields'].items()} }")
+            layout += connection_editor_layout_problems(editor)
             assert not layout, layout
             self.driver.click("field-useSshTunnel")
             self.wait(lambda: self.driver.exists("field-sshHost"), what="the SSH tunnel fields")

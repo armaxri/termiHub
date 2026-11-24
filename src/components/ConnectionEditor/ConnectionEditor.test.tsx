@@ -190,7 +190,7 @@ describe("ConnectionEditor — credential hint", () => {
     expect(hint).not.toBeNull();
   });
 
-  it("shows the save row disabled with an enable action when storage is off (#5186)", async () => {
+  it("says a typed password is not saved and links to saving when storage is off (#5186, #5835)", async () => {
     useAppStore.setState({ credentialStoreStatus: { mode: "none", status: "unlocked" } });
     await render();
     await act(async () => {
@@ -200,10 +200,13 @@ describe("ConnectionEditor — credential hint", () => {
     expect(container.querySelector('[data-testid="field-password-credential-saved"]')).toBeNull();
     const toggle = container.querySelector('[data-testid="field-savePassword"]')!;
     expect(toggle.hasAttribute("disabled")).toBe(true);
+    expect(
+      container.querySelector('[data-testid="field-password-not-saved"]')?.textContent
+    ).toContain("This one is used only for Test and this connect.");
     const enable = container.querySelector<HTMLButtonElement>(
-      '[data-testid="field-savePassword-enable-storage"]'
+      '[data-testid="field-password-turn-on-saving"]'
     )!;
-    expect(enable.textContent).toBe("Enable credential storage…");
+    expect(enable.textContent).toBe("Turn on saving…");
     await act(async () => enable.click());
     expect(useAppStore.getState().pendingSettingsCategory).toBe("security");
   });

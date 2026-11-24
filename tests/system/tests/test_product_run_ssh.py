@@ -54,9 +54,17 @@ from termihub_harness import (
 )
 from termihub_harness.native_ssh import NativeBastionControl, NativeSshServerControl
 from termihub_harness.product_run import ProductRunUi
-from termihub_harness.product_run.editor_layout import measure_editor_footer, measure_editor_layout
+from termihub_harness.product_run.editor_layout import (
+    measure_connection_editor,
+    measure_editor_footer,
+    measure_editor_layout,
+)
 from termihub_harness.product_run.hostkey_emphasis import enter_default_problems
-from termihub_harness.product_run.grades import editor_layout_problems, editor_primary_problems
+from termihub_harness.product_run.grades import (
+    connection_editor_layout_problems,
+    editor_layout_problems,
+    editor_primary_problems,
+)
 from termihub_harness.product_run.hosts import (
     COMPOSE_MFA,
     COMPOSE_PASSWORD,
@@ -683,7 +691,7 @@ class TestProductRunSsh(
             self.switch_to_connections_sidebar()
             self.open_new_connection_editor()
             self.select_connection_type("ssh")
-            self.wait(lambda: self.driver.exists("field-host-hint"), what="the SSH fields")
+            self.wait(lambda: self.driver.exists("field-host"), what="the SSH fields")
             rects = measure_editor_layout(self.driver)
             self.evidence(f"form {rects['form']['width']:.0f}px wide, port {rects['port_input']['width']:.0f}px")
             problems = editor_layout_problems(rects)
@@ -691,6 +699,11 @@ class TestProductRunSsh(
             footer = measure_editor_footer(self.driver)
             self.evidence(f"footer {[(b['testId'], b['primary']) for b in footer]}")
             problems += editor_primary_problems(footer, editing=False)
+            # #5835: Type first, no hint that repeats its label, the ~/.ssh/config
+            # link on Host's label row, Test left of Cancel on one footer row.
+            layout = measure_connection_editor(self.driver)
+            self.evidence(f"hints {[(h['key'], h['hint']) for h in layout['hints']]}")
+            problems += connection_editor_layout_problems(layout)
             assert not problems, problems
         try:
             if self.driver.exists("connection-editor-cancel"):

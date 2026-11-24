@@ -56,14 +56,12 @@ fn connection_group() -> SettingsGroup {
         label: "Telnet".to_string(),
         fields: vec![
             SettingsField {
-                description: Some("Hostname or IP address of the telnet server".to_string()),
                 required: true,
                 placeholder: Some("192.168.1.1".to_string()),
                 supports_env_expansion: true,
                 ..field("host", "Host", FieldType::Text)
             },
             SettingsField {
-                description: Some("TCP port number".to_string()),
                 required: true,
                 default: Some(serde_json::json!(23)),
                 ..field("port", "Port", FieldType::Port)

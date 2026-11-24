@@ -392,7 +392,7 @@ impl ConnectionType for Serial {
                     SettingsField {
                         key: "baudRate".to_string(),
                         label: "Baud rate".to_string(),
-                        description: Some("Communication speed".to_string()),
+                        description: None,
                         help_text: None,
                         field_type: FieldType::Select {
                             options: baud_rate_options(),

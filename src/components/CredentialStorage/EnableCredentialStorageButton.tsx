@@ -5,6 +5,8 @@ import { openCredentialStorageSetup } from "./openCredentialStorageSetup";
 interface EnableCredentialStorageButtonProps {
   /** Runs before navigating — e.g. the password prompt closes itself first. */
   onBeforeOpen?: () => void;
+  /** The action's text; "Enable credential storage…" by default. */
+  label?: string;
   "data-testid"?: string;
 }
 
@@ -15,6 +17,7 @@ interface EnableCredentialStorageButtonProps {
  */
 export function EnableCredentialStorageButton({
   onBeforeOpen,
+  label = ENABLE_CREDENTIAL_STORAGE_LABEL,
   "data-testid": testId,
 }: EnableCredentialStorageButtonProps) {
   return (
@@ -28,7 +31,7 @@ export function EnableCredentialStorageButton({
       }}
       data-testid={testId}
     >
-      {ENABLE_CREDENTIAL_STORAGE_LABEL}
+      {label}
     </Button>
   );
 }

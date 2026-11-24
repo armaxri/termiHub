@@ -39,14 +39,37 @@
   max-width: var(--form-max-width);
 }
 
-/* Action buttons pinned at the bottom */
+/* Action buttons pinned at the bottom. One row that never wraps, so a test
+   result or "Cancel test" appearing never moves Cancel / Save (#5835). */
 .connection-editor__actions {
   display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: var(--spacing-sm);
-  justify-content: flex-end;
   padding: var(--spacing-sm) var(--spacing-md);
   border-top: 1px solid var(--border-primary);
   flex-shrink: 0;
+}
+
+/* Test, Cancel test and the test result: the left side, taking the free width. */
+.connection-editor__actions-test {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+/* The result stays on one line; a long name is cut, never wrapped. */
+.connection-editor__actions-test .ui-inline-status__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A compact helper link at the right end of a field's label row (#5835). */
+.connection-editor__label-action {
+  margin-left: auto;
 }
 
 .connection-editor__setup-agent {
