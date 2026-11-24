@@ -650,7 +650,7 @@ class TestProductRunChecklist(
         with self.step(
             "checklist.zsh.mark-shape",
             "Success and failure marks sit in a gutter and differ in shape, not only colour",
-            expect="a solid green bar by true and a dashed red bar by false, clear of the prompt",
+            expect="a solid green bar by true and a notched red bar by false, clear of the prompt",
         ):
             self.require("checklist.zsh.marks")
             tab = self.wait(lambda: self.find_tab(QUESTION_CONN), what="the question tab")
@@ -662,7 +662,7 @@ class TestProductRunChecklist(
             for bar in (ok, bad):
                 gap = bar.get("gapToText")
                 assert gap is not None and gap >= 5.5, f"mark touches the text: {bar}"
-            # Shape, not hue: the failure bar is masked into dashes, success is solid.
+            # Shape, not hue: the failure bar is masked into a notch, success is solid.
             assert ok.get("maskImage") in (None, "", "none"), f"success is not solid: {ok}"
             assert (bad.get("maskImage") or "none") != "none", f"failure has no shape: {bad}"
 
@@ -683,7 +683,7 @@ class TestProductRunChecklist(
         with self.step(
             "checklist.zsh.mark-hscroll",
             "Command marks show beside the prompt with horizontal scrolling on",
-            expect="the same solid green and dashed red bars, uncut, clear of the prompt",
+            expect="the same solid green and notched red bars, uncut, clear of the prompt",
         ):
             self.require("checklist.zsh.marks")
             tab = self.wait(lambda: self.find_tab(QUESTION_CONN), what="the question tab")

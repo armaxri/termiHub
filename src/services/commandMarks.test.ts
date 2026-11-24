@@ -9,6 +9,8 @@ import { SerializeAddon } from "@xterm/addon-serialize";
 import type { LogEntry } from "@/types/terminal";
 import { onFrontendLog } from "@/utils/frontendLog";
 import {
+  commandMarkLabel,
+  formatCommandDuration,
   type CommandMarkTerminal,
   type CommandMarksSnapshot,
   CommandMarkTracker,
@@ -107,6 +109,23 @@ describe("parseOsc133", () => {
     expect(parseOsc133("P;k=i")).toBeNull();
     expect(parseOsc133("L")).toBeNull();
     expect(parseOsc133("a")).toBeNull();
+  });
+});
+
+describe("commandMarkLabel / formatCommandDuration (#5854)", () => {
+  it("formats run times by scale", () => {
+    expect(formatCommandDuration(0)).toBe("0ms");
+    expect(formatCommandDuration(999)).toBe("999ms");
+    expect(formatCommandDuration(1_000)).toBe("1.0s");
+    expect(formatCommandDuration(9_999)).toBe("9.9s");
+    expect(formatCommandDuration(10_000)).toBe("10s");
+    expect(formatCommandDuration(183_000)).toBe("3m 03s");
+  });
+
+  it("names the outcome and exit code, and the run time when known", () => {
+    expect(commandMarkLabel(0)).toBe("Command succeeded · exit code 0");
+    expect(commandMarkLabel(130, 61_000)).toBe("Command failed · exit code 130 · took 1m 01s");
+    expect(commandMarkLabel(1, Number.NaN)).toBe("Command failed · exit code 1");
   });
 });
 
@@ -440,7 +459,8 @@ describe("CommandMarkTracker (real xterm)", () => {
       expect(decorations.every((d) => d.isDisposed)).toBe(true);
     });
 
-    it("labels each mark with its exit code for the hover tooltip (#5563)", async () => {
+    /** Rendered mark elements for each `registerDecoration`, on a tracker with a fake clock. */
+    function renderedMarks(clock: { t: number }) {
       const renders: Array<(el: HTMLElement) => void> = [];
       vi.spyOn(term, "registerDecoration").mockImplementation(
         () =>
@@ -453,19 +473,59 @@ describe("CommandMarkTracker (real xterm)", () => {
             },
           }) as never
       );
-      await write(term, cycle("ok", "x\r\n", 0));
-      await write(term, cycle("bad", "y\r\n", 2));
-      const [ok, bad] = renders.map((render) => {
-        const el = document.createElement("div");
-        render(el);
-        return el;
-      });
-      expect(ok.title).toBe("Command succeeded (exit code 0)");
-      expect(ok.classList.contains("terminal-command-mark--success")).toBe(true);
-      expect(bad.title).toBe("Command failed (exit code 2)");
-      expect(bad.classList.contains("terminal-command-mark--failure")).toBe(true);
-      // The class the product run grades OSC 133 presence by stays stable.
-      expect(bad.classList.contains("terminal-command-mark")).toBe(true);
+      const timed = new CommandMarkTracker(term, { now: () => clock.t });
+      const osc = term.parser.registerOscHandler(OSC_133, timed.handleOsc);
+      const elements = () =>
+        renders.map((render) => {
+          const el = document.createElement("div");
+          render(el);
+          return el;
+        });
+      return {
+        elements,
+        dispose: () => {
+          osc.dispose();
+          timed.dispose();
+        },
+      };
+    }
+
+    it("labels each mark with its exit code and run time for the hover tooltip (#5563, #5854)", async () => {
+      const clock = { t: 1_000 };
+      const marks = renderedMarks(clock);
+      try {
+        await write(term, `${A}$ ${B}ok\r\n${C}x\r\n`);
+        clock.t += 240;
+        await write(term, D(0));
+        await write(term, `${A}$ ${B}bad\r\n${C}y\r\n`);
+        clock.t += 2_345;
+        await write(term, D(2));
+        const [ok, bad] = marks.elements();
+        expect(ok.title).toBe("Command succeeded · exit code 0 · took 240ms");
+        expect(ok.classList.contains("terminal-command-mark--success")).toBe(true);
+        expect(bad.title).toBe("Command failed · exit code 2 · took 2.3s");
+        expect(bad.classList.contains("terminal-command-mark--failure")).toBe(true);
+        // The class the product run grades OSC 133 presence by stays stable.
+        expect(bad.classList.contains("terminal-command-mark")).toBe(true);
+        // The label is also the mark's accessible name.
+        for (const el of [ok, bad]) {
+          expect(el.getAttribute("role")).toBe("img");
+          expect(el.getAttribute("aria-label")).toBe(el.title);
+        }
+      } finally {
+        marks.dispose();
+      }
+    });
+
+    it("leaves the run time out when the shell never marked the output start (#5854)", async () => {
+      const marks = renderedMarks({ t: 0 });
+      try {
+        // B then D with no C: the tracker falls back to the line after the input.
+        await write(term, `${A}$ ${B}nocee\r\nz\r\n${D(1)}`);
+        expect(marks.elements().map((el) => el.title)).toEqual(["Command failed · exit code 1"]);
+      } finally {
+        marks.dispose();
+      }
     });
 
     it("honours the decorations option at construction", async () => {
@@ -588,6 +648,11 @@ describe("CommandMarkTracker across reset / snapshot replay (#3420)", () => {
     const snapshot = before.tracker.exportSnapshot();
     const serialized = before.serializer.serialize();
     expect(snapshot?.commands).toHaveLength(4);
+    // Finished commands carry their run time across the round trip (#5854).
+    expect(snapshot?.commands.slice(0, 3).every((c) => typeof c.durationMs === "number")).toBe(
+      true
+    );
+    expect(snapshot?.commands[3].durationMs).toBeUndefined();
 
     const after = makeTerminal();
     await write(after.term, serialized);

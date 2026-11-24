@@ -155,6 +155,8 @@ function measureDecorations(element: HTMLElement): TerminalDecoration[] {
       classes: Array.from(el.classList),
       background: backgroundOf(el),
       maskImage: maskImageOf(el),
+      title: el.title,
+      hitArea: hitAreaOf(el, rect),
       gapToText: screen ? screen.left - rect.right : null,
       visibleWidth: Math.max(
         0,
@@ -169,8 +171,27 @@ function measureDecorations(element: HTMLElement): TerminalDecoration[] {
 }
 
 /**
+ * The size of the pointer area a decoration answers to (#5854): its own rect,
+ * grown by a transparent absolutely-positioned `::after` (the command mark's
+ * hover reach over the whole left padding). Engines resolve a positioned
+ * pseudo-element's computed `width` / `height` to used px.
+ */
+function hitAreaOf(el: Element, rect: DOMRect): { width: number; height: number } {
+  const after = (el.ownerDocument.defaultView ?? window).getComputedStyle(el, "::after");
+  const px = (value: string) => {
+    const n = Number.parseFloat(value);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const hasAfter = after.position === "absolute" && (after.content ?? "none") !== "none";
+  return {
+    width: Math.max(rect.width, hasAfter ? px(after.width) : 0),
+    height: Math.max(rect.height, hasAfter ? px(after.height) : 0),
+  };
+}
+
+/**
  * An element's computed mask image (#5640), `"none"` when unset: the failure
- * command mark is masked into dashes so it differs from success by shape.
+ * command mark is masked into a notch (#5854) so it differs from success by shape.
  * Reads the prefixed property too, for engines that only apply that one.
  */
 function maskImageOf(el: Element): string {

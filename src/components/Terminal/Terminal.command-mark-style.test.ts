@@ -6,8 +6,11 @@
  * could never show because the bar ignored the pointer (#5563). A later review
  * (#5640) found the bar touched the prompt text and that success and failure
  * differed only by hue, which red-green colour-blind users cannot tell apart.
+ * The next review (#5854 R-078) found 3px bars still too thin to see and hover,
+ * and the dashed failure bar looking like the solid one at a normal distance.
  * jsdom does not lay out or cascade, so this pins the stylesheet rules that
- * fix it. The colours' contrast is graded per theme in `themes/contrast.test.ts`.
+ * fix it. The colours' contrast is graded per theme in
+ * `themes/themeStateContrast.test.ts`.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
@@ -36,11 +39,11 @@ function pxToken(name: string): number {
 const MARK = ".terminal-container .xterm-decoration.terminal-command-mark";
 
 describe("command-mark gutter bar style (#5563)", () => {
-  it("is 3px wide via the shared token", () => {
+  it("is 5px wide via the shared token (#5854: 3px was too thin)", () => {
     expect(ruleBody(terminalCss, MARK)).toMatch(
       /width:\s*var\(--terminal-command-mark-width\)\s*!important/
     );
-    expect(pxToken("--terminal-command-mark-width")).toBe(3);
+    expect(pxToken("--terminal-command-mark-width")).toBe(5);
   });
 
   it("paints at full strength (no opacity) and takes the pointer for its tooltip", () => {
@@ -77,12 +80,30 @@ describe("command-mark gutter and shape (#5640)", () => {
     );
   });
 
-  it("draws failure as a dashed bar and success as a solid one (not colour alone)", () => {
+  it("draws failure as a notched bar and success as a solid one (#5854, not colour alone)", () => {
     const failure = ruleBody(terminalCss, `${MARK}--failure`);
-    expect(failure).toMatch(/-webkit-mask-image:\s*repeating-linear-gradient\(/);
-    expect(failure).toMatch(/(^|[^-])mask-image:\s*repeating-linear-gradient\(/);
-    expect(failure).toMatch(/transparent/);
+    for (const prefix of ["-webkit-mask", "mask"]) {
+      const re = (prop: string) => new RegExp(`(^|[^-])${prefix}-${prop}:\\s*([^;]+);`);
+      // Three opaque layers: the top block, the bottom block and the thin spine.
+      const image = re("image").exec(failure)?.[2] ?? "";
+      expect(image.match(/linear-gradient\(black, black\)/g)).toHaveLength(3);
+      const size = re("size").exec(failure)?.[2] ?? "";
+      expect(size).toMatch(/var\(--terminal-command-mark-notch-height\)/);
+      expect(size).toMatch(/var\(--terminal-command-mark-spine\)\s+100%/);
+      expect(re("repeat").exec(failure)?.[2]).toBe("no-repeat");
+    }
     expect(ruleBody(terminalCss, `${MARK}--success`)).not.toMatch(/mask/);
+  });
+
+  it("cuts a notch that a glance can see but keeps a spine to hold the shape", () => {
+    const notch = variablesCss.match(/--terminal-command-mark-notch-height:\s*(\d+)%;/);
+    expect(notch).not.toBeNull();
+    expect(Number(notch![1])).toBeGreaterThanOrEqual(30);
+    expect(Number(notch![1])).toBeLessThanOrEqual(50);
+    const spine = pxToken("--terminal-command-mark-spine");
+    expect(spine).toBeGreaterThanOrEqual(1);
+    // At most half the bar: the cut must be wider than what is left.
+    expect(spine * 2).toBeLessThanOrEqual(pxToken("--terminal-command-mark-width"));
   });
 });
 
@@ -107,5 +128,30 @@ describe("command marks in horizontal-scroll mode (#5693)", () => {
     expect(ruleBody(terminalCss, ".terminal-scroll-viewport.terminal-horizontal-scroll")).toMatch(
       /left:\s*0;/
     );
+  });
+});
+
+describe("command-mark hover area (#5854)", () => {
+  const hit = () => ruleBody(terminalCss, `${MARK}::after`);
+
+  it("covers the whole left padding: inset, bar and gutter", () => {
+    expect(hit()).toMatch(/content:\s*"";/);
+    expect(hit()).toMatch(/position:\s*absolute;/);
+    expect(hit()).toMatch(/left:\s*calc\(var\(--terminal-command-mark-inset\)\s*\*\s*-1\);/);
+    expect(hit()).toMatch(/right:\s*calc\(var\(--terminal-command-mark-gutter\)\s*\*\s*-1\);/);
+  });
+
+  it("is at least 24px tall (WCAG 2.2 SC 2.5.8) and centred on the prompt row", () => {
+    expect(pxToken("--terminal-command-mark-hit-min-height")).toBeGreaterThanOrEqual(24);
+    expect(hit()).toMatch(
+      /height:\s*max\(100%,\s*var\(--terminal-command-mark-hit-min-height\)\);/
+    );
+    expect(hit()).toMatch(
+      /top:\s*calc\(\(100%\s*-\s*max\(100%,\s*var\(--terminal-command-mark-hit-min-height\)\)\)\s*\/\s*2\);/
+    );
+  });
+
+  it("is transparent: it adds hover reach, never paint", () => {
+    expect(hit()).not.toMatch(/background|border|box-shadow/);
   });
 });

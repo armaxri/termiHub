@@ -322,6 +322,49 @@ describe("terminalRender helpers against a real xterm (jsdom)", () => {
     expect(decoration.classes).toContain("terminal-command-mark--failure");
     expect(decoration.background).toBe("rgb(255, 0, 0)");
     expect(decoration.maskImage).toBe("none");
+    expect(decoration.title).toBe("");
+  });
+
+  it("reports a command mark's tooltip and its ::after hover area (#5854)", () => {
+    const screen = handles.element.querySelector<HTMLElement>(".xterm-screen")!;
+    const bar = document.createElement("div");
+    bar.className = "xterm-decoration terminal-command-mark terminal-command-mark--failure";
+    bar.title = "Command failed · exit code 1 · took 2.3s";
+    screen.appendChild(bar);
+    vi.spyOn(bar, "getBoundingClientRect").mockImplementation(
+      () => ({ left: 2, right: 7, top: 0, bottom: 17, width: 5, height: 17 }) as DOMRect
+    );
+    const real = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+      const style = real(el, pseudo);
+      if (el !== bar || pseudo !== "::after") return style;
+      const values: Record<string, string> = {
+        position: "absolute",
+        content: '""',
+        width: "13px",
+        height: "24px",
+      };
+      return new Proxy(style, {
+        get: (target, key) =>
+          typeof key === "string" && key in values ? values[key] : Reflect.get(target, key, target),
+      });
+    });
+    const [decoration] = measureTerminal(handles).decorations;
+    expect(decoration.title).toBe("Command failed · exit code 1 · took 2.3s");
+    expect(decoration.hitArea).toEqual({ width: 13, height: 24 });
+    vi.restoreAllMocks();
+  });
+
+  it("falls back to the element's own rect when it has no ::after (#5854)", () => {
+    const bar = document.createElement("div");
+    bar.className = "xterm-decoration terminal-prompt-flash";
+    handles.element.querySelector(".xterm-screen")!.appendChild(bar);
+    vi.spyOn(bar, "getBoundingClientRect").mockImplementation(
+      () => ({ left: 0, right: 40, top: 0, bottom: 17, width: 40, height: 17 }) as DOMRect
+    );
+    const [decoration] = measureTerminal(handles).decorations;
+    expect(decoration.hitArea).toEqual({ width: 40, height: 17 });
+    vi.restoreAllMocks();
   });
 
   it("reports a decoration's mask shape and its gap to the cell grid (#5640)", () => {

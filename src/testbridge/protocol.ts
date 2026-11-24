@@ -964,8 +964,12 @@ export interface TerminalDecoration {
   classes: string[];
   /** Its computed `background-color`. */
   background: string;
-  /** Its computed `mask-image` (`"none"` when unset) — the failure mark's dash shape (#5640). */
+  /** Its computed `mask-image` (`"none"` when unset) — the failure mark's notch shape (#5640, #5854). */
   maskImage: string;
+  /** Its `title` — a command mark's hover text (exit code, run time; #5854); `""` when unset. */
+  title: string;
+  /** CSS px of the pointer area it answers to: its rect grown by a transparent `::after` (#5854). */
+  hitArea: { width: number; height: number };
   /** Horizontal px from its right edge to the cell grid's left edge; `null` without a screen. */
   gapToText: number | null;
   /**
