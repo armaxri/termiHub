@@ -13,6 +13,10 @@ count, each layout icon's label (the tooltip text, which carries the shortcut),
 then opens the "…" menu and checks the moved actions are rows of it and that
 the broadcast row (bound by default on every platform) shows its shortcut.
 No sshd: a local shell is enough.
+
+#5849 keeps this order and moves the sidebar toggle behind a divider (it is
+still the last icon before "…"); ``test_product_run_tabbar_controls.py`` grades
+the glyphs, the single "+" and the toggles' on/off state.
 """
 
 from __future__ import annotations
@@ -79,7 +83,8 @@ class TestProductRunTabbarToolbar(
             "toolbar.layout-icons",
             "The toolbar shows only the layout icons and '…'; each tooltip names its shortcut",
             expect="#5756: above the tab bar, from left to right: new terminal, split right, "
-            "split down, sidebar toggle, then '…'. No broadcast, record or play icon is inline",
+            "split down, a divider, sidebar toggle, then '…' (#5849). No broadcast, record "
+            "or play icon is inline",
         ):
             self.ensure_terminal()
             buttons = self._inline_buttons()
