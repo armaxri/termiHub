@@ -1,172 +1,240 @@
 /**
- * Tests for the on-disconnect / on-output-match trigger editors (#3791).
+ * "When it runs" (#5818): triggers with their settings right under them
+ * (R-158), the Armed switch, and the schedules that run the automation.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import type { SavedConnection } from "@/types/connection";
-import type { WorkflowTrigger } from "@/types/workflow";
-import { WorkflowTriggersEditor } from "./WorkflowTriggersEditor";
-import { checkA11y } from "@/test/axe";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const connections = [
-  { id: "conn-1", name: "prod-web" } as SavedConnection,
-  { id: "conn-2", name: "staging" } as SavedConnection,
-];
+vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
-/** A stateful host so edits flow back into the editor, with a change spy. */
-function Host({
-  initial,
-  spy,
-}: {
-  initial: WorkflowTrigger[];
-  spy: (t: WorkflowTrigger[]) => void;
-}) {
-  const [triggers, setTriggers] = useState(initial);
-  return (
-    <WorkflowTriggersEditor
-      triggers={triggers}
-      connections={connections}
-      onChange={(next) => {
-        spy(next);
-        setTriggers(next);
-      }}
-    />
-  );
+import { useAppStore } from "@/store/appStore";
+import {
+  automationWith,
+  chooseFrom,
+  click,
+  mountEditor,
+  pick,
+  query,
+  typeText,
+  type EditorHarness,
+} from "@/test/automationEditorHarness";
+import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
+import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
+import { flushAsync } from "@/test/flushAsync";
+import { leaveField } from "@/test/leaveField";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
+import type { ScheduleView } from "@/types/schedule";
+
+setupConnectionsRegion();
+setupSettingsRegion();
+
+const openScheduleEditor = vi.fn();
+const realOpenScheduleEditor = useAppStore.getState().openScheduleEditor;
+
+const schedule = {
+  id: "s-1",
+  name: "Nightly",
+  action: { kind: "automation", automationId: "a-1" },
+  targets: { kind: "connections", connectionIds: ["conn-1"] },
+  rule: { kind: "daily", time: "09:10" },
+  missedRuns: "skip",
+  enabled: false,
+  running: false,
+  connectIfNeeded: false,
+} as unknown as ScheduleView;
+
+let editor: EditorHarness;
+async function open(
+  triggers: AutomationTrigger[] = [],
+  { isNew = false, off = false } = {}
+): Promise<void> {
+  const automation = automationWith([{ kind: "wait", delayMs: 1 }], { triggers });
+  if (off) automation.triggersEnabled = false;
+  editor = await mountEditor(automation, { isNew });
+  if (query("automation-editor-when") === null) click("automation-editor-when-toggle");
+  await flushAsync();
 }
-
-vi.mock("@/themes", () => ({
-  applyTheme: vi.fn(),
-  onThemeChange: vi.fn(),
-}));
-
-let container: HTMLDivElement;
-let root: Root;
-
-function query(testId: string): HTMLElement | null {
-  return document.querySelector(`[data-testid="${testId}"]`);
-}
-
-function click(testId: string) {
-  act(() => {
-    (query(testId) as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-}
-
-function setInput(testId: string, value: string) {
-  const input = query(testId) as HTMLInputElement;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-function mount(initial: WorkflowTrigger[], spy: (t: WorkflowTrigger[]) => void) {
-  act(() => {
-    root.render(<Host initial={initial} spy={spy} />);
-  });
-}
+const add = (kind: string) =>
+  chooseFrom("automation-editor-add-trigger", `automation-editor-add-trigger-${kind}`);
+const savedTriggers = async () => (await editor.save()).triggers;
 
 beforeEach(() => {
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
+  openScheduleEditor.mockReset();
+  useAppStore.setState({ automations: [], schedules: [], openScheduleEditor });
+  seedConnectionsRegion({
+    connections: [
+      { id: "conn-1", name: "prod-web-1", config: {} as never, folderId: null },
+      { id: "conn-2", name: "prod-web-2", config: {} as never, folderId: null },
+    ],
+  });
 });
-
 afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
+  editor.unmount();
+  useAppStore.setState({ openScheduleEditor: realOpenScheduleEditor });
 });
 
-const last = (spy: ReturnType<typeof vi.fn>) =>
-  spy.mock.calls[spy.mock.calls.length - 1]?.[0] as WorkflowTrigger[] | undefined;
-
-describe("WorkflowTriggersEditor — on-disconnect / on-output-match (#3791)", () => {
-  it("adds an on-disconnect trigger bound to the chosen connections", () => {
-    const spy = vi.fn();
-    mount([], spy);
-
-    click("workflow-trigger-on-disconnect");
-    expect(query("workflow-trigger-on-disconnect-detail")).not.toBeNull();
-    click("workflow-trigger-on-disconnect-connection-conn-1");
-
-    expect(last(spy)).toEqual([{ kind: "on-disconnect", connectionIds: ["conn-1"] }]);
+describe("triggers", () => {
+  it("says that it always runs by hand", async () => {
+    await open();
+    expect(query("automation-editor-when-manual")?.textContent).toContain("When you run it");
+    expect(query("automation-editor-triggers")).toBeNull();
   });
 
-  it("edits an on-output-match pattern, regex flag and limits", () => {
-    const spy = vi.fn();
-    mount([], spy);
+  it("adds a hotkey, focused", async () => {
+    await open();
+    await add("hotkey");
+    expect(document.activeElement).toBe(query("automation-trigger-binding-0"));
+    typeText("automation-trigger-binding-0", "Ctrl+Alt+H");
+    expect(await savedTriggers()).toEqual([{ kind: "hotkey", binding: "Ctrl+Alt+H" }]);
+  });
 
-    click("workflow-trigger-on-output-match");
-    click("workflow-trigger-on-output-match-connection-conn-2");
-    setInput("workflow-trigger-on-output-match-pattern", "ERROR \\d+");
-    click("workflow-trigger-on-output-match-regex");
-    setInput("workflow-trigger-on-output-match-cooldown", "30");
-    setInput("workflow-trigger-on-output-match-max-fires", "3");
+  it("adds an on-connect trigger and warns while it has no connection", async () => {
+    await open();
+    await add("on-connect");
+    expect(query("automation-trigger-connection-0-none")).not.toBeNull();
+    click("automation-trigger-connection-0-conn-2");
+    expect(query("automation-trigger-connection-0-none")).toBeNull();
+    expect(await savedTriggers()).toEqual([{ kind: "on-connect", connectionIds: ["conn-2"] }]);
+  });
 
-    expect(last(spy)).toEqual([
-      {
-        kind: "on-output-match",
-        connectionIds: ["conn-2"],
-        pattern: "ERROR \\d+",
-        isRegex: true,
-        cooldownMs: 30_000,
-        maxFiresPerSession: 3,
-      },
+  it("adds an on-disconnect trigger with its cause", async () => {
+    await open();
+    await add("on-disconnect");
+    click("automation-trigger-connection-0-conn-1");
+    await pick("automation-trigger-when-0", "Any disconnect");
+    expect(await savedTriggers()).toEqual([
+      { kind: "on-disconnect", connectionIds: ["conn-1"], when: "any" },
     ]);
   });
 
-  it("shows why an unsafe regex is rejected", () => {
-    mount(
-      [{ kind: "on-output-match", connectionIds: ["conn-1"], pattern: "(a+)+", isRegex: true }],
-      vi.fn()
-    );
-    expect(container.textContent).toMatch(/Nested quantifiers/);
+  it("edits an on-output-match pattern, regex flag and limits, under their own card", async () => {
+    await open();
+    await add("on-output-match");
+    const card = query("automation-editor-trigger-0")!;
+    expect(card.contains(query("automation-trigger-pattern-0"))).toBe(true);
+    click("automation-trigger-connection-0-conn-1");
+    typeText("automation-trigger-pattern-0", "ERROR \\d+");
+    click("automation-trigger-regex-0");
+    typeText("automation-trigger-cooldown-0", "30");
+    typeText("automation-trigger-max-fires-0", "2");
+    expect(await savedTriggers()).toEqual([
+      {
+        kind: "on-output-match",
+        connectionIds: ["conn-1"],
+        pattern: "ERROR \\d+",
+        isRegex: true,
+        cooldownMs: 30_000,
+        maxFiresPerSession: 2,
+      },
+    ]);
+    click("automation-trigger-regex-0");
+    typeText("automation-trigger-cooldown-0", "");
+    typeText("automation-trigger-max-fires-0", "");
+    expect(await savedTriggers()).toEqual([
+      { kind: "on-output-match", connectionIds: ["conn-1"], pattern: "ERROR \\d+" },
+    ]);
   });
 
-  it("removes a trigger when its chip is toggled off", () => {
-    const spy = vi.fn();
-    mount([{ kind: "on-disconnect", connectionIds: [] }], spy);
-    click("workflow-trigger-on-disconnect");
-    expect(last(spy)).toEqual([]);
+  it("names a bad pattern once it was edited and left, not before (#5917)", async () => {
+    await open();
+    await add("on-output-match");
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    click("automation-trigger-regex-0");
+    typeText("automation-trigger-pattern-0", "(a+)+");
+    leaveField(query("automation-trigger-pattern-0"));
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect(query("automation-editor-save")?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("keeps several triggers of one kind apart", async () => {
+    const triggers: AutomationTrigger[] = [
+      { kind: "on-disconnect", connectionIds: ["conn-1"] },
+      { kind: "on-disconnect", connectionIds: ["conn-2"], when: "any" },
+    ];
+    await open(triggers);
+    click("automation-trigger-connection-0-conn-2");
+    expect(await savedTriggers()).toEqual([
+      { kind: "on-disconnect", connectionIds: ["conn-1", "conn-2"] },
+      triggers[1],
+    ]);
+  });
+
+  it("removes a trigger and keeps the focus in the section", async () => {
+    await open([{ kind: "hotkey", binding: "F8" }]);
+    click("automation-editor-trigger-remove-0");
+    expect(document.activeElement).toBe(query("automation-editor-add-trigger"));
+    expect(await savedTriggers()).toEqual([]);
+  });
+
+  it("follows a renamed connection without counting it as an edit (#3603)", async () => {
+    const events = installConnectionIdChangesHarness();
+    await open([{ kind: "on-connect", connectionIds: ["conn-1", "x"] }]);
+    events.emit([{ oldId: "conn-1", newId: "Prod/conn-1" }]);
+    click("automation-editor-save");
+    await flushAsync();
+    expect(editor.onSave.mock.calls[0][0].automation).toBeNull();
+    typeText("automation-editor-name", "x");
+    expect(await savedTriggers()).toEqual([
+      { kind: "on-connect", connectionIds: ["Prod/conn-1", "x"] },
+    ]);
   });
 });
 
-describe("WorkflowTriggersEditor — trigger chips use the shared toggle Chip (UI2-006)", () => {
-  const CHIPS = [
-    "workflow-trigger-manual",
-    "workflow-trigger-on-connect",
-    "workflow-trigger-hotkey",
-    "workflow-trigger-on-disconnect",
-    "workflow-trigger-on-output-match",
-  ];
-
-  it("renders every trigger as an aria-pressed toggle button", () => {
-    mount([{ kind: "manual" }], vi.fn());
-    for (const id of CHIPS) {
-      const chip = query(id) as HTMLElement;
-      expect(chip.tagName).toBe("BUTTON");
-      expect(chip.getAttribute("type")).toBe("button");
-      expect(chip.classList.contains("ui-chip--toggle")).toBe(true);
-    }
-    expect(query("workflow-trigger-manual")?.getAttribute("aria-pressed")).toBe("true");
-    expect(query("workflow-trigger-hotkey")?.getAttribute("aria-pressed")).toBe("false");
+describe("the Armed switch", () => {
+  it("shows with an automatic trigger, not for a hotkey", async () => {
+    await open([{ kind: "hotkey", binding: "F8" }]);
+    expect(query("automation-editor-armed")).toBeNull();
+    await add("on-connect");
+    expect(query("automation-editor-armed")?.getAttribute("aria-checked")).toBe("true");
   });
 
-  it("toggles aria-pressed and the trigger list on click", () => {
-    const spy = vi.fn();
-    mount([], spy);
-    click("workflow-trigger-on-connect");
-    expect(query("workflow-trigger-on-connect")?.getAttribute("aria-pressed")).toBe("true");
-    expect(last(spy)?.some((t) => t.kind === "on-connect")).toBe(true);
-    click("workflow-trigger-on-connect");
-    expect(query("workflow-trigger-on-connect")?.getAttribute("aria-pressed")).toBe("false");
-    expect(last(spy)?.some((t) => t.kind === "on-connect")).toBe(false);
+  it("is stored only while off", async () => {
+    await open([{ kind: "on-connect", connectionIds: ["conn-1"] }]);
+    click("automation-editor-armed");
+    expect((await editor.save()).triggersEnabled).toBe(false);
   });
 
-  it("has no a11y violations", async () => {
-    mount([{ kind: "manual" }], vi.fn());
-    expect(await checkA11y(container)).toHaveNoViolations();
+  it("arms again", async () => {
+    await open([{ kind: "on-connect", connectionIds: ["conn-1"] }], { off: true });
+    click("automation-editor-armed");
+    expect(await editor.save()).not.toHaveProperty("triggersEnabled");
+  });
+});
+
+describe("schedules", () => {
+  it("are linked by what they do, with their own editor", async () => {
+    useAppStore.setState({ schedules: [schedule] });
+    await open();
+    expect(query("automation-editor-schedule-s-1")?.textContent).toMatch(
+      /Nightly: .*09:10.* on prod-web-1 · Disabled/
+    );
+    click("automation-editor-schedule-edit-s-1");
+    expect(openScheduleEditor).toHaveBeenCalledWith({ scheduleId: "s-1" });
+  });
+
+  it("open the section and count in its summary", async () => {
+    useAppStore.setState({ schedules: [schedule] });
+    await open();
+    expect(query("automation-editor-when-toggle")?.textContent).toContain("1 schedule");
+  });
+
+  it("On a schedule… opens the schedule editor for a stored automation", async () => {
+    await open();
+    await chooseFrom("automation-editor-add-trigger", "automation-editor-add-schedule");
+    expect(openScheduleEditor).toHaveBeenCalledWith({
+      action: { kind: "automation", automationId: "a-1" },
+    });
+  });
+
+  it("wait for the save of a new automation, and can be taken back", async () => {
+    await open([], { isNew: true });
+    await chooseFrom("automation-editor-add-trigger", "automation-editor-add-schedule");
+    expect(openScheduleEditor).not.toHaveBeenCalled();
+    expect(query("automation-editor-schedule-pending")).not.toBeNull();
+    click("automation-editor-schedule-pending-remove");
+    expect(query("automation-editor-schedule-pending")).toBeNull();
+    await chooseFrom("automation-editor-add-trigger", "automation-editor-add-schedule");
+    await editor.save();
+    expect(editor.onSave.mock.calls[0][0].schedule).toBe(true);
   });
 });

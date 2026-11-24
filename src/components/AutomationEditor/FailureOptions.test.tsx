@@ -1,236 +1,123 @@
 /**
- * Editor coverage for per-step error handling (PROD-045): the continue-on-error
- * and retry controls on every step (including nested sub-steps), validation
- * against the runner's caps gating Save, and saving a step with no policy
- * unchanged (no new keys).
+ * "If this step fails" (PROD-045): stop or continue, bounded retries, on every
+ * step including nested ones, and the runner's caps as the Save gate.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
-import { createRoot, Root } from "react-dom/client";
-import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
-import {
-  stepPolicyErrors,
-  workflowStepsPolicyValid,
-  DEFAULT_STEP_RETRY,
-} from "./workflowStepPolicySchema";
-import { withTooltip } from "@/test/tooltip";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
+
 import { MAX_RETRY_DELAY_MS, MAX_STEP_RETRIES } from "@/services/workflowRunner";
-import type { Workflow, WorkflowStep } from "@/types/workflow";
+import {
+  automationWith,
+  chooseStep,
+  click,
+  mountEditor,
+  pick,
+  query,
+  typeText,
+  valueOf,
+  type EditorHarness,
+} from "@/test/automationEditorHarness";
+import { setupConnectionsRegion } from "@/test/connectionsHarness";
+import { leaveField } from "@/test/leaveField";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
+import { DEFAULT_STEP_RETRY, stepPolicyErrors } from "./stepPolicySchema";
 
-vi.mock("@/themes", () => ({
-  applyTheme: vi.fn(),
-  onThemeChange: vi.fn(),
-}));
+setupConnectionsRegion();
+setupSettingsRegion();
 
-let container: HTMLDivElement;
-let root: Root;
-
-function query(testId: string): HTMLElement | null {
-  return document.querySelector(`[data-testid="${testId}"]`);
-}
-
-function setInput(testId: string, value: string) {
-  const input = query(testId) as HTMLInputElement;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-/** Expand every collapsed step row (opened steps start collapsed, #5637). */
-function expandAllSteps() {
-  const toggle = document.querySelector<HTMLButtonElement>(
-    '[data-testid="workflow-editor-steps-toggle-all"]'
-  );
-  if (toggle && toggle.textContent === "Expand all") act(() => toggle.click());
-}
-
-async function flush() {
-  await act(async () => {
-    await Promise.resolve();
-  });
-}
-
-const baseWorkflow: Workflow = {
-  id: "workflow-1",
-  name: "Deploy",
-  tags: [],
-  steps: [
-    { kind: "send-command", command: "make deploy" },
-    { kind: "wait", delayMs: 100 },
-  ],
-  triggers: [{ kind: "manual" }],
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-01T00:00:00Z",
+const command: AutomationStep = { kind: "send-command", command: "make deploy" };
+const loop: AutomationStep = {
+  kind: "loop",
+  loop: { kind: "count", count: 2 },
+  body: [{ kind: "wait", delayMs: 1 }],
 };
 
-function render(workflow: Workflow = baseWorkflow) {
-  const onSave = vi.fn().mockResolvedValue(undefined);
-  act(() => {
-    root.render(
-      withTooltip(
-        <WorkflowEditorDialog
-          open
-          workflow={workflow}
-          macros={[]}
-          connections={[]}
-          onOpenChange={vi.fn()}
-          onSave={onSave}
-        />
-      )
-    );
-  });
-  expandAllSteps();
-  return { onSave };
+let editor: EditorHarness;
+async function open(step: AutomationStep = command): Promise<void> {
+  editor = await mountEditor(automationWith([step]));
 }
+const saved = async () => (await editor.save()).steps[0];
+const blocked = () => query("automation-editor-save")!.getAttribute("aria-disabled") === "true";
+afterEach(() => editor.unmount());
 
-async function save(onSave: ReturnType<typeof vi.fn>): Promise<WorkflowEditorResult> {
-  act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-  await flush();
-  return onSave.mock.calls[0][0] as WorkflowEditorResult;
-}
-
-describe("WorkflowEditorDialog — step error handling (PROD-045)", () => {
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
+describe("the options", () => {
+  it("continue, and back to stop without a key left behind", async () => {
+    await open();
+    await chooseStep("0", "failure-menu");
+    await pick("automation-editor-step-on-failure-0", "Continue with the next step");
+    expect(await saved()).toEqual({ ...command, continueOnError: true });
+    await pick("automation-editor-step-on-failure-0", "Stop the automation");
+    typeText("automation-editor-name", "x");
+    expect(await saved()).toEqual(command);
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-  });
-
-  it("saves a step without a policy unchanged (no new keys)", async () => {
-    const { onSave } = render();
-    const result = await save(onSave);
-    expect(result.steps).toEqual(baseWorkflow.steps);
-  });
-
-  it("toggles continue-on-error on and off", async () => {
-    const { onSave } = render();
-    act(() => query("workflow-editor-step-continue-0")?.click());
-    act(() => query("workflow-editor-step-continue-1")?.click());
-    act(() => query("workflow-editor-step-continue-1")?.click());
-
-    const result = await save(onSave);
-    expect(result.steps[0]).toEqual({
-      kind: "send-command",
-      command: "make deploy",
-      continueOnError: true,
+  it("retry with defaults, edited, and off again", async () => {
+    await open();
+    await chooseStep("0", "failure-menu");
+    click("automation-editor-step-retry-0");
+    expect(valueOf("automation-editor-step-retry-count-0")).toBe(String(DEFAULT_STEP_RETRY.count));
+    expect(valueOf("automation-editor-step-retry-delay-0")).toBe("1");
+    typeText("automation-editor-step-retry-count-0", "5");
+    typeText("automation-editor-step-retry-delay-0", "0.25");
+    await pick("automation-editor-step-retry-backoff-0", "Double the wait each time");
+    expect(await saved()).toEqual({
+      ...command,
+      retry: { count: 5, delayMs: 250, backoff: "exponential" },
     });
-    expect(result.steps[1]).toEqual({ kind: "wait", delayMs: 100 });
+    typeText("automation-editor-step-retry-delay-0", "");
+    expect(await saved()).toEqual({ ...command, retry: { count: 5, backoff: "exponential" } });
+    click("automation-editor-step-retry-0");
+    typeText("automation-editor-name", "x");
+    expect(await saved()).toEqual(command);
   });
 
-  it("enables retry with defaults and saves the edited count and delay", async () => {
-    const { onSave } = render();
-    expect(query("workflow-editor-step-retry-count-0")).toBeNull();
-
-    act(() => query("workflow-editor-step-retry-0")?.click());
-    expect((query("workflow-editor-step-retry-count-0") as HTMLInputElement).value).toBe(
-      String(DEFAULT_STEP_RETRY.count)
-    );
-    setInput("workflow-editor-step-retry-count-0", "5");
-    setInput("workflow-editor-step-retry-delay-0", "2500");
-
-    const result = await save(onSave);
-    expect(result.steps[0].retry).toEqual({ count: 5, delayMs: 2500, backoff: "fixed" });
-  });
-
-  it("removes the retry key when retry is switched off", async () => {
-    const { onSave } = render({
-      ...baseWorkflow,
-      steps: [{ kind: "send-command", command: "x", retry: { count: 2 } }],
-    });
-    expect((query("workflow-editor-step-retry-count-0") as HTMLInputElement).value).toBe("2");
-
-    act(() => query("workflow-editor-step-retry-0")?.click());
-    const result = await save(onSave);
-    expect(result.steps[0]).toEqual({ kind: "send-command", command: "x" });
-  });
-
-  it("blocks Save and shows an inline error for an out-of-range retry count", () => {
-    render();
-    act(() => query("workflow-editor-step-retry-0")?.click());
-    setInput("workflow-editor-step-retry-count-0", String(MAX_STEP_RETRIES + 1));
-
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-    expect(document.body.textContent).toContain(`from 1 to ${MAX_STEP_RETRIES}`);
-
-    setInput("workflow-editor-step-retry-count-0", "2");
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "false"
-    );
-  });
-
-  it("blocks Save for an over-cap retry delay", () => {
-    render();
-    act(() => query("workflow-editor-step-retry-0")?.click());
-    setInput("workflow-editor-step-retry-delay-0", String(MAX_RETRY_DELAY_MS + 1));
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-  });
-
-  it("offers the controls on nested conditional sub-steps", async () => {
-    const { onSave } = render({
-      ...baseWorkflow,
-      steps: [
-        {
-          kind: "conditional",
-          condition: { left: "a", op: "eq", right: "a" },
-          then: [{ kind: "send-command", command: "inner" }],
-        },
-      ],
-    });
-    act(() => query("workflow-editor-step-continue-0-then-0")?.click());
-
-    const result = await save(onSave);
-    const cond = result.steps[0] as Extract<WorkflowStep, { kind: "conditional" }>;
-    expect(cond.then[0]).toEqual({ kind: "send-command", command: "inner", continueOnError: true });
+  it("are offered on nested steps", async () => {
+    await open(loop);
+    click("automation-editor-step-toggle-0");
+    await chooseStep("0-body-0", "failure-menu");
+    await pick("automation-editor-step-on-failure-0-body-0", "Continue with the next step");
+    expect(await saved()).toMatchObject({ body: [{ kind: "wait", continueOnError: true }] });
   });
 });
 
-describe("workflowStepPolicySchema", () => {
-  const step = (extra: Partial<WorkflowStep>): WorkflowStep =>
-    ({ kind: "send-command", command: "x", ...extra }) as WorkflowStep;
+describe("the bounds", () => {
+  it.each([
+    ["count", "0", /Retries must be a whole number/],
+    ["count", "2.5", /Retries must be a whole number/],
+    ["count", String(MAX_STEP_RETRIES + 1), /Retries must be a whole number/],
+    ["delay", "-1", /between 0 and 60 seconds/],
+    ["delay", String(MAX_RETRY_DELAY_MS / 1000 + 1), /between 0 and 60 seconds/],
+  ])("block Save on a retry %s of %s, and say so once the field is left", async (f, v, message) => {
+    await open({ ...command, retry: { count: 2, delayMs: 1000 } });
+    click("automation-editor-step-toggle-0");
+    const field = `automation-editor-step-retry-${f}-0`;
+    typeText(field, v);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    leaveField(query(field));
+    expect(query(field)?.getAttribute("aria-invalid")).toBe("true");
+    expect(document.querySelector('[role="alert"]')?.textContent).toMatch(message);
+    expect(blocked()).toBe(true);
+  });
+});
 
-  it("accepts a step with no policy or a policy within bounds", () => {
-    expect(stepPolicyErrors(step({}))).toEqual({});
+describe("stepPolicyErrors", () => {
+  it("accepts no policy, and one within the bounds", () => {
+    expect(stepPolicyErrors(command)).toEqual({});
     expect(
-      stepPolicyErrors(
-        step({
-          continueOnError: true,
-          retry: { count: MAX_STEP_RETRIES, delayMs: MAX_RETRY_DELAY_MS, backoff: "exponential" },
-        })
-      )
+      stepPolicyErrors({
+        ...command,
+        continueOnError: true,
+        retry: { count: MAX_STEP_RETRIES, delayMs: MAX_RETRY_DELAY_MS, backoff: "exponential" },
+      })
     ).toEqual({});
   });
 
-  it.each([0, -1, 1.5, MAX_STEP_RETRIES + 1])("rejects retry count %s", (count) => {
-    expect(stepPolicyErrors(step({ retry: { count } })).count).toMatch(/whole number/);
-  });
-
-  it("rejects a negative or over-cap delay", () => {
-    expect(stepPolicyErrors(step({ retry: { count: 1, delayMs: -1 } })).delayMs).toBeDefined();
-    expect(
-      stepPolicyErrors(step({ retry: { count: 1, delayMs: MAX_RETRY_DELAY_MS + 1 } })).delayMs
-    ).toBeDefined();
-  });
-
-  it("validates nested steps recursively", () => {
-    const bad: WorkflowStep = {
-      kind: "loop",
-      loop: { kind: "count", count: 2 },
-      body: [step({ retry: { count: 0 } })],
-    };
-    expect(workflowStepsPolicyValid([bad])).toBe(false);
-    expect(workflowStepsPolicyValid([{ ...bad, body: [step({ retry: { count: 1 } })] }])).toBe(
-      true
+  it("names the field that is out of bounds", () => {
+    expect(stepPolicyErrors({ ...command, retry: { count: 0 } })).toHaveProperty("count");
+    expect(stepPolicyErrors({ ...command, retry: { count: 1, delayMs: -1 } })).toHaveProperty(
+      "delayMs"
     );
   });
 });

@@ -63,6 +63,21 @@ export async function chooseFrom(trigger: string, item: string): Promise<void> {
 export const chooseStep = (path: string, entry: string): Promise<void> =>
   chooseFrom(`automation-editor-step-more-${path}`, `automation-editor-step-${entry}-${path}`);
 
+/** Pick an option of a Select by its label. */
+export async function pick(select: string, label: string): Promise<void> {
+  press(select, "Enter");
+  await flushAsync();
+  const option = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (o) => o.textContent === label
+  );
+  if (!option) throw new Error(`no option ${label}`);
+  act(() => {
+    option.focus();
+    option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  await flushAsync();
+}
+
 /** An automation with the given steps. */
 export function automationWith(
   steps: AutomationStep[],

@@ -1,444 +1,234 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+/**
+ * The Type keys step editor (PROD-039, #3440, #5818): escape notation, byte
+ * exactness, per-row delays and the typing speed saved with the step (#5820).
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
-import { createRoot, Root } from "react-dom/client";
+
+vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
+
+import { runWorkflow } from "@/services/workflowRunner";
 import {
-  AUTHORED_STEP_DELAY_MS,
-  MacroEditorDialog,
-  type MacroEditorResult,
-} from "./MacroEditorDialog";
-import { runMacroPlayback } from "@/services/macroPlayback";
-import { withTooltip } from "@/test/tooltip";
+  automationWith,
+  click,
+  mountEditor,
+  pick,
+  press,
+  query,
+  typeText,
+  valueOf,
+  type EditorHarness,
+} from "@/test/automationEditorHarness";
+import { setupConnectionsRegion } from "@/test/connectionsHarness";
+import { flushAsync } from "@/test/flushAsync";
 import { leaveField } from "@/test/leaveField";
-import type { Macro } from "@/types/macro";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import type { Automation } from "@/types/generated/Automation";
+import { ADDED_KEYS_DELAY_MS, type TypeKeysStep } from "./automationDraft";
+import { SHOWN_KEY_ROWS } from "./TypeKeysFields";
 
-vi.mock("@/themes", () => ({
-  applyTheme: vi.fn(),
-  onThemeChange: vi.fn(),
-}));
+setupConnectionsRegion();
+setupSettingsRegion();
 
-let container: HTMLDivElement;
-let root: Root;
-
-function query(testId: string): HTMLElement | null {
-  return document.querySelector(`[data-testid="${testId}"]`);
-}
-
-function setInput(testId: string, value: string) {
-  const input = query(testId) as HTMLInputElement;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-async function flush() {
-  await act(async () => {
-    await Promise.resolve();
-  });
-}
-
-const macro: Macro = {
-  id: "macro-1",
-  name: "Deploy sequence",
-  description: "Runs the deploy",
-  tags: ["ops", "release"],
-  steps: [
-    { data: "step-one\r", delayMs: 0 },
-    { data: "step-two\r", delayMs: 50 },
-    { data: "step-three\r", delayMs: 100 },
+const recorded: TypeKeysStep = {
+  kind: "type-keys",
+  chunks: [
+    { data: "sudo -v\r", delayMs: 0 },
+    { data: "\x1b[A", delayMs: 1200 },
+    { data: "\x03", delayMs: 180 },
   ],
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-01T00:00:00Z",
+  timing: "recorded",
+  recorded: true,
 };
 
-describe("MacroEditorDialog", () => {
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    vi.clearAllMocks();
+let editor: EditorHarness;
+async function open(step: TypeKeysStep = recorded, isNew = false): Promise<void> {
+  editor = await mountEditor(automationWith([step]), { isNew });
+  if (!isNew) click("automation-editor-step-toggle-0");
+}
+afterEach(() => editor.unmount());
+
+const keysOf = (automation: Automation) => automation.steps[0] as TypeKeysStep;
+const text = (row: number) => `automation-editor-keys-text-0-${row}`;
+const blocked = () => query("automation-editor-save")!.getAttribute("aria-disabled") === "true";
+
+describe("the keys", () => {
+  it("shows control keys in the editable escape notation", async () => {
+    await open();
+    expect(valueOf(text(0))).toBe("sudo -v\\r");
+    expect(valueOf(text(1))).toBe("\\e[A");
+    expect(valueOf(text(2))).toBe("\\x03");
+    expect(query("automation-editor-keys-hint-0")?.textContent).toContain("\\r");
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-  });
-
-  function render(props: Partial<Parameters<typeof MacroEditorDialog>[0]> = {}) {
-    const onSave = props.onSave ?? vi.fn();
-    const onOpenChange = props.onOpenChange ?? vi.fn();
-    act(() => {
-      root.render(
-        withTooltip(
-          <MacroEditorDialog
-            open={props.open ?? true}
-            macro={props.macro === undefined ? macro : props.macro}
-            onOpenChange={onOpenChange}
-            onSave={onSave}
-          />
-        )
-      );
+  it("corrects one row and keeps the others byte for byte", async () => {
+    await open();
+    typeText(text(1), "\\e[B");
+    expect(keysOf(await editor.save())).toEqual({
+      ...recorded,
+      chunks: [recorded.chunks[0], { data: "\x1b[B", delayMs: 1200 }, recorded.chunks[2]],
     });
-    return { onSave, onOpenChange };
-  }
-
-  it("keeps the description a short single line (#5757)", () => {
-    render();
-    const input = query("macro-editor-description") as HTMLInputElement;
-    expect(input.tagName).toBe("INPUT");
-    expect(input.maxLength).toBe(80);
   });
 
-  it("pre-fills the fields and step list from the macro", () => {
-    render();
-    expect((query("macro-editor-name") as HTMLInputElement).value).toBe("Deploy sequence");
-    expect((query("macro-editor-description") as HTMLInputElement).value).toBe("Runs the deploy");
-    expect((query("macro-editor-tags") as HTMLInputElement).value).toBe("ops, release");
-    expect(query("macro-editor-step-0")).not.toBeNull();
-    expect(query("macro-editor-step-1")).not.toBeNull();
-    expect(query("macro-editor-step-2")).not.toBeNull();
+  it("Enter adds an Enter key at the caret instead of saving", async () => {
+    await open();
+    const input = query(text(0)) as HTMLInputElement;
+    act(() => input.focus());
+    input.setSelectionRange(4, 7);
+    press(text(0), "Enter");
+    expect(valueOf(text(0))).toBe("sudo\\r\\r");
+    expect(input.selectionStart).toBe(6);
+    expect(editor.onSave).not.toHaveBeenCalled();
   });
 
-  it("saves the edited name, description and tags", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    setInput("macro-editor-name", "Renamed");
-    setInput("macro-editor-description", "New desc");
-    setInput("macro-editor-tags", "a, b, a");
-
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    expect(onSave).toHaveBeenCalledTimes(1);
-    const result = onSave.mock.calls[0][0] as MacroEditorResult;
-    expect(result.name).toBe("Renamed");
-    expect(result.description).toBe("New desc");
-    // De-duplicated tag list.
-    expect(result.tags).toEqual(["a", "b"]);
-    expect(result.steps).toHaveLength(3);
+  it("the Enter button adds one at the end", async () => {
+    await open();
+    click("automation-editor-keys-enter-0-1");
+    expect(valueOf(text(1))).toBe("\\e[A\\r");
   });
 
-  it("deletes an individual step before saving", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    act(() => (query("macro-editor-step-delete-1") as HTMLButtonElement).click());
-    // The middle step is gone; the list re-indexes to two steps.
-    expect(query("macro-editor-step-2")).toBeNull();
-
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as MacroEditorResult;
-    expect(result.steps.map((s) => s.data)).toEqual(["step-one\r", "step-three\r"]);
-  });
-
-  it("reorders steps with the move-up control", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    act(() => (query("macro-editor-step-up-1") as HTMLButtonElement).click());
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as MacroEditorResult;
-    expect(result.steps.map((s) => s.data)).toEqual(["step-two\r", "step-one\r", "step-three\r"]);
-  });
-
-  it("enables Save with a valid name and at least one step", () => {
-    render();
-    // Pre-filled edit mode: name is populated and the macro has steps.
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "false"
-    );
-  });
-
-  it("disables Save when the name is emptied", () => {
-    render();
-    setInput("macro-editor-name", "   ");
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-  });
-
-  it("does not call onSave while the name is invalid", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    setInput("macro-editor-name", "");
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it("re-enables Save once a valid name is restored", () => {
-    render();
-    setInput("macro-editor-name", "");
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-    setInput("macro-editor-name", "Restored");
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "false"
-    );
-  });
-
-  it("disables Save when all steps are removed", () => {
-    render();
-    act(() => (query("macro-editor-step-delete-2") as HTMLButtonElement).click());
-    act(() => (query("macro-editor-step-delete-1") as HTMLButtonElement).click());
-    act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
-    expect(query("macro-editor-no-steps")).not.toBeNull();
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-  });
-
-  it("shows recorded control characters in the editable escape notation", () => {
-    render({
-      macro: {
-        ...macro,
-        steps: [
-          { data: "ls\r", delayMs: 0 },
-          { data: "\x03\x1b[A", delayMs: 5 },
-        ],
-      },
-    });
-    expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("ls\\r");
-    expect((query("macro-editor-step-data-1") as HTMLInputElement).value).toBe("\\x03\\e[A");
-  });
-
-  it("saves untouched recorded steps byte-identical", async () => {
-    const tricky: Macro = {
-      ...macro,
-      steps: [
-        { data: "C:\\dir\r", delayMs: 0 },
-        { data: "\x1b[1;5A\x7f\x03", delayMs: 30 },
-      ],
-    };
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ macro: tricky, onSave });
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-    expect((onSave.mock.calls[0][0] as MacroEditorResult).steps).toEqual(tricky.steps);
-  });
-
-  it("corrects a recorded step's text", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-    setInput("macro-editor-step-data-1", "step-2-fixed\\r");
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-    const result = onSave.mock.calls[0][0] as MacroEditorResult;
-    expect(result.steps.map((s) => s.data)).toEqual([
-      "step-one\r",
-      "step-2-fixed\r",
-      "step-three\r",
-    ]);
-    // Delays are preserved when only the text changes.
-    expect(result.steps.map((s) => s.delayMs)).toEqual([0, 50, 100]);
-  });
-
-  it("blocks Save and explains an invalid escape", () => {
-    render();
-    setInput("macro-editor-step-data-0", "echo \\q");
-    leaveField(query("macro-editor-step-data-0"));
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-    expect(query("macro-editor-step-error-0")?.textContent).toContain("\\q");
-    setInput("macro-editor-step-data-0", "echo ok\\r");
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "false"
-    );
-    expect(query("macro-editor-step-error-0")).toBeNull();
-  });
-
-  it("blocks Save when a step's input is empty", () => {
-    render();
-    setInput("macro-editor-step-data-2", "");
-    leaveField(query("macro-editor-step-data-2"));
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-    expect(query("macro-editor-step-error-2")?.textContent).toContain("empty");
-  });
-
-  it("adds a step with the authored default delay and appends Enter", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-    act(() => (query("macro-editor-add-step") as HTMLButtonElement).click());
-    expect(query("macro-editor-step-3")).not.toBeNull();
-    // A fresh empty step blocks Save until filled.
-    expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-    setInput("macro-editor-step-data-3", "exit");
-    act(() => (query("macro-editor-step-enter-3") as HTMLButtonElement).click());
-    expect((query("macro-editor-step-data-3") as HTMLInputElement).value).toBe("exit\\r");
-
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-    const result = onSave.mock.calls[0][0] as MacroEditorResult;
-    expect(result.steps[3]).toEqual({ data: "exit\r", delayMs: AUTHORED_STEP_DELAY_MS });
-  });
-
-  it("keeps each step's text attached to it when reordering", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-    setInput("macro-editor-step-data-0", "first-edited\\r");
-    act(() => (query("macro-editor-step-down-0") as HTMLButtonElement).click());
-    expect((query("macro-editor-step-data-1") as HTMLInputElement).value).toBe("first-edited\\r");
-    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-    await flush();
-    const result = onSave.mock.calls[0][0] as MacroEditorResult;
-    expect(result.steps).toEqual([
-      { data: "step-two\r", delayMs: 50 },
-      { data: "first-edited\r", delayMs: 0 },
-      { data: "step-three\r", delayMs: 100 },
-    ]);
-  });
-
-  describe("authoring a new macro (macro = null)", () => {
-    it("opens blank titled New macro with one empty step and Save disabled", () => {
-      render({ macro: null });
-      expect(document.body.textContent).toContain("New macro");
-      expect((query("macro-editor-name") as HTMLInputElement).value).toBe("");
-      expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("");
-      expect(query("macro-editor-step-1")).toBeNull();
-      expect((query("macro-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-        "true"
-      );
-    });
-
-    it("authors a multi-step macro that plays exactly like the recorded equivalent", async () => {
-      const onSave = vi.fn().mockResolvedValue(undefined);
-      render({ macro: null, onSave });
-      setInput("macro-editor-name", "Hand written");
-      setInput("macro-editor-tags", "ops");
-      setInput("macro-editor-step-data-0", "cd /srv\\r");
-      act(() => (query("macro-editor-add-step") as HTMLButtonElement).click());
-      setInput("macro-editor-step-data-1", "tail -f log\\r");
-      act(() => (query("macro-editor-add-step") as HTMLButtonElement).click());
-      setInput("macro-editor-step-data-2", "\\x03");
-
-      act(() => (query("macro-editor-save") as HTMLButtonElement).click());
-      await flush();
-
-      const result = onSave.mock.calls[0][0] as MacroEditorResult;
-      expect(result.name).toBe("Hand written");
-      expect(result.tags).toEqual(["ops"]);
-      // The same shape the recorder produces for those keystrokes.
-      const recordedEquivalent = [
+  it("adds a row that follows with a short delay, focused", async () => {
+    await open({ kind: "type-keys", chunks: [], timing: "recorded" }, true);
+    typeText(text(0), "cd /srv\\r");
+    click("automation-editor-keys-add-0");
+    expect(document.activeElement).toBe(query(text(1)));
+    typeText(text(1), "\\x03");
+    expect(keysOf(await editor.save())).toEqual({
+      kind: "type-keys",
+      timing: "recorded",
+      chunks: [
         { data: "cd /srv\r", delayMs: 0 },
-        { data: "tail -f log\r", delayMs: AUTHORED_STEP_DELAY_MS },
-        { data: "\x03", delayMs: AUTHORED_STEP_DELAY_MS },
-      ];
-      expect(result.steps).toEqual(recordedEquivalent);
-
-      // Playback injects exactly the same bytes for authored and recorded steps.
-      const play = async (steps: typeof recordedEquivalent) => {
-        const injected: string[] = [];
-        const handle = runMacroPlayback(
-          steps,
-          (data) => {
-            injected.push(data);
-            return true;
-          },
-          { timingMode: "instant" }
-        );
-        expect((await handle.done).status).toBe("completed");
-        return injected;
-      };
-      expect(await play(result.steps)).toEqual(await play(recordedEquivalent));
-      expect(await play(result.steps)).toEqual(["cd /srv\r", "tail -f log\r", "\x03"]);
+        { data: "\x03", delayMs: ADDED_KEYS_DELAY_MS },
+      ],
     });
   });
 
-  describe("validation timing (#5917)", () => {
-    const save = () => query("macro-editor-save") as HTMLButtonElement;
-    const nameError = () => document.getElementById("macro-editor-name-error");
-
-    it("opens a new macro without any error, Save reachable but blocked", () => {
-      render({ macro: null });
-      expect(nameError()).toBeNull();
-      expect(query("macro-editor-step-error-0")).toBeNull();
-      expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
-      expect(save().getAttribute("aria-disabled")).toBe("true");
-      expect(save().disabled).toBe(false);
-    });
-
-    it("leaving the edited Name shows its error, but not the untouched step's", () => {
-      render({ macro: null });
-      setInput("macro-editor-name", "x");
-      setInput("macro-editor-name", "");
-      leaveField(query("macro-editor-name"));
-      expect(nameError()?.textContent).toBe("Name is required.");
-      expect(query("macro-editor-step-error-0")).toBeNull();
-    });
-
-    it("a Save attempt saves nothing, shows every error and focuses Name", async () => {
-      const onSave = vi.fn();
-      render({ macro: null, onSave });
-      act(() => save().focus());
-      act(() => save().click());
-      await flush();
-      expect(onSave).not.toHaveBeenCalled();
-      expect(nameError()?.textContent).toBe("Name is required.");
-      expect(query("macro-editor-step-error-0")?.textContent).toBe("Step input cannot be empty.");
-      expect(document.activeElement).toBe(query("macro-editor-name"));
-    });
-
-    it("a Save attempt with no steps left focuses Add step", async () => {
-      render();
-      act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
-      act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
-      act(() => (query("macro-editor-step-delete-0") as HTMLButtonElement).click());
-      expect(query("macro-editor-no-steps")).not.toBeNull();
-      act(() => save().click());
-      await flush();
-      expect(document.activeElement).toBe(query("macro-editor-add-step"));
-    });
-
-    it("reopening starts pristine again", () => {
-      render({ macro: null });
-      act(() => save().click());
-      expect(nameError()).not.toBeNull();
-      render({ macro: null, open: false });
-      render({ macro: null });
-      expect(nameError()).toBeNull();
-    });
+  it("moves and deletes rows with their delays, keeping the focus", async () => {
+    await open();
+    click("automation-editor-keys-down-0-0");
+    expect(valueOf(text(1))).toBe("sudo -v\\r");
+    click("automation-editor-keys-delete-0-0");
+    expect(document.activeElement).toBe(query(text(0)));
+    expect(keysOf(await editor.save()).chunks).toEqual([recorded.chunks[0], recorded.chunks[2]]);
   });
 
-  describe("zod field errors (UISF2-003)", () => {
-    const save = () => query("macro-editor-save") as HTMLButtonElement;
-    const nameError = () => document.getElementById("macro-editor-name-error");
+  it("cannot delete the only row", async () => {
+    await open({ ...recorded, chunks: [recorded.chunks[0]] });
+    expect((query("automation-editor-keys-delete-0-0") as HTMLButtonElement).disabled).toBe(true);
+  });
 
-    it("shows 'Name is required.' on the Name field and re-enables Save once named", () => {
-      render();
-      expect(nameError()).toBeNull();
-      expect(save().getAttribute("aria-disabled")).toBe("false");
+  it("saves an edited delay", async () => {
+    await open();
+    typeText("automation-editor-keys-delay-0-1", "50");
+    expect(keysOf(await editor.save()).chunks[1]).toEqual({ data: "\x1b[A", delayMs: 50 });
+  });
 
-      setInput("macro-editor-name", "   ");
-      leaveField(query("macro-editor-name"));
-      expect(nameError()?.textContent).toBe("Name is required.");
-      expect(query("macro-editor-name")?.getAttribute("aria-invalid")).toBe("true");
-      expect(save().getAttribute("aria-disabled")).toBe("true");
+  it("types what was written, byte for byte", async () => {
+    await open({ kind: "type-keys", chunks: [] }, true);
+    typeText(text(0), "echo ${HOME} \\\\x41\\t\\n\\e\\x03");
+    const saved = await editor.save();
+    const sent: string[] = [];
+    await runWorkflow(saved.steps, {
+      send: (data) => {
+        sent.push(data);
+        return true;
+      },
+    } as Parameters<typeof runWorkflow>[1]).done;
+    expect(sent).toEqual(["echo ${HOME} \\x41\t\n\x1b\x03"]);
+  });
+});
 
-      setInput("macro-editor-name", "Deploy");
-      expect(nameError()).toBeNull();
-      expect(save().getAttribute("aria-disabled")).toBe("false");
+describe("validation", () => {
+  it.each([
+    ["\\q", /Unknown escape/],
+    ["\\x4", /Invalid hex escape/],
+    ["a\\", /Trailing backslash/],
+    ["", /Enter the keys to type/],
+  ])("blocks Save on %j and says why under the row", async (value, message) => {
+    await open();
+    typeText(text(1), value);
+    expect(query("automation-editor-keys-error-0-1")).toBeNull();
+    leaveField(query(text(1)));
+    expect(query("automation-editor-keys-error-0-1")?.textContent).toMatch(message);
+    expect(query(text(1))?.getAttribute("aria-invalid")).toBe("true");
+    expect(query(text(1))?.getAttribute("aria-describedby")).toContain(
+      "automation-step-keys-error-0-1"
+    );
+    expect(blocked()).toBe(true);
+  });
+
+  it("blocks Save on a negative delay while delays count", async () => {
+    await open();
+    typeText("automation-editor-keys-delay-0-1", "-5");
+    leaveField(query("automation-editor-keys-delay-0-1"));
+    expect(query("automation-editor-keys-error-0-1")?.textContent).toBe("Delay must be 0 or more.");
+    expect(blocked()).toBe(true);
+    await pick("automation-editor-step-speed-0", "Instant");
+    expect(blocked()).toBe(false);
+  });
+});
+
+describe("typing speed (#5820)", () => {
+  it("is saved with the step and hides the delays that no longer count", async () => {
+    await open();
+    expect(query("automation-editor-step-speed-0")?.textContent).toContain("As recorded");
+    await pick("automation-editor-step-speed-0", "Instant");
+    expect(query("automation-editor-keys-delay-0-0")).toBeNull();
+    const saved = keysOf(await editor.save());
+    expect(saved).toEqual({ ...recorded, timing: "instant" });
+  });
+
+  it("takes a delay of its own when fixed", async () => {
+    await open();
+    await pick("automation-editor-step-speed-0", "Same delay before every key");
+    expect((query("automation-editor-step-fixed-delay-0") as HTMLInputElement).placeholder).toBe(
+      "40"
+    );
+    typeText("automation-editor-step-fixed-delay-0", "25");
+    expect(keysOf(await editor.save())).toEqual({
+      ...recorded,
+      timing: "fixed",
+      fixedDelayMs: 25,
     });
+    typeText("automation-editor-step-fixed-delay-0", "");
+    expect(keysOf(await editor.save())).not.toHaveProperty("fixedDelayMs");
+  });
 
-    it("shows a step's input error under that step and blocks Save", () => {
-      render();
-      setInput("macro-editor-step-data-1", "");
-      leaveField(query("macro-editor-step-data-1"));
-      expect(query("macro-editor-step-error-1")?.textContent).toBe("Step input cannot be empty.");
-      expect(save().getAttribute("aria-disabled")).toBe("true");
+  it("does not speak of a recording for hand-written keys", async () => {
+    await open({ kind: "type-keys", chunks: [{ data: "a", delayMs: 0 }], timing: "recorded" });
+    expect(query("automation-editor-step-speed-0")?.textContent).toContain("With the delays above");
+  });
+});
+
+describe("a long recording", () => {
+  const long: TypeKeysStep = {
+    ...recorded,
+    chunks: Array.from({ length: 240 }, (_, i) => ({ data: String(i % 10), delayMs: i })),
+  };
+
+  it("shows its first rows, and all of them on request", async () => {
+    await open(long);
+    expect(query(text(SHOWN_KEY_ROWS - 1))).not.toBeNull();
+    expect(query(text(SHOWN_KEY_ROWS))).toBeNull();
+    const more = query("automation-editor-keys-show-all-0")!;
+    expect(more.textContent).toBe("Show all 240 keys");
+    click("automation-editor-keys-show-all-0");
+    expect(query(text(239))).not.toBeNull();
+  });
+
+  it("saves the rows it does not show", async () => {
+    await open(long);
+    typeText(text(0), "x");
+    expect(keysOf(await editor.save()).chunks.slice(1)).toEqual(long.chunks.slice(1));
+  });
+
+  it("shows a hidden row that blocks Save", async () => {
+    await open({
+      ...long,
+      chunks: long.chunks.map((c, i) => (i === 100 ? { data: "", delayMs: 0 } : c)),
     });
+    click("automation-editor-save");
+    await flushAsync();
+    expect(document.activeElement).toBe(query(text(100)));
   });
 });

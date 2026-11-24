@@ -1,471 +1,395 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
-import { createRoot, Root } from "react-dom/client";
-import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
-import { withTooltip } from "@/test/tooltip";
-import type { Workflow } from "@/types/workflow";
-import type { Macro } from "@/types/macro";
-import type { SavedConnection } from "@/types/connection";
+/**
+ * The one automation editor (#5818, slice 7): fields, step list, saving, the
+ * round trip of every golden automation, validation timing and the footer.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+
+vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
+
+import { useAppStore } from "@/store/appStore";
+import { automationLibraryState } from "@/store/slices/automationStoreState";
+import {
+  automationWith,
+  chooseFrom,
+  chooseStep,
+  click,
+  mountEditor,
+  press,
+  query,
+  typeText,
+  valueOf,
+  type EditorHarness,
+} from "@/test/automationEditorHarness";
+import { checkA11y } from "@/test/axe";
+import { openMenu } from "@/test/automationRowMenu";
+import { setupConnectionsRegion } from "@/test/connectionsHarness";
 import { flushAsync } from "@/test/flushAsync";
 import { leaveField } from "@/test/leaveField";
-import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import type { Automation } from "@/types/generated/Automation";
 
-vi.mock("@/themes", () => ({
-  applyTheme: vi.fn(),
-  onThemeChange: vi.fn(),
-}));
+setupConnectionsRegion();
+setupSettingsRegion();
 
-let container: HTMLDivElement;
-let root: Root;
+const TESTDATA = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../src-tauri/src/automations/testdata/legacy.expected.json"
+);
+const golden = (JSON.parse(readFileSync(TESTDATA, "utf8")) as { automations: Automation[] })
+  .automations;
 
-function query(testId: string): HTMLElement | null {
-  return document.querySelector(`[data-testid="${testId}"]`);
-}
-
-function setInput(testId: string, value: string) {
-  const input = query(testId) as HTMLInputElement;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  act(() => {
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-async function flush() {
-  await act(async () => {
-    await Promise.resolve();
-  });
-}
-
-const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-/** Open the "Add step…" dropdown and wait for the portalled menu items. */
-async function openAddStepMenu() {
-  const trigger = query("workflow-editor-add-step") as HTMLButtonElement;
-  await act(async () => {
-    trigger.focus();
-    trigger.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
-    );
-  });
-  for (let i = 0; i < 20 && !query("workflow-editor-add-step-wait"); i++) {
-    await act(async () => {
-      await nextFrame();
-    });
-  }
-}
-
-const macros: Macro[] = [
-  {
-    id: "macro-1",
-    name: "tail app log",
-    tags: [],
-    steps: [{ data: "tail -f app.log\r", delayMs: 0 }],
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-  },
-];
-
-const connections: SavedConnection[] = [
-  { id: "conn-1", name: "prod-web-1", config: {} as never, folderId: null },
-  { id: "conn-2", name: "prod-web-2", config: {} as never, folderId: null },
-];
-
-const workflow: Workflow = {
-  id: "workflow-1",
-  name: "Prod login",
-  description: "Log in and check health",
-  tags: ["ops", "prod"],
-  steps: [
+const stored = automationWith(
+  [
     { kind: "send-command", command: "sudo -v" },
     { kind: "wait", delayMs: 500 },
-    { kind: "run-macro", macroId: "macro-1" },
+    { kind: "run-automation", automationId: "a-log" },
   ],
-  triggers: [{ kind: "manual" }],
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-01T00:00:00Z",
+  { description: "Log in and check health", tags: ["ops", "prod"] }
+);
+const recorded = automationWith([
+  {
+    kind: "type-keys",
+    chunks: [
+      { data: "l", delayMs: 0 },
+      { data: "s", delayMs: 90 },
+      { data: "\r", delayMs: 120 },
+    ],
+    timing: "recorded",
+    recorded: true,
+  },
+]);
+
+let editor: EditorHarness;
+const open = async (automation: Automation, isNew = false) => {
+  editor = await mountEditor(automation, { isNew });
 };
+const saveButton = () => query("automation-editor-save") as HTMLButtonElement;
+const blocked = () => saveButton().getAttribute("aria-disabled") === "true";
+const nameError = () => document.getElementById("automation-editor-name-error");
 
-/** Expand every collapsed step row (opened steps start collapsed, #5637). */
-function expandAllSteps() {
-  const toggle = document.querySelector<HTMLButtonElement>(
-    '[data-testid="workflow-editor-steps-toggle-all"]'
-  );
-  if (toggle && toggle.textContent === "Expand all") act(() => toggle.click());
-}
+beforeEach(() => {
+  useAppStore.setState({
+    ...automationLibraryState([automationWith([], { id: "a-log", name: "tail app log" }), stored]),
+    schedules: [],
+  });
+});
+afterEach(() => editor.unmount());
 
-describe("WorkflowEditorDialog", () => {
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    vi.clearAllMocks();
+describe("fields and steps", () => {
+  it("shows the stored fields and one line per step", async () => {
+    await open(stored);
+    expect(valueOf("automation-editor-name")).toBe("Deploy prep");
+    expect(valueOf("automation-editor-description")).toBe("Log in and check health");
+    click("automation-editor-tags-toggle");
+    expect(valueOf("automation-editor-tags")).toBe("ops, prod");
+    expect(query("automation-editor-step-kind-0")?.textContent).toBe("Run command");
+    expect(query("automation-editor-step-summary-0")?.textContent).toBe("sudo -v");
+    expect(query("automation-editor-step-summary-1")?.textContent).toBe("0.5 s");
+    expect(query("automation-editor-step-summary-2")?.textContent).toBe("tail app log");
   });
 
-  afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-  });
-
-  function render(props: Partial<Parameters<typeof WorkflowEditorDialog>[0]> = {}) {
-    const onSave = props.onSave ?? vi.fn().mockResolvedValue(undefined);
-    const onOpenChange = props.onOpenChange ?? vi.fn();
-    act(() => {
-      root.render(
-        withTooltip(
-          <WorkflowEditorDialog
-            open={props.open ?? true}
-            workflow={props.workflow ?? workflow}
-            macros={props.macros ?? macros}
-            connections={props.connections ?? connections}
-            isNew={props.isNew ?? false}
-            onOpenChange={onOpenChange}
-            onSave={onSave}
-          />
-        )
-      );
-    });
-    return { onSave, onOpenChange };
-  }
-
-  it("keeps the description a short single line (#5757)", () => {
-    render();
-    const input = query("workflow-editor-description") as HTMLInputElement;
+  it("keeps the description a short single line (#5757)", async () => {
+    await open(stored);
+    const input = query("automation-editor-description") as HTMLInputElement;
     expect(input.tagName).toBe("INPUT");
     expect(input.maxLength).toBe(80);
   });
 
-  it("pre-fills the fields and step list from the workflow", () => {
-    render();
-    expect((query("workflow-editor-name") as HTMLInputElement).value).toBe("Prod login");
-    expect((query("workflow-editor-description") as HTMLInputElement).value).toBe(
-      "Log in and check health"
-    );
-    expect((query("workflow-editor-tags") as HTMLInputElement).value).toBe("ops, prod");
-    expect(query("workflow-editor-step-0")).not.toBeNull();
-    expect(query("workflow-editor-step-1")).not.toBeNull();
-    expect(query("workflow-editor-step-2")).not.toBeNull();
-    expect(query("workflow-editor-step-kind-0")?.textContent).toBe("Send command");
-  });
-
-  it("saves the edited name, description and tags", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    setInput("workflow-editor-name", "Renamed");
-    setInput("workflow-editor-description", "New desc");
-    setInput("workflow-editor-tags", "a, b, a");
-
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    expect(onSave).toHaveBeenCalledTimes(1);
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.name).toBe("Renamed");
-    expect(result.description).toBe("New desc");
-    expect(result.tags).toEqual(["a", "b"]);
-    expect(result.steps).toHaveLength(3);
-  });
-
-  it("edits a send-command step's command before saving", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-    expandAllSteps();
-
-    setInput("workflow-editor-step-command-0", "whoami");
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.steps[0]).toEqual({ kind: "send-command", command: "whoami" });
-  });
-
-  it("edits run-local-process args as a discrete list (a space-containing arg stays one arg)", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const lpWorkflow: Workflow = {
-      ...workflow,
-      steps: [{ kind: "run-local-process", program: "notify-send", args: ["--urgency"] }],
-    };
-    render({ onSave, workflow: lpWorkflow });
-    expandAllSteps();
-
-    // Add a second argument row, then type a value that contains a space.
-    act(() => (query("workflow-editor-step-arg-add-0") as HTMLButtonElement).click());
-    await flush();
-    setInput("workflow-editor-step-arg-0-1", "hello world");
-
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    // The space-containing value is a SINGLE discrete argument — never split.
-    expect(result.steps[0]).toEqual({
-      kind: "run-local-process",
-      program: "notify-send",
-      args: ["--urgency", "hello world"],
+  it("saves trimmed fields and de-duplicated tags, and leaves the rest alone", async () => {
+    await open(stored);
+    typeText("automation-editor-name", "  Renamed ");
+    typeText("automation-editor-description", "  spaced  desc ");
+    click("automation-editor-tags-toggle");
+    typeText("automation-editor-tags", "a, b, a");
+    expect(await editor.save()).toEqual({
+      ...stored,
+      name: "Renamed",
+      description: "spaced desc",
+      tags: ["a", "b"],
     });
   });
 
-  it("removes a run-local-process argument row", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    const lpWorkflow: Workflow = {
-      ...workflow,
-      steps: [{ kind: "run-local-process", program: "echo", args: ["a", "b"] }],
-    };
-    render({ onSave, workflow: lpWorkflow });
-    expandAllSteps();
-
-    act(() => (query("workflow-editor-step-arg-remove-0-0") as HTMLButtonElement).click());
-    await flush();
-
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.steps[0]).toEqual({ kind: "run-local-process", program: "echo", args: ["b"] });
+  it("drops an emptied description", async () => {
+    await open(stored);
+    typeText("automation-editor-description", "   ");
+    expect(await editor.save()).not.toHaveProperty("description");
   });
 
-  it("adds a typed step from the Add step menu", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    await openAddStepMenu();
-    const waitItem = query("workflow-editor-add-step-wait") as HTMLElement;
-    expect(waitItem).not.toBeNull();
-    await act(async () => {
-      waitItem.click();
-    });
-
-    expect(query("workflow-editor-step-3")).not.toBeNull();
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.steps).toHaveLength(4);
-    expect(result.steps[3].kind).toBe("wait");
+  it.each([
+    ["type-keys", "automation-editor-keys-text-3-0"],
+    ["send-command", "automation-editor-step-command-3"],
+    ["wait", "automation-editor-step-delay-3"],
+    ["wait-for-output", "automation-editor-wfo-pattern-3"],
+    ["conditional", "automation-editor-cond-left-3"],
+    ["run-script", "automation-editor-step-script-3"],
+  ])("adds a %s step, opened, with the focus on its first field", async (kind, field) => {
+    await open(stored);
+    await chooseFrom("automation-editor-add-step", `automation-editor-add-step-${kind}`);
+    expect(query("automation-editor-step-toggle-3")?.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(query(field));
   });
 
-  it("portals the Add step menu inside the dialog content, not document.body (#1868)", async () => {
-    render();
-
-    await openAddStepMenu();
-    const dialog = query("workflow-editor-dialog");
-    const waitItem = query("workflow-editor-add-step-wait");
-    expect(dialog).not.toBeNull();
-    expect(waitItem).not.toBeNull();
-
-    // Regression guard for #1868: a modal Radix Dialog sets pointer-events: none
-    // on document.body, so a menu portalled to body is dead/unclickable in a
-    // real browser. The menu must live INSIDE the dialog subtree (its
-    // pointer-events: auto content) — jsdom can't reproduce the pointer-events
-    // failure itself, but it can prove the structural fix that prevents it.
-    expect(dialog!.contains(waitItem)).toBe(true);
+  it("keeps the Add step menu inside the dialog, where it can be clicked (#1868)", async () => {
+    await open(stored);
+    openMenu("automation-editor-add-step");
+    expect(
+      query("automation-editor-dialog")!.contains(query("automation-editor-add-step-wait"))
+    ).toBe(true);
   });
 
-  it("deletes an individual step before saving", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    act(() => (query("workflow-editor-step-delete-1") as HTMLButtonElement).click());
-    expect(query("workflow-editor-step-2")).toBeNull();
-
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.steps.map((s) => s.kind)).toEqual(["send-command", "run-macro"]);
+  it("moves a step with the arrow keys on its handle, keeping the focus there", async () => {
+    await open(stored);
+    (query("automation-editor-step-grip-1") as HTMLElement).focus();
+    press("automation-editor-step-grip-1", "ArrowUp");
+    expect(query("automation-editor-step-kind-0")?.dataset.kind).toBe("wait");
+    expect(document.activeElement).toBe(query("automation-editor-step-grip-0"));
+    expect(query("automation-editor-live")?.textContent).toBe("Step moved to position 1 of 3.");
+    press("automation-editor-step-grip-0", "ArrowUp");
+    press("automation-editor-step-grip-0", "ArrowDown");
+    press("automation-editor-step-grip-1", "ArrowDown");
+    expect((await editor.save()).steps.map((s) => s.kind)).toEqual([
+      "send-command",
+      "run-automation",
+      "wait",
+    ]);
   });
 
-  it("reorders steps with the move-up control", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    act(() => (query("workflow-editor-step-up-1") as HTMLButtonElement).click());
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.steps.map((s) => s.kind)).toEqual(["wait", "send-command", "run-macro"]);
-  });
-
-  it("binds a hotkey trigger and saves it", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    act(() => (query("workflow-trigger-hotkey") as HTMLButtonElement).click());
-    setInput("workflow-trigger-hotkey-binding", "Ctrl+Alt+H");
-
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.triggers).toContainEqual({ kind: "hotkey", binding: "Ctrl+Alt+H" });
-    expect(result.triggers).toContainEqual({ kind: "manual" });
-  });
-
-  it("disables Save when the name is emptied", () => {
-    render();
-    setInput("workflow-editor-name", "   ");
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-  });
-
-  it("re-enables Save once a valid name is restored", () => {
-    render();
-    setInput("workflow-editor-name", "");
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-    setInput("workflow-editor-name", "Valid again");
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "false"
-    );
-  });
-
-  it("enables Save and saves a trimmed payload when the form and step list are valid", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    // A valid form (non-empty name) plus a non-empty step list => Save enabled.
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "false"
-    );
-
-    setInput("workflow-editor-name", "  Trim me  ");
-    setInput("workflow-editor-description", "  spaced desc  ");
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    expect(onSave).toHaveBeenCalledTimes(1);
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    // Name and description are trimmed on save, exactly as before the migration.
-    expect(result.name).toBe("Trim me");
-    expect(result.description).toBe("spaced desc");
-    expect(result.steps).toHaveLength(3);
-    expect(result.triggers).toEqual([{ kind: "manual" }]);
-  });
-
-  it("omits an all-whitespace description as undefined on save", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({ onSave });
-
-    setInput("workflow-editor-description", "   ");
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.description).toBeUndefined();
-  });
-
-  it("keeps a valid step list from enabling Save while the name is invalid", () => {
-    render();
-    // Step list is non-empty (valid) but the form is invalid => Save blocked,
-    // proving the gate ANDs form validity with the step-list condition.
-    setInput("workflow-editor-name", "   ");
-    expect(query("workflow-editor-steps")).not.toBeNull();
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-  });
-
-  it("populates the form fields from the workflow in edit mode", () => {
-    render();
-    expect((query("workflow-editor-name") as HTMLInputElement).value).toBe("Prod login");
-    expect((query("workflow-editor-description") as HTMLInputElement).value).toBe(
-      "Log in and check health"
-    );
-    expect((query("workflow-editor-tags") as HTMLInputElement).value).toBe("ops, prod");
-  });
-
-  it("disables Save and shows the empty hint when all steps are removed", () => {
-    render();
-    act(() => (query("workflow-editor-step-delete-2") as HTMLButtonElement).click());
-    act(() => (query("workflow-editor-step-delete-1") as HTMLButtonElement).click());
-    act(() => (query("workflow-editor-step-delete-0") as HTMLButtonElement).click());
-    expect(query("workflow-editor-no-steps")).not.toBeNull();
-    expect((query("workflow-editor-save") as HTMLButtonElement).getAttribute("aria-disabled")).toBe(
-      "true"
-    );
-  });
-
-  it("saves an on-connect trigger with a renamed connection's new id (#3603)", async () => {
-    const events = installConnectionIdChangesHarness();
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render({
-      onSave,
-      workflow: {
-        ...workflow,
-        triggers: [{ kind: "manual" }, { kind: "on-connect", connectionIds: ["conn-1", "x"] }],
-      },
-    });
+  it("moves a step from its menu, not past either end", async () => {
+    await open(stored);
+    openMenu("automation-editor-step-more-0");
+    expect(query("automation-editor-step-up-0")?.getAttribute("aria-disabled")).toBe("true");
+    click("automation-editor-step-down-0");
     await flushAsync();
-
-    events.emit([
-      { oldId: "conn-1", newId: "Prod/conn-1" },
-      { oldId: "conn-2", newId: "Prod/conn-2" },
-    ]);
-    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
-    await flush();
-
-    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
-    expect(result.triggers).toEqual([
-      { kind: "manual" },
-      { kind: "on-connect", connectionIds: ["Prod/conn-1", "x"] },
+    expect((await editor.save()).steps.map((s) => s.kind)).toEqual([
+      "wait",
+      "send-command",
+      "run-automation",
     ]);
   });
 
-  describe("validation timing (#5917)", () => {
-    const blank: Workflow = { ...workflow, name: "", description: "", tags: [], steps: [] };
-    const nameError = () => document.getElementById("workflow-editor-name-error");
-    const save = () => query("workflow-editor-save") as HTMLButtonElement;
+  it("deletes a step, moves the focus to its neighbor and offers Undo (R-167)", async () => {
+    await open(stored);
+    await chooseStep("1", "delete");
+    expect(query("automation-editor-step-2")).toBeNull();
+    expect(query("automation-editor-step-deleted")?.textContent).toContain("Deleted Wait.");
+    expect(document.activeElement).toBe(query("automation-editor-step-toggle-1"));
+    expect(query("automation-editor-live")?.textContent).toContain("Undo is available");
+    click("automation-editor-step-undo");
+    expect(query("automation-editor-step-deleted")).toBeNull();
+    expect(query("automation-editor-step-kind-1")?.dataset.kind).toBe("wait");
+    typeText("automation-editor-name", "x");
+    expect((await editor.save()).steps).toEqual(stored.steps);
+  });
 
-    it("opens a new workflow without a Name error, Save reachable but blocked", () => {
-      render({ workflow: blank, isNew: true });
-      expect(nameError()).toBeNull();
-      expect(query("workflow-editor-name")?.getAttribute("aria-invalid")).toBeNull();
-      expect(save().getAttribute("aria-disabled")).toBe("true");
-      expect(save().disabled).toBe(false);
-    });
+  it("duplicates a step right below it", async () => {
+    await open(stored);
+    await chooseStep("0", "duplicate");
+    expect((await editor.save()).steps).toEqual([stored.steps[0], ...stored.steps]);
+  });
 
-    it("a Save attempt saves nothing, shows the Name error and focuses Name", async () => {
-      const onSave = vi.fn();
-      render({ workflow: blank, isNew: true, onSave });
-      act(() => save().focus());
-      act(() => save().click());
-      await flush();
-      expect(onSave).not.toHaveBeenCalled();
-      expect(nameError()?.textContent).toBe("Name is required.");
-      expect(document.activeElement).toBe(query("workflow-editor-name"));
-    });
+  it("offers every other automation to run, never itself", async () => {
+    await open(automationWith([{ kind: "run-automation", automationId: "gone" }], { id: "a-log" }));
+    click("automation-editor-step-toggle-0");
+    const picker = query("automation-editor-step-automation-0")!;
+    expect(picker.textContent).toContain("Deleted automation");
+    press("automation-editor-step-automation-0", "Enter");
+    await flushAsync();
+    const options = Array.from(document.querySelectorAll('[role="option"]'), (o) => o.textContent);
+    expect(options).toEqual(["Deleted automation", "Deploy prep"]);
+  });
 
-    it("a Save attempt with only the steps missing focuses Add step", async () => {
-      const onSave = vi.fn();
-      render({ workflow: { ...blank, name: "Named" }, isNew: true, onSave });
-      act(() => save().focus());
-      act(() => save().click());
-      await flush();
-      expect(onSave).not.toHaveBeenCalled();
-      expect(query("workflow-editor-no-steps")).not.toBeNull();
-      expect(document.activeElement).toBe(query("workflow-editor-add-step"));
+  it("has no accessibility violations, every section open", async () => {
+    await open(golden.find((a) => a.name === "Deploy prep")!);
+    click("automation-editor-steps-toggle-all");
+    click("automation-editor-tags-toggle");
+    await checkA11y(query("automation-editor-dialog")!);
+  });
+});
+
+describe("round trip (#5818)", () => {
+  it.each(golden.map((a) => [a.name, a] as const))(
+    "saving %s unchanged stores nothing",
+    async (_name, automation) => {
+      await open(automation);
+      if (automation.steps.length === 0) return; // nothing to save: an empty one is blocked
+      click("automation-editor-save");
+      await flushAsync();
+      expect(editor.onSave).toHaveBeenCalledWith({
+        automation: null,
+        run: false,
+        schedule: false,
+      });
+    }
+  );
+
+  it.each(golden.filter((a) => a.steps.length > 0).map((a) => [a.name, a] as const))(
+    "renaming %s keeps everything else byte for byte",
+    async (_name, automation) => {
+      await open(automation);
+      // Opened rows mount every field; mounting one must not rewrite its value.
+      click("automation-editor-steps-toggle-all");
+      typeText("automation-editor-name", "Renamed");
+      expect(JSON.stringify(await editor.save())).toBe(
+        JSON.stringify({ ...automation, name: "Renamed" })
+      );
+    }
+  );
+});
+
+describe("saving", () => {
+  it("keeps the dialog and its edits when saving fails", async () => {
+    await open(stored);
+    editor.onSave.mockRejectedValueOnce(new Error("disk full"));
+    typeText("automation-editor-name", "Renamed");
+    click("automation-editor-save");
+    await flushAsync();
+    expect(valueOf("automation-editor-name")).toBe("Renamed");
+    expect(editor.onClose).not.toHaveBeenCalled();
+  });
+
+  it("Save and run saves, then asks to run", async () => {
+    await open(stored);
+    typeText("automation-editor-name", "Renamed");
+    click("automation-editor-save-run");
+    await flushAsync();
+    expect(editor.onSave).toHaveBeenCalledWith({
+      automation: { ...stored, name: "Renamed" },
+      run: true,
+      schedule: false,
     });
   });
 
-  it("shows 'Name is required.' on the Name field while it is blank (UISF2-003)", () => {
-    render();
-    const nameError = () => document.getElementById("workflow-editor-name-error");
-    const save = () => query("workflow-editor-save") as HTMLButtonElement;
+  it("always stores a new automation, edited or not", async () => {
+    await open(stored, true);
+    expect(await editor.save()).toEqual(stored);
+  });
+});
+
+describe("the primary action (#5755, #5810)", () => {
+  const footer = () =>
+    Array.from(document.querySelectorAll(".ui-modal__foot button"), (b) => b.textContent);
+  const isPrimary = (id: string) => query(id)!.className.includes("ui-btn--primary");
+  const enter = (id: string) => press(id, "Enter");
+
+  it("is Save and run for a new automation", async () => {
+    await open(stored, true);
+    expect(footer()).toEqual(["Cancel", "Save", "Save and run"]);
+    expect(isPrimary("automation-editor-save-run")).toBe(true);
+    expect(isPrimary("automation-editor-save")).toBe(false);
+    enter("automation-editor-name");
+    await flushAsync();
+    expect(editor.onSave.mock.calls[0][0].run).toBe(true);
+  });
+
+  it("is Save for an existing one", async () => {
+    await open(stored);
+    expect(footer()).toEqual(["Cancel", "Save and run", "Save"]);
+    expect(isPrimary("automation-editor-save")).toBe(true);
+    typeText("automation-editor-description", "x");
+    enter("automation-editor-description");
+    await flushAsync();
+    expect(editor.onSave.mock.calls[0][0].run).toBe(false);
+  });
+
+  it("is never run by Enter in a step: typing a command must not run it", async () => {
+    await open(stored, true);
+    enter("automation-editor-step-command-0");
+    click("automation-editor-when-toggle");
+    await chooseFrom("automation-editor-add-trigger", "automation-editor-add-trigger-hotkey");
+    enter("automation-trigger-binding-0");
+    await flushAsync();
+    expect(editor.onSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("validation timing (#5917)", () => {
+  const blank = automationWith([], { name: "" });
+  const blankKeys = automationWith([{ kind: "type-keys", chunks: [], timing: "recorded" }], {
+    name: "",
+  });
+
+  it("opens a new automation clean, with Save reachable but blocked", async () => {
+    await open(blankKeys, true);
     expect(nameError()).toBeNull();
-    expect(save().getAttribute("aria-disabled")).toBe("false");
+    expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+    expect(blocked()).toBe(true);
+    expect(saveButton().disabled).toBe(false);
+  });
 
-    setInput("workflow-editor-name", "");
-    leaveField(query("workflow-editor-name"));
+  it("shows a field's error once it was edited and left, not the others'", async () => {
+    await open(blankKeys, true);
+    typeText("automation-editor-name", "x");
+    typeText("automation-editor-name", "");
+    expect(nameError()).toBeNull();
+    leaveField(query("automation-editor-name"));
     expect(nameError()?.textContent).toBe("Name is required.");
-    expect(query("workflow-editor-name")?.getAttribute("aria-invalid")).toBe("true");
-    expect(save().getAttribute("aria-disabled")).toBe("true");
-
-    setInput("workflow-editor-name", "Prod login");
+    expect(query("automation-editor-keys-error-0-0")).toBeNull();
+    typeText("automation-editor-name", "Named");
     expect(nameError()).toBeNull();
-    expect(save().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it.each(["automation-editor-save", "automation-editor-save-run"])(
+    "%s on an invalid form saves nothing, shows every error and focuses the first",
+    async (button) => {
+      await open(blankKeys, true);
+      click(button);
+      await flushAsync();
+      expect(editor.onSave).not.toHaveBeenCalled();
+      expect(nameError()?.textContent).toBe("Name is required.");
+      expect(query("automation-editor-keys-error-0-0")?.textContent).toBe(
+        "Enter the keys to type."
+      );
+      expect(document.activeElement).toBe(query("automation-editor-name"));
+    }
+  );
+
+  it("with only the steps missing, says so and focuses Add step", async () => {
+    await open({ ...blank, name: "Named" }, true);
+    expect(query("automation-editor-no-steps")?.textContent).toBe(
+      "No steps yet. Add the first one."
+    );
+    click("automation-editor-save");
+    await flushAsync();
+    expect(query("automation-editor-no-steps")?.textContent).toBe("Add at least one step.");
+    expect(document.activeElement).toBe(query("automation-editor-add-step"));
+  });
+
+  it("opens a collapsed, nested step whose field blocks Save", async () => {
+    await open(
+      automationWith([
+        {
+          kind: "loop",
+          loop: { kind: "count", count: 2 },
+          body: [{ kind: "wait", delayMs: 1, retry: { count: 0 } }],
+        },
+      ])
+    );
+    expect(query("automation-editor-step-body-0")).toBeNull();
+    click("automation-editor-save");
+    await flushAsync();
+    expect(document.activeElement).toBe(query("automation-editor-step-retry-count-0-body-0"));
+  });
+
+  it("opens the closed When it runs section on a trigger that blocks Save", async () => {
+    await open(
+      automationWith([{ kind: "wait", delayMs: 1 }], {
+        triggers: [{ kind: "on-output-match", connectionIds: ["c"], pattern: "" }],
+      })
+    );
+    click("automation-editor-when-toggle");
+    expect(query("automation-editor-when")).toBeNull();
+    click("automation-editor-save");
+    await flushAsync();
+    expect(document.activeElement).toBe(query("automation-trigger-pattern-0"));
+  });
+
+  it("blocks Save once every step is gone", async () => {
+    await open(recorded);
+    await chooseStep("0", "delete");
+    expect(blocked()).toBe(true);
+    expect(document.activeElement).not.toBe(document.body);
   });
 });
