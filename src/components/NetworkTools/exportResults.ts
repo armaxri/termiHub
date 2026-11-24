@@ -160,6 +160,7 @@ export async function exportNetworkResults(
     });
     if (!filePath) return; // user cancelled the dialog
     await writeTextFile(filePath, content);
+    // toast-policy: no-in-place-surface — the export is a file on disk
     toast.success("Results exported");
   } catch (err) {
     frontendLog("network_export", `Export failed: ${errorMessage(err)}`);

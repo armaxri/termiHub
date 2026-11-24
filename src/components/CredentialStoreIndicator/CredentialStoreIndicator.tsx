@@ -26,7 +26,6 @@ export function CredentialStoreIndicator() {
     } else {
       try {
         await lockCredentialStore();
-        toast.success("Credential store locked");
       } catch (err) {
         toast.error(`Failed to lock credential store: ${errorMessage(err)}`);
       }

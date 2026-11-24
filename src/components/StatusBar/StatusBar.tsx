@@ -75,7 +75,7 @@ import { ScheduleStatus } from "./ScheduleStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 import { SerialStatus, SshStatus, TelnetStatus } from "./SessionChips";
 import { MonitoringMetricRows } from "./MonitoringMetricRows";
-import { formatRefreshInterval, MonitoringRefreshSubmenu } from "./MonitoringRefreshSubmenu";
+import { MonitoringRefreshSubmenu } from "./MonitoringRefreshSubmenu";
 
 /**
  * Backend code for a monitor whose remote agent is too old to monitor an
@@ -712,7 +712,6 @@ function MonitoringStatus() {
       if (!activeMonitorKey) return;
       try {
         await setMonitoringPaused(activeMonitorKey, paused);
-        toast.success(paused ? "Monitoring paused" : "Monitoring resumed");
       } catch (err) {
         frontendLog(
           "monitoring",
@@ -730,7 +729,6 @@ function MonitoringStatus() {
       if (!activeMonitorKey) return;
       try {
         await setMonitoringInterval(activeMonitorKey, intervalMs);
-        toast.success(`Refresh interval set to ${formatRefreshInterval(intervalMs)}`);
       } catch (err) {
         frontendLog("monitoring", `Failed to set monitoring interval: ${errorMessage(err)}`);
         toast.error(`Failed to set interval: ${errorMessage(err)}`);
@@ -744,7 +742,6 @@ function MonitoringStatus() {
     if (!activeMonitorKey) return;
     try {
       await cancelMonitoring(activeMonitorKey);
-      toast.success("Monitoring connect canceled");
     } catch (err) {
       frontendLog("monitoring", `Failed to cancel monitoring: ${errorMessage(err)}`);
       toast.error(`Failed to cancel: ${errorMessage(err)}`);

@@ -128,8 +128,6 @@ export function TransferQueue() {
     if (failed > 0) {
       frontendLog("transfer_queue", `cancelAll: ${failed}/${pending.length} cancels failed`);
       toast.error(`Failed to cancel ${failed} transfer${failed === 1 ? "" : "s"}`);
-    } else {
-      toast.success(`Canceling ${pending.length} transfer${pending.length === 1 ? "" : "s"}`);
     }
   };
 

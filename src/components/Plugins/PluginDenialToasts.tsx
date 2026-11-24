@@ -6,6 +6,7 @@ import { EMPTY_SANDBOX_VIEW } from "@/store/pluginSandboxBridge";
 import { DenialToastLimiter, type DenialToast } from "./denialToastLimiter";
 
 function show(t: DenialToast): void {
+  // toast-policy: background — a plugin was denied something while running
   toast.info(t.title, {
     description: t.description,
     testId: `plugin-denial-toast-${t.pluginId}`,

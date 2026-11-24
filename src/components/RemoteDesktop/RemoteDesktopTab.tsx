@@ -17,7 +17,7 @@ import { fireAndForget, frontendWarn } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import type { MonitorRect, RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
-import { SCALE_MODE_LABELS, effectiveScaleMode, scaleModesFor } from "@/types/remoteDesktop";
+import { effectiveScaleMode, scaleModesFor } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { RemoteDesktopToolbar, type FilesButtonState } from "./RemoteDesktopToolbar";
 import { RemoteDesktopDropOverlay } from "./RemoteDesktopDropOverlay";
@@ -29,7 +29,7 @@ import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
 import { RemoteDesktopFirstFrameOverlay } from "./RemoteDesktopFirstFrameOverlay";
 import { sshTunnelVia } from "./graphicalStages";
-import { monitorLabel, viewportsFor } from "./monitorLayout";
+import { viewportsFor } from "./monitorLayout";
 import "./RemoteDesktopTab.css";
 
 /**
@@ -189,17 +189,20 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
             return;
           }
           if (next.canceled) {
+            // toast-policy: explains-outcome — nothing uploads, and this says why
             toast.info("Upload canceled", {
               description: "The linked SSH password is needed to upload files.",
             });
             return;
           }
           const why = dropRefusal(next.files);
+          // toast-policy: explains-outcome — the drop is refused, and this says why
           if (why) toast.info(why.title, { description: why.hint });
         });
         return;
       }
       const why = dropRefusal(files);
+      // toast-policy: explains-outcome — the drop is refused, and this says why
       if (why) toast.info(why.title, { description: why.hint });
     },
     [sessionLive, evicted, session.viewOnly, remoteFiles]
@@ -296,9 +299,6 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const handleCycleViewport = useCallback(() => {
     const next = shownIndex === null ? 0 : shownIndex + 1 < monitors.length ? shownIndex + 1 : null;
     setViewportIndex(next);
-    toast.success(
-      next === null ? "Showing all monitors" : `Showing ${monitorLabel(monitors[next], next)}`
-    );
   }, [shownIndex, monitors]);
 
   const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
@@ -323,14 +323,12 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
       .slice()
       .reverse()
       .forEach((code) => session.sendInput({ kind: "key", code, pressed: false }));
-    toast.success("Sent Ctrl+Alt+Del");
   }, [session]);
 
   const handleCycleScaleMode = useCallback(() => {
     const idx = scaleCycle.indexOf(scaleMode);
     const next = scaleCycle[(idx + 1) % scaleCycle.length];
     setScaleModeOverride(next);
-    toast.success(`Scaling: ${SCALE_MODE_LABELS[next]}`);
   }, [scaleMode, scaleCycle]);
 
   const handleFullscreen = useCallback(() => {
@@ -390,8 +388,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const handleCopyFilesToHost = useCallback(async () => {
     const count = await session.bindClipboardFiles();
     if (count > 0) {
+      // toast-policy: no-in-place-surface — the files are on the local clipboard
       toast.success(`${count} file${count === 1 ? "" : "s"} ready — paste into any app`);
     } else {
+      // toast-policy: explains-outcome — nothing was copied, and this says why
       toast.info("No remote files to paste");
     }
   }, [session]);
@@ -422,6 +422,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     draftEditedRef.current = false;
     setPendingRemoteClipboard(null);
     session.sendClipboard(clipboardDraft);
+    // toast-policy: no-in-place-surface — the text is on the remote clipboard
     toast.success("Clipboard sent to remote");
   }, [session, clipboardDraft]);
 

@@ -66,16 +66,15 @@ export function PluginManagerView() {
     const failed = plugins.filter(
       (p) => hasUpdateSource(p) && entries[p.manifest.id]?.phase === "error"
     ).length;
-    if (available > 0) {
-      toast.success(
-        `${available} plugin ${available === 1 ? "update is" : "updates are"} available`
-      );
-    } else if (failed > 0) {
+    // Available updates show on their plugins' rows (#5859).
+    if (available > 0) return;
+    if (failed > 0) {
       toast.error(`Update check failed for ${failed} ${failed === 1 ? "plugin" : "plugins"}`);
     } else if (indexError !== null) {
       toast.error(`Could not check the plugin index: ${indexError}`);
     } else {
-      toast.success("All plugins are up to date");
+      // toast-policy: explains-outcome — the check changed nothing, and this says so
+      toast.info("All plugins are up to date");
     }
   }, [checkForUpdates, plugins]);
 

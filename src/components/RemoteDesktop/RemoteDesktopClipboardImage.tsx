@@ -54,8 +54,10 @@ export function RemoteDesktopClipboardImage({
   const handleCopy = useCallback(async () => {
     const info = await remoteDesktopCopyClipboardImage(sessionId);
     if (info) {
+      // toast-policy: no-in-place-surface — the image is on the local clipboard
       toast.success(`Image copied to clipboard (${formatDimensions(info)})`);
     } else {
+      // toast-policy: explains-outcome — nothing was copied, and this says why
       toast.info("No remote image to copy");
     }
   }, [sessionId]);
@@ -63,8 +65,10 @@ export function RemoteDesktopClipboardImage({
   const handleSend = useCallback(async () => {
     const info = await remoteDesktopSendClipboardImage(sessionId);
     if (info) {
+      // toast-policy: no-in-place-surface — the image is on the remote clipboard
       toast.success(`Image sent to remote (${formatDimensions(info)})`);
     } else {
+      // toast-policy: explains-outcome — nothing was sent, and this says why
       toast.info("No image on the local clipboard");
     }
   }, [sessionId]);
