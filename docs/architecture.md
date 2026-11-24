@@ -1546,7 +1546,7 @@ flowchart LR
     D --> E
 ```
 
-The theme engine writes CSS custom properties directly to `:root` via JavaScript — no separate CSS files per theme. When "System" is selected, a `matchMedia` listener auto-switches between Dark and Light when the OS preference changes. The activity bar stays dark in all themes (VS Code convention).
+The theme engine writes CSS custom properties directly to `:root` via JavaScript — no separate CSS files per theme. When "System" is selected, a `matchMedia` listener auto-switches between Dark and Light when the OS preference changes. The activity bar stays dark in Dark, Light and Solarized Dark (VS Code convention); Solarized Light paints it base2 with dark icons so it matches the cream sidebar and editor (#5853).
 
 ### Per-Workspace Settings (PROD-052)
 

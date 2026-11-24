@@ -5,7 +5,9 @@
  * surfaces and the 2px indicator bar, in Dark (accent tint, no bar) and both
  * Solarized themes (palette surface + bar). In Solarized Light the pane is
  * base2, so its rows step up to base3; sidebar rows use the theme's active
- * tone (#5639). Expected colours come from the theme definitions.
+ * tone (#5639). Both Solarized themes also outline the row at >=3:1 against
+ * the surface under it (#5853). Expected colours come from the theme
+ * definitions.
  *
  * Screenshots land in the usual screens/ folder for human review.
  */
@@ -37,7 +39,7 @@ const SOL_LIGHT = solarizedLightTheme;
 
 /** Per theme: the expected opaque surfaces, or `null` for the accent tint. */
 const THEMES = [
-  { theme: "dark", sidebar: null, pane: null, bar: null },
+  { theme: "dark", sidebar: null, pane: null, bar: null, outline: null },
   {
     theme: "solarized-light",
     // #5639: the active tone on base3; base3 on the base2 pane.
@@ -47,12 +49,14 @@ const THEMES = [
       under: rgb(SOL_LIGHT.colors.bgSecondary),
     },
     bar: rgb(SOL_LIGHT.selection!.indicator), // accentColor
+    outline: rgb(SOL_LIGHT.selection!.outline!), // base01 (#5853)
   },
   {
     theme: "solarized-dark",
     sidebar: { row: "rgb(0, 43, 54)", under: "rgb(7, 54, 66)" }, // base03 on base02
     pane: { row: "rgb(0, 43, 54)", under: "rgb(7, 54, 66)" }, // base03 on base02
     bar: "rgb(38, 139, 210)", // blue, canonical
+    outline: "rgb(131, 148, 150)", // base0 (#5853)
   },
 ] as const;
 
@@ -89,7 +93,8 @@ async function measure(row: Locator, under: string, token: string) {
 function expectSelected(
   got: Awaited<ReturnType<typeof measure>>,
   surface: { row: string; under: string } | null,
-  bar: string | null
+  bar: string | null,
+  outline: string | null
 ): void {
   // Every list paints the shared token, whatever the theme.
   expect(got.bg).toBe(got.tokenBg);
@@ -98,6 +103,7 @@ function expectSelected(
     expect(got.bg).toBe(surface.row);
     expect(got.under).toBe(surface.under);
     expect(got.shadow).toContain(bar);
+    if (outline) expect(got.shadow).toContain(outline);
   } else {
     // The accent tint: translucent, no bar.
     expect(got.bg).not.toBe(got.under);
@@ -144,7 +150,8 @@ for (const t of THEMES) {
     expectSelected(
       await measure(row, "[data-testid=sidebar]", "--selected-row-bg"),
       t.sidebar,
-      t.bar
+      t.bar,
+      t.outline
     );
 
     const file = join(SCREENS, "selected-rows", `file-browser-${t.theme}.png`);
@@ -166,7 +173,8 @@ for (const t of THEMES) {
     expectSelected(
       await measure(row, ".transfer-pane", "--selected-row-secondary-bg"),
       t.pane,
-      t.bar
+      t.bar,
+      t.outline
     );
 
     const file = join(SCREENS, "selected-rows", `transfer-pane-${t.theme}.png`);

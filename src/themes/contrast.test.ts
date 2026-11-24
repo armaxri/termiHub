@@ -38,6 +38,8 @@ import { parsePluginTheme } from "./pluginThemes";
 const AA_NORMAL_TEXT = 4.5;
 /** WCAG 2.2 SC 1.4.11: non-text UI components and indicators. */
 const UI_COMPONENT_MIN = 3;
+/** #5853: links keep a margin over AA (graded in themeStateContrast.test.ts). */
+const LINK_MIN = 5;
 
 const BUILT_IN_THEMES = [darkTheme, lightTheme, solarizedDarkTheme, solarizedLightTheme];
 const SOLARIZED_THEMES = [solarizedDarkTheme, solarizedLightTheme];
@@ -314,11 +316,12 @@ describe("secondary text on hovered/selected rows (WCAG 2.2 AA, #5249)", () => {
   }
 
   it("documents the gap the token closes: plain textSecondary fails on a row state", () => {
-    for (const theme of [darkTheme, lightTheme]) {
-      const worst = Math.min(
-        contrastRatio(theme.colors.textSecondary, theme.colors.bgHover),
-        contrastRatio(theme.colors.textSecondary, theme.colors.bgActive)
-      );
+    // Light's textSecondary before #5853 darkened it past AA on both row states.
+    for (const [secondary, { bgHover, bgActive }] of [
+      [darkTheme.colors.textSecondary, darkTheme.colors],
+      ["#5e6670", lightTheme.colors],
+    ] as const) {
+      const worst = Math.min(contrastRatio(secondary, bgHover), contrastRatio(secondary, bgActive));
       expect(worst).toBeLessThan(AA_NORMAL_TEXT);
     }
   });
@@ -495,7 +498,8 @@ describe("solarized link and status colours (WCAG 2.2 AA, #5399)", () => {
   type Key = keyof typeof solarizedDarkTheme.colors;
   // [token, canonical hue, minimum ratio, surfaces]
   const ROLES: [Key, string, number, readonly Key[]][] = [
-    ["textLink", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
+    // #5853: links take a 5:1 target (thin 12-13px underlined text).
+    ["textLink", SOLARIZED_PALETTE.blue, LINK_MIN, TEXT_SURFACES],
     ["textAccent", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
     ["colorInfo", SOLARIZED_PALETTE.blue, AA_NORMAL_TEXT, TEXT_SURFACES],
     ["colorError", SOLARIZED_PALETTE.red, AA_NORMAL_TEXT, TEXT_SURFACES],
@@ -656,7 +660,7 @@ describe("solarized light selection and filled buttons (#5562)", () => {
       new RegExp(`${sel.replace(/[.:-]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css)?.[1];
     const selected = rule(".connection-tree__item--selected");
     expect(selected).toMatch(/background-color:\s*var\(--selected-row-bg\)/);
-    expect(selected).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--selected-row-indicator\)/);
+    expect(selected).toMatch(/box-shadow:\s*var\(--selected-row-shadow\)/);
     expect(rule(".connection-tree__item--selected:hover")).toMatch(
       /background-color:\s*var\(--selected-row-hover-bg\)/
     );
@@ -804,7 +808,7 @@ describe("selected rows on every surface (#5591)", () => {
       expect(rest).toMatch(
         new RegExp(`background(-color)?:\\s*var\\(--selected-row${surface.pair}-bg\\)`)
       );
-      expect(rest).toMatch(/box-shadow:\s*inset 2px 0 0 0 var\(--selected-row-indicator\)/);
+      expect(rest).toMatch(/box-shadow:\s*var\(--selected-row-shadow\)/);
       expect(hover).toMatch(
         new RegExp(`background(-color)?:\\s*var\\(--selected-row${surface.pair}-hover-bg\\)`)
       );

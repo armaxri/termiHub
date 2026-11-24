@@ -155,6 +155,12 @@ export interface ThemeSelection {
   /** The 2px left bar on a selected row, on every surface (`--selected-row-indicator`). */
   indicator: string;
   /**
+   * A 1px outline around the selected row (`--selected-row-outline`), for a
+   * theme whose opaque `bg` sits below 3:1 against the sidebar (#5853): the
+   * outline gives the row a WCAG 1.4.11 boundary. Omitted, no outline is drawn.
+   */
+  outline?: string;
+  /**
    * Rows on a `bgSecondary` pane (the transfer view), for a theme whose
    * `bgSecondary` equals or sits too close to `bg`
    * (`--selected-row-secondary-bg` / `--selected-row-secondary-hover-bg`).

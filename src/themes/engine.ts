@@ -184,6 +184,7 @@ export function selectionVariables(theme: ThemeDefinition): Record<string, strin
     "--selected-row-bg": sel?.bg ?? null,
     "--selected-row-hover-bg": sel?.bgHover ?? null,
     "--selected-row-indicator": sel?.indicator ?? null,
+    "--selected-row-outline": sel?.outline ?? null,
     "--selected-row-secondary-bg": sel?.secondary?.bg ?? null,
     "--selected-row-secondary-hover-bg": sel?.secondary?.bgHover ?? null,
   };

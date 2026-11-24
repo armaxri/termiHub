@@ -1,0 +1,227 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { contrastRatio, relativeLuminance } from "./contrast";
+import { applyTheme } from "./engine";
+import { darkTheme } from "./dark";
+import { lightTheme } from "./light";
+import { solarizedDarkTheme } from "./solarized-dark";
+import { solarizedLightTheme } from "./solarized-light";
+import type { ThemeDefinition } from "./types";
+
+/**
+ * Selected rows, activity bar, links and switches in every built-in theme
+ * (#5853, UI review of product run 20261123T215628Z: R-059, R-115, R-144,
+ * R-145, R-146).
+ *
+ * - R-059: the Solarized Light selected row was a beige band at 1.44:1 on the
+ *   cream sidebar; only the left bar marked it. An opaque selection now needs a
+ *   row boundary (fill or 1px outline) at the WCAG 1.4.11 minimum of 3:1.
+ * - R-115: Light's hint and empty-state body text (`--text-secondary`) read
+ *   weak on the #f3f3f3 sidebar. It now reaches 5.8:1 there.
+ * - R-144: Solarized Light's activity bar was dark teal beside a cream sidebar
+ *   and editor. Solarized activity bars now follow the theme's light/dark side.
+ * - R-145: links sat at exactly 4.50:1. Every built-in link reaches 5:1 on the
+ *   surfaces links sit on.
+ * - R-146: switches told on from off mainly by colour. The knob reaches 3:1 on
+ *   its track in both states, and the on knob carries a check glyph.
+ */
+
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const UI_COMPONENT_MIN = 3;
+const AA_NORMAL_TEXT = 4.5;
+/** Links are thin, often 12-13px text: a margin over AA (R-145). */
+const LINK_MIN = 5;
+/** Light's hint text must read as clearly as the review asked (R-115). */
+const LIGHT_HINT_MIN = 5.8;
+
+const BUILT_IN_THEMES: ThemeDefinition[] = [
+  darkTheme,
+  lightTheme,
+  solarizedDarkTheme,
+  solarizedLightTheme,
+];
+const LINK_SURFACES = ["bgPrimary", "bgSecondary", "sidebarBg", "bgDropdown"] as const;
+
+/** CSS with comments stripped. */
+function css(file: string): string {
+  return readFileSync(join(SRC_DIR, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/** The declarations of the rule headed exactly by `selector` in `source`. */
+function ruleBody(source: string, selector: string): string | undefined {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(source)?.[1];
+}
+
+describe("links reach 5:1 on every text surface (#5853 R-145)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    for (const surface of LINK_SURFACES) {
+      const fg = theme.colors.textLink;
+      const bg = theme.colors[surface];
+      it(`${theme.id} textLink (${fg}) reaches ${LINK_MIN}:1 on ${surface} (${bg})`, () => {
+        expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(LINK_MIN);
+      });
+    }
+  }
+});
+
+describe("light hint text reads clearly on the sidebar (#5853 R-115)", () => {
+  const { colors } = lightTheme;
+
+  it(`textSecondary (${colors.textSecondary}) reaches ${LIGHT_HINT_MIN}:1 on the sidebar`, () => {
+    expect(contrastRatio(colors.textSecondary, colors.sidebarBg)).toBeGreaterThanOrEqual(
+      LIGHT_HINT_MIN
+    );
+    expect(contrastRatio(colors.textSecondary, colors.bgSecondary)).toBeGreaterThanOrEqual(
+      LIGHT_HINT_MIN
+    );
+  });
+
+  it("muted text stays the lighter level and still reaches AA", () => {
+    expect(contrastRatio(colors.textMuted, colors.sidebarBg)).toBeGreaterThanOrEqual(
+      AA_NORMAL_TEXT
+    );
+    expect(contrastRatio(colors.textMuted, colors.sidebarBg)).toBeLessThan(
+      contrastRatio(colors.textSecondary, colors.sidebarBg)
+    );
+  });
+
+  it("the empty-state body and the connections hint use the secondary token", () => {
+    expect(ruleBody(css("components/ui/ui.css"), ".ui-empty__description")).toMatch(
+      /color:\s*var\(--text-secondary\)/
+    );
+    expect(
+      ruleBody(css("components/Sidebar/ConnectionList.css"), ".connections-empty__hint")
+    ).toMatch(/color:\s*var\(--text-secondary\)/);
+  });
+});
+
+describe("opaque selected rows have a 3:1 boundary (#5853 R-059)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    const sel = theme.selection;
+    if (!sel) continue;
+    const { sidebarBg, bgSecondary } = theme.colors;
+    const rows = [
+      ["sidebar", sidebarBg, sel.bg, sel.bgHover],
+      [
+        "secondary pane",
+        bgSecondary,
+        sel.secondary?.bg ?? sel.bg,
+        sel.secondary?.bgHover ?? sel.bgHover,
+      ],
+    ] as const;
+
+    for (const [where, surface, bg, bgHover] of rows) {
+      it(`${theme.id}: the selected row on the ${where} is bounded at 3:1`, () => {
+        const fill = Math.min(contrastRatio(bg, surface), contrastRatio(bgHover, surface));
+        const outline = sel.outline ? contrastRatio(sel.outline, surface) : 1;
+        expect(Math.max(fill, outline)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+      });
+    }
+
+    it(`${theme.id}: the indicator bar still reaches 3:1 on the sidebar`, () => {
+      expect(contrastRatio(sel.indicator, sidebarBg)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+    });
+  }
+
+  it("the engine writes the outline only for a theme that has one", () => {
+    const style = document.documentElement.style;
+    applyTheme("solarized-light");
+    expect(style.getPropertyValue("--selected-row-outline")).toBe(
+      solarizedLightTheme.selection?.outline
+    );
+    applyTheme("dark");
+    expect(style.getPropertyValue("--selected-row-outline")).toBe("");
+  });
+
+  it("every selected-row rule paints the shared shadow (bar + outline)", () => {
+    const vars = css("styles/variables.css");
+    expect(vars).toMatch(/--selected-row-outline:\s*transparent;/);
+    expect(vars).toMatch(
+      /--selected-row-shadow:\s*inset 2px 0 0 0 var\(--selected-row-indicator\),\s*inset 0 0 0 1px var\(--selected-row-outline\);/
+    );
+    const rules: [string, string][] = [
+      ["components/Sidebar/ConnectionList.css", ".connection-tree__item--selected"],
+      ["components/Sidebar/FileBrowser.css", ".file-browser__row-wrapper--selected"],
+      ["components/Plugins/Plugins.css", ".plugin-row--selected"],
+      ["components/TransferView/TransferView.css", ".transfer-pane__row--selected"],
+    ];
+    for (const [file, selector] of rules) {
+      expect(ruleBody(css(file), selector), `${file} ${selector}`).toMatch(
+        /box-shadow:\s*var\(--selected-row-shadow\)/
+      );
+    }
+  });
+});
+
+describe("solarized activity bars match the theme's side (#5853 R-144)", () => {
+  for (const theme of [solarizedDarkTheme, solarizedLightTheme]) {
+    const { activityBarBg, sidebarBg } = theme.colors;
+    it(`${theme.id}: the activity bar (${activityBarBg}) is on the sidebar's light/dark side`, () => {
+      const isLight = (c: string) => (relativeLuminance(c) ?? 0) > 0.5;
+      expect(isLight(activityBarBg)).toBe(isLight(sidebarBg));
+      expect(isLight(activityBarBg)).toBe(theme.colorScheme === "light");
+    });
+  }
+
+  for (const theme of BUILT_IN_THEMES) {
+    const { activityBarIndicator, activityBarBg } = theme.colors;
+    it(`${theme.id}: the activity-bar indicator reaches 3:1 on the bar`, () => {
+      expect(contrastRatio(activityBarIndicator, activityBarBg)).toBeGreaterThanOrEqual(
+        UI_COMPONENT_MIN
+      );
+    });
+  }
+
+  it("the item hover/press overlays derive from the icon colour, not a fixed white", () => {
+    const vars = css("styles/variables.css");
+    expect(vars).toMatch(
+      /--activity-bar-item-hover-bg:\s*color-mix\(in srgb, var\(--activity-bar-active\) \d+%, transparent\);/
+    );
+    expect(vars).toMatch(
+      /--activity-bar-item-active-bg:\s*color-mix\(in srgb, var\(--activity-bar-active\) \d+%, transparent\);/
+    );
+  });
+});
+
+describe("switches show on/off without relying on colour (#5853 R-146)", () => {
+  for (const theme of BUILT_IN_THEMES) {
+    const { colors, controls } = theme;
+    // variables.css defaults: off track --bg-active, off knob --text-secondary.
+    const offTrack = controls?.toggleOffTrack ?? colors.bgActive;
+    const offKnob = controls?.toggleOffThumb ?? colors.textSecondary;
+
+    it(`${theme.id}: the off knob (${offKnob}) reaches 3:1 on its track (${offTrack})`, () => {
+      expect(contrastRatio(offKnob, offTrack)).toBeGreaterThanOrEqual(UI_COMPONENT_MIN);
+    });
+
+    it(`${theme.id}: the on knob reaches 3:1 on the accent track`, () => {
+      expect(contrastRatio(colors.textOnAccent, colors.accentColor)).toBeGreaterThanOrEqual(
+        UI_COMPONENT_MIN
+      );
+    });
+
+    it(`${theme.id}: the on knob's check glyph reaches 3:1 on the knob`, () => {
+      expect(contrastRatio(colors.accentColor, colors.textOnAccent)).toBeGreaterThanOrEqual(
+        UI_COMPONENT_MIN
+      );
+    });
+  }
+
+  it("solarized light's off knob gains margin over the 4.13:1 it had", () => {
+    const { controls } = solarizedLightTheme;
+    expect(contrastRatio(controls!.toggleOffThumb!, controls!.toggleOffTrack!)).toBeGreaterThan(
+      4.5
+    );
+  });
+
+  it("the checked knob draws a check glyph in the accent colour", () => {
+    const ui = css("components/ui/ui.css");
+    const glyph = ruleBody(ui, '.ui-toggle[data-state="checked"] .ui-toggle__thumb::after');
+    expect(glyph).toMatch(/content:\s*""/);
+    expect(glyph).toMatch(/border-color:\s*var\(--accent-color\)/);
+    expect(ruleBody(ui, ".ui-toggle__thumb")).toMatch(/position:\s*relative/);
+  });
+});
