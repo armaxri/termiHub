@@ -5,8 +5,13 @@
  * `send` seam bound here. The Macros view keeps its own progress, toasts and
  * history on top of this.
  */
-import { runAutomation } from "@/services/automationRunner";
-import type { MacroInjector, MacroPlaybackHandle, MacroTimingMode } from "@/services/macroPlayback";
+import { runAutomation, runAutomationOnTargets } from "@/services/automationRunner";
+import type {
+  MacroInjector,
+  MacroPlaybackHandle,
+  MacroPlaybackStatus,
+  MacroTimingMode,
+} from "@/services/macroPlayback";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { TypingSpeed } from "@/types/generated/TypingSpeed";
@@ -104,5 +109,91 @@ export function playAutomationKeys(
       stepsPlayed: played,
     })),
     cancel: handle.cancel,
+  };
+}
+
+/** How one target of a multi-terminal playback ended. */
+export interface MacroTargetOutcome {
+  /** The target tab. */
+  tabId: string;
+  /** `undefined` when the target never started (every target was stopped first). */
+  status: MacroPlaybackStatus | undefined;
+  /** Chunks typed into this target. */
+  stepsPlayed: number;
+}
+
+/** Hooks of {@link playAutomationKeysOnTargets}. */
+export interface MacroTargetsHooks {
+  /** After a chunk reaches `tabId`, with the chunks typed there so far. */
+  onProgress?: (tabId: string, played: number, total: number) => void;
+  /** When `tabId`'s own run ends, however it ended. */
+  onTargetEnd?: (tabId: string) => void;
+}
+
+/** A running playback of one macro on several terminals. */
+export interface MacroTargetsPlayback {
+  /** Resolves once every started target's run has ended, in target order. */
+  done: Promise<MacroTargetOutcome[]>;
+  /** Stop one target's run; the others keep going. */
+  cancel: (tabId: string) => void;
+  /** Stop every target and start no queued one. */
+  cancelAll: () => void;
+}
+
+/**
+ * Play `macro` on each of `targets` as an independent run (#5818, slice 5),
+ * through `runAutomationOnTargets`: at most 8 at once (`parallel`, the
+ * default), or one after another. This replaces the lock-step fan-out: a
+ * slow or dropped target no longer holds the others back, and one that stops
+ * accepting input (`inject` resolves `false`) ends only its own run.
+ */
+export function playAutomationKeysOnTargets(
+  state: AppState,
+  macro: Macro,
+  targets: readonly string[],
+  inject: (tabId: string, data: string) => Promise<boolean> | boolean,
+  options: { override?: MacroTimingOverride; parallel?: boolean },
+  hooks: MacroTargetsHooks = {}
+): MacroTargetsPlayback {
+  const base = automationOf(state, macro);
+  const automation: Automation = {
+    ...base,
+    steps: withTiming(base.steps, options.override ?? {}),
+  };
+  const total = macro.steps.length;
+  const played = targets.map(() => 0);
+  const handle = runAutomationOnTargets(
+    automation,
+    targets,
+    (tabId, index) => ({
+      send: async (data) => {
+        const ok = await inject(tabId, data);
+        if (ok) {
+          played[index] += 1;
+          hooks.onProgress?.(tabId, played[index], total);
+        }
+        return ok;
+      },
+      resolveAutomation: (id) => automationForRun(state, id),
+    }),
+    {
+      parallel: options.parallel,
+      onTargetEnd: (index) => hooks.onTargetEnd?.(targets[index]),
+    }
+  );
+  return {
+    done: handle.done.then((results) =>
+      results.map((result, index) => ({
+        tabId: targets[index],
+        status:
+          result === undefined ? undefined : result.status === "failed" ? "error" : result.status,
+        stepsPlayed: played[index],
+      }))
+    ),
+    cancel: (tabId) => {
+      const index = targets.indexOf(tabId);
+      if (index >= 0) handle.cancel(index);
+    },
+    cancelAll: handle.cancelAll,
   };
 }
