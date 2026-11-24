@@ -4,7 +4,16 @@ import { createRoot, Root } from "react-dom/client";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import type { BackupSectionInfo } from "@/types/backup";
-import { BackupExportDialog, backupSavedMessage } from "./BackupExportDialog";
+import {
+  BackupExportDialog,
+  backupExportSteps,
+  backupSavedMessage,
+  emptySectionsLine,
+  plainBackupBlockedReason,
+} from "./BackupExportDialog";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { OS_AUTH_UNAVAILABLE } from "@/test/osAuthFixtures";
 
 vi.mock("@/services/api", async () => {
@@ -30,6 +39,10 @@ import { toast } from "@/components/ui";
 import { exportBackup, getOsAuthInfo, listBackupSections, localOpenFolder } from "@/services/api";
 
 const PASSPHRASE = "correct horse battery staple";
+const backupCss = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "BackupRestore.css"),
+  "utf8"
+);
 
 function section(overrides: Partial<BackupSectionInfo>): BackupSectionInfo {
   return {
@@ -87,7 +100,24 @@ function visibleLabelOf(testId: string): HTMLLabelElement | null {
   return document.querySelector<HTMLLabelElement>(`label[for="${input.id}"]`);
 }
 
-describe("BackupExportDialog labels and layout (#5613)", () => {
+async function click(testId: string) {
+  await act(async () => {
+    query(testId)!.click();
+  });
+}
+
+function isChecked(testId: string): boolean {
+  return query(testId)?.getAttribute("aria-checked") === "true";
+}
+
+/** Every password input currently in the dialog. */
+function passwordFields(): string[] {
+  return Array.from(document.querySelectorAll<HTMLInputElement>("input[data-testid]"))
+    .filter((input) => input.type === "password")
+    .map((input) => input.dataset.testid!);
+}
+
+describe("BackupExportDialog labels and layout (#5613, #5847)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -106,28 +136,73 @@ describe("BackupExportDialog labels and layout (#5613)", () => {
 
   it("gives every password field a visible label", async () => {
     await renderDialog("master_password");
-    const expected: Record<string, string> = {
-      "backup-export-master-password": "Current master password",
-      "backup-export-passphrase": "Backup passphrase",
-      "backup-export-confirm": "Repeat backup passphrase",
-    };
-    for (const [testId, text] of Object.entries(expected)) {
+    const expectLabel = (testId: string, text: string) => {
       const label = visibleLabelOf(testId);
       expect(label, `${testId} has no <label for>`).not.toBeNull();
       expect(label!.textContent).toBe(text);
       expect(query(`${testId}-label`)).toBe(label);
-    }
+    };
+    await click("backup-export-next");
+    expectLabel("backup-export-passphrase", "Backup passphrase");
+    expectLabel("backup-export-confirm", "Repeat backup passphrase");
+    setInputValue("backup-export-passphrase", PASSPHRASE);
+    setInputValue("backup-export-confirm", PASSPHRASE);
+    await click("backup-export-next");
+    expectLabel("backup-export-master-password", "Master password");
   });
 
-  it("groups the master password with the Credentials option", async () => {
+  it("asks for one secret per step, the master password last (#5847)", async () => {
     await renderDialog("master_password");
-    const row = query("backup-export-credentials-row");
-    expect(row).not.toBeNull();
-    expect(row!.contains(query("backup-export-master-password"))).toBe(true);
+    expect(query("backup-export-step")?.textContent).toBe("Step 1 of 3 · What to back up");
+    expect(passwordFields()).toEqual([]);
+    expect(query("backup-export-credentials-detail")?.textContent).toMatch(
+      /enter your master password in the last step/
+    );
+
+    await click("backup-export-next");
+    expect(query("backup-export-step")?.textContent).toBe("Step 2 of 3 · Backup passphrase");
+    expect(passwordFields()).toEqual(["backup-export-passphrase", "backup-export-confirm"]);
+    expect(query("backup-export-rule")?.textContent).toMatch(
+      /^Everything in this file is locked with the backup passphrase\./
+    );
+
+    setInputValue("backup-export-passphrase", PASSPHRASE);
+    setInputValue("backup-export-confirm", PASSPHRASE);
+    await click("backup-export-next");
+    expect(query("backup-export-step")?.textContent).toBe("Step 3 of 3 · Master password");
+    expect(passwordFields()).toEqual(["backup-export-master-password"]);
+    expect(query("backup-export-master-purpose")?.textContent).toMatch(/master password/);
+    expect(query("backup-export-submit")).not.toBeNull();
+    expect(query("backup-export-next")).toBeNull();
+  });
+
+  it("skips the master password step when credentials are not included", async () => {
+    await renderDialog("master_password");
+    await click("backup-export-credentials");
+    await click("backup-export-next");
+    expect(query("backup-export-step")?.textContent).toBe("Step 2 of 2 · Backup passphrase");
+    expect(query("backup-export-submit")).not.toBeNull();
+  });
+
+  it("does not move on until the step is valid, and Back keeps what was typed", async () => {
+    await renderDialog("none");
+    await click("backup-export-next");
+    setInputValue("backup-export-passphrase", PASSPHRASE);
+    setInputValue("backup-export-confirm", "something else entirely");
+    await click("backup-export-submit");
+    expect(query("backup-export-error")?.textContent).toMatch(/do not match/);
+    expect(exportBackup).not.toHaveBeenCalled();
+
+    await click("backup-export-back");
+    expect(query("backup-export-error")).toBeNull();
+    expect(query("backup-export-sections")).not.toBeNull();
+    await click("backup-export-next");
+    expect((query("backup-export-passphrase") as HTMLInputElement).value).toBe(PASSPHRASE);
   });
 
   it("shows the strength meter directly under the passphrase, before the repeat field", async () => {
     await renderDialog("none");
+    await click("backup-export-next");
     setInputValue("backup-export-passphrase", PASSPHRASE);
     const field = query("backup-export-passphrase-field")!;
     const strength = query("backup-export-strength")!;
@@ -142,14 +217,59 @@ describe("BackupExportDialog labels and layout (#5613)", () => {
     expect(rows[1].contains(query("backup-export-credentials"))).toBe(true);
   });
 
-  it("collapses empty categories into one line", async () => {
+  it("collapses empty categories into one short line outside the list (#5847)", async () => {
     await renderDialog("master_password");
     expect(query("backup-export-section-workspaces")).toBeNull();
     expect(query("backup-export-section-macros")).toBeNull();
-    expect(query("backup-export-empty-sections")?.textContent).toBe(
+    const line = query("backup-export-empty-sections")!;
+    expect(line.textContent).toBe("3 other kinds have nothing saved yet.");
+    expect(line.getAttribute("title")).toBe(
       "Nothing saved yet: shared credentials, workspaces, macros"
     );
+    expect(query("backup-export-sections")!.contains(line)).toBe(false);
     expect(query("backup-export-section-settings")).not.toBeNull();
+  });
+
+  it("does not scroll the list inside the dialog (#5847)", async () => {
+    await renderDialog("master_password");
+    expect(query("backup-export-sections")!.classList).toContain("backup-export__list");
+    const rule = /\.backup-export__list\s*\{([^}]*)\}/.exec(backupCss)?.[1] ?? "";
+    expect(rule).toMatch(/max-height:\s*none/);
+    expect(rule).toMatch(/overflow:\s*visible/);
+  });
+
+  it("saves without a passphrase only when nothing locked-only is included", async () => {
+    await renderDialog("master_password");
+    await click("backup-export-next");
+    expect((query("backup-export-plain") as HTMLButtonElement).disabled).toBe(true);
+    expect(query("backup-export-plain-detail")?.textContent).toBe(
+      "Not possible while the backup includes credentials and trusted SSH host keys."
+    );
+
+    await click("backup-export-back");
+    await click("backup-export-credentials");
+    await click("backup-export-section-sshKnownHosts");
+    await click("backup-export-next");
+    expect((query("backup-export-plain") as HTMLButtonElement).disabled).toBe(false);
+    await click("backup-export-plain");
+    expect(isChecked("backup-export-plain")).toBe(true);
+    expect(query("backup-export-plain-warning")).not.toBeNull();
+    expect(query("backup-export-rule")).toBeNull();
+    expect(query("backup-export-passphrase")).toBeNull();
+
+    vi.mocked(exportBackup).mockResolvedValue({
+      json: "{}",
+      sections: ["connections", "settings"],
+      credentialCount: null,
+      warnings: [],
+    });
+    vi.mocked(save).mockResolvedValue("/tmp/out/termihub-backup.json");
+    await click("backup-export-submit");
+    expect(exportBackup).toHaveBeenCalledWith(
+      { sections: ["connections", "settings"], includeCredentials: false, encrypt: false },
+      null,
+      null
+    );
   });
 
   it("names the file, uses the singular and offers to reveal it", async () => {
@@ -161,12 +281,17 @@ describe("BackupExportDialog labels and layout (#5613)", () => {
       warnings: [],
     });
     vi.mocked(save).mockResolvedValue("/tmp/out/termihub-backup.json");
-    setInputValue("backup-export-master-password", "master-pw");
+    await click("backup-export-next");
     setInputValue("backup-export-passphrase", PASSPHRASE);
     setInputValue("backup-export-confirm", PASSPHRASE);
-    await act(async () => {
-      query("backup-export-submit")!.click();
-    });
+    await click("backup-export-next");
+    setInputValue("backup-export-master-password", "master-pw");
+    await click("backup-export-submit");
+    expect(exportBackup).toHaveBeenCalledWith(
+      expect.objectContaining({ includeCredentials: true, encrypt: true }),
+      PASSPHRASE,
+      "master-pw"
+    );
     expect(toast.success).toHaveBeenCalledWith(
       "Backup saved to termihub-backup.json — connections, settings and 1 credential.",
       expect.objectContaining({ action: expect.objectContaining({ label: expect.any(String) }) })
@@ -174,6 +299,25 @@ describe("BackupExportDialog labels and layout (#5613)", () => {
     const opts = vi.mocked(toast.success).mock.calls[0][1]!;
     opts.action!.onClick();
     expect(localOpenFolder).toHaveBeenCalledWith("/tmp/out");
+  });
+});
+
+describe("backup export step helpers (#5847)", () => {
+  it("adds the master password step only when it is needed", () => {
+    expect(backupExportSteps(false)).toEqual(["choose", "passphrase"]);
+    expect(backupExportSteps(true)).toEqual(["choose", "passphrase", "masterPassword"]);
+  });
+
+  it("words the empty-categories line", () => {
+    expect(emptySectionsLine(1)).toBe("1 other kind has nothing saved yet.");
+    expect(emptySectionsLine(8)).toBe("8 other kinds have nothing saved yet.");
+  });
+
+  it("explains why a plain backup is not possible", () => {
+    expect(plainBackupBlockedReason([])).toBeNull();
+    expect(plainBackupBlockedReason(["Credentials"])).toBe(
+      "Not possible while the backup includes credentials."
+    );
   });
 });
 

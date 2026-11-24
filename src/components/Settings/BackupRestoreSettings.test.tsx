@@ -187,6 +187,11 @@ async function openExport() {
   await act(async () => {});
 }
 
+/** Step 1 → step 2 of the backup dialog (#5847). */
+async function toPassphraseStep() {
+  await click("backup-export-next");
+}
+
 describe("backup export helpers", () => {
   it("explains why credentials cannot be included", () => {
     expect(
@@ -318,6 +323,9 @@ describe("BackupRestoreSettings", () => {
       warnings: [],
     });
     vi.mocked(save).mockResolvedValue("/tmp/backup.json");
+    await toPassphraseStep();
+    // The OS verifies the user: no master password step either.
+    expect(query("backup-export-step")?.textContent).toBe("Step 2 of 2 · Backup passphrase");
     setInputValue("backup-export-passphrase", PASSPHRASE);
     setInputValue("backup-export-confirm", PASSPHRASE);
     await click("backup-export-submit");
@@ -349,6 +357,7 @@ describe("BackupRestoreSettings", () => {
       warnings: [],
     });
     vi.mocked(save).mockResolvedValue("/tmp/backup.json");
+    await toPassphraseStep();
     setInputValue("backup-export-passphrase", PASSPHRASE);
     setInputValue("backup-export-confirm", PASSPHRASE);
     await click("backup-export-submit");
@@ -376,6 +385,7 @@ describe("BackupRestoreSettings", () => {
       warnings: ['Plugin "huge" was not included because it is too large.'],
     });
     vi.mocked(save).mockResolvedValue("/tmp/backup.json");
+    await toPassphraseStep();
     setInputValue("backup-export-passphrase", PASSPHRASE);
     setInputValue("backup-export-confirm", PASSPHRASE);
     await click("backup-export-submit");
@@ -391,8 +401,10 @@ describe("BackupRestoreSettings", () => {
     await openExport();
     expect(isChecked("backup-export-credentials")).toBe(true);
 
+    await toPassphraseStep();
     setInputValue("backup-export-passphrase", PASSPHRASE);
     setInputValue("backup-export-confirm", PASSPHRASE);
+    await click("backup-export-next");
     await click("backup-export-submit");
     expect(query("backup-export-error")?.textContent).toMatch(/master password/);
     expect(exportBackup).not.toHaveBeenCalled();
@@ -412,22 +424,31 @@ describe("BackupRestoreSettings", () => {
     expect(writeTextFile).not.toHaveBeenCalled();
   });
 
-  it("turning encryption off drops secret-bearing sections and warns", async () => {
+  it("a backup without a passphrase needs the locked-only parts left out, and warns", async () => {
     render("none");
     await openExport();
     expect(isChecked("backup-export-section-embeddedServers")).toBe(true);
 
-    await click("backup-export-encrypt");
-    expect(isChecked("backup-export-section-embeddedServers")).toBe(false);
-    expect((query("backup-export-section-embeddedServers") as HTMLButtonElement).disabled).toBe(
-      true
+    await toPassphraseStep();
+    expect((query("backup-export-plain") as HTMLButtonElement).disabled).toBe(true);
+    expect(query("backup-export-plain-detail")?.textContent).toBe(
+      "Not possible while the backup includes embedded servers and trusted SSH host keys."
     );
-    // Trust decisions (host keys, plugins) are encrypted-only too.
-    expect(isChecked("backup-export-section-sshKnownHosts")).toBe(false);
-    expect((query("backup-export-section-sshKnownHosts") as HTMLButtonElement).disabled).toBe(true);
-    expect(document.body.textContent).toMatch(/Trust decisions — needs encryption/);
+
+    await click("backup-export-back");
+    await click("backup-export-section-embeddedServers");
+    await click("backup-export-section-sshKnownHosts");
+    await toPassphraseStep();
+    await click("backup-export-plain");
     expect(query("backup-export-plain-warning")).not.toBeNull();
     expect(query("backup-export-passphrase")).toBeNull();
+
+    // Ticking a locked-only part again turns the passphrase back on.
+    await click("backup-export-back");
+    await click("backup-export-section-sshKnownHosts");
+    await toPassphraseStep();
+    expect(isChecked("backup-export-plain")).toBe(false);
+    expect(query("backup-export-passphrase")).not.toBeNull();
   });
 
   it("previews, restores the chosen parts and restarts", async () => {
