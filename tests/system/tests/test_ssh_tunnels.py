@@ -1,6 +1,6 @@
 """SSH tunnel operations (ported from ssh-tunnels.test.js + ssh-tunnels-infra).
 
-Drives the experimental Tunnels view. Three kinds of coverage:
+Drives the SSH Tunnels view (always on since #5858). Three kinds of coverage:
 
 * **Editor / list UI** (TUNNEL-01..06, 08..10): open the sidebar and editor,
   check each tunnel type's diagram + form fields, edit/duplicate/delete a saved
@@ -178,7 +178,6 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
     # ── Editor / list UI (no live SSH server needed) ────────────────────────────
     def test_sidebar_shows_new_tunnel_button(self):
         """TUNNEL-01: the tunnels sidebar renders with the New Tunnel button."""
-        self.enable_experimental_features()
         self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
         self.wait(lambda: self.driver.exists("tunnel-new-btn"), what="the tunnels sidebar")
         assert self.driver.exists("tunnel-sidebar")
@@ -418,7 +417,6 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
     # ── helpers ────────────────────────────────────────────────────────────────
     def _open_new_tunnel_editor(self):
         """Open a fresh tunnel editor (no SSH connection / save needed)."""
-        self.enable_experimental_features()
         self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
         self.driver.click("tunnel-new-btn")
         self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
