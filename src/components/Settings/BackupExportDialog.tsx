@@ -329,7 +329,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
       </ul>
       {emptySections.length > 0 && (
         <p
-          className="backup-restore__detail backup-export__empty"
+          className="backup-restore__detail backup-export__nothing-saved"
           title={`Nothing saved yet: ${emptySections.map((sec) => midSentence(sec.label)).join(", ")}`}
           data-testid="backup-export-empty-sections"
         >

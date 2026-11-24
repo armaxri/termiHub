@@ -89,6 +89,6 @@
   color: var(--text-secondary);
 }
 
-.backup-export__empty {
+.backup-export__nothing-saved {
   margin: 0;
 }
