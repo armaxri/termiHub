@@ -379,6 +379,19 @@ mod executed {
     }
 
     #[test]
+    fn a_setup_puts_a_leftover_agent_back_before_it_starts() {
+        let Some(pwsh) = pwsh() else { return };
+        // A broken install next to the last working agent, and an update that
+        // fails too: without the restore up front the copy would be moved away.
+        let host = Host::update(&pwsh, FAILS_INSTALLED);
+        host.put("termihub-agent.exe", BROKEN);
+        host.put("termihub-agent.previous.exe", OLD);
+        let (status, out) = host.setup(&windows_setup_script());
+        assert_eq!(status, Some(1), "{out}");
+        host.assert_only(OLD, &out);
+    }
+
+    #[test]
     fn a_recovery_never_replaces_an_agent_that_starts() {
         let Some(pwsh) = pwsh() else { return };
         let host = Host::new(&pwsh);
