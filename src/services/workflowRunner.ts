@@ -776,7 +776,7 @@ export function describeAutomationCycle(
  * Parameters with neither are left out, so a `${name}` reference to them stays
  * literal exactly as in a top-level run. A **pure** helper.
  */
-export function calleeParamValues(
+function calleeParamValues(
   callee: Automation,
   callerValues: WorkflowParamValues | undefined
 ): WorkflowParamValues {
