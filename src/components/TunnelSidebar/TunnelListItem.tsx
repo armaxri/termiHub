@@ -178,41 +178,64 @@ export function TunnelListItem({
   // a macro's Play. Stop while it runs, Retry after an error, Start otherwise.
   // A tunnel whose SSH connection was deleted cannot start; its row offers
   // "Choose connection" instead.
-  const runControl = (
-    label: "Start" | "Stop" | "Retry",
-    testId: string,
-    icon: React.ReactNode,
-    run: () => void | Promise<void>
-  ) => (
-    <Tooltip content={label} side="top">
-      <Button
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label={label}
-        data-testid={testId}
-        icon={icon}
-        // The store surfaces its own start/stop toast; suppress the Button's
-        // duplicate error toast and keep the pending spinner.
-        errorToast={false}
-        onClick={(e) => {
-          e.stopPropagation();
-          return run();
-        }}
-      />
-    </Tooltip>
-  );
-  const primaryAction = isActive
-    ? runControl("Stop", `tunnel-stop-${tunnel.id}`, <Square size={12} />, () => onStop(tunnel.id))
-    : isError
-      ? runControl("Retry", `tunnel-retry-${tunnel.id}`, <RotateCw size={12} />, () =>
-          onStart(tunnel.id)
-        )
-      : isMissingConnection
-        ? undefined
-        : runControl("Start", `tunnel-start-${tunnel.id}`, <Play size={12} />, () =>
-            onStart(tunnel.id)
-          );
+  // The store surfaces its own start/stop toast, so each run control suppresses
+  // the Button's duplicate error toast and keeps the pending spinner.
+  let primaryAction: React.ReactNode;
+  if (isActive) {
+    primaryAction = (
+      <Tooltip content="Stop" side="top">
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Stop"
+          data-testid={`tunnel-stop-${tunnel.id}`}
+          icon={<Square size={12} />}
+          errorToast={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            return onStop(tunnel.id);
+          }}
+        />
+      </Tooltip>
+    );
+  } else if (isError) {
+    primaryAction = (
+      <Tooltip content="Retry" side="top">
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Retry"
+          data-testid={`tunnel-retry-${tunnel.id}`}
+          icon={<RotateCw size={12} />}
+          errorToast={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            return onStart(tunnel.id);
+          }}
+        />
+      </Tooltip>
+    );
+  } else if (!isMissingConnection) {
+    primaryAction = (
+      <Tooltip content="Start" side="top">
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Start"
+          data-testid={`tunnel-start-${tunnel.id}`}
+          icon={<Play size={12} />}
+          errorToast={false}
+          onClick={(e) => {
+            e.stopPropagation();
+            return onStart(tunnel.id);
+          }}
+        />
+      </Tooltip>
+    );
+  }
   const statusLabel = isMissingConnection
     ? t("tunnel.missingConnection.status")
     : tunnelStatusLabel(status);
