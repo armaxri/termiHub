@@ -180,7 +180,7 @@ class TestProductRunAutomationRunPicker(
                 f"Pick workflow {t}",
                 [
                     ("send-command", {"step-command": f"echo PR_PICK_START_{t}"}),
-                    ("wait", {"step-delay": WAIT_MS}),
+                    ("wait", {"step-delay": WAIT_MS / 1000}),
                     ("send-command", {"step-command": f"echo PR_PICK_DONE_{t}"}),
                 ],
             )

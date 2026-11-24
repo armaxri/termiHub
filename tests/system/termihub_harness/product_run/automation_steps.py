@@ -13,15 +13,15 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..ui.automation_sidebar import KEYS_EDITOR, STEPS_EDITOR, AutomationSidebarUi
+from ..ui.automation_sidebar import AutomationSidebarUi
 
 SCHEDULE_EDITOR = "schedule-editor-dialog"
 SCHEDULE_CONFIRM = "schedule-enable-confirm"
 #: The one run picker (#5818, slice 5) behind every "Run on…" and Play macro….
 RUN_TARGETS = "run-targets-dialog"
-#: A field inside a workflow step row (``workflow-editor-step-delay-1``): the
-#: row starts collapsed when an existing workflow is opened (#5637).
-_STEP_FIELD = re.compile(r"^workflow-editor-step-[a-z-]+-(\d+)$")
+#: A field inside a step row (``automation-editor-step-delay-1``): the row starts
+#: collapsed when a stored automation is opened (#5637).
+_STEP_FIELD = re.compile(r"^automation-editor-step-[a-z-]+-(\d+)$")
 
 
 class AutomationPhaseUi(AutomationSidebarUi):
@@ -41,7 +41,7 @@ class AutomationPhaseUi(AutomationSidebarUi):
         def set_command(self, index: int, command: str) -> None: ...
         def save_workflow(self) -> None: ...
         def workflow_id(self, name: str) -> str: ...
-        def expand_step(self, index: int) -> None: ...
+        def add_trigger(self, kind: str) -> int: ...
 
     # ── stores ───────────────────────────────────────────────────────────────
     def _state_list(self, key: str) -> list[dict[str, Any]]:
@@ -79,14 +79,11 @@ class AutomationPhaseUi(AutomationSidebarUi):
         return self.create_typed_automation(name, steps)
 
     def edit_macro_step(self, macro_id: str, index: int, data: str) -> None:
-        """Open the keystroke editor from the row, change one step, save."""
-        self.edit_automation(macro_id, KEYS_EDITOR)
-        self.wait(
-            lambda: self.driver.exists(f"macro-editor-step-data-{index}"),
-            what=f"keystroke step {index} in the editor",
-        )
-        self.driver.type(f"macro-editor-step-data-{index}", data)
-        self.save_keystrokes()
+        """Open the editor from the row, change one row of its keys, save."""
+        self.edit_automation(macro_id)
+        self.expand_step(0)
+        self.driver.type(f"automation-editor-keys-text-0-{index}", data)
+        self.save_editor()
 
     def play_macro(self, macro_id: str) -> None:
         self.run_automation(macro_id)
@@ -98,27 +95,21 @@ class AutomationPhaseUi(AutomationSidebarUi):
         for index, (kind, fields) in enumerate(steps):
             self.add_step(kind)
             for key, value in fields.items():
-                self.driver.type(f"workflow-editor-{key}-{index}", str(value))
+                self.driver.type(f"automation-editor-{key}-{index}", str(value))
         self.set_name(name)
 
     def set_output_match_trigger(self, connection_id: str, pattern: str) -> None:
-        """Turn on the on-output-match trigger for one connection and a literal pattern."""
-        chip = "workflow-trigger-on-output-match"
-        if self.driver.get_attribute(chip, "aria-pressed") != "true":
-            self.driver.click(chip)
-        self.wait(
-            lambda: self.driver.exists("workflow-trigger-on-output-match-detail"),
-            what="the output-match trigger detail",
-        )
-        box = f"workflow-trigger-on-output-match-connection-{connection_id}"
+        """Add an on-output-match trigger for one connection and a literal pattern."""
+        index = self.add_trigger("on-output-match")
+        box = f"automation-trigger-connection-{index}-{connection_id}"
         self.wait(lambda: self.driver.exists(box), what="the trigger's connection checkbox")
         if self.driver.get_attribute(box, "data-state") != "checked":
             self.driver.click(box)
-        self.driver.type("workflow-trigger-on-output-match-pattern", pattern)
+        self.driver.type(f"automation-trigger-pattern-{index}", pattern)
 
     def edit_workflow(self, workflow_id: str, fields: dict[str, Any]) -> None:
-        """Open the workflow's editor from its row, set fields by testid, save."""
-        self.edit_automation(workflow_id, STEPS_EDITOR)
+        """Open the automation's editor from its row, set fields by testid, save."""
+        self.edit_automation(workflow_id)
         for testid, value in fields.items():
             step = _STEP_FIELD.match(testid)
             if step:

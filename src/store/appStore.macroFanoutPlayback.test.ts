@@ -121,9 +121,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
 
     expect(injected.filter(([id]) => id === "a").map(([, d]) => d)).toEqual(["l", "s\r"]);
     expect(injected.filter(([id]) => id === "b").map(([, d]) => d)).toEqual(["l", "s\r"]);
@@ -138,9 +136,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     seedFleet();
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b", "c"] });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b", "c"] });
 
     expect(injected.map(([id]) => id)).toEqual(["a", "b"]);
     expect(toast.success).not.toHaveBeenCalled();
@@ -163,9 +159,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
     expect(injected).toEqual([
       ["a", "one"],
@@ -191,9 +185,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     seedFleet();
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["c", "zz"] });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["c", "zz"] });
 
     expect(injected).toEqual([]);
     expect(toast.error).toHaveBeenCalledWith("None of the selected terminals are connected");
@@ -221,13 +213,9 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ]);
     useAppStore.setState({ macros: [slow("m1"), slow("m2")] });
 
-    const first = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const first = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
-    const second = useAppStore
-      .getState()
-      .playMacro("m2", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const second = useAppStore.getState().playMacro("m2", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
 
     // The superseded run settles as cancelled and must not clear the new run's
@@ -253,9 +241,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
 
@@ -279,9 +265,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
 
@@ -307,9 +291,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["b"] });
     await vi.advanceTimersByTimeAsync(0);
     expect(useAppStore.getState().macroPlayback?.tabId).toBe("b");
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toBeUndefined();
@@ -330,9 +312,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
     useAppStore.getState().cancelMacroPlaybackOnTab("b");
     await vi.advanceTimersByTimeAsync(0);
@@ -356,9 +336,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
     expect(useAppStore.getState().macroPlayback?.targetProgress).toEqual({ a: 1, b: 1 });
     useAppStore.getState().cancelMacroPlayback();
@@ -376,9 +354,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
       ],
     });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"], parallel: false });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"], parallel: false });
 
     expect(injected).toEqual([
       ["a", "1"],
@@ -401,7 +377,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     });
     const done = useAppStore
       .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"], parallel: false });
+      .playMacro("m1", { targetTabIds: ["a", "b"], parallel: false });
     await vi.advanceTimersByTimeAsync(0);
     useAppStore.getState().cancelMacroPlaybackOnTab("b");
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a"]);
@@ -421,8 +397,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
         ]),
       ],
     });
-    const play = () =>
-      useAppStore.getState().playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const play = () => useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     const first = play();
     await vi.advanceTimersByTimeAsync(0);
     const second = play();
@@ -437,7 +412,7 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     seedFleet();
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
 
-    await useAppStore.getState().playMacro("m1", { timingMode: "instant", targetTabIds: ["b"] });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["b"] });
 
     expect(injected).toEqual([["b", "x"]]);
     // One visible terminal: the typed output is the feedback (#5859).
@@ -468,9 +443,7 @@ describe("appStore — multi-target playback drops a target whose injection fail
       ],
     });
 
-    const done = useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    const done = useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
     await vi.advanceTimersByTimeAsync(0);
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
     await vi.advanceTimersByTimeAsync(100);
@@ -502,9 +475,7 @@ describe("appStore — multi-target playback drops a target whose injection fail
       ],
     });
 
-    await useAppStore
-      .getState()
-      .playMacro("m1", { timingMode: "instant", targetTabIds: ["a", "b"] });
+    await useAppStore.getState().playMacro("m1", { targetTabIds: ["a", "b"] });
 
     expect(injected.filter(([id]) => id === "a").map(([, d]) => d)).toEqual([
       "one",

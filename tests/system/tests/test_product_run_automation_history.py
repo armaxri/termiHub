@@ -196,9 +196,9 @@ class TestProductRunAutomationHistory(
             self.ids["macro"] = self.create_macro(f"History macro {t}", [f"echo {marker}\\r"])
             self.author_workflow(
                 f"History caller {t}",
-                [("send-command", {"step-command": f"echo PR_HIST_W_{t}"}), ("run-macro", {})],
+                [("send-command", {"step-command": f"echo PR_HIST_W_{t}"}), ("run-automation", {})],
             )
-            self.pick_macro(1, self.ids["macro"], f"History macro {t}")
+            self.pick_automation(1, self.ids["macro"], f"History macro {t}")
             self.save_workflow()
             self.ids["workflow"] = self.workflow_id(f"History caller {t}")
             mid, wid = self.ids["macro"], self.ids["workflow"]

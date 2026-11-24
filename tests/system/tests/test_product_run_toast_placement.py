@@ -43,7 +43,7 @@ TOAST_REGION = "toast-region"
 STATUS_BAR = "status-bar"
 EDITOR_FORM = "connection-editor-body"
 EDITOR_FOOTER = "connection-editor-actions"
-WORKFLOW_DIALOG = "workflow-editor-dialog"
+WORKFLOW_DIALOG = "automation-editor-dialog"
 #: The minimum supported window, where the stack has the least room.
 NARROW_WINDOW = (800, 600)
 #: The product run's normal window, restored afterwards.

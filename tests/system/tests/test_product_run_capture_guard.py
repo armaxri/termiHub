@@ -173,15 +173,15 @@ def _step(suite: Suite, step_id: str) -> dict[str, Any]:
 
 def test_cleanup_before_the_end_capture_fails_as_a_harness_error(tmp_path, monkeypatch):
     """The R-154 shape: the body cancels the dialog, the end capture shows the sidebar."""
-    driver = FakeDriver({"workflow-editor-dialog": IN_FRAME})
+    driver = FakeDriver({"automation-editor-dialog": IN_FRAME})
     suite = _suite(tmp_path, driver, monkeypatch)
     with suite.step("complaints.toasts.dialog", "Toast", expect="the editor open",
-                    expect_testid="workflow-editor-dialog"):
-        del driver.visible["workflow-editor-dialog"]  # cancel_clean_editor()
+                    expect_testid="automation-editor-dialog"):
+        del driver.visible["automation-editor-dialog"]  # cancel_clean_editor()
     step = _step(suite, "complaints.toasts.dialog")
     assert step["status"] == "fail"
     assert step["reason"].startswith(HARNESS_ERROR)
-    assert "workflow-editor-dialog is not in the page" in step["reason"]
+    assert "automation-editor-dialog is not in the page" in step["reason"]
     # Only the labelled failure capture; no main capture of the wrong screen.
     assert step["screenshots"] == ["shots/complaints.toasts.dialog--failure.png"]
     assert suite._failed_steps == ["complaints.toasts.dialog"]
@@ -189,11 +189,11 @@ def test_cleanup_before_the_end_capture_fails_as_a_harness_error(tmp_path, monke
 
 def test_a_main_capture_taken_before_cleanup_replaces_the_end_capture(tmp_path, monkeypatch):
     """The fix: ``self.shot()`` while the dialog is open, then the cleanup."""
-    driver = FakeDriver({"workflow-editor-dialog": IN_FRAME})
+    driver = FakeDriver({"automation-editor-dialog": IN_FRAME})
     suite = _suite(tmp_path, driver, monkeypatch)
-    with suite.step("complaints.toasts.dialog", "Toast", expect_testid="workflow-editor-dialog"):
+    with suite.step("complaints.toasts.dialog", "Toast", expect_testid="automation-editor-dialog"):
         suite.shot()
-        del driver.visible["workflow-editor-dialog"]
+        del driver.visible["automation-editor-dialog"]
     step = _step(suite, "complaints.toasts.dialog")
     assert step["status"] == "pass", step.get("reason")
     assert step["screenshots"] == ["shots/complaints.toasts.dialog.png"]

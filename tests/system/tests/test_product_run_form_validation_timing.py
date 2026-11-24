@@ -7,7 +7,7 @@ error must now appear only after the user edited the field and left it, or
 for every field once they try to save; that attempt also moves focus to the
 first invalid field.
 
-#5917 moved the remaining editor dialogs (macro, workflow, schedule,
+#5917 moved the remaining editor dialogs (automation, schedule,
 embedded server, theme, highlight rule) to the same pattern: their Save is
 ``aria-disabled`` instead of natively ``disabled``, so trying it can reveal
 the reasons; a natively disabled Save would hide them for good (#2467).
@@ -16,7 +16,7 @@ The live grades are hand-triggered only (``scripts/internal/product-run.sh``;
 deselected without ``--product-run``). The first opens a new connection,
 picks SSH, checks that no error shows, then clicks Save and checks that
 Name's and Host's errors show and that nothing was saved. The second does the
-same for a new macro. The ``test_grade_*`` functions grade fixed captures
+same for a new automation that types keys. The ``test_grade_*`` functions grade fixed captures
 without an app and run in the normal lane.
 """
 
@@ -37,14 +37,14 @@ NAME_ERROR = "connection-editor-name-error"
 HOST_ERROR = "field-host-error"
 #: Suffix every inline field error's test id carries (``Field`` ``errorTestId``).
 ERROR_SUFFIX = "-error"
-#: Infix of an indexed row error's test id (``macro-editor-step-error-0``).
+#: Infix of an indexed row error's test id (``automation-editor-keys-error-0-0``).
 ERROR_INFIX = "-error-"
 
-#: The macro editor (#5917): its Name error uses ``Field``'s default test id.
-MACRO_EDITOR = "macro-editor-dialog"
-MACRO_SAVE = "macro-editor-save"
+#: The automation editor (#5917): its Name error uses ``Field``'s default test id.
+MACRO_EDITOR = "automation-editor-dialog"
+MACRO_SAVE = "automation-editor-save"
 MACRO_NAME_ERROR = "field-error"
-MACRO_STEP_ERROR = "macro-editor-step-error-0"
+MACRO_STEP_ERROR = "automation-editor-keys-error-0-0"
 
 
 # ── grading ───────────────────────────────────────────────────────────────
@@ -120,7 +120,7 @@ def test_grade_save_attempt_missing_field_error_fails():
 
 
 def test_grade_reads_indexed_row_errors():
-    items = [_item(MACRO_STEP_ERROR), _item("macro-editor-step-0"), _item(MACRO_NAME_ERROR)]
+    items = [_item(MACRO_STEP_ERROR), _item("automation-editor-keys-row-0-0"), _item(MACRO_NAME_ERROR)]
     assert shown_error_ids(items) == [MACRO_STEP_ERROR, MACRO_NAME_ERROR]
 
 
@@ -198,10 +198,10 @@ class TestProductRunDialogValidationTiming(ProductRunUi, AutomationPhaseUi, Side
     def test_20_dialog_errors_wait_for_the_user(self):
         with self.step(
             "forms.dialog-validation-timing",
-            "A new macro shows no error until a field is left or Save is tried; "
+            "A new automation shows no error until a field is left or Save is tried; "
             "Save stays clickable and then shows every reason (#5917)",
-            expect="#5917: the new-macro dialog opens clean; Save is aria-disabled, "
-            "not disabled; after Save, Name and the empty step each show their error",
+            expect="#5917: the new-automation dialog opens clean; Save is aria-disabled, "
+            "not disabled; after Save, Name and the empty keys each show their error",
         ):
             self.open_new_keystrokes()
             pristine = self._shown_errors()
@@ -217,17 +217,17 @@ class TestProductRunDialogValidationTiming(ProductRunUi, AutomationPhaseUi, Side
 
             self.driver.click(MACRO_SAVE)
             self.wait(
-                lambda: self.driver.exists(MACRO_STEP_ERROR), what="the step error after Save"
+                lambda: self.driver.exists(MACRO_STEP_ERROR), what="the keys error after Save"
             )
             attempted = self._shown_errors()
             self.evidence(f"errors after Save {attempted}")
             self.shot(label="after-save")
             problems += save_attempt_problems(attempted, [MACRO_NAME_ERROR, MACRO_STEP_ERROR])
-            assert self.driver.exists(MACRO_EDITOR), "Save closed the editor of an invalid macro"
+            assert self.driver.exists(MACRO_EDITOR), "Save closed the editor of an invalid automation"
             assert not problems, problems
         try:
-            if self.driver.exists("macro-editor-cancel"):
-                self.driver.click("macro-editor-cancel")
+            if self.driver.exists("automation-editor-cancel"):
+                self.driver.click("automation-editor-cancel")
             self.dismiss_modals(MACRO_EDITOR)
         except Exception as exc:  # noqa: BLE001 - cleanup must not fail the run
-            print(f"[product-run] could not close the macro editor cleanly: {exc}")
+            print(f"[product-run] could not close the automation editor cleanly: {exc}")

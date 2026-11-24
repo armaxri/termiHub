@@ -44,6 +44,7 @@ from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.grades import row_leftover_text
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
+from termihub_harness.ui.automation_sidebar import EDITOR
 
 pytestmark = [
     pytest.mark.product_run,
@@ -186,9 +187,9 @@ class TestProductRunAutomations(
         ):
             self.author_workflow(name, [
                 ("send-command", {"step-command": f"echo PR_WF_START_{t}"}),
-                ("wait", {"step-delay": 500}),
+                ("wait", {"step-delay": 0.5}),
                 ("send-command", {"step-command": f"sleep {SHELL_SLEEP_S}; echo PR_WF_READY_$((40+2))_{t}"}),
-                ("wait-for-output", {"wfo-pattern": f"PR_WF_READY_42_{t}", "wfo-timeout": 20000}),
+                ("wait-for-output", {"wfo-pattern": f"PR_WF_READY_42_{t}", "wfo-timeout": 20}),
                 ("send-command", {"step-command": f"echo PR_WF_DONE_{t}"}),
             ])
             self.shot(label="editor")
@@ -205,7 +206,7 @@ class TestProductRunAutomations(
             "with an accent bar on its leading edge (#5687, it fades after about 3 s)",
         ):
             self.require("automations.workflow.create")
-            self.edit_workflow(self.ids["workflow"], {"workflow-editor-step-delay-1": WAIT_MS})
+            self.edit_workflow(self.ids["workflow"], {"automation-editor-step-delay-1": WAIT_MS / 1000})
             delay = self.wait(
                 lambda: (lambda w: w and w["steps"][1].get("delayMs"))(self.workflow(self.ids["workflow"])),
                 what="the edited workflow",
@@ -542,21 +543,21 @@ class TestProductRunAutomations(
             assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
             self.driver.click("automation-history-show-all")
 
-    # ── workflow editor layout ───────────────────────────────────────────────
-    def test_80_workflow_editor_layout(self):
+    # ── automation editor layout ─────────────────────────────────────────────
+    def test_80_automation_editor_layout(self):
         with self.step(
             "automations.workflow.editor-layout",
-            "The workflow editor fits 800x600 with one scroll container and Triggers in view",
-            expect="the Edit workflow dialog at 800x600: Name, Description and Tags spaced "
-            "apart, the Triggers chips fully visible above the Cancel/Save footer, the five "
-            "steps as one-line summaries, a single scrollbar (#5637)",
-            expect_testid="workflow-editor-dialog",
+            "The automation editor fits 800x600 with one scroll container and its steps in view",
+            expect="the Edit automation dialog at 800x600: Name beside Description, then the "
+            "five steps as one-line summaries, all above the Cancel / Save and run / Save "
+            "footer; a single scrollbar (#5637, R-076)",
+            expect_testid=EDITOR,
         ):
             self.require("automations.workflow.create")
             self.driver.resize_window(800, 600)
             try:
-                self.edit_automation(self.ids["workflow"], "workflow-editor-dialog")
-                self._grade_workflow_editor_layout()
+                self.edit_automation(self.ids["workflow"])
+                self._grade_editor_layout()
                 # The step's capture, at 800x600 with the editor open: the
                 # cancel below closes it (#5857).
                 self.shot()
@@ -564,47 +565,40 @@ class TestProductRunAutomations(
             finally:
                 self.driver.resize_window(1280, 800)
 
-    def _grade_workflow_editor_layout(self) -> None:
-        """Grade the editor's layout at 800x600 (#5637, R-063/R-069/R-070).
+    def _grade_editor_layout(self) -> None:
+        """Grade the editor's layout at 800x600 (#5637, R-063/R-069/R-070/R-076).
 
-        No element inside the dialog body scrolls on its own (the steps list and
-        the trigger connection list flow in the body); Name, Description and Tags
-        are at least 8 px apart; the Triggers chips sit wholly inside the dialog
-        and above its footer without scrolling; collapsed steps are one line.
+        No element inside the dialog body scrolls on its own; Name and Description
+        share a line; collapsed steps are one line; all five step rows sit above
+        the footer without scrolling.
         """
-        dialog = self.driver.measure_element("workflow-editor-dialog")["rect"]
+        dialog = self.driver.measure_element(EDITOR)["rect"]
         self.evidence(f"dialog {dialog}")
         assert dialog["y"] >= 0 and dialog["y"] + dialog["height"] <= 600 + 1, (
             f"the dialog {dialog} does not fit 800x600"
         )
-        for nested in ("workflow-editor-steps", "workflow-editor-form"):
+        for nested in ("automation-editor-steps", "automation-editor-form"):
             overflow = self.driver.get_computed_style("overflow-y", nested)
             box = self.driver.measure_element(nested)
             self.evidence(f"{nested}: overflow-y {overflow}, scroll {box['scrollHeight']} "
                           f"/ client {box['clientHeight']}")
             assert overflow == "visible", f"{nested} is its own scroll container ({overflow})"
             assert box["scrollHeight"] <= box["clientHeight"] + 1, f"{nested} clips its content"
-        pairs = (("workflow-editor-name", "workflow-editor-description-label"),
-                 ("workflow-editor-description", "workflow-editor-tags-label"))
-        for above, below in pairs:
-            upper = self.driver.measure_element(above)["rect"]
-            lower = self.driver.measure_element(below)["rect"]
-            gap = lower["y"] - (upper["y"] + upper["height"])
-            self.evidence(f"gap {above} -> {below}: {gap:.1f}px")
-            assert gap >= 8, f"{below} sits {gap:.1f}px under {above} (want >= 8px)"
-        chips = self.driver.measure_element("workflow-editor-triggers-chips")["rect"]
-        save = self.driver.measure_element("workflow-editor-save")["rect"]
-        self.evidence(f"trigger chips {chips}; Save {save}")
-        assert chips["y"] >= dialog["y"], f"the trigger chips {chips} start above the dialog"
-        assert chips["y"] + chips["height"] <= save["y"] - 8, (
-            f"the trigger chips {chips} run into the footer (Save at {save})"
-        )
+        name = self.driver.measure_element("automation-editor-name")["rect"]
+        description = self.driver.measure_element("automation-editor-description")["rect"]
+        self.evidence(f"Name {name}; Description {description}")
+        assert abs(name["y"] - description["y"]) <= 1, "Name and Description are not on one line"
+        assert description["x"] >= name["x"] + name["width"] + 8, "Description touches Name"
+        save = self.driver.measure_element("automation-editor-save")["rect"]
         index = 0
-        while self.driver.exists(f"workflow-editor-step-{index}"):
-            row = self.driver.measure_element(f"workflow-editor-step-{index}")["rect"]
+        while self.driver.exists(f"automation-editor-step-{index}"):
+            row = self.driver.measure_element(f"automation-editor-step-{index}")["rect"]
             assert row["height"] <= 48, f"collapsed step {index} is {row['height']:.0f}px tall"
+            assert row["y"] + row["height"] <= save["y"] - 8, (
+                f"step {index} {row} is below the fold (Save at {save})"
+            )
             index += 1
-        self.evidence(f"{index} collapsed step rows, each <= 48px")
+        self.evidence(f"{index} collapsed step rows, each <= 48px and above the footer")
         assert index == 5, f"expected the five authored steps, found {index}"
 
     # ── macro row hints, preview and history polish (#5680) ──────────────────
@@ -742,7 +736,7 @@ class TestProductRunAutomations(
             self.require("automations.workflow.edit")
             wid = self.ids["workflow"]
             row = f"automation-item-{wid}"
-            self.edit_workflow(wid, {"workflow-editor-description": f"edited {self.tag}"})
+            self.edit_workflow(wid, {"automation-editor-description": f"edited {self.tag}"})
             marked = self.driver.get_attribute(row, "data-just-saved")
             background = self.driver.get_computed_style("background-color", row)
             self.evidence(f"{row}: data-just-saved={marked!r}, background {background}")

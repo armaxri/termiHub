@@ -118,9 +118,9 @@ describe("row tooltip", () => {
         { kind: "wait", delayMs: 500 },
       ],
     });
-    expect(automationRowTooltip(a, nameOf)[1]).toBe("Send command: make build (+2 more)");
+    expect(automationRowTooltip(a, nameOf)[1]).toBe("Run command: make build (+2 more)");
     expect(automationRowTooltip(automation({ steps: a.steps.slice(0, 1) }), nameOf)[1]).toBe(
-      "Send command: make build"
+      "Run command: make build"
     );
   });
 

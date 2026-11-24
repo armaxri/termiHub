@@ -96,8 +96,6 @@ export function AutomationSidebar() {
   }, []);
 
   const files = useAutomationFiles();
-  const editors = useAutomationEditors(connections, markSaved);
-  const { edit, newFromAutomation, newFromKeys, newFromSteps } = editors;
 
   const deletion = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
@@ -125,6 +123,9 @@ export function AutomationSidebar() {
     },
     [runAutomation, runTarget]
   );
+
+  const editors = useAutomationEditors({ onSaved: markSaved, onRun: handleRun });
+  const { edit, newFromAutomation, newFromKeys, newFromSteps } = editors;
 
   const handleStop = useCallback(
     (id: string) => {

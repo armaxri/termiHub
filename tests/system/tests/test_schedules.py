@@ -77,7 +77,7 @@ class TestScheduledRuns(
         # A failed attempt can leave a dialog open, scheduling paused, or its
         # 1-minute schedule still enabled — which would fire into the rerun's
         # terminal and make its runs skip as "another scheduled run".
-        self.dismiss_modals(EDITOR, CONFIRM, "macro-editor-dialog")
+        self.dismiss_modals(EDITOR, CONFIRM, "automation-editor-dialog")
         self._open_schedules_settings()
         for s in self._schedules():
             if s.get("enabled"):

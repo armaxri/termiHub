@@ -59,7 +59,6 @@ from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.editor_layout import TUNNEL_ACTIONS, measure_editor_footer
 from termihub_harness.product_run.grades import row_leftover_text, tunnel_editor_primary_problems
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
-from termihub_harness.ui.automation_sidebar import KEYS_EDITOR
 
 pytestmark = [
     pytest.mark.product_run,
@@ -129,10 +128,10 @@ class TestProductRunRowsNames(
             self.ids["macro"] = self.create_macro(
                 f"Rows macro {t}", [f"echo PR_ROWS_MACRO_{t}\\r"]
             )
-            self.edit_automation(self.ids["macro"], KEYS_EDITOR)
-            self.driver.type("macro-editor-description", "Checks the release")
-            self.driver.type("macro-editor-tags", "ops")
-            self.save_keystrokes()
+            self.edit_automation(self.ids["macro"])
+            self.driver.type("automation-editor-description", "Checks the release")
+            self.set_tags("ops")
+            self.save_editor()
             self.wait(
                 lambda: (self.macro(self.ids["macro"]) or {}).get("description")
                 == "Checks the release",
@@ -142,8 +141,8 @@ class TestProductRunRowsNames(
             self.author_workflow(f"Answer rows {t}", [
                 ("send-command", {"step-command": f"echo PR_ROWS_ANSWER_{t}"}),
             ])
-            self.driver.type("workflow-editor-description", "Replies on match")
-            self.driver.type("workflow-editor-tags", "deploy")
+            self.driver.type("automation-editor-description", "Replies on match")
+            self.set_tags("deploy")
             self.set_output_match_trigger(self.ids["conn"], f"PR_ROWS_FIRE_{t}")
             self.save_workflow()
             self.ids["workflow"] = self.workflow_id(f"Answer rows {t}")

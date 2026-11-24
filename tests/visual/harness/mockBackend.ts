@@ -163,6 +163,42 @@ const AUTOMATIONS = [
     createdAt: STAMP,
     updatedAt: STAMP,
   },
+  {
+    // Five steps of every width, one that will not run without the experimental switch.
+    id: "wf-4",
+    name: "Release",
+    description: "Build, check and announce a release",
+    tags: ["release", "ops"],
+    steps: [
+      {
+        kind: "type-keys",
+        chunks: [
+          { data: "git fetch --all --prune", delayMs: 0 },
+          { data: "\r", delayMs: 180 },
+        ],
+        timing: "fixed",
+        fixedDelayMs: 25,
+        recorded: true,
+      },
+      {
+        kind: "send-command",
+        command: "make -C /srv/release/current build test package ENV=${env} JOBS=16 VERBOSE=1",
+        retry: { count: 3, delayMs: 1000, backoff: "exponential" },
+        continueOnError: true,
+      },
+      { kind: "wait-for-output", pattern: "Build (OK|DONE)", isRegex: true, timeoutMs: 60000 },
+      {
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [{ kind: "wait", delayMs: 1200 }],
+      },
+      { kind: "run-local-process", program: "notify-send", args: ["released", "${env}"] },
+    ],
+    triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+R" }],
+    parameters: [{ name: "env", type: "enum", options: ["dev", "prod"], default: "dev" }],
+    createdAt: STAMP,
+    updatedAt: STAMP,
+  },
 ];
 
 const AUTOMATION_RUNS = [
