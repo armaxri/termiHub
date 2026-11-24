@@ -177,7 +177,7 @@ class TestProductRunAutomationStore(
             t = self.tag
             self.ids["macro"] = self.create_macro(f"Store macro {t}", [f"echo PR_STORE_M_{t}\\r"])
             self.author_workflow(
-                f"Store workflow {t}", [("send-command", {"command": f"echo PR_STORE_W_{t}"})]
+                f"Store workflow {t}", [("send-command", {"step-command": f"echo PR_STORE_W_{t}"})]
             )
             self.save_workflow()
             self.ids["workflow"] = self.workflow_id(f"Store workflow {t}")

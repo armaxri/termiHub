@@ -273,7 +273,7 @@ class TestProductRunAutomationSidebar(
                 f"Answer {t}",
                 [
                     ("send-command", {"step-command": f"echo PR_SIDE_ANSWER_{t}"}),
-                    ("wait", {"step-delay": WAIT_MS}),
+                    ("wait", {"step-delay": WAIT_MS / 1000}),
                 ],
             )
             self.set_output_match_trigger(self.ids["conn"], f"PR_SIDE_NEVER_{t}")
@@ -408,20 +408,20 @@ class TestProductRunAutomationSidebar(
         with self.step(
             "automation-sidebar.local-process",
             "With experimental features off, the Add step menu leaves out Run local process",
-            expect="the step editor's Add step menu without 'Run local process'",
+            expect="the editor's Add step menu without 'Run local process'",
             screenshot=False,
         ):
             assert not self._experimental_enabled(), "the run turned experimental features on"
             self.open_new_workflow()
             try:
-                self.driver.click("workflow-editor-add-step")
+                self.driver.click("automation-editor-add-step")
                 self.wait(
-                    lambda: self.driver.exists("workflow-editor-add-step-wait"),
+                    lambda: self.driver.exists("automation-editor-add-step-wait"),
                     what="the Add step menu",
                 )
-                offered = self.driver.exists("workflow-editor-add-step-run-local-process")
+                offered = self.driver.exists("automation-editor-add-step-run-local-process")
                 self.shot(label="add-step")
-                self.driver.press_key("Escape", "workflow-editor-add-step-wait")
+                self.driver.press_key("Escape", "automation-editor-add-step-wait")
                 self.evidence(f"Run local process offered: {offered}")
                 assert not offered, "Run local process is offered with experimental features off"
             finally:

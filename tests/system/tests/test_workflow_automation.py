@@ -1,17 +1,17 @@
 """End-to-end coverage for step-by-step automations (#1851, #5818).
 
 Drives the real app over the bridge through the whole authoring + run journey:
-show the Automations sidebar, author a workflow in the step editor (add every
-step kind through the "Add step…" menu, edit a field, reorder, remove), confirm
-the manual trigger, save it, then run a `send-command` workflow against a live
+show the Automations sidebar, author a workflow in the editor (add every
+step kind through the "Add step" menu, edit a field, reorder, remove), confirm
+that a new one only runs by hand, save it, then run a `send-command` workflow against a live
 local-shell session and assert the command actually reaches the terminal.
 
-The "Add step…" menu is the #1868 regression surface — a Radix menu that
+The "Add step" menu is the #1868 regression surface — a Radix menu that
 rendered in the DOM but was dead in the real app while jsdom unit tests passed.
 :meth:`WorkflowUi.add_step` asserts the step count actually changes, so a menu
-item that renders-but-does-nothing fails here. The run-macro step's Macro
-select is the same kind of portalled listbox inside the modal;
-:meth:`WorkflowUi.pick_macro` clicks an option in the real webview (#4012).
+item that renders-but-does-nothing fails here. The run-automation step's
+picker is the same kind of portalled listbox inside the modal;
+:meth:`WorkflowUi.pick_automation` clicks an option in the real webview (#4012).
 
 Automations need no experimental switch (#5818); only the "Run local process"
 step does.
@@ -30,10 +30,20 @@ from termihub_harness import (
 
 pytestmark = pytest.mark.integration
 
-STEP_KINDS = ["send-command", "run-script", "run-macro", "wait", "run-local-process"]
+STEP_KINDS = [
+    "type-keys",
+    "send-command",
+    "wait",
+    "wait-for-output",
+    "conditional",
+    "loop",
+    "run-script",
+    "run-automation",
+    "run-local-process",
+]
 
-#: The editor dialogs a failed attempt can leave open (#4834).
-WORKFLOW_MODALS = ("workflow-editor-dialog", "macro-editor-dialog")
+#: The editor dialog a failed attempt can leave open (#4834).
+WORKFLOW_MODALS = ("automation-editor-dialog",)
 
 
 class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
@@ -56,7 +66,7 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         assert self.editor_open()
         assert self.step_count() == 0
         # A workflow with no steps cannot be saved.
-        assert self.driver.exists("workflow-editor-no-steps")
+        assert self.driver.exists("automation-editor-no-steps")
         assert self.save_disabled()
         # Nothing was edited, so Cancel closes without the unsaved prompt.
         self.cancel_clean_editor()
@@ -78,7 +88,7 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         # The added steps make the editor dirty, so Cancel raises the shared
         # unsaved-changes prompt instead of closing (#4314). "Keep editing"
         # returns to the editor with every step intact...
-        self.driver.click("workflow-editor-cancel")
+        self.driver.click("automation-editor-cancel")
         self.wait(self.unsaved_prompt_open, what="the unsaved-changes prompt")
         assert self.editor_open()
         self.driver.click("unsaved-changes-cancel")
@@ -97,7 +107,7 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         self.add_step("send-command")
         self.add_step("wait")
         self.set_command(0, "echo authored")
-        assert self.driver.get_value("workflow-editor-step-command-0") == "echo authored"
+        assert self.driver.get_value("automation-editor-step-command-0") == "echo authored"
 
         # Reorder: move the send-command down so the wait leads.
         self.move_step_down(0)
@@ -111,8 +121,8 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         assert self.step_count() == 1
         assert self.step_kind(0) == "wait"
 
-        # Manual trigger is on by default.
-        assert self.trigger_active("manual")
+        # Nothing but the user starts it until a trigger is added.
+        assert self.trigger_kinds() == []
 
         self.set_name(name)
         assert not self.save_disabled()
@@ -170,8 +180,8 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
         assert second in self.wait_for_output(second)
 
     def test_run_macro_step_picks_a_macro_and_plays_it(self):
-        # #1868 / #4012: the Macro select inside the editor modal must be
-        # clickable in the real webview — pick a macro, save, and run it.
+        # #1868 / #4012: the automation picker inside the editor modal must be
+        # clickable in the real webview — pick an automation, save, and run it.
         macro_name = unique_name("wf-macro")
         marker = unique_name("WF_MACRO").replace("-", "_")
         self.ensure_terminal()
@@ -179,8 +189,8 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest)
 
         name = unique_name("wf-pick")
         self.open_new_workflow()
-        self.add_step("run-macro")
-        self.pick_macro(0, macro_id, macro_name)
+        self.add_step("run-automation")
+        self.pick_automation(0, macro_id, macro_name)
         # Picking from the listbox must not dismiss the editor modal.
         assert self.editor_open()
         self.set_name(name)

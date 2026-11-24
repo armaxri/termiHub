@@ -63,8 +63,9 @@
 }
 
 .automation-editor__section-content {
-  /* Lines up with the section title, past the chevron. */
-  padding-left: calc(14px + var(--spacing-xs-sm));
+  /* Geometry, not spacing: lines up with the section title, past its chevron (#3170). */
+  --automation-section-chevron: 14px;
+  padding-left: calc(var(--automation-section-chevron) + var(--spacing-xs-sm));
 }
 
 .automation-editor__steps-header {
