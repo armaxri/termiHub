@@ -1,5 +1,1 @@
-export {
-  AutomationEditorDialog,
-  type AutomationEditorDialogProps,
-  type AutomationSaveRequest,
-} from "./AutomationEditorDialog";
+export { AutomationEditorDialog, type AutomationSaveRequest } from "./AutomationEditorDialog";
