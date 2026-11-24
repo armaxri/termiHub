@@ -9,6 +9,7 @@
 //! - `idRemaps`: every legacy id the conversion had to change. Schedules still
 //!   resolve macros and workflows by their legacy id, so the schedule rewrite
 //!   follows this list when schedules move to v3 (slice 10).
+//! - `legacyFrozenAt`: when the UI switched to this store (slice 4).
 
 use serde::{Deserialize, Serialize};
 
@@ -97,6 +98,12 @@ pub struct AutomationStore {
     /// Legacy ids the conversion changed, for the schedules v3 rewrite.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub id_remaps: Vec<RecordedIdRemap>,
+    /// When the UI switched to this store and the legacy files froze
+    /// (RFC 3339; #5818 slice 4). Absent on a store written by a build from
+    /// before the switch: the next boot then follows, once, the deletions
+    /// made in the legacy files meanwhile (`super::migrate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_frozen_at: Option<String>,
     /// Unknown top-level keys, preserved verbatim for forward compatibility
     /// (PER-010).
     #[serde(flatten, default)]
@@ -117,6 +124,7 @@ impl Default for AutomationStore {
             automations: Vec::new(),
             migrated_from: None,
             id_remaps: Vec::new(),
+            legacy_frozen_at: None,
             extra: serde_json::Map::new(),
         }
     }

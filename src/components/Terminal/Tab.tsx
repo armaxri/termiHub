@@ -31,6 +31,7 @@ import {
   ArrowRight,
   CircleDashed,
   CheckCircle2,
+  CircleStop,
   SquareSplitHorizontal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -66,6 +67,7 @@ const STATUS_LABELS: Record<TabStatus, string> = {
   connected: "Connected",
   failed: "Connection failed",
   disconnected: "Disconnected",
+  exited: "Process exited",
   evicted: "Taken over by another desktop",
   finished: "Finished",
 };
@@ -84,6 +86,8 @@ const STATUS_ICON: Record<TabStatus, LucideIcon> = {
   connected: Circle,
   failed: TriangleAlert,
   disconnected: Unplug,
+  // A process that exited is no lost connection (#5955): a neutral stop sign.
+  exited: CircleStop,
   evicted: MonitorX,
   finished: CheckCircle2,
 };

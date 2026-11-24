@@ -10,6 +10,7 @@ use std::sync::Mutex as StdMutex;
 use termihub_core::monitoring::{KillSignal, ProcessError, ProcessInfo, ProcessManager};
 
 use crate::session::manager::SessionProcessError;
+use termihub_core::connection::SshNegotiatedAlgorithms;
 
 /// A per-session process manager standing in for a session backend's own
 /// (an SSH exec, a `docker exec`, a `wsl.exe -d`).
@@ -54,13 +55,18 @@ type Resolution = Result<Arc<dyn ProcessManager + Send + Sync>, SessionProcessEr
 struct ProcessSessionManager {
     registry: termihub_core::connection::ConnectionTypeRegistry,
     resolutions: StdMutex<HashMap<String, Resolution>>,
+    /// Scripted `session_ssh_algorithms` answers (#5896).
+    algorithms: StdMutex<HashMap<String, AlgorithmsResolution>>,
 }
+
+type AlgorithmsResolution = Result<Option<SshNegotiatedAlgorithms>, SessionProcessError>;
 
 impl ProcessSessionManager {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             registry: crate::registry::build_registry(),
             resolutions: StdMutex::new(HashMap::new()),
+            algorithms: StdMutex::new(HashMap::new()),
         })
     }
 
@@ -94,6 +100,14 @@ impl SessionManagerApi for ProcessSessionManager {
     }
     async fn session_process_manager(&self, session_id: &str) -> Resolution {
         self.resolutions
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .unwrap_or(Err(SessionProcessError::Unknown))
+    }
+    async fn session_ssh_algorithms(&self, session_id: &str) -> AlgorithmsResolution {
+        self.algorithms
             .lock()
             .unwrap()
             .get(session_id)
@@ -346,4 +360,89 @@ async fn an_unknown_id_is_not_found() {
     )
     .await;
     assert_eq!(r["error"]["code"], errors::CONNECTION_NOT_FOUND, "{r}");
+}
+
+// ── connection.sshAlgorithms (#5896) ──────────────────────────────────
+
+fn algorithms_params(session_id: &str) -> Value {
+    json!({ "session_id": session_id })
+}
+
+#[tokio::test]
+async fn ssh_algorithms_of_a_held_session_are_reported() {
+    let sessions = ProcessSessionManager::new();
+    let sample = SshNegotiatedAlgorithms::new(
+        "curve25519-sha256",
+        "ssh-ed25519",
+        "chacha20-poly1305@openssh.com",
+        "hmac-sha2-256-etm@openssh.com",
+    );
+    sessions
+        .algorithms
+        .lock()
+        .unwrap()
+        .insert("ssh-session".into(), Ok(Some(sample)));
+    sessions
+        .algorithms
+        .lock()
+        .unwrap()
+        .insert("serial-session".into(), Ok(None));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_SSH_ALGORITHMS,
+        algorithms_params("ssh-session"),
+        2,
+    )
+    .await;
+    assert_eq!(
+        r["result"]["algorithms"],
+        json!({
+            "kex": "curve25519-sha256",
+            "hostKey": "ssh-ed25519",
+            "cipher": "chacha20-poly1305@openssh.com",
+            "mac": null
+        }),
+        "{r}"
+    );
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_SSH_ALGORITHMS,
+        algorithms_params("serial-session"),
+        3,
+    )
+    .await;
+    assert!(r["result"]["algorithms"].is_null(), "{r}");
+    assert!(r.get("error").is_none(), "{r}");
+}
+
+#[tokio::test]
+async fn ssh_algorithms_refuse_sessions_this_client_does_not_hold() {
+    let sessions = ProcessSessionManager::new();
+    sessions
+        .algorithms
+        .lock()
+        .unwrap()
+        .insert("theirs".into(), Err(SessionProcessError::HeldElsewhere));
+    let handler = handler_with(sessions).await;
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_SSH_ALGORITHMS,
+        algorithms_params("theirs"),
+        2,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::SESSION_HELD_BY_OTHER, "{r}");
+
+    let r = dispatch(
+        &handler,
+        pm::CONNECTION_SSH_ALGORITHMS,
+        algorithms_params("nobody"),
+        3,
+    )
+    .await;
+    assert_eq!(r["error"]["code"], errors::SESSION_NOT_FOUND, "{r}");
 }

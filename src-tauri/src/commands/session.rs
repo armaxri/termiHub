@@ -24,6 +24,7 @@ use crate::session::graphical_probe::{
 };
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{SessionInfo, SessionLogStatus, SessionManager, SessionOrigin};
+use crate::session::prompt_connection_name::with_prompt_connection_name;
 use crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter;
 use crate::session_projection::projection::fold_session_transition;
 use crate::system_monitor_projection::projection::fold_monitor_transition;
@@ -143,14 +144,25 @@ pub async fn create_connection(
         &settings,
     );
 
-    let connect = manager.create_connection(
-        &type_id,
-        settings,
-        agent_id.as_deref(),
-        connect_id.as_deref(),
-        spawned.unwrap_or(false),
-        resilient_reconnect.unwrap_or(false),
-        app_handle.clone(),
+    // A host-key prompt of this connect — or of the session's own later SFTP,
+    // monitoring or process login, which has no tab — names the saved
+    // connection (#5943). A terminal tab's own title still wins on the
+    // frontend.
+    let prompt_name = saved_connection_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .and_then(|id| conn_manager.saved_connection_name(id));
+    let connect = with_prompt_connection_name(
+        prompt_name.as_deref(),
+        manager.create_connection(
+            &type_id,
+            settings,
+            agent_id.as_deref(),
+            connect_id.as_deref(),
+            spawned.unwrap_or(false),
+            resilient_reconnect.unwrap_or(false),
+            app_handle.clone(),
+        ),
     );
     let result = if unattended {
         termihub_core::backends::ssh::unattended::run_unattended(connect).await
@@ -250,6 +262,9 @@ fn initial_connect_tab_id(connect_id: Option<&str>) -> Option<String> {
 /// prompt shape, `session_id` = `connect_id`), answered through
 /// [`test_connection_cert_decision`]. Otherwise — every unattended caller — the
 /// probe stays non-interactive and reports the certificate as not trusted.
+///
+/// `connection_name` (#5943) is the name the editor shows for the connection
+/// under test; an SSH host-key prompt the test raises names it. Optional.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn test_connection(
@@ -258,6 +273,7 @@ pub async fn test_connection(
     agent_id: Option<String>,
     connect_id: Option<String>,
     review_cert: Option<bool>,
+    connection_name: Option<String>,
     window: tauri::WebviewWindow,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
@@ -281,17 +297,19 @@ pub async fn test_connection(
         }),
         _ => None,
     };
-    manager
-        .test_connection(
+    with_prompt_connection_name(
+        connection_name.as_deref(),
+        manager.test_connection(
             &type_id,
             settings,
             agent_id.as_deref(),
             connect_id.as_deref(),
             Some(graphical.trust_store().as_ref()),
             reviewer.as_ref().map(|r| r as &dyn CertReviewer),
-        )
-        .await
-        .map_err(TerminalError::from_session_spawn)
+        ),
+    )
+    .await
+    .map_err(TerminalError::from_session_spawn)
 }
 
 /// Event asking the window running an interactive Test connection to review an
@@ -1540,6 +1558,19 @@ pub async fn list_processes(
     manager: State<'_, SessionManager>,
 ) -> Result<Vec<ProcessInfo>, ProcessError> {
     crate::session::process_ops::list_processes(&manager, &session_id).await
+}
+
+/// The cipher, MAC, key exchange and host-key algorithm an SSH session's
+/// transport negotiated (#5896), for the status bar's "Connection security"
+/// popover, which asks when it opens. `null` for an unknown or non-SSH
+/// session and an agent-hosted one on an agent that predates it — the
+/// popover then says only "Encrypted (SSH)".
+#[tauri::command]
+pub async fn get_ssh_algorithms(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Option<termihub_core::connection::SshNegotiatedAlgorithms>, TerminalError> {
+    Ok(manager.ssh_algorithms(&session_id).await)
 }
 
 /// Terminate a process in a session (PROD-0028).

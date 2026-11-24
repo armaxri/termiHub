@@ -17,6 +17,7 @@ mod monitoring_controller;
 mod output_sink;
 mod persistent_controller;
 pub mod process_ops;
+pub mod prompt_connection_name;
 pub mod rdp_trust_store;
 pub mod registry;
 pub mod remote_desktop_frames;

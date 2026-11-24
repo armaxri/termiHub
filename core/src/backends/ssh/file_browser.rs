@@ -87,15 +87,29 @@ pub struct SftpFileBrowser {
     /// derived from the config its owner dialled; `None` derives it from
     /// [`config`](Self::config).
     identity: Option<FilesystemIdentity>,
+    /// The connection name scoped around the connect that built this browser
+    /// (#5943). The SFTP session opens lazily on a later task, outside that
+    /// scope, so a host-key prompt its own login raises is re-scoped with it
+    /// and still names the connection.
+    prompt_connection_name: Option<String>,
 }
 
 impl SftpFileBrowser {
+    /// A browser that dials `config` lazily. It remembers the connection name
+    /// scoped around the caller (#5943) for the host-key prompt of that login.
     pub fn new(config: SshConfig) -> Self {
         Self {
             config,
             state: Arc::new(Mutex::new(None)),
             identity: None,
+            prompt_connection_name: super::prompt_owner::current_prompt_connection_name(),
         }
+    }
+
+    /// The connection name a host-key prompt of this browser's own login
+    /// carries (#5943), if any.
+    pub fn prompt_connection_name(&self) -> Option<&str> {
+        self.prompt_connection_name.as_deref()
     }
 
     /// Ride an **already-authenticated** SSH session another owner holds (a VNC
@@ -140,6 +154,8 @@ impl SftpFileBrowser {
                 sftp,
             }))),
             identity: Some(identity.unwrap_or_default()),
+            // A riding browser never dials, so it never raises a prompt.
+            prompt_connection_name: None,
         })
     }
 
@@ -151,7 +167,7 @@ impl SftpFileBrowser {
     /// session id only once the connection succeeds) call this right after
     /// [`new`](Self::new).
     pub async fn connect(&self) -> Result<(), FileError> {
-        Self::ensure_connected(&self.state, &self.config).await
+        self.ensure_connected().await
     }
 
     /// Report whether an exec (command) channel can be opened and used on the
@@ -165,7 +181,7 @@ impl SftpFileBrowser {
     /// possible. Pushed into core so the desktop `SftpSession` no longer forks it
     /// (#2104, issue-body item 1).
     pub async fn has_exec_capability(&self) -> Result<bool, FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -184,7 +200,7 @@ impl SftpFileBrowser {
     /// encapsulated in core, so the desktop transfer subsystem drives the core
     /// API rather than russh directly (#2104 item 1, #2236 item 2).
     pub async fn open_dedicated_channel(&self) -> Result<SftpTransferChannel, FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -201,10 +217,7 @@ impl SftpFileBrowser {
     /// `total == 0` as indeterminate and shows a spinner rather than a
     /// percentage. Never errors, mirroring the previous desktop behavior.
     pub async fn remote_size(&self, path: &str) -> u64 {
-        if Self::ensure_connected(&self.state, &self.config)
-            .await
-            .is_err()
-        {
+        if self.ensure_connected().await.is_err() {
             return 0;
         }
         let guard = self.state.lock().await;
@@ -226,7 +239,7 @@ impl SftpFileBrowser {
         if !is_home_relative(path) {
             return Ok(path.to_string());
         }
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -236,20 +249,22 @@ impl SftpFileBrowser {
     }
 
     /// Ensure the SFTP session is connected, opening it if needed.
-    async fn ensure_connected(
-        state: &Mutex<Option<SftpState>>,
-        config: &SshConfig,
-    ) -> Result<(), FileError> {
-        let mut guard = state.lock().await;
+    async fn ensure_connected(&self) -> Result<(), FileError> {
+        let mut guard = self.state.lock().await;
         if guard.is_some() {
             return Ok(());
         }
 
         // Reach the target directly, or through its pooled jump-host gateway when
-        // a ProxyJump chain is configured (#939).
-        let (session, _registry, gateway) = connect_target(config, None)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("SFTP connection failed: {e}")))?;
+        // a ProxyJump chain is configured (#939). The login runs on whichever
+        // task first used the browser; its host-key prompt still names the
+        // connection the browser was built for (#5943).
+        let (session, _registry, gateway) = super::prompt_owner::with_prompt_connection_name(
+            self.prompt_connection_name.as_deref(),
+            connect_target(&self.config, None),
+        )
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("SFTP connection failed: {e}")))?;
 
         let sftp = sftp::open_sftp_subsystem(&session)
             .await
@@ -440,7 +455,7 @@ impl SftpTransferChannel {
 impl FileBrowser for SftpFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -453,7 +468,7 @@ impl FileBrowser for SftpFileBrowser {
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -496,7 +511,7 @@ impl FileBrowser for SftpFileBrowser {
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -524,7 +539,7 @@ impl FileBrowser for SftpFileBrowser {
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -556,7 +571,7 @@ impl FileBrowser for SftpFileBrowser {
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
         let from = &self.resolve_home(from).await?;
         let to = &self.resolve_home(to).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -573,7 +588,7 @@ impl FileBrowser for SftpFileBrowser {
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -590,7 +605,7 @@ impl FileBrowser for SftpFileBrowser {
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -603,7 +618,7 @@ impl FileBrowser for SftpFileBrowser {
 
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -631,7 +646,7 @@ impl FileBrowser for SftpFileBrowser {
         uid: Option<u32>,
         gid: Option<u32>,
     ) -> Result<(), FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -661,7 +676,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn create_symlink(&self, target: &str, link_path: &str) -> Result<(), FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -682,7 +697,7 @@ impl FileBrowser for SftpFileBrowser {
     }
 
     async fn copy(&self, src: &str, dest: &str) -> Result<(), FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -747,7 +762,7 @@ impl FileBrowser for SftpFileBrowser {
 impl RangedFileAccess for SftpFileBrowser {
     async fn read_range(&self, path: &str, offset: u64, len: u32) -> Result<Vec<u8>, FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -773,7 +788,7 @@ impl RangedFileAccess for SftpFileBrowser {
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
         let path = &self.resolve_home(path).await?;
         use tokio::io::AsyncWriteExt;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -822,7 +837,7 @@ impl RangedFileAccess for SftpFileBrowser {
     /// size is measured again afterwards.
     async fn shorten(&self, path: &str, len: u64) -> Result<u64, FileError> {
         let path = &self.resolve_home(path).await?;
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -989,7 +1004,7 @@ pub trait SftpAdvancedOps: Send {
 #[async_trait::async_trait]
 impl SftpAdvancedOps for SftpFileBrowser {
     async fn check_writable(&self, remote_path: &str) -> Result<Writability, FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -999,7 +1014,7 @@ impl SftpAdvancedOps for SftpFileBrowser {
     }
 
     async fn realpath(&self, path: &str) -> Result<String, FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -1014,7 +1029,7 @@ impl SftpAdvancedOps for SftpFileBrowser {
         content: &str,
         sudo_password: &str,
     ) -> Result<ElevatedWriteResult, FileError> {
-        Self::ensure_connected(&self.state, &self.config).await?;
+        self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
@@ -1155,5 +1170,21 @@ mod tests {
             stat_error("/d/a.txt", russh_sftp::client::error::Error::Timeout),
             FileError::NotFound(_)
         ));
+    }
+
+    /// A browser built inside a connect's connection-name scope remembers it
+    /// for its own lazy login's host-key prompt (#5943); one built outside
+    /// any scope carries none, and a clone shares it.
+    #[tokio::test]
+    async fn a_browser_remembers_the_connection_name_it_was_built_under() {
+        let named = crate::backends::ssh::prompt_owner::with_prompt_connection_name(
+            Some("prod files"),
+            async { SftpFileBrowser::new(SshConfig::default()) },
+        )
+        .await;
+        assert_eq!(named.prompt_connection_name(), Some("prod files"));
+        assert_eq!(named.clone().prompt_connection_name(), Some("prod files"));
+        let unnamed = SftpFileBrowser::new(SshConfig::default());
+        assert_eq!(unnamed.prompt_connection_name(), None);
     }
 }

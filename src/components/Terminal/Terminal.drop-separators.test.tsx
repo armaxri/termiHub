@@ -74,11 +74,16 @@ vi.mock("@/services/api", () => ({
 
 type ExitHandler = (code: number | null, endCause: string | null) => void;
 const exitHandlers = vi.hoisted(() => new Map<string, ExitHandler>());
+type OutputHandler = (data: Uint8Array) => void;
+const outputHandlers = vi.hoisted(() => new Map<string, OutputHandler>());
 
 vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
-    subscribeOutput: vi.fn(() => vi.fn()),
+    subscribeOutput: vi.fn((sessionId: string, cb: OutputHandler) => {
+      outputHandlers.set(sessionId, cb);
+      return vi.fn();
+    }),
     subscribeExit: vi.fn((sessionId: string, cb: ExitHandler) => {
       exitHandlers.set(sessionId, cb);
       return vi.fn();
@@ -113,6 +118,7 @@ beforeEach(() => {
   mockCreateTerminal.mockClear();
   mockCreateTerminal.mockResolvedValue("session-1");
   exitHandlers.clear();
+  outputHandlers.clear();
   xtermInstances.length = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -139,10 +145,25 @@ async function mount(config: ConnectionConfig): Promise<void> {
   });
 }
 
-/** Everything the latest xterm instance got through `writeln`. */
+const decoder = new TextDecoder();
+
+/** Everything the latest xterm instance got through `write` and `writeln`, in order. */
 function written(): string {
   const xterm = xtermInstances[xtermInstances.length - 1];
-  return xterm.writeln.mock.calls.map((call) => String(call[0])).join("\n");
+  const calls = [
+    ...xterm.write.mock.calls.map((call, i) => ({
+      order: xterm.write.mock.invocationCallOrder[i],
+      text: typeof call[0] === "string" ? call[0] : decoder.decode(call[0] as Uint8Array),
+    })),
+    ...xterm.writeln.mock.calls.map((call, i) => ({
+      order: xterm.writeln.mock.invocationCallOrder[i],
+      text: String(call[0]),
+    })),
+  ];
+  return calls
+    .sort((a, b) => a.order - b.order)
+    .map((c) => c.text)
+    .join("\n");
 }
 
 async function fireExit(code: number | null, endCause: string | null = null): Promise<void> {
@@ -203,6 +224,22 @@ describe("Terminal — drop separators (#5619)", () => {
     expect(written()).toContain("[Process exited with code 0]");
   });
 
+  it("writes the exit line after the output still waiting for its flush (#5955)", async () => {
+    await mount({ type: "local", config: { shell: "/bin/zsh" } });
+    const onOutput = outputHandlers.get("session-1");
+    expect(onOutput).toBeDefined();
+    // The shell's last line arrives and the exit follows before the next frame.
+    await act(async () => {
+      onOutput?.(new TextEncoder().encode("none found.\r\n"));
+      exitHandlers.get("session-1")?.(3, null);
+      await wait(30);
+    });
+    const text = written();
+    expect(text).toContain("none found.");
+    expect(text).toContain("[Process exited with code 3]");
+    expect(text.indexOf("none found.")).toBeLessThan(text.indexOf("[Process exited with code 3]"));
+  });
+
   it("keeps the exit code for a remote process that exited", async () => {
     await mount({ type: "ssh", config: { host: "bastion" } });
     await fireExit(0);
@@ -223,5 +260,17 @@ describe("Terminal — reconnected marker (#5660)", () => {
     });
 
     expect(written()).toMatch(new RegExp(`— reconnected ${CLOCK} —`));
+  });
+
+  it("writes a restarted marker, not reconnected, after a local Restart (#5955)", async () => {
+    await mount({ type: "local", config: { shell: "/bin/bash" } });
+    act(() => {
+      useAppStore.getState().reconnectTerminal("tab-1");
+    });
+    await act(async () => {
+      await wait(50);
+    });
+    expect(written()).toMatch(new RegExp(`— restarted ${CLOCK} —`));
+    expect(written()).not.toContain("reconnected");
   });
 });

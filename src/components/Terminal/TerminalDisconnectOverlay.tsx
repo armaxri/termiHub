@@ -1,15 +1,5 @@
 import { useCallback, useId } from "react";
-import {
-  WifiOff,
-  RefreshCw,
-  AlertTriangle,
-  CheckCircle2,
-  Unplug,
-  Plus,
-  RotateCcw,
-  SquareTerminal,
-  Usb,
-} from "lucide-react";
+import { RefreshCw, AlertTriangle, Unplug, Plus, RotateCcw } from "lucide-react";
 import { connectionIdentityForTabId, isAutoReconnectOffTabId, useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, ContentOverlay } from "@/components/ui";
@@ -24,6 +14,7 @@ import {
   dropTransportOf,
   isLinkDrop,
   sessionEndActionLabel,
+  sessionEndEnterHint,
   sessionEndNoticeFor,
   type DisconnectCause,
   type DropTransport,
@@ -33,6 +24,7 @@ import {
 import { markTerminalRefocusPending } from "./terminalRefocus";
 import { TerminalPluginExitOverlay } from "./TerminalPluginExitOverlay";
 import { TerminalReconnectStrip } from "./TerminalReconnectStrip";
+import { SESSION_END_ICONS } from "./sessionEndIcons";
 import "./TerminalDisconnectOverlay.css";
 
 interface TerminalDisconnectOverlayProps {
@@ -50,15 +42,6 @@ interface TerminalDisconnectOverlayProps {
  * has no scrim, so it only has to say the scrollback is kept.
  */
 const SCROLLBACK_KEPT = t("drop.overlay.scrollbackKept");
-
-/** The strip icon per kind of end (#5910): only a dropped link shows WifiOff. */
-const END_ICONS: Record<SessionEndKind, typeof WifiOff> = {
-  exited: SquareTerminal,
-  ended: CheckCircle2,
-  user: Unplug,
-  device: Usb,
-  link: WifiOff,
-};
 
 /** The strip tint per kind of end: a process end is calm, a drop a warning. */
 const END_TONES: Record<SessionEndKind, DisconnectStripTone> = {
@@ -129,17 +112,21 @@ export function sessionEndNoticeForTab(
  *
  * Variants (determined from store state, in priority order):
  *   - "session-lost"   — terminal: live agent session unrecoverable, "start new
- *                        shell" + view-scrollback buttons (#2512)
+ *                        shell" (#2512)
  *   - "plugin-exit"    — the sandboxed plugin process crashed / hung / ran out of
  *                        memory / sent invalid data: restart session + close tab
  *                        (#4188, {@link TerminalPluginExitOverlay})
  *   - "reconnecting"   — non-blocking top strip, not an overlay (#5179): the
  *                        agentless countdown + attempt n/N + Cancel (#1962), or
  *                        a spinner + Stop ({@link TerminalReconnectStrip})
- *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
+ *   - "error"          — error box, "Reconnect failed" heading, retry button
  *   - "disconnected"   — the session ended: "Process exited (code N)" + Restart
  *                        for a process, "Session disconnected" + Reconnect for
- *                        a dropped link (#5910), plus view-scrollback
+ *                        a dropped link (#5910), with a "Press Enter to …" hint
+ *
+ * One dismiss control for every variant: the strip's "x" (#5955). A "View
+ * scrollback" button beside it did the same and read as if the scrollback
+ * were hidden, so it is gone.
  *
  * The scrollback buffer is always preserved and fully visible: every variant is
  * a strip that pushes the terminal down below it (#5908, {@link DisconnectStrip}),
@@ -226,25 +213,15 @@ export function TerminalDisconnectOverlay({
           describedBy={sessionLostError ? errorTextId : undefined}
           autoFocusPrimaryAction={isActive}
           actions={
-            <>
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<Plus size={14} />}
-                onClick={handleStartNewShell}
-                data-testid="terminal-session-lost-new-shell-btn"
-              >
-                Start new shell
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDismiss}
-                data-testid="terminal-disconnect-view-btn"
-              >
-                View scrollback
-              </Button>
-            </>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={14} />}
+              onClick={handleStartNewShell}
+              data-testid="terminal-session-lost-new-shell-btn"
+            >
+              Start new shell
+            </Button>
           }
         >
           {sessionLostError && (
@@ -309,25 +286,15 @@ export function TerminalDisconnectOverlay({
                   .join(" ")
           }
           actions={
-            <>
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<RefreshCw size={14} />}
-                onClick={handleReconnect}
-                data-testid="terminal-disconnect-reconnect-btn"
-              >
-                Try again
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleDismiss}
-                data-testid="terminal-disconnect-view-btn"
-              >
-                View scrollback
-              </Button>
-            </>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<RefreshCw size={14} />}
+              onClick={handleReconnect}
+              data-testid="terminal-disconnect-reconnect-btn"
+            >
+              Try again
+            </Button>
           }
         >
           <div
@@ -349,9 +316,14 @@ export function TerminalDisconnectOverlay({
   // A process that exits is not a lost connection (#5910): the heading, icon
   // and action follow the kind of end.
   const notice = sessionEndNoticeFor(cause, { transport, code: exitInfo?.code, device });
-  const EndIcon = END_ICONS[notice.kind];
+  const EndIcon = SESSION_END_ICONS[notice.kind];
   const actionLabel = sessionEndActionLabel(notice.action);
-  const subheading = [notice.causeLine, SCROLLBACK_KEPT].filter(Boolean).join(" ");
+  // Every kind of end says the same "Press Enter to …" as the view-mode
+  // banner (#5955): Enter runs the strip's action, from its button or the
+  // terminal.
+  const subheading = [notice.causeLine, SCROLLBACK_KEPT, sessionEndEnterHint(notice.action)]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <DisconnectStrip
@@ -375,26 +347,16 @@ export function TerminalDisconnectOverlay({
         announce="polite"
         autoFocusPrimaryAction={isActive}
         actions={
-          <>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={notice.action === "restart" ? <RotateCcw size={14} /> : <RefreshCw size={14} />}
-              onClick={handleReconnect}
-              data-testid="terminal-disconnect-reconnect-btn"
-              data-action={notice.action}
-            >
-              {actionLabel}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleDismiss}
-              data-testid="terminal-disconnect-view-btn"
-            >
-              View scrollback
-            </Button>
-          </>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={notice.action === "restart" ? <RotateCcw size={14} /> : <RefreshCw size={14} />}
+            onClick={handleReconnect}
+            data-testid="terminal-disconnect-reconnect-btn"
+            data-action={notice.action}
+          >
+            {actionLabel}
+          </Button>
         }
       >
         {autoReconnectOff && (

@@ -15,6 +15,7 @@ import type { RemoteDesktopFileChannel } from "@/types/generated/RemoteDesktopFi
 import type { RemoteDesktopUploadStarted } from "@/types/generated/RemoteDesktopUploadStarted";
 import type { RemoteDesktopFileBrowser } from "@/types/generated/RemoteDesktopFileBrowser";
 import type { FileAttributeOps } from "@/types/generated/FileAttributeOps";
+import type { SshNegotiatedAlgorithms } from "@/types/generated/SshNegotiatedAlgorithms";
 import type {
   ClipboardImageInfo,
   ClipboardImageStatus,
@@ -268,14 +269,17 @@ async function testConnection(
   settings: Record<string, unknown>,
   agentId?: string,
   connectId?: string,
-  reviewCert = false
+  reviewCert = false,
+  connectionName?: string
 ): Promise<void> {
+  const name = connectionName?.trim();
   await invoke("test_connection", {
     typeId,
     settings,
     agentId: agentId ?? null,
     connectId: connectId ?? null,
     reviewCert,
+    ...(name ? { connectionName: name } : {}),
   });
 }
 
@@ -286,6 +290,11 @@ export interface TestTerminalOptions {
    * Requires a `connectId`; unattended callers leave it off.
    */
   reviewCert?: boolean;
+  /**
+   * The name the editor shows for the connection under test (#5943): an SSH
+   * host-key prompt the test raises names it. Sent only when set.
+   */
+  connectionName?: string;
 }
 
 /**
@@ -300,15 +309,23 @@ export async function testTerminal(
   options: TestTerminalOptions = {}
 ): Promise<void> {
   const reviewCert = options.reviewCert ?? false;
+  const { connectionName } = options;
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
       agentId: string;
       sessionType: string;
       [key: string]: unknown;
     };
-    return await testConnection(sessionType, rest, agentId, connectId, reviewCert);
+    return await testConnection(sessionType, rest, agentId, connectId, reviewCert, connectionName);
   }
-  return await testConnection(config.type, config.config, undefined, connectId, reviewCert);
+  return await testConnection(
+    config.type,
+    config.config,
+    undefined,
+    connectId,
+    reviewCert,
+    connectionName
+  );
 }
 
 /**
@@ -2834,6 +2851,16 @@ export async function sessionGetCapabilities(
       sessionId,
     }
   );
+}
+
+/**
+ * The cipher, MAC, key exchange and host-key algorithm the session's SSH
+ * transport negotiated (#5896), asked when the status bar's security popover
+ * opens. `null` for a non-SSH session, an unknown one, and an agent-hosted
+ * one on an agent that predates it — the popover then says "Encrypted (SSH)".
+ */
+export async function getSshAlgorithms(sessionId: string): Promise<SshNegotiatedAlgorithms | null> {
+  return await invoke<SshNegotiatedAlgorithms | null>("get_ssh_algorithms", { sessionId });
 }
 
 /**

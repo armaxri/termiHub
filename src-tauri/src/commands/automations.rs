@@ -1,7 +1,7 @@
 //! IPC commands for the merged automation store and its run history (#5818).
 //!
-//! The frontend switches to these in slice 4; until then the macro and
-//! workflow commands keep serving the UI.
+//! The frontend reads and writes only these since slice 4; the legacy macro
+//! and workflow files are frozen.
 
 use tauri::State;
 
@@ -65,10 +65,12 @@ pub fn record_automation_run(
     manager.record(run)
 }
 
-/// Clear the entire automation run history.
+/// Clear the automation run history: the runs with the given ids, or every
+/// run when `run_ids` is absent. Returns the remaining runs, newest first.
 #[tauri::command]
 pub fn clear_automation_run_history(
+    run_ids: Option<Vec<String>>,
     manager: State<'_, AutomationRunHistoryManager>,
 ) -> Result<Vec<AutomationRun>, TerminalError> {
-    manager.clear()
+    manager.clear_runs(run_ids.as_deref())
 }

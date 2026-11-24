@@ -36,6 +36,7 @@ use serde::Serialize;
 use termihub_core::backends::ssh::host_key::{
     HostKeyDecision, HostKeyInfo, HostKeyVerifier, KnownHostsStatus, RecordedHostKey,
 };
+use termihub_core::backends::ssh::prompt_owner::current_prompt_connection_name;
 use tokio::sync::oneshot;
 use tracing::warn;
 
@@ -71,6 +72,16 @@ pub struct SshHostKeyPromptEvent {
     /// that tab's own connect deadline while the prompt is open. `null` for a
     /// prompt with no owning connect.
     pub owner: Option<String>,
+    /// The name of the connection the connect runs for — a saved connection
+    /// (also on its session's own later SFTP, monitoring and process logins),
+    /// a tunnel, an agent or the editor's Test — when the connect named it
+    /// (#5943). The dialog shows it so a prompt with no owning terminal tab
+    /// still says which connection asks; a terminal tab's own title wins over
+    /// it. Absent when unknown, so the wire shape of an unnamed prompt is
+    /// unchanged.
+    #[cfg_attr(test, ts(optional))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_name: Option<String>,
 }
 
 /// A host key that was trusted for a host before its key changed (#5627).
@@ -340,6 +351,7 @@ impl SshHostKeyVerifier {
             changed,
             previous_keys,
             owner: current_prompt_owner(),
+            connection_name: current_prompt_connection_name(),
         });
 
         let decision = rx.await.unwrap_or(Decision {
@@ -754,6 +766,44 @@ mod tests {
         assert_eq!(prompts[1].owner, None);
         let wire = serde_json::to_value(&prompts[0]).unwrap();
         assert_eq!(wire["owner"], "tab-a:2", "the owner is on the wire");
+    }
+
+    /// The prompt names the connection its connect runs for (#5943) — a
+    /// tunnel, an SFTP browser, an agent — so a prompt with no owning tab still
+    /// says which connection asks. Unscoped, the field is left off the wire,
+    /// so an older frontend sees the shape it knows.
+    #[tokio::test]
+    async fn prompt_carries_the_connects_connection_name() {
+        use termihub_core::backends::ssh::prompt_owner::with_prompt_connection_name;
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let v = verifier.clone();
+        let named = tokio::spawn(async move {
+            with_prompt_connection_name(Some("web (tunnel)"), v.verify(&info("h", 22, "SHA256:N")))
+                .await
+        });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert!(named.await.unwrap());
+
+        let v = verifier.clone();
+        let unnamed = tokio::spawn(async move { v.verify(&info("h", 22, "SHA256:N")).await });
+        resolve_when_ready(&verifier, &sink, true, false).await;
+        assert!(unnamed.await.unwrap());
+
+        let prompts = sink.prompts.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0].connection_name.as_deref(), Some("web (tunnel)"));
+        assert_eq!(prompts[0].owner, None, "a named connect need not be owned");
+        assert_eq!(prompts[1].connection_name, None);
+        let wire = serde_json::to_value(&prompts[0]).unwrap();
+        assert_eq!(wire["connection_name"], "web (tunnel)");
+        let wire = serde_json::to_value(&prompts[1]).unwrap();
+        assert!(
+            wire.get("connection_name").is_none(),
+            "an unnamed prompt keeps the old wire shape: {wire}"
+        );
     }
 
     /// A changed key prompts with `changed=true` and is NOT persisted unless

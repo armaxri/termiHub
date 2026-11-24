@@ -552,6 +552,16 @@
   color: var(--color-warning);
 }
 
+/* The session is down (#5955): the chip and its shield grey out, so a dropped
+   session never shows the green "secure" cue of a live one. */
+.status-bar__item--down {
+  color: var(--text-secondary);
+}
+
+.status-bar__item--down .status-bar__ssh-trust {
+  color: inherit;
+}
+
 /* The SSH details popover's heading reads in sentence case, "Connection
    security" (#5956): it is a title, not one of a menu's uppercase group
    labels. Two classes outrank the shared `.ui-menu__label`. */

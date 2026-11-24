@@ -1,7 +1,8 @@
 /**
  * Tests for the macro Zustand slice (#1673).
  *
- * Pins that the store's macro actions round-trip through the macroApi service:
+ * Pins that the store's macro actions round-trip through the automation store
+ * (#5818, slice 4: the macro view is a thin adapter over automationApi):
  * loadMacros populates state, saveMacroToBackend refreshes the list and returns
  * the stored macro, and deleteMacroFromBackend only mutates state after the
  * backend delete resolves (and rethrows on failure without desyncing).
@@ -37,19 +38,27 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn(),
-  deleteMacro: vi.fn(() => Promise.resolve()),
+vi.mock("@/services/automationApi", () => ({
+  listAutomations: vi.fn(() => Promise.resolve([])),
+  saveAutomation: vi.fn(),
+  deleteAutomation: vi.fn(() => Promise.resolve()),
 }));
 
 import { useAppStore } from "./appStore";
 import {
-  listMacros as apiListMacros,
-  saveMacro as apiSaveMacro,
-  deleteMacro as apiDeleteMacro,
-} from "@/services/macroApi";
+  listAutomations as apiListMacros,
+  saveAutomation as apiSaveMacro,
+  deleteAutomation as apiDeleteMacro,
+} from "@/services/automationApi";
 import type { Macro } from "@/types/macro";
+import { automationLibraryState } from "./slices/automationStoreState";
+import { macroToAutomation } from "./slices/automationViews";
+
+/** The stored automation a macro view comes from. */
+const asAutomation = (macro: Macro) => macroToAutomation(macro);
+/** Seed the store with these macros (as automations). */
+const seed = (...macros: Macro[]) =>
+  useAppStore.setState(automationLibraryState(macros.map(asAutomation)));
 
 function makeMacro(id: string, name: string): Macro {
   return {
@@ -74,7 +83,7 @@ describe("appStore — macro slice (#1673)", () => {
   });
 
   it("loadMacros populates state from the api", async () => {
-    vi.mocked(apiListMacros).mockResolvedValueOnce([makeMacro("m-1", "First")]);
+    vi.mocked(apiListMacros).mockResolvedValueOnce([asAutomation(makeMacro("m-1", "First"))]);
 
     await useAppStore.getState().loadMacros();
 
@@ -84,7 +93,7 @@ describe("appStore — macro slice (#1673)", () => {
   });
 
   it("loadMacros swallows an Error rejection and leaves state untouched (#2979)", async () => {
-    useAppStore.setState({ macros: [makeMacro("m-keep", "Keep")] });
+    seed(makeMacro("m-keep", "Keep"));
     vi.mocked(apiListMacros).mockRejectedValueOnce(new Error("backend down"));
 
     // A read-only refresh logs rather than throwing, so it must resolve...
@@ -102,19 +111,33 @@ describe("appStore — macro slice (#1673)", () => {
 
   it("saveMacroToBackend saves, refreshes the list, and returns the stored macro", async () => {
     const stored = makeMacro("m-1", "Saved");
-    vi.mocked(apiSaveMacro).mockResolvedValueOnce(stored);
-    vi.mocked(apiListMacros).mockResolvedValueOnce([stored]);
+    vi.mocked(apiSaveMacro).mockResolvedValueOnce(asAutomation(stored));
+    vi.mocked(apiListMacros).mockResolvedValueOnce([asAutomation(stored)]);
 
     const result = await useAppStore.getState().saveMacroToBackend(makeMacro("m-1", "Saved"));
 
-    expect(apiSaveMacro).toHaveBeenCalled();
+    // Saved as one recorded type-keys step holding the chunks byte for byte.
+    expect(apiSaveMacro).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "m-1",
+        triggers: [],
+        steps: [
+          {
+            kind: "type-keys",
+            chunks: [{ data: "echo hi\r", delayMs: 0 }],
+            timing: "recorded",
+            recorded: true,
+          },
+        ],
+      })
+    );
     expect(apiListMacros).toHaveBeenCalled();
     expect(result).toEqual(stored);
     expect(useAppStore.getState().macros).toHaveLength(1);
   });
 
   it("deleteMacroFromBackend removes the macro after the backend delete resolves", async () => {
-    useAppStore.setState({ macros: [makeMacro("m-1", "First"), makeMacro("m-2", "Second")] });
+    seed(makeMacro("m-1", "First"), makeMacro("m-2", "Second"));
 
     await useAppStore.getState().deleteMacroFromBackend("m-1");
 
@@ -125,7 +148,7 @@ describe("appStore — macro slice (#1673)", () => {
   });
 
   it("deleteMacroFromBackend keeps the macro and rethrows when the backend fails", async () => {
-    useAppStore.setState({ macros: [makeMacro("m-1", "First")] });
+    seed(makeMacro("m-1", "First"));
     vi.mocked(apiDeleteMacro).mockRejectedValueOnce(new Error("boom"));
 
     await expect(useAppStore.getState().deleteMacroFromBackend("m-1")).rejects.toThrow("boom");

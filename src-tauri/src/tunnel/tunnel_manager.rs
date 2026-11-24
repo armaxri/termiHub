@@ -55,6 +55,14 @@ fn block_on_runtime<F: std::future::Future>(fut: F) -> F::Output {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
 }
 
+/// Run `f` — a tunnel's SSH connect — named after the tunnel, so a host-key
+/// prompt it raises names the tunnel (#5943). The connect blocks on the
+/// calling thread ([`block_on_runtime`]), which keeps the scope.
+fn in_tunnel_prompt_scope<R>(config: &TunnelConfig, f: impl FnOnce() -> R) -> R {
+    let name = crate::session::prompt_connection_name::tunnel(&config.name);
+    crate::session::prompt_connection_name::with_prompt_connection_name_sync(Some(&name), f)
+}
+
 /// A pooled endpoint SSH session together with its native liveness watch (#1297).
 ///
 /// Pooled by connection id so every local/dynamic tunnel sharing the endpoint
@@ -1191,7 +1199,20 @@ impl TunnelManager {
     /// so they live exactly as long as the tunnel. If the forwarder fails to
     /// start, the `?` propagation drops the guards and releases the references,
     /// so the pool ref counts never leak.
+    ///
+    /// The handshake runs named after the tunnel (#5943), so a host-key prompt
+    /// it raises tells the user which tunnel asks — a tunnel has no tab.
     fn build_forwarder(
+        &self,
+        config: &TunnelConfig,
+        cancel: CancellationToken,
+    ) -> Result<(ActiveForwarder, PooledSessionGuards, Option<LivenessWatch>), TerminalError> {
+        in_tunnel_prompt_scope(config, || self.build_forwarder_named(config, cancel))
+    }
+
+    /// [`build_forwarder`](Self::build_forwarder) inside the tunnel's
+    /// prompt-name scope.
+    fn build_forwarder_named(
         &self,
         config: &TunnelConfig,
         cancel: CancellationToken,
@@ -2964,6 +2985,20 @@ mod tests {
         // A running reply that somehow omits stats is likewise skipped.
         let no_stats = serde_json::json!({ "running": true });
         assert!(stats_from_status_reply(&no_stats).is_none());
+    }
+
+    /// A tunnel's connect runs named after the tunnel (#5943): a host-key
+    /// prompt raised by the handshake — which blocks on the calling thread —
+    /// names the tunnel, and nothing leaks past the connect.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tunnel_connect_names_the_tunnel_for_its_prompts() {
+        use crate::session::prompt_connection_name::current_prompt_connection_name;
+        let config = tunnel("web-db", None);
+        let seen = super::in_tunnel_prompt_scope(&config, || {
+            super::block_on_runtime(async { current_prompt_connection_name() })
+        });
+        assert_eq!(seen.as_deref(), Some("web-db (tunnel)"));
+        assert_eq!(current_prompt_connection_name(), None);
     }
 
     // ── Companion chained-pair helpers (#2597) ──────────────────────────────

@@ -13,7 +13,7 @@
 
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use crate::connection::ConnectionTypeInfo;
-use crate::connection::SessionEndCause;
+use crate::connection::{SessionEndCause, SshNegotiatedAlgorithms};
 use crate::monitoring::{KillSignal, MonitorStatus, MonitorStatusReason, ProcessInfo, SystemStats};
 use crate::service::ServiceStatus;
 #[cfg(feature = "ssh")]
@@ -98,6 +98,10 @@ pub const CONNECTION_MONITORING_UNSUBSCRIBE: &str = "connection.monitoring.unsub
 // Connection-scoped process listing + termination (PROD-0028).
 pub const CONNECTION_PROCESSES_LIST: &str = "connection.processes.list";
 pub const CONNECTION_PROCESSES_KILL: &str = "connection.processes.kill";
+
+/// The algorithms a held SSH session's transport negotiated (protocol 0.44.0,
+/// #5896), for the desktop's "Connection security" popover.
+pub const CONNECTION_SSH_ALGORITHMS: &str = "connection.sshAlgorithms";
 
 // Saved connection & folder CRUD (agent-hosted connection store).
 pub const CONNECTIONS_LIST: &str = "connections.list";
@@ -1601,6 +1605,23 @@ pub struct ProcessKillParams {
     pub pid: u32,
     /// Signal to deliver (SIGTERM by default in the UI).
     pub signal: KillSignal,
+}
+
+// ── connection.sshAlgorithms (#5896) ────────────────────────────────
+
+/// Params for `connection.sshAlgorithms`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshAlgorithmsParams {
+    /// The session to ask about; it must be held by the calling client.
+    pub session_id: String,
+}
+
+/// Result of `connection.sshAlgorithms`: `algorithms` is `null` for a
+/// non-SSH session, or one whose session daemon predates the report.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshAlgorithmsResult {
+    #[serde(default)]
+    pub algorithms: Option<SshNegotiatedAlgorithms>,
 }
 
 // ── agent.shutdown ──────────────────────────────────────────────────
@@ -4662,6 +4683,7 @@ mod tests {
         assert_eq!(CONNECTION_EXIT, "connection.exit");
         assert_eq!(CONNECTION_EVICTED, "connection.evicted");
         assert_eq!(CONNECTION_FILES_ONLY, "connection.filesOnly");
+        assert_eq!(CONNECTION_SSH_ALGORITHMS, "connection.sshAlgorithms");
         assert_eq!(CONNECTION_RECONNECT, "connection.reconnect");
         assert_eq!(CONNECTION_MONITORING_DATA, "connection.monitoring.data");
         assert_eq!(CONNECTION_MONITORING_STATUS, "connection.monitoring.status");

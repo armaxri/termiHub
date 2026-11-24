@@ -50,6 +50,7 @@ import {
   connectAgent,
   createTerminal,
   getSettings,
+  getSshAlgorithms,
   listAgentConnections,
   loadConnectionsAndFolders,
 } from "./api";
@@ -65,6 +66,7 @@ import {
 import type { PanelNode } from "@/types/terminal";
 import { parseBackendError } from "@/utils/backendErrorCode";
 import { connectionErrorKindFromCode } from "@/utils/connectionErrorHints";
+import { sshSecurityChip } from "@/utils/sshSecurityChip";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -138,6 +140,35 @@ describe("wire contract: connections / folders load", () => {
     expect(data.externalErrors).toEqual([
       { filePath: "/home/me/broken.json", error: "expected value at line 1 column 1" },
     ]);
+  });
+});
+
+describe("wire contract: SSH algorithms (#5896)", () => {
+  it("feeds the popover's cipher, MAC and key-exchange rows", async () => {
+    const config = { type: "ssh" as const, config: { host: "h", username: "u" } };
+    const fixtures = sessionFixture.sshAlgorithms;
+
+    respondWith(fixtures.withMac);
+    const withMac = await getSshAlgorithms("s-1");
+    expect(mockedInvoke).toHaveBeenLastCalledWith("get_ssh_algorithms", { sessionId: "s-1" });
+    const rows = sshSecurityChip(config, [], false, withMac)!.rows;
+    expect(rows.find((r) => r.id === "encryption")!.value).toBe("aes256-ctr");
+    expect(rows.find((r) => r.id === "integrity")!.value).toBe("hmac-sha2-256-etm");
+    expect(rows.find((r) => r.id === "keyExchange")!.value).toBe("curve25519-sha256");
+    expect(rows.find((r) => r.id === "hostKeyAlgorithm")!.value).toBe("rsa-sha2-512");
+
+    respondWith(fixtures.aead);
+    const aead = await getSshAlgorithms("s-1");
+    expect(aead!.mac).toBeNull();
+    const aeadRows = sshSecurityChip(config, [], false, aead)!.rows;
+    expect(aeadRows.find((r) => r.id === "encryption")!.value).toBe("chacha20-poly1305");
+    expect(aeadRows.find((r) => r.id === "integrity")).toBeUndefined();
+
+    respondWith(fixtures.none);
+    const none = await getSshAlgorithms("s-1");
+    expect(none).toBeNull();
+    const fallback = sshSecurityChip(config, [], false, none)!.rows;
+    expect(fallback.find((r) => r.id === "encryption")!.value).toBe("Encrypted (SSH)");
   });
 });
 

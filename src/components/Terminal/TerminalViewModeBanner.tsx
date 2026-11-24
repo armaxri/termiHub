@@ -1,9 +1,16 @@
 import { useCallback, useRef } from "react";
-import { WifiOff, RefreshCw, RotateCcw, SquareTerminal, CheckCircle2 } from "lucide-react";
+import { RefreshCw, RotateCcw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, LiveRegion, TOAST_AVOID_PROPS } from "@/components/ui";
 import { useTopNoticeInset } from "./topNoticeInset";
-import { sessionEndActionLabel, type SessionEndNotice } from "./dropCopy";
+import {
+  ENTER_TO_RECONNECT_HINT,
+  ENTER_TO_RESTART_HINT,
+  ENTER_TO_RESUME_HINT,
+  sessionEndActionLabel,
+  type SessionEndNotice,
+} from "./dropCopy";
+import { SESSION_END_ICONS } from "./sessionEndIcons";
 import "./TerminalViewModeBanner.css";
 
 interface TerminalViewModeBannerProps {
@@ -23,10 +30,10 @@ interface TerminalViewModeBannerProps {
 }
 
 /** The short hint after the banner's heading (#5823). */
-export const VIEW_MODE_ENTER_HINT = "Press Enter to reconnect.";
+export const VIEW_MODE_ENTER_HINT = ENTER_TO_RECONNECT_HINT;
 
 /** The hint when Enter starts a local process again (#5910). */
-export const VIEW_MODE_RESTART_HINT = "Press Enter to restart.";
+export const VIEW_MODE_RESTART_HINT = ENTER_TO_RESTART_HINT;
 
 /**
  * The hint after the user disconnected the tab's agent (#5980): Reconnect
@@ -34,7 +41,7 @@ export const VIEW_MODE_RESTART_HINT = "Press Enter to restart.";
  * on the agent host (#5953). Only when the agent no longer runs it does a new
  * session start, and the tab's marker then says so.
  */
-export const VIEW_MODE_RESUME_HINT = "Press Enter to resume.";
+export const VIEW_MODE_RESUME_HINT = ENTER_TO_RESUME_HINT;
 
 /**
  * Thin non-blocking banner pinned to the top of the terminal slot when the
@@ -63,13 +70,13 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
   }, [tabId, reconnectTerminal]);
 
   // A process exit is not a lost connection (#5910): it says so and restarts.
-  // Only the process kinds change the heading; any other end keeps the short
-  // "Session ended." of #5823.
-  const processEnd = !agentDisconnected && notice?.kind === "exited";
+  // The banner names the end exactly as the strip did (#5955), so dismissing
+  // the strip never changes what the tab says happened; without a notice it
+  // keeps the short "Session ended." of #5823.
   const restart = !agentDisconnected && notice?.action === "restart";
   const heading = agentDisconnected
     ? "Agent disconnected."
-    : processEnd
+    : notice
       ? `${notice.heading}.`
       : "Session ended.";
   const actionLabel = sessionEndActionLabel(restart ? "restart" : "reconnect");
@@ -90,7 +97,9 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
   // the banner's own visible text. It used to promise "a new session" while
   // Reconnect resumed the agent's session.
   const announcement = [heading, hint, causeLine].filter(Boolean).join(" ");
-  const Icon = processEnd ? SquareTerminal : notice?.kind === "ended" ? CheckCircle2 : WifiOff;
+  // The same icon as the strip for the same end (#5955); the user disconnecting
+  // the agent is a user end.
+  const Icon = SESSION_END_ICONS[agentDisconnected ? "user" : (notice?.kind ?? "link")];
 
   return (
     <div
@@ -104,7 +113,7 @@ export function TerminalViewModeBanner({ tabId, cause, notice }: TerminalViewMod
       <LiveRegion message={announcement} data-testid="terminal-view-mode-announcement" />
       <Icon size={12} className="terminal-view-mode-banner__icon" aria-hidden />
       <span className="terminal-view-mode-banner__text">
-        <span className="terminal-view-mode-banner__label">
+        <span className="terminal-view-mode-banner__label" data-testid="terminal-view-mode-label">
           <span className="terminal-view-mode-banner__heading">{heading}</span>{" "}
           <span className="terminal-view-mode-banner__hint">{hint}</span>
         </span>

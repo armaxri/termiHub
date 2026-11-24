@@ -380,10 +380,11 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
         marker = "TH_VIEWMODE_SCROLLBACK_4417"
         tab_id = self._connect_and_drop(unique_name("ssh-viewmode"), marker=marker)
 
-        # MT-SSH-24: "View scrollback" dismisses the overlay into view mode — a
-        # thin "Session ended" banner — and the earlier output is still in the
-        # buffer (the drop must not wipe the scrollback).
-        self.driver.click("terminal-disconnect-view-btn")
+        # MT-SSH-24: the strip's dismiss (x) turns the overlay into view mode — a
+        # thin banner that names the end as the strip did (#5955) — and the
+        # earlier output is still in the buffer (the drop must not wipe the
+        # scrollback).
+        self.driver.click("terminal-disconnect-dismiss-btn")
         self.wait(
             lambda: not self.driver.exists("terminal-disconnect-overlay"),
             what="the disconnect overlay to close",
@@ -392,7 +393,8 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
             lambda: self.driver.exists("terminal-view-mode-banner"),
             what="the view-mode banner",
         )
-        assert "Session ended" in self.driver.get_text("terminal-view-mode-banner")
+        banner = self.driver.get_text("terminal-view-mode-banner")
+        assert "Session disconnected" in banner or "Session ended" in banner, banner
         assert marker in self.driver.read_terminal(tab_id), (
             "view mode must keep the pre-disconnect scrollback"
         )

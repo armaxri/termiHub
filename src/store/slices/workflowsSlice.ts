@@ -3,13 +3,7 @@ import { StateCreator } from "zustand";
 import { toast } from "@/components/ui";
 import { claimWorkflowRunToast } from "./workflowRunToasts";
 import { newId } from "@/services/transport/ids";
-import {
-  listWorkflows as apiListWorkflows,
-  saveWorkflow as apiSaveWorkflow,
-  deleteWorkflow as apiDeleteWorkflow,
-  listWorkflowRuns as apiListWorkflowRuns,
-  clearWorkflowRunHistory as apiClearWorkflowRunHistory,
-} from "@/services/workflowApi";
+import { saveAutomation as apiSaveAutomation } from "@/services/automationApi";
 import {
   parseWorkflowEnvelope,
   resolveImportCollisions as resolveWorkflowImportCollisions,
@@ -19,13 +13,11 @@ import {
 } from "@/services/workflowIo";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import { Workflow, WorkflowParameter, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
-import { frontendLog } from "@/utils/frontendLog";
-import { errorMessage } from "@/utils/errorMessage";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
-import { syncWorkflowOutputTriggers } from "../workflowSessionTriggers";
 import type { AppState } from "../appStore";
 import { getActiveTab } from "../layoutHelpers";
+import { automationToWorkflow, isMacroShaped, workflowToAutomation } from "./automationViews";
 import {
   clampFanoutConcurrency,
   describeFanoutProgress,
@@ -174,6 +166,15 @@ interface FanoutState {
 /** The in-flight multi-target run, or `null` when none is running. */
 let activeFanout: FanoutState | null = null;
 
+/** A workflow the local library does not hold yet (made in another window). */
+async function fetchWorkflow(
+  get: () => AppState,
+  workflowId: string
+): Promise<Workflow | undefined> {
+  const automation = await get().fetchAutomationForRun(workflowId);
+  return automation && !isMacroShaped(automation) ? automationToWorkflow(automation) : undefined;
+}
+
 /** Generate a unique workflow id. */
 function generateWorkflowId(): string {
   return newId("workflow");
@@ -270,20 +271,14 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
   // Workflows (#1852)
   workflows: [],
 
-  loadWorkflows: async () => {
-    try {
-      const workflows = await apiListWorkflows();
-      set({ workflows });
-      syncWorkflowOutputTriggers({ get, set }, workflows);
-    } catch (err) {
-      frontendLog("app_store", `Failed to load workflows: ${errorMessage(err)}`);
-    }
-  },
+  // The library and history live in the automation store (#5818, slice 4);
+  // these are thin adapters that read and write it through the workflow view.
+  loadWorkflows: () => get().loadAutomations(),
 
   saveWorkflowToBackend: async (workflow) => {
-    const saved = await apiSaveWorkflow(workflow);
-    await get().loadWorkflows();
-    return saved;
+    const existing = get().automations.find((a) => a.id === workflow.id);
+    const saved = await get().saveAutomationToBackend(workflowToAutomation(workflow, existing));
+    return automationToWorkflow(saved);
   },
 
   setWorkflowTriggersEnabled: async (workflowId, enabled) => {
@@ -294,29 +289,14 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     await get().saveWorkflowToBackend(enabled ? rest : { ...rest, triggersEnabled: false });
   },
 
-  deleteWorkflowFromBackend: async (workflowId) => {
-    await apiDeleteWorkflow(workflowId);
-    set((state) => ({
-      workflows: state.workflows.filter((w) => w.id !== workflowId),
-    }));
-    syncWorkflowOutputTriggers({ get, set }, get().workflows);
-  },
+  deleteWorkflowFromBackend: (workflowId) => get().deleteAutomationFromBackend(workflowId),
 
   workflowRuns: [],
 
-  loadWorkflowRuns: async () => {
-    try {
-      const runs = await apiListWorkflowRuns();
-      set({ workflowRuns: Array.isArray(runs) ? runs : [] });
-    } catch (err) {
-      frontendLog("app_store", `Failed to load workflow run history: ${errorMessage(err)}`);
-    }
-  },
+  loadWorkflowRuns: () => get().loadAutomationRuns(),
 
-  clearWorkflowRunHistory: async () => {
-    const runs = await apiClearWorkflowRunHistory();
-    set({ workflowRuns: Array.isArray(runs) ? runs : [] });
-  },
+  // Clears only the runs this history shows; macro runs stay.
+  clearWorkflowRunHistory: () => get().clearAutomationRuns(get().workflowRuns.map((r) => r.id)),
 
   importWorkflows: async (json) => {
     // parseWorkflowEnvelope throws on a malformed/incompatible file; let the
@@ -331,10 +311,10 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       generateWorkflowId
     );
     for (const workflow of prepared) {
-      await apiSaveWorkflow(workflow);
+      await apiSaveAutomation(workflowToAutomation(workflow));
     }
     // Refresh once, after all saves, rather than per-workflow.
-    await get().loadWorkflows();
+    await get().loadAutomations();
     // Flag any imported run-local-process steps: they are preserved (never
     // stripped) so #1857's run-time guard applies, but they are NOT
     // auto-authorized — the caller surfaces this to the user.
@@ -348,8 +328,9 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
   },
 
   runWorkflow: async (workflowId, opts) => {
+    const workflow =
+      get().workflows.find((w) => w.id === workflowId) ?? (await fetchWorkflow(get, workflowId));
     const state = get();
-    const workflow = state.workflows.find((w) => w.id === workflowId);
     if (!workflow) {
       toast.error("Workflow not found");
       return;

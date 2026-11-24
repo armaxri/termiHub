@@ -491,6 +491,29 @@ impl ConnectionManager {
             .cloned()
     }
 
+    /// The name of saved connection `id`, for the host-key prompt of a connect
+    /// opened for it (#5943). Looked up like a spawn target in the
+    /// [unified view](Self::load_unified_view); `None` for an unknown,
+    /// ambiguous or unnamed id — the prompt then shows only the host.
+    pub fn saved_connection_name(&self, id: &str) -> Option<String> {
+        self.resolve_saved_connection(id, ReferenceRole::SpawnTarget)
+            .ok()
+            .map(|c| c.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+    }
+
+    /// The name of saved remote agent `id`, for the host-key prompt of its
+    /// SSH connect (#5943); `None` when unknown or unnamed.
+    pub fn saved_agent_name(&self, id: &str) -> Option<String> {
+        self.get_all()
+            .ok()?
+            .agents
+            .into_iter()
+            .find(|a| a.id == id)
+            .map(|a| a.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+    }
+
     /// The connections a saved-connection reference may point at (main store,
     /// then every enabled external file) and the external files that are not in
     /// that set — disabled, or enabled but failed to load — for error messages.

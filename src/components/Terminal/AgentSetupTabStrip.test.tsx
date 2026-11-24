@@ -11,12 +11,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  AgentSetupTabStrip,
-  agentSetupTabFinished,
-  agentSetupTabNotice,
-  withSetupOutcome,
-} from "./AgentSetupTabStrip";
+import { AgentSetupTabStrip, agentSetupTabNotice, withSetupOutcome } from "./AgentSetupTabStrip";
 import { TOP_NOTICE_INSET_VAR } from "./topNoticeInset";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
@@ -47,21 +42,31 @@ const exit = (code: number | null): TerminalExitInfo => ({
 });
 
 describe("withSetupOutcome (#5980)", () => {
-  it("turns a setup tab that exited 0 from disconnected into finished", () => {
-    expect(withSetupOutcome("disconnected", setupTab(), exit(0))).toBe("finished");
-    // Also after the user closed the strip.
-    expect(agentSetupTabFinished(setupTab({ dismissed: true }), exit(0))).toBe(true);
-  });
+  it.each(["disconnected", "exited"] as const)(
+    "reads a %s setup that exited 0 as finished",
+    (s) => {
+      expect(withSetupOutcome(s, setupTab(), exit(0))).toBe("finished");
+      // Also after the user closed the strip.
+      expect(withSetupOutcome(s, setupTab({ dismissed: true }), exit(0))).toBe("finished");
+    }
+  );
 
-  it("keeps the status of a failed, dropped or cancelled setup and of other tabs", () => {
-    expect(withSetupOutcome("disconnected", setupTab(), exit(2))).toBe("disconnected");
+  it.each(["disconnected", "exited"] as const)(
+    "keeps the red plug for a %s setup that did not",
+    (s) => {
+      const cancelled = setupTab({ progress: { kind: "cancelled" } });
+      const failed = setupTab({ progress: { kind: "failed", message: "no" } });
+      expect(withSetupOutcome(s, setupTab(), exit(2))).toBe("disconnected");
+      expect(withSetupOutcome(s, cancelled, exit(0))).toBe("disconnected");
+      expect(withSetupOutcome(s, failed, exit(0))).toBe("disconnected");
+    }
+  );
+
+  it("keeps the status of a dropped link, a live setup and other tabs", () => {
     expect(withSetupOutcome("disconnected", setupTab(), exit(null))).toBe("disconnected");
-    expect(
-      withSetupOutcome("disconnected", setupTab({ progress: { kind: "cancelled" } }), exit(0))
-    ).toBe("disconnected");
-    expect(withSetupOutcome("disconnected", undefined, exit(0))).toBe("disconnected");
-    // A live setup tab is not finished.
     expect(withSetupOutcome("connected", setupTab(), undefined)).toBe("connected");
+    expect(withSetupOutcome("exited", undefined, exit(0))).toBe("exited");
+    expect(withSetupOutcome("disconnected", undefined, exit(0))).toBe("disconnected");
   });
 });
 

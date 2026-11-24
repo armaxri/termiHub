@@ -63,6 +63,7 @@ import {
   sessionCopy,
   // session monitoring
   sessionGetCapabilities,
+  getSshAlgorithms,
   sessionMonitoringClose,
   sessionMonitoringSetPaused,
   sessionMonitoringSetInterval,
@@ -575,6 +576,33 @@ describe("api pass-through wrappers (#2975)", () => {
       });
     });
 
+    it("testTerminal names the connection under test only when it has a name (#5943)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await testTerminal({ type: "ssh", config: { host: "h" } }, "test:1", {
+        connectionName: " prod web ",
+      });
+      await testTerminal({ type: "ssh", config: { host: "h" } }, "test:2", {
+        connectionName: "  ",
+      });
+
+      expect(mockedInvoke).toHaveBeenNthCalledWith(1, "test_connection", {
+        typeId: "ssh",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "test:1",
+        reviewCert: false,
+        connectionName: "prod web",
+      });
+      expect(mockedInvoke).toHaveBeenNthCalledWith(2, "test_connection", {
+        typeId: "ssh",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "test:2",
+        reviewCert: false,
+      });
+    });
+
     it("testConnectionCertDecision forwards the verdict and reports delivery", async () => {
       mockedInvoke.mockResolvedValue(true);
 
@@ -719,6 +747,16 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("session_get_capabilities", { sessionId: "s-1" });
       expect(result).toEqual(caps);
+    });
+
+    it("getSshAlgorithms asks for the session's negotiated algorithms (#5896)", async () => {
+      const algorithms = { kex: "k", hostKey: "h", cipher: "c", mac: null };
+      mockedInvoke.mockResolvedValue(algorithms);
+
+      const result = await getSshAlgorithms("s-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_ssh_algorithms", { sessionId: "s-1" });
+      expect(result).toEqual(algorithms);
     });
 
     it("sessionMonitoringClose forwards the session id", async () => {

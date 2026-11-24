@@ -226,7 +226,8 @@ export function sessionEndSeparator(input: {
  * The marker written after a successful reconnect (#5660). It says what the new
  * session lost (#5831, R-101): SSH and an agent open a new remote shell (#5953),
  * telnet a new telnet session and any other session starts afresh, so running
- * programs are gone; a serial device is reopened and keeps the plain marker.
+ * programs are gone; a serial device is reopened and keeps the plain marker. A
+ * local process was restarted, not reconnected (#5955): its marker says so.
  */
 export function reconnectedMarker(at: Date, transport: DropTransport = "other"): string {
   const time = formatClock(at);
@@ -235,6 +236,7 @@ export function reconnectedMarker(at: Date, transport: DropTransport = "other"):
   if (transport === "ssh" || transport === "agent") {
     return tf("drop.separator.reconnectedShell", { time });
   }
+  if (transport === "other") return tf("drop.separator.restarted", { time });
   return tf("drop.separator.reconnectedSession", { time });
 }
 
@@ -253,6 +255,15 @@ export function resumedMarker(at: Date): string {
  */
 export type SessionEndKind = "exited" | "ended" | "user" | "device" | "link";
 
+/**
+ * Whether a session ended because its process did (#5955): it exited with a
+ * code, or ended normally. The tab strip then shows a stop marker rather than
+ * the network-drop plug.
+ */
+export function isProcessEnd(kind: SessionEndKind): boolean {
+  return kind === "exited" || kind === "ended";
+}
+
 /** The heading, cause line and action of a session-end notice (#5910). */
 export interface SessionEndNotice {
   kind: SessionEndKind;
@@ -266,8 +277,10 @@ export interface SessionEndNotice {
 
 /**
  * The session-end notice for `cause` (#5910). A process that exits is not a
- * lost connection: it reads "Process exited (code N)", a normal end reads
- * "Session ended", and only a dropped link says "Session disconnected". A
+ * lost connection: it reads "Process exited (code N)" — for a local process
+ * also when it ended normally with code 0 (#5955) —, a remote session's normal
+ * end reads "Session ended", and only a dropped link says "Session
+ * disconnected". A
  * local process (transport `other`) offers Restart; a session over a link
  * offers Reconnect, since starting it again reconnects first.
  */
@@ -278,11 +291,21 @@ export function sessionEndNoticeFor(
   const { transport, code, device } = details;
   const local = transport === "other";
   const line = disconnectCauseLine(cause ?? "lost", { code, device });
+  // A local process that ended on its own reads one way whatever its code
+  // (#5955): "Process exited (code 0)" like "Process exited (code 3)".
+  if (local && (cause === "exited" || cause === "ended")) {
+    return {
+      kind: "exited",
+      heading: processExitedHeading(code),
+      causeLine: undefined,
+      action: "restart",
+    };
+  }
   switch (cause) {
     case "exited":
       return {
         kind: "exited",
-        heading: tf("drop.end.exited", { code: code ?? "?" }),
+        heading: processExitedHeading(code),
         causeLine: undefined,
         action: local ? "restart" : "reconnect",
       };
@@ -315,6 +338,30 @@ export function sessionEndNoticeFor(
         action: "reconnect",
       };
   }
+}
+
+/** "Process exited (code N)", or "Process exited" when the code is unknown. */
+function processExitedHeading(code: number | null | undefined): string {
+  return code === null || code === undefined
+    ? t("drop.end.exitedNoCode")
+    : tf("drop.end.exited", { code });
+}
+
+/** "Press Enter to reconnect." when Enter reconnects a link (#5823). */
+export const ENTER_TO_RECONNECT_HINT = t("drop.end.enterReconnect");
+
+/** "Press Enter to restart." when Enter starts a local process again (#5910). */
+export const ENTER_TO_RESTART_HINT = t("drop.end.enterRestart");
+
+/** "Press Enter to resume." after the user disconnected the tab's agent (#5980). */
+export const ENTER_TO_RESUME_HINT = t("drop.end.enterResume");
+
+/**
+ * The "Press Enter to …" hint every session-end notice shows (#5955): the
+ * strip and the view-mode banner say the same for the same action.
+ */
+export function sessionEndEnterHint(action: SessionEndNotice["action"]): string {
+  return action === "restart" ? ENTER_TO_RESTART_HINT : ENTER_TO_RECONNECT_HINT;
 }
 
 /** The label of a session-end notice's primary action (#5910). */

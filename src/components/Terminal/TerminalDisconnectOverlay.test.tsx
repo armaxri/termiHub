@@ -74,7 +74,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     expect(container.textContent).toContain("Session disconnected");
   });
 
-  it("renders reconnect and view-scrollback buttons", async () => {
+  it("renders reconnect and one dismiss control, no view-scrollback (#5955)", async () => {
     harness.transport.setSession(TAB, disconnected());
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
@@ -84,7 +84,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     expect(
       container.querySelector("[data-testid='terminal-disconnect-reconnect-btn']")
     ).not.toBeNull();
-    expect(container.querySelector("[data-testid='terminal-disconnect-view-btn']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='terminal-disconnect-view-btn']")).toBeNull();
     expect(
       container.querySelector("[data-testid='terminal-disconnect-dismiss-btn']")
     ).not.toBeNull();
@@ -109,29 +109,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     expect(useAppStore.getState().terminalRetryCounters[TAB]).toBe(1);
   });
 
-  it("view-scrollback button enters view mode", async () => {
-    harness.transport.setSession(TAB, disconnected());
-    act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
-    });
-    await flushSessionRegion();
-
-    const btn = container.querySelector(
-      "[data-testid='terminal-disconnect-view-btn']"
-    ) as HTMLButtonElement;
-    act(() => {
-      btn.click();
-    });
-
-    const state = useAppStore.getState();
-    // View mode flag is set; the region keeps the tab exited so the banner shows.
-    expect(state.terminalViewMode[TAB]).toBe(true);
-    expect(regionExited(currentSessionView()[TAB])).toBe(true);
-    // Retry counter unchanged.
-    expect(state.terminalRetryCounters[TAB]).toBeUndefined();
-  });
-
-  it("dismiss button (×) also enters view mode", async () => {
+  it("dismiss button (×) enters view mode", async () => {
     harness.transport.setSession(TAB, disconnected());
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
@@ -181,7 +159,8 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     });
     await flushSessionRegion();
 
-    expect(container.textContent).toContain("Session ended");
+    // #5955: a local process reads "Process exited (code 0)", like any exit.
+    expect(container.textContent).toContain("Process exited (code 0)");
     // Must NOT read as an unexpected disconnect.
     expect(container.textContent).not.toContain("The remote process has exited");
   });
@@ -389,18 +368,19 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
     expect(useAppStore.getState().terminalRetryCounters[TAB]).toBe(1);
   });
 
-  it("view-scrollback button enters view mode without retrying (MT-AGENT-09)", async () => {
+  it("dismissing enters view mode without retrying (MT-AGENT-09)", async () => {
     harness.transport.setSession(TAB, failed("Failed to reconnect after 10 attempts"));
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
     await flushSessionRegion();
 
+    // #5955: the strip's "x" is its one dismiss control.
+    expect(container.querySelector("[data-testid='terminal-disconnect-view-btn']")).toBeNull();
     const btn = container.querySelector(
-      "[data-testid='terminal-disconnect-view-btn']"
+      "[data-testid='terminal-disconnect-dismiss-btn']"
     ) as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
-    expect(btn!.textContent).toContain("View scrollback");
     act(() => {
       btn!.click();
     });

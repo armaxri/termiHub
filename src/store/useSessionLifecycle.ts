@@ -248,20 +248,28 @@ export interface ProjectedSessionLifecycleMaps {
    * derived purely from the region ({@link effectiveExitedMap}, #2625). Drives the
    * tab-strip status dot and the close-confirmation live count. */
   terminalExitedTabs: Record<string, boolean>;
-  /** Each ended tab's exit cause and code ({@link effectiveExitInfo}): the
-   * tab strip reads a setup tab's exit 0 as "finished", not "disconnected"
-   * (#5980). Optional so partial test doubles stay valid. */
-  terminalExitInfo?: Record<string, TerminalExitInfo>;
+  /**
+   * How each ended tab's session ended (#5955): its exit and its link's end
+   * cause, for the tab strip to tell a process exit from a dropped link.
+   */
+  terminalEnds: Record<string, TerminalEnd>;
 }
 
-/** Build the `tabId → exit info` map from the projected region view. */
-function exitInfoMap(
+/** How one tab's session ended: its exit and its link's end cause (#5955). */
+export interface TerminalEnd {
+  exit: TerminalExitInfo | undefined;
+  endCause: SessionEndCause | undefined;
+}
+
+/** Build the `tabId → end` map for every tab that has exited (#5955). */
+function terminalEndsMap(
   view: Record<string, ProjectedSessionLifecycle>
-): Record<string, TerminalExitInfo> {
-  const map: Record<string, TerminalExitInfo> = {};
+): Record<string, TerminalEnd> {
+  const map: Record<string, TerminalEnd> = {};
   for (const [tabId, life] of Object.entries(view)) {
-    const exit = effectiveExitInfo(life);
-    if (exit) map[tabId] = exit;
+    if (life.exit !== undefined || life.endCause !== undefined) {
+      map[tabId] = { exit: effectiveExitInfo(life), endCause: life.endCause };
+    }
   }
   return map;
 }
@@ -321,7 +329,7 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
       terminalSessionLost: sessionLostMap(view),
       terminalEvicted: effectiveEvictedMap(view),
       terminalExitedTabs: effectiveExitedMap(view),
-      terminalExitInfo: exitInfoMap(view),
+      terminalEnds: terminalEndsMap(view),
     }),
     [view]
   );

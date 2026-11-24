@@ -177,7 +177,8 @@ describe("ConnectionEditor — Test Connection (UX-007)", () => {
 
     const testCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "test_connection");
     expect(testCalls).toHaveLength(1);
-    expect(testCalls[0][1]).toMatchObject({ typeId: "local" });
+    // The test names the connection for any host-key prompt it raises (#5943).
+    expect(testCalls[0][1]).toMatchObject({ typeId: "local", connectionName: "My Local Shell" });
 
     // The result shows beside the Test button, not in a toast (#5859).
     expect(toastSuccess).not.toHaveBeenCalled();

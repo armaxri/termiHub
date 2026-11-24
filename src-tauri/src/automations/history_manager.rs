@@ -79,12 +79,28 @@ impl AutomationRunHistoryManager {
 
     /// Clear every record.
     pub fn clear(&self) -> Result<Vec<AutomationRun>, TerminalError> {
+        self.clear_runs(None)
+    }
+
+    /// Clear the records with the given ids, or every record for `None`.
+    /// Returns the remaining records, newest first. The macro and workflow
+    /// history panels each clear only the runs they show (#5818, slice 4).
+    pub fn clear_runs(
+        &self,
+        run_ids: Option<&[String]>,
+    ) -> Result<Vec<AutomationRun>, TerminalError> {
         let mut store = self.lock()?;
         let mut next = store.clone();
-        next.runs.clear();
+        match run_ids {
+            None => next.runs.clear(),
+            Some(ids) => {
+                let ids: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+                next.runs.retain(|r| !ids.contains(r.id.as_str()));
+            }
+        }
         self.persist(&next)?;
         *store = next;
-        Ok(Vec::new())
+        Ok(newest_first(&store))
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, AutomationRunHistoryStore>, TerminalError> {

@@ -38,10 +38,13 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn((m) => Promise.resolve(m)),
-  deleteMacro: vi.fn(() => Promise.resolve()),
+vi.mock("@/services/automationApi", () => ({
+  listAutomations: vi.fn(() => Promise.resolve([])),
+  saveAutomation: vi.fn((a: unknown) => Promise.resolve(a)),
+  deleteAutomation: vi.fn(() => Promise.resolve()),
+  listAutomationRuns: vi.fn(() => Promise.resolve([])),
+  recordAutomationRun: vi.fn(() => Promise.resolve([])),
+  clearAutomationRunHistory: vi.fn(() => Promise.resolve([])),
 }));
 
 import { useAppStore } from "./appStore";

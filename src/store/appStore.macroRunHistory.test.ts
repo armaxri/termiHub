@@ -30,19 +30,21 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-const recorded: MacroRun[] = [];
-vi.mock("@/services/macroApi", () => ({
-  listMacros: vi.fn(() => Promise.resolve([])),
-  saveMacro: vi.fn((m: Macro) => Promise.resolve(m)),
-  deleteMacro: vi.fn(() => Promise.resolve()),
-  listMacroRuns: vi.fn(() => Promise.resolve([...recorded])),
-  recordMacroRun: vi.fn((run: MacroRun) => {
+const recorded: AutomationRun[] = [];
+vi.mock("@/services/automationApi", () => ({
+  listAutomations: vi.fn(() => Promise.resolve([])),
+  saveAutomation: vi.fn((a: unknown) => Promise.resolve(a)),
+  deleteAutomation: vi.fn(() => Promise.resolve()),
+  listAutomationRuns: vi.fn(() => Promise.resolve([...recorded])),
+  recordAutomationRun: vi.fn((run: AutomationRun) => {
     recorded.unshift(run);
     return Promise.resolve([...recorded]);
   }),
-  clearMacroRunHistory: vi.fn(() => {
+  clearAutomationRunHistory: vi.fn((ids?: string[]) => {
+    const keep = recorded.filter((r) => ids !== undefined && !ids.includes(r.id));
     recorded.length = 0;
-    return Promise.resolve([]);
+    recorded.push(...keep);
+    return Promise.resolve([...recorded]);
   }),
 }));
 
@@ -50,10 +52,12 @@ import { useAppStore } from "./appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import {
-  recordMacroRun as apiRecordMacroRun,
-  listMacroRuns as apiListMacroRuns,
-  clearMacroRunHistory as apiClearMacroRunHistory,
-} from "@/services/macroApi";
+  recordAutomationRun as apiRecordMacroRun,
+  listAutomationRuns as apiListMacroRuns,
+  clearAutomationRunHistory as apiClearMacroRunHistory,
+} from "@/services/automationApi";
+import type { AutomationRun } from "@/types/generated/AutomationRun";
+import { automationRunToMacroRun } from "./slices/automationViews";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 
 const SECRET = "hunter2-secret-input";
@@ -87,10 +91,10 @@ function seedFleet() {
   seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
-/** Wait until the fire-and-forget record lands, then return it. */
+/** Wait until the fire-and-forget record lands, then return its macro view. */
 async function lastRecorded(): Promise<MacroRun> {
   await vi.waitFor(() => expect(recorded.length).toBeGreaterThan(0));
-  return recorded[0];
+  return automationRunToMacroRun(recorded[0]);
 }
 
 describe("appStore — macro run history (#3543)", () => {
@@ -237,5 +241,38 @@ describe("appStore — macro run history (#3543)", () => {
 
     await useAppStore.getState().clearMacroRunHistory();
     expect(useAppStore.getState().macroRuns).toEqual([]);
+  });
+
+  it("records into the automation history and clears only the macro runs (#5818)", async () => {
+    useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
+    await useAppStore.getState().playMacro("m1", { timingMode: "instant" });
+    await lastRecorded();
+    expect(recorded[0]).toMatchObject({
+      automationId: "m1",
+      status: "completed",
+      stepsCompleted: 1,
+      total: 1,
+      targetCount: 1,
+      targetLabel: "title-a",
+    });
+    // A workflow run shares the store but not the macro history.
+    recorded.push({
+      id: "wrun-1",
+      automationId: "w1",
+      automationName: "Deploy",
+      startedAt: "2026-11-24T10:00:00Z",
+      endedAt: "2026-11-24T10:00:01Z",
+      status: "completed",
+      stepsCompleted: 1,
+      total: 1,
+      origin: "manual",
+    });
+    await useAppStore.getState().loadMacroRuns();
+    expect(useAppStore.getState().macroRuns.map((r) => r.macroId)).toEqual(["m1"]);
+    expect(useAppStore.getState().workflowRuns.map((r) => r.id)).toEqual(["wrun-1"]);
+
+    await useAppStore.getState().clearMacroRunHistory();
+    expect(useAppStore.getState().macroRuns).toEqual([]);
+    expect(useAppStore.getState().workflowRuns.map((r) => r.id)).toEqual(["wrun-1"]);
   });
 });

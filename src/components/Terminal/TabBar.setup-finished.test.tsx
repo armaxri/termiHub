@@ -3,8 +3,8 @@
  *
  * After "Agent installed" the setup tab kept the red disconnected plug, which
  * read as an error on a tab that finished correctly. A setup tab whose setup
- * exited 0 now shows a success check labelled "Finished"; a failed setup, a
- * dropped link and every other tab keep their status.
+ * exited 0 now shows a success check labelled "Finished"; a failed setup
+ * keeps the red plug, and any other tab that exited keeps #5955's stop sign.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React from "react";
@@ -156,11 +156,11 @@ describe("TabBar — finished agent setup tab (#5980)", () => {
     expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");
   });
 
-  it("keeps the red plug for an ordinary tab that exited 0", async () => {
+  it("keeps the neutral stop sign (#5955) for an ordinary tab that exited 0", async () => {
     harness.transport.setSession("t1", withExit(disconnected("unexpected"), exitInfo(0)));
     await render([makeTerminalTab("t1", true)]);
     await flushSessionRegion();
-    expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");
+    expect(dotFor("t1")?.className).toContain("tab__state-dot--exited");
   });
 });
 

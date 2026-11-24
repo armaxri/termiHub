@@ -84,3 +84,48 @@ fn a_failed_save_leaves_memory_unchanged() {
     assert!(mgr.save(automation("a-2", "Second")).is_err());
     assert_eq!(mgr.list().unwrap().len(), 1);
 }
+
+fn remap(changes: &[(&str, &str)]) -> crate::connection::id_changes::ConnectionIdRemap {
+    let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+        .iter()
+        .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+        .collect();
+    crate::connection::id_changes::ConnectionIdRemap::new(&changes)
+}
+
+#[test]
+fn connection_bound_triggers_follow_connection_id_changes() {
+    let dir = TempDir::new().unwrap();
+    let mgr = manager(&dir);
+    let mut a = automation("a-1", "Deploy");
+    a.triggers = serde_json::from_value(serde_json::json!([
+        { "kind": "on-connect", "connectionIds": ["Work/a", "b", "x"] },
+        { "kind": "hotkey", "binding": "Ctrl+Alt+H" },
+        { "kind": "on-output-match", "connectionIds": ["Work/a"], "pattern": "ok" }
+    ]))
+    .unwrap();
+    let saved = mgr.save(a).unwrap();
+
+    assert!(mgr
+        .follow_connection_id_changes(&remap(&[("Work/a", "b"), ("b", "c")]))
+        .unwrap());
+
+    let reloaded = manager(&dir).get("a-1").unwrap();
+    assert_eq!(
+        serde_json::to_value(&reloaded.triggers).unwrap(),
+        serde_json::json!([
+            { "kind": "on-connect", "connectionIds": ["b", "c", "x"] },
+            { "kind": "hotkey", "binding": "Ctrl+Alt+H" },
+            { "kind": "on-output-match", "connectionIds": ["b"], "pattern": "ok" }
+        ])
+    );
+    assert_eq!(
+        reloaded.updated_at, saved.updated_at,
+        "following a rename is not an edit"
+    );
+    assert!(
+        !mgr.follow_connection_id_changes(&remap(&[("zzz", "yyy")]))
+            .unwrap(),
+        "no matching trigger reports no change"
+    );
+}

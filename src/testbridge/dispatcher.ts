@@ -17,6 +17,7 @@ import type {
   TerminalCellRow,
   TerminalInspection,
   TerminalMeasurement,
+  TerminalKeyCommand,
   TerminalOutputTap,
   TerminalWebglFrame,
 } from "./protocol";
@@ -725,6 +726,56 @@ async function compose(command: ComposeCommand, deps: BridgeDeps): Promise<Bridg
 }
 
 /**
+ * The `terminalKey` verb (#5966): press `key` on the hidden input textarea of
+ * the terminal in `tabId` (the active tab), where xterm listens for keys.
+ *
+ * Mirrors the browser's sequence for a real keystroke: focus, `keydown`, then
+ * `keypress` only when the keydown was not cancelled and the key produces a
+ * character (one printable character, or Enter), then `keyup`. xterm cancels
+ * the keydowns it handles itself (Enter → `\r`) and the ones the app's custom
+ * key handler swallows, so those get no keypress, as with a real key.
+ */
+function terminalKey(command: TerminalKeyCommand, deps: BridgeDeps): BridgeResponse {
+  if (typeof command.key !== "string" || command.key === "") {
+    return fail("terminalKey", "terminalKey needs a `key`");
+  }
+  if (!deps.getTerminalInputElement) {
+    return fail("terminalKey", "terminal key input is not available");
+  }
+  const tabId = command.tabId ?? deps.getActiveTabId();
+  if (!tabId) return fail("terminalKey", "no active terminal to press a key in");
+  const target = deps.getTerminalInputElement(tabId);
+  if (!target) return fail("terminalKey", `no terminal registered for tab "${tabId}"`);
+  // As in `pressKey`: `.focus()` no-ops on an occluded webview, so also fire
+  // the `focus` event a real focus default action fires.
+  target.focus();
+  target.dispatchEvent(new FocusEvent("focus"));
+  const init: KeyboardEventInit = {
+    key: command.key,
+    code: domCodeFor(command.key),
+    ctrlKey: command.ctrl ?? false,
+    metaKey: command.meta ?? false,
+    shiftKey: command.shift ?? false,
+    altKey: command.alt ?? false,
+    bubbles: true,
+    cancelable: true,
+  };
+  const down = keyboardEvent("keydown", init, command.key);
+  target.dispatchEvent(down);
+  const producesChar = command.key.length === 1 || command.key === "Enter";
+  if (!down.defaultPrevented && producesChar && !init.ctrlKey && !init.metaKey) {
+    const charCode = command.key === "Enter" ? 13 : command.key.charCodeAt(0);
+    const press = new KeyboardEvent("keypress", init);
+    Object.defineProperty(press, "charCode", { get: () => charCode });
+    Object.defineProperty(press, "keyCode", { get: () => charCode });
+    Object.defineProperty(press, "which", { get: () => charCode });
+    target.dispatchEvent(press);
+  }
+  target.dispatchEvent(keyboardEvent("keyup", init, command.key));
+  return ok("terminalKey");
+}
+
+/**
  * Execute a single {@link BridgeCommand} against the live app and return a
  * structured {@link BridgeResponse}.
  *
@@ -1153,6 +1204,9 @@ export async function dispatchCommand(
       target.dispatchEvent(keyboardEvent("keyup", init, command.key));
       return ok("pressKey");
     }
+
+    case "terminalKey":
+      return terminalKey(command, deps);
 
     case "editorCursor": {
       // Move the active editor's caret through Monaco's command API rather than a

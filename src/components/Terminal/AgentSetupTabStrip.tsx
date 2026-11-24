@@ -53,29 +53,21 @@ export function agentSetupTabNotice(
 }
 
 /**
- * Whether a setup tab's setup finished successfully (#5980): the notice reads
- * "Agent installed", also after the user dismissed the strip. The tab strip
- * then shows a success check instead of the red disconnected plug.
- */
-export function agentSetupTabFinished(
-  tab: AgentSetupTab | undefined,
-  exit: TerminalExitInfo | undefined
-): boolean {
-  return !!tab && agentSetupTabNotice({ ...tab, dismissed: false }, exit)?.kind === "installed";
-}
-
-/**
- * A tab's strip status with its setup outcome folded in (#5980): a setup tab
- * that exited 0 is `finished`, not `disconnected`. Any other tab, and a setup
- * that failed, dropped or was cancelled, keeps its status (a failed setup
- * keeps the red plug).
+ * A tab's strip status with its setup outcome folded in (#5980), also after
+ * the user dismissed the setup strip. An ended setup tab that exited 0 is
+ * `finished`; one that failed or was cancelled is `disconnected` (the red
+ * plug), not the neutral `exited` of an ordinary process (#5955). Any other
+ * tab, and a setup whose link dropped, keeps its status.
  */
 export function withSetupOutcome(
   status: TabStatus,
   tab: AgentSetupTab | undefined,
   exit: TerminalExitInfo | undefined
 ): TabStatus {
-  return status === "disconnected" && agentSetupTabFinished(tab, exit) ? "finished" : status;
+  if (!tab || (status !== "disconnected" && status !== "exited")) return status;
+  const outcome = agentSetupTabNotice({ ...tab, dismissed: false }, exit)?.kind;
+  if (outcome === "installed") return "finished";
+  return outcome === "failed" || outcome === "cancelled" ? "disconnected" : status;
 }
 
 const TONES: Record<AgentSetupTabNotice["kind"], DisconnectStripTone> = {

@@ -140,7 +140,8 @@ def dispatcher_like(
     ``readTerminalWebglFrame`` returns (tab ids recorded under ``webglReads``).
     ``cell_rows`` is the value ``readTerminalCells`` returns; its
     ``(tabId, contains)`` pairs are recorded under ``cellReads`` and each
-    ``compose`` command under ``compositions``.
+    ``compose`` command under ``compositions`` and each ``terminalKey`` as
+    ``(tabId, key)`` under ``terminalKeys``.
     ``output_tap`` is the value ``readTerminalOutput`` returns (tab ids recorded
     under ``outputReads``); ``frontend_log`` the entries ``readFrontendLog``
     filters by its ``contains`` substring; ``js_errors`` the records
@@ -165,6 +166,7 @@ def dispatcher_like(
         "selects": [],
         "contextMenus": [],
         "pressedKeys": [],
+        "terminalKeys": [],
         "dragTos": [],
         "scrolls": [],
         "inspections": [],
@@ -201,6 +203,9 @@ def dispatcher_like(
         if action == "pressKey":
             recorded["pressedKeys"].append(command["key"])
             return {"ok": True, "action": "pressKey"}
+        if action == "terminalKey":
+            recorded["terminalKeys"].append((command.get("tabId"), command["key"]))
+            return {"ok": True, "action": "terminalKey"}
         if action == "dragTo":
             drag = {"from": command["fromTestId"], "to": command["toTestId"]}
             # Held modifiers / mid-drag observe only appear when requested.

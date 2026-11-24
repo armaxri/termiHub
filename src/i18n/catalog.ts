@@ -171,9 +171,13 @@ const en = {
   "statusBar.ssh.trust.pending": "host key not checked yet",
   "statusBar.ssh.ariaLabel": "SSH: {label}, encrypted, {trust}. Show connection security",
   "statusBar.ssh.encrypted": "Encrypted (SSH)",
+  "statusBar.ssh.down": "Not connected",
   "statusBar.ssh.hostKey.pending": "Not checked yet (still connecting)",
   "statusBar.ssh.row.endpoint": "Host",
   "statusBar.ssh.row.encryption": "Encryption",
+  "statusBar.ssh.row.integrity": "Integrity",
+  "statusBar.ssh.row.keyExchange": "Key exchange",
+  "statusBar.ssh.row.hostKeyAlgorithm": "Host key algorithm",
   "statusBar.ssh.row.auth": "Signed in with",
   "statusBar.ssh.row.hostKey": "Host key",
   "statusBar.ssh.title": "Connection security",
@@ -370,6 +374,8 @@ const en = {
     "— reconnected {time} — new session; running programs were lost",
   // An agent tab that re-attached its own, still-running session (#5953).
   "drop.separator.resumed": "— reconnected {time} — session resumed —",
+  // A local process is started again, not reconnected (#5955).
+  "drop.separator.restarted": "— restarted {time} —",
   "drop.separator.reconnectedTelnet":
     "— reconnected {time} — new telnet session; the remote state was not restored",
   "drop.overlay.scrollbackKept": "Scrollback is kept.",
@@ -388,11 +394,16 @@ const en = {
   // A process that exits is not a lost connection: only a dropped link says
   // "disconnected", and a local process is restarted, not reconnected.
   "drop.end.exited": "Process exited (code {code})",
+  "drop.end.exitedNoCode": "Process exited",
   "drop.end.ended": "Session ended",
   "drop.end.device": "Device disconnected",
   "drop.end.disconnected": "Session disconnected",
   "drop.end.restart": "Restart",
   "drop.end.reconnect": "Reconnect",
+  // One Enter hint for the strip and the view-mode banner (#5955).
+  "drop.end.enterReconnect": "Press Enter to reconnect.",
+  "drop.end.enterRestart": "Press Enter to restart.",
+  "drop.end.enterResume": "Press Enter to resume.",
   "drop.heading.server": "Server closed the connection — reconnecting…",
   "drop.heading.timeout": "Connection timed out — reconnecting…",
   "drop.autoReconnectOff":

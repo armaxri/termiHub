@@ -14,6 +14,7 @@ use tracing::debug;
 
 use super::host_key::{HostKeyDecision, HostKeyVerifier, HOST_KEY_PROMPT_TIMEOUT};
 use super::prompt_clock::PromptClock;
+use crate::connection::SshNegotiatedAlgorithms;
 
 /// Convenience alias for the connected session handle.
 ///
@@ -40,7 +41,12 @@ pub type SshSession = russh::client::Handle<TermiHubHandler>;
 pub struct LivenessWatch {
     rx: watch::Receiver<bool>,
     server_id: Arc<OnceLock<String>>,
+    algorithms: AlgorithmsSlot,
 }
+
+/// The algorithms the session's latest key exchange negotiated (#5896),
+/// written by the handler on russh's session task.
+pub(crate) type AlgorithmsSlot = Arc<Mutex<Option<SshNegotiatedAlgorithms>>>;
 
 impl LivenessWatch {
     /// Resolve once the session is dead. Returns immediately if it already died.
@@ -67,6 +73,15 @@ impl LivenessWatch {
     /// say), once the first key exchange has completed; `None` before (#5134).
     pub fn server_id(&self) -> Option<&str> {
         self.server_id.get().map(String::as_str)
+    }
+
+    /// The cipher, MAC, key exchange and host-key algorithm the latest key
+    /// exchange negotiated (#5896); `None` before the first one completed.
+    pub fn algorithms(&self) -> Option<SshNegotiatedAlgorithms> {
+        self.algorithms
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -181,6 +196,9 @@ pub(crate) struct HandshakeContext {
     /// The owner of the connect (#5243): the trust prompt carries it so the
     /// frontend pauses that tab's own connect deadline while it is open.
     pub owner: Option<String>,
+    /// The name of the connection the connect runs for (#5943): the trust
+    /// prompt carries it so a prompt with no owning tab names its connection.
+    pub connection_name: Option<String>,
     /// Cancelled when the connecting task stops waiting for the handshake
     /// (abort, connect timeout): the open prompt is then dropped — dismissed.
     pub abandoned: CancellationToken,
@@ -221,6 +239,9 @@ pub struct TermiHubHandler {
     /// The server's SSH identification line, set at the first key exchange
     /// and shared with the [`LivenessWatch`] (#5134).
     server_id: Arc<OnceLock<String>>,
+    /// The negotiated algorithms, refreshed at every key exchange and shared
+    /// with the [`LivenessWatch`] (#5896).
+    algorithms: AlgorithmsSlot,
 }
 
 impl TermiHubHandler {
@@ -245,6 +266,7 @@ impl TermiHubHandler {
         let registry: ForwardedChannelRegistry = Arc::new(ForwardedChannels::default());
         let (liveness_tx, liveness_rx) = watch::channel(false);
         let server_id = Arc::new(OnceLock::new());
+        let algorithms = AlgorithmsSlot::default();
         let handler = Self {
             forwarded_channel_registry: registry.clone(),
             liveness_tx,
@@ -253,10 +275,12 @@ impl TermiHubHandler {
             port,
             handshake: HandshakeContext::default(),
             server_id: server_id.clone(),
+            algorithms: algorithms.clone(),
         };
         let liveness = LivenessWatch {
             rx: liveness_rx,
             server_id,
+            algorithms,
         };
         (handler, registry, liveness)
     }
@@ -285,7 +309,10 @@ impl TermiHubHandler {
         let ctx = &self.handshake;
         let decision = super::prompt_owner::with_prompt_owner(
             ctx.owner.as_deref(),
-            super::host_key::decide_host_key(info, ctx.verifier.clone()),
+            super::prompt_owner::with_prompt_connection_name(
+                ctx.connection_name.as_deref(),
+                super::host_key::decide_host_key(info, ctx.verifier.clone()),
+            ),
         );
         let bounded = ctx
             .clock
@@ -308,6 +335,18 @@ impl Default for TermiHubHandler {
     fn default() -> Self {
         Self::new().0
     }
+}
+
+/// The negotiated algorithms of a finished key exchange (#5896), by their
+/// SSH wire names. The client-to-server MAC is reported: termiHub's russh
+/// offers one MAC list for both directions, so both pick the same.
+pub(crate) fn negotiated_algorithms(names: &russh::Names) -> SshNegotiatedAlgorithms {
+    SshNegotiatedAlgorithms::new(
+        names.kex.as_ref(),
+        names.key.as_str(),
+        names.cipher.as_ref(),
+        names.client_mac.as_ref(),
+    )
 }
 
 /// The bare host key to verify, or `None` for an OpenSSH host certificate,
@@ -341,18 +380,21 @@ async fn reject_unsolicited(reply: russh::client::ChannelOpenHandle, kind: &str)
 impl russh::client::Handler for TermiHubHandler {
     type Error = russh::Error;
 
-    /// Record the server's SSH identification line (#5134). russh calls this
-    /// after every key exchange, the first one before the connect returns.
+    /// Record the server's SSH identification line (#5134) and the negotiated
+    /// algorithms (#5896). russh calls this after every key exchange, the
+    /// first one before the connect returns; a rekey refreshes the algorithms.
     async fn kex_done(
         &mut self,
         _shared_secret: Option<&[u8]>,
-        _names: &russh::Names,
+        names: &russh::Names,
         session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         let id = String::from_utf8_lossy(session.remote_sshid())
             .trim()
             .to_string();
         let _ = self.server_id.set(id);
+        *self.algorithms.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(negotiated_algorithms(names));
         Ok(())
     }
 
@@ -689,3 +731,7 @@ mod tests {
 #[cfg(test)]
 #[path = "handler_channel_open_tests.rs"]
 mod channel_open_tests;
+
+#[cfg(test)]
+#[path = "handler_algorithms_tests.rs"]
+mod algorithms_tests;

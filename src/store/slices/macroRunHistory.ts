@@ -4,15 +4,14 @@
  * blocks or fails a playback. The record carries only outcome, timing, targets
  * and origin — never the macro's recorded input.
  */
-import { recordMacroRun as apiRecordMacroRun } from "@/services/macroApi";
 import type { MacroPlaybackStatus } from "@/services/macroPlayback";
 import { newId } from "@/services/transport/ids";
 import type { Macro, MacroRun, MacroRunOrigin } from "@/types/macro";
-import { errorMessage } from "@/utils/errorMessage";
-import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
 import { collectLiveTabs } from "../layoutHelpers";
+import { recordAutomationRun } from "./automationStoreState";
+import { macroRunToAutomationRun } from "./automationViews";
 
 /** The display label (tab title) of a terminal tab, for the run history. */
 export function macroTargetLabel(state: AppState, tabId: string): string {
@@ -59,18 +58,10 @@ export function buildMacroRun(desc: MacroRunDescription): MacroRun {
 }
 
 /**
- * Persist `run` in the backend history and refresh the store's list. Never
- * throws and never awaits the backend: a failed write is only logged.
+ * Persist `run` in the automation run history (#5818, slice 4) and refresh the
+ * store's lists. Never throws and never awaits the backend: a failed write is
+ * only logged.
  */
 export function recordMacroRun(set: (partial: Partial<AppState>) => void, run: MacroRun): void {
-  try {
-    void apiRecordMacroRun(run)
-      .then((runs) => set({ macroRuns: Array.isArray(runs) ? runs : [] }))
-      .catch((err) => {
-        frontendLog("macro_playback", `Failed to record macro run: ${errorMessage(err)}`);
-      });
-  } catch (err) {
-    // Guard even a synchronous throw (e.g. no Tauri bridge).
-    frontendLog("macro_playback", `Failed to record macro run: ${errorMessage(err)}`);
-  }
+  recordAutomationRun(set, macroRunToAutomationRun(run), "macro_playback");
 }
