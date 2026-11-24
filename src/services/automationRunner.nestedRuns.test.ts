@@ -4,7 +4,7 @@
  * as "Run by another automation".
  */
 import { describe, expect, it, vi } from "vitest";
-import { runAutomation } from "./automationRunner";
+import { runAutomation, runAutomationOnTargets } from "./automationRunner";
 import type { WorkflowNestedRunEvent, WorkflowRunnerDeps } from "./workflowRunner";
 import { collectNestedRun, nestedRunRecord } from "@/store/slices/automationViews";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
@@ -125,5 +125,33 @@ describe("nested automation runs (#5818, slice 9)", () => {
       endedAt: events[299].endedAt.toISOString(),
       status: "failed",
     });
+  });
+
+  it("reports nested runs per target when one automation runs on several", async () => {
+    const inner = automation("inner", [keys("a")]);
+    const outer = automation("outer", [
+      { kind: "loop", loop: { kind: "count", count: 3 }, body: [call("inner")] },
+    ]);
+    const perTarget = [0, 1].map(() => new Map<string, AutomationRun>());
+    const results = await runAutomationOnTargets(
+      outer,
+      ["t1", "t2"],
+      () => ({
+        send: vi.fn(async () => true),
+        wait: vi.fn(async () => undefined),
+        resolveAutomation: (id) => (id === "inner" ? inner : undefined),
+      }),
+      {
+        hooksFor: (index) => ({
+          onNestedRunFinished: (event) =>
+            collectNestedRun(perTarget[index], nestedRunRecord(event, `t${index + 1}`, undefined)),
+        }),
+      }
+    ).done;
+    expect(results.map((r) => r?.status)).toEqual(["completed", "completed"]);
+    expect(perTarget.map((m) => [...m.values()].map((r) => [r.automationId, r.tabId]))).toEqual([
+      [["inner", "t1"]],
+      [["inner", "t2"]],
+    ]);
   });
 });

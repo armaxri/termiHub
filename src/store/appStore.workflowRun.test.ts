@@ -1328,6 +1328,45 @@ describe("appStore — workflow run slice (#1852)", () => {
       );
     });
 
+    it("records one run per terminal, and one nested run per called automation on each (#5818)", async () => {
+      seedTwoTerminals();
+      captureSends();
+      recordedRuns.length = 0;
+      recordedMacroRuns.length = 0;
+      const macro: Macro = {
+        id: "m1",
+        name: "tail log",
+        tags: [],
+        steps: [{ data: "x", delayMs: 0 }],
+        createdAt: "",
+        updatedAt: "",
+      };
+      useAppStore.setState({
+        macros: [macro],
+        workflows: [
+          workflow("w1", [
+            {
+              kind: "loop",
+              loop: { kind: "count", count: 5 },
+              body: [{ kind: "run-macro", macroId: "m1" }],
+            },
+            { kind: "run-macro", macroId: "m1" },
+          ]),
+        ],
+      });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      await vi.waitFor(() => expect(recordedRuns).toHaveLength(4));
+      expect(recordedRuns.map((r) => `${r.workflowId} ${r.tabId}`).sort()).toEqual([
+        "m1 tab-a",
+        "m1 tab-b",
+        "w1 tab-a",
+        "w1 tab-b",
+      ]);
+      expect(recordedMacroRuns).toEqual([]);
+    });
+
     it("refuses when none of the selected terminals are connected", async () => {
       seedTwoTerminals(null);
       const sends = captureSends();
