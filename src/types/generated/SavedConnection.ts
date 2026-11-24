@@ -38,6 +38,14 @@ iconEmoji?: string,
  */
 description?: string, 
 /**
+ * When this connection last connected successfully (#5940), as Unix
+ * milliseconds. The backend stamps it on each successful connect
+ * (`ConnectionManager::record_connection_used`); a save never moves it
+ * back. Absent = never used. Ranks the empty
+ * window's "Recent connections" and is never shown on a row.
+ */
+lastUsedAt?: number, 
+/**
  * Runtime-only: which external file this connection was loaded from.
  * `None` = main connections.json, `Some(path)` = external file.
  *

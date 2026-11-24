@@ -617,8 +617,8 @@ pub struct SavedConnection {
     pub description: Option<String>,
     /// When this connection last connected successfully (#5940), as Unix
     /// milliseconds. The backend stamps it on each successful connect
-    /// ([`ConnectionManager::record_connection_used`](crate::connection::manager::ConnectionManager::record_connection_used));
-    /// a save never moves it back. Absent = never used. Ranks the empty
+    /// (`ConnectionManager::record_connection_used`); a save never moves it
+    /// back. Absent = never used. Ranks the empty
     /// window's "Recent connections" and is never shown on a row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
