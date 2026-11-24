@@ -34,8 +34,16 @@ import "./toast.css";
  * single-line toast at a time over the dialog head, never its body, and
  * success/info toasts wait until the dialog closes — errors stay visible.
  *
+ * The status bar is a keep-clear zone too (#5830), so the stack always starts
+ * above it and never hides its lock indicator. While an editor's form fields
+ * (`data-toast-avoid-form`) sit where the stack would go, the stack is pinned
+ * top-right instead, just above the form, one compact toast at a time.
+ *
  * A toast raised with `dismissOnModal` (the "Closed … / Reopen" undo) is
- * dismissed when a dialog opens (#5665), so it never lingers beside one.
+ * dismissed when a dialog opens (#5665), so it never lingers beside one; so
+ * are the success/info confirmations still showing (#5830). While a dialog is
+ * open, its own success/info feedback shows in its inline status line instead
+ * of a toast (see `Modal`).
  *
  * Toasts stack expanded (`expand`), each in its own slot with a gap, so a newer
  * toast is never drawn over an older one with both texts showing through
@@ -73,16 +81,22 @@ const TOAST_OFFSET = {
 const DOCKED_OFFSET = { ...TOAST_OFFSET, top: DOCKED_TOP };
 
 export function ToastProvider() {
-  const docked = useToastAvoidInset(TOAST_WIDTH, TOAST_EDGE);
+  const { docked, pinnedTop } = useToastAvoidInset(TOAST_WIDTH, TOAST_EDGE);
   useDismissOnModalOpen();
-  const offset = docked ? DOCKED_OFFSET : TOAST_OFFSET;
+  const pinned = pinnedTop !== null;
+  const offset = docked
+    ? DOCKED_OFFSET
+    : pinned
+      ? { ...TOAST_OFFSET, top: pinnedTop }
+      : TOAST_OFFSET;
+  const position = docked ? "top-center" : pinned ? "top-right" : "bottom-right";
   return (
     // `toast-region` lets the product run measure the stack (#5618).
     <div data-testid="toast-region">
       <Toaster
-        position={docked ? "top-center" : "bottom-right"}
+        position={position}
         expand
-        visibleToasts={docked ? 1 : VISIBLE_TOASTS}
+        visibleToasts={docked || pinned ? 1 : VISIBLE_TOASTS}
         gap={8}
         offset={offset}
         mobileOffset={offset}

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import {
   computeToastAvoidInset,
   computeToastLayout,
+  COMPACT_TOAST_HEIGHT,
   MIN_TOAST_WIDTH,
   TOAST_NARROW_CLASS,
   TOAST_WIDTH_VAR,
@@ -78,7 +79,12 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
     // A 640px-wide dialog on a narrower window, reaching down to y=760.
     const dialog = box(180, 300, 820, 760);
     const zone = { ...ZONE, viewportWidth: 1000 };
-    expect(computeToastLayout([dialog], zone)).toEqual({ inset: 500, width: 340, docked: false });
+    expect(computeToastLayout([dialog], zone)).toEqual({
+      inset: 500,
+      width: 340,
+      docked: false,
+      pinnedTop: null,
+    });
   });
 
   it("narrows the column beside a dialog too tall to clear", () => {
@@ -87,7 +93,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
     const footer = box(320, 700, 960, 760);
     const layout = computeToastLayout([dialog, footer], ZONE);
     // 1280 - 16 (edge) - 960 (dialog right) - 16 (gap) = 288.
-    expect(layout).toEqual({ inset: 0, width: 288, docked: false });
+    expect(layout).toEqual({ inset: 0, width: 288, docked: false, pinnedTop: null });
   });
 
   it("docks the stack when there is no room beside a tall dialog (#5715)", () => {
@@ -115,7 +121,12 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
   it("does not dock for a tall dialog that leaves a 240px column (#5715)", () => {
     // 1280 - 16 - 1008 - 16 = 240: exactly the narrowest column.
     const dialog = box(368, 40, 1008, 760);
-    expect(computeToastLayout([dialog], ZONE)).toEqual({ inset: 0, width: 240, docked: false });
+    expect(computeToastLayout([dialog], ZONE)).toEqual({
+      inset: 0,
+      width: 240,
+      docked: false,
+      pinnedTop: null,
+    });
   });
 
   it("does not dock for a short dialog it can lift above (#5715)", () => {
@@ -130,6 +141,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
       inset: 0,
       width: 340,
       docked: false,
+      pinnedTop: null,
     });
   });
 
@@ -140,6 +152,7 @@ describe("computeToastLayout — open dialogs (#5686)", () => {
       inset: 200,
       width: 340,
       docked: false,
+      pinnedTop: null,
     });
   });
 });
@@ -191,5 +204,54 @@ describe("useToastAvoidInset (#5618)", () => {
     act(() => root.unmount());
     expect(html.style.getPropertyValue(TOAST_WIDTH_VAR)).toBe("");
     expect(html.classList.contains(TOAST_NARROW_CLASS)).toBe(false);
+  });
+});
+
+describe("computeToastLayout — status bar and editor forms (#5830)", () => {
+  /** The 800x600 minimum window. */
+  const SMALL: ToastZone = { ...ZONE, viewportWidth: 800, viewportHeight: 600 };
+  /** The status bar: full width, 24px tall, at the window bottom. */
+  const statusBar = box(0, 576, 800, 600);
+  /** A connection editor's footer above the status bar. */
+  const editorFooter = box(48, 528, 800, 576);
+  /** The editor's form body, between its title strip and its footer. */
+  const editorForm = box(48, 104, 800, 528);
+
+  it("lifts the stack above the status bar so it never covers the lock indicator", () => {
+    const layout = computeToastLayout([statusBar], SMALL);
+    expect(layout).toEqual({ inset: 24, width: 340, docked: false, pinnedTop: null });
+    // The stack's bottom edge sits 16px above the status bar's top.
+    expect(600 - layout.inset - SMALL.edge).toBeLessThanOrEqual(statusBar.top);
+  });
+
+  it("pins the stack top-right above an editor's form at 800x600", () => {
+    const layout = computeToastLayout([statusBar, editorFooter], SMALL, [editorForm]);
+    // 104 (form top) - 32 (one compact toast) - 2 (gap) = 70.
+    expect(layout.pinnedTop).toBe(70);
+    expect(layout.docked).toBe(false);
+    expect(layout.pinnedTop! + COMPACT_TOAST_HEIGHT).toBeLessThanOrEqual(editorForm.top);
+  });
+
+  it("uses the measured compact toast height when pinning", () => {
+    const zone = { ...SMALL, compactHeight: 40 };
+    expect(computeToastLayout([statusBar, editorFooter], zone, [editorForm]).pinnedTop).toBe(62);
+  });
+
+  it("does not pin for a form outside the stack's column or above its band", () => {
+    const leftForm = box(0, 104, 300, 528);
+    const highForm = box(48, 40, 800, 200);
+    expect(computeToastLayout([statusBar], SMALL, [leftForm, highForm]).pinnedTop).toBeNull();
+  });
+
+  it("never pins above the window's top edge", () => {
+    const tallForm = box(48, 10, 800, 528);
+    expect(computeToastLayout([statusBar, editorFooter], SMALL, [tallForm]).pinnedTop).toBe(4);
+  });
+
+  it("docks over a tall dialog rather than pinning to the form under it", () => {
+    const dialog = box(80, 24, 720, 576);
+    const layout = computeToastLayout([statusBar, dialog], SMALL, [editorForm]);
+    expect(layout.docked).toBe(true);
+    expect(layout.pinnedTop).toBeNull();
   });
 });

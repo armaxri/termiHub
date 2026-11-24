@@ -83,6 +83,7 @@ import {
   UnsavedChangesDialog,
   toast,
   TOAST_AVOID_PROPS,
+  TOAST_AVOID_FORM_PROPS,
 } from "@/components/ui";
 import { SettingsField } from "@/components/Settings/SettingsField";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
@@ -2247,8 +2248,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               ? "Edit connection"
               : "New connection"}
       </div>
+      {/* The form keeps the toast stack off its fields (#5830). */}
       <div
         className={`connection-editor__body ${isCompact ? "connection-editor__body--compact" : ""}`}
+        data-testid="connection-editor-body"
+        {...TOAST_AVOID_FORM_PROPS}
       >
         <SettingsNav
           categories={categories}

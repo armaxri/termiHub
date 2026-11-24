@@ -3,7 +3,10 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 
 const dismissTransient = vi.fn();
-vi.mock("./Toast/toast", () => ({ toast: { dismissTransient: () => dismissTransient() } }));
+vi.mock("./Toast/toast", () => ({
+  toast: { dismissTransient: () => dismissTransient() },
+  registerInlineStatusSink: () => () => undefined,
+}));
 
 import { Modal } from "./Modal";
 import { TOAST_AVOID_ATTR } from "./Toast/toastAvoid";

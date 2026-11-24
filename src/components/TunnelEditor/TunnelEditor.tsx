@@ -32,6 +32,7 @@ import {
   UnsavedChangesDialog,
   toast,
   TOAST_AVOID_PROPS,
+  TOAST_AVOID_FORM_PROPS,
 } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -603,7 +604,12 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </span>
       </div>
 
-      <div className="tunnel-editor__form" ref={formRef} data-testid="tunnel-editor-form">
+      <div
+        className="tunnel-editor__form"
+        ref={formRef}
+        data-testid="tunnel-editor-form"
+        {...TOAST_AVOID_FORM_PROPS}
+      >
         <Controller
           name="name"
           control={control}

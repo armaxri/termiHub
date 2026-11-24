@@ -749,9 +749,10 @@ class TestProductRunComplaints(
         tag = unique_name("pr").split("-")[-1]
         with self.step(
             "complaints.toasts.dialog",
-            "A toast shown while the workflow editor is open stays off the dialog (#5686)",
-            expect="#5686 complaint: with the workflow editor open, the 'Ran workflow' toast "
-            "sits above or beside the dialog and covers none of it ('Add parameter…' visible)",
+            "No toast covers the workflow editor; the earlier 'Ran workflow' toast is dismissed "
+            "when it opens (#5686, #5830)",
+            expect="#5686/#5830 complaint: with the workflow editor open, no toast covers the "
+            "dialog ('Add parameter…' visible) and the stale 'Ran workflow' toast is gone",
         ):
             workflow = self._create_workflow(f"Toast clear {tag}", [f"echo PR_TOAST_DLG_{tag}"])
             self.ensure_terminal()
@@ -764,8 +765,12 @@ class TestProductRunComplaints(
             toasts = self._toast_items()
             self.evidence(f"dialog {dialog}; toasts {[(t['text'], t['rect']) for t in toasts]}")
             try:
-                assert toasts, "no toast left to grade (it closed before the editor opened)"
-                for item in toasts:
+                # A dialog opening dismisses the success toasts still showing (#5830).
+                self.wait(
+                    lambda: not self._toast_titles("Ran workflow"),
+                    what="the stale 'Ran workflow' toast to go when the editor opens",
+                )
+                for item in self._toast_items():
                     assert not _intersects(item["rect"], dialog), (
                         f"toast {item['text'] or item['label']!r} {item['rect']} covers the "
                         f"open dialog {dialog}"

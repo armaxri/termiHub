@@ -1,9 +1,9 @@
 import React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { CheckCircle2, Info, X } from "lucide-react";
 import { isImeComposing } from "@/utils/imeComposition";
 import { Button } from "./Button";
-import { toast } from "./Toast/toast";
+import { registerInlineStatusSink, toast, type InlineStatus } from "./Toast/toast";
 import { TOAST_AVOID_PROPS } from "./Toast/toastAvoid";
 import "./ui.css";
 
@@ -60,6 +60,37 @@ function firstTabbable(root: Element | null | undefined): HTMLElement | null {
     return el;
   }
   return null;
+}
+
+/**
+ * A dialog's inline status line (#5830): the success/info feedback of an
+ * action taken in the dialog, shown where the user is looking instead of in a
+ * toast that must squeeze in beside the dialog. A polite live region, so a
+ * screen reader announces it as it would the toast.
+ */
+function ModalStatus({ status }: { status: InlineStatus | null }): React.ReactElement {
+  const Icon = status?.kind === "success" ? CheckCircle2 : Info;
+  return (
+    <div
+      className="ui-modal__status"
+      role="status"
+      aria-live="polite"
+      data-testid="modal-status"
+      data-kind={status?.kind}
+    >
+      {status ? (
+        <>
+          <Icon className="ui-modal__status-icon" aria-hidden="true" />
+          <span className="ui-modal__status-text">
+            {status.message}
+            {status.description ? (
+              <span className="ui-modal__status-detail"> {status.description}</span>
+            ) : null}
+          </span>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -124,6 +155,13 @@ export interface ModalProps {
    * unlock), so a stale "Connected" or "Saved" never sits beside the error.
    */
   dismissTransientToasts?: boolean;
+  /**
+   * Show success/info feedback raised while the modal is open in its own
+   * status line, at the left of the footer, instead of a toast beside the
+   * dialog (#5830). On by default; off by default for `size="full"`, which
+   * hosts a whole surface rather than one task.
+   */
+  inlineStatus?: boolean;
   /** Test hook forwarded to the content node. */
   "data-testid"?: string;
 }
@@ -157,8 +195,20 @@ export function Modal({
   dirty = false,
   initialFocusRef,
   dismissTransientToasts = false,
+  inlineStatus,
   ...rest
 }: ModalProps): React.ReactElement {
+  const statusLine = inlineStatus ?? size !== "full";
+  // The message the inline status line shows (#5830), fed by the toast hub.
+  const [status, setStatus] = React.useState<InlineStatus | null>(null);
+  React.useEffect(() => {
+    if (!open || !statusLine) return;
+    const unregister = registerInlineStatusSink(setStatus);
+    return () => {
+      unregister();
+      setStatus(null);
+    };
+  }, [open, statusLine]);
   // Track the content node so descendants can portal into it (#1868). A callback
   // ref stored in state re-renders once the node mounts, so menus opened later
   // pick up the real container rather than falling back to `document.body`.
@@ -303,7 +353,12 @@ export function Modal({
                 actions. */}
             {footer ? (
               <div className="ui-modal__foot" {...TOAST_AVOID_PROPS}>
+                {statusLine ? <ModalStatus status={status} /> : null}
                 {footer}
+              </div>
+            ) : statusLine && status ? (
+              <div className="ui-modal__status-row">
+                <ModalStatus status={status} />
               </div>
             ) : null}
           </ModalPortalContainerContext.Provider>
