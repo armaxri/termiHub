@@ -20,7 +20,7 @@ export function SettingsSearch({ query, onQueryChange }: SettingsSearchProps) {
   );
 
   return (
-    <div className="settings-search">
+    <div className="settings-search" data-testid="settings-search-bar">
       <SearchInput
         value={query}
         onValueChange={onQueryChange}

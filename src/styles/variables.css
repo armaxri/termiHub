@@ -73,6 +73,17 @@
      a readable line length; short numeric inputs (port, timeout) stay narrow. */
   --form-max-width: 560px;
   --form-input-narrow-width: 160px;
+  /* Settings page geometry (#5843): the nav column and the content column sit
+     side by side, and the search bar, nav and content share one centred max
+     width, so a wide window does not leave the content floating left. */
+  --settings-nav-width: 180px;
+  --settings-content-max-width: 640px;
+  --settings-page-max-width: calc(var(--settings-nav-width) + var(--settings-content-max-width));
+  /* A compact numeric settings input is its value's width in `ch` plus this
+     allowance for its padding, border and spin buttons (#5843). */
+  --settings-number-chrome: 40px;
+  /* Widest line of a settings "?" help tooltip (#5843). */
+  --settings-help-tip-max-width: 320px;
   /* OSC 133 command-mark gutter bar width (#5563; 5px since #5854 — at 3px the
      marks were too thin to see and to hover). */
   --terminal-command-mark-width: 5px;

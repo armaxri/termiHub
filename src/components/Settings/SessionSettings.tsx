@@ -4,7 +4,8 @@ import { useAppStore } from "@/store/appStore";
 import { useNetworkToolHistoryStore } from "@/store/networkToolHistoryStore";
 import { clearHttpMonitorHistory } from "@/services/networkHistoryApi";
 import { resolveRestoreMode, type RestoreLastSessionMode } from "@/utils/restoreMode";
-import { Button, NumberInput, Select, Toggle, toast } from "@/components/ui";
+import { Button, Select, Toggle, toast } from "@/components/ui";
+import { SettingsNumberInput } from "./SettingsNumberInput";
 import { SettingsField } from "./SettingsField";
 import type { SettingsUpdate } from "./GeneralSettings";
 import { SettingsSectionHeading } from "./SettingsSectionHeading";
@@ -53,7 +54,10 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Restore last session on startup"
-            hint="Choose how the tabs and panel layout from your previous session are handled when the app starts. Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
+            hint="What happens to your previous session's tabs and layout at startup."
+            help="Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
+            helpTestId="settings-restore-last-session-mode-help"
+            hintTestId="settings-restore-last-session-mode-hint"
           >
             <Select
               value={restoreMode}
@@ -84,7 +88,10 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
           {show("sessionHistoryEnabled") && (
             <SettingsField
               label="Auto-save sessions to history"
-              hint="Record every session you open so it can be reconnected from the Recent Sessions panel. Passwords are never stored in history."
+              hint="Record each session you open. Passwords are never stored."
+              help="Recorded sessions can be reconnected from the Recent Sessions panel."
+              helpTestId="settings-session-history-enabled-help"
+              hintTestId="settings-session-history-enabled-hint"
             >
               <Toggle
                 checked={settings.sessionHistoryEnabled ?? true}
@@ -99,9 +106,13 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
           {show("sessionHistoryLimit") && (
             <SettingsField
               label="Session history limit"
-              hint="Maximum number of recent sessions to keep (10–500). When the limit is reached, the least-recently-used unpinned entry is removed."
+              hint="Recent sessions to keep (10–500)."
+              help="When the limit is reached, the least recently used unpinned entry is removed."
+              helpTestId="settings-session-history-limit-help"
+              hintTestId="settings-session-history-limit-hint"
             >
-              <NumberInput
+              <SettingsNumberInput
+                unit="sessions"
                 value={settings.sessionHistoryLimit ?? 50}
                 onValueChange={(value) =>
                   onChange((prev) => ({
@@ -137,7 +148,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
               hint="Remove all recorded sessions, including pinned entries."
             >
               <Button
-                variant="danger"
+                variant="secondary"
                 size="sm"
                 disabled={historyCount === 0}
                 data-testid="settings-clear-session-history"
@@ -158,7 +169,18 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Record network tool history"
-            hint="Keep finished ping, traceroute, port scan, ping sweep, DNS, open-ports and Wake-on-LAN runs so they can be revisited, re-run and exported from each tool's History section, and keep each HTTP monitor's checks so its chart survives a stop or restart. Results can contain hostnames and IP addresses; they are stored only on this computer. The newest 50 runs per tool are kept for up to 30 days, and the newest 1,000 checks per monitor for up to 7 days."
+            hint="Keep finished network tool runs and HTTP monitor checks on this computer."
+            help={
+              <>
+                Ping, traceroute, port scan, ping sweep, DNS, open-ports and Wake-on-LAN runs can be
+                revisited, re-run and exported from each tool&apos;s History section, and each HTTP
+                monitor&apos;s chart survives a stop or restart. Results can contain hostnames and
+                IP addresses. The newest 50 runs per tool are kept for up to 30 days, and the newest
+                1,000 checks per monitor for up to 7 days.
+              </>
+            }
+            helpTestId="settings-network-tool-history-help"
+            hintTestId="settings-network-tool-history-hint"
           >
             <Toggle
               checked={settings.networkToolHistoryEnabled ?? true}
@@ -171,10 +193,10 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Clear network tool history"
-            hint="Remove every recorded network tool run for all tools and every recorded HTTP monitor check."
+            hint="Remove every recorded network tool run and HTTP monitor check."
           >
             <Button
-              variant="danger"
+              variant="secondary"
               size="sm"
               data-testid="settings-clear-network-tool-history"
               onClick={async () => {
