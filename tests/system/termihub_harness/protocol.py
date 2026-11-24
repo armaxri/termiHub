@@ -47,6 +47,7 @@ BRIDGE_ACTIONS: frozenset[str] = frozenset(
         "getAttribute",
         "getComputedStyle",
         "measureElement",
+        "scrollIntoView",
         "getJsErrors",
         "getState",
         "getTerminalViewport",

@@ -205,6 +205,16 @@ export interface MeasureElementCommand {
   descendants?: "buttons" | "text";
 }
 
+/**
+ * Scroll an element into view inside its scroll containers (#5857), so a
+ * product-run capture shows a settings group that sits below the fold. Uses
+ * `scrollIntoView({ block: "nearest" })`: an element already in view stays put.
+ */
+export interface ScrollIntoViewCommand {
+  action: "scrollIntoView";
+  testId: string;
+}
+
 /** One box in a {@link MeasureElementCommand} result (CSS pixels, viewport-relative). */
 export interface MeasuredBox {
   x: number;
@@ -1212,6 +1222,7 @@ export type BridgeCommand =
   | GetValueCommand
   | GetComputedStyleCommand
   | MeasureElementCommand
+  | ScrollIntoViewCommand
   | RenderSettledCommand
   | SampleCanvasCommand
   | DragCommand

@@ -583,6 +583,14 @@ class Driver:
             {"action": "measureElement", "testId": test_id, "descendants": descendants}
         )
 
+    def scroll_into_view(self, test_id: str) -> None:
+        """Scroll ``test_id`` into view inside its scroll containers (#5857).
+
+        For a capture of something below the fold (e.g. a settings group at the
+        end of a long category). An element already in view does not move.
+        """
+        self._call({"action": "scrollIntoView", "testId": test_id})
+
     def render_settled(
         self,
         test_id: Optional[str] = None,

@@ -234,6 +234,7 @@ unmount.
 | `getValue`                 | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
 | `getComputedStyle`         | Read a _computed_ CSS property — incl. theme custom properties |
 | `measureElement`           | Read an element's box, overflow and visible buttons / text     |
+| `scrollIntoView`           | Scroll an element into view inside its scroll containers       |
 | `renderSettled`            | Whether the screen finished rendering (no spinner, idle DOM)   |
 | `readTerminal`             | Read a terminal's reconstructed logical-line text              |
 | `getTerminalViewport`      | Read a terminal's `{ viewportY, baseY }` scroll position       |
