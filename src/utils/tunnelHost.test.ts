@@ -96,6 +96,38 @@ describe("tunnelEndpointLines", () => {
     expect(lines[1].machine).toBe("agent build-box");
   });
 
+  it.each([
+    ["127.0.0.1", THIS],
+    ["localhost", AGENT],
+    ["::1", THIS],
+  ])(
+    "says that only the SSH server itself reaches a remote forward on %s (#6034)",
+    (bind, host) => {
+      const type = remote();
+      const lines = tunnelEndpointLines(
+        { ...type, config: { ...type.config, remoteHost: bind } } as TunnelType,
+        host
+      );
+      expect(lines[0].note).toBe("reachable only from the SSH server itself");
+    }
+  );
+
+  it.each([
+    ["0.0.0.0", THIS],
+    ["0.0.0.0", AGENT],
+    ["10.0.0.5", THIS],
+    ["", AGENT],
+  ])("leaves who reaches a remote forward on %j to the SSH server (#6034)", (bind, host) => {
+    const type = remote();
+    const { note } = tunnelEndpointLines(
+      { ...type, config: { ...type.config, remoteHost: bind } } as TunnelType,
+      host
+    )[0];
+    expect(note).toContain("the SSH server decides");
+    expect(note).toContain("GatewayPorts");
+    expect(note).not.toContain("reachable");
+  });
+
   it("labels the dynamic proxy on the tunnel host", () => {
     const lines = tunnelEndpointLines(dynamic(), THIS);
     expect(lines[0].label).toBe("SOCKS5 proxy on");
@@ -139,9 +171,17 @@ describe("reportedReachability", () => {
     expect(r).toEqual({ label: "reachable on build-box's network", warn: false });
   });
 
-  it("describes an -R forward as reachable on the SSH server's network", () => {
-    const r = reportedReachability("sshServer", "build-box");
-    expect(r).toEqual({ label: "reachable on the SSH server's network", warn: false });
+  it.each([
+    [undefined, "the SSH server decides"],
+    ["0.0.0.0:9000", "the SSH server decides"],
+    ["[::]:9000", "the SSH server decides"],
+    ["localhost:9000", "reachable only from the SSH server itself"],
+    ["127.0.0.1:9000", "reachable only from the SSH server itself"],
+    ["[::1]:9000", "reachable only from the SSH server itself"],
+  ])("claims no more of an -R forward on %s than is known (#6034)", (bound, says) => {
+    const r = reportedReachability("sshServer", "build-box", bound);
+    expect(r?.label).toContain(says);
+    expect(r?.warn).toBe(false);
   });
 
   it("returns null when the agent has not reported (undefined)", () => {

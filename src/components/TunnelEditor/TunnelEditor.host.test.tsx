@@ -17,6 +17,10 @@ import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
@@ -75,6 +79,8 @@ async function render(tunnelId: string | null) {
   await flushAsync();
 }
 
+const showPath = () => act(() => q("tunnel-editor-show-path")!.click());
+
 function q(testid: string): HTMLElement | null {
   return container.querySelector<HTMLElement>(`[data-testid="${testid}"]`);
 }
@@ -108,13 +114,14 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes a Tunnel host field", async () => {
+  it("exposes a Run on field", async () => {
     await render(null);
     expect(q("tunnel-editor-host")).not.toBeNull();
   });
 
   it("names the concrete machine in the endpoint lines for a new (desktop) tunnel", async () => {
     await render(null);
+    showPath();
     const endpoints = q("tunnel-editor-endpoints");
     expect(endpoints?.textContent).toContain("this computer");
     expect(endpoints?.textContent).toContain("Listens on");
@@ -124,6 +131,7 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
 
   it("names the agent and warns for an agent-hosted loopback listen", async () => {
     await render("tun-agent");
+    showPath();
     const endpoints = q("tunnel-editor-endpoints");
     expect(endpoints?.textContent).toContain("agent build-box");
     const warning = q("tunnel-editor-reachability");
@@ -136,6 +144,7 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     const widen = q("tunnel-editor-widen-bind") as HTMLButtonElement;
     expect(widen).not.toBeNull();
     act(() => widen.click());
+    showPath();
     // The warning is gone (bind is no longer loopback) and the endpoint line
     // reflects the widened address.
     expect(q("tunnel-editor-reachability")).toBeNull();
@@ -159,6 +168,7 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     });
     await render("tun-agent");
     expect(q("tunnel-editor-host")?.textContent).toBe("Unknown machine");
+    showPath();
     expect(q("tunnel-editor-endpoints")?.textContent).toContain("an unknown machine");
     expect(q("tunnel-editor-endpoints")?.textContent).not.toContain("this computer");
     await act(async () => q("tunnel-editor-save")!.click());

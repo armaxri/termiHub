@@ -1,7 +1,7 @@
 import type { KeyboardEventHandler, ReactNode, RefObject, FocusEvent } from "react";
 import { AlertTriangle } from "lucide-react";
 import { TOAST_AVOID_FORM_PROPS, TOAST_AVOID_PROPS } from "@/components/ui";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import "./ServiceEditor.css";
 
 interface ServiceEditorShellProps {
@@ -87,6 +87,11 @@ export function ServiceEditorShell({
       </div>
     </div>
   );
+}
+
+/** "New service · Web server (HTTP)", or what a saved one is. */
+export function editorSubtitle(isNew: boolean, technical: string): string {
+  return isNew ? tf("service.editor.new", { technical }) : technical;
 }
 
 /** What the user should know before saving, beside the field it is about. */

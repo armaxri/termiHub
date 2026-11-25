@@ -1,4 +1,5 @@
 import type { TunnelType } from "@/types/tunnel";
+import { bindField } from "./tunnelForm";
 import { validateHost, validatePort } from "@/utils/fieldValidation";
 
 /** Field-keyed validation messages for the tunnel forwarding config. */
@@ -11,16 +12,6 @@ export interface TunnelValidation {
   /** True when every visible host/port field is valid. */
   valid: boolean;
 }
-
-const HOST_LABELS: Record<string, string> = {
-  localHost: "Local host",
-  remoteHost: "Remote host",
-};
-
-const PORT_LABELS: Record<string, string> = {
-  localPort: "Local port",
-  remotePort: "Remote port",
-};
 
 /**
  * Validate the host/port fields of a tunnel's forwarding config.
@@ -39,11 +30,11 @@ export function validateTunnelType(tunnelType: TunnelType): TunnelValidation {
   for (const [key, value] of Object.entries(tunnelType.config)) {
     if (key.endsWith("Host")) {
       const host = typeof value === "string" ? value : "";
-      const err = validateHost(host, HOST_LABELS[key] ?? "Host");
+      const err = validateHost(host, key === bindField(tunnelType) ? "Address" : "Host");
       if (err) errors[key] = err;
     } else if (key.endsWith("Port")) {
       const port = typeof value === "number" || value === "" ? value : "";
-      const err = validatePort(port, { label: PORT_LABELS[key] ?? "Port" });
+      const err = validatePort(port, { label: "Port" });
       if (err) errors[key] = err;
     }
   }

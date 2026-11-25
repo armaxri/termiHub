@@ -92,8 +92,8 @@ describe("foregrounds never read the accent fill token (#5727)", () => {
 /** [CSS file under src/, selector, the foreground token it must read]. */
 const MIGRATED: [string, string, string][] = [
   [
-    "components/TunnelEditor/TunnelEditor.css",
-    ".tunnel-editor__reachability-action",
+    "components/ServiceEditor/ServiceEditor.css",
+    ".service-editor__warning-link",
     // #5744: the action sits on the warning tint, where plain --text-link misses AA.
     "--text-link-on-tint",
   ],

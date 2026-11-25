@@ -5,14 +5,9 @@
  */
 import { z } from "zod";
 import { t, tf } from "@/i18n/catalog";
-import {
-  DEFAULT_PORTS,
-  type EmbeddedServerConfig,
-  type NetworkInterface,
-  type ServerType,
-} from "@/types/embeddedServer";
+import { DEFAULT_PORTS, type EmbeddedServerConfig, type ServerType } from "@/types/embeddedServer";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
-import { isPrivateBind, isWideBind } from "@/utils/serviceAddress";
+import { whoOf } from "./bindWho";
 
 /**
  * The editing shape of an {@link EmbeddedServerConfig}: `port` is `""` while its
@@ -215,31 +210,6 @@ export function configOf(
         : undefined,
     ...(moved && form.host.kind !== "unreadable" ? { host: form.host } : {}),
   };
-}
-
-/** Who can open a server: its machine, everyone who reaches that, or one address. */
-export type Who = "here" | "network" | "address";
-
-/** What `bind` means; nothing while nobody was chosen. */
-export function whoOf(bind: string): Who | undefined {
-  if (bind.trim() === "") return undefined;
-  if (isPrivateBind(bind)) return "here";
-  return isWideBind(bind) ? "network" : "address";
-}
-
-/** The addresses of this computer that others may reach. */
-export function ownAddresses(
-  interfaces: readonly NetworkInterface[],
-  current: string
-): { value: string; label: string }[] {
-  const choices = interfaces
-    .filter(({ addr }) => whoOf(addr) === "address")
-    .map(({ name, addr }) => ({ value: addr, label: `${addr} (${name})` }));
-  // A saved one that is not there now stays what it is.
-  if (whoOf(current) === "address" && choices.every(({ value }) => value !== current)) {
-    choices.push({ value: current, label: current });
-  }
-  return choices;
 }
 
 /** Who reaches the server, and what they can do: for whoever opens it to others. */

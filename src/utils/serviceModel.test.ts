@@ -589,7 +589,8 @@ describe("the address, only while it runs", () => {
     });
     expect(of(remote("0.0.0.0"))).toMatchObject({
       copy: "shop.example:9000",
-      reach: "anyone who reaches shop-web",
+      // Only its SSH server knows (#6034).
+      reach: "anyone who reaches shop-web, if its SSH server allows it",
     });
     // The agent that hosts it changes nothing about where it listens.
     expect(of(remote("localhost"), { host: EDGE })?.on).toBe("shop-web");

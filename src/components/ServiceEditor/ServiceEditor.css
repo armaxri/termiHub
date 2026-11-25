@@ -81,9 +81,19 @@
   min-width: 0;
 }
 
+.service-editor__row--even > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .service-editor__port {
   flex-shrink: 0;
   width: 110px;
+}
+
+/* The port that is opened, under what it is called. */
+.service-editor__opened {
+  max-width: 220px;
 }
 
 /* A label over a group of choices. */
@@ -164,4 +174,29 @@
   flex-shrink: 0;
   margin-top: var(--spacing-xxs);
   color: var(--color-warning);
+}
+
+.service-editor__warning-link {
+  padding: 0;
+  border: none;
+  background: none;
+  /* #5744: plain --text-link misses AA on the warning tint in all four themes. */
+  color: var(--text-link-on-tint);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.service-editor__warning-link:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.service-editor__warning-link:disabled {
+  color: var(--text-disabled);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+.service-editor__link--row {
+  align-self: flex-start;
 }
