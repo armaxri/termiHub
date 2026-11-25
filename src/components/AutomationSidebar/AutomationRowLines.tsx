@@ -1,7 +1,8 @@
-import { Ban, CalendarClock, Hand, Square, Zap, ZapOff } from "lucide-react";
+import { Ban, CalendarClock, Hand, Square, TriangleAlert, Zap, ZapOff } from "lucide-react";
 import type React from "react";
 import { Button, Toggle } from "@/components/ui";
-import { tf } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
+import { joinWords } from "@/utils/joinWords";
 import type { AutomationRunTarget } from "./AutomationRow";
 import type { TriggerState } from "./automationRowInfo";
 
@@ -13,6 +14,9 @@ export interface RowLinesProps {
   targets: AutomationRunTarget[];
   /** Why it cannot run. */
   blocked: string | null;
+  /** What an import left out of it, until it was saved once. */
+  importedInPart: string[];
+  onEdit: () => void;
   /** What starts it, or does not while its triggers are off. */
   triggers: TriggerState | null;
   /** When a schedule runs it next. */
@@ -35,6 +39,8 @@ export function RowLines({
   name,
   targets,
   blocked,
+  importedInPart,
+  onEdit,
   triggers,
   nextRun,
   onSetTriggers,
@@ -87,6 +93,26 @@ export function RowLines({
         >
           <Ban size={10} aria-hidden="true" />
           <span className="automation-item__line-text">{blocked}</span>
+        </div>
+      )}
+      {importedInPart.length > 0 && (
+        <div
+          className="automation-item__line automation-item__line--blocked"
+          data-testid={`automation-imported-part-${id}`}
+          {...keepOffRow}
+        >
+          <TriangleAlert size={10} aria-hidden="true" />
+          <span className="automation-item__line-text">
+            {tf("automation.importedInPart", { parts: joinWords(importedInPart) })}{" "}
+            <button
+              type="button"
+              className="automation-item__link"
+              onClick={onEdit}
+              data-testid={`automation-imported-check-${id}`}
+            >
+              {t("automation.importedCheck")}
+            </button>
+          </span>
         </div>
       )}
       {triggers !== null && (

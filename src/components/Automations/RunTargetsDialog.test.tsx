@@ -145,8 +145,8 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
   it("counts live terminals for this panel and all terminals", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b"), term("c", null)]);
     render();
-    expect(document.body.textContent).toContain("Terminals in this split (2)");
-    expect(document.body.textContent).toMatch(/All terminals in “.+” \(2\)/);
+    expect(document.body.textContent).toContain("Terminals in this split: host-a, host-b");
+    expect(document.body.textContent).toContain("All terminals: host-a, host-b");
     // Broadcast is off, so its option is not offered.
     expect(q("run-targets-target-broadcast")).toBeNull();
   });

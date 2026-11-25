@@ -13,11 +13,13 @@ import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automatio
  */
 export function ScheduleStatus() {
   const schedules = useAppStore((s) => s.schedules);
-  const { blockedShort } = useScheduleLabels();
+  const { automations, connections, blockedShort } = useScheduleLabels();
   const on = schedules.filter((x) => x.enabled);
   const enabled = on.length;
   // One that will not run is on, but nothing starts (B-016).
-  const blocked = on.filter((x) => blockedShort(x) !== null).length;
+  // Not before the library and the connections have loaded.
+  const loaded = automations.length > 0 && connections.length > 0;
+  const blocked = loaded ? on.filter((x) => blockedShort(x) !== null).length : 0;
   const running = useAppStore((s) => s.schedules.some((x) => x.running));
   const paused = useAppStore((s) => s.schedulesPaused);
 

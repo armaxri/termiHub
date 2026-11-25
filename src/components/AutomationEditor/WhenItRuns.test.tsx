@@ -179,7 +179,7 @@ describe("triggers", () => {
     click("automation-editor-when-toggle");
     await flushAsync();
     expect(query("automation-editor-when-waits")?.textContent).toContain(
-      "Schedules, On disconnect and On output match do not start it"
+      "Step 1 waits for you. Started on connect, it ends after 5 minutes without Continue."
     );
     await chooseStep("0", "delete");
     expect(query("automation-editor-when-waits")).toBeNull();

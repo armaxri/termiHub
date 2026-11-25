@@ -41,8 +41,6 @@ export interface TerminalToolbarMoreProps {
   recordingLabel: string | null;
   /** Something is recorded, with or without a chip. */
   recording: boolean;
-  /** What is typed now is kept apart: the user is at a password prompt. */
-  recordingAtPrompt: boolean;
   onToggleRecording: () => void;
   playback: PlaybackProgress | null;
   onRunAutomation: () => void;
@@ -74,7 +72,6 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
     loggingActive,
     onToggleLogging,
     recordingLabel,
-    recordingAtPrompt,
     onToggleRecording,
     playback,
     onStopPlayback,
@@ -121,12 +118,7 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
           {recordingLabel !== null && (
             <ActiveChip
               label={recordingLabel}
-              tooltip={withActionAccelerator(
-                recordingAtPrompt
-                  ? t("terminalToolbar.chip.recordingPromptTooltip")
-                  : recordingLabel,
-                "toggle-macro-recording"
-              )}
+              tooltip={withActionAccelerator(recordingLabel, "toggle-macro-recording")}
               icon={<Square size={12} fill="currentColor" />}
               tone="recording"
               onClick={onToggleRecording}

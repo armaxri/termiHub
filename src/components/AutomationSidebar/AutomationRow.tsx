@@ -264,6 +264,8 @@ export function AutomationRow({
       name={name}
       targets={targets}
       blocked={running ? null : blocked}
+      importedInPart={automation.importedInPart ?? []}
+      onEdit={() => actions.onEdit(id)}
       triggers={triggers}
       nextRun={nextRun}
       onSetTriggers={(on) => onSetTriggers(id, on)}

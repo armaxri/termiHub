@@ -37,7 +37,9 @@ export const AUTOMATION_FILE_VERSION = WORKFLOW_EXPORT_VERSION;
 
 /** Serialize automations into an export file. */
 export function serializeAutomations(automations: readonly Automation[]): string {
-  return `${JSON.stringify({ version: AUTOMATION_FILE_VERSION, automations }, null, 2)}\n`;
+  // What an import left out is about this library's copy, not the automation.
+  const entries = automations.map(({ importedInPart: _importedInPart, ...entry }) => entry);
+  return `${JSON.stringify({ version: AUTOMATION_FILE_VERSION, automations: entries }, null, 2)}\n`;
 }
 
 /**
@@ -62,7 +64,7 @@ export function withCalledAutomations(
 /** An entry of a file, under the id it has there. */
 export interface ParsedEntry {
   automation: Automation;
-  /** The parts of it this build does not know, which were left out: "step 2: later". */
+  /** The parts of it this build does not know, which were left out: "a setting of step 2 (“later”)". */
   leftOut: string[];
 }
 
@@ -96,13 +98,18 @@ function unknownKind(raw: unknown): string | null {
   );
 }
 
-/** Where a part is, in the dialog's words: `step 2: later`. */
+/**
+ * What a part is and where (B-041): its key means nothing to the reader, so it says
+ * "a setting of step 2 (“later”)".
+ */
 function partName(path: readonly (string | number)[]): string {
   const key = path[path.length - 1];
   const [list, index] = path;
-  if (path.length < 3 || typeof index !== "number") return String(key);
-  if (list === "steps") return `step ${index + 1}: ${key}`;
-  return list === "triggers" ? `trigger ${index + 1}: ${key}` : String(key);
+  const what = (of: string) => `a setting${of} (“${key}”)`;
+  if (path.length < 3 || typeof index !== "number") return what("");
+  if (list === "steps") return what(` of step ${index + 1}`);
+  if (list === "triggers") return what(` of trigger ${index + 1}`);
+  return what(list === "parameters" ? ` of value ${index + 1}` : "");
 }
 
 /** The keys of `raw`, at any level, that validation took out. */
@@ -309,6 +316,8 @@ export function prepareAutomationImport(
       updatedAt: "",
     };
     if (automation.triggers.length > 0) automation.triggersEnabled = false;
+    // Its row says so until the user has looked at it and saved it (B-041).
+    if (leftOut.length > 0) automation.importedInPart = leftOut;
     result.automations.push(automation);
     result.entries.push({
       automation,

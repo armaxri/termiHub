@@ -206,6 +206,24 @@
   white-space: normal;
 }
 
+.automation-item__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.automation-item__link:hover {
+  text-decoration: underline;
+}
+
+.automation-item__link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
 .automation-item__where {
   flex: 1;
   min-width: 0;

@@ -467,7 +467,7 @@ describe("toastRunOutcome", () => {
     toastRunOutcome("wf", { status: "failed", stepsCompleted: 1, error: "nope" }, 3, "t");
     expect(mocks.toast.error).toHaveBeenCalledWith("“wf” failed at step 2", {
       id: "t",
-      description: "nope",
+      description: "Step 1 was run. nope",
     });
   });
 
@@ -537,10 +537,12 @@ describe("runWorkflowOnTarget — a step that waits for the user (#6025)", () =>
       automationName: "wf",
       message: "Type your password",
     });
-    expect(mocks.toast.loading).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ description: "Waiting for you" })
-    );
+    // No spinner while it waits: the bar says it, and the next step brings it back (B-004).
+    const texts = mocks.toast.loading.mock.calls.map(([, options]) => options.description);
+    expect(texts[0]).toBe("Step 1 of 3 in prod-web");
+    expect(texts).not.toContain("Waiting for you");
+    expect(mocks.toast.dismiss).toHaveBeenCalled();
+    expect(texts[texts.length - 1]).toBe("Step 3 of 3 in prod-web");
     expect(mocks.injector).toHaveBeenCalledTimes(2);
   });
 

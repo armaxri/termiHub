@@ -258,7 +258,11 @@ export function ScheduleEditorDialog({
   const isOn = schedule !== null && enabled;
   const staysOff = !isOn || (schedule !== null && needsNewConfirmation(schedule, current));
   // Only what would run then can be switched on from here.
-  const offerSwitchOn = staysOff && cannotRun === null && targetNames.gone === null;
+  const offerSwitchOn =
+    staysOff &&
+    cannotRun === null &&
+    !noneLeft &&
+    (picked !== undefined || watched.automationId === "");
 
   return (
     <Modal
@@ -342,16 +346,19 @@ export function ScheduleEditorDialog({
                 hint={
                   pickRefused || automationNote === null ? undefined : (
                     <>
-                      {automationNote}{" "}
+                      {automationNote}
                       {cannotRun !== null && picked && onEditAutomation ? (
-                        <button
-                          type="button"
-                          className="schedules__link"
-                          onClick={() => onEditAutomation(picked)}
-                          data-testid="schedule-editor-edit-automation"
-                        >
-                          {t("schedule.editAutomation")}
-                        </button>
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            className="schedules__link"
+                            onClick={() => onEditAutomation(picked)}
+                            data-testid="schedule-editor-edit-automation"
+                          >
+                            {t("schedule.editAutomation")}
+                          </button>
+                        </>
                       ) : null}
                     </>
                   )

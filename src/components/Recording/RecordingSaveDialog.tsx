@@ -9,6 +9,7 @@ import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/i
 import { parseTags } from "@/utils/parseTags";
 import { recordedTime, recordingName } from "@/utils/recordingText";
 import "./Recording.css";
+import { t } from "@/i18n/catalog";
 
 /** Props of {@link RecordingSaveDialog}. Mount it with a fresh `key` per take. */
 export interface RecordingSaveDialogProps {
@@ -119,7 +120,7 @@ export function RecordingSaveDialog({
         <>
           {/* What the X does, by name (A-009). */}
           <Button
-            variant="ghost"
+            variant="secondary"
             className="recording-save__keep"
             onClick={onKeep}
             data-testid="recording-save-keep"
@@ -180,8 +181,7 @@ export function RecordingSaveDialog({
                 options={[
                   {
                     value: "leave-out",
-                    label:
-                      "Leave it out. The automation waits at this point until you have typed it.",
+                    label: t("recording.leaveOut"),
                     "data-testid": "recording-save-secrets-leave-out",
                   },
                   {

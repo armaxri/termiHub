@@ -113,7 +113,7 @@ describe("import", () => {
     expect(refused("Odd")?.textContent).toContain("teleport");
     expect(refused("Odd")?.textContent).toContain("Update termiHub");
     expect(entry("Part")?.dataset.state).toBe("partly");
-    expect(entry("Part")?.textContent).toContain("step 1: later");
+    expect(entry("Part")?.textContent).toContain("a setting of step 1 (“later”)");
   });
 
   it("says that nothing was imported", async () => {

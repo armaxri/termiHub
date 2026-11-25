@@ -121,7 +121,13 @@ describe("the keys", () => {
 
   it("cannot delete the only row", async () => {
     await open({ ...recorded, chunks: [recorded.chunks[0]] });
-    expect((query("automation-editor-keys-delete-0-0") as HTMLButtonElement).disabled).toBe(true);
+    // Nothing to move it past, nothing to time (B-012).
+    expect(query("automation-editor-keys-delete-0-0")).toBeNull();
+    expect(query("automation-editor-keys-up-0-0")).toBeNull();
+    expect(query("automation-editor-step-speed-0")).toBeNull();
+    click("automation-editor-keys-add-0");
+    expect(query("automation-editor-keys-delete-0-0")).not.toBeNull();
+    expect(query("automation-editor-step-speed-0")).not.toBeNull();
   });
 
   it("shows no delay before the first keys: they are typed at once", async () => {
@@ -208,8 +214,11 @@ describe("typing speed (#5820)", () => {
   });
 
   it("does not speak of a recording for hand-written keys", async () => {
-    await open({ kind: "type-keys", chunks: [{ data: "a", delayMs: 0 }], timing: "recorded" });
-    expect(query("automation-editor-step-speed-0")?.textContent).toContain("Set for each row");
+    const row = { data: "a", delayMs: 0 };
+    await open({ kind: "type-keys", chunks: [row, row], timing: "recorded" });
+    expect(query("automation-editor-step-speed-0")?.textContent).toContain(
+      "Own pause before each row"
+    );
   });
 });
 

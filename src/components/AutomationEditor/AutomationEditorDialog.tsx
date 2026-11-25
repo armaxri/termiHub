@@ -5,7 +5,6 @@ import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { reachesWaitForUser } from "@/services/automationRunner";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import type { RecordedTake } from "@/store/slices/recordingSlice";
 import { showTerminal } from "@/utils/showTerminal";
@@ -37,6 +36,11 @@ import { insertRecording, recordedNote, withRecordedSecrets } from "./recordedSt
 import { RecordStepsButton } from "./RecordStepsButton";
 import { StepEditorProvider, type StepEditorContextValue } from "./stepEditorContext";
 import { StepList } from "./StepList";
+import { hotkeyConflict } from "./HotkeyField";
+import { tf } from "@/i18n/catalog";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { joinWords } from "@/utils/joinWords";
+import { waitingStep } from "@/utils/unattended";
 import { WhenItRuns, whenItRunsSummary } from "./WhenItRuns";
 import "./AutomationEditor.css";
 
@@ -121,11 +125,11 @@ export function AutomationEditorDialog({
   const [announcement, setAnnouncement] = useState("");
 
   const automations = useAppStore((s) => s.automations);
-  const scheduleCount = useAppStore(
-    (s) => s.schedules.filter((x) => x.action.automationId === automation.id).length
-  );
+  const schedules = useAppStore((s) => s.schedules);
+  const linked = schedules.filter((x) => x.action.automationId === automation.id);
+  const { connections } = useProjectedConnections();
   // What starts it comes first when something does (A-024); the heading says what.
-  const [whenFirst] = useState(initial.triggers.length > 0 || (!isNew && scheduleCount > 0));
+  const [whenFirst] = useState(initial.triggers.length > 0 || (!isNew && linked.length > 0));
   const [whenOpen, setWhenOpen] = useState(false);
   const [valuesOpen, setValuesOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
@@ -184,6 +188,7 @@ export function AutomationEditorDialog({
   const stepEditor: StepEditorContextValue = useMemo(
     () => ({
       automations: automations.filter((a) => a.id !== automation.id),
+      valueNames: draft.parameters.map((p) => p.name).filter(Boolean),
       errors,
       expanded,
       setExpanded: (uid, open) => setExpandedSet((prev) => toggled(prev, uid, open)),
@@ -196,7 +201,16 @@ export function AutomationEditorDialog({
       announce: setAnnouncement,
       renderStepList: (props) => <StepList {...props} />,
     }),
-    [automations, automation.id, errors, expanded, failureOpen, openSettingsTab, setAside]
+    [
+      automations,
+      automation.id,
+      draft.parameters,
+      errors,
+      expanded,
+      failureOpen,
+      openSettingsTab,
+      setAside,
+    ]
   );
 
   /** Open whatever hides an error, then show every error and focus the first. */
@@ -223,7 +237,11 @@ export function AutomationEditorDialog({
     // Refused anyway, and the footer says why.
     if (run && blockedBy !== null) return;
     // An untouched automation is not written again: its file keeps its bytes.
-    const changed = isNew || draftContentKey(draft) !== draftContentKey(initial);
+    // Except to say that an import in part was looked at (B-041).
+    const changed =
+      isNew ||
+      draftContentKey(draft) !== draftContentKey(initial) ||
+      (base.importedInPart?.length ?? 0) > 0;
     return onSave({
       automation: changed ? fromDraft(draft, base) : null,
       run,
@@ -246,7 +264,18 @@ export function AutomationEditorDialog({
     [draft.steps, automations, experimental]
   );
   const missing = missingSummary(allErrors);
-  const footerNote = missing ?? blockedBy;
+  // A hotkey somebody else answers to is stored and never works (B-022).
+  const deadHotkey = draft.triggers
+    .flatMap(({ trigger }) =>
+      trigger.kind === "hotkey" ? [hotkeyConflict(trigger.binding, stepEditor.automations)] : []
+    )
+    .find((conflict) => conflict !== null);
+  const footerNote =
+    missing ??
+    blockedBy ??
+    (deadHotkey
+      ? `The hotkey will not work: ${deadHotkey.keys} is used by “${deadHotkey.user}”.`
+      : null);
 
   const handleRecord = async (tabId: string | null) => {
     const intoEditor = draft.name.trim();
@@ -266,8 +295,8 @@ export function AutomationEditorDialog({
     setRecorded({ ...recorded, take: { ...recorded.take, secrets: [] } });
   };
 
-  const waitsForUser = useMemo(
-    () => reachesWaitForUser(fromDraft(draft, base), (id) => automations.find((a) => a.id === id)),
+  const waitsAt = useMemo(
+    () => waitingStep(fromDraft(draft, base), (id) => automations.find((a) => a.id === id)),
     [draft, base, automations]
   );
   const stepUids = allUids(draft.steps);
@@ -277,7 +306,12 @@ export function AutomationEditorDialog({
     <div data-enter-exempt>
       <EditorSection
         title="When it runs"
-        summary={whenItRunsSummary(draft.triggers, isNew ? 0 : scheduleCount)}
+        summary={whenItRunsSummary({
+          triggers: draft.triggers.map((x) => x.trigger),
+          triggersEnabled: draft.triggersEnabled,
+          schedules: isNew ? [] : linked,
+          connectionName: (id) => connections.find((c) => c.id === id)?.name,
+        })}
         open={whenOpen}
         onOpenChange={setWhenOpen}
         data-testid="automation-editor-when-toggle"
@@ -285,7 +319,7 @@ export function AutomationEditorDialog({
         <WhenItRuns
           triggers={draft.triggers}
           triggersEnabled={draft.triggersEnabled}
-          waitsForUser={waitsForUser}
+          waitsAt={waitsAt}
           automationId={isNew ? null : automation.id}
           scheduleAfterSave={scheduleAfterSave}
           errors={errors}
@@ -363,6 +397,14 @@ export function AutomationEditorDialog({
         onKeyDown={handleKeyDown}
         {...rootProps}
       >
+        {base.importedInPart?.length ? (
+          <p
+            className="automation-step__note automation-step__note--warning"
+            data-testid="automation-editor-imported-part"
+          >
+            {tf("automation.importedNote", { parts: joinWords(base.importedInPart) })}
+          </p>
+        ) : null}
         <div className="automation-editor__head">
           <Field label="Name" htmlFor="automation-editor-name" error={errors.name}>
             <Input

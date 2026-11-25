@@ -100,7 +100,7 @@ describe("labels and icons", () => {
 
   it("names the recorded speed only for a recording", () => {
     expect(typingSpeedLabel("recorded", true)).toBe("As recorded");
-    expect(typingSpeedLabel("recorded", false)).toBe("Set for each row");
+    expect(typingSpeedLabel("recorded", false)).toBe("Own pause before each row");
   });
 });
 

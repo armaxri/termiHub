@@ -152,16 +152,19 @@ export function ScheduleRow({
               className="schedules__line schedules__line--warning"
               data-testid={`schedule-blocked-${s.id}`}
             >
-              {blocked}{" "}
+              {blocked}
               {repairable && (
-                <button
-                  type="button"
-                  className="schedules__link"
-                  onClick={onRepair}
-                  data-testid={`schedule-repair-${s.id}`}
-                >
-                  {t("schedule.repair")}
-                </button>
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="schedules__link"
+                    onClick={onRepair}
+                    data-testid={`schedule-repair-${s.id}`}
+                  >
+                    {t("schedule.repair")}
+                  </button>
+                </>
               )}
             </span>
           ) : null}
@@ -173,16 +176,19 @@ export function ScheduleRow({
             >
               <StatusDot tone={attemptTone(last.kind)} size="sm" ariaHidden />
               <span>
-                {lastRunText(last)}{" "}
+                {lastRunText(last)}
                 {last.kind !== "completed" && (
-                  <button
-                    type="button"
-                    className="schedules__link"
-                    onClick={onShowHistory}
-                    data-testid={`schedule-last-history-${s.id}`}
-                  >
-                    {t("schedule.menu.history")}
-                  </button>
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      className="schedules__link"
+                      onClick={onShowHistory}
+                      data-testid={`schedule-last-history-${s.id}`}
+                    >
+                      {t("schedule.menu.history")}
+                    </button>
+                  </>
                 )}
               </span>
             </span>

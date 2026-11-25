@@ -53,4 +53,9 @@ updatedAt: string,
 /**
  * Where a converted automation came from; absent for new ones.
  */
-legacy?: AutomationLegacy, };
+legacy?: AutomationLegacy, 
+/**
+ * What an import left out, in words, until the user has saved the
+ * automation once (#6045). Empty for every other automation.
+ */
+importedInPart?: Array<string>, };

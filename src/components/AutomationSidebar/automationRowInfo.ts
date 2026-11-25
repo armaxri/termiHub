@@ -48,7 +48,11 @@ function isSessionTrigger(trigger: AutomationTrigger): trigger is SessionTrigger
  * connection never fires, so it does not count; a hotkey is the user.
  */
 export function automaticTriggers(automation: Automation): SessionTrigger[] {
-  return automation.triggers.filter(
+  return boundTriggers(automation.triggers);
+}
+
+function boundTriggers(triggers: readonly AutomationTrigger[]): SessionTrigger[] {
+  return triggers.filter(
     (trigger): trigger is SessionTrigger =>
       isSessionTrigger(trigger) && trigger.connectionIds.length > 0
   );
@@ -60,8 +64,8 @@ export function triggersArmed(automation: Automation): boolean {
 }
 
 /** The keys its hotkey triggers name. */
-function hotkeyBindings(automation: Automation): string[] {
-  return automation.triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
+function hotkeyBindings(triggers: readonly AutomationTrigger[]): string[] {
+  return triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
 }
 
 /** The bound connections' names, the first few listed and the rest counted. */
@@ -105,6 +109,21 @@ export interface TriggerState {
   text: string;
 }
 
+/** What can start it by itself, in words: "hotkey F8", "connecting to prod". */
+export function triggerPhrases(
+  triggers: readonly AutomationTrigger[],
+  connectionName: ConnectionName
+): string[] {
+  return [
+    ...hotkeyBindings(triggers).map((keys) => tf("automation.trigger.hotkey", { keys })),
+    ...boundTriggers(triggers).map((trigger) =>
+      tf(TRIGGER_PHRASE[trigger.kind], {
+        connections: connectionList(trigger.connectionIds, connectionName),
+      })
+    ),
+  ];
+}
+
 /**
  * The row's trigger line (#6026): which hotkey and what else starts it, or, while
  * its triggers are off, what does not start it any more. `null` when nothing
@@ -114,14 +133,7 @@ export function triggerState(
   automation: Automation,
   connectionName: ConnectionName
 ): TriggerState | null {
-  const parts = [
-    ...hotkeyBindings(automation).map((keys) => tf("automation.trigger.hotkey", { keys })),
-    ...automaticTriggers(automation).map((trigger) =>
-      tf(TRIGGER_PHRASE[trigger.kind], {
-        connections: connectionList(trigger.connectionIds, connectionName),
-      })
-    ),
-  ];
+  const parts = triggerPhrases(automation.triggers, connectionName);
   if (parts.length === 0) return null;
   const on = triggersArmed(automation);
   return {

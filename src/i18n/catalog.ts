@@ -588,6 +588,21 @@ const en = {
   "automation.triggers.toggleOff": "Turn off the triggers of {name}",
   "automation.triggers.toggleOn": "Turn on the triggers of {name}",
   "automation.triggers.toggleFailed": "The triggers of “{name}” could not be changed",
+  "automation.importedInPart": "Imported in part, without {parts}.",
+  "automation.importedCheck": "Check it",
+  "automation.importedNote":
+    "Imported in part, without {parts}, which this version does not know. Check what it does, then save it.",
+  "automation.blockedShort.unknown": "needs a newer termiHub",
+  "automation.blockedShort.local": "needs experimental features",
+  "automation.replace.title": "Run “{name}”?",
+  "automation.replace.message": "That stops {running}, wherever it is in its steps.",
+  "automation.replace.one": "“{name}” in {where}",
+  "automation.replace.accept": "Stop it and run",
+  "automation.triggerHint.hotkey": "When you press keys in a terminal",
+  "automation.triggerHint.onConnect": "When a connection opens",
+  "automation.triggerHint.onDisconnect": "When a connection closes",
+  "automation.triggerHint.onOutputMatch": "When a terminal shows a text",
+  "automation.triggerHint.schedule": "At a time, again and again",
   "automation.triggers.offMany": "Triggers off: {triggers} do not start it. You can still run it.",
   "automation.trigger.hotkey": "hotkey {keys}",
   "automation.trigger.onConnect": "connecting to {connections}",
@@ -714,9 +729,9 @@ const en = {
   "automation.wait.message": "Type what the terminal asks for",
   "automation.wait.password": "Type your password",
   "automation.wait.stepNote":
-    "The run stops here until you press Continue above the terminal. It ends after 5 minutes without it. A schedule, On disconnect and On output match do not start an automation with this step.",
+    "The run stops here until you press Continue above the terminal. It ends if you do not press it within 5 minutes. A schedule, on disconnect and on output match cannot start an automation with this step.",
   "automation.wait.whenNote":
-    "It waits for you. Schedules, On disconnect and On output match do not start it; a run On connect ends if nobody presses Continue within 5 minutes.",
+    "Step {step} waits for you. Started on connect, it ends after 5 minutes without Continue. It cannot be started by a schedule, on disconnect or on output match.",
   "automation.wait.title": "“{name}” waits for you in {tab}.",
   "automation.wait.then": "{message}, then Continue.",
   "automation.wait.passwordThen":
@@ -745,9 +760,10 @@ const en = {
   "terminalToolbar.chip.logging": "Logging",
   "terminalToolbar.chip.recording": "Stop recording",
   "terminalToolbar.chip.recordingIn": "Stop recording in {tab}",
-  "terminalToolbar.chip.recordingPrompt": "Stop recording (password kept apart)",
-  "terminalToolbar.chip.recordingPromptTooltip":
-    "Stop recording (password kept apart). You choose whether to store it when you save",
+  "recording.leaveOut":
+    "Leave it out. The run stops here until you typed it and pressed Continue. It cannot run on a schedule.",
+  "recording.promptNote":
+    "Password prompt: what you type now is not recorded, unless you choose so when saving.",
   "terminalToolbar.chip.recordingPaused": "Stop recording (not connected)",
   "terminalToolbar.chip.playback": "Stop “{name}” ({percent} % typed)",
   "terminalToolbar.chip.playbackSeveral": "Stop “{name}” in {count} terminals",

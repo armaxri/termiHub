@@ -188,6 +188,8 @@ export function fromDraft(draft: AutomationDraft, base: Automation): Automation 
     if (draft.triggersEnabled) delete next.triggersEnabled;
     else next.triggersEnabled = false;
   }
+  // Saving it is what "checked" means.
+  delete next.importedInPart;
   return next;
 }
 

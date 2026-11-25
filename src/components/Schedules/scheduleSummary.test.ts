@@ -15,8 +15,8 @@ const summary = (over: Partial<ScheduleSummaryInput> = {}) =>
     next: tomorrow.toISOString(),
     rule: { kind: "daily", time: "02:00" },
     targets: { label: "Build Box", hosts: ["Build Box"], gone: null },
-    targetCount: 1,
-    cannotRun: null,
+    cannotRun: false,
+    missing: [],
     ifClosed: "connect",
     isOn: true,
     switchesOff: false,
@@ -26,13 +26,25 @@ const summary = (over: Partial<ScheduleSummaryInput> = {}) =>
 
 describe("scheduleSummary: what will happen, before saving (A-046)", () => {
   it("names the next run and where", () => {
-    expect(summary()).toEqual(["Next run: tomorrow 02:00 on Build Box."]);
+    expect(summary()).toEqual(["On. Next run: tomorrow 02:00 on Build Box."]);
   });
 
-  it("says that a new schedule is off until it is switched on", () => {
+  it("promises no run of one that is off, only what happens when it is switched on (B-030)", () => {
     expect(summary({ isOn: false })).toEqual([
-      "Next run: tomorrow 02:00 on Build Box.",
+      "When switched on: next run tomorrow 02:00 on Build Box.",
+    ]);
+    expect(summary({ isOn: false, next: null })).toEqual([
       "Off until you switch it on in the list.",
+    ]);
+  });
+
+  it("says everything that is missing, and nothing about a run (B-032)", () => {
+    expect(summary({ isOn: false, missing: ["give it a name", "choose a connection"] })).toEqual([
+      "To save: give it a name and choose a connection.",
+    ]);
+    expect(summary({ missing: ["give it a name"], cannotRun: true })).toEqual([
+      "To save: give it a name.",
+      "Will not run on a schedule.",
     ]);
   });
 
@@ -44,17 +56,14 @@ describe("scheduleSummary: what will happen, before saving (A-046)", () => {
     expect(summary({ rule: { ...rule, everyMinutes: 1 }, isOn: false })[0]).toContain(
       "1 minute after"
     );
-    expect(summary({ rule })[0]).toBe("Next run: tomorrow 02:00 on Build Box.");
+    expect(summary({ rule })[0]).toBe("On. Next run: tomorrow 02:00 on Build Box.");
   });
 
   it("says what keeps it from running", () => {
-    expect(summary({ targetCount: 0 })[0]).toBe(
-      "Next run: tomorrow 02:00, but no connection is chosen."
-    );
     expect(summary({ targets: { label: "x", hosts: ["x"], gone: "it is gone" } })[0]).toBe(
       "Will not run: it is gone."
     );
-    expect(summary({ cannotRun: "Will not run: because." })).toEqual(["Will not run: because."]);
+    expect(summary({ cannotRun: true })).toEqual(["Will not run on a schedule."]);
     expect(summary({ paused: true })).toContain("All schedules are paused.");
   });
 
