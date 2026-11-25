@@ -12,10 +12,10 @@ import { newId } from "@/services/transport/ids";
 import {
   InputRecorder,
   recordedParts,
-  type ReadPrompt,
   type Recorded,
   type RecordingSlot,
 } from "@/services/inputRecorder";
+import type { PromptReader } from "@/services/passwordPrompt";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { t } from "@/i18n/catalog";
@@ -91,9 +91,9 @@ export interface RecordingSlice {
    */
   startRecording: (options?: StartRecordingOptions) => boolean;
   /** Record input `tabId` sent its session. Ignored for any other terminal. */
-  recordInput: (tabId: string, data: string, readPrompt?: ReadPrompt) => void;
+  recordInput: (tabId: string, data: string, readPrompt?: PromptReader) => void;
   /** Keep the place of a paste into `tabId`; `null` when it is not recorded. */
-  reserveRecordedPaste: (tabId: string, readPrompt?: ReadPrompt) => RecordingSlot | null;
+  reserveRecordedPaste: (tabId: string, readPrompt?: PromptReader) => RecordingSlot | null;
   /** Stop, and ask what to do with the take (or hand it to the editor). */
   stopRecording: (ended?: RecordingEnd) => void;
   /** Stop and keep nothing: a recording into the editor that went wrong (A-010). */
@@ -216,7 +216,8 @@ export const createRecordingSlice: StateCreator<AppState, [], [], RecordingSlice
         toast.info("Open a terminal to record in");
         return false;
       }
-      recorder = new InputRecorder();
+      const own = new InputRecorder(undefined, () => recorder === own && publish());
+      recorder = own;
       set({
         recording: {
           tabId: tab.id,

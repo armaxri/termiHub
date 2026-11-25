@@ -841,6 +841,11 @@ const en = {
   "automation.wait.until": "Stops at {time} if you do nothing.",
   "automation.wait.stillAsking":
     "The terminal still asks for a password. Type it and press Enter first, or the next keys go into the prompt.",
+  "automation.wait.checking": "Looking at what the terminal prints…",
+  "automation.wait.unchecked":
+    "It cannot be told yet whether the terminal asks for a password: it still prints. Look at it first, or the next keys may go into a prompt.",
+  "automation.wait.elsewhere":
+    "Another window or computer controls this terminal. Take it back first, then press Continue.",
   "automation.wait.note": "Waiting for you",
   "automation.wait.unattended":
     "It stops to let you type in the terminal, and nobody is there when it starts by itself. Nothing was typed.",
@@ -858,6 +863,10 @@ const en = {
   "recording.leaveOut":
     "Leave it out. The run pauses here until you typed it and pressed Continue. Cannot be started by a schedule, by a closing connection or by matching output.",
   "recording.noEnter": "It ends without Enter: the last line is typed but not sent.",
+  "recording.secretUnknown":
+    "Some of what you typed may be a password: the terminal was still printing.",
+  "recording.secretAt": "You typed at a password prompt ({prompts}).",
+  "recording.secretStored": "An automation stores what it types unencrypted.",
   "recording.promptNote":
     "Password prompt: what you type now is kept out of the recording. When saving you decide whether to store it.",
   "terminalToolbar.chip.recordingPaused": "Stop recording (not connected)",

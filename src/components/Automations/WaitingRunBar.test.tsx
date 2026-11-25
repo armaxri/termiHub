@@ -11,7 +11,7 @@ vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
 import { toast } from "@/components/ui";
 import { CONTEXT_COMMANDS } from "@/services/contextCommands";
-import { registerTerminalPromptReader } from "@/services/passwordPrompt";
+import { registerTerminalPrompt } from "@/services/passwordPrompt";
 import { WAIT_FOR_USER_LIMIT_MS, type WaitForUserResult } from "@/services/workflowRunner";
 import { useAppStore } from "@/store/appStore";
 import { __emitSessionViewForTest, type ProjectedSessionLifecycle } from "@/store/sessionBridge";
@@ -28,6 +28,9 @@ let container: HTMLDivElement;
 let root: Root;
 let version = 9000;
 let prompt = "$ ";
+/** Where the cursor is, for a prompt that shows again further down. */
+let cursorLine = 0;
+let takeBack: (() => void)[] = [];
 
 const store = () => useAppStore.getState();
 const tab = (id: string, sessionId = `sess-${id}`): TerminalTab => ({
@@ -87,7 +90,16 @@ beforeEach(async () => {
   emitSessions({});
   seedTabs([tab("a"), tab("b")]);
   prompt = "$ ";
-  registerTerminalPromptReader(() => prompt);
+  cursorLine = 0;
+  takeBack = ["a", "b"].map((id) =>
+    registerTerminalPrompt(id, {
+      read: (then) => then(prompt),
+      pin: () => {
+        const at = cursorLine;
+        return () => at === cursorLine;
+      },
+    })
+  );
   vi.spyOn(toast, "info").mockReturnValue("t");
   vi.spyOn(toast, "dismiss").mockReturnValue(undefined as never);
   container = document.createElement("div");
@@ -98,7 +110,7 @@ beforeEach(async () => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  registerTerminalPromptReader(null);
+  takeBack.forEach((fn) => fn());
   vi.restoreAllMocks();
   vi.useRealTimers();
 });

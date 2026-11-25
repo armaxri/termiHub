@@ -218,9 +218,9 @@ beforeEach(async () => {
     const session = { status: "connected" } as ProjectedSessionLifecycle;
     __emitSessionViewForTest({ sessions: { [tabId]: session } }, version);
   });
-  arrive("$ ");
+  arrive("$\r\n");
   await settle();
-  expect(line()).toBe("$");
+  expect(line()).toBe("");
 });
 afterEach(() => {
   act(() => root.unmount());

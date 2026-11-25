@@ -5,9 +5,12 @@
  * state, so a keystroke copies nothing.
  */
 import type { TypeKeysChunk } from "@/types/generated/TypeKeysChunk";
-import { isPasswordPrompt } from "./passwordPrompt";
+import { isPasswordPrompt, type PromptReader } from "./passwordPrompt";
 
-/** Chunks `start`..`end` (exclusive) were typed at the password prompt `prompt`. */
+/**
+ * Chunks `start`..`end` (exclusive) were typed at the password prompt `prompt`, or
+ * where it is not known whether one showed (`""`).
+ */
 export interface SecretRun {
   start: number;
   end: number;
@@ -27,9 +30,6 @@ export interface RecordingSlot {
   cancel: () => void;
 }
 
-/** Reads the text in front of the terminal's cursor. */
-export type ReadPrompt = () => string;
-
 /** Ends what is typed at a prompt: Enter, Ctrl+C, Ctrl+D. */
 // eslint-disable-next-line no-control-regex -- the control keys themselves
 const ENDS_ANSWER = /[\r\n\x03\x04]/;
@@ -42,6 +42,18 @@ interface Entry {
   at: number;
   /** The password prompt it was typed at. */
   secret: OpenRun | null;
+  /** What it was typed at is known, or asked ({@link InputRecorder.drain}). */
+  judged: boolean;
+}
+
+/** A chunk whose prompt is being read: what has arrived may not show yet (#6070). */
+interface Asked {
+  entry: Entry;
+  readPrompt?: PromptReader;
+  apart?: string;
+  /** The text it was typed behind, once it is known. */
+  before: string | null;
+  known: boolean;
 }
 
 interface OpenRun {
@@ -50,12 +62,12 @@ interface OpenRun {
   kept?: boolean;
 }
 
-/** The screen must never get in the way of typing: what cannot be read is no prompt. */
-function readSafely(readPrompt: ReadPrompt): string {
+/** The screen must never get in the way of typing: what cannot be read is not known. */
+function readSafely(readPrompt: PromptReader, then: (before: string) => void): void {
   try {
-    return readPrompt();
+    readPrompt(then);
   } catch {
-    return "";
+    // Never calls back, like a terminal that is gone.
   }
 }
 
@@ -71,10 +83,16 @@ function showsEcho(prompt: string, now: string): boolean {
 export class InputRecorder {
   private readonly entries: Entry[] = [];
   private open: OpenRun | null = null;
-  private readPrompt: ReadPrompt | null = null;
+  private readPrompt: PromptReader | null = null;
   private count = 0;
+  /** Chunks that wait to be judged, in the order they were typed. */
+  private readonly asked: Asked[] = [];
 
-  constructor(private readonly now: () => number = () => performance.now()) {}
+  /** `onJudged` is called when a chunk was judged later than it was typed. */
+  constructor(
+    private readonly now: () => number = () => performance.now(),
+    private readonly onJudged: () => void = () => {}
+  ) {}
 
   /** How many chunks (keys and pastes) were recorded. */
   get keys(): number {
@@ -90,17 +108,15 @@ export class InputRecorder {
    * Record a chunk the session was sent. `apart` names why it is set apart like
    * a password although no prompt shows: an automation waits for it (#6025).
    */
-  push(data: string, readPrompt?: ReadPrompt, apart?: string): void {
-    const secret = this.judge(readPrompt, apart);
-    this.entries.push({ data, at: this.now(), secret });
+  push(data: string, readPrompt?: PromptReader, apart?: string): void {
     this.count += 1;
-    if (ENDS_ANSWER.test(data)) this.open = null;
+    this.ask({ data, at: this.now(), secret: null, judged: false }, readPrompt, apart);
   }
 
   /** Keep the place of a paste until its text is known. */
-  reserve(readPrompt?: ReadPrompt, apart?: string): RecordingSlot {
-    const entry: Entry = { data: null, at: this.now(), secret: this.judge(readPrompt, apart) };
-    this.entries.push(entry);
+  reserve(readPrompt?: PromptReader, apart?: string): RecordingSlot {
+    const entry: Entry = { data: null, at: this.now(), secret: null, judged: false };
+    this.ask(entry, readPrompt, apart);
     let open = true;
     return {
       fill: (data) => {
@@ -108,7 +124,7 @@ export class InputRecorder {
         open = false;
         entry.data = data;
         this.count += 1;
-        if (ENDS_ANSWER.test(data)) this.open = null;
+        if (entry.judged && ENDS_ANSWER.test(data)) this.open = null;
       },
       cancel: () => {
         open = false;
@@ -118,7 +134,13 @@ export class InputRecorder {
 
   /** The recording so far. A pending paste is not part of it. */
   finish(): Recorded {
-    this.dropEchoedRun();
+    // Not known whether a password was asked for: kept apart, and the user decides.
+    const unknown: OpenRun = { prompt: "" };
+    for (const { entry } of this.asked.splice(0)) entry.secret = this.open ?? unknown;
+    const { readPrompt } = this;
+    let finished = false;
+    if (readPrompt) readSafely(readPrompt, (before) => finished || this.dropEchoedRun(before));
+    finished = true;
     const kept = this.entries.filter((e): e is Entry & { data: string } => e.data !== null);
     const chunks = kept.map(({ data, at }, i) => ({
       data,
@@ -135,28 +157,51 @@ export class InputRecorder {
     return { chunks, secrets, durationMs };
   }
 
+  /** Record `entry`, and find out what it was typed at. */
+  private ask(entry: Entry, readPrompt?: PromptReader, apart?: string): void {
+    this.entries.push(entry);
+    const asked: Asked = { entry, readPrompt, apart, before: null, known: false };
+    this.asked.push(asked);
+    let typing = true;
+    const know = (before: string | null) => {
+      asked.before = before;
+      asked.known = true;
+      this.drain();
+      if (!typing) this.onJudged();
+    };
+    if (apart !== undefined || !readPrompt) know(null);
+    else readSafely(readPrompt, know);
+    typing = false;
+  }
+
+  /** Judge what is known, in the order it was typed. */
+  private drain(): void {
+    while (this.asked[0]?.known) {
+      const { entry, readPrompt, apart, before } = this.asked.shift()!;
+      this.readPrompt = readPrompt ?? null;
+      entry.secret = this.judge(before, apart);
+      entry.judged = true;
+      if (entry.data !== null && ENDS_ANSWER.test(entry.data)) this.open = null;
+    }
+  }
+
   /** The run the next chunk belongs to, if it is typed at a password prompt. */
-  private judge(readPrompt: ReadPrompt | undefined, apart?: string): OpenRun | null {
-    this.readPrompt = readPrompt ?? null;
+  private judge(before: string | null, apart?: string): OpenRun | null {
     if (apart !== undefined) {
       if (!this.open?.kept) this.open = { prompt: apart, kept: true };
       return this.open;
     }
-    this.dropEchoedRun();
+    if (before !== null) this.dropEchoedRun(before);
     // The wait it was typed for is over.
     if (this.open?.kept) this.open = null;
-    if (!this.open && readPrompt) {
-      const before = readSafely(readPrompt);
-      if (isPasswordPrompt(before)) this.open = { prompt: before };
-    }
+    if (!this.open && before !== null && isPasswordPrompt(before)) this.open = { prompt: before };
     return this.open;
   }
 
   /** Keys that show up behind the "prompt" were echoed: it was no password. */
-  private dropEchoedRun(): void {
-    const { open, readPrompt } = this;
-    if (!open || open.kept || !readPrompt || !showsEcho(open.prompt, readSafely(readPrompt)))
-      return;
+  private dropEchoedRun(before: string): void {
+    const { open } = this;
+    if (!open || open.kept || !showsEcho(open.prompt, before)) return;
     for (const entry of this.entries) if (entry.secret === open) entry.secret = null;
     this.open = null;
   }

@@ -61,6 +61,12 @@ export class TerminalOutputFlow {
   private stagedLen = 0;
   private inflight = 0;
   private isPaused = false;
+  /** Bytes ever pushed: where the next chunk starts. */
+  private received = 0;
+  /** Bytes of a repaint xterm has not taken in yet. */
+  private repaint = 0;
+  /** Who waits for the output up to a position, oldest first. */
+  private waiting: { at: number; then: () => void }[] = [];
 
   constructor(options: TerminalOutputFlowOptions) {
     this.high = options.highWatermark ?? FLOW_HIGH_WATERMARK;
@@ -95,6 +101,7 @@ export class TerminalOutputFlow {
     if (chunk.length === 0) return;
     this.staged.push(chunk);
     this.stagedLen += chunk.length;
+    this.received += chunk.length;
     this.enforceCap();
     if (!this.isPaused && this.stagedLen + this.inflight > this.high) {
       this.setPaused(true);
@@ -102,26 +109,56 @@ export class TerminalOutputFlow {
   }
 
   /**
-   * Take all staged output as one batch for `xterm.write`, counting it as in
-   * flight. Returns `null` when nothing is staged or xterm's backlog is at the
+   * A repaint of `bytes` is written to xterm past the stage: it is no backlog, but
+   * who waits ({@link whenShown}) waits for it. Call the result once xterm has it.
+   */
+  repainting(bytes: number): () => void {
+    this.received += bytes;
+    this.repaint += bytes;
+    return () => {
+      this.repaint -= bytes;
+      this.notifyShown();
+    };
+  }
+
+  /**
+   * Call `then` when xterm has taken in all output received so far, and nothing
+   * received after it (#6070): at once when nothing is on its way, and never when
+   * some of it was dropped, as then nobody can tell what it did.
+   */
+  whenShown(then: () => void): void {
+    if (this.stagedLen + this.inflight + this.repaint === 0) then();
+    else this.waiting.push({ at: this.received, then });
+  }
+
+  /**
+   * Take the staged output as one batch for `xterm.write`, counting it as in
+   * flight; only up to where somebody waits ({@link whenShown}). Returns `null` when nothing is staged or xterm's backlog is at the
    * high watermark (the next write callback makes room); `force` ignores the
    * backlog (final drain on teardown).
    */
   takeBatch(force = false): Uint8Array | null {
     if (this.staged.length === 0 || (!force && this.inflight >= this.high)) return null;
-    let batch: Uint8Array;
-    if (this.staged.length === 1) {
-      batch = this.staged[0];
-    } else {
-      batch = new Uint8Array(this.stagedLen);
+    const start = this.received - this.stagedLen;
+    const until = force ? undefined : this.waiting.find((w) => w.at > start);
+    const end = until?.at ?? this.received;
+    let count = 0;
+    let size = 0;
+    while (count < this.staged.length && start + size < end) {
+      size += this.staged[count].length;
+      count += 1;
+    }
+    const chunks = this.staged.splice(0, count);
+    let batch = chunks[0];
+    if (chunks.length > 1) {
+      batch = new Uint8Array(size);
       let offset = 0;
-      for (const chunk of this.staged) {
+      for (const chunk of chunks) {
         batch.set(chunk, offset);
         offset += chunk.length;
       }
     }
-    this.staged = [];
-    this.stagedLen = 0;
+    this.stagedLen -= batch.length;
     this.inflight += batch.length;
     return batch;
   }
@@ -130,6 +167,7 @@ export class TerminalOutputFlow {
   written(bytes: number): void {
     this.inflight = Math.max(0, this.inflight - bytes);
     this.resumeIfDrained();
+    this.notifyShown();
   }
 
   /** xterm refused a taken batch: put it back in front of the staged output. */
@@ -139,7 +177,8 @@ export class TerminalOutputFlow {
     this.stagedLen += batch.length;
   }
 
-  /** Drop the staged output: a repaint of the terminal shows it. */
+  /** Drop the staged output: a repaint of the terminal shows it, and who waits for
+   * it waits for that ({@link repainting}). */
   discardStaged(): void {
     this.staged = [];
     this.stagedLen = 0;
@@ -151,6 +190,11 @@ export class TerminalOutputFlow {
     if (this.isPaused) this.setPaused(false);
   }
 
+  private notifyShown(): void {
+    const shown = this.received - this.stagedLen - this.inflight - this.repaint;
+    while (this.waiting.length > 0 && this.waiting[0].at <= shown) this.waiting.shift()!.then();
+  }
+
   private enforceCap(): void {
     let dropped = 0;
     while (this.stagedLen > this.maxStaged && this.staged.length > 1) {
@@ -158,7 +202,9 @@ export class TerminalOutputFlow {
       this.stagedLen -= oldest.length;
       dropped += oldest.length;
     }
-    if (dropped > 0) this.onOverflow?.(dropped);
+    if (dropped === 0) return;
+    this.waiting = [];
+    this.onOverflow?.(dropped);
   }
 
   private resumeIfDrained(): void {

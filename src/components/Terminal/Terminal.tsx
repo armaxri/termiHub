@@ -63,6 +63,7 @@ import {
   sandboxHasParsers,
   sandboxSessionPending,
   enqueueSandboxTransform,
+  enqueueSandboxMarker,
   enqueueSandboxPassthrough,
   sandboxNotifySessionStart,
   sandboxNotifySessionEnd,
@@ -88,7 +89,12 @@ import {
 import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth, remeasureCharSize } from "./xtermDimensions";
 import { trackUserInput } from "./xtermUserInput";
-import { textBeforeCursor } from "@/services/passwordPrompt";
+import {
+  promptOfTerminal,
+  registerTerminalPrompt,
+  textBeforeCursor,
+  type PromptReader,
+} from "@/services/passwordPrompt";
 import { TERMINAL_MIN_CONTRAST_RATIO } from "./terminalContrast";
 import {
   CommandMarkTracker,
@@ -1242,7 +1248,41 @@ export function Terminal({
           const held = outputDuringRepaint ?? [];
           outputDuringRepaint = null;
           for (const { data, position } of held) receiveOutput(data, position);
+          for (const waiting of waitingForRepaint.splice(0)) waiting();
         };
+        // Who waits for what has arrived (#6070), while it is being repainted or a
+        // protocol parser has it.
+        const waitingForRepaint: (() => void)[] = [];
+        const waitingForParser = new Set<() => void>();
+        /** Call `then` when xterm has all that arrived by now; see `PromptReader`. */
+        const whenOutputShown = (then: () => void) => {
+          const staged = () => {
+            if (!waitingForParser.delete(staged)) return;
+            outputFlow.whenShown(then);
+            // Now: a background window serves no frames.
+            flushOutput();
+          };
+          if (outputDuringRepaint) {
+            waitingForRepaint.push(() => whenOutputShown(then));
+            return;
+          }
+          waitingForParser.add(staged);
+          if (!enqueueSandboxMarker(sessionId, staged)) staged();
+        };
+        const unregisterPrompt = registerTerminalPrompt(tabId, {
+          read: (then) => whenOutputShown(() => then(textBeforeCursor(xterm.buffer.active))),
+          pin: () => {
+            const line = () => xterm.buffer.active.baseY + xterm.buffer.active.cursorY;
+            const type = xterm.buffer.active.type;
+            // Moves with the line; the alternate screen has no markers.
+            const marker = xterm.registerMarker(0);
+            const at = line();
+            return () => {
+              const same = xterm.buffer.active.type === type;
+              return same && (marker ? marker.line : at) === line();
+            };
+          },
+        });
 
         // What came since the repaint began, then the live stream.
         for (const { data, position } of takeHeldOutput()) receiveOutput(data, position);
@@ -1297,7 +1337,7 @@ export function Terminal({
         // What the terminal itself sends (focus reports, query replies) is no
         // keystroke and is not recorded (#5818).
         const userInput = trackUserInput(xterm);
-        const readPrompt = () => textBeforeCursor(xterm.buffer.active);
+        const readPrompt: PromptReader = (then) => promptOfTerminal(tabId)?.read(then);
         const sendTyped = (data: string, fromUser = true) => {
           // SM-003 (single-attach): another desktop/window controls this session
           // — never send it input until the user explicitly reclaims it.
@@ -1405,7 +1445,9 @@ export function Terminal({
               xterm.reset();
               outputFlow.discardStaged();
               discardSandboxSession(sid);
-              xterm.write(buffer);
+              // It shows what was dropped: who waited for that waits for this.
+              for (const waiting of waitingForParser) waitingForRepaint.push(waiting);
+              xterm.write(buffer, outputFlow.repainting(buffer.length));
               replayEnd = end;
               beforeFirstOutput = null;
             })
@@ -1454,6 +1496,7 @@ export function Terminal({
 
         cleanupRef.current = () => {
           unsubOutput();
+          unregisterPrompt();
           // No more output will arrive to end a redraw wait: release its input.
           redrawWait.releaseAll();
           unsubExit();

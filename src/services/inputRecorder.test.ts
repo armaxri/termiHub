@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InputRecorder, recordedParts, withoutSecrets } from "./inputRecorder";
+import type { PromptReader } from "./passwordPrompt";
 
 /** A recorder on a clock and a screen the test sets. */
 function setup() {
@@ -8,7 +9,7 @@ function setup() {
   /** Type a chunk `after` ms later; `echo` is what it puts on the screen. */
   const type = (data: string, after = 0, echo: string | null = data) => {
     at.time += after;
-    recorder.push(data, () => at.screen);
+    recorder.push(data, (then) => then(at.screen));
     if (echo !== null) at.screen += echo;
   };
   return { at, recorder, type };
@@ -105,7 +106,7 @@ describe("what is typed at a password prompt", () => {
   it("is kept apart while something waits for it, whatever the screen shows (#6025)", () => {
     const { at, recorder } = setup();
     at.screen = "Deploy hunter2";
-    const read = () => at.screen;
+    const read: PromptReader = (then) => then(at.screen);
     recorder.push("hunter2", read, "Deploy");
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
     recorder.reserve(read, "Deploy").fill("pasted");
@@ -125,7 +126,7 @@ describe("what is typed at a password prompt", () => {
   it("is flagged when it is pasted", () => {
     const { at, recorder, type } = setup();
     at.screen = "Password: ";
-    const paste = recorder.reserve(() => at.screen);
+    const paste = recorder.reserve((then) => then(at.screen));
     paste.fill("hunter2");
     type("\r", 10, null);
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
@@ -164,9 +165,9 @@ describe("what is typed at a password prompt", () => {
 
   it("stays hidden when other output moves the prompt while it is answered", () => {
     const recorder = new InputRecorder(() => 0);
-    recorder.push("p", () => "Password: ");
-    recorder.push("w", () => "[1]+  Done   sleep 1");
-    recorder.push("\r", () => "");
+    recorder.push("p", (then) => then("Password: "));
+    recorder.push("w", (then) => then("[1]+  Done   sleep 1"));
+    recorder.push("\r", (then) => then(""));
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 3, prompt: "Password:" }]);
   });
 
