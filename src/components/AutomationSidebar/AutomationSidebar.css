@@ -40,6 +40,11 @@
   min-height: var(--control-height-md);
 }
 
+/* A closed one is only its header and what went wrong under it: it cannot shrink. */
+.automation-sidebar > .schedules[data-open="false"] {
+  flex-shrink: 0;
+}
+
 /*
  * The row's trailing edge: markers, the trigger switch and Run, all in the
  * name's line and always visible (#5636, R-075, R-077). Edit and "…" overlay the

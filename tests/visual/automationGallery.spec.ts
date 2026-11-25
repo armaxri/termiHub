@@ -51,6 +51,9 @@ const STATES = {
   "sidebar--two-runs": "Two automations run in three terminals: tell them apart, stop one.",
   "sidebar--waiting": "One run waits for the user, another one goes on: which needs something?",
   "sidebar--switched-off": "Triggers were just switched off: what no longer happens?",
+  "sidebar--dead-trigger": "What starts this one, and what does not?",
+  "sidebar--delete-used": "Delete an automation that a schedule and another one use.",
+  "sidebar--long": "Many automations with long names and many connections.",
   "sidebar--search-empty": "A search finds nothing: get back to the list.",
   "editor--new-steps": "Make an automation step by step.",
   "editor--new-keys": "Make one that only types keys; nothing else should be in the way.",
@@ -63,6 +66,8 @@ const STATES = {
   "editor--blocked-collapsed": "Closed, can one tell which step keeps it from running?",
   "editor--settings-aside": "Open settings was chosen: the editor waits with its changes.",
   "editor--add-trigger": "Choose what starts it.",
+  "editor--dead-trigger": "A trigger was added that can never start it.",
+  "editor--while-running": "Change an automation while it runs.",
   "editor--on-connect": "Make it run when a connection opens, below another trigger.",
   "editor--hotkey": "Press the keys of a hotkey that an app shortcut already uses.",
   "editor--hotkey-other": "Press the keys of a hotkey that another automation uses.",
@@ -76,6 +81,7 @@ const STATES = {
   "recording--chip": "Know that typing is being recorded, and stop it.",
   "recording--password-prompt": "Typing a password while recording: know that it is noticed.",
   "recording--save": "Name the recording, or add it to an automation.",
+  "recording--save-no-enter": "The recording does not end with Enter: what will it do?",
   "recording--save-password": "Decide what happens to the password that was typed.",
   "recording--unsaved": "The dialog was closed: the recording is still there.",
   "recording--quit": "Quit while recording: do not lose what was typed.",
@@ -88,6 +94,7 @@ const STATES = {
   "run--stopped": "A run was stopped: how far did it get?",
   "run--replace": "Start one while another one runs: what happens to it?",
   "run--wait-ended": "Nobody continued a run that waited: what now?",
+  "run--no-terminal": "Run one while nothing is open: what can be chosen?",
   "run--quit": "Quit while automations run: know what is stopped.",
   "run--password-wait": "The run waits for a password: type it, then go on.",
   "run--password-still-asked": "Continue was pressed too early: the terminal still asks.",
@@ -99,6 +106,8 @@ const STATES = {
   "editor--triggers-deleted": "The connection a trigger watched was deleted: see and fix it.",
   "schedules--list": "See what runs by itself and when; turn one off.",
   "schedules--missed": "A scheduled run was missed and one failed: find out why.",
+  "schedules--closed": "The section is closed: does anything need attention?",
+  "schedules--first-on-long": "Switch on a long one for several connections.",
   "schedules--history": "Look up last night in the History: what ran, what did not, why.",
   "schedules--deleted": "A schedule's connection was deleted: see that it cannot run.",
   "schedules--paused": "All schedules are paused: see it, and that nothing runs.",
@@ -715,11 +724,75 @@ for (const viewport of WINDOWS) {
         await page.locator(id("automation-start-password")).click();
         await page.locator("[role=tab]").first().click();
         await page.locator(id("automation-start-typing")).click();
-        await expect(page.locator(id("automation-running-password"))).toHaveText("Waiting for you");
+        await expect(page.locator(id("automation-running-password"))).toHaveAttribute(
+          "aria-label",
+          "Waiting for you"
+        );
         await expect(page.locator(id("automation-item-typing"))).toContainText("50 % typed");
         await shot(page, "sidebar--waiting", SIDEBAR);
         await requestQuit(page);
         await shot(page, "run--quit", QUIT);
+      });
+
+      test("editing while it runs", async ({ page }) => {
+        await bootWithTerminals(page, theme, 1, { automationData: running });
+        await page.locator(id("automation-start-health")).click();
+        await expect(page.locator(id("automation-running-health"))).toBeVisible();
+        await edit(page, "health");
+        await shot(page, "editor--while-running", EDITOR);
+      });
+
+      test("running without a terminal", async ({ page }) => {
+        await boot(page, theme);
+        await page.locator(id("automation-start-keys")).click();
+        await page.locator(id("run-targets-dialog")).waitFor();
+        await shot(page, "run--no-terminal", id("run-targets-dialog"));
+      });
+
+      test("deleting one that is used", async ({ page }) => {
+        await boot(page, theme, {
+          automationData: {
+            automations: [
+              ...LIBRARY,
+              automation({
+                id: "caller",
+                name: "Release everything",
+                steps: [{ kind: "run-automation", automationId: "off-trigger" }],
+              }),
+            ],
+            runs: RUNS,
+            schedules: SCHEDULES,
+          },
+        });
+        await page.locator(id("automation-item-off-trigger")).click({ button: "right" });
+        await page.locator(id("automation-menu-delete-off-trigger")).click();
+        await page.locator(id("confirm-delete-dialog")).waitFor();
+        await shot(page, "sidebar--delete-used", id("confirm-delete-dialog"));
+      });
+
+      test("long lists", async ({ page }) => {
+        const many = Array.from({ length: 30 }, (_, i) =>
+          automation({
+            id: `long-${i}`,
+            name: `Restart every service of the Frankfurt web tier, part ${i + 1}`,
+            description: "Drains the load balancer, restarts and waits for the health check",
+            triggers: [
+              { kind: "hotkey", binding: "Ctrl+Alt+Shift+F9" },
+              {
+                kind: "on-connect",
+                connectionIds: [BUILD_BOX, "Scratch", "Work/Production database replica"],
+              },
+            ],
+          })
+        );
+        await boot(page, theme, {
+          automationData: {
+            automations: many,
+            runs: [],
+            schedules: { paused: false, schedules: [] },
+          },
+        });
+        await shot(page, "sidebar--long", SIDEBAR);
       });
 
       test("replacing and stopping a run", async ({ page }) => {
@@ -744,6 +817,7 @@ for (const viewport of WINDOWS) {
           stepsCompleted: 1,
           total: 3,
           failedStepIndex: 1,
+          startedAt: "2026-10-01T11:54:58Z",
           error: "nobody pressed Continue within 5 minutes; nothing more was typed",
         });
         await boot(page, theme, { automationData: { ...running, runs: [ended] } });
@@ -882,6 +956,31 @@ for (const viewport of WINDOWS) {
         await shot(page, "editor--hotkey-other", EDITOR);
       });
 
+      test("editor, a trigger that cannot start it", async ({ page }) => {
+        await boot(page, theme, {
+          automationData: {
+            ...bodies,
+            automations: BODIES.map((a) =>
+              (a as { id?: string }).id === "bodies"
+                ? {
+                    ...a,
+                    triggers: [
+                      { kind: "hotkey", binding: "Ctrl+Alt+W" },
+                      { kind: "on-output-match", connectionIds: [BUILD_BOX], pattern: "ready" },
+                    ],
+                  }
+                : a
+            ),
+          },
+        });
+        await page.locator(id("automation-item-bodies")).scrollIntoViewIfNeeded();
+        await shot(page, "sidebar--dead-trigger", SIDEBAR);
+        await edit(page, "bodies");
+        await page.locator(id("automation-editor-when-toggle")).click();
+        await page.locator(id("automation-editor-trigger-blocked-1")).scrollIntoViewIfNeeded();
+        await shot(page, "editor--dead-trigger", EDITOR);
+      });
+
       test("editor, keys", async ({ page }) => {
         await boot(page, theme);
         await edit(page, "keys");
@@ -905,7 +1004,13 @@ for (const viewport of WINDOWS) {
         await page.locator(id("recording-bar-unsaved")).waitFor();
         await shot(page, "recording--unsaved", id("recording-bar-unsaved"));
         await page.locator(id("recording-bar-discard")).click();
-        await record(page, [["git pull\r", "$ "]]);
+        await record(page, [["git pull", "$ "]]);
+        await page.locator(id("terminal-view-active-recording")).click();
+        await page.locator(id("recording-save-no-enter")).waitFor();
+        await shot(page, "recording--save-no-enter", SAVE);
+        await page.locator(id("recording-save-discard")).click();
+        await record(page, [["git pull", "$ "]]);
+        await record(page, [["\r", "$ "]]);
         await page.locator(id("terminal-view-active-recording")).click();
         await page.locator(SAVE).waitFor();
         await shot(page, "recording--save", SAVE);
@@ -1057,6 +1162,45 @@ for (const viewport of WINDOWS) {
         await page.locator(id("schedule-enable-s2")).click();
         await page.locator(id("schedule-confirm-connects")).waitFor();
         await shot(page, "schedules--first-on-connects", id("schedule-enable-confirm"));
+      });
+
+      test("schedules, closed with trouble", async ({ page }) => {
+        await boot(page, theme, {
+          automationData: { automations: LIBRARY, runs: TROUBLED_RUNS, schedules: TROUBLED },
+        });
+        await expect(page.locator(id("schedules-concern"))).toHaveText("1 failed, 1 not run");
+        await shot(page, "schedules--closed", SIDEBAR);
+      });
+
+      test("schedules, a long one for many", async ({ page }) => {
+        const steps = Array.from({ length: 9 }, (_, i) => ({
+          kind: "send-command",
+          command: `systemctl restart web-${i + 1}`,
+        }));
+        const long = automation({ id: "long", name: "Restart the web tier", steps });
+        await bootSchedules(
+          page,
+          {
+            paused: false,
+            schedules: [
+              {
+                ...HEALTH_CHECK,
+                id: "s1",
+                name: "Every night, everywhere",
+                action: { kind: "automation", automationId: "long" },
+                targets: {
+                  kind: "connections",
+                  connectionIds: [BUILD_BOX, "Scratch", "Work/Old Build Box"],
+                },
+                rule: { kind: "daily", time: "02:00" },
+              },
+            ],
+          },
+          { automations: [...LIBRARY, long] }
+        );
+        await page.locator(id("schedule-enable-s1")).click();
+        await page.locator(id("schedule-confirm-steps")).waitFor();
+        await shot(page, "schedules--first-on-long", id("schedule-enable-confirm"));
       });
 
       test("schedules, paused", async ({ page }) => {
