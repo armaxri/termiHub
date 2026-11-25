@@ -19,7 +19,7 @@ import { closePanelGuarded } from "@/utils/tabGroupCloseGuard";
 import { clearOverrides, setOverride } from "@/services/keybindings";
 import { sessionLoggingStart } from "@/services/api";
 import {
-  OPEN_MACRO_PLAYBACK_EVENT,
+  OPEN_RUN_AUTOMATION_EVENT,
   TOGGLE_SESSION_LOGGING_EVENT,
 } from "@/services/contextCommands";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -27,12 +27,10 @@ import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import type { LeafPanel, PanelNode, TerminalTab } from "@/types/terminal";
 import type { RunTargetsDialogProps } from "@/components/Automations/RunTargetsDialog";
-import type { MacroRecordSaveDialogProps } from "./MacroRecordSaveDialog";
 import type { BroadcastScopeDialogProps } from "./BroadcastScopeDialog";
 
 const probes = vi.hoisted(() => ({
   playback: null as RunTargetsDialogProps | null,
-  save: null as MacroRecordSaveDialogProps | null,
   scope: null as BroadcastScopeDialogProps | null,
 }));
 
@@ -49,12 +47,7 @@ vi.mock("@/components/ui", async () =>
   (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
 );
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
-vi.mock("./MacroRecordSaveDialog", () => ({
-  MacroRecordSaveDialog: (p: MacroRecordSaveDialogProps) => {
-    probes.save = p;
-    return null;
-  },
-}));
+vi.mock("@/components/Recording", () => ({ RecordingBar: () => null }));
 vi.mock("@/components/Automations/RunTargetsDialog", () => ({
   RunTargetsDialog: (p: RunTargetsDialogProps) => {
     probes.playback = p;
@@ -131,7 +124,7 @@ async function renderView(): Promise<void> {
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   harness = installBroadcastHarness();
-  probes.playback = probes.save = probes.scope = null;
+  probes.playback = probes.scope = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -258,7 +251,7 @@ describe("TerminalView — logging and play shortcuts (#5779)", () => {
     await renderView();
     expect(probes.playback?.open).toBe(false);
     act(() => {
-      window.dispatchEvent(new CustomEvent(OPEN_MACRO_PLAYBACK_EVENT));
+      window.dispatchEvent(new CustomEvent(OPEN_RUN_AUTOMATION_EVENT));
     });
     expect(probes.playback?.open).toBe(true);
   });
@@ -266,17 +259,17 @@ describe("TerminalView — logging and play shortcuts (#5779)", () => {
 
 describe("TerminalView — macro playback and dialogs (#5172)", () => {
   it("opens the playback dialog and forwards a play request to the store", async () => {
-    const playMacro = vi.fn(() => Promise.resolve(null));
-    useAppStore.setState({ playMacro });
+    const runAutomation = vi.fn(() => Promise.resolve());
+    useAppStore.setState({ runAutomation });
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     expect(probes.playback?.open).toBe(false);
 
-    click("terminal-view-play-macro");
+    click("terminal-view-run-automation");
     expect(probes.playback?.open).toBe(true);
 
     act(() => probes.playback!.onRun("m1", ["t1"], { parallel: false }));
-    expect(playMacro).toHaveBeenCalledWith("m1", { targetTabIds: ["t1"], parallel: false });
+    expect(runAutomation).toHaveBeenCalledWith("m1", { targetTabIds: ["t1"], parallel: false });
     act(() => probes.playback!.onOpenChange(false));
     expect(probes.playback?.open).toBe(false);
   });
@@ -295,29 +288,14 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     });
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
-    const btn = button("terminal-view-play-macro")!;
-    expect(btn.textContent).toBe("Stop macro playback (2/5)");
+    const btn = button("terminal-view-run-automation")!;
+    expect(btn.textContent).toBe("Stop automation (2/5)");
     expect(btn.getAttribute("data-active")).toBe("true");
 
-    click("terminal-view-play-macro");
+    click("terminal-view-run-automation");
 
     expect(cancelMacroPlayback).toHaveBeenCalledTimes(1);
     expect(probes.playback?.open).toBe(false);
-  });
-
-  it("wires the record-save dialog to save and discard the recording", async () => {
-    const saveRecordedMacro = vi.fn(() => Promise.resolve());
-    const discardRecordedMacro = vi.fn();
-    useAppStore.setState({ saveRecordedMacro, discardRecordedMacro, macroSaveDialogOpen: true });
-    seed(leaf("a", [tab("t1", "a")]), "a");
-    await renderView();
-    expect(probes.save?.open).toBe(true);
-
-    const meta = { name: "deploy" } as Parameters<MacroRecordSaveDialogProps["onSave"]>[0];
-    act(() => probes.save!.onSave(meta));
-    expect(saveRecordedMacro).toHaveBeenCalledWith(meta);
-    act(() => probes.save!.onDiscard());
-    expect(discardRecordedMacro).toHaveBeenCalledTimes(1);
   });
 
   it("opens a new local terminal from the toolbar", async () => {
@@ -368,8 +346,8 @@ describe("TerminalView — toolbar layout icons and the … menu (#5559, #5756)"
     expect(ids('[data-testid="terminal-view-more-menu"]')).toEqual([
       "terminal-view-broadcast",
       "terminal-view-toggle-logging",
-      "terminal-view-record-macro",
-      "terminal-view-play-macro",
+      "terminal-view-record",
+      "terminal-view-run-automation",
     ]);
     // The old session and macro groups are gone from the toolbar.
     expect(container.querySelector('[data-testid="terminal-view-toolbar-session"]')).toBeNull();
@@ -402,10 +380,10 @@ describe("TerminalView — toolbar layout icons and the … menu (#5559, #5756)"
     expect(row.textContent).toContain("Broadcast input…");
   });
 
-  it("draws record macro as a record glyph, not a plain circle", async () => {
+  it("draws Record automation as a record glyph, not a plain circle", async () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
-    const svg = button("terminal-view-record-macro")!.querySelector("svg")!;
+    const svg = button("terminal-view-record")!.querySelector("svg")!;
     expect(svg.getAttribute("class")).toContain("lucide-circle-dot");
   });
 
@@ -484,13 +462,32 @@ describe("TerminalView — running actions stay visible as chips (#5756)", () =>
     expect(harness.transport.dispatched.map((i) => i.kind)).toEqual(["broadcast.stop"]);
   });
 
+  it("records the active terminal from the menu, and stops there (#1674, #5818)", async () => {
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    const row = () => button("terminal-view-record")!;
+    expect(row().textContent).toBe("Record automation");
+    expect(row().getAttribute("data-active")).toBe("false");
+    expect(button("terminal-view-active-recording")).toBeNull();
+
+    click("terminal-view-record");
+    expect(useAppStore.getState().recording?.tabId).toBe("t1");
+    // #5849: a checkbox row — the label stays, the tick and aria-checked flip.
+    expect(row().textContent).toBe("Record automation");
+    expect(row().getAttribute("aria-checked")).toBe("true");
+
+    act(() => useAppStore.getState().recordInput("t1", "ls\r"));
+    click("terminal-view-record");
+    expect(useAppStore.getState()).toMatchObject({ recording: null, recordingSaveOpen: true });
+  });
+
   it("names a running recording and playback, each stoppable from its chip", async () => {
     const cancelMacroPlayback = vi.fn();
-    const toggleMacroRecording = vi.fn();
+    const toggleRecording = vi.fn();
     useAppStore.setState({
       cancelMacroPlayback,
-      toggleMacroRecording,
-      macroRecording: true,
+      toggleRecording,
+      recording: { tabId: "t1", tabTitle: "a", keys: 1, atPrompt: false, intoEditor: null },
       macroPlayback: {
         macroId: "m1",
         macroName: "Deploy",
@@ -506,7 +503,7 @@ describe("TerminalView — running actions stay visible as chips (#5756)", () =>
 
     click("terminal-view-active-recording");
     click("terminal-view-active-playback");
-    expect(toggleMacroRecording).toHaveBeenCalledTimes(1);
+    expect(toggleRecording).toHaveBeenCalledTimes(1);
     expect(cancelMacroPlayback).toHaveBeenCalledTimes(1);
   });
 });

@@ -56,8 +56,8 @@ export function AutomationSidebar() {
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
-  const toggleMacroRecording = useAppStore((s) => s.toggleMacroRecording);
-  const recording = useAppStore((s) => s.macroRecording);
+  const toggleRecording = useAppStore((s) => s.toggleRecording);
+  const recording = useAppStore((s) => s.recording !== null);
   // Where Run types (R-113, R-119): the active terminal tab's title.
   const runTarget = useAppStore((s) => {
     const tab = getActiveTab(s);
@@ -83,17 +83,14 @@ export function AutomationSidebar() {
   const [rootRef, width] = useElementWidth<HTMLDivElement>();
   const compact = width !== null && width < AUTOMATIONS_COMPACT_WIDTH;
 
-  // The row just saved from an editor, marked briefly so the user sees which
-  // one changed (#5687). `seq` tells two saves of the same automation apart.
-  const [justSaved, setJustSaved] = useState<{ id: string; seq: number } | null>(null);
-  const justSavedSeq = useRef(0);
+  // The row just saved (from the editor or a recording), marked briefly so the
+  // user sees which one changed (#5687). What was saved before is not marked.
+  const saved = useAutomationSections((s) => s.saved);
+  const [unmarkedSeq, setUnmarkedSeq] = useState(saved?.seq ?? 0);
+  const justSaved = saved && saved.seq > unmarkedSeq ? saved : null;
   const scrolledSeq = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
-  const markSaved = useCallback((id: string) => {
-    justSavedSeq.current += 1;
-    setJustSaved({ id, seq: justSavedSeq.current });
-  }, []);
 
   const files = useAutomationFiles();
 
@@ -124,8 +121,7 @@ export function AutomationSidebar() {
     [runAutomation, runTarget]
   );
 
-  const editors = useAutomationEditors({ onSaved: markSaved, onRun: handleRun });
-  const { edit, newFromAutomation, newFromKeys, newFromSteps } = editors;
+  const { edit, newFromAutomation, newFromKeys, newFromSteps } = useAutomationEditors();
 
   const handleStop = useCallback(
     (id: string) => {
@@ -189,10 +185,7 @@ export function AutomationSidebar() {
   // Unmark the saved row once its highlight has played out (#5687).
   useEffect(() => {
     if (!justSaved) return;
-    const timer = window.setTimeout(
-      () => setJustSaved((current) => (current === justSaved ? null : current)),
-      AUTOMATION_JUST_SAVED_MS
-    );
+    const timer = window.setTimeout(() => setUnmarkedSeq(justSaved.seq), AUTOMATION_JUST_SAVED_MS);
     return () => window.clearTimeout(timer);
   }, [justSaved]);
 
@@ -287,9 +280,12 @@ export function AutomationSidebar() {
             label: recording ? "Stop recording" : "Record",
             tooltip: recording
               ? "Stop recording and name the automation"
-              : "Record what you type in the active terminal",
+              : runTarget === null
+                ? "Open a terminal to record in"
+                : `Record what you type in ${runTarget}`,
+            disabled: !recording && runTarget === null,
             icon: <CircleDot size={12} />,
-            onClick: toggleMacroRecording,
+            onClick: toggleRecording,
             testId: "automation-record-btn",
           },
         ]}
@@ -314,7 +310,7 @@ export function AutomationSidebar() {
                 <Button
                   size="sm"
                   icon={<CircleDot size={14} />}
-                  onClick={toggleMacroRecording}
+                  onClick={toggleRecording}
                   data-testid="automation-empty-record-btn"
                 >
                   {recording ? "Stop recording" : "Record"}
@@ -383,7 +379,6 @@ export function AutomationSidebar() {
         collapse={{ expanded: historyOpen, onChange: setHistoryOpen }}
       />
       <WorkflowRunOutput />
-      {editors.dialogs}
       <RunTargetsDialog
         open={runOnId !== null}
         automations={runOnItems}

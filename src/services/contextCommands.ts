@@ -183,20 +183,20 @@ function closeActivePanel(): void {
  */
 export const TOGGLE_SESSION_LOGGING_EVENT = "termihub:toggle-session-logging";
 
-/** Window event the terminal view listens for to open the macro picker (#5779). */
-export const OPEN_MACRO_PLAYBACK_EVENT = "termihub:open-macro-playback";
+/** Window event the terminal view listens for to open the run picker (#5779). */
+export const OPEN_RUN_AUTOMATION_EVENT = "termihub:open-run-automation";
 
 /**
- * Play macro…, as the "…" menu row does it: stop a running playback, otherwise
- * open the macro picker.
+ * Run automation…, as the "…" menu row does it: stop a running playback, otherwise
+ * open the run picker.
  */
-function playOrStopMacro(): void {
+function runOrStopAutomation(): void {
   const state = useAppStore.getState();
   if (state.macroPlayback) {
     state.cancelMacroPlayback();
     return;
   }
-  window.dispatchEvent(new CustomEvent(OPEN_MACRO_PLAYBACK_EVENT));
+  window.dispatchEvent(new CustomEvent(OPEN_RUN_AUTOMATION_EVENT));
 }
 
 /**
@@ -307,7 +307,7 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
       window.dispatchEvent(new CustomEvent(TOGGLE_SESSION_LOGGING_EVENT));
     },
   },
-  "play-macro": { isAvailable: () => true, run: playOrStopMacro },
+  "play-macro": { isAvailable: () => true, run: runOrStopAutomation },
   "close-tab-group": { isAvailable: hasMultipleTabGroups, run: closeActiveTabGroup },
   "next-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(1) },
   "prev-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(-1) },

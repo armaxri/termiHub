@@ -18,6 +18,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import {
   isSessionInputHeld,
@@ -167,6 +168,48 @@ describe("paste keeps keystroke order (#5026)", () => {
     });
     await flush();
     expect(sent).toEqual(["\x1b[200~ab\x1b[201~", "x"]);
+  });
+
+  it("records the paste as it is sent, in its place among the keys (#5818)", async () => {
+    seedLayoutState({
+      rootPanel: {
+        type: "leaf",
+        id: "leaf",
+        activeTabId: "tab-paste",
+        tabs: [
+          {
+            id: "tab-paste",
+            sessionId: "session-paste",
+            title: "prod-web",
+            connectionType: "local",
+            contentType: "terminal",
+            config: { type: "local", config: {} },
+            panelId: "leaf",
+            isActive: true,
+          },
+        ],
+      },
+      activePanelId: "leaf",
+    });
+    const store = () => useAppStore.getState();
+    act(() => void store().startRecording());
+    xtermModes.bracketedPasteMode = true;
+    const clip = slowClipboard();
+    let pasted!: Promise<void>;
+    act(() => {
+      pasted = registry.pasteToTerminal("tab-paste");
+    });
+    act(() => store().recordInput("tab-paste", "x"));
+    clip.resolve("grüße\r\n");
+    await act(async () => {
+      await pasted;
+    });
+    act(() => store().stopRecording());
+    expect(store().recordedTake?.chunks.map((c) => c.data)).toEqual([
+      "\x1b[200~grüße\r\n\x1b[201~",
+      "x",
+    ]);
+    act(() => store().discardRecordedTake());
   });
 
   it("releases the slot when the clipboard read fails, sending later keys", async () => {

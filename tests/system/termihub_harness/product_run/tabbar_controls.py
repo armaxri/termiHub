@@ -7,7 +7,7 @@ above the tab bar:
   pill that read as a tab) and the toolbar's new-terminal "+".
 * R-067: new terminal, split right, split down and the sidebar toggle were four
   look-alike outline glyphs; the sidebar toggle read as a third split icon.
-* R-066: "Log session output" and "Record macro" are on/off states, but the
+* R-066: "Log session output" and "Record automation" are on/off states, but the
   "…" menu showed no state.
 
 The app now tags each toolbar control with a ``data-icon`` naming its glyph.
@@ -29,11 +29,11 @@ LAYOUT_CONTROLS = (
     "terminal-view-toggle-sidebar",
 )
 #: The "…" menu rows that are on/off states.
-TOGGLE_ROWS = ("terminal-view-toggle-logging", "terminal-view-record-macro")
+TOGGLE_ROWS = ("terminal-view-toggle-logging", "terminal-view-record")
 #: Their labels, which stay the same whether on or off.
 TOGGLE_LABELS = {
     "terminal-view-toggle-logging": "Log session output",
-    "terminal-view-record-macro": "Record macro",
+    "terminal-view-record": "Record automation",
 }
 #: The words the tab-group add control shows when no chip is on screen.
 NEW_TAB_GROUP = "New tab group"

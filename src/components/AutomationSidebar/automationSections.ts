@@ -16,6 +16,13 @@ export interface AutomationSectionsState {
   historyOpen: boolean;
   /** The automation the history is narrowed to; `null` shows every run. */
   historyAutomationId: string | null;
+  /**
+   * The automation saved last, so its row can be marked (#5687); `seq` tells two
+   * saves of the same one apart.
+   */
+  saved: { id: string; seq: number } | null;
+  /** Mark an automation's row as just saved. */
+  markSaved: (automationId: string) => void;
   /** Open or close the Schedules section. */
   setSchedulesOpen: (open: boolean) => void;
   /** Open or close the History section. */
@@ -31,6 +38,8 @@ export const useAutomationSections = create<AutomationSectionsState>((set) => ({
   schedulesOpen: false,
   historyOpen: false,
   historyAutomationId: null,
+  saved: null,
+  markSaved: (id) => set((s) => ({ saved: { id, seq: (s.saved?.seq ?? 0) + 1 } })),
   setSchedulesOpen: (schedulesOpen) => set({ schedulesOpen }),
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
   setHistoryAutomationId: (historyAutomationId) => set({ historyAutomationId }),

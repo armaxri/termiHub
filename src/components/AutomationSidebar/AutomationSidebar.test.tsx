@@ -56,10 +56,19 @@ import { parseMacroEnvelope } from "@/services/macroIo";
 import { parseWorkflowEnvelope } from "@/services/workflowIo";
 import { resetRememberedRunTargetChoice } from "@/components/Automations/runTargetChoice";
 import { AUTOMATION_JUST_SAVED_MS } from "./AutomationRow";
+import { AutomationEditorHost, useAutomationEditor } from "@/components/AutomationEditor";
 import { AutomationSidebar } from "./AutomationSidebar";
 import { useAutomationSections } from "./automationSections";
 
 setupConnectionsRegion();
+
+/** The sidebar and the app-level editor it opens. */
+const SidebarAndEditor = () => (
+  <>
+    <AutomationSidebar />
+    <AutomationEditorHost />
+  </>
+);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -144,7 +153,7 @@ const storeFns = {
   cancelMacroPlayback: vi.fn(),
   cancelMacroPlaybackOnTab: vi.fn(),
   openScheduleEditor: vi.fn(),
-  toggleMacroRecording: vi.fn(),
+  toggleRecording: vi.fn(),
   loadAutomationRuns: vi.fn(),
 };
 
@@ -201,6 +210,7 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   useAppStore.setState({ ...storeFns });
   useAutomationSections.setState(useAutomationSections.getInitialState());
+  useAutomationEditor.setState({ editing: null });
   seedConnectionsRegion({
     connections: [
       { id: "conn-1", name: "prod", config: { type: "ssh", config: {} }, folderId: null },
@@ -218,7 +228,7 @@ afterEach(() => {
 
 async function render(automations: Automation[] = library): Promise<void> {
   setLibrary(automations);
-  await act(async () => root.render(withTooltip(<AutomationSidebar />)));
+  await act(async () => root.render(withTooltip(<SidebarAndEditor />)));
   await flushAsync();
 }
 
@@ -276,7 +286,7 @@ describe("empty state", () => {
     await render([]);
     expect(query("automation-empty")!.textContent).toContain("No automations yet.");
     click("automation-empty-record-btn");
-    expect(storeFns.toggleMacroRecording).toHaveBeenCalledTimes(1);
+    expect(storeFns.toggleRecording).toHaveBeenCalledTimes(1);
     click("automation-empty-new-btn");
     expect(query("automation-editor-dialog")).not.toBeNull();
   });
@@ -314,8 +324,18 @@ describe("toolbar (R-037)", () => {
   it("records, and says so while it does", async () => {
     await render();
     click("automation-record-btn");
-    expect(storeFns.toggleMacroRecording).toHaveBeenCalledTimes(1);
-    act(() => useAppStore.setState({ macroRecording: true }));
+    expect(storeFns.toggleRecording).toHaveBeenCalledTimes(1);
+    act(() =>
+      useAppStore.setState({
+        recording: {
+          tabId: "tab-a",
+          tabTitle: "web-1",
+          keys: 0,
+          atPrompt: false,
+          intoEditor: null,
+        },
+      })
+    );
     expect(query("automation-record-btn")!.textContent).toBe("Stop recording");
   });
 
@@ -737,7 +757,7 @@ describe("the editor", () => {
         } as HTMLElement["scrollIntoView"];
         await act(async () => {
           setLibrary(library);
-          root.render(withTooltip(<AutomationSidebar />));
+          root.render(withTooltip(<SidebarAndEditor />));
         });
         click(`automation-edit-${id}`);
         set("automation-editor-name", "Renamed");

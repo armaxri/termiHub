@@ -208,7 +208,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "toggle-macro-recording",
-    label: "Record macro (start/stop)",
+    label: "Record automation (start/stop)",
     category: "terminal",
     // Ships unbound to avoid colliding with shell/tmux/vim keys; the user can
     // assign a binding in Settings. Reachable now via the toolbar button and the
@@ -230,9 +230,9 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   },
   {
     action: "play-macro",
-    label: "Play macro…",
+    label: "Run automation…",
     category: "terminal",
-    // Ships unbound like Record macro (#5779). Opens the macro picker, or stops
+    // Ships unbound like Record automation (#5779). Opens the run picker, or stops
     // a running playback, exactly like the "…" menu row.
     macDefault: null,
     winLinuxDefault: null,

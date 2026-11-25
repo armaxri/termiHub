@@ -23,7 +23,7 @@ vi.mock("@/components/ui", async () =>
   (await import("@/test/terminalViewUiMock")).terminalViewUiMock()
 );
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
-vi.mock("./MacroRecordSaveDialog", () => ({ MacroRecordSaveDialog: () => null }));
+vi.mock("@/components/Recording", () => ({ RecordingBar: () => null }));
 vi.mock("@/components/Automations/RunTargetsDialog", () => ({ RunTargetsDialog: () => null }));
 vi.mock("./BroadcastScopeDialog", () => ({ BroadcastScopeDialog: () => null }));
 vi.mock("@/components/SplitView", () => ({ SplitView: () => null }));

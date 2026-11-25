@@ -1,7 +1,7 @@
 /**
- * The tab context menu's "Stop automation" (#5818, slice 5): the keyboard
- * route to the running-automation badge's Stop, shown only while an
- * automation is typing into the tab.
+ * The tab context menu's "Stop automation" (#5818, slice 5) and "Stop
+ * recording" (slice 8): the keyboard routes to the badges' Stop, shown only
+ * while an automation is typing into the tab, or the tab is recorded.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -42,7 +42,11 @@ const running: RunningAutomationInfo = {
 
 let root: Root | null = null;
 
-function renderTab(info: RunningAutomationInfo | null, onStop: () => void) {
+function renderTab(
+  info: RunningAutomationInfo | null,
+  onStop: () => void,
+  onStopRecording?: () => void
+) {
   root = createRoot(document.body.appendChild(document.createElement("div")));
   act(() => {
     root!.render(
@@ -53,6 +57,8 @@ function renderTab(info: RunningAutomationInfo | null, onStop: () => void) {
           onClose={() => {}}
           runningAutomation={info}
           onStopAutomation={onStop}
+          isRecording={onStopRecording !== undefined}
+          onStopRecording={onStopRecording}
         />
       </TooltipProvider>
     );
@@ -85,5 +91,22 @@ describe("Tab — Stop automation (#5818)", () => {
   it("is absent while nothing runs on the tab", () => {
     renderTab(null, vi.fn());
     expect(item()).toBeNull();
+  });
+
+  it("stops the recording of this tab from its badge and the context menu", () => {
+    const stopRecording = vi.fn();
+    renderTab(null, vi.fn(), stopRecording);
+    const at = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    act(() => at("tab-recording-badge-t1")!.click());
+    expect(stopRecording).toHaveBeenCalledTimes(1);
+    expect(at("tab-context-stop-recording")?.textContent).toContain("Stop recording");
+    act(() => at("tab-context-stop-recording")!.click());
+    expect(stopRecording).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows no recording on a tab that is not recorded", () => {
+    renderTab(null, vi.fn());
+    expect(document.querySelector('[data-testid="tab-recording-badge-t1"]')).toBeNull();
+    expect(document.querySelector('[data-testid="tab-context-stop-recording"]')).toBeNull();
   });
 });

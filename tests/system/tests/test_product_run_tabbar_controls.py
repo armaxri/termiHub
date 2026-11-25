@@ -16,7 +16,7 @@ grades the icon order and the menu's contents; this file grades the controls'
 look and state.
 
 The grade opens one local terminal; no servers needed. It starts and stops a
-macro recording with nothing typed (no macro is saved) and never starts
+recording with nothing typed (no automation is saved) and never starts
 session logging, which would write a file.
 
 The ``test_grade_*`` functions grade fixed readings without an app and run in
@@ -48,7 +48,7 @@ SIDEBAR_SEPARATOR = "terminal-view-toolbar-sidebar-separator"
 SPLIT_DOWN = "terminal-view-split-vertical"
 MORE = "terminal-view-more-actions"
 MENU = "terminal-view-more-menu"
-RECORD = "terminal-view-record-macro"
+RECORD = "terminal-view-record"
 RECORDING_CHIP = "terminal-view-active-recording"
 
 #: The shipped toolbar, as the live run reads it with one tab group.
@@ -68,7 +68,7 @@ def _rows(checked: str, role: str = "menuitemcheckbox") -> dict[str, dict[str, O
             "checked": checked,
             "text": "Log session output",
         },
-        "terminal-view-record-macro": {"role": role, "checked": checked, "text": "Record macro"},
+        "terminal-view-record": {"role": role, "checked": checked, "text": "Record automation"},
     }
 
 
@@ -245,9 +245,9 @@ class TestProductRunTabbarControls(
     def test_40_menu_toggle_rows_show_their_state(self):
         with self.step(
             "toolbar.more-menu.toggle-state",
-            "'Log session output' and 'Record macro' are checkbox rows: unticked while off, "
-            "'Record macro' ticked while recording",
-            expect="#5849 (R-066): the '…' menu shows a tick before 'Record macro' while a "
+            "'Log session output' and 'Record automation' are checkbox rows: unticked while off, "
+            "'Record automation' ticked while recording",
+            expect="#5849 (R-066): the '…' menu shows a tick before 'Record automation' while a "
             "recording runs, and the 'Recording' chip shows beside the layout icons",
         ):
             self.ensure_terminal()
@@ -265,7 +265,7 @@ class TestProductRunTabbarControls(
                 self.driver.press_key("Escape")
                 on = self._menu_rows()
             finally:
-                # Nothing was typed, so stopping saves no macro.
+                # Nothing was typed, so stopping keeps no recording.
                 if self.driver.exists(RECORDING_CHIP):
                     self.driver.click(RECORDING_CHIP)
             self.evidence(f"recording rows {on}")

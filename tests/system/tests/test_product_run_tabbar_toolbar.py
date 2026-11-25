@@ -54,8 +54,8 @@ BOUND_ICONS = (
 MENU_ACTIONS = (
     "terminal-view-broadcast",
     "terminal-view-toggle-logging",
-    "terminal-view-record-macro",
-    "terminal-view-play-macro",
+    "terminal-view-record",
+    "terminal-view-run-automation",
 )
 #: An accelerator as the keybinding registry formats it, e.g. "(Cmd+Shift+B)",
 #: "(Alt+Shift+D)" or "(F9)".
@@ -102,7 +102,7 @@ class TestProductRunTabbarToolbar(
             "The '…' menu lists broadcast, logging, record and play, with the broadcast shortcut",
             expect="#5756: the open '…' menu sits inside the window under its button and lists "
             "'Broadcast input…' (its shortcut right-aligned), 'Log session output', "
-            "'Record macro' and 'Play macro…'",
+            "'Record automation' and 'Run automation…'",
         ):
             self.ensure_terminal()
             self.driver.click(MORE)

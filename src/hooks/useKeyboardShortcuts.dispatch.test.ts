@@ -120,7 +120,7 @@ const DISPATCH: Record<string, Effect> = {
   "show-shortcuts": store("setShortcutsOverlayOpen", true),
   "show-shortcuts-outside-terminal": store("setShortcutsOverlayOpen", true),
   "new-terminal": store("addLocalShellTab"),
-  "toggle-macro-recording": store("toggleMacroRecording"),
+  "toggle-macro-recording": store("toggleRecording"),
   "toggle-broadcast": store("toggleBroadcast"),
   "split-right": store("splitPanel", "horizontal"),
   "split-down": store("splitPanel", "vertical"),

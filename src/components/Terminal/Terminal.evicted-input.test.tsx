@@ -197,6 +197,22 @@ describe("Terminal — no input while evicted (SM-003)", () => {
     expect(mockSendInput).toHaveBeenCalledWith("session-1", "ls\r");
   });
 
+  it("records what was sent, and nothing that was dropped (#5818)", async () => {
+    await ensureSessionSubscribed();
+    harness.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    await mountTerminal();
+    const recordInput = vi.fn();
+    act(() => useAppStore.setState({ recordInput }));
+
+    act(() => capturedOnData!("l"));
+    harness.transport.setSession("tab-1", evicted());
+    await flushSessionRegion();
+    act(() => capturedOnData!("dropped"));
+
+    expect(recordInput.mock.calls.map(([tab, data]) => [tab, data])).toEqual([["tab-1", "l"]]);
+  });
+
   it("forwards input normally when the tab was never evicted", async () => {
     await ensureSessionSubscribed();
     harness.transport.setSession("tab-1", connected());

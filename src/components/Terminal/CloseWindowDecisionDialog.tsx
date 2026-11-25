@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowRight,
   Ban,
+  CircleDot,
   FileWarning,
   KeyRound,
   LoaderCircle,
@@ -21,6 +22,7 @@ import { cancelQuit, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendError } from "@/utils/frontendLog";
 import { windowDisplayName } from "@/types/window";
+import { recordedKeys } from "@/utils/recordingText";
 import type {
   WindowCloseDirtyEditor,
   WindowCloseOtherTab,
@@ -118,12 +120,13 @@ export function CloseWindowDecisionDialog() {
   const liveCount = count - startingCount;
   const dirtyEditors = request.dirtyEditors ?? [];
   const dirtyCount = dirtyEditors.length;
+  const { recording } = request;
   const movableCount = dirtyEditors.filter((editor) => editor.movable).length;
   const blockedEditors = dirtyEditors.filter((editor) => !editor.movable);
   // Move is offered when there is somewhere to go and something to carry; it
   // stays disabled while an editor would otherwise be discarded silently.
   const showMove = canMove && (count > 0 || movableCount > 0);
-  const moveBlocked = blockedEditors.length > 0;
+  const moveBlocked = blockedEditors.length > 0 || recording !== undefined;
   const otherTabs = request.otherTabs ?? [];
   // Movable form editors whose typed secrets stay behind (#4500).
   const secretEditors = dirtyEditors.filter(
@@ -148,6 +151,15 @@ export function CloseWindowDecisionDialog() {
     await getCurrentWindow().destroy();
   };
 
+  /** Leave the close (or the quit) and save the recording first (#5818). */
+  const handleSaveRecording = async () => {
+    setRequest(null);
+    if (isQuit) await answerQuit(cancelQuit);
+    const store = useAppStore.getState();
+    if (store.recording) store.stopRecording();
+    else store.setRecordingSaveOpen(true);
+  };
+
   /** Explicit Discard of one blocked editor: close its tab without saving. */
   const handleDiscardEditor = async (editor: WindowCloseDirtyEditor) => {
     const store = useAppStore.getState();
@@ -158,7 +170,7 @@ export function CloseWindowDecisionDialog() {
       store.closeTab(editor.tabId, located.panelId);
     }
     const remaining = dirtyEditors.filter((e) => e.tabId !== editor.tabId);
-    if (count === 0 && remaining.length === 0) {
+    if (count === 0 && remaining.length === 0 && !recording) {
       // Nothing is left that closing would lose, so close as asked.
       setRequest(null);
       await getCurrentWindow().destroy();
@@ -193,7 +205,9 @@ export function CloseWindowDecisionDialog() {
       description={
         count > 0
           ? `Choose what happens to this window's live sessions before ${isQuit ? "termiHub quits" : "it closes"}.`
-          : `This window has unsaved editors that ${isQuit ? "quitting" : "closing it"} would discard.`
+          : `This window has unsaved ${dirtyCount > 0 ? "editors" : "input"} that ${
+              isQuit ? "quitting" : "closing it"
+            } would discard.`
       }
       data-testid="close-window-decision-dialog"
       footer={
@@ -253,6 +267,8 @@ export function CloseWindowDecisionDialog() {
                 {dirtyCount} unsaved editor{dirtyCount === 1 ? "" : "s"} will be discarded.
               </>
             ))}
+          {recording && (count > 0 || dirtyCount > 0) && " "}
+          {recording && <>The recording is not saved and would be lost.</>}
         </p>
       </div>
 
@@ -261,9 +277,15 @@ export function CloseWindowDecisionDialog() {
           className="close-window-decision__blocked"
           data-testid="close-window-decision-move-blocked"
         >
-          {blockedEditors.map((editor) => `"${editor.title}"`).join(", ")} can&apos;t be moved with
-          unsaved changes. Save or discard {blockedEditors.length === 1 ? "it" : "them"} to move the
-          tabs.
+          {blockedEditors.length === 0 ? (
+            "Save the recording to move the tabs."
+          ) : (
+            <>
+              {blockedEditors.map((editor) => `"${editor.title}"`).join(", ")} can&apos;t be moved
+              with unsaved changes. Save or discard {blockedEditors.length === 1 ? "it" : "them"} to
+              move the tabs.
+            </>
+          )}
         </p>
       )}
 
@@ -288,6 +310,25 @@ export function CloseWindowDecisionDialog() {
         {request.sessions.map((session) => (
           <SessionRow key={session.tabId} session={session} />
         ))}
+        {recording && (
+          <div className="close-window-decision__row" data-testid="close-window-decision-recording">
+            <CircleDot className="li close-window-decision__row-icon" aria-hidden="true" />
+            <span className="close-window-decision__row-name">
+              Recording in {recording.tabTitle} ({recordedKeys(recording.keys)})
+            </span>
+            <span className="close-window-decision__pill close-window-decision__pill--terminate">
+              <Trash2 className="li" aria-hidden="true" /> Not saved — discarded
+            </span>
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => void handleSaveRecording()}
+              data-testid="close-window-decision-save-recording"
+            >
+              Save recording…
+            </Button>
+          </div>
+        )}
         {dirtyEditors.map((editor) => (
           <div
             key={editor.tabId}

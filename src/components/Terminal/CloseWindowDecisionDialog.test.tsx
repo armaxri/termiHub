@@ -200,6 +200,63 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     });
   });
 
+  describe("a recording (#5818)", () => {
+    const recording = { tabTitle: "prod-web", keys: 14 };
+    const ask = (over: Partial<WindowCloseRequest> = {}) => {
+      render();
+      act(() =>
+        useAppStore.getState().setPendingWindowClose(request({ sessions: [], recording, ...over }))
+      );
+    };
+
+    it("is named as lost", () => {
+      ask();
+      expect(q("close-window-decision-recording").textContent).toContain(
+        "Recording in prod-web (14 keys)"
+      );
+      expect(q("close-window-decision-dialog").textContent).toContain(
+        "The recording is not saved and would be lost."
+      );
+      expect(q("close-window-decision-end").textContent).toContain("Discard & close");
+    });
+
+    it("blocks moving the tabs, which would lose it", () => {
+      ask({ sessions: request().sessions });
+      expect((q("close-window-decision-move") as HTMLButtonElement).disabled).toBe(true);
+      expect(q("close-window-decision-move-blocked").textContent).toBe(
+        "Save the recording to move the tabs."
+      );
+    });
+
+    it("can be saved instead: the close is called off", async () => {
+      const stopRecording = vi.fn();
+      const setRecordingSaveOpen = vi.fn();
+      act(() =>
+        useAppStore.setState({
+          stopRecording,
+          setRecordingSaveOpen,
+          recording: {
+            tabId: "t",
+            tabTitle: "prod-web",
+            keys: 14,
+            atPrompt: false,
+            intoEditor: null,
+          },
+        })
+      );
+      ask();
+      await act(async () => q("close-window-decision-save-recording").click());
+      expect(stopRecording).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().pendingWindowClose).toBeNull();
+      expect(destroy).not.toHaveBeenCalled();
+
+      act(() => useAppStore.setState({ recording: null }));
+      act(() => useAppStore.getState().setPendingWindowClose(request({ sessions: [], recording })));
+      await act(async () => q("close-window-decision-save-recording").click());
+      expect(setRecordingSaveOpen).toHaveBeenCalledWith(true);
+    });
+  });
+
   describe("unsaved editors (UX2-003)", () => {
     const dirtyEditors = [{ tabId: "e1", title: "nginx.conf" }];
 

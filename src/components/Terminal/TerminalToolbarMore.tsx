@@ -17,8 +17,8 @@ import { getActionAccelerator, withActionAccelerator } from "@/services/keybindi
 /** Keeps the open menu this far from every window edge (same as the file browser menu, #5624). */
 export const TERMINAL_MENU_EDGE_PADDING = 8;
 
-/** Progress of a running macro playback, as the store reports it. */
-export interface MacroPlaybackProgress {
+/** Progress of a running automation, as the store reports it. */
+export interface PlaybackProgress {
   played: number;
   total: number;
 }
@@ -29,20 +29,21 @@ export interface TerminalToolbarMoreProps {
   onToggleBroadcast: () => void;
   loggingActive: boolean;
   onToggleLogging: () => void;
-  macroRecording: boolean;
+  /** What the recording chip says; `null` while nothing is recorded. */
+  recordingLabel: string | null;
   onToggleRecording: () => void;
-  macroPlayback: MacroPlaybackProgress | null;
-  onPlayMacro: () => void;
+  playback: PlaybackProgress | null;
+  onRunAutomation: () => void;
   onStopPlayback: () => void;
 }
 
 /**
- * The session and macro half of the terminal toolbar (#5756): broadcast,
- * session logging, macro record and macro play are entries of one "…" menu,
+ * The session and automation half of the terminal toolbar (#5756): broadcast,
+ * session logging, Record and Run automation are entries of one "…" menu,
  * each with its keyboard shortcut right-aligned (from the keybinding registry,
  * so it follows the platform and any user override).
  *
- * Session logging and macro recording are on/off states, so their rows are
+ * Session logging and recording are on/off states, so their rows are
  * checkbox rows (#5849, R-066): the label stays put ("Log session output") and
  * a tick plus `aria-checked` say whether it is on, instead of a row whose
  * wording flips and says nothing while off. Every row keeps a tick column so
@@ -60,17 +61,17 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
     onToggleBroadcast,
     loggingActive,
     onToggleLogging,
-    macroRecording,
+    recordingLabel,
     onToggleRecording,
-    macroPlayback,
+    playback,
     onStopPlayback,
   } = props;
   const moreLabel = t("terminalToolbar.more");
   const activeCount =
     Number(broadcastActive) +
     Number(loggingActive) +
-    Number(macroRecording) +
-    Number(macroPlayback !== null);
+    Number(recordingLabel !== null) +
+    Number(playback !== null);
 
   return (
     <>
@@ -94,9 +95,9 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
               testId="terminal-view-active-broadcast"
             />
           )}
-          {macroRecording && (
+          {recordingLabel !== null && (
             <ActiveChip
-              label={t("terminalToolbar.chip.recording")}
+              label={recordingLabel}
               tooltip={withActionAccelerator(
                 t("terminalToolbar.record.stop"),
                 "toggle-macro-recording"
@@ -107,16 +108,16 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
               testId="terminal-view-active-recording"
             />
           )}
-          {macroPlayback && (
+          {playback && (
             <ActiveChip
               label={tf("terminalToolbar.chip.playback", {
-                played: macroPlayback.played,
-                total: macroPlayback.total,
+                played: playback.played,
+                total: playback.total,
               })}
               tooltip={withActionAccelerator(
                 tf("terminalToolbar.play.stop", {
-                  played: macroPlayback.played,
-                  total: macroPlayback.total,
+                  played: playback.played,
+                  total: playback.total,
                 }),
                 "play-macro"
               )}
@@ -178,10 +179,10 @@ function MoreMenuItems({
   onToggleBroadcast,
   loggingActive,
   onToggleLogging,
-  macroRecording,
+  recordingLabel,
   onToggleRecording,
-  macroPlayback,
-  onPlayMacro,
+  playback,
+  onRunAutomation,
   onStopPlayback,
 }: TerminalToolbarMoreProps) {
   return (
@@ -211,28 +212,28 @@ function MoreMenuItems({
       <MenuCheckboxItem
         icon={<RowIcon toggle icon={<CircleDot size={14} />} />}
         shortcut={getActionAccelerator("toggle-macro-recording")}
-        checked={macroRecording}
+        checked={recordingLabel !== null}
         onSelect={onToggleRecording}
-        data-active={macroRecording}
-        data-testid="terminal-view-record-macro"
+        data-active={recordingLabel !== null}
+        data-testid="terminal-view-record"
       >
         {t("terminalToolbar.record.start")}
       </MenuCheckboxItem>
       <MenuItem
         icon={
           <RowIcon
-            icon={macroPlayback ? <Square size={12} fill="currentColor" /> : <Play size={14} />}
+            icon={playback ? <Square size={12} fill="currentColor" /> : <Play size={14} />}
           />
         }
         shortcut={getActionAccelerator("play-macro")}
-        onSelect={macroPlayback ? onStopPlayback : onPlayMacro}
-        data-active={macroPlayback !== null}
-        data-testid="terminal-view-play-macro"
+        onSelect={playback ? onStopPlayback : onRunAutomation}
+        data-active={playback !== null}
+        data-testid="terminal-view-run-automation"
       >
-        {macroPlayback
+        {playback
           ? tf("terminalToolbar.play.stop", {
-              played: macroPlayback.played,
-              total: macroPlayback.total,
+              played: playback.played,
+              total: playback.total,
             })
           : t("terminalToolbar.play.start")}
       </MenuItem>

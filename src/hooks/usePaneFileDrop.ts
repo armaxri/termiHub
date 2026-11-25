@@ -3,6 +3,7 @@ import { LeafPanel } from "@/types/terminal";
 import { getPanelActiveSessionId } from "@/utils/panelTree";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { sendInputDetached } from "@/services/detachedSessionInput";
+import { useAppStore } from "@/store/appStore";
 import { quotePath } from "@/utils/quotePath";
 
 interface PaneFileDrop {
@@ -26,9 +27,11 @@ export function usePaneFileDrop(panel: LeafPanel): PaneFileDrop {
     async (paths: string[]) => {
       if (!panelSessionId || paths.length === 0) return;
       const text = paths.map(quotePath).join(" ");
+      // Dropped paths are typed for the user, so a recording holds them (#5818).
+      if (panel.activeTabId) useAppStore.getState().recordInput(panel.activeTabId, text);
       await sendInputDetached(panelSessionId, text, "dropped file paths");
     },
-    [panelSessionId]
+    [panelSessionId, panel.activeTabId]
   );
   const { isDragOver: isFileDragOver } = useOsFileDrop(terminalAreaRef, handleFileDrop);
   return { terminalAreaRef, isFileDragOver, panelSessionId };

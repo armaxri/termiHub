@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Button, Field, Input, LiveRegion, Modal, ModalClose } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { useAppStore } from "@/store/appStore";
+import type { RecordedTake } from "@/store/slices/recordingSlice";
+import { showTerminal } from "@/utils/showTerminal";
 import type { Automation } from "@/types/generated/Automation";
 import { remapTriggerConnections } from "@/utils/connectionIdChanges";
 import { ITEM_DESCRIPTION_MAX_LENGTH } from "@/utils/itemDescription";
@@ -21,6 +23,8 @@ import {
 import { draftErrors, draftValues, stepsWithErrors, STEP_LIST_ERROR } from "./draftValidation";
 import { EditorSection } from "./EditorSection";
 import { ParametersEditor } from "./ParametersEditor";
+import { insertRecording, recordedNote, withRecordedSecrets } from "./recordedSteps";
+import { RecordStepsButton } from "./RecordStepsButton";
 import { StepEditorProvider, type StepEditorContextValue } from "./stepEditorContext";
 import { StepList } from "./StepList";
 import { WhenItRuns, whenItRunsSummary } from "./WhenItRuns";
@@ -57,6 +61,16 @@ function toggled(set: ReadonlySet<string>, value: string, on: boolean): Readonly
   if (on) next.add(value);
   else next.delete(value);
   return next;
+}
+
+/** The uid of the automation's own step `el` sits in, if any. */
+function outermostStep(el: Element): string | null {
+  let step = el.closest<HTMLElement>("[data-step-uid]");
+  for (let outer = step; outer; ) {
+    step = outer;
+    outer = outer.parentElement?.closest<HTMLElement>("[data-step-uid]") ?? null;
+  }
+  return step?.dataset.stepUid ?? null;
 }
 
 /** Every step uid of a list, nested ones included. */
@@ -106,6 +120,28 @@ export function AutomationEditorDialog({
   const [valuesOpen, setValuesOpen] = useState(initial.parameters.length > 0);
   const [tagsOpen, setTagsOpen] = useState(false);
   const primaryRef = useRef<HTMLButtonElement>(null);
+
+  // "Record steps" (slice 8): the editor hides while the user types in a
+  // terminal, keeps its draft, and comes back with the recording as a step.
+  const recordingHere = useAppStore((s) => s.recording?.intoEditor != null);
+  const hasTake = useAppStore((s) =>
+    [s.recordedTake, ...s.queuedTakes].some((take) => take?.forEditor)
+  );
+  const startRecording = useAppStore((s) => s.startRecording);
+  const takeForEditor = useAppStore((s) => s.takeForEditor);
+  const [recorded, setRecorded] = useState<{ take: RecordedTake; uid: string | null } | null>(null);
+  const [wentRecording, setWentRecording] = useState(false);
+  const lastStepUid = useRef<string | null>(null);
+  const recordRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!hasTake) return;
+    const take = takeForEditor();
+    if (!take) return;
+    const { steps, uid } = insertRecording(draft.steps, take, lastStepUid.current);
+    setDraft((d) => ({ ...d, steps }));
+    setRecorded({ take, uid });
+  }, [hasTake, takeForEditor, draft.steps]);
 
   useConnectionIdChanges((remap) => {
     setBase((b) => {
@@ -207,12 +243,30 @@ export function AutomationEditorDialog({
     </Button>
   );
 
+  const handleRecord = (tabId: string) => {
+    if (!startRecording({ tabId, intoEditor: draft.name.trim() })) return;
+    setRecorded(null);
+    setWentRecording(true);
+    showTerminal(tabId);
+  };
+
+  const storeSecrets = () => {
+    if (!recorded) return;
+    patch({ steps: withRecordedSecrets(draft.steps, recorded.take, recorded.uid) });
+    setRecorded({ ...recorded, take: { ...recorded.take, secrets: [] } });
+  };
+
   const stepUids = allUids(draft.steps);
   const allExpanded = stepUids.length > 0 && stepUids.every((uid) => expanded.has(uid));
+
+  // Not rendered while recording, rather than closed: the focus is free at once.
+  if (recordingHere) return null;
 
   return (
     <Modal
       open
+      // Back from a recording, start where it was asked for.
+      initialFocusRef={wentRecording ? recordRef : undefined}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -270,11 +324,16 @@ export function AutomationEditorDialog({
           className="automation-editor__section"
           aria-labelledby="automation-editor-steps-title"
           data-enter-exempt
+          onFocusCapture={(e) => {
+            lastStepUid.current = outermostStep(e.target) ?? lastStepUid.current;
+          }}
         >
           <div className="automation-editor__steps-header">
             <h3 id="automation-editor-steps-title" className="automation-editor__section-title">
               Steps ({draft.steps.length})
             </h3>
+            <span className="automation-editor__steps-spacer" />
+            <RecordStepsButton ref={recordRef} onRecord={handleRecord} />
             {draft.steps.length > 0 && (
               <Button
                 variant="ghost"
@@ -297,6 +356,25 @@ export function AutomationEditorDialog({
               data-testid="automation-editor-no-steps"
             >
               {errors[STEP_LIST_ERROR] ?? "No steps yet. Add the first one."}
+            </p>
+          )}
+          {recorded && (
+            <p
+              className="automation-editor__recorded"
+              role="status"
+              data-testid="automation-editor-recorded"
+            >
+              {recordedNote(recorded.take)}
+              {recorded.take.secrets.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={storeSecrets}
+                  data-testid="automation-editor-recorded-keep-secrets"
+                >
+                  Store it unencrypted
+                </Button>
+              )}
             </p>
           )}
           <StepEditorProvider value={stepEditor}>
