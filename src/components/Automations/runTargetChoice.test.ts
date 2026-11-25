@@ -61,6 +61,15 @@ describe("initialRunTargetChoice (#5818 slice 5)", () => {
     expect(initialRunTargetChoice(group, options())).toEqual(group);
   });
 
+  it("opens on all terminals when the remembered split is the same choice (C-012)", () => {
+    const split = { kind: "panel", parallel: false } as const;
+    expect(initialRunTargetChoice(split, options())).toEqual(split);
+    expect(initialRunTargetChoice(split, options({ panel: ["a", "b"] }))).toEqual({
+      kind: "all",
+      parallel: false,
+    });
+  });
+
   it("falls back to this terminal when the remembered option is gone, keeping parallel", () => {
     const fallback = { kind: "active", parallel: false };
     expect(
