@@ -2,7 +2,9 @@ import { useCallback, useMemo } from "react";
 import { useAppStore } from "@/store/appStore";
 import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
 import { toast } from "@/components/ui";
-import type { ScheduleInput } from "@/types/schedule";
+import type { ScheduleInput, ScheduleRule } from "@/types/schedule";
+import { t, tf } from "@/i18n/catalog";
+import { previewScheduleNextRun } from "@/services/scheduleApi";
 import { errorMessage } from "@/utils/errorMessage";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
 import { useScheduleLabels } from "./useScheduleLabels";
@@ -39,6 +41,12 @@ export function ScheduleEditorHost() {
         : null,
     [existing]
   );
+  const paused = useAppStore((s) => s.schedulesPaused);
+  const existingId = existing?.id ?? null;
+  const preview = useCallback(
+    (rule: ScheduleRule) => previewScheduleNextRun(existingId, rule),
+    [existingId]
+  );
   const scheduleId = existing?.id ?? editor?.draftId ?? "";
 
   const handleSave = useCallback(
@@ -46,14 +54,20 @@ export function ScheduleEditorHost() {
       try {
         const saved = await saveSchedule(next);
         closeScheduleEditor();
-        useAutomationSections.getState().setSchedulesOpen(true);
-        // The saved row shows in the Schedules list (#5859). A disabled one
-        // will not run, which the row alone does not explain.
+        const sections = useAutomationSections.getState();
+        sections.setSchedulesOpen(true);
+        sections.markScheduleSaved(saved.id);
+        // The saved row shows in the Schedules list (#5859). One that is off
+        // will not run, which the user must know after saving it.
         if (!saved.enabled) {
-          // toast-policy: explains-outcome — the schedule was saved but will not run yet
-          toast.info(`Saved schedule "${saved.name}" disabled`, {
-            description: "Enable it in the Schedules list when you are ready.",
-          });
+          // After the editor closed: its own status line would take the message
+          // with it.
+          window.setTimeout(() => {
+            // toast-policy: explains-outcome — the schedule was saved but will not run yet
+            toast.info(tf("schedule.saved.off", { name: saved.name }), {
+              description: t("schedule.saved.offHint"),
+            });
+          }, 0);
         }
       } catch (err) {
         toast.error(`Failed to save schedule: ${errorMessage(err)}`);
@@ -72,6 +86,9 @@ export function ScheduleEditorHost() {
       automations={automations}
       connections={connections}
       groups={groups}
+      enabled={existing?.enabled === true}
+      paused={paused}
+      previewNextRun={preview}
       onOpenChange={(open) => {
         if (!open) closeScheduleEditor();
       }}

@@ -911,6 +911,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::schedules::delete_schedule,
             commands::schedules::set_schedule_enabled,
             commands::schedules::set_schedules_paused,
+            commands::schedules::preview_schedule_next_run,
+            commands::schedules::clear_schedule_history,
             commands::schedules::report_schedule_run,
             commands::schedules::register_schedule_window,
             commands::schedules::ack_schedule_run,

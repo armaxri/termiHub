@@ -4,7 +4,7 @@ import { Tooltip } from "@/components/ui";
 import { showSchedulesInSidebar } from "@/components/AutomationSidebar/automationSections";
 
 /**
- * Status-bar indicator for scheduled runs (PROD-043): "N schedules active"
+ * Status-bar indicator for scheduled runs (PROD-043): "N schedules on"
  * while any schedule is enabled — scheduled runs type into remote hosts
  * unattended, so their existence must always be visible — or "Schedules
  * paused" under the global pause. Clicking it opens the Schedules section of
@@ -19,7 +19,7 @@ export function ScheduleStatus() {
 
   const label = paused
     ? "Schedules paused"
-    : `${enabled} schedule${enabled === 1 ? "" : "s"} active${running ? " · running" : ""}`;
+    : `${enabled} schedule${enabled === 1 ? "" : "s"} on${running ? " · running" : ""}`;
   const tooltip = paused
     ? "All schedules are paused — no scheduled run fires. Click to manage schedules."
     : "Scheduled automations send input to their target hosts automatically. Click to manage schedules.";

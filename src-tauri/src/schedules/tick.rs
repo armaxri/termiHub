@@ -6,13 +6,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use super::config::{MissedRunPolicy, Schedule, ScheduleRunOutcome};
+use super::config::{MissedRunPolicy, Schedule, ScheduleRunOutcome, ScheduleRunResult};
 use super::history;
 use super::manager::{
     anchor_of, initial_due, ActiveRun, Runtime, ACK_TIMEOUT, MISSED_GRACE, STALE_RUN_TIMEOUT,
 };
 use super::timing::next_run_after;
-use super::wire::{aggregate, skipped, ScheduleFire};
+use super::wire::{aggregate, missed_run, skipped, ScheduleFire};
 
 /// What every schedule of one tick shares.
 pub(super) struct TickContext {
@@ -78,9 +78,13 @@ pub(super) fn connect_window(audience: &BTreeSet<String>) -> Option<String> {
 }
 
 /// Record a skipped due run.
-fn skip(s: &mut Schedule, now: DateTime<Utc>, msg: String, catch_up: bool) -> Step {
-    tracing::info!("schedule {}: {msg}", s.id);
-    history::record(s, skipped(now, msg, catch_up));
+fn skip(s: &mut Schedule, result: ScheduleRunResult) -> Step {
+    tracing::info!(
+        "schedule {} skipped a run: {}",
+        s.id,
+        result.message.as_deref().unwrap_or_default()
+    );
+    history::record(s, result);
     Step {
         fire: None,
         changed: true,
@@ -128,15 +132,11 @@ pub(super) fn step<Tz: TimeZone>(
         };
     }
     if missed && s.missed_runs == MissedRunPolicy::Skip {
-        let when = due.with_timezone(tz).naive_local().format("%Y-%m-%d %H:%M");
-        let msg = format!(
-            "Missed the run due at {when} (termiHub was closed or the computer was asleep)"
-        );
-        return skip(s, now, msg, false);
+        return skip(s, missed_run(now, due));
     }
     if rt.active.is_some() {
         let msg = "Skipped: the previous run was still in progress".to_string();
-        return skip(s, now, msg, missed);
+        return skip(s, skipped(now, msg, missed));
     }
     let token = uuid::Uuid::new_v4().to_string();
     tracing::info!(

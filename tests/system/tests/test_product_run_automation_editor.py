@@ -380,6 +380,7 @@ class TestProductRunAutomationEditor(
             box = f"schedule-editor-connection-{self.ids['conn']}"
             self.wait(lambda: self.driver.exists(box), what="the target connection checkbox")
             self.driver.click(box)
+            self.driver.click("schedule-editor-closed-skip")
             self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
             self.driver.click("schedule-editor-save")
             self.wait(lambda: not self.driver.exists(SCHEDULE_EDITOR), what="it to close")

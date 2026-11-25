@@ -162,8 +162,10 @@ class AutomationPhaseUi(AutomationSidebarUi):
         name: str,
         connection_id: str,
         description: Optional[str] = None,
+        if_closed: str = "skip",
     ) -> str:
         """Row menu "Schedule…": the editor opens with that automation picked (#5818);
+        choose what to do with a closed connection (``skip`` or ``connect``, #6024),
         save it every minute on one connection and return the schedule id."""
         self.automation_menu(automation_id, "schedule")
         self.wait(lambda: self.driver.exists(SCHEDULE_EDITOR), what="the schedule editor")
@@ -173,6 +175,7 @@ class AutomationPhaseUi(AutomationSidebarUi):
         box = f"schedule-editor-connection-{connection_id}"
         self.wait(lambda: self.driver.exists(box), what="the target connection checkbox")
         self.driver.click(box)
+        self.driver.click(f"schedule-editor-closed-{if_closed}")
         self.driver.type("schedule-editor-every", "1")
         self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
         self.driver.click("schedule-editor-save")
@@ -182,6 +185,15 @@ class AutomationPhaseUi(AutomationSidebarUi):
             what=f"the saved schedule {name!r}",
         )
         return found["id"]
+
+    def schedule_row_texts(self, schedule_id: str) -> dict[str, str]:
+        """What the schedule's row says, by line (#6024); a line it lacks is empty."""
+        texts = {}
+        for line in ("status", "rule", "what", "last"):
+            test_id = f"schedule-{line}-{schedule_id}"
+            shown = self.driver.exists(test_id)
+            texts[line] = self.driver.get_text(test_id).strip() if shown else ""
+        return texts
 
     def set_schedule_enabled(self, schedule_id: str, enabled: bool) -> None:
         """Settings -> Schedules: flip the switch (accepting the first-enable confirmation)."""

@@ -97,6 +97,29 @@ describe("triggers", () => {
     expect(await savedTriggers()).toEqual([{ kind: "on-connect", connectionIds: ["conn-2"] }]);
   });
 
+  it("names a deleted connection, says the trigger starts nothing, and removes it (A-025)", async () => {
+    await open([
+      { kind: "on-output-match", connectionIds: ["Work/Old Box"], pattern: "Continue?" },
+    ]);
+    const row = query("automation-trigger-connection-0-deleted-0")!;
+    expect(row.textContent).toContain("Deleted connection “Old Box”");
+    expect(query("automation-trigger-connection-0-none")!.textContent).toContain("never starts it");
+    click("automation-trigger-connection-0-conn-1");
+    expect(query("automation-trigger-connection-0-none")).toBeNull();
+    click("automation-trigger-connection-0-deleted-remove-0");
+    expect(query("automation-trigger-connection-0-deleted-0")).toBeNull();
+    expect(await savedTriggers()).toEqual([
+      { kind: "on-output-match", connectionIds: ["conn-1"], pattern: "Continue?" },
+    ]);
+  });
+
+  it("names a deleted connection also when no connection is saved any more", async () => {
+    seedConnectionsRegion({ connections: [] });
+    await open([{ kind: "on-connect", connectionIds: ["Work/Old Box"] }]);
+    expect(query("automation-trigger-connection-0-deleted-0")).not.toBeNull();
+    expect(query("automation-trigger-connection-0-none")).not.toBeNull();
+  });
+
   it("adds an on-disconnect trigger with its cause", async () => {
     await open();
     await add("on-disconnect");
@@ -213,7 +236,7 @@ describe("schedules", () => {
     useAppStore.setState({ schedules: [schedule] });
     await open();
     expect(query("automation-editor-schedule-s-1")?.textContent).toMatch(
-      /Nightly: .*09:10.* on prod-web-1 · Disabled/
+      /Nightly: .*09:10.* on prod-web-1 · Off/
     );
     click("automation-editor-schedule-edit-s-1");
     expect(openScheduleEditor).toHaveBeenCalledWith({ scheduleId: "s-1" });

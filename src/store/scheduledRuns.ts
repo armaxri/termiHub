@@ -36,15 +36,16 @@
  * can settle the run and record the reason.
  */
 import { toast } from "@/components/ui";
-import type { WorkflowParamValues } from "@/services/workflowRunner";
 import type { ScheduleFire, ScheduleTargets, WindowRunReport } from "@/types/schedule";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { BroadcastGroup } from "@/types/terminal";
-import type { Workflow, WorkflowParameter } from "@/types/workflow";
+import type { Workflow } from "@/types/workflow";
 import type { Automation } from "@/types/generated/Automation";
+import { t, tf } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 import { localProcessBlockedReason } from "@/utils/localProcessGate";
+import { unattendedParamValues } from "@/utils/unattended";
 
 import type { AppState } from "./appStore";
 import { collectLiveTabs } from "./layoutHelpers";
@@ -90,6 +91,13 @@ function busyReason(state: AppState): string | null {
   return null;
 }
 
+/** Nothing to type into: why, and (#6024) that this is what the schedule was told to do. */
+function noneOpen(fire: ScheduleFire): string {
+  return fire.connectWindow === undefined
+    ? t("schedule.skip.noneOpenSkip")
+    : t("schedule.skip.noneOpen");
+}
+
 /** A report for a run that did nothing in this window. */
 function skip(message: string): WindowRunReport {
   return { outcome: "skipped", message, targetsRun: 0 };
@@ -131,34 +139,6 @@ export function claimedTargetIds(fire: ScheduleFire, state: AppState): string[] 
   return connectionIds === null ? [] : connectedIds(state, connectionIds);
 }
 
-/**
- * Parameter values for an unattended run: each parameter's default, else a
- * type-appropriate empty value. Returns the name of a required parameter that
- * has no usable default (the run must then not start — it cannot prompt).
- */
-export function unattendedParamValues(
-  parameters: readonly WorkflowParameter[]
-): { values: WorkflowParamValues } | { missing: string } {
-  const values: WorkflowParamValues = {};
-  for (const param of parameters) {
-    const value = param.default;
-    const hasDefault = value !== undefined && !(typeof value === "string" && value.trim() === "");
-    if (!hasDefault && param.required && param.type !== "boolean") {
-      return { missing: param.label ?? param.name };
-    }
-    if (value !== undefined) {
-      values[param.name] = value;
-    } else if (param.type === "boolean") {
-      values[param.name] = false;
-    } else if (param.type === "enum") {
-      values[param.name] = param.options?.[0] ?? "";
-    } else {
-      values[param.name] = "";
-    }
-  }
-  return { values };
-}
-
 /** Run a workflow on this window's connected targets, unattended. */
 async function runScheduledWorkflow(
   fire: ScheduleFire,
@@ -168,10 +148,10 @@ async function runScheduledWorkflow(
 ): Promise<WindowRunReport> {
   if (workflow.steps.length === 0) return skip(`Automation "${workflow.name}" has no steps`);
   const { targets } = resolveConnectedTargets(store.getState(), tabIds);
-  if (targets.length === 0) return skip("None of the target connections is connected");
+  if (targets.length === 0) return skip(noneOpen(fire));
   const params = unattendedParamValues(workflow.parameters ?? []);
   if ("missing" in params) {
-    return skip(`Parameter "${params.missing}" needs a default value to run unattended`);
+    return skip(tf("schedule.skip.missingValue", { name: params.missing }));
   }
 
   const toastId = `schedule-run-${fire.token}`;
@@ -220,6 +200,7 @@ async function runScheduledWorkflow(
 
 /** Play a typing-only automation into this window's connected targets. */
 async function runScheduledMacro(
+  fire: ScheduleFire,
   automation: Automation,
   tabIds: string[],
   store: ScheduledRunStore
@@ -228,7 +209,7 @@ async function runScheduledMacro(
   const macroId = automation.id;
   if (automation.steps.length === 0) return skip(`Automation "${automation.name}" has no steps`);
   const targets = filterConnectedTerminalTabIds(state, tabIds);
-  if (targets.length === 0) return skip("None of the target connections is connected");
+  if (targets.length === 0) return skip(noneOpen(fire));
   // Every terminal's playback writes its own record (#5818): the attempt links
   // exactly the ones written, and fails when any of them failed.
   const recorded: AutomationRun[] = [];
@@ -242,10 +223,12 @@ async function runScheduledMacro(
     targetsRun: recorded.length,
     ...(recorded.length > 0 ? { runIds: recorded.map((run) => run.id) } : {}),
   };
-  if (recorded.some((run) => run.status === "failed")) {
+  const failed = recorded.find((run) => run.status === "failed");
+  if (failed) {
     return {
       outcome: "failed",
-      message: "A target terminal disconnected during playback",
+      // The words of the run's own record, so the schedule and the History agree.
+      message: `${failed.targetLabel ?? automation.name}: ${failed.error ?? "it failed"}`,
       ...ran,
     };
   }
@@ -309,7 +292,7 @@ async function runAction(
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
-  if (isMacroShaped(automation)) return await runScheduledMacro(automation, tabIds, store);
+  if (isMacroShaped(automation)) return await runScheduledMacro(fire, automation, tabIds, store);
   return await runScheduledWorkflow(fire, automationToWorkflow(automation), tabIds, store);
 }
 

@@ -165,7 +165,7 @@ termiHub uses US English.
 > "Users are looking for names and maybe for a short description, but not the settings."
 > (maintainer, 2026-11-13, [#5757](https://github.com/armaxri/termiHub/issues/5757))
 
-A row in a sidebar or list (connections, automations, schedules, agents, tunnels,
+A row in a sidebar or list (connections, automations, agents, tunnels,
 services, HTTP monitors, plugins) shows:
 
 - **The name the user gave the item.**
@@ -173,8 +173,8 @@ services, HTTP monitors, plugins) shows:
   description is optional, single line and at most 80 characters
   (`ITEM_DESCRIPTION_MAX_LENGTH` in `src/utils/itemDescription.ts`). No description, no line.
 - **A compact state marker, only when the state needs attention:** running, error or failed,
-  armed/off, connected, disabled, paused. A routine state that the dot already says ("on,
-  next run at 09:10") is not a marker.
+  armed/off, connected, disabled, paused. A routine state that the dot already says
+  ("connected") is not a marker.
 - **Its run control, when the list exists to run things:** an automation's Run, a tunnel's or
   service's Start / Stop (Retry after an error). It stays visible at rest on the row's
   trailing edge (`SidebarListItem`'s `primaryAction`); the other actions show on hover.
@@ -188,18 +188,22 @@ previews, the last run and where it went, prefixes, tags. Pass these lines to
 `SidebarListItem`'s `tooltip` prop; they show in a tooltip on the name and are the row's
 accessible description.
 
-| Do                                     | Don't                                             |
-| -------------------------------------- | ------------------------------------------------- |
-| Prod web · _Main shop front_           | Prod web · _deploy@10.0.0.4:22\_                  |
-| Answer on match · ⚡ Armed             | Answer on match · _On output match · prod-shell_  |
-| Release check                          | Release check · _echo start_ · _Last run: 5m ago_ |
-| Nightly backup (dot: on)               | Nightly backup · _Next: today 09:10_              |
-| Nightly backup (dot: off) · _Disabled_ | Nightly backup · _Every day 09:10 · on db-1_      |
-| Prod DB (dot: connected)               | Prod DB · LOCAL · _127.0.0.1:5432 → db:5432_      |
-| Docs share · _Error: port in use_      | Docs share · HTTP · _:8080 → /srv/docs_           |
-| Build box (dot: connected)             | Build box · v0.4.1 ✓                              |
-| Shop health (dot: down) · _Down_       | shop.example.com/health · ✗ down · 2m ago         |
-| Log colorizer · _Colours log levels_   | Log colorizer · v0.3.0                            |
+| Do                                   | Don't                                             |
+| ------------------------------------ | ------------------------------------------------- |
+| Prod web · _Main shop front_         | Prod web · _deploy@10.0.0.4:22\_                  |
+| Answer on match · ⚡ Armed           | Answer on match · _On output match · prod-shell_  |
+| Release check                        | Release check · _echo start_ · _Last run: 5m ago_ |
+| Prod DB (dot: connected)             | Prod DB · LOCAL · _127.0.0.1:5432 → db:5432_      |
+| Docs share · _Error: port in use_    | Docs share · HTTP · _:8080 → /srv/docs_           |
+| Build box (dot: connected)           | Build box · v0.4.1 ✓                              |
+| Shop health (dot: down) · _Down_     | shop.example.com/health · ✗ down · 2m ago         |
+| Log colorizer · _Colours log levels_ | Log colorizer · v0.3.0                            |
+
+**A schedule's row is the exception** (#6024): the list exists to answer when something runs by
+itself, what, where, and whether the last run happened. Its row says its state with the next run
+and the rule, the automation and the connections, why it will not run, and the last run with the
+whole reason. Those lines wrap and are never cut. Its switch shows on and off; a coloured dot
+always means an outcome. A schedule is **On**, **Off** or **Paused**, never "enabled" or "armed".
 
 Not list rows, so this rule does not apply: location context that says where a view is (the
 file browser's host label), detail areas (the status bar's SSH and serial chips, a service's

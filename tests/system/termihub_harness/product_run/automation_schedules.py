@@ -111,3 +111,45 @@ def linked_run_problems(attempt: Any, stored_runs: Any, automation_id: str) -> l
         if run.get("origin") != "scheduled":
             problems.append(f"run {run_id} has origin {run.get('origin')!r}, not 'scheduled'")
     return problems
+
+
+def schedule_row_problems(
+    texts: dict[str, str],
+    schedule: dict[str, Any],
+    *,
+    automation_name: str,
+    targets: str,
+) -> list[str]:
+    """What is wrong with a schedule's row (#6024): it must say whether it is on and
+    when it next runs, its rule, what it runs where, and how the last run ended.
+
+    ``texts`` are the row's lines by name (``status``, ``rule``, ``what``, ``last``);
+    a line the row lacks is absent or empty.
+    """
+    problems: list[str] = []
+    status = texts.get("status", "")
+    if schedule.get("enabled"):
+        if not (status.startswith("Next run ") or status == "Running now"):
+            problems.append(f"a schedule that is on reads {status!r}, not its next run")
+    elif status not in ("Off", "Off until you switch it on"):
+        problems.append(f"a schedule that is off reads {status!r}")
+    if not texts.get("rule"):
+        problems.append("the row does not say the rule")
+    what = f"{automation_name} on {targets}"
+    if texts.get("what") != what:
+        problems.append(f"the row says {texts.get('what')!r}, not {what!r}")
+    last = texts.get("last", "")
+    if schedule.get("lastResult"):
+        if not last.startswith("Last run "):
+            problems.append(f"the row does not say how the last run ended: {last!r}")
+        elif (schedule["lastResult"].get("outcome") == "completed") != (
+            last.startswith(("Last run completed", "Last run left some out"))
+        ):
+            problems.append(f"the last run reads {last!r}")
+    elif last:
+        problems.append(f"a schedule that never ran says {last!r}")
+    for text in texts.values():
+        for word in ("Disabled", "Enabled", "Armed", "playback"):
+            if word.lower() in text.lower():
+                problems.append(f"{word!r} is on the row: {text!r}")
+    return problems

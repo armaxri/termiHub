@@ -1,26 +1,34 @@
+import { useCallback } from "react";
 import { ConfirmDialog } from "@/components/ui";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
+import { previewScheduleNextRun } from "@/services/scheduleApi";
+import type { ScheduleRule } from "@/types/schedule";
+import { formatDayTime } from "@/utils/formatters";
+import { describeRule } from "./scheduleForm";
+import { useNextRun } from "./useNextRun";
 
 export interface ScheduleEnableConfirmDialogProps {
   /** Whether the dialog is open. */
   open: boolean;
   /** The schedule's name. */
   scheduleName: string;
-  /** What it runs, e.g. `workflow "Health check"`. */
+  /** The automation's name. */
   actionLabel: string;
-  /** When it runs, e.g. "Every 15 minutes". */
-  ruleLabel: string;
+  /** When it runs. */
+  rule: ScheduleRule | null;
   /** The hosts it will send input to. */
   hosts: string[];
+  /** Why nothing will run, or `null`. */
+  gone?: string | null;
   /** It also connects hosts that are not connected (#3527). */
   connects?: boolean;
-  /** Enable the schedule (confirmed). */
+  /** Switch the schedule on (confirmed). */
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
 }
 
 /**
- * The one-time confirmation before a schedule is first enabled (PROD-043): a
+ * The one-time confirmation before a schedule is first switched on (PROD-043): a
  * scheduled run types into remote hosts unattended, so the user must see and
  * accept exactly which hosts, what, and when.
  */
@@ -28,36 +36,54 @@ export function ScheduleEnableConfirmDialog({
   open,
   scheduleName,
   actionLabel,
-  ruleLabel,
+  rule,
   hosts,
+  gone = null,
   connects = false,
   onConfirm,
   onCancel,
 }: ScheduleEnableConfirmDialogProps) {
+  // A schedule that is off is timed from the moment it is switched on.
+  const preview = useCallback((r: ScheduleRule) => previewScheduleNextRun(null, r), []);
+  const next = useNextRun(open ? rule : null, preview);
   return (
     <ConfirmDialog
       open={open}
       variant="warn"
-      title={`Enable schedule "${scheduleName}"?`}
+      title={tf("schedule.confirm.title", { name: scheduleName })}
       message={
-        <>
+        <div className="schedule-confirm">
           <p>
-            {ruleLabel}, termiHub will run {actionLabel} and send its input — without asking — to
-            every connected terminal of:
+            {tf("schedule.confirm.message", {
+              rule: rule ? describeRule(rule) : "",
+              action: actionLabel,
+            })}
           </p>
           <ul className="schedule-confirm__hosts" data-testid="schedule-confirm-hosts">
-            {hosts.length === 0 ? <li>No hosts (the targets no longer exist)</li> : null}
             {hosts.map((host, i) => (
               <li key={`${host}-${i}`}>{host}</li>
             ))}
+            {hosts.length === 0 && gone ? (
+              <li>{tf("schedule.confirm.gone", { reason: gone })}</li>
+            ) : null}
           </ul>
-          {connects ? (
-            <p data-testid="schedule-confirm-connects">{t("schedule.connect.confirm")}</p>
+          {gone && hosts.length > 0 ? (
+            <p data-testid="schedule-confirm-gone">
+              {tf("schedule.confirm.gone", { reason: gone })}
+            </p>
           ) : null}
-          <p>It only runs while termiHub is open. You can pause all schedules at any time.</p>
-        </>
+          {next && !gone ? (
+            <p data-testid="schedule-confirm-next">
+              {tf("schedule.confirm.next", { when: formatDayTime(next) })}
+            </p>
+          ) : null}
+          <p data-testid={connects ? "schedule-confirm-connects" : "schedule-confirm-skips"}>
+            {t(connects ? "schedule.connect.confirm" : "schedule.confirm.skips")}
+          </p>
+          <p>{t("schedule.confirm.foot")}</p>
+        </div>
       }
-      confirmLabel="Enable schedule"
+      confirmLabel={t("schedule.confirm.accept")}
       confirmVariant="primary"
       onConfirm={onConfirm}
       onCancel={onCancel}

@@ -1,20 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { ITEM_DESCRIPTION_MAX_LENGTH } from "@/utils/itemDescription";
+import { Info } from "lucide-react";
 import { Controller } from "react-hook-form";
 import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import { draftKey } from "@/utils/draftKey";
 import {
   Button,
-  Checkbox,
-  EmptyState,
   Field,
   Input,
   Modal,
   ModalClose,
   NumberInput,
+  RadioGroup,
   Select,
-  type SelectOption,
 } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import type { Automation } from "@/types/generated/Automation";
@@ -22,11 +21,29 @@ import type { ScheduleAction, ScheduleInput } from "@/types/schedule";
 import { SCHEDULE_WEEKDAYS } from "@/types/schedule";
 import type { BroadcastGroup } from "@/types/terminal";
 import {
+  unattendedBlockedReason,
+  unattendedDefaults,
+  unattendedPasswordNote,
+} from "@/utils/unattended";
+import {
+  automationOptions,
+  CLOSED_OPTIONS,
+  groupOptions,
+  MISSED_OPTIONS,
+  RULE_OPTIONS,
+  TARGET_OPTIONS,
+} from "./scheduleEditorOptions";
+import { ScheduleConnectionPicker } from "./ScheduleConnectionPicker";
+import { needsNewConfirmation, scheduleSummary } from "./scheduleSummary";
+import { useNextRun, type PreviewNextRun } from "./useNextRun";
+import {
   blankScheduleForm,
+  describeTargetNames,
   formToScheduleInput,
   keepUntouched,
   MAX_INTERVAL_MINUTES,
   MIN_INTERVAL_MINUTES,
+  ruleOf,
   scheduleFormSchema,
   scheduleToForm,
   weekdayLabel,
@@ -52,55 +69,28 @@ export interface ScheduleEditorDialogProps {
   automations: Automation[];
   connections: SavedConnection[];
   groups: BroadcastGroup[];
+  /** Whether the edited schedule is on. */
+  enabled?: boolean;
+  /** The global pause switch. */
+  paused?: boolean;
+  /** Asks the scheduler when a rule would run next (#6024). */
+  previewNextRun?: PreviewNextRun;
   onOpenChange: (open: boolean) => void;
   /** Persist the schedule; may reject (the dialog then stays open). */
   onSave: (input: ScheduleInput) => void | Promise<void>;
 }
 
-const TARGET_OPTIONS = [
-  { value: "connections", label: "Saved connections" },
-  { value: "broadcast-group", label: "Broadcast group" },
-];
-const RULE_OPTIONS = [
-  { value: "interval", label: "Every N minutes" },
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-];
-const MISSED_OPTIONS = [
-  { value: "skip", label: "Skip missed runs" },
-  { value: "run-once", label: "Run once when termiHub is back" },
-];
-
-/**
- * The picker's options: every automation by name, plus the stored id when it
- * no longer resolves, so an edit keeps (and shows) a deleted automation. One
- * that a schedule must not run (#5818) is listed disabled, with the reason.
- */
-function automationOptions(
-  automations: readonly Automation[],
-  selected: string,
-  blockedReason: (id: string) => string | null
-): SelectOption[] {
-  const options: SelectOption[] = automations.map((a) =>
-    blockedReason(a.id)
-      ? { value: a.id, label: `${a.name} (experimental: runs a local process)`, disabled: true }
-      : { value: a.id, label: a.name }
-  );
-  if (selected && !automations.some((a) => a.id === selected)) {
-    options.push({ value: selected, label: "Missing automation" });
-  }
-  return options;
-}
-
 /**
  * Create/edit a schedule (PROD-043): which automation to run (one picker,
- * #5818), on which saved connections (or broadcast group), and when (every N
- * minutes, daily, or on chosen weekdays at a local time). New schedules are
- * saved **disabled**; they are enabled from the schedules list, which asks for
- * confirmation of the target hosts first.
+ * #5818), on which saved connections (or broadcast group), what to do when one
+ * of them is closed (a new schedule must choose, #6024), and when (every N
+ * minutes, daily, or on chosen weekdays at a local time). The footer says when
+ * and where it runs next before it is saved. New schedules are saved **off**;
+ * they are switched on in the schedules list, which asks for confirmation of the
+ * target hosts first.
  *
  * A schedule whose automation was deleted keeps its id: the picker shows it
- * as "Missing automation" so saving never rewrites the action silently.
+ * as "Deleted automation" so saving never rewrites the action silently.
  */
 export function ScheduleEditorDialog({
   open,
@@ -110,6 +100,9 @@ export function ScheduleEditorDialog({
   automations,
   connections,
   groups,
+  enabled = false,
+  paused = false,
+  previewNextRun,
   onOpenChange,
   onSave,
 }: ScheduleEditorDialogProps) {
@@ -144,6 +137,7 @@ export function ScheduleEditorDialog({
   const [baselineKey, setBaselineKey] = useState<string | null>(null);
   latest.current = { schedule, initialAction };
   const loaded = useRef<ScheduleFormValues | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
   const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
@@ -180,6 +174,43 @@ export function ScheduleEditorDialog({
 
   const errorFor = (path: keyof ScheduleFormValues): string | undefined => errors[path];
 
+  // What the automation cannot do when nobody is there (#6024).
+  const findAutomation = (id: string) => automations.find((a) => a.id === id);
+  const picked = findAutomation(watched.automationId);
+  const cannotRun = blockedPick ?? (picked ? unattendedBlockedReason(picked) : null);
+  const passwordNote = picked ? unattendedPasswordNote(picked, findAutomation) : null;
+  const defaultsNote = picked ? unattendedDefaults(picked) : null;
+  const automationNote = cannotRun ?? passwordNote ?? defaultsNote;
+
+  // A connection that was deleted is named and can be removed; a choice of only
+  // deleted ones is no choice, unless it is the stored one the user left alone.
+  const connectionName = (id: string) => connections.find((c) => c.id === id)?.name;
+  const edited = formToScheduleInput(scheduleId, watched);
+  const current =
+    schedule && loaded.current ? keepUntouched(schedule, loaded.current, watched, edited) : edited;
+  const targetNames = describeTargetNames(current.targets, connectionName, groups);
+  const noneLeft =
+    watched.targetsKind === "connections" &&
+    watched.connectionIds.length > 0 &&
+    targetNames.gone !== null;
+  const targetsRefused = noneLeft && current.targets !== schedule?.targets;
+
+  const next = useNextRun(open ? ruleOf(watched) : null, previewNextRun);
+  const summary = scheduleSummary({
+    next,
+    rule: ruleOf(watched),
+    targets: targetNames,
+    targetCount:
+      watched.targetsKind === "connections"
+        ? watched.connectionIds.length
+        : Number(watched.groupId !== ""),
+    cannotRun,
+    ifClosed: watched.ifClosed,
+    isOn: schedule !== null && enabled,
+    switchesOff: schedule !== null && enabled && needsNewConfirmation(schedule, current),
+    paused,
+  });
+
   const handleSave = () => {
     // Save stays reachable while invalid (aria-disabled, not disabled):
     // activating it then points at the problem instead of saving.
@@ -191,12 +222,13 @@ export function ScheduleEditorDialog({
       document.getElementById("schedule-editor-automation")?.focus();
       return;
     }
-    const values = getValues();
-    const edited = formToScheduleInput(scheduleId, values);
-    return onSave(
-      schedule && loaded.current ? keepUntouched(schedule, loaded.current, values, edited) : edited
-    );
+    if (targetsRefused) {
+      document.getElementById("schedule-editor-connections")?.focus();
+      return;
+    }
+    return onSave(current);
   };
+  const saveBlocked = !canSave || pickRefused || targetsRefused;
 
   return (
     <Modal
@@ -204,11 +236,21 @@ export function ScheduleEditorDialog({
       onOpenChange={onOpenChange}
       dirty={isDirty}
       title={schedule ? "Edit schedule" : "New schedule"}
-      description="Run an automation on saved connections at set times, while termiHub is running"
-      size="md"
+      description="Run an automation on saved connections at set times, while termiHub is open"
+      size="lg"
+      initialFocusRef={nameRef}
       data-testid="schedule-editor-dialog"
       footer={
         <>
+          <div
+            className="schedule-editor__summary"
+            role="status"
+            data-testid="schedule-editor-summary"
+          >
+            {summary.map((line) => (
+              <span key={line}>{line}</span>
+            ))}
+          </div>
           {/* Routed through the Modal so a dirty form asks first (UX2-004). */}
           <ModalClose>
             <Button variant="secondary" data-testid="schedule-editor-cancel">
@@ -218,8 +260,8 @@ export function ScheduleEditorDialog({
           <Button
             variant="primary"
             onClick={handleSave}
-            aria-disabled={!canSave || pickRefused}
-            data-invalid={!canSave || pickRefused || undefined}
+            aria-disabled={saveBlocked}
+            data-invalid={saveBlocked || undefined}
             errorToast={false}
             data-testid="schedule-editor-save"
           >
@@ -229,145 +271,133 @@ export function ScheduleEditorDialog({
       }
     >
       <div className="schedule-editor__form" data-testid="schedule-editor-form" {...rootProps}>
-        <Controller
-          name="name"
-          control={control}
-          render={({ field }) => (
-            <Field label="Name" htmlFor="schedule-editor-name" error={errorFor("name")}>
-              <Input
-                id="schedule-editor-name"
-                value={field.value}
-                onChange={(e) => field.onChange(e.target.value)}
-                onBlur={field.onBlur}
-                placeholder="Nightly health check"
-                data-testid="schedule-editor-name"
-              />
-            </Field>
-          )}
-        />
-        <Controller
-          name="description"
-          control={control}
-          render={({ field }) => (
-            <Field
-              label="Description (optional)"
-              htmlFor="schedule-editor-description"
-              error={errorFor("description")}
-            >
-              <Input
-                id="schedule-editor-description"
-                value={field.value}
-                onChange={(e) => field.onChange(e.target.value)}
-                onBlur={field.onBlur}
-                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-                placeholder="What this schedule is for"
-                data-testid="schedule-editor-description"
-              />
-            </Field>
-          )}
-        />
-
-        <Controller
-          name="automationId"
-          control={control}
-          render={({ field }) => (
-            <Field
-              label="Automation"
-              htmlFor="schedule-editor-automation"
-              error={pickRefused ? (blockedPick ?? undefined) : errorFor("automationId")}
-              hint={storedPick ? (blockedPick ?? undefined) : undefined}
-              hintVariant="warning"
-            >
-              <Select
-                id="schedule-editor-automation"
-                value={field.value || undefined}
-                onChange={field.onChange}
-                placeholder={
-                  automations.length === 0 ? "No saved automations" : "Pick an automation"
-                }
-                disabled={automations.length === 0}
-                options={automationOptions(automations, field.value, blockedReason)}
-                data-testid="schedule-editor-automation"
-              />
-            </Field>
-          )}
-        />
-
-        <Controller
-          name="targetsKind"
-          control={control}
-          render={({ field }) => (
-            <Field label="On" htmlFor="schedule-editor-targets-kind">
-              <Select
-                id="schedule-editor-targets-kind"
-                value={field.value}
-                onChange={field.onChange}
-                options={TARGET_OPTIONS}
-                data-testid="schedule-editor-targets-kind"
-              />
-            </Field>
-          )}
-        />
-        {watched.targetsKind === "connections" ? (
+        <p className="schedule-editor__note" data-testid="schedule-editor-only-while-open">
+          <Info size={14} aria-hidden="true" />
+          {t("schedule.onlyWhileOpen")}
+        </p>
+        <div className="schedule-editor__row">
           <Controller
-            name="connectionIds"
+            name="name"
             control={control}
             render={({ field }) => (
-              <Field label="Connections" error={errorFor("connectionIds")}>
-                {connections.length === 0 ? (
-                  <EmptyState title="No saved connections." />
-                ) : (
-                  <div
-                    className="schedule-editor__connections"
-                    data-testid="schedule-editor-connections"
-                  >
-                    {connections.map((conn) => (
-                      <label className="schedule-editor__connection" key={conn.id}>
-                        <Checkbox
-                          checked={field.value.includes(conn.id)}
-                          onCheckedChange={(checked) =>
-                            field.onChange(
-                              checked
-                                ? [...field.value, conn.id]
-                                : field.value.filter((id) => id !== conn.id)
-                            )
-                          }
-                          aria-label={conn.name}
-                          data-testid={`schedule-editor-connection-${conn.id}`}
-                        />
-                        <span>{conn.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </Field>
-            )}
-          />
-        ) : (
-          <Controller
-            name="groupId"
-            control={control}
-            render={({ field }) => (
-              <Field
-                label="Broadcast group"
-                htmlFor="schedule-editor-group"
-                error={errorFor("groupId")}
-              >
-                <Select
-                  id="schedule-editor-group"
-                  value={field.value || undefined}
-                  onChange={field.onChange}
-                  placeholder={groups.length === 0 ? "No saved broadcast groups" : "Pick a group"}
-                  disabled={groups.length === 0}
-                  options={groups.map((g) => ({ value: g.id, label: g.name }))}
-                  data-testid="schedule-editor-group"
+              <Field label="Name" htmlFor="schedule-editor-name" error={errorFor("name")}>
+                <Input
+                  id="schedule-editor-name"
+                  ref={nameRef}
+                  value={field.value}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  placeholder="Nightly health check"
+                  data-testid="schedule-editor-name"
                 />
               </Field>
             )}
           />
-        )}
-
+          <Controller
+            name="automationId"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label="Automation"
+                htmlFor="schedule-editor-automation"
+                error={pickRefused ? (blockedPick ?? undefined) : errorFor("automationId")}
+                hint={pickRefused ? undefined : (automationNote ?? undefined)}
+                hintVariant={automationNote === defaultsNote ? "default" : "warning"}
+                hintTestId="schedule-editor-automation-note"
+              >
+                <Select
+                  id="schedule-editor-automation"
+                  value={field.value || undefined}
+                  onChange={field.onChange}
+                  placeholder={
+                    automations.length === 0 ? "No saved automations" : "Pick an automation"
+                  }
+                  disabled={automations.length === 0}
+                  options={automationOptions(automations, field.value, blockedReason)}
+                  data-testid="schedule-editor-automation"
+                />
+              </Field>
+            )}
+          />
+        </div>
         <div className="schedule-editor__row">
+          <div className="schedule-editor__column">
+            <Controller
+              name="targetsKind"
+              control={control}
+              render={({ field }) => (
+                <Field label="Run on" htmlFor="schedule-editor-targets-kind">
+                  <Select
+                    id="schedule-editor-targets-kind"
+                    value={field.value}
+                    onChange={field.onChange}
+                    options={TARGET_OPTIONS}
+                    data-testid="schedule-editor-targets-kind"
+                  />
+                </Field>
+              )}
+            />
+            {watched.targetsKind === "connections" ? (
+              <Controller
+                name="connectionIds"
+                control={control}
+                render={({ field }) => (
+                  <Field
+                    label="Connections"
+                    error={targetsRefused ? t("schedule.gone.pick") : errorFor("connectionIds")}
+                  >
+                    <ScheduleConnectionPicker
+                      connections={connections}
+                      selected={field.value}
+                      onChange={field.onChange}
+                    />
+                  </Field>
+                )}
+              />
+            ) : (
+              <Controller
+                name="groupId"
+                control={control}
+                render={({ field }) => (
+                  <Field
+                    label="Broadcast group"
+                    htmlFor="schedule-editor-group"
+                    error={errorFor("groupId")}
+                  >
+                    <Select
+                      id="schedule-editor-group"
+                      value={field.value || undefined}
+                      onChange={field.onChange}
+                      placeholder={
+                        groups.length === 0 ? "No saved broadcast groups" : "Pick a group"
+                      }
+                      disabled={groups.length === 0 && field.value === ""}
+                      options={groupOptions(groups, field.value)}
+                      data-testid="schedule-editor-group"
+                    />
+                  </Field>
+                )}
+              />
+            )}
+          </div>
+          <Controller
+            name="ifClosed"
+            control={control}
+            render={({ field }) => (
+              <Field label={t("schedule.closed.label")} error={errorFor("ifClosed")}>
+                <RadioGroup
+                  variant="cards"
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  aria-label={t("schedule.closed.label")}
+                  options={CLOSED_OPTIONS}
+                  data-testid="schedule-editor-closed"
+                />
+              </Field>
+            )}
+          />
+        </div>
+        <div className="schedule-editor__row schedule-editor__row--when">
           <Controller
             name="ruleKind"
             control={control}
@@ -421,6 +451,21 @@ export function ScheduleEditorDialog({
               )}
             />
           )}
+          <Controller
+            name="missedRuns"
+            control={control}
+            render={({ field }) => (
+              <Field label="If a run is missed" htmlFor="schedule-editor-missed">
+                <Select
+                  id="schedule-editor-missed"
+                  value={field.value}
+                  onChange={field.onChange}
+                  options={MISSED_OPTIONS}
+                  data-testid="schedule-editor-missed"
+                />
+              </Field>
+            )}
+          />
         </div>
         {watched.ruleKind === "weekly" ? (
           <Controller
@@ -453,50 +498,31 @@ export function ScheduleEditorDialog({
             )}
           />
         ) : null}
-
         <Controller
-          name="missedRuns"
+          name="description"
           control={control}
           render={({ field }) => (
             <Field
-              label="If a run is missed (termiHub closed or the computer asleep)"
-              htmlFor="schedule-editor-missed"
+              label="Description (optional)"
+              htmlFor="schedule-editor-description"
+              error={errorFor("description")}
             >
-              <Select
-                id="schedule-editor-missed"
+              <Input
+                id="schedule-editor-description"
                 value={field.value}
-                onChange={field.onChange}
-                options={MISSED_OPTIONS}
-                data-testid="schedule-editor-missed"
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                placeholder="What this schedule is for"
+                data-testid="schedule-editor-description"
               />
             </Field>
           )}
         />
-        <Controller
-          name="connectIfNeeded"
-          control={control}
-          render={({ field }) => (
-            <Field
-              label={t("schedule.connect.fieldLabel")}
-              htmlFor="schedule-editor-connect"
-              hint={t("schedule.connect.help")}
-            >
-              <div className="schedule-editor__connection">
-                <Checkbox
-                  id="schedule-editor-connect"
-                  checked={field.value}
-                  onCheckedChange={field.onChange}
-                  data-testid="schedule-editor-connect"
-                />
-                <label htmlFor="schedule-editor-connect">{t("schedule.connect.label")}</label>
-              </div>
-            </Field>
-          )}
-        />
-        <p className="schedule-editor__note">
-          Runs only while termiHub is open and never prompts. Without “Connect if not connected” it
-          runs only on terminals that are already connected. New schedules start disabled.
-        </p>
+        <details className="schedule-editor__details">
+          <summary data-testid="schedule-editor-details">{t("schedule.details.title")}</summary>
+          <p>{t("schedule.connect.help")}</p>
+        </details>
       </div>
     </Modal>
   );

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { ScheduleInput } from "@/types/schedule";
 
@@ -6,7 +6,6 @@ import {
   blankScheduleForm,
   describeRule,
   describeTargetNames,
-  formatNextRun,
   formToScheduleInput,
   scheduleFormSchema,
   scheduleToForm,
@@ -17,6 +16,7 @@ const valid = (over: Partial<ScheduleFormValues> = {}): ScheduleFormValues => ({
   ...blankScheduleForm({ kind: "automation", automationId: "wf" }),
   name: "Health",
   connectionIds: ["c1"],
+  ifClosed: "skip",
   ...over,
 });
 
@@ -134,62 +134,52 @@ describe("describeTargetNames", () => {
   ]);
   const lookup = (id: string) => names.get(id);
 
-  it("lists connection names, flagging unknown ids", () => {
+  it("lists connection names, a deleted one named as such (#6024)", () => {
     expect(
-      describeTargetNames({ kind: "connections", connectionIds: ["c1", "zz"] }, lookup, [])
-    ).toEqual({ label: "web-1, Unknown (zz)", hosts: ["web-1", "Unknown (zz)"] });
-  });
-
-  it("resolves a broadcast group's members, or flags a missing group", () => {
-    const groups = [{ id: "g", name: "Web", connectionIds: ["c1", "c2"] }];
-    expect(describeTargetNames({ kind: "broadcast-group", groupId: "g" }, lookup, groups)).toEqual({
-      label: 'Group "Web"',
-      hosts: ["web-1", "web-2"],
+      describeTargetNames(
+        { kind: "connections", connectionIds: ["c1", "Work/Old Box"] },
+        lookup,
+        []
+      )
+    ).toEqual({
+      label: "web-1, Deleted connection “Old Box”",
+      hosts: ["web-1", "Deleted connection “Old Box”"],
+      gone: null,
     });
-    expect(
-      describeTargetNames({ kind: "broadcast-group", groupId: "x" }, lookup, groups).hosts
-    ).toEqual([]);
+  });
+
+  it("says when every connection was deleted (A-045)", () => {
+    const { label, gone } = describeTargetNames(
+      { kind: "connections", connectionIds: ["zz"] },
+      lookup,
+      []
+    );
+    expect(label).toBe("Deleted connection “zz”");
+    expect(gone).toBe("its connections were deleted");
+  });
+
+  it("resolves a broadcast group's members, or says what is left of it", () => {
+    const groups = [
+      { id: "g", name: "Web", connectionIds: ["c1", "c2"] },
+      { id: "old", name: "Old", connectionIds: ["x/y"] },
+    ];
+    const of = (groupId: string) =>
+      describeTargetNames({ kind: "broadcast-group", groupId }, lookup, groups);
+    expect(of("g")).toEqual({ label: "Group “Web”", hosts: ["web-1", "web-2"], gone: null });
+    expect(of("old")).toEqual({
+      label: "Group “Old”",
+      hosts: ["Deleted connection “y”"],
+      gone: "its broadcast group has no connection left",
+    });
+    expect(of("x")).toEqual({
+      label: "Deleted broadcast group",
+      hosts: [],
+      gone: "its broadcast group was deleted",
+    });
   });
 });
 
-describe("formatNextRun", () => {
-  const now = new Date(2026, 5, 1, 10, 0);
-  it("says today / tomorrow, else the date", () => {
-    expect(formatNextRun(new Date(2026, 5, 1, 18, 5).toISOString(), now)).toBe("today 18:05");
-    expect(formatNextRun(new Date(2026, 5, 2, 7, 0).toISOString(), now)).toBe("tomorrow 07:00");
-    expect(formatNextRun(new Date(2026, 5, 5, 9, 30).toISOString(), now)).toMatch(/09:30$/);
-    expect(formatNextRun("garbage", now)).toBe("");
-  });
-});
-
-describe("formatNextRun follows the UI locale (#4374, I18N2-004)", () => {
-  const now = new Date(2026, 5, 1, 10, 0);
-  const originalLanguage = Object.getOwnPropertyDescriptor(navigator, "language");
-  const originalLanguages = Object.getOwnPropertyDescriptor(navigator, "languages");
-  afterEach(() => {
-    if (originalLanguage) Object.defineProperty(navigator, "language", originalLanguage);
-    if (originalLanguages) Object.defineProperty(navigator, "languages", originalLanguages);
-  });
-  function setLocale(tag: string): void {
-    Object.defineProperty(navigator, "language", { configurable: true, get: () => tag });
-    Object.defineProperty(navigator, "languages", { configurable: true, get: () => [tag] });
-  }
-
-  it("renders the relative day and the date in one locale (de-DE)", () => {
-    setLocale("de-DE");
-    expect(formatNextRun(new Date(2026, 5, 1, 18, 5).toISOString(), now)).toBe("heute 18:05");
-    expect(formatNextRun(new Date(2026, 5, 2, 7, 0).toISOString(), now)).toBe("morgen 07:00");
-    const later = new Date(2026, 5, 5, 9, 30);
-    const date = new Intl.DateTimeFormat("de-DE", {
-      weekday: "short",
-      day: "numeric",
-      month: "short",
-    }).format(later);
-    expect(formatNextRun(later.toISOString(), now)).toBe(`${date} 09:30`);
-  });
-});
-
-describe("connect if not connected (#3527)", () => {
+describe("what to do with a closed connection (#3527, #6024)", () => {
   const base: ScheduleInput = {
     id: "s1",
     name: "Health",
@@ -199,17 +189,21 @@ describe("connect if not connected (#3527)", () => {
     missedRuns: "skip",
   };
 
-  it("is off by default and a schedule without it stays without it", () => {
-    expect(blankScheduleForm().connectIfNeeded).toBe(false);
-    const form = scheduleToForm(base);
-    expect(form.connectIfNeeded).toBe(false);
-    expect(formToScheduleInput("s1", form)).not.toHaveProperty("connectIfNeeded");
+  it("is not chosen for a new schedule, which cannot be saved without", () => {
+    expect(blankScheduleForm().ifClosed).toBe("");
+    expect(issues(valid({ ifClosed: "" }))).toEqual(["ifClosed"]);
+    expect(issues(valid({ ifClosed: "skip" }))).toEqual([]);
+    expect(issues(valid({ ifClosed: "connect" }))).toEqual([]);
   });
 
-  it("round-trips when on", () => {
+  it("an existing schedule keeps its value: absent and off mean skip", () => {
+    for (const stored of [base, { ...base, connectIfNeeded: false }]) {
+      const form = scheduleToForm(stored);
+      expect(form.ifClosed).toBe("skip");
+      expect(formToScheduleInput("s1", form)).not.toHaveProperty("connectIfNeeded");
+    }
     const form = scheduleToForm({ ...base, connectIfNeeded: true });
-    expect(form.connectIfNeeded).toBe(true);
-    expect(issues(valid({ connectIfNeeded: true }))).toEqual([]);
+    expect(form.ifClosed).toBe("connect");
     expect(formToScheduleInput("s1", form).connectIfNeeded).toBe(true);
   });
 });

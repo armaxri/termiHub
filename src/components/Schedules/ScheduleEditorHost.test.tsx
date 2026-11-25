@@ -9,6 +9,8 @@ import { createRoot, Root } from "react-dom/client";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn(() => vi.fn()) }));
 
+import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
+import { toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { flushAsync } from "@/test/flushAsync";
@@ -110,7 +112,7 @@ describe("ScheduleEditorHost keeps what the user did not change (#5983)", () => 
   it("shows the stored description and option", async () => {
     await open();
     expect((q("schedule-editor-description") as HTMLInputElement).value).toBe(stored.description);
-    expect(q("schedule-editor-connect")!.getAttribute("aria-checked")).toBe("true");
+    expect(q("schedule-editor-closed-connect")!.getAttribute("aria-checked")).toBe("true");
   });
 
   it("a rename saves every other field exactly as stored", async () => {
@@ -127,7 +129,7 @@ describe("ScheduleEditorHost keeps what the user did not change (#5983)", () => 
   it("a changed description or option is saved, and only that changes", async () => {
     await open();
     setInput("schedule-editor-description", "");
-    click("schedule-editor-connect");
+    click("schedule-editor-closed-skip");
     const saved = await save();
     expect(saved.description).toBeUndefined();
     expect(saved.connectIfNeeded).not.toBe(true);
@@ -164,6 +166,39 @@ describe("ScheduleEditorHost keeps what the user did not change (#5983)", () => 
     await open();
     setInput("schedule-editor-name", "Renamed");
     expect((await save()).targets).toEqual(targets);
+  });
+
+  describe("after Save: is it on? (A-044)", () => {
+    async function saveAs(view: Partial<ScheduleView>) {
+      saveSchedule.mockResolvedValueOnce({ ...stored, ...view });
+      await open();
+      await act(async () => q("schedule-editor-save")!.click());
+      await flushAsync();
+      await act(async () => await new Promise((resolve) => setTimeout(resolve, 0)));
+    }
+
+    it("says that it was saved switched off, not inside the closing editor", async () => {
+      const info = vi.spyOn(toast, "info");
+      await saveAs({ enabled: false });
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith("Saved “Nightly”, switched off", {
+        description: "Switch it on in the Schedules list.",
+      });
+      // The editor and its status line are gone by then.
+      expect(q("schedule-editor-dialog")).toBeNull();
+      info.mockRestore();
+    });
+
+    it("says nothing of it when it stays on, and shows the row", async () => {
+      const info = vi.spyOn(toast, "info");
+      await saveAs({});
+      expect(info).not.toHaveBeenCalled();
+      expect(useAutomationSections.getState()).toMatchObject({
+        schedulesOpen: true,
+        savedSchedule: { id: "s1" },
+      });
+      info.mockRestore();
+    });
   });
 
   it("does not revert a change another window saved meanwhile", async () => {

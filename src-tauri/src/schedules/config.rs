@@ -200,6 +200,11 @@ pub struct ScheduleRunResult {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub catch_up: bool,
+    /// Present only for a skipped slot that was missed (termiHub was closed or
+    /// the computer was asleep, #6024): RFC 3339 time the run was due.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub missed_due_at: Option<String>,
 }
 
 /// A stored schedule.
@@ -394,6 +399,7 @@ mod tests {
             outcome: ScheduleRunOutcome::Skipped,
             message: Some("why".into()),
             catch_up: false,
+            missed_due_at: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(!s.contains("catchUp"));

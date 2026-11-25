@@ -55,6 +55,7 @@ from termihub_harness import (
 )
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.agent_deploy import AgentDeployUi, reap_agents_under
+from termihub_harness.product_run.automation_schedules import schedule_row_problems
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.editor_layout import TUNNEL_ACTIONS, measure_editor_footer
 from termihub_harness.product_run.grades import row_leftover_text, tunnel_editor_primary_problems
@@ -222,11 +223,10 @@ class TestProductRunRowsNames(
         t = self.tag
         with self.step(
             "rows-names.schedule",
-            "A schedule row shows its name and the Disabled marker; the rule and targets are "
-            "in the tooltip",
-            expect="Settings -> Schedules: 'Rows schedule …' with a grey dot, 'Every minute "
-            "check' muted under the name and 'Disabled'; no rule or 'on pr-rows-local-…' "
-            "text on the row (#5757)",
+            "A schedule row shows its name and description, and answers when, what and where",
+            expect="Settings -> Schedules: 'Rows schedule …', 'Every minute check' muted under "
+            "the name, 'Off until you switch it on · Every minute', and 'Rows macro … on "
+            "pr-rows-local-…'; nothing is cut (#5757, the schedule exception of #6024)",
         ):
             self.require("rows-names.items")
             self.close_automation_schedules()  # its rows share Settings' testIds
@@ -234,14 +234,20 @@ class TestProductRunRowsNames(
             sid = self.ids["schedule"]
             row = f"schedule-item-{sid}"
             self.wait(lambda: self.driver.exists(row), what="the schedule row")
-            status = self.driver.get_text(f"schedule-status-{sid}").strip()
-            assert status == "Disabled", f"the state marker reads {status!r}"
-            self._grade_row(
-                row,
-                [f"Rows schedule {t}", "Every minute check", status],
-                [f"on {self.ids['conn_name']}"],
+            texts = self.schedule_row_texts(sid)
+            problems = schedule_row_problems(
+                texts,
+                self.schedule(sid) or {},
+                automation_name=(self.macro(self.ids["macro"]) or {}).get("name", ""),
+                targets=self.ids["conn_name"],
             )
+            self.evidence(f"row {texts}")
+            text = self.row_text(row)
+            shown = [f"Rows schedule {t}", "Every minute check", "·", *texts.values()]
+            left = row_leftover_text(text, shown)
             self.shot(label="schedule")
+            assert not problems, problems
+            assert left == "", f"{row} shows something else: {left!r}"
 
     def test_50_tunnel_row(self):
         t = self.tag

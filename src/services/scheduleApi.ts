@@ -8,6 +8,7 @@ import type {
   RunCoverage,
   ScheduleFire,
   ScheduleInput,
+  ScheduleRule,
   ScheduleView,
   SchedulerState,
   WindowRunReport,
@@ -38,6 +39,19 @@ export async function setScheduleEnabled(
   confirmed: boolean
 ): Promise<ScheduleView> {
   return await invoke<ScheduleView>("set_schedule_enabled", { scheduleId, enabled, confirmed });
+}
+
+/** When `rule` would run next; `scheduleId` is the schedule being edited, if any. */
+export async function previewScheduleNextRun(
+  scheduleId: string | null,
+  rule: ScheduleRule
+): Promise<string | null> {
+  return await invoke<string | null>("preview_schedule_next_run", { scheduleId, rule });
+}
+
+/** Clear the recorded attempts of these schedules (`null`: of every schedule). */
+export async function clearScheduleHistory(scheduleIds: string[] | null): Promise<void> {
+  await invoke("clear_schedule_history", { scheduleIds });
 }
 
 /** Pause or resume all schedules. */
