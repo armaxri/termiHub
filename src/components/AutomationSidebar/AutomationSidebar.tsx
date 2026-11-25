@@ -10,17 +10,19 @@ import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "@/components/WorkflowSidebar/WorkflowRunOutput";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { nameDescriptionTagsFields, useListFilter } from "@/hooks/useListFilter";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { t, tf } from "@/i18n/catalog";
 import type { Automation } from "@/types/generated/Automation";
+import { runBlockedReason } from "@/utils/runBlocked";
 import { errorMessage } from "@/utils/errorMessage";
 import { AUTOMATION_JUST_SAVED_MS, AutomationRow } from "./AutomationRow";
 import type { AutomationRowActions } from "./AutomationRowMenu";
 import { HistorySection } from "./HistorySection";
-import { summarizeRuns } from "./automationRowInfo";
+import { nextScheduledRun, summarizeRuns } from "./automationRowInfo";
 import { useAutomationSections } from "./automationSections";
 import { useAutomationEditors } from "./useAutomationEditors";
 import { useAutomationFiles } from "@/components/Automations/useAutomationFiles";
@@ -74,6 +76,10 @@ export function AutomationSidebar() {
   }, [connections]);
   const runSummaries = useMemo(() => summarizeRuns(automationRuns), [automationRuns]);
   const running = useRunningAutomations();
+  const schedules = useAppStore((s) => s.schedules);
+  const schedulesPaused = useAppStore((s) => s.schedulesPaused);
+  const experimental = useExperimentalFeatures();
+  const resolve = useCallback((id: string) => automations.find((a) => a.id === id), [automations]);
 
   const historyAutomationId = useAutomationSections((s) => s.historyAutomationId);
   const setHistoryAutomationId = useAutomationSections((s) => s.setHistoryAutomationId);
@@ -137,13 +143,13 @@ export function AutomationSidebar() {
     [cancelMacroPlayback, cancelWorkflowRun]
   );
 
-  const handleSetArmed = useCallback(
-    async (id: string, armed: boolean) => {
+  const handleSetTriggers = useCallback(
+    async (id: string, on: boolean) => {
       const name = automations.find((a) => a.id === id)?.name ?? "automation";
       try {
-        await setWorkflowTriggersEnabled(id, armed);
+        await setWorkflowTriggersEnabled(id, on);
       } catch (err) {
-        toast.error(`Failed to ${armed ? "arm" : "disarm"} "${name}"`, {
+        toast.error(tf("automation.triggers.toggleFailed", { name }), {
           description: errorMessage(err),
         });
       }
@@ -162,7 +168,7 @@ export function AutomationSidebar() {
       onDuplicate: (id) => {
         const name = automations.find((a) => a.id === id)?.name ?? "automation";
         duplicateAutomation(id).catch((err: unknown) =>
-          toast.error(`Failed to duplicate "${name}"`, { description: errorMessage(err) })
+          toast.error(`Failed to duplicate “${name}”`, { description: errorMessage(err) })
         );
       },
       onUseInNew: newFromAutomation,
@@ -208,13 +214,9 @@ export function AutomationSidebar() {
   }, [justSaved, filtered, reducedMotion]);
 
   // Roving-tabindex keyboard navigation over the filtered list, matching the
-  // other management sidebars. Enter runs the focused automation.
-  const handleActivate = useCallback(
-    (automation: Automation) => {
-      if (!running.has(automation.id)) handleRun(automation.id);
-    },
-    [handleRun, running]
-  );
+  // other management sidebars. Enter opens the editor, like a double-click:
+  // nothing but Run types into a terminal (#6026). Ctrl/Cmd+Enter is Run.
+  const handleActivate = useCallback((automation: Automation) => edit(automation.id), [edit]);
   const nav = useFlatRovingNav<Automation, HTMLDivElement>(
     filtered,
     (automation) => automation.name,
@@ -228,6 +230,13 @@ export function AutomationSidebar() {
     // Enter and typing on a row's own button belong to the button.
     const onRow = target.getAttribute("role") === "treeitem";
     if (!onRow && (e.key === "Enter" || e.key.length === 1)) return;
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const automation = filtered[nav.activeIndex];
+      if (!automation || e.repeat || running.has(automation.id)) return;
+      if (runBlockedReason(automation, resolve, experimental) === null) handleRun(automation.id);
+      return;
+    }
     nav.onKeyDown(e);
   };
 
@@ -379,7 +388,9 @@ export function AutomationSidebar() {
               runTarget={runTarget}
               compact={compact}
               connectionName={connectionName}
-              onSetArmed={(id, armed) => void handleSetArmed(id, armed)}
+              blocked={runBlockedReason(automation, resolve, experimental)}
+              nextRun={nextScheduledRun(automation.id, schedules, schedulesPaused)}
+              onSetTriggers={(id, on) => void handleSetTriggers(id, on)}
               actions={actions}
               justSaved={justSaved?.id === automation.id}
               rowProps={nav.getItemProps(index)}
@@ -409,7 +420,7 @@ export function AutomationSidebar() {
         {...deletion.dialogProps}
         message={
           deletion.pending
-            ? `Delete automation "${deletion.pending.name}"? This cannot be undone.`
+            ? `Delete automation “${deletion.pending.name}”? This cannot be undone.`
             : ""
         }
       />

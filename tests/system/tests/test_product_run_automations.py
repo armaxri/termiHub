@@ -324,7 +324,7 @@ class TestProductRunAutomations(
             "Workflow rows show names and the armed state; trigger and target are in the "
             "tooltip; history names each run's terminal",
             expect="the Automations sidebar: 'Deploy smoke' shows only its name (and its "
-            "description once edited); 'Answer on match' shows its name and an 'Armed' marker "
+            "description once edited); 'Answer on match' shows its name and 'Triggers on: …' "
             "with its switch, no 'On output match' text on the row; the two Deploy smoke "
             "history rows name different terminals (#5635, #5757)",
         ):
@@ -585,7 +585,7 @@ class TestProductRunAutomations(
             expect="the Automations sidebar at rest: the macro row shows only its name and Play (no "
             "'echo …' preview, no 'Last run' line, no step count); the toolbar reads 'New' and "
             "'Record'; each History row is one line, and an opened row "
-            "reads 'Run by you' / 'Run by schedule' in sentence case (#5680, #5818)",
+            "reads 'You' / 'Schedule' in sentence case (#5680, #5818)",
         ):
             self.require("automations.macro.edit")
             mid = self.ids["macro"]
@@ -638,8 +638,8 @@ class TestProductRunAutomations(
         runs = self.automation_runs(mid)
         assert runs, "no macro runs recorded to grade the history with"
         self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
-        labels = {"manual": "Run by you", "palette": "Run by you", "scheduled": "Run by schedule",
-                  "run-by-automation": "Run by another automation"}
+        labels = {"manual": "You", "palette": "You", "scheduled": "Schedule",
+                  "run-by-automation": "Another automation"}
         graded = 0
         for run in runs[:5]:
             toggle = f"automation-run-toggle-{run['id']}"

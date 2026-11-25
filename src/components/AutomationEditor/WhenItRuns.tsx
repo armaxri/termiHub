@@ -37,7 +37,7 @@ const AUTOMATION_TRIGGER_KINDS: readonly AutomationTriggerKind[] = [
 /** Props of {@link WhenItRuns}. */
 export interface WhenItRunsProps {
   triggers: TriggerDraft[];
-  /** The Armed switch of the triggers. */
+  /** The switch of the triggers, hotkeys included. */
   triggersEnabled: boolean;
   /** The stored automation's id; `null` while it is new. */
   automationId: string | null;
@@ -108,13 +108,13 @@ export function WhenItRuns({
       </p>
       {triggers.length > 0 && (
         <Field
-          label="Armed"
+          label={t(
+            triggersEnabled ? "automation.triggers.onState" : "automation.triggers.offState"
+          )}
           htmlFor="automation-editor-armed"
           layout="inline"
           hint={
-            triggersEnabled
-              ? "The triggers below can start it."
-              : "Off: only a schedule or you can start it."
+            triggersEnabled ? t("automation.triggers.editorOn") : t("automation.triggers.editorOff")
           }
         >
           <Toggle

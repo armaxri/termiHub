@@ -1126,9 +1126,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       const result = await useAppStore.getState().importAutomations(json);
 
-      expect(result.removedScriptPaths).toEqual([
-        { name: "innocent", path: "/home/u/.ssh/id_ed25519" },
-      ]);
+      expect(result.entries[0].removedScriptPaths).toEqual(["/home/u/.ssh/id_ed25519"]);
       const [imported] = layoutState().workflows;
       expect(imported.steps).toEqual([{ kind: "run-script", script: "echo harmless" }]);
 
@@ -1572,7 +1570,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       const recorded = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.tabId);
       expect(recorded).toEqual(["tab-a", "tab-b"]);
       expect(toast.success).toHaveBeenCalledWith(
-        'Ran automation "Workflow w1" on 2 terminals',
+        "Ran automation “Workflow w1” on 2 terminals",
         expect.objectContaining({ id: "workflow-run-w1-fanout" })
       );
     });
@@ -1586,7 +1584,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends).toEqual([["tab-a", "uptime\n"]]);
       expect(toast.info).toHaveBeenCalledWith(
-        'Ran automation "Workflow w1" on 1 terminal',
+        "Ran automation “Workflow w1” on 1 terminal",
         expect.objectContaining({ description: expect.stringContaining("1 skipped") })
       );
     });
@@ -1650,7 +1648,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends.map(([tabId]) => tabId)).toEqual(["tab-a", "tab-b"]);
       expect(toast.error).toHaveBeenCalledWith(
-        'Automation "Workflow w1" failed on 1 terminal',
+        "Automation “Workflow w1” failed on 1 terminal",
         expect.objectContaining({ description: expect.stringContaining("web-1:") })
       );
     });
@@ -1669,7 +1667,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends).toEqual([["tab-a", "one\n"]]);
       expect(toast.info).toHaveBeenCalledWith(
-        'Automation "Workflow w1" canceled',
+        "“Workflow w1” stopped",
         expect.objectContaining({ id: "workflow-run-w1-fanout" })
       );
     });
@@ -1687,7 +1685,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(run.status).toBe("completed");
       expect(run.continuedFailures).toBe(1);
       expect(toast.info).toHaveBeenCalledWith(
-        'Ran automation "Workflow w1" with 1 tolerated step failure',
+        "Ran automation “Workflow w1” with 1 tolerated step failure",
         expect.anything()
       );
     });
@@ -1749,7 +1747,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(runs.map((r) => r.label)).toEqual(["web-1", "web-2"]);
       expect(new Set(runs.map((r) => r.runId)).size).toBe(2);
       expect(toast.loading).toHaveBeenCalledWith(
-        'Running automation "Workflow w1" on 2 terminals…',
+        "Running automation “Workflow w1” on 2 terminals…",
         expect.objectContaining({ description: "2 running" })
       );
 
@@ -1779,7 +1777,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(inj.maxInFlight()).toBe(WORKFLOW_FANOUT_CONCURRENCY);
       expect(inj.sends).toHaveLength(ids.length);
       expect(toast.success).toHaveBeenCalledWith(
-        `Ran automation "Workflow w1" on ${ids.length} terminals`,
+        `Ran automation “Workflow w1” on ${ids.length} terminals`,
         expect.anything()
       );
     });
@@ -1815,7 +1813,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
       expect(statuses).toEqual(Array(WORKFLOW_FANOUT_CONCURRENCY).fill("cancelled"));
       expect(toast.info).toHaveBeenCalledWith(
-        'Automation "Workflow w1" canceled',
+        "“Workflow w1” stopped",
         expect.objectContaining({ description: expect.stringContaining("10 not finished") })
       );
     });
@@ -1934,7 +1932,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await run;
 
       expect(injected).toEqual([]);
-      expect(toast.info).toHaveBeenCalledWith('Automation "Workflow wp" canceled');
+      expect(toast.info).toHaveBeenCalledWith("“Workflow wp” was not run");
       expect(apiRecordWorkflowRun).not.toHaveBeenCalled();
     });
 

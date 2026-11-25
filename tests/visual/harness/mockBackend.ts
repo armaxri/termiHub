@@ -56,6 +56,8 @@ export interface VisualScenario {
     runs?: unknown[];
     schedules?: { paused: boolean; schedules: unknown[] };
   };
+  /** Allow automations to start local programs, so that each is asked about. */
+  localProcessAsk?: boolean;
   /** Turn "Allow experimental features" off. */
   experimentalOff?: boolean;
   /**
@@ -738,7 +740,11 @@ const MONITORS_VIEW = {
 
 function settingsFor(scenario: VisualScenario): unknown {
   const settings = scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
-  return scenario.experimentalOff ? { ...settings, experimentalFeaturesEnabled: false } : settings;
+  return {
+    ...settings,
+    ...(scenario.experimentalOff ? { experimentalFeaturesEnabled: false } : {}),
+    ...(scenario.localProcessAsk ? { workflowLocalProcessEnabled: true } : {}),
+  };
 }
 
 function regionView(region: string, populated: boolean): unknown {
@@ -782,6 +788,61 @@ const pendingConnects = new Map<string, () => void>();
 /** Terminal sessions created so far (each `create_connection` makes one). */
 let terminalSessions = 0;
 
+/** Runs recorded while the page is open. */
+const recordedRuns: unknown[] = [];
+
+interface MockWorkflowRun {
+  runId: string;
+  completed: number;
+  [key: string]: unknown;
+}
+
+/**
+ * The `workflow-run` region: which automations run, on which terminal, at which
+ * step. Enough of the real store that a run shows on its row and its tab.
+ */
+const workflowRuns = {
+  region: "",
+  runs: [] as MockWorkflowRun[],
+  output: null as unknown,
+  channels: [] as { onmessage?: (frame: unknown) => void }[],
+};
+
+function workflowRunFrame(frameVersion: number) {
+  const { region, runs, output } = workflowRuns;
+  return {
+    kind: "snapshot" as const,
+    region,
+    version: frameVersion,
+    view: { run: runs[runs.length - 1] ?? null, runs: [...runs], output },
+  };
+}
+
+function subscribeWorkflowRuns(region: string, channel: unknown, frameVersion: number) {
+  workflowRuns.region = region;
+  if (channel) workflowRuns.channels.push(channel as { onmessage?: (frame: unknown) => void });
+  return workflowRunFrame(frameVersion);
+}
+
+function pushWorkflowRuns(frame: unknown): void {
+  for (const channel of workflowRuns.channels) channel.onmessage?.(frame);
+}
+
+function foldWorkflowRuns(kind: string, payload: Record<string, unknown>): void {
+  const runId = String(payload.runId ?? "");
+  if (kind === "workflow.runStarted") {
+    workflowRuns.runs.push({ ...payload, runId, completed: 0 });
+  } else if (kind === "workflow.stepAdvanced") {
+    workflowRuns.runs = workflowRuns.runs.map((run) =>
+      run.runId === runId ? { ...run, completed: Number(payload.completed ?? 0) } : run
+    );
+  } else if (kind === "workflow.outputOpened") {
+    workflowRuns.output = { ...payload, status: "running" };
+  } else if (kind.startsWith("workflow.run")) {
+    workflowRuns.runs = workflowRuns.runs.filter((run) => run.runId !== runId);
+  }
+}
+
 /** Answer one IPC command. Unknown commands resolve to `null` and are recorded. */
 export function handleCommand(cmd: string, args: Args): unknown {
   const scenario = window.__VISUAL_SCENARIO__ ?? {};
@@ -794,6 +855,9 @@ export function handleCommand(cmd: string, args: Args): unknown {
     // ── projection substrate ──
     case "projection_subscribe": {
       const region = String(args?.region ?? "");
+      if (region.startsWith("workflow-run@")) {
+        return subscribeWorkflowRuns(region, args?.channel, ++version);
+      }
       return { kind: "snapshot", region, version: ++version, view: regionView(region, populated) };
     }
     case "projection_resync":
@@ -817,6 +881,18 @@ export function handleCommand(cmd: string, args: Args): unknown {
           intentId: intent.intentId ?? "",
           status: "accepted",
           produced: [{ region: "session-lifecycle", version: 1_000_000 + version++ }],
+        };
+      }
+      if (intentKind?.startsWith("workflow.")) {
+        const { payload } = args?.intent as { payload?: Record<string, unknown> };
+        foldWorkflowRuns(intentKind, payload ?? {});
+        const frame = workflowRunFrame(++version);
+        // After the acknowledgement, as the backend's channel delivers it.
+        setTimeout(() => pushWorkflowRuns(frame));
+        return {
+          intentId: intent.intentId ?? "",
+          status: "applied",
+          produced: [{ region: frame.region, version: frame.version }],
         };
       }
       return { intentId: intent.intentId ?? "", status: "applied", produced: [] };
@@ -900,8 +976,31 @@ export function handleCommand(cmd: string, args: Args): unknown {
     }
     case "list_automations":
       return scenario.automationData?.automations ?? (populated ? AUTOMATIONS : []);
+    case "save_automation": {
+      // Stored, so that a switch or an edit stays on the screen.
+      const saved = args?.automation as { id: string };
+      const data = (scenario.automationData ??= {});
+      const list = (data.automations ?? (populated ? AUTOMATIONS : [])) as { id: string }[];
+      data.automations = list.some((a) => a.id === saved.id)
+        ? list.map((a) => (a.id === saved.id ? saved : a))
+        : [...list, saved];
+      return saved;
+    }
     case "list_automation_runs":
-      return scenario.automationData?.runs ?? (populated ? AUTOMATION_RUNS : []);
+      return [
+        ...recordedRuns,
+        ...(scenario.automationData?.runs ?? (populated ? AUTOMATION_RUNS : [])),
+      ];
+    case "record_automation_run":
+      // Newest first, like the real store; a run never wipes the others.
+      recordedRuns.unshift(args?.run);
+      return handleCommand("list_automation_runs", {});
+    case "check_local_process":
+      return {
+        status: "ask",
+        path: `/usr/bin/${String(args?.program ?? "")}`,
+        reason: `"${String(args?.program ?? "")}" is not an allowed program.`,
+      };
     case "list_schedules":
       return (
         scenario.automationData?.schedules ??

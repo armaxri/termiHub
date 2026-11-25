@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { Ban, FileX2, Link2Off, Scissors, SquareTerminal, ZapOff } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Ban, Check, Scissors } from "lucide-react";
 import { Button, Modal } from "@/components/ui";
-import type { AutomationImport } from "@/services/automationFileIo";
+import type { AutomationImport, ImportedEntry } from "@/services/automationFileIo";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import "./AutomationImportDialog.css";
 
@@ -15,77 +14,41 @@ export interface AutomationImportDialogProps {
   onShow: () => void;
 }
 
-/** One thing to know about the import. */
-interface Note {
-  id: string;
-  Icon: LucideIcon;
-  /** What it is about, as a full sentence. */
-  text: string;
-  /** Which automations, one line each. */
-  lines: string[];
-}
-
-/** The notes an import needs; empty when there is nothing to look at. */
-function importNotes(result: AutomationImport): Note[] {
-  const notes: Note[] = [];
-  if (result.refused.length > 0) {
-    notes.push({
-      id: "refused",
-      Icon: Ban,
-      text: "Not imported: they have a step or a trigger this version of termiHub does not know. Update termiHub to import them.",
-      lines: result.refused.map(({ name, kind }) => `${name}: ${kind}`),
-    });
+/** What to know about one imported automation, a sentence each. */
+function entryNotes(entry: ImportedEntry): string[] {
+  const notes: string[] = [];
+  if (entry.leftOut.length > 0) {
+    notes.push(
+      `Left out, because this version does not know it: ${entry.leftOut.join(", ")}. ` +
+        "It may do less, or something else, than the original: read its steps before you run it."
+    );
   }
-  if (result.leftOut.length > 0) {
-    notes.push({
-      id: "left-out",
-      Icon: Scissors,
-      text: "Parts this version of termiHub does not know were left out. Check what they do before you run them.",
-      lines: result.leftOut,
-    });
+  if (entry.triggersOff.length > 0) {
+    notes.push(`Triggers off: ${entry.triggersOff.join(", ")}. Turn them on in its row.`);
   }
-  if (result.disarmed.length > 0) {
-    notes.push({
-      id: "disarmed",
-      Icon: ZapOff,
-      text: "Switched off. Their triggers and hotkeys do nothing until you turn them on in the list.",
-      lines: result.disarmed,
-    });
+  if (entry.localProcess) {
+    notes.push(
+      `Runs a program on this computer: not until you turn on ${EXPERIMENTAL_SETTING_PATH} and allow the program.`
+    );
   }
-  if (result.localProcess.length > 0) {
-    notes.push({
-      id: "local-process",
-      Icon: SquareTerminal,
-      text: `Run programs on this computer. They do not run until you turn on ${EXPERIMENTAL_SETTING_PATH} and allow the program.`,
-      lines: result.localProcess,
-    });
+  for (const path of entry.removedScriptPaths) {
+    notes.push(
+      `Read its script from ${path}: the path was removed, the script text in the step is used.`
+    );
   }
-  if (result.removedScriptPaths.length > 0) {
-    notes.push({
-      id: "script-paths",
-      Icon: FileX2,
-      text: "Read a script from a file. The path was removed, so the script text in the step is used. Choose the file again in the step to read it.",
-      lines: result.removedScriptPaths.map(({ name, path }) => `${name}: ${path}`),
-    });
-  }
-  if (result.outside.length > 0) {
-    notes.push({
-      id: "outside",
-      Icon: Link2Off,
-      text: "Run an automation that is not in the file.",
-      lines: result.outside.map(({ name, runs }) =>
-        runs === null
-          ? `${name}: choose one in its “Run automation” step, or that step fails`
-          : `${name}: runs “${runs}” of your library`
-      ),
-    });
+  for (const runs of entry.outside) {
+    notes.push(
+      runs === null
+        ? "Runs an automation that is not in the file: choose one in its step, or that step fails."
+        : `Runs “${runs}” of your library: it is not in the file.`
+    );
   }
   return notes;
 }
 
 /**
- * What an import of automations brought in (#5818, slice 11): how many, which
- * were switched off, and what else needs a look before one is run.
+ * What an import of automations brought in (#5818, slice 11): how many of how
+ * many, and for each what was imported, left out, switched off or refused.
  */
 export function AutomationImportDialog({ result, onClose, onShow }: AutomationImportDialogProps) {
   // Keep the text while the dialog fades out.
@@ -94,8 +57,16 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
     if (result) setShown(result);
   }, [result]);
   const current = result ?? shown;
-  const count = current?.automations.length ?? 0;
-  const notes = current ? importNotes(current) : [];
+  const entries = current?.entries ?? [];
+  const refused = current?.refused ?? [];
+  const count = entries.length;
+  const total = count + refused.length;
+  const title =
+    count === 0
+      ? "Nothing was imported"
+      : refused.length > 0
+        ? `Imported ${count} of ${total} automations`
+        : `Imported ${count} automation${count === 1 ? "" : "s"}`;
 
   return (
     <Modal
@@ -103,54 +74,85 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title={
-        count === 0
-          ? "Nothing was imported"
-          : `Imported ${count} automation${count === 1 ? "" : "s"}`
-      }
+      title={title}
       size="md"
       data-testid="automation-import-dialog"
       footer={
-        <>
-          <Button variant="secondary" onClick={onShow} data-testid="automation-import-show">
-            Show in sidebar
-          </Button>
+        count === 0 ? (
           <Button variant="primary" onClick={onClose} data-testid="automation-import-close">
             Close
           </Button>
-        </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} data-testid="automation-import-close">
+              Close
+            </Button>
+            <Button variant="primary" onClick={onShow} data-testid="automation-import-show">
+              Show in sidebar
+            </Button>
+          </>
+        )
       }
     >
-      <div className="automation-import">
-        {(count > 0 || notes.length === 0) && (
-          <p data-testid="automation-import-names">
-            {count === 0
-              ? "The file holds no automations."
-              : (current?.automations ?? []).map((a) => a.name).join(", ")}
-          </p>
-        )}
-        {notes.length > 0 && (
-          <ul className="automation-import__notes">
-            {notes.map(({ id, Icon, text, lines }) => (
+      {total === 0 ? (
+        <p data-testid="automation-import-names">The file holds no automations.</p>
+      ) : (
+        // One block per automation, what came in first (A-051).
+        <ul className="automation-import" data-testid="automation-import-names">
+          {entries.map((entry) => {
+            const notes = entryNotes(entry);
+            const partly = entry.leftOut.length > 0;
+            return (
               <li
-                key={id}
-                className="automation-import__note"
-                data-testid={`automation-import-note-${id}`}
+                key={entry.automation.id}
+                className="automation-import__entry"
+                data-testid={`automation-import-entry-${entry.automation.name}`}
+                data-state={partly ? "partly" : "imported"}
               >
-                <Icon size={14} aria-hidden="true" />
+                {partly ? (
+                  <Scissors size={14} aria-hidden="true" />
+                ) : (
+                  <Check size={14} aria-hidden="true" />
+                )}
                 <div>
-                  <p>{text}</p>
-                  <ul className="automation-import__lines">
-                    {lines.map((line, i) => (
-                      <li key={i}>{line}</li>
-                    ))}
-                  </ul>
+                  <p>
+                    <strong>{entry.automation.name}</strong>:{" "}
+                    {partly ? "imported in part" : "imported"}
+                  </p>
+                  {notes.length > 0 && (
+                    <ul className="automation-import__notes">
+                      {notes.map((note) => (
+                        <li key={note}>{note}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               </li>
-            ))}
-          </ul>
-        )}
-      </div>
+            );
+          })}
+          {refused.map(({ name, kind }, i) => (
+            <li
+              key={`refused-${i}`}
+              className="automation-import__entry"
+              data-testid={`automation-import-refused-${name}`}
+              data-state="refused"
+            >
+              <Ban size={14} aria-hidden="true" />
+              <div>
+                <p>
+                  <strong>{name}</strong>: not imported
+                </p>
+                <ul className="automation-import__notes">
+                  <li>
+                    It needs a newer termiHub ({kind}). Update termiHub, then import the file again;
+                    it was not changed.
+                  </li>
+                </ul>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </Modal>
   );
 }

@@ -1,5 +1,4 @@
-import React, { useRef } from "react";
-import { AlertTriangle, MoreHorizontal, Pencil, Play, Square, Zap, ZapOff } from "lucide-react";
+import { AlertTriangle, Ban, Hand, MoreHorizontal, Pencil, Play, Square } from "lucide-react";
 import {
   Button,
   ContextMenuContent,
@@ -9,23 +8,21 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
   Spinner,
-  Toggle,
   Tooltip,
 } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { FlatRovingItemProps } from "@/hooks/useFlatRovingNav";
 import { t, tf } from "@/i18n/catalog";
+import { modKeyAccelerator } from "@/services/keybindings";
 import { isMacroShaped } from "@/store/slices/automationViews";
 import type { Automation } from "@/types/generated/Automation";
 import {
-  armedMarkerDescription,
   automationRowTooltip,
-  automaticTriggers,
-  hotkeyBindings,
-  triggersArmed,
+  triggerState,
   type AutomationRunSummary,
   type ConnectionName,
 } from "./automationRowInfo";
+import { keepOffRow, RowLines } from "./AutomationRowLines";
 import { AutomationRowMenu, type AutomationRowActions } from "./AutomationRowMenu";
 
 /**
@@ -40,10 +37,12 @@ export interface AutomationRunTarget {
   key: string;
   /** The terminal's name. */
   label: string;
-  /** Steps done so far. */
-  completed: number;
-  /** Steps in all. */
-  total: number;
+  /** Where it runs and how far it is, e.g. "in bash, step 5 of 12". */
+  progress: string;
+  /** It waits for the user (#6025). */
+  waiting: boolean;
+  /** Bring the terminal to the front. */
+  onShow: () => void;
   /** Stop the run on this terminal only. */
   onStop: () => void;
 }
@@ -59,10 +58,14 @@ export interface AutomationRowProps {
   runTarget: string | null;
   /** The sidebar is too narrow for marker words: markers show as icons. */
   compact?: boolean;
+  /** Why it cannot run at all; `null` when it can (#6026). */
+  blocked: string | null;
+  /** When a schedule runs it next; `null` without one that is on. */
+  nextRun: string | null;
   /** Resolves a saved connection id to its name, for triggers. */
   connectionName: ConnectionName;
-  /** Arm or disarm its automatic triggers (#5674). */
-  onSetArmed: (automationId: string, armed: boolean) => void;
+  /** Turn its triggers, hotkeys included, on or off (#5674). */
+  onSetTriggers: (automationId: string, on: boolean) => void;
   /** Every other action. */
   actions: AutomationRowActions;
   /** It was just saved: tint the row briefly (#5687). */
@@ -71,23 +74,16 @@ export interface AutomationRowProps {
   rowProps: FlatRovingItemProps<HTMLDivElement>;
 }
 
-/** Keep a control's clicks and Enter/Space off the row, which runs on them. */
-const keepOffRow = {
-  onClick: (e: React.SyntheticEvent) => e.stopPropagation(),
-  onDoubleClick: (e: React.SyntheticEvent) => e.stopPropagation(),
-  onKeyDown: (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-  },
-};
-
 /**
  * One automation in the sidebar: the name (what users scan and search for,
- * #5519), the user's description when there is one, compact state markers
- * (Armed/Off with its switch, Running, Failed) and a Run control that is always
- * visible and becomes Stop while it runs (#5636, R-075). No settings: how it is
- * launched, what it types and when it last ran are in the name's tooltip
- * (#5757). Edit and a "…" menu appear on hover or focus; the same menu opens on
- * right-click. Double-click or Enter runs it.
+ * #5519), the user's description when there is one, and Run, always visible,
+ * which becomes Stop while it runs (#5636, R-075). Under them the row says, in
+ * words, what no icon can (#6026): what starts it by itself, with the triggers'
+ * switch, or what does not start it while they are off; when a schedule runs it
+ * next; where it runs and at which step; and why it cannot run. What it types and
+ * when it last ran are in the name's tooltip (#5757). The selected row shows
+ * Edit; a "…" menu appears on hover or focus and on right-click. Double-click
+ * opens the editor: only Run types into a terminal.
  */
 export function AutomationRow({
   automation,
@@ -95,8 +91,10 @@ export function AutomationRow({
   runs,
   runTarget,
   compact = false,
+  blocked,
+  nextRun,
   connectionName,
-  onSetArmed,
+  onSetTriggers,
   actions,
   justSaved = false,
   rowProps,
@@ -105,25 +103,26 @@ export function AutomationRow({
   const { ref, ...rovingProps } = rowProps;
   const running = targets.length > 0;
   const several = targets.length > 1;
-  const armed = triggersArmed(automation);
-  // A hotkey starts nothing by itself, so on its own it only shows when it is off.
-  const watches = automaticTriggers(automation).length > 0;
-  const armRef = useRef<HTMLSpanElement>(null);
-  const automatic = watches || (!armed && hotkeyBindings(automation).length > 0);
-  const failed = !running && runs?.failedUnattended === true;
-  const armedDescription = automatic ? armedMarkerDescription(automation, connectionName) : "";
+  const waiting = targets.some((target) => target.waiting);
+  const selected = rowProps.tabIndex === 0;
+  const triggers = triggerState(automation, connectionName);
+  const failed = !running && runs?.failed === true;
 
-  const runningText = several
-    ? tf("automation.marker.runningCount", { count: targets.length })
-    : t("automation.marker.running");
-  const armedText = armed ? t("automation.marker.armed") : t("automation.marker.off");
+  const runningText = waiting
+    ? t("automation.marker.waiting")
+    : several
+      ? tf("automation.marker.runningCount", { count: targets.length })
+      : t("automation.marker.running");
   // The row's own name says its state too, so moving through the list reads
   // "Deploy prep, Running" instead of every button inside the row.
   const rowLabel = [
     name,
     running ? runningText : null,
+    blocked && !running ? t("automation.marker.blocked") : null,
     failed ? t("automation.marker.failed") : null,
-    automatic ? armedText : null,
+    triggers
+      ? t(triggers.on ? "automation.triggers.onState" : "automation.triggers.offState")
+      : null,
   ]
     .filter(Boolean)
     .join(", ");
@@ -132,6 +131,7 @@ export function AutomationRow({
     <AutomationRowMenu
       automationId={id}
       running={running}
+      blocked={blocked !== null}
       canUseInNew={isMacroShaped(automation)}
       actions={actions}
     />
@@ -142,14 +142,37 @@ export function AutomationRow({
       {running ? (
         <Tooltip content={runningText} side="top" disabled={!compact}>
           <span
-            className="automation-item__marker automation-item__marker--running"
+            className={
+              waiting
+                ? "automation-item__marker automation-item__marker--waiting"
+                : "automation-item__marker automation-item__marker--running"
+            }
+            data-waiting={waiting ? "true" : undefined}
             data-testid={`automation-running-${id}`}
             role={compact ? "img" : undefined}
             aria-label={compact ? runningText : undefined}
           >
-            <Spinner size={10} label={null} />
+            {waiting ? <Hand size={10} aria-hidden="true" /> : <Spinner size={10} label={null} />}
             {compact ? null : runningText}
           </span>
+        </Tooltip>
+      ) : null}
+      {blocked && !running ? (
+        <Tooltip content={tf("automation.blocked.label", { name })} side="top">
+          <button
+            type="button"
+            className="automation-item__marker automation-item__marker--blocked"
+            aria-label={tf("automation.blocked.label", { name })}
+            data-testid={`automation-blocked-${id}`}
+            {...keepOffRow}
+            onClick={(e) => {
+              e.stopPropagation();
+              actions.onEdit(id);
+            }}
+          >
+            <Ban size={10} aria-hidden="true" />
+            {compact ? null : t("automation.marker.blocked")}
+          </button>
         </Tooltip>
       ) : null}
       {failed ? (
@@ -170,44 +193,6 @@ export function AutomationRow({
           </button>
         </Tooltip>
       ) : null}
-      {automatic ? (
-        <>
-          <Tooltip content={armedDescription} side="top">
-            <span
-              className={
-                armed
-                  ? "automation-item__marker automation-item__marker--armed"
-                  : "automation-item__marker automation-item__marker--off"
-              }
-              role="img"
-              aria-label={armedDescription}
-              data-testid={`automation-armed-${id}`}
-              data-armed={armed ? "true" : "false"}
-            >
-              {armed ? (
-                <Zap size={10} aria-hidden="true" />
-              ) : (
-                <ZapOff size={10} aria-hidden="true" />
-              )}
-              {compact ? null : <span aria-hidden="true">{armedText}</span>}
-            </span>
-          </Tooltip>
-          <span ref={armRef} className="automation-item__arm-toggle" {...keepOffRow}>
-            <Toggle
-              checked={armed}
-              onCheckedChange={(next) => {
-                // A hotkey's switch goes once it is on: the row takes its focus.
-                if (!watches) armRef.current?.closest<HTMLElement>("[role=treeitem]")?.focus();
-                onSetArmed(id, next);
-              }}
-              aria-label={tf(armed ? "automation.armed.toggleOff" : "automation.armed.toggleOn", {
-                name,
-              })}
-              data-testid={`automation-arm-toggle-${id}`}
-            />
-          </span>
-        </>
-      ) : null}
     </>
   );
 
@@ -226,11 +211,11 @@ export function AutomationRow({
         }}
       />
     </Tooltip>
-  ) : (
+  ) : blocked ? null : (
     <Tooltip
       content={
         runTarget
-          ? tf("automation.run.target", { target: runTarget })
+          ? tf("automation.run.target", { target: runTarget, keys: modKeyAccelerator("Enter") })
           : t("automation.run.noTarget")
       }
       side="top"
@@ -248,6 +233,38 @@ export function AutomationRow({
         }}
       />
     </Tooltip>
+  );
+
+  // Always in the same place: pressing it focuses and so selects the row, and a
+  // button that moved between press and release would never be clicked.
+  const editButton = (
+    <Tooltip content="Edit" side="top">
+      <Button
+        className={selected ? undefined : "automation-item__edit"}
+        variant="ghost"
+        size="sm"
+        iconOnly
+        aria-label={`Edit ${name}`}
+        data-testid={`automation-edit-${id}`}
+        icon={<Pencil size={12} />}
+        onClick={(e) => {
+          e.stopPropagation();
+          actions.onEdit(id);
+        }}
+      />
+    </Tooltip>
+  );
+
+  const details = (
+    <RowLines
+      id={id}
+      name={name}
+      targets={targets}
+      blocked={running ? null : blocked}
+      triggers={triggers}
+      nextRun={nextRun}
+      onSetTriggers={(on) => onSetTriggers(id, on)}
+    />
   );
 
   return (
@@ -271,12 +288,13 @@ export function AutomationRow({
             // events reach here through the React tree.
             const target = e.target as HTMLElement;
             if (!e.currentTarget.contains(target) || target.closest("button")) return;
-            if (!running) actions.onRun(id);
+            actions.onEdit(id);
           }}
           primaryActionTestId={`automation-primary-${id}`}
           primaryAction={
             <>
               {markers}
+              {editButton}
               {runControl}
             </>
           }
@@ -284,20 +302,6 @@ export function AutomationRow({
           moreActionsTestId={`automation-more-group-${id}`}
           actions={
             <>
-              <Tooltip content="Edit" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label={`Edit ${name}`}
-                  data-testid={`automation-edit-${id}`}
-                  icon={<Pencil size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    actions.onEdit(id);
-                  }}
-                />
-              </Tooltip>
               <DropdownMenuRoot>
                 <Tooltip content="More actions" side="top">
                   <DropdownMenuTrigger asChild>
@@ -318,40 +322,7 @@ export function AutomationRow({
               </DropdownMenuRoot>
             </>
           }
-          details={
-            several ? (
-              <ul
-                className="automation-item__targets"
-                aria-label="Running terminals"
-                data-testid={`automation-targets-${id}`}
-              >
-                {targets.map((target) => (
-                  <li
-                    key={target.key}
-                    className="automation-item__target"
-                    data-testid={`automation-target-${target.key}`}
-                  >
-                    <span className="automation-item__target-name">{target.label}</span>
-                    <span className="automation-item__target-progress">
-                      {target.completed} / {target.total}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label={tf("automation.stop.target", { target: target.label })}
-                      data-testid={`automation-target-stop-${target.key}`}
-                      icon={<Square size={10} fill="currentColor" />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        target.onStop();
-                      }}
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : null
-          }
+          details={details}
         />
       </ContextMenuTrigger>
       <ContextMenuContent>{menu}</ContextMenuContent>

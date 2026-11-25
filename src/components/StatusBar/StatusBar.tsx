@@ -421,13 +421,13 @@ function ServicesIndicator() {
   return (
     <Tooltip content={servicesLabel} side="top">
       <button
-        className="status-bar__item status-bar__item--interactive"
+        className="status-bar__item status-bar__item--interactive status-bar__item--with-icon"
         aria-label={servicesLabel}
         data-testid="services-indicator"
         onClick={() => setSidebarView("services")}
       >
         <Server size={12} />
-        {runningCount}
+        {`${runningCount} service${runningCount !== 1 ? "s" : ""}`}
       </button>
     </Tooltip>
   );
@@ -531,13 +531,13 @@ function AgentUpdatesIndicator() {
   return (
     <Tooltip content={summary} side="top">
       <button
-        className="status-bar__item status-bar__item--interactive"
+        className="status-bar__item status-bar__item--interactive status-bar__item--with-icon"
         aria-label={summary}
         data-testid="agent-updates-indicator"
         onClick={() => setSidebarView("connections")}
       >
         <Server size={12} />
-        {connectedCount}
+        {agentLabel}
         {updatesAvailable > 0 && (
           <span className="status-bar__agent-updates" data-testid="agent-updates-count">
             <ArrowUpCircle size={11} />

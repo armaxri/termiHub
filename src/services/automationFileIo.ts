@@ -20,11 +20,13 @@ import { child, isNonBlankString, isRecord } from "@/services/importEnvelope";
 import { parseMacroEnvelope } from "@/services/macroIo";
 import { WORKFLOW_EXPORT_VERSION, parseStepEntries } from "@/services/workflowIo";
 import { KNOWN_ENTRY_KEYS, KNOWN_STEP_KINDS, KNOWN_TRIGGER_KINDS } from "@/services/workflowSchema";
+import { triggerKindLabel } from "@/components/AutomationEditor/stepText";
 import { referencedAutomations } from "@/services/automationRunner";
 import { newId } from "@/services/transport/ids";
 import { macroToAutomation, workflowToAutomation } from "@/store/slices/automationViews";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
+import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 
 /** The lists a file may hold, in the order their entries are imported. */
 const LIST_KEYS = ["automations", "macros", "workflows"] as const;
@@ -60,8 +62,8 @@ export function withCalledAutomations(
 /** An entry of a file, under the id it has there. */
 export interface ParsedEntry {
   automation: Automation;
-  /** It has parts this build does not know, which were left out. */
-  leftOut: boolean;
+  /** The parts of it this build does not know, which were left out: "step 2: later". */
+  leftOut: string[];
 }
 
 /** What a file holds, per list. */
@@ -94,15 +96,30 @@ function unknownKind(raw: unknown): string | null {
   );
 }
 
-/** Whether `raw` has a key, at any level, that validation took out. */
-function hasLeftOut(validated: unknown, raw: unknown, known: readonly string[] = []): boolean {
+/** Where a part is, in the dialog's words: `step 2: later`. */
+function partName(path: readonly (string | number)[]): string {
+  const key = path[path.length - 1];
+  const [list, index] = path;
+  if (path.length < 3 || typeof index !== "number") return String(key);
+  if (list === "steps") return `step ${index + 1}: ${key}`;
+  return list === "triggers" ? `trigger ${index + 1}: ${key}` : String(key);
+}
+
+/** The keys of `raw`, at any level, that validation took out. */
+function leftOutParts(
+  validated: unknown,
+  raw: unknown,
+  known: readonly string[] = [],
+  path: readonly (string | number)[] = []
+): string[] {
   if (Array.isArray(validated)) {
-    return validated.some((item, i) => hasLeftOut(item, child(raw, i)));
+    return validated.flatMap((item, i) => leftOutParts(item, child(raw, i), [], [...path, i]));
   }
-  if (!isRecord(validated) || !isRecord(raw)) return false;
-  return Object.keys(raw).some((key) =>
-    key in validated ? hasLeftOut(validated[key], raw[key]) : !known.includes(key)
-  );
+  if (!isRecord(validated) || !isRecord(raw)) return [];
+  return Object.keys(raw).flatMap((key) => {
+    if (key in validated) return leftOutParts(validated[key], raw[key], [], [...path, key]);
+    return known.includes(key) ? [] : [partName([...path, key])];
+  });
 }
 
 /**
@@ -151,7 +168,7 @@ export function parseAutomationFile(json: string): ParsedAutomationFile {
     const list = readable(key);
     return parse(JSON.stringify({ version, [key]: list })).map((entry, i) => ({
       automation: convert(entry),
-      leftOut: hasLeftOut(entry, child(list, i), KNOWN_ENTRY_KEYS),
+      leftOut: leftOutParts(entry, child(list, i), KNOWN_ENTRY_KEYS),
     }));
   };
   const entries = {
@@ -166,25 +183,38 @@ export function parseAutomationFile(json: string): ParsedAutomationFile {
   return { entries, refused };
 }
 
-/** What an import brought in, and what the user should know about it. */
+/** One imported automation, and what the user should know about it. */
+export interface ImportedEntry {
+  automation: Automation;
+  /** The parts this build does not know, which were left out. */
+  leftOut: string[];
+  /** The triggers it arrives with, hotkeys included; they are off. */
+  triggersOff: string[];
+  /** It has a "Run local process" step, which needs the experimental switch. */
+  localProcess: boolean;
+  /** The script files it asked to read; the references were removed. */
+  removedScriptPaths: string[];
+  /**
+   * It runs automations the file does not hold: the name of the one of this
+   * library with that very id, or `null`.
+   */
+  outside: (string | null)[];
+}
+
+/** What an import brought in. */
 export interface AutomationImport {
   /** The automations to save, in file order. */
   automations: Automation[];
+  /** The same, each with what to know about it. */
+  entries: ImportedEntry[];
   /** Entries of a newer build that were not imported, and the kind not known. */
   refused: { name: string; kind: string }[];
-  /** The ones with parts this build does not know, which were left out. */
-  leftOut: string[];
-  /** The ones with triggers, which arrive switched off. */
-  disarmed: string[];
-  /** The ones with "Run local process" steps, which need the experimental switch. */
-  localProcess: string[];
-  /** The script files the file asked to read; the references were removed. */
-  removedScriptPaths: { name: string; path: string }[];
-  /**
-   * The ones that run an automation the file does not hold. `runs` is the name
-   * of the automation of this library with that very id, or `null`.
-   */
-  outside: { name: string; runs: string | null }[];
+}
+
+/** A trigger in the dialog's words: "Hotkey F9", "On connect". */
+function triggerName(trigger: AutomationTrigger): string {
+  const label = triggerKindLabel(trigger.kind);
+  return trigger.kind === "hotkey" && trigger.binding ? `${label} ${trigger.binding}` : label;
 }
 
 /** `name`, or `name (imported)`, `name (imported 2)`, … when it is taken. */
@@ -247,19 +277,12 @@ export function prepareAutomationImport(
   });
 
   const names = new Set(library.map((a) => a.name));
-  const result: AutomationImport = {
-    automations: [],
-    refused: file.refused,
-    leftOut: [],
-    disarmed: [],
-    localProcess: [],
-    removedScriptPaths: [],
-    outside: [],
-  };
+  const result: AutomationImport = { automations: [], entries: [], refused: file.refused };
   entries.forEach(({ automation: entry, leftOut }, i) => {
     const name = importedName(entry.name, names);
     names.add(name);
     const outside = new Set<string | null>();
+    const removedScriptPaths: string[] = [];
     const steps = mapSteps(entry.steps, (step) => {
       if (step.kind === "run-automation") {
         const copy = copies.get(step.automationId);
@@ -270,14 +293,11 @@ export function prepareAutomationImport(
       }
       if (step.kind === "run-script" && step.sourcePath !== undefined) {
         const { sourcePath, ...rest } = step;
-        result.removedScriptPaths.push({ name, path: sourcePath });
+        removedScriptPaths.push(sourcePath);
         return rest;
       }
       return step;
     });
-    outside.forEach((runs) => result.outside.push({ name, runs }));
-    if (leftOut) result.leftOut.push(name);
-    if (hasLocalProcess(steps)) result.localProcess.push(name);
 
     const { triggersEnabled: _armed, ...kept } = entry;
     const automation: Automation = {
@@ -288,11 +308,16 @@ export function prepareAutomationImport(
       createdAt: "",
       updatedAt: "",
     };
-    if (automation.triggers.length > 0) {
-      automation.triggersEnabled = false;
-      result.disarmed.push(name);
-    }
+    if (automation.triggers.length > 0) automation.triggersEnabled = false;
     result.automations.push(automation);
+    result.entries.push({
+      automation,
+      leftOut,
+      triggersOff: automation.triggers.map(triggerName),
+      localProcess: hasLocalProcess(steps),
+      removedScriptPaths,
+      outside: [...outside],
+    });
   });
   return result;
 }

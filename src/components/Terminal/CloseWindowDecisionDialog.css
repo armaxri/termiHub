@@ -59,6 +59,14 @@
   text-overflow: ellipsis;
 }
 
+/* A name that says where it is wraps instead of hiding that (#6026). */
+.close-window-decision__row-name--wrap {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .close-window-decision__row-type {
   flex: 1 1 auto;
   min-width: 0;

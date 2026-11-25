@@ -86,6 +86,8 @@ import { useAppStore, type AppState } from "./appStore";
 import type { Macro } from "@/types/macro";
 import type { Workflow, WorkflowStep } from "@/types/workflow";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
+import type { Automation } from "@/types/generated/Automation";
+import { EDIT_AUTOMATION_EVENT, SHOW_AUTOMATION_RUNS_EVENT } from "./slices/automationRunActions";
 import {
   activeWorkflowRunCount,
   cancelWorkflowRunById,
@@ -213,7 +215,7 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
     );
     expect(result.status).toBe("failed");
     expect(mocks.toast.error).toHaveBeenCalledWith(
-      'Automation "slow" failed at step 1',
+      expect.stringMatching(/^“slow” failed at step 1 \(/),
       expect.objectContaining({ description: expect.stringMatching(/timed out/) })
     );
   });
@@ -456,17 +458,62 @@ describe("toastRunOutcome", () => {
       "t"
     );
     expect(mocks.toast.info).toHaveBeenCalledWith(
-      'Ran automation "wf" with 2 tolerated step failures',
+      "Ran automation “wf” with 2 tolerated step failures",
       { id: "t", description: "Step 1: boom" }
     );
   });
 
   it("falls back to the completed-step count when no failed index is known", () => {
     toastRunOutcome("wf", { status: "failed", stepsCompleted: 1, error: "nope" }, 3, "t");
-    expect(mocks.toast.error).toHaveBeenCalledWith('Automation "wf" failed at step 2', {
+    expect(mocks.toast.error).toHaveBeenCalledWith("“wf” failed at step 2", {
       id: "t",
       description: "nope",
     });
+  });
+
+  it("names the step that failed and links to the editor and the history (A-037)", () => {
+    const automation = workflow([
+      { kind: "wait", delayMs: 1 },
+      { kind: "send-command", command: "make" },
+    ]) as unknown as Automation;
+    const asked: string[] = [];
+    const listen = (e: Event) => asked.push(e.type, (e as CustomEvent).detail.automationId);
+    window.addEventListener(EDIT_AUTOMATION_EVENT, listen);
+    window.addEventListener(SHOW_AUTOMATION_RUNS_EVENT, listen);
+    toastRunOutcome(
+      "wf",
+      { status: "failed", stepsCompleted: 1, failedStepIndex: 1, error: "nope" },
+      2,
+      "t",
+      automation
+    );
+    const [message, options] = mocks.toast.error.mock.calls[0];
+    expect(message).toBe("“wf” failed at step 2 (Run command: make)");
+    options.action.onClick();
+    options.cancel.onClick();
+    window.removeEventListener(EDIT_AUTOMATION_EVENT, listen);
+    window.removeEventListener(SHOW_AUTOMATION_RUNS_EVENT, listen);
+    expect(asked).toEqual([
+      EDIT_AUTOMATION_EVENT,
+      automation.id,
+      SHOW_AUTOMATION_RUNS_EVENT,
+      automation.id,
+    ]);
+  });
+
+  it("says that nothing was run when it did not start", () => {
+    toastRunOutcome(
+      "wf",
+      {
+        status: "failed",
+        stepsCompleted: 0,
+        error: "step 1 is from a newer build",
+        notStarted: true,
+      },
+      2,
+      "t"
+    );
+    expect(mocks.toast.error.mock.calls[0][0]).toBe("“wf” was not run");
   });
 });
 

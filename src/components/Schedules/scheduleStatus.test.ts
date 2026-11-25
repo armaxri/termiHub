@@ -81,7 +81,7 @@ describe("summarizeAttempt and lastRunText: the whole reason, first (A-041)", ()
       text({ outcome: "skipped", message: "Skipped: the previous run was still in progress" })
     ).toBe("Last run skipped: the previous run was still in progress (today 02:00)");
     expect(text({ outcome: "cancelled", message: "Ran on 1 terminal: canceled" })).toBe(
-      "Last run was canceled (today 02:00)"
+      "Last run was stopped (today 02:00)"
     );
   });
 

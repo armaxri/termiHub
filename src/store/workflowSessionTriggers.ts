@@ -98,7 +98,7 @@ function launchTriggeredRun(
   const refusal = localProcessRefusal(store.get(), workflow);
   if (refusal) {
     frontendLog("workflow", `${triggeredBy} trigger for "${workflow.name}" refused: ${refusal}`);
-    toast.error(`Automation "${workflow.name}" was not run`, {
+    toast.error(`Automation “${workflow.name}” was not run`, {
       id: localProcessRefusalToastId(workflow.id),
       description: refusal,
     });
@@ -107,7 +107,7 @@ function launchTriggeredRun(
   const params = unattendedParamValues(workflow.parameters ?? []);
   if ("missing" in params) {
     // toast-policy: explains-outcome — an automatic trigger did not run, and this says why
-    toast.info(`Automation "${workflow.name}" was not run`, {
+    toast.info(`Automation “${workflow.name}” was not run`, {
       description: `Parameter "${params.missing}" needs a default value to run from a trigger`,
     });
     return false;

@@ -38,6 +38,8 @@ import type { TerminalTab } from "@/types/terminal";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import { resolveWindowEviction } from "@/utils/tabOwnership";
 import { captureAllTabGroups } from "@/utils/workspaceLayout";
+import { currentWorkflowRunView } from "@/store/workflowRunBridge";
+import { macroTargetLabel } from "./macroRunHistory";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { toast } from "@/components/ui";
 import { errorMessage } from "@/utils/errorMessage";
@@ -301,6 +303,26 @@ function recordingField(state: AppState): Pick<WindowCloseRequest, "recording"> 
     : {};
 }
 
+/** `runs` for a {@link WindowCloseRequest}, omitted when no automation runs here. */
+function runsField(state: AppState): Pick<WindowCloseRequest, "runs"> {
+  const { macroPlayback } = state;
+  const runs = [
+    ...currentWorkflowRunView().runs.map((run) => ({
+      key: run.runId,
+      name: run.workflowName,
+      tabTitle: run.label || macroTargetLabel(state, run.tabId),
+    })),
+    ...(macroPlayback ? (macroPlayback.targetTabIds ?? [macroPlayback.tabId]) : []).map(
+      (tabId) => ({
+        key: tabId,
+        name: macroPlayback?.macroName ?? "",
+        tabTitle: macroTargetLabel(state, tabId),
+      })
+    ),
+  ];
+  return runs.length > 0 ? { runs } : {};
+}
+
 /** `otherTabs` for a {@link WindowCloseRequest}, omitted when there are none. */
 function otherTabsField(
   tabs: TerminalTab[],
@@ -485,7 +507,9 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     );
     // A recording lives in this window only: closing it must ask too (#5818).
     const recording = recordingField(get());
-    if (dirtyEditors.length > 0 || recording.recording) {
+    // So does a run: it types from this window and stops with it (#6026).
+    const runs = runsField(get());
+    if (dirtyEditors.length > 0 || recording.recording || runs.runs) {
       set({
         pendingWindowClose: {
           sessions,
@@ -493,6 +517,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
           ...(dirtyEditors.length > 0 ? { dirtyEditors } : {}),
           ...otherTabs,
           ...recording,
+          ...runs,
         },
       });
       return "prompt";
@@ -523,7 +548,13 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
     const sessions = classifyWindowCloseSessions(tabs, startingTabIds(get()));
     const dirtyEditors = dirtyEditorRows(tabs, get().editorDirtyTabs);
     const recording = recordingField(get());
-    if (dirtyEditors.length === 0 && !recording.recording && !windowCloseWouldLoseData(sessions)) {
+    const runs = runsField(get());
+    if (
+      dirtyEditors.length === 0 &&
+      !recording.recording &&
+      !runs.runs &&
+      !windowCloseWouldLoseData(sessions)
+    ) {
       return "ready";
     }
     set({
@@ -533,6 +564,7 @@ export const createWindowManagementSlice: StateCreator<AppState, [], [], WindowM
         mode: "quit",
         ...(dirtyEditors.length > 0 ? { dirtyEditors } : {}),
         ...recording,
+        ...runs,
       },
     });
     return "prompt";

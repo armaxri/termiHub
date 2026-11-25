@@ -16,7 +16,8 @@ import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
-import { formatRelativeTime } from "@/utils/formatters";
+import type { ScheduleView } from "@/types/schedule";
+import { formatDayTime, formatRelativeTime } from "@/utils/formatters";
 import { automationRunTargets } from "./historyFormat";
 
 /** How many bound connection names a trigger lists before collapsing to "+N". */
@@ -52,13 +53,13 @@ export function automaticTriggers(automation: Automation): SessionTrigger[] {
   );
 }
 
-/** Whether the triggers may fire; an absent flag means armed (#5674). */
+/** Whether the triggers may fire; an absent flag means on (#5674). */
 export function triggersArmed(automation: Automation): boolean {
   return automation.triggersEnabled !== false;
 }
 
 /** The keys its hotkey triggers name. */
-export function hotkeyBindings(automation: Automation): string[] {
+function hotkeyBindings(automation: Automation): string[] {
   return automation.triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
 }
 
@@ -89,29 +90,70 @@ export function triggerSummary(automation: Automation, connectionName: Connectio
   return parts.length > 0 ? parts.join("; ") : triggerKindLabel("manual");
 }
 
+/** Where a trigger of this kind watches, in the row's words. */
+const TRIGGER_PHRASE = {
+  "on-connect": "automation.trigger.onConnect",
+  "on-disconnect": "automation.trigger.onDisconnect",
+  "on-output-match": "automation.trigger.onOutputMatch",
+} as const;
+
+/** What starts an automation by itself while its triggers are on, and what does not while off. */
+export interface TriggerState {
+  on: boolean;
+  /** The whole sentence. */
+  text: string;
+}
+
 /**
- * The Armed/Off marker's description (#5635, #5674), naming what each automatic
- * trigger watches: `Runs automatically: on output match of prod`, or, switched
- * off, `Trigger off, will not run automatically: …` (R-077: "Off" is about the
- * trigger, not the automation).
+ * The row's trigger line (#6026): which hotkey and what else starts it, or, while
+ * its triggers are off, what does not start it any more. `null` when nothing
+ * could: no trigger, or only ones without keys or connections.
  */
-export function armedMarkerDescription(
+export function triggerState(
   automation: Automation,
   connectionName: ConnectionName
-): string {
-  const automatic = automaticTriggers(automation).map(
-    (trigger) =>
-      `${triggerKindLabel(trigger.kind).toLowerCase()} of ${connectionList(
-        trigger.connectionIds,
-        connectionName
-      )}`
-  );
-  if (triggersArmed(automation)) {
-    return tf("automation.armed.on", { triggers: automatic.join("; ") });
-  }
-  // Off covers the hotkeys too (#5818, slice 11).
-  const hotkeys = hotkeyBindings(automation).map((binding) => `hotkey ${binding}`);
-  return tf("automation.armed.off", { triggers: [...automatic, ...hotkeys].join("; ") });
+): TriggerState | null {
+  const parts = [
+    ...hotkeyBindings(automation).map((keys) => tf("automation.trigger.hotkey", { keys })),
+    ...automaticTriggers(automation).map((trigger) =>
+      tf(TRIGGER_PHRASE[trigger.kind], {
+        connections: connectionList(trigger.connectionIds, connectionName),
+      })
+    ),
+  ];
+  if (parts.length === 0) return null;
+  const on = triggersArmed(automation);
+  return {
+    on,
+    text: on
+      ? tf("automation.triggers.on", { triggers: parts.join(", ") })
+      : tf("automation.triggers.off", { triggers: parts.join(", or ") }),
+  };
+}
+
+/**
+ * When a schedule runs it next (#6026), over every schedule of it that is on;
+ * `null` without one.
+ */
+export function nextScheduledRun(
+  automationId: string,
+  schedules: readonly ScheduleView[],
+  paused: boolean,
+  now?: Date
+): string | null {
+  const on = schedules.filter((s) => s.enabled && s.action.automationId === automationId);
+  if (on.length === 0) return null;
+  if (paused) return t("automation.schedule.paused");
+  const next = on.flatMap((s) => (s.nextRunAt ? [s.nextRunAt] : [])).sort(byTime)[0];
+  if (next === undefined) return t("automation.schedule.on");
+  const when = formatDayTime(next, now);
+  return on.length === 1
+    ? tf("automation.schedule.next", { when })
+    : tf("automation.schedule.nextOf", { when, count: on.length });
+}
+
+function byTime(a: string, b: string): number {
+  return (Date.parse(a) || 0) - (Date.parse(b) || 0);
 }
 
 /** What the automation does first, as tooltip lines. */
@@ -175,11 +217,10 @@ export interface AutomationRunSummary {
   /** Its most recent run. */
   last: AutomationRun;
   /**
-   * The latest run the user did not start failed, and nothing has completed
-   * since: the row's Failed marker. A run started by hand reports its failure
-   * right away, so it does not mark the row.
+   * The row's Failed marker: the last run failed, or the last one nobody watched
+   * did, and nothing has completed since.
    */
-  failedUnattended: boolean;
+  failed: boolean;
 }
 
 /**
@@ -201,9 +242,9 @@ export function summarizeRuns(runs: readonly AutomationRun[]): Map<string, Autom
     const completed = newestFirst.find((r) => r.status === "completed");
     out.set(id, {
       last: newestFirst[0],
-      failedUnattended:
-        unattended?.status === "failed" &&
-        (completed === undefined || ended(completed) < ended(unattended)),
+      failed: [newestFirst[0], unattended].some(
+        (r) => r?.status === "failed" && (completed === undefined || ended(completed) < ended(r))
+      ),
     });
   }
   return out;

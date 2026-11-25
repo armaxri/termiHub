@@ -49,6 +49,7 @@ vi.mock("@/utils/frontendLog", async (importOriginal) => {
 });
 
 import { useAppStore } from "./appStore";
+import { setWorkflowRunViewForTest } from "./workflowRunBridge";
 import { STARTING_CONNECT_SETTLE_MS } from "./slices/windowManagementSlice";
 import type { WindowInfo } from "@/types/window";
 
@@ -110,6 +111,48 @@ describe("appStore — closing a window with a recording (#5818)", () => {
       recording: { tabTitle: "agent", keys: 1 },
     });
     if (store().recording) store().stopRecording();
+  });
+
+  it.each<[string, () => void, object]>([
+    [
+      "step by step",
+      () =>
+        setWorkflowRunViewForTest({
+          run: {
+            runId: "r1",
+            workflowId: "w",
+            workflowName: "Deploy",
+            tabId: "t",
+            label: "prod-web",
+            total: 2,
+            completed: 0,
+          },
+          output: null,
+        }),
+      { key: "r1", name: "Deploy", tabTitle: "prod-web" },
+    ],
+    [
+      "by typing keys",
+      () =>
+        useAppStore.setState({
+          macroPlayback: {
+            macroId: "m",
+            macroName: "Login",
+            tabId: "t",
+            total: 2,
+            played: 1,
+          },
+        }),
+      { key: "t", name: "Login" },
+    ],
+  ])("asks first while an automation runs %s (#6026)", async (_how, arrange, run) => {
+    arrange();
+    expect(await store().prepareWindowClose(OTHERS)).toBe("prompt");
+    expect(store().pendingWindowClose?.runs).toMatchObject([run]);
+    store().setPendingWindowClose(null);
+    expect(store().prepareAppQuit()).toBe("prompt");
+    expect(store().pendingWindowClose).toMatchObject({ mode: "quit", runs: [run] });
+    setWorkflowRunViewForTest({ run: null, output: null });
   });
 
   it("asks first while the editor waits hidden for one, though nothing was typed", async () => {

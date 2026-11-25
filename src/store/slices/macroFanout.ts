@@ -102,14 +102,14 @@ export function describeMacroFanoutOutcome(
 ): MacroFanoutSummary {
   const problems: string[] = [];
   if (o.skipped > 0) problems.push(`${o.skipped} skipped (not connected)`);
-  if (o.dropped > 0) problems.push(`${o.dropped} stopped early (disconnected mid-playback)`);
+  if (o.dropped > 0) problems.push(`${o.dropped} stopped early (disconnected while it ran)`);
   const detail = problems.length > 0 ? problems.join(" · ") : undefined;
 
   if (o.status === "cancelled") {
     return {
       // A dropped terminal is a failure and stays visible as one.
       kind: o.dropped > 0 ? "error" : "info",
-      message: `Playback of "${macroName}" canceled`,
+      message: `“${macroName}” stopped`,
       description: [`Finished on ${o.delivered} of ${plural(o.requested, "terminal")}`, detail]
         .filter(Boolean)
         .join(" · "),
@@ -118,19 +118,19 @@ export function describeMacroFanoutOutcome(
   if (o.status === "error") {
     return {
       kind: "error",
-      message: `Could not finish "${macroName}" — no target terminal is still connected`,
+      message: `Could not finish “${macroName}” — no target terminal is still connected`,
       description: detail,
     };
   }
   if (problems.length === 0 && o.delivered === o.requested) {
     return {
       kind: "success",
-      message: `Ran automation "${macroName}" on ${plural(o.delivered, "terminal")}`,
+      message: `Ran automation “${macroName}” on ${plural(o.delivered, "terminal")}`,
     };
   }
   return {
     kind: "error",
-    message: `Ran automation "${macroName}" on ${o.delivered} of ${plural(o.requested, "terminal")}`,
+    message: `Ran automation “${macroName}” on ${o.delivered} of ${plural(o.requested, "terminal")}`,
     description: detail,
   };
 }

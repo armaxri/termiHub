@@ -515,7 +515,7 @@
                 <td>
                   <code>WorkflowSidebar</code>. Toolbar: New (Blank, or Promote a macro), Import,
                   Export. Rows: name, Run or Stop, "Run on…", Edit, Schedule, Duplicate, Export,
-                  Delete, an Armed/Off switch and a running-terminals list. Below the list:
+                  Delete, a triggers switch and a running-terminals list. Below the list:
                   <strong>Schedules section</strong>, History, run output
                 </td>
               </tr>
@@ -780,16 +780,30 @@ Step = everything WorkflowStep has today, plus:
 ├─────────────────────────────────────────────────────┤
 │ Deploy prep                                  ▶      │   Play always visible (#5636)
 │   Pull, build and restart the web tier              │   muted description, if written
-│ Answer on match              ⚡ Armed [on]   ▶      │   marker + switch only when it has
-│ Nightly cleanup                     ◷ Off   ▶      │     an automatic trigger
+│ Answer on match                             ▶      │   the sentence and its switch only
+│   ⚡ Triggers on: matching output in prod   [on]    │     when it has triggers or hotkeys
+│ Nightly cleanup                             ▶      │
+│   Triggers off: not on connecting to db.    [off]   │   what no longer happens; it can
+│   You can still run it.                             │     still be run
+│   ◷ Next run tomorrow 02:00                         │   from its schedules
 │ Sudo password                              ▶ ⋯     │   hover: Run on…, Edit, Schedule,
 │ Health check                  ⟳ Running 2  ■       │     Duplicate, Export, Delete
-│ Rotate logs                        ⚠ Failed  ▶      │   last automatic/scheduled run failed
+│   in web-1, step 2 of 3                     ■       │   a click shows the terminal
+│   in web-2, step 1 of 3                     ■       │
+│ Rotate logs                        ⚠ Failed  ▶      │   its last run failed
+│ From a newer version           ⊘ Cannot run         │   no Run; the reason under it
 ├ ▸ Schedules (2)  ───────────────────────────────────┤   collapsible, no longer experimental
 ├ ▸ History ──────────────────────────────────────────┤   one history for everything
 └ (run output panel appears here while a process runs)┘</pre
         >
         <ul>
+          <li>
+            Pressing Enter or double-clicking a row opens the editor, so nobody types into a
+            terminal by accident; <kbd>Ctrl/Cmd+Enter</kbd> runs the selected row (<a
+              href="https://github.com/armaxri/termiHub/issues/6026"
+              >#6026</a
+            >).
+          </li>
           <li>
             The tooltip on the name holds the trigger and its targets, a preview of the first step,
             the last run and where it went, and the tags. It does not show "macro" or "workflow".
@@ -849,8 +863,8 @@ Step = everything WorkflowStep has today, plus:
           </li>
           <li>
             "When I run it" always applies and cannot be turned off. This replaces the "Manual"
-            chip, which had no effect (2.6). Adding an automatic trigger shows the Armed switch in
-            the editor and on the row.
+            chip, which had no effect (2.6). Adding an automatic trigger shows the Triggers switch
+            in the editor and on the row.
           </li>
           <li>
             "On a schedule…" opens the existing <code>ScheduleEditorDialog</code> with this
@@ -1021,13 +1035,17 @@ History                           [Deploy prep ×]  Clear…
                     <svg class="li"><use href="#i-play" /></svg>
                   </div>
                   <div class="connection-tree__item">
-                    <span class="automation-row__name">Answer on match</span>
-                    <span class="automation-row__marker">Armed</span>
+                    <span class="automation-row__name"
+                      >Answer on match<small>Triggers on: matching output in prod</small></span
+                    >
                     <svg class="li"><use href="#i-play" /></svg>
                   </div>
                   <div class="connection-tree__item">
-                    <span class="automation-row__name">Nightly cleanup</span>
-                    <span class="automation-row__marker">Off</span>
+                    <span class="automation-row__name"
+                      >Nightly cleanup<small
+                        >Triggers off: not on connecting to db. You can still run it.</small
+                      ></span
+                    >
                     <svg class="li"><use href="#i-play" /></svg>
                   </div>
                   <div class="connection-tree__item">
@@ -1081,7 +1099,7 @@ History                           [Deploy prep ×]  Clear…
               </li>
               <li>
                 <span class="callout">C</span> Rows follow the copy-style rule "List rows: names,
-                not settings". Armed/Off appears only on rows with an automatic trigger.
+                not settings", with the exception for what starts an automation by itself (#6026).
               </li>
               <li>
                 <span class="callout">D</span> Schedules stay separate entries (decision 4) and are
@@ -1901,8 +1919,8 @@ flowchart LR
           Review findings (#5818) that were decided differently or are open: R-068 (mark what an
           automation typed) is <a href="https://github.com/armaxri/termiHub/issues/6021">#6021</a>;
           R-018 keeps both homes of schedules by the maintainer's decision, and since slice 12 both
-          edit (R-017); R-120 keeps the history filter and Clear in a row of their own; R-170 keeps
-          "Armed" / "Off".
+          edit (R-017); R-120 keeps the history filter and Clear in a row of their own; R-170's
+          "Armed" / "Off" became "Triggers on" / "Triggers off" in #6026.
         </p>
         <p>Model notes from slice 1:</p>
         <ul>

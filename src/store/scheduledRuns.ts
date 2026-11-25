@@ -147,7 +147,7 @@ async function runScheduledWorkflow(
   tabIds: string[],
   store: ScheduledRunStore
 ): Promise<WindowRunReport> {
-  if (workflow.steps.length === 0) return skip(`Automation "${workflow.name}" has no steps`);
+  if (workflow.steps.length === 0) return skip(`Automation “${workflow.name}” has no steps`);
   const { targets } = resolveConnectedTargets(store.getState(), tabIds);
   if (targets.length === 0) return skip(noneOpen(fire));
   const params = unattendedParamValues(workflow.parameters ?? []);
@@ -156,9 +156,9 @@ async function runScheduledWorkflow(
   }
 
   const toastId = `schedule-run-${fire.token}`;
-  toast.loading(`Scheduled run "${fire.scheduleName}"`, {
+  toast.loading(`Scheduled run “${fire.scheduleName}”`, {
     id: toastId,
-    description: `Running automation "${workflow.name}" on ${targets.length} terminal${
+    description: `Running automation “${workflow.name}” on ${targets.length} terminal${
       targets.length === 1 ? "" : "s"
     }…`,
   });
@@ -208,7 +208,7 @@ async function runScheduledMacro(
 ): Promise<WindowRunReport> {
   const state = store.getState();
   const macroId = automation.id;
-  if (automation.steps.length === 0) return skip(`Automation "${automation.name}" has no steps`);
+  if (automation.steps.length === 0) return skip(`Automation “${automation.name}” has no steps`);
   const targets = filterConnectedTerminalTabIds(state, tabIds);
   if (targets.length === 0) return skip(noneOpen(fire));
   // Every terminal's playback writes its own record (#5818): the attempt links

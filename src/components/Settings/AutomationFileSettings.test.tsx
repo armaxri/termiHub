@@ -60,24 +60,26 @@ async function importJson(file: unknown): Promise<void> {
   click("import-migration-automations-import-btn");
   await flushAsync();
 }
-const note = (id: string) => query(`automation-import-note-${id}`)?.textContent;
+const entry = (name: string) => query(`automation-import-entry-${name}`);
+const refused = (name: string) => query(`automation-import-refused-${name}`);
+const title = () => query("automation-import-dialog")?.querySelector("h2")?.textContent;
 
 describe("import", () => {
   it("says what came in, and no more when there is nothing to look at", async () => {
     await importJson({ version: 1, automations: [automation({}), automation({ name: "B" })] });
-    expect(query("automation-import-dialog")?.textContent).toContain("Imported 2 automations");
-    expect(query("automation-import-names")?.textContent).toBe("Deploy, B");
-    expect(document.querySelector("[data-testid^=automation-import-note-]")).toBeNull();
+    expect(title()).toBe("Imported 2 automations");
+    expect(entry("Deploy")?.textContent).toBe("Deploy: imported");
+    expect(entry("B")?.textContent).toBe("B: imported");
     click("automation-import-close");
     await flushAsync();
     expect(query("automation-import-dialog")).toBeNull();
   });
 
-  it("names what was switched off, what runs programs, what it wanted to read and what is missing", async () => {
+  it("says per automation what is off, runs programs, was removed and is missing (A-049)", async () => {
     await importJson({
       version: 1,
       automations: [
-        automation({ name: "Hot", triggers: [{ kind: "hotkey", binding: "Enter" }] }),
+        automation({ name: "Hot", triggers: [{ kind: "hotkey", binding: "F9" }] }),
         automation({
           name: "Local",
           steps: [{ kind: "run-local-process", program: "rm", args: [] }],
@@ -89,27 +91,29 @@ describe("import", () => {
         automation({ name: "Caller", steps: [{ kind: "run-automation", automationId: "gone" }] }),
       ],
     });
-    expect(note("disarmed")).toMatch(/Switched off\. .*hotkeys.*Hot$/);
-    expect(note("local-process")).toMatch(/Allow experimental features.*Local$/);
-    expect(note("script-paths")).toContain("Script: /home/u/.ssh/id");
-    expect(note("outside")).toContain(
-      "Caller: choose one in its “Run automation” step, or that step fails"
-    );
+    expect(entry("Hot")?.textContent).toMatch(/Triggers off: Hotkey F9/);
+    expect(entry("Local")?.textContent).toMatch(/Allow experimental features/);
+    expect(entry("Script")?.textContent).toContain("/home/u/.ssh/id");
+    expect(entry("Caller")?.textContent).toContain("Runs an automation th");
+    for (const other of ["Local", "Script", "Caller"])
+      expect(entry(other)?.textContent).not.toContain("Triggers off");
     expect(vi.mocked(saveAutomation).mock.calls[0][0].triggersEnabled).toBe(false);
     await checkA11y(query("automation-import-dialog")!);
   });
 
-  it("says what it did not take from a newer build", async () => {
+  it("counts what it did not take from a newer build, and names each part (A-050)", async () => {
     await importJson({
       version: 1,
       automations: [
         { ...automation({ name: "Odd" }), steps: [{ kind: "teleport" }] },
-        { ...automation({ name: "Part" }), later: 1 },
+        { ...automation({ name: "Part" }), steps: [{ kind: "wait", delayMs: 1, later: 1 }] },
       ],
     });
-    expect(query("automation-import-dialog")?.textContent).toContain("Imported 1 automation");
-    expect(note("refused")).toMatch(/Not imported.*Update termiHub.*Odd: teleport$/);
-    expect(note("left-out")).toMatch(/left out.*Part$/);
+    expect(title()).toBe("Imported 1 of 2 automations");
+    expect(refused("Odd")?.textContent).toContain("teleport");
+    expect(refused("Odd")?.textContent).toContain("Update termiHub");
+    expect(entry("Part")?.dataset.state).toBe("partly");
+    expect(entry("Part")?.textContent).toContain("step 1: later");
   });
 
   it("says that nothing was imported", async () => {
@@ -117,9 +121,9 @@ describe("import", () => {
       version: 1,
       automations: [{ ...automation({ name: "Odd" }), steps: [{ kind: "teleport" }] }],
     });
-    expect(query("automation-import-dialog")?.textContent).toContain("Nothing was imported");
-    expect(note("refused")).toContain("Odd: teleport");
-    expect(query("automation-import-names")).toBeNull();
+    expect(title()).toBe("Nothing was imported");
+    expect(refused("Odd")?.textContent).toContain("teleport");
+    expect(query("automation-import-show")).toBeNull();
     expect(saveAutomation).not.toHaveBeenCalled();
   });
 
@@ -133,12 +137,12 @@ describe("import", () => {
         automation({ name: "Caller", steps: [{ kind: "run-automation", automationId: "here" }] }),
       ],
     });
-    expect(note("outside")).toContain("Caller: runs “Cleanup” of your library");
+    expect(entry("Caller")?.textContent).toContain("“Cleanup”");
   });
 
   it("takes a file of an older build", async () => {
     await importJson({ version: 1, macros: [{ name: "M", steps: [{ data: "x", delayMs: 0 }] }] });
-    expect(query("automation-import-names")?.textContent).toBe("M");
+    expect(entry("M")?.textContent).toBe("M: imported");
   });
 
   it("shows them in the sidebar, without closing it when it already shows", async () => {

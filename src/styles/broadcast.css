@@ -52,7 +52,9 @@
   cursor: pointer;
 }
 
+/* The words in text colour: the accent alone is below 4.5:1 in light (A-018). */
 .tab__automation-progress {
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 

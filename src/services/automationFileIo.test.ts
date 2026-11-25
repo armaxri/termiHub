@@ -103,6 +103,13 @@ const EVERYTHING = {
   updatedAt: "2026-01-02T00:00:00Z",
 } as unknown as Automation;
 
+/** What was left out, with whose it is. */
+const leftOut = (result: AutomationImport) =>
+  result.entries.flatMap((e) => e.leftOut.map((part) => [e.automation.name, part]));
+/** What runs an automation the file does not hold. */
+const outside = (result: AutomationImport) =>
+  result.entries.flatMap((e) => e.outside.map((runs) => ({ name: e.automation.name, runs })));
+
 describe("export → import", () => {
   it("is one versioned list", () => {
     const json = exported(automation());
@@ -115,7 +122,7 @@ describe("export → import", () => {
     const [copy] = importFile(exported(EVERYTHING)).automations;
     const expected = JSON.parse(JSON.stringify(EVERYTHING));
     expected.steps[8].else[0].body[0].automationId = "n1"; // runs its own copy
-    expect(importFile(exported(EVERYTHING)).leftOut).toEqual([]);
+    expect(leftOut(importFile(exported(EVERYTHING)))).toEqual([]);
     expect(copy).toEqual({
       ...expected,
       id: "n1",
@@ -251,7 +258,7 @@ describe("files of older builds", () => {
       createdAt: "",
       updatedAt: "",
     });
-    expect(result.outside).toEqual([{ name: "Release", runs: null }]);
+    expect(outside(result)).toEqual([{ name: "Release", runs: null }]);
   });
 
   it("the one file with both lists, and its run steps run the imported copies", () => {
@@ -269,7 +276,7 @@ describe("files of older builds", () => {
     expect(release.steps[0]).toMatchObject({ kind: "run-automation", automationId: login.id });
     expect(JSON.stringify(release.steps[1])).toContain(`"automationId":"${login.id}"`);
     expect(all.steps).toEqual([runs(release.id), keys]);
-    expect(result.outside).toEqual([]);
+    expect(outside(result)).toEqual([]);
   });
 
   it.each(["legacy", "collision"])("every stored workflow of the %s fixture", (kind) => {
@@ -302,7 +309,7 @@ describe("run steps", () => {
     );
     expect(result.automations[0].steps).toEqual([runs("n2"), runs("n1")]);
     expect(JSON.stringify(result.automations[1])).toContain('"automationId":"n1"');
-    expect(result.outside).toEqual([]);
+    expect(outside(result)).toEqual([]);
   });
 
   it("that run one the file does not hold keep their id and are reported", () => {
@@ -315,7 +322,7 @@ describe("run steps", () => {
       exported(automation({ name: "New", steps: [runs("here"), runs("gone"), runs("gone")] }))
     );
     expect(result.automations[0].steps).toEqual([runs("here"), runs("gone"), runs("gone")]);
-    expect(result.outside).toEqual([
+    expect(outside(result)).toEqual([
       { name: "New", runs: "Cleanup" },
       { name: "New", runs: null },
     ]);
@@ -327,13 +334,13 @@ describe("run steps", () => {
       library,
       exported(automation({ name: "New", steps: [runs("Cleanup")] }))
     );
-    expect(result.outside).toEqual([{ name: "New", runs: null }]);
+    expect(outside(result)).toEqual([{ name: "New", runs: null }]);
   });
 
   it("without a chosen automation are left alone", () => {
     const result = importFile(exported(automation({ steps: [runs("")] })));
     expect(result.automations[0].steps).toEqual([runs("")]);
-    expect(result.outside).toEqual([]);
+    expect(outside(result)).toEqual([]);
   });
 
   it("with an id two entries share run the first", () => {
@@ -349,19 +356,19 @@ describe("run steps", () => {
 });
 
 describe("an import is never trusted", () => {
-  it.each<[string, Automation["triggers"]]>([
-    ["a connection", [{ kind: "on-connect", connectionIds: ["c"] }]],
-    ["a hotkey", [{ kind: "hotkey", binding: "Enter" }]],
-  ])("arrives switched off when it has a trigger: %s", (_name, triggers) => {
+  it.each<[string, Automation["triggers"], string]>([
+    ["a connection", [{ kind: "on-connect", connectionIds: ["c"] }], "On connect"],
+    ["a hotkey", [{ kind: "hotkey", binding: "F9" }], "Hotkey F9"],
+  ])("arrives with its triggers off, named: %s", (_name, triggers, off) => {
     const result = importFile(exported(automation({ triggers, triggersEnabled: true })));
     expect(result.automations[0]).toMatchObject({ triggers, triggersEnabled: false });
-    expect(result.disarmed).toEqual(["Deploy"]);
+    expect(result.entries[0].triggersOff).toEqual([off]);
   });
 
   it("without a trigger has nothing to switch off", () => {
     const result = importFile(exported(automation({ triggersEnabled: false })));
     expect(result.automations[0]).not.toHaveProperty("triggersEnabled");
-    expect(result.disarmed).toEqual([]);
+    expect(result.entries[0].triggersOff).toEqual([]);
   });
 
   it("names the ones that run a local program, nested ones too, and keeps the step", () => {
@@ -381,7 +388,7 @@ describe("an import is never trusted", () => {
     const result = importFile(
       exported(automation({ name: "A", steps: [step] }), automation({ name: "B", steps: [nested] }))
     );
-    expect(result.localProcess).toEqual(["A", "B"]);
+    expect(result.entries.map((e) => e.localProcess)).toEqual([true, true]);
     expect(result.automations[1].steps).toEqual([nested]);
   });
 
@@ -400,9 +407,9 @@ describe("an import is never trusted", () => {
     const result = importFile(exported(automation({ steps: [script, nested] })));
     const clean = { kind: "run-script", script: "echo hi" };
     expect(result.automations[0].steps).toEqual([clean, { ...nested, body: [clean] }]);
-    expect(result.removedScriptPaths).toEqual([
-      { name: "Deploy", path: "/home/u/.ssh/id_ed25519" },
-      { name: "Deploy", path: "/home/u/.ssh/id_ed25519" },
+    expect(result.entries[0].removedScriptPaths).toEqual([
+      "/home/u/.ssh/id_ed25519",
+      "/home/u/.ssh/id_ed25519",
     ]);
   });
 
@@ -452,10 +459,14 @@ describe("a bad file imports nothing", () => {
 });
 
 describe("a file of a newer build", () => {
-  it.each<[string, object]>([
-    ["the automation", { later: true }],
-    ["a step", { steps: [{ kind: "wait", delayMs: 1, later: 1 }] }],
-    ["a chunk", { steps: [{ kind: "type-keys", chunks: [{ data: "x", delayMs: 0, later: 1 }] }] }],
+  it.each<[string, object, string]>([
+    ["the automation", { later: true }, "later"],
+    ["a step", { steps: [{ kind: "wait", delayMs: 1, later: 1 }] }, "step 1: later"],
+    [
+      "a chunk",
+      { steps: [{ kind: "type-keys", chunks: [{ data: "x", delayMs: 0, later: 1 }] }] },
+      "step 1: later",
+    ],
     [
       "a nested step",
       {
@@ -467,14 +478,15 @@ describe("a file of a newer build", () => {
           },
         ],
       },
+      "step 1: later",
     ],
-    ["a trigger", { triggers: [{ kind: "hotkey", binding: "F8", later: 1 }] }],
-    ["a value it asks for", { parameters: [{ name: "p", type: "string", later: 1 }] }],
-  ])("loses an unknown key of %s, and says so by name", (_where, over) => {
+    ["a trigger", { triggers: [{ kind: "hotkey", binding: "F8", later: 1 }] }, "trigger 1: later"],
+    ["a value it asks for", { parameters: [{ name: "p", type: "string", later: 1 }] }, "later"],
+  ])("loses an unknown key of %s, and says which (A-050)", (_where, over, part) => {
     const result = importFile(
       exported(automation({ ...over, name: "New" } as Partial<Automation>))
     );
-    expect(result.leftOut).toEqual(["New"]);
+    expect(leftOut(result)).toEqual([["New", part]]);
     expect(JSON.stringify(result.automations)).not.toContain("later");
   });
 
@@ -485,7 +497,10 @@ describe("a file of a newer build", () => {
       macros: [macro, { ...macro, name: "N", later: 1 }],
       workflows: [{ name: "W", steps: [{ kind: "wait", delayMs: 1, later: 1 }] }],
     });
-    expect(result.leftOut).toEqual(["N", "W"]);
+    expect(leftOut(result)).toEqual([
+      ["N", "later"],
+      ["W", "step 1: later"],
+    ]);
   });
 
   it("says nothing about what an import sets itself", () => {
@@ -498,7 +513,7 @@ describe("a file of a newer build", () => {
         })
       )
     );
-    expect(result.leftOut).toEqual([]);
+    expect(leftOut(result)).toEqual([]);
     expect(result.automations[0]).not.toHaveProperty("legacy");
   });
 
@@ -534,7 +549,7 @@ describe("a file of a newer build", () => {
       expect(result.refused).toEqual([{ name: "Odd", kind }]);
       expect(result.automations.map((a) => a.name)).toEqual(["Deploy", "C"]);
       // What runs the refused one is not left to fail unannounced.
-      expect(result.outside).toEqual([{ name: "C", runs: null }]);
+      expect(outside(result)).toEqual([{ name: "C", runs: null }]);
     }
   );
 

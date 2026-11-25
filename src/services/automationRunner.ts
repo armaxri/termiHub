@@ -24,6 +24,7 @@
  * serial, telnet and agent-hosted sessions therefore all work without any
  * protocol change.
  */
+import { tf } from "@/i18n/catalog";
 import { clampFanoutConcurrency, runWithConcurrency } from "@/store/slices/workflowFanout";
 import {
   describeAutomationCycle,
@@ -147,7 +148,7 @@ export interface UnknownStepFound {
  * steps and called automations count, whichever branch they sit in; each
  * automation is visited once. A **pure** helper.
  */
-function findUnknownStep(
+export function findUnknownStep(
   root: Automation,
   resolve: (id: string) => Automation | undefined
 ): UnknownStepFound | null {
@@ -171,6 +172,19 @@ function findUnknownStep(
     }
   }
   return null;
+}
+
+/** What to do about a step of a kind this version does not know. */
+export function unknownStepReason(
+  automation: Pick<Automation, "name">,
+  found: UnknownStepFound
+): string {
+  return tf(
+    found.automation === automation.name
+      ? "automation.blocked.unknownStep"
+      : "automation.blocked.unknownStepIn",
+    { step: found.stepIndex + 1, kind: found.kind, name: found.automation }
+  );
 }
 
 /**
@@ -211,7 +225,7 @@ export function findAutomationCycle(
 
 /** A run that failed before it started, as a handle. */
 function failedHandle(result: WorkflowRunResult): WorkflowRunHandle {
-  return { done: Promise.resolve(result), cancel: () => {} };
+  return { done: Promise.resolve({ ...result, notStarted: true }), cancel: () => {} };
 }
 
 /**
@@ -242,9 +256,7 @@ export function runAutomation(
       status: "failed",
       stepsCompleted: 0,
       failedStepIndex: unknown.stepIndex,
-      error:
-        `"${unknown.automation}" has a step this version of termiHub does not know ` +
-        `("${unknown.kind}"), so nothing was run. Update termiHub to run it.`,
+      error: unknownStepReason(automation, unknown),
     });
   }
   return runWorkflow(automation.steps, deps, hooks, paramValues, {

@@ -73,7 +73,10 @@ def _middle(rect: Rect) -> float:
 
 
 def row_layout_problems(m: Mapping[str, Any]) -> list[str]:
-    """Run, the markers and the switch sit on the name's line, inside the sidebar (R-075, R-077).
+    """Run sits on the name's line, the trigger sentence and its switch share the line under it.
+
+    The sentence needs the row's width (#6026); R-077's point, that one sees which
+    switch belongs to which row and it stays reachable, holds on its own line too.
 
     ``m`` holds rects: ``sidebar``, ``name``, ``run`` and, for a triggered
     automation, ``marker`` and ``switch``; ``moreOpacity`` is the hover group's
@@ -92,12 +95,21 @@ def row_layout_problems(m: Mapping[str, Any]) -> list[str]:
         if float(rect["width"]) <= 0 or float(rect["height"]) <= 0:
             problems.append(f"the {part} is not laid out")
             continue
-        if abs(_middle(rect) - _middle(name)) > float(name["height"]):
-            problems.append(f"the {part} is not on the name's line")
-        if float(rect["x"]) < _right(name) - EPS:
+        if part == "run":
+            if abs(_middle(rect) - _middle(name)) > float(name["height"]):
+                problems.append("the run is not on the name's line")
+            if float(rect["x"]) < _right(name) - EPS:
+                problems.append("the run covers the name")
+        elif float(rect["y"]) < float(name["y"]) + float(name["height"]) - EPS:
             problems.append(f"the {part} covers the name")
         if _right(rect) > _right(m["sidebar"]) + EPS:
             problems.append(f"the {part} runs outside the sidebar")
+    marker, switch = m.get("marker"), m.get("switch")
+    if marker and switch:
+        if not float(marker["y"]) <= _middle(switch) <= float(marker["y"]) + float(marker["height"]):
+            problems.append("the switch is not beside its sentence")
+        if float(switch["x"]) < _right(marker) - EPS:
+            problems.append("the switch covers its sentence")
     if str(m.get("moreOpacity")) != "0":
         problems.append("the other actions show at rest and crowd the name")
     return problems

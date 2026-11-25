@@ -53,7 +53,7 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
   it("says that it waits for the user there (#6025)", () => {
     const info = runningAutomationOnTab(null, [run], "b", [{ runId: "r1" }])!;
     expect(info.waiting).toBe(true);
-    expect(runningAutomationLabel(info)).toBe('Automation "Health" waits for you');
+    expect(runningAutomationLabel(info)).toBe("Automation “Health” waits for you");
     expect(runningAutomationOnTab(null, [run], "b", [{ runId: "other" }])!.waiting).toBe(false);
   });
 
@@ -66,6 +66,6 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
         waiting: false,
         stop: { kind: "macro" },
       })
-    ).toBe('Running automation "Deploy" (2/5)');
+    ).toBe("Running automation “Deploy” (2/5)");
   });
 });

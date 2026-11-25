@@ -60,7 +60,7 @@ export interface AutomationDraft {
   tags: string;
   steps: StepDraft[];
   triggers: TriggerDraft[];
-  /** The Armed switch of the automatic triggers. */
+  /** The switch of the triggers, hotkeys included. */
   triggersEnabled: boolean;
   parameters: WorkflowParameter[];
 }

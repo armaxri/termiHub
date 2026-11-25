@@ -3,7 +3,7 @@
 Hand-triggered only (``scripts/internal/product-run.sh``; deselected without
 ``--product-run``). An on-output-match workflow bound to a saved local-shell
 connection is disarmed with the switch on its Workflows-sidebar row: the row's
-marker reads "Off", the trigger bindings are kept, and printing the pattern
+row reads "Triggers off", the trigger bindings are kept, and printing the pattern
 does not run it. Switched back on, the same output fires it again.
 
 The class runs in its own fresh profile and needs no sshd: the only target is
@@ -72,10 +72,10 @@ class TestProductRunWorkflowDisarm(
         t = self.tag
         with self.step(
             "workflow-disarm.armed",
-            "An on-output-match workflow on a local shell shows Armed and an on switch",
-            expect="#5674: the Automations sidebar; the 'Disarm check' row reads 'Armed' with a "
-            "lightning icon next to an on (accent) switch; the trigger text ('On output match · "
-            "<connection>') is in the row tooltip, not on the row (#5757)",
+            "An on-output-match workflow on a local shell shows Triggers on and an on switch",
+            expect="#5674: the Automations sidebar; the 'Disarm check' row reads 'Triggers on: "
+            "matching output in <connection>' with a lightning icon next to an on (accent) "
+            "switch (#6026)",
         ):
             local = f"pr-disarm-local-{t}"
             self.switch_to_connections_sidebar()
@@ -96,7 +96,7 @@ class TestProductRunWorkflowDisarm(
             marker = self.driver.get_text(f"automation-armed-{wid}").strip()
             checked = self.driver.get_attribute(toggle, "aria-checked")
             self.evidence(f"marker {marker!r}, switch aria-checked={checked!r}")
-            assert marker == "Armed", f"the marker reads {marker!r}"
+            assert marker.startswith("Triggers on: "), f"the marker reads {marker!r}"
             assert checked == "true", f"a fresh armed workflow's switch is {checked!r}"
 
     def test_20_disarm_from_row(self):
@@ -105,7 +105,8 @@ class TestProductRunWorkflowDisarm(
             "workflow-disarm.off",
             "One click on the row switch disarms the workflow; its trigger stays bound and "
             "matching output no longer runs it",
-            expect="#5674: the 'Disarm check' row now reads 'Off' in muted text next to an off "
+            expect="#5674: the 'Disarm check' row now reads 'Triggers off: not on … "
+            "You can still run it.' next to an off "
             "(grey) switch, its trigger (in the tooltip) unchanged; the local "
             "terminal shows PR_DISARM_FIRE_OFF but no PR_DISARM_ANSWER_42 line",
         ):
@@ -127,7 +128,7 @@ class TestProductRunWorkflowDisarm(
                 f"disarming changed the trigger bindings: {trigger}"
             )
             marker = self.driver.get_text(f"automation-armed-{wid}").strip()
-            assert marker == "Off", f"the disarmed marker reads {marker!r}"
+            assert marker.startswith("Triggers off: "), f"the disarmed marker reads {marker!r}"
             assert self.driver.get_attribute(f"automation-arm-toggle-{wid}", "aria-checked") == (
                 "false"
             )
@@ -146,7 +147,7 @@ class TestProductRunWorkflowDisarm(
         with self.step(
             "workflow-disarm.on",
             "Switched back on, the same workflow fires on matching output again",
-            expect="#5674: the 'Disarm check' row reads 'Armed' again next to an on switch; the "
+            expect="#5674: the 'Disarm check' row reads 'Triggers on: …' again next to an on switch; the "
             "local terminal shows PR_DISARM_FIRE_ON followed by PR_DISARM_ANSWER_42",
         ):
             self.require("workflow-disarm.off")
@@ -160,7 +161,7 @@ class TestProductRunWorkflowDisarm(
                 what="the workflow to be saved armed",
             )
             marker = self.driver.get_text(f"automation-armed-{wid}").strip()
-            assert marker == "Armed", f"the re-armed marker reads {marker!r}"
+            assert marker.startswith("Triggers on: "), f"the re-armed marker reads {marker!r}"
             self._fire(tab, "ON")
             self.wait_for_output(f"PR_DISARM_ANSWER_42_{t}", tab_id=tab, timeout=30.0)
             run = self.wait(

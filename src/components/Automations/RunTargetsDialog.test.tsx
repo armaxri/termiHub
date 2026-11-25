@@ -37,6 +37,9 @@ vi.mock("@/themes", () => ({
 
 import { RunTargetsDialog, type RunPickerAutomation } from "./RunTargetsDialog";
 import { resetRememberedRunTargetChoice } from "./runTargetChoice";
+import { automationLibraryState } from "@/store/slices/automationStoreState";
+import type { Automation } from "@/types/generated/Automation";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
@@ -62,6 +65,17 @@ function term(id: string, sessionId: string | null, connectionId?: string): Term
     connectionId,
   };
 }
+
+/** The automation the picker runs, with `steps`. */
+const stored = (steps: AutomationStep[]): Automation => ({
+  id: "m1",
+  name: "Deploy",
+  tags: [],
+  steps,
+  triggers: [],
+  createdAt: "",
+  updatedAt: "",
+});
 
 function seedTabs(tabs: TerminalTab[]) {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: tabs[0].id };
@@ -120,7 +134,7 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
   it("defaults to this terminal and runs without a confirmation", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b")]);
     const onRun = render();
-    expect(document.body.textContent).toContain('Run "Deploy"');
+    expect(document.body.textContent).toContain("Run “Deploy”");
     expect(q("run-targets-target-active").getAttribute("aria-checked")).toBe("true");
     expect(document.body.textContent).toContain("This terminal (host-a)");
     expect(runButton().textContent).toBe("Run");
@@ -131,8 +145,8 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
   it("counts live terminals for this panel and all terminals", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b"), term("c", null)]);
     render();
-    expect(document.body.textContent).toContain("This panel (2)");
-    expect(document.body.textContent).toContain("All terminals (2)");
+    expect(document.body.textContent).toContain("Terminals in this split (2)");
+    expect(document.body.textContent).toMatch(/All terminals in “.+” \(2\)/);
     // Broadcast is off, so its option is not offered.
     expect(q("run-targets-target-broadcast")).toBeNull();
   });
@@ -149,7 +163,7 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(list.textContent).toContain("host-a");
     expect(list.textContent).toContain("host-b");
     expect(q("run-targets-confirm-step").textContent).toContain(
-      '"Deploy" will run on 2 terminals at the same time'
+      "“Deploy” will run on 2 terminals at the same time"
     );
     act(() => {
       q("run-targets-dialog").dispatchEvent(
@@ -173,14 +187,14 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("runs one after another when Run in parallel is turned off under More", () => {
+  it("runs one after another when Run in parallel is turned off", () => {
     seedTabs([term("a", "s-a"), term("b", "s-b")]);
     const onRun = render();
+    // One terminal has nothing to run in parallel with.
     expect(q("run-targets-parallel")).toBeNull();
-    click("run-targets-more");
+    click("run-targets-target-all");
     expect(q("run-targets-parallel").getAttribute("aria-checked")).toBe("true");
     click("run-targets-parallel");
-    click("run-targets-target-all");
     click("run-targets-run");
     expect(q("run-targets-confirm-step").textContent).toContain("one after another");
     click("run-targets-run");
@@ -263,14 +277,43 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(onRun).not.toHaveBeenCalled();
   });
 
-  it("Enter on Cancel or More does not run; Enter on a target choice does", () => {
+  it("Enter on Cancel does not run; Enter on a target choice does", () => {
     seedTabs([term("a", "s-a")]);
     const onRun = render();
     pressEnter("run-targets-cancel");
-    pressEnter("run-targets-more");
     expect(onRun).not.toHaveBeenCalled();
     pressEnter("run-targets-target-active");
     expect(onRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms with each terminal's machine and what is typed (A-035)", () => {
+    const at = (id: string, host: string): TerminalTab => ({
+      ...term(id, `s-${id}`),
+      config: { type: "ssh", config: { host, username: "ops" } },
+    });
+    seedTabs([at("a", "web-1"), at("b", "web-2")]);
+    useAppStore.setState(
+      automationLibraryState([stored([{ kind: "send-command", command: "make deploy" }])])
+    );
+    render();
+    click("run-targets-target-all");
+    click("run-targets-run");
+    const list = q("run-targets-confirm-list").textContent;
+    expect(list).toContain("ops@web-1");
+    expect(list).toContain("ops@web-2");
+    expect(q("run-targets-confirm-steps").textContent).toContain("Run command: make deploy");
+  });
+
+  it("says why it cannot run instead of running (A-016)", () => {
+    seedTabs([term("a", "s-a")]);
+    useAppStore.setState(
+      automationLibraryState([stored([{ kind: "run-local-process", program: "make", args: [] }])])
+    );
+    const onRun = render();
+    expect(runButton().disabled || runButton().getAttribute("aria-disabled") === "true").toBe(true);
+    expect(q("run-targets-dialog").textContent).toContain("Cannot run: ");
+    pressEnter("run-targets-target-active");
+    expect(onRun).not.toHaveBeenCalled();
   });
 
   it("a double click on Run does not pass the confirmation", () => {
