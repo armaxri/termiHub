@@ -1757,7 +1757,7 @@
                   minutes. The line says which. There is no "Start now": the wait tries every
                   second, so it would do nothing the wait does not
                 </td>
-                <td>Stop waiting</td>
+                <td>Cancel waiting</td>
                 <td></td>
               </tr>
               <tr>
@@ -1824,7 +1824,7 @@ stateDiagram-v2
   [*] --> Stopped
   Stopped --> Waiting: auto-start, agent or store not ready
   Waiting --> Starting: it is ready
-  Waiting --> Stopped: Stop waiting
+  Waiting --> Stopped: Cancel waiting
   Stopped --> Starting: Start
   Starting --> Running: port open, signed in
   Starting --> Error: failed
@@ -4421,7 +4421,12 @@ flowchart LR
           failing hop, causes of a start that failed on an agent, a taken port on an agent or on the
           SSH server, a deleted folder, and the same remedies in Activity and Open connections. The
           dialog got the words and the order of slice 7's form, not its tab; until slice 5 the
-          second sidebar is called File servers. Slices 5 to 14 are not started. Step 0 of
+          second sidebar is called File servers. A second round (<a
+            href="https://github.com/armaxri/termiHub/issues/6068"
+            >#6068</a
+          >) made the numbers of a list agree with its rows and filter it, told a password from
+          none, asks before a stop only when someone is connected (from slice 11), and keeps a
+          service on a removed agent from looking green. Slices 5 to 14 are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>
