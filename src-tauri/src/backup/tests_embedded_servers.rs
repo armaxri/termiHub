@@ -362,3 +362,73 @@ fn backup_owner_names_label_embedded_server_credentials() {
         Some("Web (HTTP Basic auth)")
     );
 }
+
+// --- where a server runs (#6028) ---
+
+fn hosted(id: &str, host: Option<Value>) -> Value {
+    let mut server = http_server(id, None);
+    if let Some(host) = host {
+        server["host"] = host;
+    }
+    server["future"] = json!({"deep": 1});
+    server
+}
+
+/// Back `servers` up, restore them over `current` with `request`, and read the
+/// result.
+fn restored(servers: Vec<Value>, current: Vec<Value>, request: &BackupRestoreRequest) -> Value {
+    let (src, dst) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write_doc(src.path(), FILE, &current_doc(servers));
+    let json = export::build(
+        src.path(),
+        &options(&["embeddedServers"], false, false),
+        None,
+        None,
+        "t".into(),
+        "v".into(),
+    )
+    .unwrap()
+    .json;
+    write_doc(dst.path(), FILE, &current_doc(current));
+    let mgr = mp_manager(dst.path());
+    let opened = restore::open(&json, None).unwrap();
+    restore::apply(&opened, dst.path(), request, Some(&mgr)).unwrap();
+    boot(dst.path());
+    read_doc(dst.path(), FILE)["servers"][0].clone()
+}
+
+#[test]
+fn a_backup_carries_the_host_and_unknown_fields_verbatim() {
+    for host in [
+        json!({"kind": "agent", "agentId": "edge"}),
+        json!({"kind": "thisComputer"}),
+        json!({"kind": "cluster", "clusterId": "a"}),
+        Value::Null,
+    ] {
+        let entry = restored(vec![hosted("s1", Some(host.clone()))], vec![], &replace());
+        assert_eq!(entry.get("host"), Some(&host));
+        assert_eq!(entry["future"], json!({"deep": 1}));
+    }
+}
+
+/// A backup from before the host was stored does not move a server that is set
+/// to an agent to this computer.
+#[test]
+fn a_backup_without_a_host_keeps_the_current_one() {
+    let host = json!({"kind": "agent", "agentId": "edge"});
+    for request in [replace(), merge(ConflictStrategy::Overwrite)] {
+        let entry = restored(
+            vec![hosted("s1", None)],
+            vec![hosted("s1", Some(host.clone()))],
+            &request,
+        );
+        assert_eq!(entry.get("host"), Some(&host));
+    }
+    // With a host in the backup, the backup decides.
+    let entry = restored(
+        vec![hosted("s1", Some(json!({"kind": "thisComputer"})))],
+        vec![hosted("s1", Some(host))],
+        &replace(),
+    );
+    assert_eq!(entry["host"], json!({"kind": "thisComputer"}));
+}
