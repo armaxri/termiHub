@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { toast, ConfirmDialog, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useServiceContext } from "@/hooks/useServiceContext";
 import { useTunnelDeleteConfirm } from "@/hooks/useTunnelDeleteConfirm";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import {
@@ -14,6 +14,7 @@ import {
   isCompanionRedundant,
   orderTunnelRows,
 } from "@/utils/tunnelChain";
+import { isWideBind } from "@/utils/serviceAddress";
 import { TunnelListItem } from "./TunnelListItem";
 import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
@@ -24,7 +25,11 @@ const DISCONNECTED: TunnelStatus = "disconnected";
 export function TunnelSidebar() {
   const tunnels = useAppStore((s) => s.tunnels);
   const tunnelStates = useAppStore((s) => s.tunnelStates);
-  const { connections } = useProjectedConnections();
+  const needsNetwork = tunnels.some(
+    (tunnel) =>
+      tunnel.tunnelType.type !== "remote" && isWideBind(tunnel.tunnelType.config.localHost)
+  );
+  const context = useServiceContext(needsNetwork);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);
@@ -191,7 +196,7 @@ export function TunnelSidebar() {
                 key={tunnel.id}
                 tunnel={tunnel}
                 state={tunnelStates[tunnel.id]}
-                connections={connections}
+                context={context}
                 onStart={startTunnel}
                 onStop={handleStop}
                 onReconnect={handleReconnect}

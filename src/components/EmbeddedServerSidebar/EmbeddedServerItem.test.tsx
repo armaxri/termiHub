@@ -32,6 +32,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
 }));
 
 import { EmbeddedServerItem, hostAgentFor } from "./EmbeddedServerItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER } from "@/utils/runLocation";
 import { TooltipProvider } from "@/components/ui";
@@ -66,6 +67,8 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof EmbeddedServer
     state: undefined as ServerState | undefined,
     onStart: vi.fn(() => Promise.resolve()),
     onStop: vi.fn(() => Promise.resolve()),
+    onRestart: vi.fn(() => Promise.resolve()),
+    context: NO_CONTEXT,
     onEdit: noop,
     onDuplicate: noop,
     onDelete: noop,
@@ -260,7 +263,7 @@ describe("EmbeddedServerItem", () => {
         {...baseProps({
           state: runningState,
           agents: [oldAgent],
-          runLocation: { kind: "agent", agentId: "agent-1" },
+          config: { ...config, host: { kind: "agent", agentId: "agent-1" } },
         })}
       />
     );

@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { TooltipProvider } from "@/components/ui";
 import type { EmbeddedServerConfig, ServerState, ServerStatus } from "@/types/embeddedServer";
 
@@ -40,6 +41,8 @@ function render(status?: ServerStatus) {
           config={config}
           state={state}
           onStart={vi.fn()}
+          onRestart={vi.fn()}
+          context={NO_CONTEXT}
           onStop={vi.fn()}
           onEdit={vi.fn()}
           onDuplicate={vi.fn()}
@@ -73,7 +76,7 @@ describe("EmbeddedServerItem — run control and labelled dot (#5852)", () => {
     ["starting", "Stop", "Starting"],
     ["running", "Stop", "Running"],
     ["stopping", "Stop", "Stopping"],
-    ["error", "Start", "Error"],
+    ["error", "Retry", "Error"],
     ["waiting", "Stop waiting", "Waiting"],
     ["notReachable", "Stop", "Not reachable"],
   ])("status %s: the run control is %s and the dot reads %s", (status, control, dot) => {
@@ -87,8 +90,10 @@ describe("EmbeddedServerItem — run control and labelled dot (#5852)", () => {
   it("puts activity, edit, duplicate and delete in the hover group", () => {
     render("running");
     expect(labels(".sidebar-list-item__more")).toEqual([
-      "Show activity",
+      "Open in browser",
+      "Activity",
       "Edit",
+      "Restart",
       "Duplicate",
       "Delete",
     ]);

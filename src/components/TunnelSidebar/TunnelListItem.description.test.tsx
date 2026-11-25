@@ -8,9 +8,9 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const noop = () => {};
 
@@ -42,7 +42,7 @@ function renderItem(tunnel: TunnelConfig): void {
         <TunnelListItem
           tunnel={tunnel}
           state={STATE}
-          connections={[] as SavedConnection[]}
+          context={NO_CONTEXT}
           onStart={noop}
           onStop={noop}
           onReconnect={noop}
@@ -84,6 +84,6 @@ describe("TunnelListItem — description (#5770)", () => {
   it("shows no description line without one", () => {
     renderItem({ ...BASE } as TunnelConfig);
     expect(container.querySelector('[data-testid="tunnel-description-tun-1"]')).toBeNull();
-    expect(row().textContent).toBe("My Tunnel");
+    expect(row().textContent).toMatch(/^My Tunnel(Running|Stopped) · /);
   });
 });

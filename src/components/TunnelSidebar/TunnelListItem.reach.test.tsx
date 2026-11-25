@@ -10,9 +10,10 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
+import type { ServiceContext } from "@/utils/serviceModel";
 import { withTooltip } from "@/test/tooltip";
 import type { ReachableFrom, TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const noop = () => {};
 
@@ -43,6 +44,11 @@ function stateWith(
   };
 }
 
+const CONTEXT: ServiceContext = {
+  ...NO_CONTEXT,
+  agents: [{ id: "agent-1", name: "build-box", config: {} as never }],
+};
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -53,7 +59,7 @@ function renderItem(tunnel: TunnelConfig, state: TunnelState): void {
         <TunnelListItem
           tunnel={tunnel}
           state={state}
-          connections={[] as SavedConnection[]}
+          context={CONTEXT}
           onStart={noop}
           onStop={noop}
           onReconnect={noop}
@@ -66,8 +72,13 @@ function renderItem(tunnel: TunnelConfig, state: TunnelState): void {
   });
 }
 
-function reach(): HTMLElement | null {
-  return container.querySelector<HTMLElement>('[data-testid="tunnel-reach-tun-1"]');
+function address(): string | null | undefined {
+  return container.querySelector('[data-testid="tunnel-address-tun-1"]')?.textContent;
+}
+
+function rowTooltip(): string {
+  const row = container.querySelector('[data-testid="tunnel-item-tun-1"]');
+  return row?.getAttribute("aria-description") ?? "";
 }
 
 setupAgentsRegion();
@@ -87,28 +98,25 @@ describe("TunnelListItem — reported reachability note (#2199)", () => {
     container.remove();
   });
 
-  it("warns for a loopback bind on the agent (agentOnly)", () => {
+  it("says on which machine a loopback bind on the agent opens (#6028)", () => {
     renderItem(AGENT_TUNNEL, stateWith("agentOnly", "connected", "127.0.0.1:8080"));
-    expect(reach()?.textContent).toContain("reachable only on build-box");
-    expect(reach()?.getAttribute("data-warn")).toBe("true");
-    // The bound address the agent reported is available on hover.
-    expect(reach()?.getAttribute("title")).toContain("127.0.0.1:8080");
+    expect(address()).toContain("localhost:8080 on build-box");
+    expect(rowTooltip()).toContain("Bound 127.0.0.1:8080: reachable only on build-box");
   });
 
-  it("puts a widened bind on the agent LAN in the tooltip, not on the row (#5770)", () => {
+  it("puts a widened bind on the agent LAN in the tooltip", () => {
     renderItem(AGENT_TUNNEL, stateWith("agentLan"));
-    expect(reach()).toBeNull();
-    const row = container.querySelector('[data-testid="tunnel-item-tun-1"]');
-    expect(row?.getAttribute("aria-description")).toContain("reachable on build-box's network");
+    expect(rowTooltip()).toContain("reachable on build-box's network");
   });
 
-  it("shows no note before the agent has reported reachability", () => {
+  it("says nothing about reach before the agent has reported it", () => {
     renderItem(AGENT_TUNNEL, stateWith(undefined));
-    expect(reach()).toBeNull();
+    expect(rowTooltip()).not.toContain("reachable");
   });
 
-  it("shows no note once the tunnel is no longer active", () => {
+  it("claims neither address nor reach once the tunnel is no longer running", () => {
     renderItem(AGENT_TUNNEL, stateWith("agentOnly", "disconnected"));
-    expect(reach()).toBeNull();
+    expect(address()).toBeUndefined();
+    expect(rowTooltip()).not.toContain("reachable");
   });
 });

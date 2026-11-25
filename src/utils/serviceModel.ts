@@ -83,7 +83,7 @@ export interface ServiceModel {
   /** What it is for, in plain words: "Open a folder in a browser". */
   what: string;
   where: ServiceWhere;
-  /** What and where, as one line. */
+  /** What it is, and where when that is not this computer, as one line. */
   kindLine: string;
   state: ServiceState;
   /** Why it is in that state, when the user needs to know. */
@@ -182,8 +182,8 @@ function listenerOn(host: HostChoice, context: ServiceContext): Listener {
   return { on: "there", name: agent?.name ?? host.agentId, host: agent?.config?.host };
 }
 
-function kindLine(what: string, where: ServiceWhere): string {
-  return tf("service.kindLine", { what, where: where.label });
+function kindLine(what: string, host: HostChoice, where: ServiceWhere): string {
+  return host.kind === "thisComputer" ? what : tf("service.kindLine", { what, where: where.label });
 }
 
 /** The address of a running tunnel: where others connect to it. */
@@ -239,7 +239,7 @@ export function tunnelModel(
     description: config.description,
     what,
     where,
-    kindLine: kindLine(what, where),
+    kindLine: kindLine(what, host, where),
     state: serviceState,
     reason: needsConnection
       ? t("service.reason.needsConnection")
@@ -290,7 +290,7 @@ export function fileServerModel(
     description: config.description,
     what,
     where,
-    kindLine: kindLine(what, where),
+    kindLine: kindLine(what, host, where),
     state: serviceState,
     reason: serviceReason(serviceState, state?.error),
     address,

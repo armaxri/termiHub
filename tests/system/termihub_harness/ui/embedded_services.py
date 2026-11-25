@@ -145,14 +145,14 @@ class EmbeddedServicesUi(HarnessMixin):
     def open_server_menu(self, server_id: str) -> None:
         """Right-click a server row and wait for its context menu (issue #965).
 
-        ``EmbeddedServerItem`` wraps each row in a Radix context menu that mirrors
+        ``ServiceListItem`` wraps each row in a Radix context menu that mirrors
         the inline action buttons under ``ctx-*-${id}`` testids. We wait for the
-        Copy-URL item — present regardless of running state — so the menu is
-        confirmed open before any action is selected.
+        Edit item — present in every state — so the menu is confirmed open before
+        any action is selected.
         """
         self.driver.context_menu(f"server-item-{server_id}")
         self.wait(
-            lambda: self.driver.exists(f"ctx-copy-url-{server_id}"),
+            lambda: self.driver.exists(f"ctx-edit-{server_id}"),
             what="the server context menu",
         )
 

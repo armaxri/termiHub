@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 
@@ -57,6 +58,8 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof EmbeddedServer
     state: undefined as ServerState | undefined,
     onStart: vi.fn(() => Promise.resolve()),
     onStop: vi.fn(() => Promise.resolve()),
+    onRestart: vi.fn(() => Promise.resolve()),
+    context: NO_CONTEXT,
     onEdit: noop,
     onDuplicate: noop,
     onDelete: noop,

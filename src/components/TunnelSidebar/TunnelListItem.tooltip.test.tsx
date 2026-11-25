@@ -12,9 +12,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const TUNNEL: TunnelConfig = {
   id: "tun-1",
@@ -51,7 +51,7 @@ function renderItem(state: TunnelState | undefined): void {
         <TunnelListItem
           tunnel={TUNNEL}
           state={state}
-          connections={[] as SavedConnection[]}
+          context={NO_CONTEXT}
           onStart={noop}
           onStop={noop}
           onReconnect={noop}

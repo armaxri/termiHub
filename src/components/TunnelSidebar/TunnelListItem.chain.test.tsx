@@ -10,9 +10,9 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const noop = () => {};
 
@@ -87,7 +87,7 @@ describe("TunnelListItem — chained pair (#2597)", () => {
   });
 
   const common = {
-    connections: [] as SavedConnection[],
+    context: NO_CONTEXT,
     onStart: noop,
     onStop: noop,
     onReconnect: noop,

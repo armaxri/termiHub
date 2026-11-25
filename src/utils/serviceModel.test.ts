@@ -163,7 +163,9 @@ describe("what it is and where it runs", () => {
   ])("a tunnel in plain words", (tunnelType, what) => {
     const model = tunnelModel(tunnel({ tunnelType }), undefined, CONTEXT);
     expect(model.what).toBe(what);
-    expect(model.kindLine).toBe(`${what} · this computer`);
+    // Here is the rule, so the line does not say it.
+    expect(model.kindLine).toBe(what);
+    expect(model.where.label).toBe("this computer");
     expect(model.state).toBe("stopped");
   });
 
@@ -183,9 +185,9 @@ describe("what it is and where it runs", () => {
       "a removed agent"
     );
     const unreadable = { kind: "cluster" } as never;
-    expect(tunnelModel(tunnel({ host: unreadable }), undefined, CONTEXT).where.label).toBe(
-      "an unknown machine"
-    );
+    const unknown = tunnelModel(tunnel({ host: unreadable }), undefined, CONTEXT);
+    expect(unknown.where.label).toBe("an unknown machine");
+    expect(unknown.kindLine).toContain("· an unknown machine");
   });
 });
 

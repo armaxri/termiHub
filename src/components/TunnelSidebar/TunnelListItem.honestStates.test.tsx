@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 
@@ -41,7 +42,7 @@ function render(status: TunnelStatus, extra: Partial<TunnelState> = {}) {
         <TunnelListItem
           tunnel={TUNNEL}
           state={state}
-          connections={[]}
+          context={NO_CONTEXT}
           onStart={vi.fn()}
           onStop={onStop}
           onReconnect={vi.fn()}
@@ -92,9 +93,9 @@ describe("TunnelListItem — honest states (#6028)", () => {
     expect(classes.contains("status-dot--success")).toBe(false);
   });
 
-  it("shows no reachability note while it is not reachable", () => {
-    render("notReachable", { boundAddress: undefined, reachableFrom: undefined });
-    expect(q("tunnel-reach-tun-1")).toBeNull();
+  it("shows no address while it is not reachable", () => {
+    render("notReachable", { boundAddress: "127.0.0.1:5432", reachableFrom: "agentOnly" });
+    expect(q("tunnel-address-tun-1")).toBeNull();
   });
 
   it.each<TunnelStatus>(["connected", "disconnected", "connecting"])(
@@ -107,7 +108,7 @@ describe("TunnelListItem — honest states (#6028)", () => {
 
   it.each<TunnelStatus>(["error", "reconnecting"])("%s says why once", (status) => {
     render(status);
-    expect(q("tunnel-reason-tun-1")).toBeNull();
+    expect(q("tunnel-reason-tun-1")?.textContent).toBe(WHY);
     expect(container.textContent?.split(WHY)).toHaveLength(2);
   });
 });

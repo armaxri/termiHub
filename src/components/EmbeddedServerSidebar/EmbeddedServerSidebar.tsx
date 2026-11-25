@@ -9,6 +9,8 @@ import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
 import { isServiceActive, serverServiceState } from "@/utils/serviceState";
+import { useServiceContext } from "@/hooks/useServiceContext";
+import { isWideBind } from "@/utils/serviceAddress";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
@@ -31,6 +33,8 @@ export function EmbeddedServerSidebar() {
   const deleteEmbeddedServer = useAppStore((s) => s.deleteEmbeddedServer);
   const startEmbeddedServer = useAppStore((s) => s.startEmbeddedServer);
   const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
+  const restartEmbeddedServer = useAppStore((s) => s.restartEmbeddedServer);
+  const context = useServiceContext(servers.some((server) => isWideBind(server.bindHost)));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<EmbeddedServerConfig | null>(null);
   // A copy that has to be given its password before it is saved (#6028, F-4).
@@ -195,9 +199,10 @@ export function EmbeddedServerSidebar() {
                 config={cfg}
                 state={serverStates[cfg.id]}
                 agents={agents}
-                runLocation={hostChoice(cfg.host)}
+                context={context}
                 onStart={startEmbeddedServer}
                 onStop={stopEmbeddedServer}
+                onRestart={restartEmbeddedServer}
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDelete}
