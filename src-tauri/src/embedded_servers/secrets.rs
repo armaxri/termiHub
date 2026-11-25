@@ -563,6 +563,7 @@ pub(crate) mod tests {
             http_auth: None,
             max_transfer_bytes: None,
             max_concurrent_sessions: None,
+            host: Default::default(),
             extra: Default::default(),
         }
     }

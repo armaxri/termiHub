@@ -66,6 +66,7 @@ pub fn list_config_files(dir: String) -> Vec<ConfigFileStatus> {
         "connections.json",
         "settings.json",
         "tunnels.json",
+        "embedded_servers.json",
         "credentials.enc",
         "workspaces.json",
     ];
