@@ -112,6 +112,8 @@ fn cause_of(said: &str) -> Option<ServiceCause> {
     ];
     if offline.iter().any(|words| said.contains(words)) {
         Some(ServiceCause::AgentOffline)
+    } else if said.contains("keeps asking") {
+        Some(ServiceCause::AgentSilent)
     } else if said.contains("credential store") {
         Some(ServiceCause::StoreLocked)
     } else {
@@ -266,6 +268,15 @@ fn a_start_without_an_answer_is_unknown_not_refused_and_the_agent_decides() {
         tick(h);
         assert_row(h, "web", ServerStatus::Running, "");
     }
+}
+
+/// "Check again" (#6068) does not wait for the tick.
+#[test]
+fn checking_again_asks_the_agent_now() {
+    let run = unanswered(|| TerminalError::agent_timeout(Duration::from_secs(60)));
+    run.machine.hosted.lock().unwrap().insert("web".into());
+    run.h.manager.check_again();
+    assert_row(&run.h, "web", ServerStatus::Running, "");
 }
 
 #[test]
@@ -523,7 +534,7 @@ fn a_stop_while_the_agent_is_gone_wins_when_it_is_back() {
         h,
         "web",
         ServerStatus::Stopping,
-        "Its agent is offline. It may still run there; it is stopped when",
+        "Its agent is offline. It may still run there; it will be stopped when",
     );
     // Nothing that starts by itself undoes it.
     h.manager.start_auto_servers();

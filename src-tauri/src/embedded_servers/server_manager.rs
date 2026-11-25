@@ -56,7 +56,7 @@ use crate::agent_service::hosted::{
 };
 use crate::agent_service::{
     agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
-    not_reachable_reason, port_in_use_here, stopping_reason, unanswered_start_failed,
+    not_reachable_reason, poll_now, port_in_use_here, stopping_reason, unanswered_start_failed,
     waited_too_long, waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, Reason,
     HOST_UNREADABLE,
 };
@@ -829,6 +829,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// service-specific poll + write-back/emit (DUP-020).
     fn ensure_status_poller(&self) {
         self.agent_status_poller.ensure(self.status_poll());
+    }
+
+    /// Ask the agents about their servers now, instead of on the next tick.
+    /// Blocking.
+    pub fn check_again(&self) {
+        poll_now(&self.status_poll());
     }
 
     fn status_poll(&self) -> EmbeddedServerPoll<R> {
