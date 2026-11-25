@@ -38,6 +38,7 @@ const openTunnelEditorTab = vi.fn();
 
 function seedStore() {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    embeddedServers: [],
     tunnels: [makeTunnel("tun-1", "Alpha"), makeTunnel("tun-2", "Bravo")],
     tunnelStates: {},
     connections: [],

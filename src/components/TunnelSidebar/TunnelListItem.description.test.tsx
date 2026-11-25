@@ -2,7 +2,7 @@
  * A tunnel row shows the user's description muted under the name (#5770),
  * and nothing more when there is none.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -49,6 +49,7 @@ function renderItem(tunnel: TunnelConfig): void {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );
@@ -84,6 +85,6 @@ describe("TunnelListItem — description (#5770)", () => {
   it("shows no description line without one", () => {
     renderItem({ ...BASE } as TunnelConfig);
     expect(container.querySelector('[data-testid="tunnel-description-tun-1"]')).toBeNull();
-    expect(row().textContent).toMatch(/^My Tunnel(Running|Stopped) · /);
+    expect(row().textContent).toMatch(/^My TunnelLocal(Running|Stopped) · /);
   });
 });

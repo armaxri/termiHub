@@ -44,7 +44,10 @@ interface ActivityBarItemDef {
   icon: typeof Network;
   /** The glyph's lucide name, exposed as `data-icon` for the product-run grade (#5848). */
   iconName: string;
+  /** Its name; its test id is made of it. */
   label: string;
+  /** What it is called instead, for a while. */
+  shownAs?: string;
 }
 
 const REQUIRED_ITEMS: ActivityBarItemDef[] = [
@@ -59,7 +62,14 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   // as "quick action"; the clapperboard read as video (#5848).
   { view: "automations", icon: Zap, iconName: "zap", label: "Automations" },
   { view: "tunnels", icon: ArrowLeftRight, iconName: "arrow-left-right", label: "SSH tunnels" },
-  { view: "services", icon: Server, iconName: "server", label: "Services" },
+  // "Services" once the tunnels are in it, too (#6028).
+  {
+    view: "services",
+    icon: Server,
+    iconName: "server",
+    label: "Services",
+    shownAs: "File servers",
+  },
   { view: "network-tools", icon: Stethoscope, iconName: "stethoscope", label: "Network tools" },
   { view: "plugins", icon: Puzzle, iconName: "puzzle", label: "Plugins" },
 ];
@@ -111,7 +121,8 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 key={item.view}
                 icon={item.icon}
                 iconName={item.iconName}
-                label={item.label}
+                label={item.shownAs ?? item.label}
+                idLabel={item.label}
                 isActive={sidebarView === item.view && !sidebarCollapsed}
                 onClick={() => setSidebarView(item.view)}
               />
@@ -215,7 +226,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
             data-testid={`activity-bar-context-toggle-${item.view}`}
           >
             <span className="ui-menu__indicator">✓</span>
-            {item.label}
+            {item.shownAs ?? item.label}
           </MenuItem>
         ))}
         {availableOptionalItems.map((item) => {
@@ -228,7 +239,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
               data-testid={`activity-bar-context-toggle-${item.view}`}
             >
               <span className="ui-menu__indicator">{isVisible ? "✓" : ""}</span>
-              {item.label}
+              {item.shownAs ?? item.label}
             </MenuCheckboxItem>
           );
         })}

@@ -63,6 +63,7 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof EmbeddedServer
     onEdit: noop,
     onDuplicate: noop,
     onDelete: noop,
+    onUsePort: noop,
     ...overrides,
   };
 }

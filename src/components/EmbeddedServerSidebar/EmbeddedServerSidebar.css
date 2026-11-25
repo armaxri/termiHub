@@ -28,9 +28,24 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
-  padding: var(--spacing-xs) 0 var(--spacing-lg);
-  max-height: 60vh;
-  overflow-y: auto;
+}
+
+.server-dialog__folder {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.server-dialog__folder > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Beside Save, on the left. */
+.server-dialog__missing {
+  margin-right: auto;
+  align-self: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 .server-dialog__label {
@@ -99,7 +114,7 @@
   padding-left: var(--spacing-lg);
 }
 
-/* ─── Per-server activity panel: stats + access log (PROD-034/036) ────────── */
+/* ─── Per-server activity panel: stats + requests (PROD-034/036) ────────── */
 
 .server-activity {
   display: flex;
@@ -114,6 +129,18 @@
      (base01, 4.39:1), so this surface uses the stronger muted token. */
   --text-muted: var(--text-muted-on-selection);
   cursor: default;
+}
+
+.server-activity__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.server-activity__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
 }
 
 .server-activity__stats {

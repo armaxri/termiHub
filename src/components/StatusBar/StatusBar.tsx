@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   CircleStop,
+  HardDrive,
   Server,
   RotateCw,
   Pause,
@@ -399,35 +400,46 @@ function HighlightingIndicator() {
   );
 }
 
+/** "2 tunnels", "1 file server", … */
+function counted(count: number, one: string): string {
+  return `${count} ${one}${count === 1 ? "" : "s"}`;
+}
+
 /**
- * Shows running embedded servers count in the status bar.
- * Clicking opens the Services sidebar panel, which is always available since
- * Services graduated from the experimental switch (#5858).
+ * How many services run, tunnels and file servers alike (#6063). Opens the
+ * sidebar of what runs: the tunnels when no file server does.
  */
 function ServicesIndicator() {
-  const embeddedServerStates = useAppStore((s) => s.embeddedServerStates);
+  const tunnels = useAppStore(
+    (s) => s.tunnels.filter((tunnel) => s.tunnelStates[tunnel.id]?.status === "connected").length
+  );
+  const servers = useAppStore(
+    (s) =>
+      Object.values(s.embeddedServerStates).filter((state) => state.status === "running").length
+  );
   const setSidebarView = useAppStore((s) => s.setSidebarView);
 
-  const runningCount = Object.values(embeddedServerStates).filter(
-    (s) => s.status === "running"
-  ).length;
+  if (tunnels + servers === 0) return null;
 
-  if (runningCount === 0) return null;
-
-  const runningLabel = `${runningCount} service${runningCount !== 1 ? "s" : ""} running`;
-
-  const servicesLabel = `${runningLabel} — click to open Services`;
+  const kinds = [
+    tunnels > 0 && counted(tunnels, "tunnel"),
+    servers > 0 && counted(servers, "file server"),
+  ].filter(Boolean);
+  const view = servers > 0 ? "services" : "tunnels";
+  const label = `${kinds.join(" and ")} running — click to open ${
+    view === "services" ? "File servers" : "SSH tunnels"
+  }`;
 
   return (
-    <Tooltip content={servicesLabel} side="top">
+    <Tooltip content={label} side="top">
       <button
         className="status-bar__item status-bar__item--interactive status-bar__item--with-icon"
-        aria-label={servicesLabel}
+        aria-label={label}
         data-testid="services-indicator"
-        onClick={() => setSidebarView("services")}
+        onClick={() => setSidebarView(view)}
       >
         <Server size={12} />
-        {`${runningCount} service${runningCount !== 1 ? "s" : ""}`}
+        {`${tunnels + servers} running`}
       </button>
     </Tooltip>
   );
@@ -536,7 +548,7 @@ function AgentUpdatesIndicator() {
         data-testid="agent-updates-indicator"
         onClick={() => setSidebarView("connections")}
       >
-        <Server size={12} />
+        <HardDrive size={12} />
         {agentLabel}
         {updatesAvailable > 0 && (
           <span className="status-bar__agent-updates" data-testid="agent-updates-count">

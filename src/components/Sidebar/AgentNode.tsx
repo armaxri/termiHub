@@ -6,7 +6,6 @@
  * local connections experience).
  */
 
-import { saveAfterStorageChoice } from "@/utils/credentialStorageChoice";
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
@@ -67,7 +66,6 @@ import {
 import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { connectionTypeDisplayName } from "@/utils/connectionTypeDisplayName";
-import type { PasswordPromptAnswer } from "@/store/slices/passwordPromptSlice";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useAgentSetupStatus, type AgentSetupPhase } from "@/store/agentSetupStatus";
 import { frontendLog } from "@/utils/frontendLog";
@@ -76,14 +74,12 @@ import {
   AgentSessionInfo,
   AgentDefinitionInfo,
   AgentFolderInfo,
-  storeCredential,
   cancelConnectAgent,
   listAgentHosts,
   type ConnectedHost,
 } from "@/services/api";
 import type { RemoteAgentConfig } from "@/types/terminal";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
-import { isAuthFailure } from "@/utils/backendErrorCode";
 import { connectionStateLabel } from "@/utils/statusLabel";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -95,6 +91,7 @@ import { focusTabAnywhere, useOpenAgentSessionTabs } from "./openAgentSessionTab
 import { agentShellTabTitle, numberedTabTitle } from "@/utils/defaultTabTitle";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { connectAgentWithCredentials } from "@/utils/connectAgent";
 import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { AgentTreeFilter, filterAgentTree } from "@/utils/agentTreeSearch";
@@ -1347,113 +1344,17 @@ export function AgentNode({
     if (connecting) return;
     connectCanceledRef.current = false;
 
-    // If the credential store is locked and this agent uses a stored credential,
-    // prompt for unlock first and wait — on success the code continues and the
-    // credential resolves automatically.
-    const proceed = await ensureCredentialStoreUnlocked({
-      authMethod: agent.config.authMethod,
-      savePassword: agent.config.savePassword,
-      credentialRef: agent.config.credentialRef,
-    });
-    if (!proceed) return;
-
-    // A new attempt decides the row's state from here on, not the setup that
-    // preceded it (#5906).
-    useAgentSetupStatus.getState().clear(agent.id);
-    setConnecting(true);
     try {
-      let password: string | undefined;
-
-      const resolution = await resolveConnectionCredential(
-        agent.id,
-        agent.config.authMethod,
-        agent.config.savePassword,
-        agent.config.credentialRef
-      );
-      // A shared credential (#3557) is never deleted on rejection nor replaced
-      // by a per-agent secret.
-      const sharedCredential = resolution.namedCredentialId !== undefined;
-
-      // The agent's name titles each prompt, so a queued prompt says which
-      // agent it is for (#4475).
-      const promptLabel = { label: agent.name };
-      // The prompt's own answer carries its Save choice (#4474), so the
-      // connect awaited in between can never pick up another prompt's choice.
-      let prompted: PasswordPromptAnswer | null = null;
-
-      if (resolution.usedStoredCredential && resolution.password) {
-        password = resolution.password;
-      } else if (agent.config.authMethod === "password" && !agent.config.password) {
-        const answer = await requestPassword(
-          agent.config.host,
-          agent.config.username,
-          "",
-          "password",
-          promptLabel
-        );
-        if (!answer || !answer.password) {
-          setConnecting(false);
-          return;
-        }
-        password = answer.password;
-        prompted = answer;
-      }
-
-      try {
-        await connectRemoteAgent(agent.id, password);
-        // Persist the entered password if the user opted in via the prompt checkbox
-        if (prompted && !sharedCredential && prompted.shouldSave) {
-          const typed = prompted.password;
-          // No storage chosen yet: ask where now that it connected (#5867).
-          await saveAfterStorageChoice(() => storeCredential(agent.id, "password", typed)).catch(
-            (err) => {
-              frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
-            }
-          );
-        }
-      } catch (err) {
-        // Gate the DESTRUCTIVE stored-credential discard on the typed,
-        // locale-independent auth signal (I18N-001) — never on the classifier's
-        // category, which can still be derived from English substrings for the
-        // non-auth branches. A transport error that merely mentions "auth
-        // failed" must not delete a valid credential.
-        if (resolution.usedStoredCredential && isAuthFailure(err)) {
-          // The saved password is KEPT (#5156): a rejection can be transient,
-          // so only the user replaces it — the re-prompt offers "Replace saved
-          // password", written below only after the retry connects.
-          const retry = sharedCredential
-            ? await requestPassword(
-                agent.config.host,
-                agent.config.username,
-                "The shared credential was rejected — enter it for this connect, or rotate it in Settings → Security.",
-                "password",
-                { allowSave: false, ...promptLabel }
-              )
-            : await requestPassword(
-                agent.config.host,
-                agent.config.username,
-                "The saved password was rejected. It is kept — enter the password to connect.",
-                "password",
-                { savedRejected: true, ...promptLabel }
-              );
-          if (!retry || !retry.password) {
-            setConnecting(false);
-            return;
-          }
-          await connectRemoteAgent(agent.id, retry.password);
-          // Connected: replace the saved password if the user opted in.
-          if (!sharedCredential && retry.shouldSave) {
-            const typed = retry.password;
-            await saveAfterStorageChoice(() => storeCredential(agent.id, "password", typed)).catch(
-              (err) => {
-                frontendLog("agent_node", `Failed to store credential: ${errorMessage(err)}`);
-              }
-            );
-          }
-          return;
-        }
-        throw err;
-      }
+      await connectAgentWithCredentials(agent, {
+        requestPassword,
+        connectRemoteAgent,
+        onAttempt: () => {
+          // A new attempt decides the row's state from here on, not the setup
+          // that preceded it (#5906).
+          useAgentSetupStatus.getState().clear(agent.id);
+          setConnecting(true);
+        },
+      });
     } catch (err) {
       const classified = classifyAgentError(err);
       setConnectionError(classified);

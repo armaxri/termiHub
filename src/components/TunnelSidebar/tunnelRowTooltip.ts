@@ -20,8 +20,6 @@ export interface TunnelRowTooltipInput {
   reach?: string | null;
   /** The bound address the agent reported. */
   boundAddress?: string;
-  /** A healthy chained-pair label ("Linked · connected"). */
-  pair?: string | null;
 }
 
 /**
@@ -72,6 +70,5 @@ export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipIn
         : input.reach
     );
   }
-  if (input.pair) out.push(input.pair);
   return out;
 }

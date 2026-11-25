@@ -4,7 +4,7 @@
  * the other actions are a hover group; the status dot names its state in a
  * tooltip and as its accessible name.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TunnelListItem } from "./TunnelListItem";
@@ -43,6 +43,7 @@ function render(status?: TunnelStatus) {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );
@@ -73,12 +74,11 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
   it.each<[TunnelStatus | undefined, string, string]>([
     [undefined, "Start", "Stopped"],
     ["disconnected", "Start", "Stopped"],
-    ["connecting", "Stop", "Starting"],
+    ["connecting", "Cancel start", "Starting"],
     ["connected", "Stop", "Running"],
     ["reconnecting", "Stop", "Reconnecting"],
     ["error", "Retry", "Error"],
     ["waiting", "Stop waiting", "Waiting"],
-    ["stopping", "Stop", "Stopping"],
     ["notReachable", "Stop", "Not reachable"],
   ])("status %s: the run control is %s and the dot reads %s", (status, control, dot) => {
     render(status);
@@ -87,6 +87,12 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
     expect(dotEl.getAttribute("aria-label")).toBe(dot);
     expect(dotEl.getAttribute("title")).toBe(dot);
     expect(dotEl.getAttribute("role")).toBe("img");
+  });
+
+  it("stopping has no run control: it was pressed already", () => {
+    render("stopping");
+    expect(primaryLabels()).toEqual([]);
+    expect(q('[data-testid="tunnel-status-tun-1"]')!.getAttribute("title")).toBe("Stopping");
   });
 
   it("keeps the run control out of the hover group, and Edit and the menu in it", () => {

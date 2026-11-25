@@ -19,6 +19,10 @@ status: TunnelStatus,
  */
 error?: string, 
 /**
+ * What the row can offer about it (#6063).
+ */
+cause?: import("./ServiceCause").ServiceCause, 
+/**
  * Live traffic statistics.
  */
 stats: import("./TunnelStats").TunnelStats, 

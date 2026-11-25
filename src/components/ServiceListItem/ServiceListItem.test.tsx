@@ -131,16 +131,42 @@ afterEach(() => {
 
 describe("what the row says", () => {
   it.each([
-    ["tunnel", tunnelIn("connected"), "Running · Reach something on the SSH server's side"],
+    ["tunnel", tunnelIn("connected"), "Running · Reach something through the SSH server"],
     ["server", serverIn("running"), "Running · Open a folder in a browser"],
     [
       "server",
       serverIn("stopped", { host: { kind: "agent", agentId: "edge" } }),
-      "Stopped · Open a folder in a browser · agent Edge box",
+      "Stopped · Open a folder in a browser",
     ],
-  ])("what and where, after the state in words (%s)", (kind, model, line) => {
+  ])("what it is, after the state in words (%s)", (kind, model, line) => {
     render(model);
     expect(q(`${kind}-kind-${model.id}`)?.textContent).toBe(line);
+  });
+
+  it("the technical name, running or not", () => {
+    render(serverIn("stopped"));
+    expect(q("server-technical-s")?.textContent).toBe("HTTP");
+    render(tunnelIn("connected"));
+    expect(q("tunnel-technical-t")?.textContent).toBe("Local");
+  });
+
+  it("the machine in one place, and only when it is another one", () => {
+    const edge = { kind: "agent", agentId: "edge" } as const;
+    for (const status of ["stopped", "running", "notReachable"] as const) {
+      render(serverIn(status, { host: edge }));
+      expect(q("server-machine-s")?.textContent).toBe("Edge box");
+      expect(rowOf(serverIn(status)).textContent!.split("Edge box")).toHaveLength(2);
+    }
+    render(serverIn("running"));
+    expect(q("server-machine-s")).toBeNull();
+  });
+
+  it("keeps the end of a long machine's name, and all of it for a screen reader", () => {
+    const where = { label: "agent x", agentId: "x", name: "Edge gateway in the Frankfurt rack" };
+    render({ ...serverIn("stopped"), where });
+    const chip = q("server-machine-s")!;
+    expect(chip.textContent).toBe(where.name);
+    expect(chip.querySelector(".middle-ellipsis__tail")?.textContent).toBe("urt rack");
   });
 
   it("says the state once to a screen reader: the dot's name", () => {
@@ -163,7 +189,7 @@ describe("what the row says", () => {
 
   it("the address with Copy only while it runs, else why not", () => {
     render(tunnelIn("connected"));
-    expect(q("tunnel-address-t")?.textContent).toBe("localhost:5432");
+    expect(q("tunnel-address-t")?.textContent).toBe("localhost:5432only this computer");
     expect(q("tunnel-copy-address-t")?.getAttribute("aria-label")).toBe("Copy address");
     expect(q("tunnel-reason-t")).toBeNull();
     for (const status of ["waiting", "error", "notReachable", "stopping"] as const) {
@@ -174,20 +200,74 @@ describe("what the row says", () => {
     }
   });
 
-  it("the machine beside an address that opens elsewhere, which is not copied", async () => {
+  it("who reaches it, and says so when a copied address works only there", async () => {
     render(serverIn("running", { host: { kind: "agent", agentId: "edge" } }));
-    expect(q("server-address-s")?.textContent).toBe("http://localhost:8080 on Edge box");
+    expect(q("server-address-s")?.textContent).toBe("http://localhost:8080only on that machine");
     await act(async () => q("server-copy-address-s")!.click());
     expect(writeText).toHaveBeenCalledWith("http://localhost:8080");
+    const warned = ["Copied. Works only on Edge box"];
+    expect(toastSuccess.mock.calls).toEqual([warned]);
+    // From the menu, too, and nothing more.
+    await openMenu(serverIn("running"));
+    await act(async () => q("ctx-copy-url-s")!.click());
+    await flush();
+    expect(toastSuccess.mock.calls).toEqual([warned, warned]);
   });
 
-  it("the next step of a deleted connection", () => {
+  it("no address, and nothing to copy, while nobody knows it", async () => {
+    const model = serverIn("running", { bindHost: "0.0.0.0" });
+    render(model);
+    expect(q("server-address-s")?.textContent).toBe("Open to your network. Address not known yet.");
+    expect(q("server-copy-address-s")).toBeNull();
+    expect(await openMenu(model)).not.toContain(" Copy address");
+  });
+
+  it("that anyone may upload", () => {
+    render({ ...serverIn("running"), risk: "Anyone on your network can upload" });
+    expect(q("server-risk-s")?.textContent).toBe("Anyone on your network can upload");
+    render(serverIn("running"));
+    expect(q("server-risk-s")).toBeNull();
+  });
+
+  it("the remedies beside the reason, each a button", () => {
     const onNextStep = vi.fn();
-    render(tunnelIn("missingConnection"), { onNextStep });
+    const model = serverIn("error");
+    const nextSteps = [
+      { id: "usePort" as const, label: "Use 8081", port: 8081 },
+      { id: "edit" as const, label: "Edit" },
+    ];
+    render({ ...model, nextSteps }, { onNextStep });
+    expect(q("server-reason-s")?.textContent).toBe("why Use 8081 · Edit");
+    act(() => q("server-use-port-s")!.click());
+    act(() => q("server-edit-port-s")!.click());
+    expect(onNextStep.mock.calls.map(([step]) => step)).toEqual(nextSteps);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("a remedy that fails is not an unhandled rejection, and does not select the row", async () => {
+    const onClick = vi.fn();
+    render(tunnelIn("missingConnection"), {
+      onNextStep: () => Promise.reject(new Error("no")),
+      rowProps: { onClick },
+    });
     expect(q("tunnel-reason-t")?.textContent).toContain("Its SSH connection was deleted.");
     act(() => q("tunnel-choose-connection-t")!.click());
-    expect(onNextStep).toHaveBeenCalledOnce();
-    expect(onAction).not.toHaveBeenCalled();
+    await flush();
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("the icons: a filled square stops, a cross gives up waiting or starting", () => {
+    const icon = (model: ServiceModel) => {
+      render(model);
+      const svg = q("server-primary-s")!.querySelector("svg")!;
+      return `${svg.getAttribute("class")?.match(/lucide-(square|play|x|rotate-cw)/)?.[1]} ${svg.getAttribute("fill")}`;
+    };
+    expect(icon(serverIn("running"))).toBe("square currentColor");
+    expect(icon(serverIn("notReachable"))).toBe("square currentColor");
+    expect(icon(serverIn("stopped"))).toBe("play currentColor");
+    expect(icon(serverIn("starting"))).toBe("x none");
+    expect(icon(serverIn("waiting"))).toBe("x none");
+    expect(icon(serverIn("error"))).toBe("rotate-cw none");
   });
 
   it("the user's description, the extras and the open activity", () => {
@@ -196,6 +276,8 @@ describe("what the row says", () => {
       activity: <i data-testid="activity" />,
     });
     expect(q("tunnel-description-t")?.textContent).toBe("Reaches the DB");
+    // In the place of what its type is for, after the state.
+    expect(q("tunnel-kind-t")?.textContent).toBe("Stopped · Reaches the DB");
     expect(q("extra")).not.toBeNull();
     expect(q("activity")).not.toBeNull();
     expect(rowOf(tunnelIn("connected")).getAttribute("aria-description")).toContain("a");

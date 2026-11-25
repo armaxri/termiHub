@@ -7,6 +7,7 @@
 //!
 //! [`HostedServices`]: crate::agent_service::hosted::HostedServices
 
+use chrono::{DateTime, Local};
 use serde_json::Value;
 use termihub_core::protocol::methods::{
     TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TUNNEL_STATUS,
@@ -15,6 +16,7 @@ use termihub_core::protocol::methods::{
 
 use super::config::{ReachableFrom, TunnelConfig, TunnelState, TunnelStats, TunnelStatus};
 use crate::agent_service::hosted::{Away, HostedKind, Reading, View, WaitFor};
+use crate::agent_service::Reason;
 
 pub(super) struct HostedTunnels;
 
@@ -101,11 +103,11 @@ impl HostedKind for HostedTunnels {
     }
 }
 
-/// The sentences a row shows; they name the agent, so they need the app.
+/// The sentences a row shows; some depend on the agent, so they need the app.
 pub(super) trait Reasons {
-    fn waiting(&self, on: &WaitFor) -> String;
-    fn stopping(&self, agent_id: &str) -> String;
-    fn not_reachable(&self, agent_id: &str, why: Away) -> String;
+    fn waiting(&self, on: &WaitFor, until: DateTime<Local>) -> Reason;
+    fn stopping(&self, agent_id: &str) -> Reason;
+    fn not_reachable(&self, agent_id: &str, why: Away) -> Reason;
 }
 
 /// The row of a tunnel whose state [`HostedServices`] decides. Pure, so every
@@ -122,7 +124,9 @@ pub(super) fn tunnel_state(
     };
     match view {
         View::Starting => row(TunnelStatus::Connecting, None),
-        View::Waiting(on) => row(TunnelStatus::Waiting, Some(reasons.waiting(&on))),
+        View::Waiting { on, until } => {
+            row(TunnelStatus::Waiting, Some(reasons.waiting(&on, until)))
+        }
         View::Stopping { agent_id } => {
             row(TunnelStatus::Stopping, Some(reasons.stopping(&agent_id)))
         }

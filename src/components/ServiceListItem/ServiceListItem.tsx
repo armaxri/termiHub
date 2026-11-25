@@ -1,16 +1,19 @@
 import type React from "react";
 import {
   Activity,
-  Clipboard,
+  AlertTriangle,
   Copy,
+  CopyPlus,
   Ellipsis,
   ExternalLink,
+  HardDrive,
   Pencil,
   Play,
   RefreshCw,
   RotateCw,
   Square,
   Trash2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -33,8 +36,13 @@ import { SidebarListItem } from "@/components/SidebarListItem";
 import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget } from "@/utils/frontendLog";
 import { t, tf } from "@/i18n/catalog";
-import type { ServiceAction, ServiceActionId, ServiceModel } from "@/utils/serviceModel";
-import { serviceStateDot, serviceStateLabel } from "@/utils/serviceState";
+import type {
+  ServiceAction,
+  ServiceActionId,
+  ServiceModel,
+  ServiceNextStep,
+} from "@/utils/serviceModel";
+import { MiddleEllipsis } from "./MiddleEllipsis";
 import { serviceRowTestIds, type ServiceActionTestIds } from "./serviceRowTestIds";
 import "./ServiceListItem.css";
 
@@ -47,8 +55,8 @@ export interface ServiceListItemProps {
   tooltip: readonly string[];
   /** Run one of the row's actions. May be async: its button shows it. */
   onAction: (id: ServiceRowAction) => void | Promise<void>;
-  /** Take the next step the model names. */
-  onNextStep?: () => void;
+  /** Take one of the next steps the model names. May be async. */
+  onNextStep?: (step: ServiceNextStep) => void | Promise<void>;
   /** Lines of one kind only, under the shared ones. */
   extras?: React.ReactNode;
   /** The open Activity, when it is open. */
@@ -65,16 +73,31 @@ export interface ServiceListItemProps {
 const ICONS: Record<ServiceActionId, LucideIcon> = {
   start: Play,
   stop: Square,
-  stopWaiting: Square,
+  stopWaiting: X,
   retry: RotateCw,
-  copyAddress: Clipboard,
+  copyAddress: Copy,
   openInBrowser: ExternalLink,
   activity: Activity,
   edit: Pencil,
   restart: RefreshCw,
-  duplicate: Copy,
+  duplicate: CopyPlus,
   delete: Trash2,
 };
+
+/** Drawn solid, like on a player: an empty square reads as a box to tick. */
+const SOLID: ReadonlySet<LucideIcon> = new Set([Play, Square]);
+
+/** The icon of `action` in the state of `model`. */
+function ActionIcon({ model, action, size }: ActionIconProps) {
+  const Icon = action.id === "stop" && model.state === "starting" ? X : ICONS[action.id];
+  return <Icon size={size} fill={SOLID.has(Icon) ? "currentColor" : "none"} />;
+}
+
+interface ActionIconProps {
+  model: ServiceModel;
+  action: ServiceAction;
+  size: number;
+}
 
 /** The run control, always visible on the row's trailing edge (#5852). */
 const RUN: ReadonlySet<ServiceActionId> = new Set(["start", "stop", "stopWaiting", "retry"]);
@@ -83,7 +106,7 @@ const ON_ROW: ReadonlySet<ServiceActionId> = new Set(["activity", "edit"]);
 /** Keys that move in the list. */
 const MOVES: ReadonlySet<string> = new Set(["ArrowUp", "ArrowDown", "Home", "End"]);
 /** In the menu, a line goes before these. */
-const GROUP_STARTS: ReadonlySet<ServiceActionId> = new Set(["activity", "edit", "delete"]);
+const GROUP_STARTS: ReadonlySet<ServiceActionId> = new Set(["copyAddress", "edit", "delete"]);
 
 /**
  * The row of a service, an SSH tunnel or a file server (#6028): what it is and
@@ -111,7 +134,12 @@ export function ServiceListItem({
   const run = model.actions.find((action) => RUN.has(action.id));
 
   const copyAddress = async () => {
-    if (address) await writeClipboard(address.copy);
+    if (!address?.copy) return;
+    await writeClipboard(address.copy);
+    if (address.on) {
+      // toast-policy: no-in-place-surface — the address is on the clipboard
+      toast.success(tf("service.addressCopied.onlyOn", { machine: address.on }));
+    }
   };
 
   /** Do `action`; rejects when it fails, after the user was told. */
@@ -124,7 +152,8 @@ export function ServiceListItem({
         throw err;
       }
     } else if (id === "openInBrowser") {
-      if (address) fireAndForget(openUrl(address.copy), `open ${address.copy} in browser`);
+      const url = address?.copy;
+      if (url) fireAndForget(openUrl(url), `open ${url} in browser`);
     } else {
       await onAction(id);
     }
@@ -136,17 +165,18 @@ export function ServiceListItem({
 
   const performFromMenu = (id: ServiceActionId) => {
     if (id !== "copyAddress") return performQuietly(id);
-    const copied = perform(id).then(() =>
+    const copied = perform(id).then(() => {
       // toast-policy: no-in-place-surface — the address is on the clipboard
-      toast.success(t("service.addressCopied"))
-    );
+      if (!address?.on) toast.success(t("service.addressCopied"));
+    });
     fireAndForget(copied, `copy the address of service ${model.id}`);
   };
 
   const button = (action: ServiceAction): React.ReactNode => {
-    const Icon = ICONS[action.id];
+    const help =
+      action.id === "copyAddress" ? `${action.label}: ${address?.copy ?? ""}` : action.label;
     return (
-      <Tooltip key={action.id} content={action.label} side="top">
+      <Tooltip key={action.id} content={help} side="top">
         <Button
           variant="ghost"
           size="sm"
@@ -154,7 +184,7 @@ export function ServiceListItem({
           aria-label={action.label}
           aria-pressed={action.id === "activity" ? activity !== undefined : undefined}
           {...ids.actionTestIds[action.id]}
-          icon={<Icon size={12} />}
+          icon={<ActionIcon model={model} action={action} size={12} />}
           // Whoever acts shows its own failure.
           errorToast={false}
           onClick={(e) => {
@@ -195,7 +225,6 @@ export function ServiceListItem({
   /** Every action, in the model's order. */
   const menuItems = (testIds: ServiceActionTestIds) =>
     model.actions.map((action, index) => {
-      const Icon = ICONS[action.id];
       return (
         <MenuEntry key={action.id} separated={index > 0 && GROUP_STARTS.has(action.id)}>
           <MenuItem
@@ -203,7 +232,7 @@ export function ServiceListItem({
             onSelect={() => performFromMenu(action.id)}
             {...testIds[action.id]}
           >
-            <Icon size={14} /> {action.label}
+            <ActionIcon model={model} action={action} size={14} /> {action.label}
           </MenuItem>
         </MenuEntry>
       );
@@ -230,8 +259,19 @@ export function ServiceListItem({
     </DropdownMenuRoot>
   );
 
+  const { where } = model;
+  const description = model.description?.trim();
+
   const details = (
     <>
+      {where.label !== t("service.where.here") && (
+        <Tooltip content={where.label} side="right">
+          <span className="service-row__machine" data-testid={ids.machineTestId}>
+            <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
+            <MiddleEllipsis text={where.name ?? where.label} />
+          </span>
+        </Tooltip>
+      )}
       <span className="service-row__kind" data-testid={ids.kindTestId}>
         <span
           className="service-row__state"
@@ -239,18 +279,28 @@ export function ServiceListItem({
           // The dot beside the name says it.
           aria-hidden="true"
         >
-          {serviceStateLabel(model.state)}
+          {model.stateLabel}
         </span>
         {" · "}
-        {model.kindLine}
+        {description ? <span data-testid={ids.descriptionTestId}>{description}</span> : model.what}
       </span>
       {address && (
         <span className="service-row__address" data-testid={ids.addressTestId}>
-          <span className="service-row__address-text">
-            <code>{address.copy}</code>
-            {address.on && ` ${tf("service.address.onMachine", { machine: address.on })}`}
-          </span>
-          {copy && button(copy)}
+          {address.copy && (
+            <span className="service-row__address-text">
+              <code>
+                <MiddleEllipsis text={address.copy} tail={10} />
+              </code>
+              {copy && button(copy)}
+            </span>
+          )}
+          <span className="service-row__reach">{address.reach}</span>
+        </span>
+      )}
+      {model.risk && (
+        <span className="service-row__risk" data-testid={ids.riskTestId}>
+          <AlertTriangle size={11} aria-hidden="true" />
+          <span>{model.risk}</span>
         </span>
       )}
       {model.reason && (
@@ -260,22 +310,27 @@ export function ServiceListItem({
           data-testid={ids.reasonTestId}
         >
           {model.reason}
-          {model.nextStep && onNextStep && (
-            <>
-              {" "}
-              <button
-                type="button"
-                className="service-row__next"
-                data-testid={ids.nextStepTestId}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNextStep();
-                }}
-              >
-                {model.nextStep.label}
-              </button>
-            </>
-          )}
+          {onNextStep &&
+            model.nextSteps.map((step, index) => (
+              <span key={step.id} className="service-row__step">
+                {" "}
+                {index > 0 && <span aria-hidden="true">· </span>}
+                <button
+                  type="button"
+                  className="service-row__next"
+                  {...ids.nextStepTestIds[step.id]}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    fireAndForget(
+                      Promise.resolve(onNextStep(step)),
+                      `${step.id} service ${model.id}`
+                    );
+                  }}
+                >
+                  {step.label}
+                </button>
+              </span>
+            ))}
         </span>
       )}
       {extras}
@@ -304,10 +359,13 @@ export function ServiceListItem({
               model.name
             )
           }
+          nameSuffix={
+            <span className="service-row__technical" data-testid={ids.technicalTestId}>
+              {model.technical}
+            </span>
+          }
           onDoubleClick={() => performQuietly("edit")}
-          status={<StatusDot {...serviceStateDot(model.state)} testId={ids.statusTestId} />}
-          description={model.description}
-          descriptionTestId={ids.descriptionTestId}
+          status={<StatusDot {...model.dot} testId={ids.statusTestId} />}
           tooltip={tooltip}
           tooltipTestId={ids.tooltipTestId}
           primaryAction={run && button(run)}

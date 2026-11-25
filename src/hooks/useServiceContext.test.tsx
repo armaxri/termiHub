@@ -15,6 +15,7 @@ vi.mock("@/store/useProjectedConnections", () => ({
   useProjectedConnections: () => ({ connections }),
 }));
 
+import { useAppStore } from "@/store/appStore";
 import type { ServiceContext } from "@/utils/serviceModel";
 import { useServiceContext } from "./useServiceContext";
 
@@ -45,8 +46,34 @@ describe("useServiceContext (#6028)", () => {
 
   it("hands on the agents and connections, and asks for nothing else", async () => {
     await render(false);
-    expect(seen).toEqual({ agents, connections, networkAddress: undefined });
+    expect(seen).toEqual({
+      agents,
+      connections,
+      networkAddress: undefined,
+      usedPorts: new Set(),
+    });
     expect(listNetworkInterfaces).not.toHaveBeenCalled();
+  });
+
+  it("knows the ports of the services on this computer", async () => {
+    const edge = { kind: "agent", agentId: "edge" };
+    const listening = (type: string, localPort: number, host?: unknown) => ({
+      tunnelType: { type, config: { localPort } },
+      host,
+    });
+    useAppStore.setState({
+      tunnels: [
+        listening("local", 15432),
+        listening("dynamic", 1080),
+        // Listens on the SSH server.
+        listening("remote", 3000),
+        listening("local", 5000, edge),
+      ] as never,
+      embeddedServers: [{ port: 8080 }, { port: 9000, host: edge }] as never,
+    });
+    await render(false);
+    expect(seen.usedPorts).toEqual(new Set([15432, 1080, 8080]));
+    useAppStore.setState(useAppStore.getInitialState());
   });
 
   it("reads this computer's address, not loopback and not all interfaces", async () => {

@@ -4,7 +4,7 @@
  * name for agent-hosted ones. Since #5770 this is in the row's tooltip (its
  * accessible description), not on the row.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -57,6 +57,7 @@ function renderItem(tunnel: TunnelConfig): void {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );
@@ -91,7 +92,7 @@ describe("TunnelListItem — where it runs, on the row and in the tooltip (#2155
   it("reads 'this computer' for a desktop-hosted tunnel (default)", () => {
     renderItem({ ...BASE, host: { kind: "thisComputer" } });
     expect(rowTooltip()).toContain("Hosted on this computer");
-    expect(row().textContent).not.toContain("this computer");
+    expect(container.querySelector('[data-testid^="tunnel-machine"]')).toBeNull();
   });
 
   it("reads 'this computer' when the host field is absent (legacy config)", () => {
@@ -102,6 +103,8 @@ describe("TunnelListItem — where it runs, on the row and in the tooltip (#2155
   it("names the agent for an agent-hosted tunnel", () => {
     renderItem({ ...BASE, host: { kind: "agent", agentId: "agent-1" } });
     expect(rowTooltip()).toContain("Hosted on agent build-box");
-    expect(row().textContent).toContain("on build-box");
+    expect(container.querySelector('[data-testid^="tunnel-machine"]')?.textContent).toBe(
+      "build-box"
+    );
   });
 });

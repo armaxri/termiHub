@@ -58,7 +58,7 @@ const VIEWS: ReadonlyArray<{ view: SidebarView; panelTestid: string; title: stri
   { view: "connections", panelTestid: "panel-connections", title: "Connections" },
   { view: "files", panelTestid: "panel-files", title: "File browser" },
   { view: "tunnels", panelTestid: "panel-tunnels", title: "SSH tunnels" },
-  { view: "services", panelTestid: "panel-services", title: "Services" },
+  { view: "services", panelTestid: "panel-services", title: "File servers" },
   { view: "workspaces", panelTestid: "panel-workspaces", title: "Workspaces" },
   { view: "automations", panelTestid: "panel-automations", title: "Automations" },
   { view: "network-tools", panelTestid: "panel-network-tools", title: "Network tools" },

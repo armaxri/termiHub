@@ -73,6 +73,7 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof EmbeddedServer
     onEdit: noop,
     onDuplicate: noop,
     onDelete: noop,
+    onUsePort: noop,
     ...overrides,
   };
 }
@@ -265,6 +266,19 @@ describe("EmbeddedServerItem", () => {
     expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
   });
 
+  it("closes the activity panel from its own heading", async () => {
+    render(<EmbeddedServerItem {...baseProps({ state: runningState })} />);
+    const toggle = container.querySelector('[data-testid="server-activity-toggle-srv-1"]')!;
+    click(toggle);
+    await flush();
+    const close = container.querySelector('[data-testid="server-activity-close-srv-1"]')!;
+    expect(close.getAttribute("aria-label")).toBe("Close activity");
+    click(close);
+    await flush();
+    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("tells an old agent apart in the activity panel (#3453)", async () => {
     const oldAgent = {
       id: "agent-1",
@@ -282,7 +296,7 @@ describe("EmbeddedServerItem", () => {
     );
     click(container.querySelector('[data-testid="server-activity-toggle-srv-1"]')!);
     await flush();
-    expect(container.textContent).toContain("not supported by this agent version");
+    expect(container.textContent).toContain("Update agent Lab Pi to see who uses the server.");
   });
 
   it("derives the host agent's access-log support from its capabilities", () => {

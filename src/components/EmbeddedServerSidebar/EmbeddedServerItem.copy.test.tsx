@@ -71,6 +71,7 @@ function baseProps() {
     onEdit: () => {},
     onDuplicate: () => {},
     onDelete: () => {},
+    onUsePort: () => {},
   };
 }
 

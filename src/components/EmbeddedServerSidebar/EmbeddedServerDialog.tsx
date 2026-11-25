@@ -6,6 +6,7 @@ import { useZodEditorForm } from "@/hooks/useZodEditorForm";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
+import { open as openFolderDialog } from "@/services/nativeDialog";
 import {
   Modal,
   Button,
@@ -30,7 +31,7 @@ import { RunLocationSelect } from "@/components/RunLocationSelect";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, isAgentHost } from "@/utils/runLocation";
 import { sameHost, type HostChoice } from "@/utils/hostChoice";
-import { t } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 
 interface Props {
@@ -111,7 +112,7 @@ const serverFormSchema = z
       ctx.addIssue({
         code: "custom",
         path: ["rootDirectory"],
-        message: "Root directory is required.",
+        message: "Choose the folder to share.",
       });
     }
     if (form.port === "") {
@@ -139,6 +140,50 @@ function defaultConfig(): ServerFormState {
 /** The form's values for an existing server or a copy, else a blank one. */
 function initialConfig(config: EmbeddedServerConfig | null): ServerFormState {
   return config ? { ...config } : defaultConfig();
+}
+
+/** Who can open a server, in words; the addresses are for special cases. */
+function bindChoices(
+  interfaces: readonly NetworkInterface[],
+  current: string,
+  onAgent: boolean
+): { value: string; label: string }[] {
+  const choices = [
+    {
+      value: "127.0.0.1",
+      label: t(onAgent ? "server.editor.who.there" : "server.editor.who.here"),
+    },
+    {
+      value: "0.0.0.0",
+      label: t(onAgent ? "server.editor.who.anyoneThere" : "server.editor.who.network"),
+    },
+  ];
+  // The addresses of this computer say nothing about another machine.
+  const own = onAgent ? [] : interfaces;
+  const addresses = [
+    ...own.map((i) => ({ addr: i.addr, name: i.name })),
+    { addr: current, name: "" },
+  ];
+  for (const { addr, name } of addresses) {
+    if (choices.some((choice) => choice.value === addr)) continue;
+    choices.push({
+      value: addr,
+      label: name
+        ? tf("server.editor.who.through", { name, addr })
+        : tf("server.editor.who.address", { addr }),
+    });
+  }
+  return choices;
+}
+
+/** What Save still needs. */
+function missingText(errors: Readonly<Record<string, string | undefined>>): string {
+  const missing = [
+    errors["rootDirectory"] && t("server.editor.missing.folder"),
+    errors["name"] && t("server.editor.missing.name"),
+    errors["port"] && t("server.editor.missing.port"),
+  ].filter(Boolean);
+  return tf("server.editor.missing", { fields: missing.join(", ") });
 }
 
 /**
@@ -230,6 +275,19 @@ export function EmbeddedServerDialog({
     }
   };
 
+  /** A server without a name is called like its folder. */
+  const nameAfterFolder = (folder: string) => {
+    const last = folder.split(/[\\/]/).filter(Boolean).pop();
+    if (last && getValues().name.trim() === "") setValue("name", last);
+  };
+
+  const chooseFolder = async () => {
+    const picked = await openFolderDialog({ directory: true, multiple: false });
+    if (typeof picked !== "string") return;
+    setValue("rootDirectory", picked);
+    nameAfterFolder(picked);
+  };
+
   const handleLanConfirm = () => {
     setValue("bindHost", "0.0.0.0");
     setLanWarning(false);
@@ -292,7 +350,7 @@ export function EmbeddedServerDialog({
         title={
           <>
             <AlertTriangle size={16} style={{ color: "var(--color-warning)" }} />
-            Security warning
+            {t("server.editor.open.title")}
           </>
         }
         footer={
@@ -301,14 +359,17 @@ export function EmbeddedServerDialog({
               Cancel
             </Button>
             <Button variant="primary" onClick={handleLanConfirm} data-testid="lan-warning-confirm">
-              I understand
+              {t("server.editor.open.confirm")}
             </Button>
           </>
         }
       >
         <p className="dialog__body">
-          Binding to <strong>0.0.0.0</strong> will make this server accessible to{" "}
-          <strong>all devices on your network</strong>. Only enable this on trusted networks.
+          {t(
+            form.serverType === "http" || form.readOnly
+              ? "server.editor.open.download"
+              : "server.editor.open.upload"
+          )}
         </p>
       </Modal>
 
@@ -316,9 +377,15 @@ export function EmbeddedServerDialog({
       <Modal
         open={open && !lanWarning}
         onOpenChange={onOpenChange}
-        title={config ? "Edit service" : "New service"}
+        title={t(config ? "server.editor.title.edit" : "server.editor.title.new")}
+        size="lg"
         footer={
           <>
+            {!canSave && (
+              <span className="server-dialog__missing" data-testid="server-dialog-missing">
+                {missingText(allErrors)}
+              </span>
+            )}
             <Button
               variant="secondary"
               onClick={() => onOpenChange(false)}
@@ -344,6 +411,129 @@ export function EmbeddedServerDialog({
               {t("server.editor.copyHint")}
             </p>
           )}
+          {/* Protocol */}
+          <div className="server-dialog__label">
+            <span id="server-dialog-protocol-label">{t("share.type.label")}</span>
+            <RadioGroup
+              variant="cards"
+              orientation="horizontal"
+              value={form.serverType}
+              onValueChange={(v) => handleProtocolChange(v as ServerType)}
+              aria-labelledby="server-dialog-protocol-label"
+              options={SHARE_TYPE_KINDS.map((type) => {
+                const help = shareTypeHelp(type, location, locationName);
+                return {
+                  value: type,
+                  label: help.label,
+                  description: `${help.fact} (${help.protocol})`,
+                  help: help.lines,
+                  "data-testid": `server-dialog-proto-${type}`,
+                };
+              })}
+            />
+          </div>
+
+          {/* Folder to share */}
+          <Controller
+            name="rootDirectory"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label={t("server.editor.folder")}
+                htmlFor="server-dialog-root-input"
+                error={errors["rootDirectory"]}
+                hint={isAgentHost(location) ? t("server.editor.folder.there") : undefined}
+                className="server-dialog__label"
+              >
+                {/* A fragment: the input is wired here, not the box around it. */}
+                <>
+                  <div className="server-dialog__folder">
+                    <Input
+                      id="server-dialog-root-input"
+                      value={field.value ?? ""}
+                      onChange={(e) => field.onChange(e.target.value)}
+                      onBlur={() => {
+                        field.onBlur();
+                        nameAfterFolder(field.value ?? "");
+                      }}
+                      error={Boolean(errors["rootDirectory"])}
+                      aria-invalid={Boolean(errors["rootDirectory"])}
+                      aria-describedby={
+                        errors["rootDirectory"] ? "server-dialog-root-input-error" : undefined
+                      }
+                      data-testid="server-dialog-root"
+                      autoFocus
+                    />
+                    {!isAgentHost(location) && (
+                      <Button
+                        variant="secondary"
+                        onClick={chooseFolder}
+                        data-testid="server-dialog-root-choose"
+                      >
+                        {t("server.editor.folder.choose")}
+                      </Button>
+                    )}
+                  </div>
+                </>
+              </Field>
+            )}
+          />
+
+          {/* Who can open it (#6063) */}
+          <div className="server-dialog__row">
+            <div className="server-dialog__label server-dialog__label--inline">
+              <span id="server-dialog-bind-label">{t("server.editor.who")}</span>
+              <Select
+                value={form.bindHost}
+                onChange={handleBindHostChange}
+                options={bindChoices(interfaces, form.bindHost, isAgentHost(location))}
+                aria-label={t("server.editor.who")}
+                data-testid="server-dialog-bind-host"
+              />
+            </div>
+            <Controller
+              name="port"
+              control={control}
+              render={({ field }) => (
+                <Field
+                  label="Port"
+                  htmlFor="server-dialog-port-input"
+                  error={errors["port"]}
+                  className="server-dialog__label server-dialog__label--inline"
+                >
+                  <NumberInput
+                    id="server-dialog-port-input"
+                    className="server-dialog__input--port"
+                    min={1}
+                    max={65535}
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    data-testid="server-dialog-port"
+                  />
+                </Field>
+              )}
+            />
+          </div>
+
+          {/* What they can do: a web server has no uploads. */}
+          {form.serverType !== "http" && (
+            <label className="server-dialog__check">
+              <Controller
+                name="readOnly"
+                control={control}
+                render={({ field }) => (
+                  <Checkbox
+                    checked={field.value}
+                    onCheckedChange={(checked) => field.onChange(checked)}
+                    aria-label={t("server.editor.onlyDownload")}
+                    data-testid="server-dialog-readonly"
+                  />
+                )}
+              />
+              <span>{t("server.editor.onlyDownload")}</span>
+            </label>
+          )}
+
           {/* Name */}
           <Controller
             name="name"
@@ -360,80 +550,9 @@ export function EmbeddedServerDialog({
                   value={field.value ?? ""}
                   onChange={(e) => field.onChange(e.target.value)}
                   onBlur={field.onBlur}
-                  placeholder="e.g. Firmware Share"
+                  placeholder={t("server.editor.name.placeholder")}
                   error={Boolean(errors["name"])}
                   data-testid="server-dialog-name"
-                  autoFocus
-                />
-              </Field>
-            )}
-          />
-
-          {/* Description (#5770): one short line shown under the name. */}
-          <Controller
-            name="description"
-            control={control}
-            render={({ field }) => (
-              <Field
-                label="Description (optional)"
-                htmlFor="server-dialog-description-input"
-                hint="One short line shown under the name in the sidebar."
-                className="server-dialog__label"
-              >
-                <Input
-                  id="server-dialog-description-input"
-                  value={field.value ?? ""}
-                  onChange={(e) => field.onChange(e.target.value)}
-                  onBlur={field.onBlur}
-                  maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-                  placeholder="What this service is for"
-                  data-testid="server-dialog-description"
-                />
-              </Field>
-            )}
-          />
-
-          {/* Protocol */}
-          <div className="server-dialog__label">
-            <span id="server-dialog-protocol-label">{t("share.type.label")}</span>
-            <RadioGroup
-              variant="cards"
-              orientation="horizontal"
-              value={form.serverType}
-              onValueChange={(v) => handleProtocolChange(v as ServerType)}
-              aria-labelledby="server-dialog-protocol-label"
-              options={SHARE_TYPE_KINDS.map((type) => {
-                const help = shareTypeHelp(type, location, locationName);
-                return {
-                  value: type,
-                  label: help.label,
-                  description: `${help.summary} (${help.protocol})`,
-                  help: help.lines,
-                  "data-testid": `server-dialog-proto-${type}`,
-                };
-              })}
-            />
-          </div>
-
-          {/* Root directory */}
-          <Controller
-            name="rootDirectory"
-            control={control}
-            render={({ field }) => (
-              <Field
-                label="Root directory"
-                htmlFor="server-dialog-root-input"
-                error={errors["rootDirectory"]}
-                className="server-dialog__label"
-              >
-                <Input
-                  id="server-dialog-root-input"
-                  value={field.value ?? ""}
-                  onChange={(e) => field.onChange(e.target.value)}
-                  onBlur={field.onBlur}
-                  placeholder="/path/to/directory"
-                  error={Boolean(errors["rootDirectory"])}
-                  data-testid="server-dialog-root"
                 />
               </Field>
             )}
@@ -456,51 +575,6 @@ export function EmbeddedServerDialog({
             )}
           </div>
 
-          {/* Network */}
-          <fieldset className="server-dialog__fieldset">
-            <legend className="server-dialog__legend">Network</legend>
-            <div className="server-dialog__row">
-              <label className="server-dialog__label server-dialog__label--inline">
-                Bind address
-                <Select
-                  value={form.bindHost}
-                  onChange={handleBindHostChange}
-                  options={interfaces.map((iface) => ({
-                    value: iface.addr,
-                    label:
-                      iface.addr === "0.0.0.0" || iface.addr === "127.0.0.1"
-                        ? `${iface.addr} — ${iface.name}`
-                        : `${iface.addr} (${iface.name})`,
-                  }))}
-                  aria-label="Bind address"
-                  data-testid="server-dialog-bind-host"
-                />
-              </label>
-              <Controller
-                name="port"
-                control={control}
-                render={({ field }) => (
-                  <Field
-                    label="Port"
-                    htmlFor="server-dialog-port-input"
-                    error={errors["port"]}
-                    className="server-dialog__label server-dialog__label--inline"
-                  >
-                    <NumberInput
-                      id="server-dialog-port-input"
-                      className="server-dialog__input--port"
-                      min={1}
-                      max={65535}
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      data-testid="server-dialog-port"
-                    />
-                  </Field>
-                )}
-              />
-            </div>
-          </fieldset>
-
           {/* Options */}
           <fieldset className="server-dialog__fieldset">
             <legend className="server-dialog__legend">Options</legend>
@@ -518,21 +592,6 @@ export function EmbeddedServerDialog({
                 )}
               />
               <span>Auto-start when termiHub launches</span>
-            </label>
-            <label className="server-dialog__check">
-              <Controller
-                name="readOnly"
-                control={control}
-                render={({ field }) => (
-                  <Checkbox
-                    checked={field.value}
-                    onCheckedChange={(checked) => field.onChange(checked)}
-                    aria-label="Read-only (disable uploads / writes)"
-                    data-testid="server-dialog-readonly"
-                  />
-                )}
-              />
-              <span>Read-only (disable uploads / writes)</span>
             </label>
             {form.serverType === "http" && (
               <label className="server-dialog__check">
@@ -678,6 +737,29 @@ export function EmbeddedServerDialog({
               )}
             </fieldset>
           )}
+          {/* Description (#5770): one short line shown under the name. */}
+          <Controller
+            name="description"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label="Description (optional)"
+                htmlFor="server-dialog-description-input"
+                hint="One short line shown under the name in the sidebar."
+                className="server-dialog__label"
+              >
+                <Input
+                  id="server-dialog-description-input"
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                  placeholder="What this service is for"
+                  data-testid="server-dialog-description"
+                />
+              </Field>
+            )}
+          />
         </div>
       </Modal>
     </>

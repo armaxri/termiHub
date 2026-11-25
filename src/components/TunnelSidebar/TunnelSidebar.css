@@ -28,25 +28,8 @@
   color: var(--text-muted);
 }
 
-/* Combined "Linked · …" status chip on the parent row. */
-.tunnel-item__pair {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--text-secondary);
-}
-
-.tunnel-item__pair[data-warn="true"] {
-  color: var(--color-warning);
-}
-
-.tunnel-item__pair-icon {
-  flex-shrink: 0;
-}
-
-/* Redundant-hop notice + inline degraded fix. */
-.tunnel-item__redundant,
-.tunnel-item__degraded-fix {
+/* Redundant-hop notice. */
+.tunnel-item__redundant {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -54,8 +37,7 @@
   color: var(--color-warning);
 }
 
-.tunnel-item__redundant-icon,
-.tunnel-item__degraded-icon {
+.tunnel-item__redundant-icon {
   flex-shrink: 0;
 }
 

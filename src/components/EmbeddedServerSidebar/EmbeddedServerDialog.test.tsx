@@ -13,6 +13,9 @@ vi.mock("@/services/embeddedServerApi", () => ({
   ),
 }));
 
+const { openFolder } = vi.hoisted(() => ({ openFolder: vi.fn() }));
+vi.mock("@/services/nativeDialog", () => ({ open: openFolder }));
+
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { withTooltip } from "@/test/tooltip";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
@@ -412,7 +415,7 @@ describe("EmbeddedServerDialog", () => {
     expect(pass.placeholder).toBe("");
   });
 
-  it("says in plain words what each kind of server is for (#6036)", async () => {
+  it("says in plain words what decides between the kinds (#6036, #6063)", async () => {
     await render(<EmbeddedServerDialog {...baseProps} />);
     const cards = (["http", "ftp", "tftp"] as const).map((kind) => {
       const card = document.querySelector<HTMLElement>(
@@ -421,9 +424,143 @@ describe("EmbeddedServerDialog", () => {
       return card.closest("label")?.textContent ?? card.textContent;
     });
     expect(cards[0]).toContain("Web server");
-    expect(cards[0]).toContain("Open a folder in a browser (HTTP)");
-    expect(cards[1]).toContain("Upload and download files (FTP)");
-    expect(cards[2]).toContain("Give files to a device (TFTP)");
+    expect(cards[0]).toContain("Anyone with a browser; nothing to install (HTTP)");
+    expect(cards[1]).toContain("Needs an FTP program; others can upload if you allow it (FTP)");
+    expect(cards[2]).toContain("For switches, routers, network boot; no password (TFTP)");
+  });
+
+  const field = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLInputElement;
+
+  it("asks for what matters first, and for the name last (S-015)", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    const order = [
+      "server-dialog-proto-http",
+      "server-dialog-root",
+      "server-dialog-bind-host",
+      "server-dialog-port",
+      "server-dialog-name",
+      "server-dialog-runloc",
+      "server-dialog-description",
+    ].map((id) => field(id));
+    for (let i = 1; i < order.length; i += 1) {
+      const follows = order[i - 1].compareDocumentPosition(order[i]);
+      expect(follows & Node.DOCUMENT_POSITION_FOLLOWING, String(i)).toBeTruthy();
+    }
+    expect(document.activeElement).toBe(field("server-dialog-root"));
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("New file server");
+  });
+
+  it("says beside Save what is still missing", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    const missing = () => field("server-dialog-missing")?.textContent;
+    expect(missing()).toBe("Still needed: folder, name");
+    typeInto(field("server-dialog-name"), "Firmware");
+    expect(missing()).toBe("Still needed: folder");
+    typeInto(field("server-dialog-root"), "/srv/fw");
+    expect(missing()).toBeUndefined();
+  });
+
+  it("takes the chosen folder, and its name when there is none yet", async () => {
+    openFolder.mockResolvedValueOnce("C:\\share\\Firmware files\\");
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    await act(async () => field("server-dialog-root-choose").click());
+    expect(openFolder).toHaveBeenCalledWith({ directory: true, multiple: false });
+    expect(field("server-dialog-root").value).toBe("C:\\share\\Firmware files\\");
+    expect(field("server-dialog-name").value).toBe("Firmware files");
+
+    // Nothing chosen changes nothing, and a name the user gave stays.
+    openFolder.mockResolvedValueOnce(null);
+    await act(async () => field("server-dialog-root-choose").click());
+    expect(field("server-dialog-root").value).toBe("C:\\share\\Firmware files\\");
+    typeInto(field("server-dialog-name"), "Mine");
+    openFolder.mockResolvedValueOnce("/srv/other");
+    await act(async () => field("server-dialog-root-choose").click());
+    expect(field("server-dialog-name").value).toBe("Mine");
+  });
+
+  it("names it after a typed folder when the user leaves the field", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    typeInto(field("server-dialog-root"), "/srv/builds");
+    expect(field("server-dialog-name").value).toBe("");
+    leaveField(field("server-dialog-root"));
+    expect(field("server-dialog-name").value).toBe("builds");
+  });
+
+  it("offers no folder of this computer for a server on an agent", async () => {
+    await render(
+      <EmbeddedServerDialog
+        {...baseProps}
+        runLocation={{ kind: "agent", agentId: "edge" }}
+        agents={[{ id: "edge", name: "Edge box" } as never]}
+      />
+    );
+    expect(field("server-dialog-root-choose")).toBeNull();
+    expect(document.body.textContent).toContain("A folder on that machine, as a full path.");
+    expect(field("server-dialog-bind-host").textContent).toBe("Only that machine");
+  });
+
+  it("says who can open it instead of an address, and shows a stored one", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    expect(field("server-dialog-bind-host").textContent).toBe("Only this computer");
+    const stored = { ...(baseProps.config ?? {}), bindHost: "10.9.8.7" };
+    act(() => root.unmount());
+    root = createRoot(container);
+    await render(
+      <EmbeddedServerDialog
+        {...baseProps}
+        config={
+          {
+            id: "s",
+            name: "Old",
+            serverType: "http",
+            rootDirectory: "/srv",
+            port: 80,
+            autoStart: false,
+            readOnly: false,
+            ...stored,
+          } as EmbeddedServerConfig
+        }
+      />
+    );
+    // Not an address of this computer any more: never blank.
+    expect(field("server-dialog-bind-host").textContent).toBe("Anyone who reaches 10.9.8.7");
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("Edit file server");
+  });
+
+  it("does not name this computer's networks for a server on an agent", async () => {
+    vi.mocked(listNetworkInterfaces).mockResolvedValueOnce([{ name: "en0", addr: "10.9.8.7" }]);
+    await render(
+      <EmbeddedServerDialog
+        {...baseProps}
+        runLocation={{ kind: "agent", agentId: "edge" }}
+        agents={[{ id: "edge", name: "Edge box" } as never]}
+        config={
+          {
+            id: "s",
+            name: "There",
+            serverType: "http",
+            rootDirectory: "/srv",
+            port: 80,
+            autoStart: false,
+            readOnly: false,
+            bindHost: "10.9.8.7",
+          } as EmbeddedServerConfig
+        }
+      />
+    );
+    expect(field("server-dialog-bind-host").textContent).toBe("Anyone who reaches 10.9.8.7");
+  });
+
+  it("asks about uploads only where there are some", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    expect(field("server-dialog-readonly")).toBeNull();
+    for (const kind of ["ftp", "tftp"]) {
+      act(() => field(`server-dialog-proto-${kind}`).click());
+      expect(field("server-dialog-readonly"), kind).not.toBeNull();
+      expect(field("server-dialog-readonly").getAttribute("aria-label")).toBe(
+        "Others can only download"
+      );
+    }
   });
 
   it("switching protocol away from HTTP hides the auth section (PROD-0035)", async () => {
@@ -494,7 +631,7 @@ describe("EmbeddedServerDialog", () => {
     const errorFor = (inputId: string) => document.getElementById(`${inputId}-error`);
     const save = () => byTestId("server-dialog-save") as unknown as HTMLButtonElement;
 
-    it("opens without errors; a Save attempt shows them and focuses Name (#5917)", async () => {
+    it("opens without errors; a Save attempt shows them and focuses the first (#5917)", async () => {
       const onSave = vi.fn().mockResolvedValue(true);
       await render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
       expect(errorFor("server-dialog-name-input")).toBeNull();
@@ -502,13 +639,13 @@ describe("EmbeddedServerDialog", () => {
       expect(save().getAttribute("aria-disabled")).toBe("true");
       expect(save().disabled).toBe(false);
 
-      // Name is autofocused; start from Save so the focus move is observable.
+      // The folder is autofocused; start from Save so the focus move is observable.
       act(() => save().focus());
       act(() => save().click());
       expect(onSave).not.toHaveBeenCalled();
       expect(errorFor("server-dialog-name-input")?.textContent).toBe("Name is required.");
-      expect(errorFor("server-dialog-root-input")?.textContent).toBe("Root directory is required.");
-      expect(document.activeElement).toBe(byTestId("server-dialog-name"));
+      expect(errorFor("server-dialog-root-input")?.textContent).toBe("Choose the folder to share.");
+      expect(document.activeElement).toBe(byTestId("server-dialog-root"));
 
       typeInto(byTestId("server-dialog-name"), "Firmware");
       expect(errorFor("server-dialog-name-input")).toBeNull();

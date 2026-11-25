@@ -2,51 +2,76 @@ import { describe, expect, it } from "vitest";
 import { isWideBind, serviceAddress, splitHostPort, type Listener } from "./serviceAddress";
 
 const HERE: Listener = { on: "here", network: "192.168.1.20" };
-const HERE_OFFLINE: Listener = { on: "here" };
-const AGENT: Listener = { on: "there", name: "Edge box", host: "edge.example" };
-const UNKNOWN: Listener = { on: "there", name: "Edge box" };
+const OFFLINE: Listener = { on: "here" };
+const AGENT: Listener = { on: "there", name: "Edge box", host: "edge.example", shown: true };
+const SERVER: Listener = { on: "there", name: "Build Box", host: "build.example" };
 
 describe("serviceAddress (#6028)", () => {
-  it.each<[string, Listener, string, string | undefined]>([
-    // bind, who listens, what is copied, where it opens
-    ["127.0.0.1", HERE, "localhost:80", undefined],
-    ["localhost", HERE, "localhost:80", undefined],
-    ["::1", HERE, "localhost:80", undefined],
-    ["", HERE, "localhost:80", undefined],
-    ["0.0.0.0", HERE, "192.168.1.20:80", undefined],
-    ["::", HERE, "192.168.1.20:80", undefined],
-    ["*", HERE, "192.168.1.20:80", undefined],
-    ["0.0.0.0", HERE_OFFLINE, "localhost:80", undefined],
-    ["192.168.1.7", HERE, "192.168.1.7:80", undefined],
-    ["fe80::1", HERE, "[fe80::1]:80", undefined],
-    ["[fe80::1]", HERE, "[fe80::1]:80", undefined],
+  it.each<[string, Listener, string | undefined, string | undefined, string]>([
+    // bind, who listens, what is copied, where it opens, who reaches it
+    ["127.0.0.1", HERE, "localhost:80", undefined, "only this computer"],
+    ["localhost", HERE, "localhost:80", undefined, "only this computer"],
+    ["::1", HERE, "localhost:80", undefined, "only this computer"],
+    ["", HERE, "localhost:80", undefined, "only this computer"],
+    ["127.0.0.2", HERE, "127.0.0.2:80", undefined, "only this computer"],
+    ["0.0.0.0", HERE, "192.168.1.20:80", undefined, "anyone on your network"],
+    ["::", HERE, "192.168.1.20:80", undefined, "anyone on your network"],
+    ["*", HERE, "192.168.1.20:80", undefined, "anyone on your network"],
+    ["192.168.1.7", HERE, "192.168.1.7:80", undefined, "anyone on your network"],
+    ["fe80::1", HERE, "[fe80::1]:80", undefined, "anyone on your network"],
+    ["[fe80::1]", HERE, "[fe80::1]:80", undefined, "anyone on your network"],
+    // Open to others, and nobody knows how: never a localhost.
+    ["0.0.0.0", OFFLINE, undefined, undefined, "Open to your network. Address not known yet."],
+    ["::", OFFLINE, undefined, undefined, "Open to your network. Address not known yet."],
     // On another machine, localhost is that machine's.
-    ["127.0.0.1", AGENT, "localhost:80", "Edge box"],
-    ["", AGENT, "localhost:80", "Edge box"],
-    ["0.0.0.0", AGENT, "edge.example:80", undefined],
-    ["0.0.0.0", UNKNOWN, "localhost:80", "Edge box"],
-    ["10.0.0.4", AGENT, "10.0.0.4:80", undefined],
-  ])("bound to %j on %o is %s", (bind, listener, copy, on) => {
-    const address = serviceAddress(bind, 80, listener);
-    expect(address?.copy).toBe(copy);
-    expect(address?.on).toBe(on);
+    ["127.0.0.1", SERVER, "localhost:80", "Build Box", "only on Build Box"],
+    ["", SERVER, "localhost:80", "Build Box", "only on Build Box"],
+    ["0.0.0.0", SERVER, "build.example:80", undefined, "anyone who reaches Build Box"],
+    ["10.0.0.4", SERVER, "10.0.0.4:80", undefined, "anyone who reaches Build Box"],
+    // The row names its agent anyway.
+    ["127.0.0.1", AGENT, "localhost:80", "Edge box", "only on that machine"],
+    ["0.0.0.0", AGENT, "edge.example:80", undefined, "anyone who reaches that machine"],
+    ["10.0.0.4", AGENT, "10.0.0.4:80", undefined, "anyone who reaches that machine"],
+    [
+      "0.0.0.0",
+      { ...SERVER, host: undefined },
+      undefined,
+      undefined,
+      "Open to Build Box's network. Address not known.",
+    ],
+    [
+      "0.0.0.0",
+      { ...AGENT, host: undefined },
+      undefined,
+      undefined,
+      "Open to that machine's network. Address not known.",
+    ],
+  ])("bound to %j on %o is %s", (bind, listener, copy, on, reach) => {
+    const address = serviceAddress(bind, 80, listener)!;
+    expect(address.copy).toBe(copy);
+    expect(address.on).toBe(on);
+    expect(address.reach).toBe(reach);
+    expect(address.open).toBe(!reach.startsWith("only"));
   });
 
   it("is never a wide bind address", () => {
     for (const bind of ["0.0.0.0", "::", "[::]", "*", " 0.0.0.0 "]) {
       expect(isWideBind(bind)).toBe(true);
-      for (const listener of [HERE, HERE_OFFLINE, AGENT, UNKNOWN]) {
+      for (const listener of [HERE, OFFLINE, AGENT, SERVER]) {
         const copy = serviceAddress(bind, 80, listener)?.copy ?? "";
         expect(copy).not.toMatch(/0\.0\.0\.0|\[?::\]?|\*/);
+        // And never one that is the reader's own machine.
+        expect(copy).not.toContain("localhost");
       }
     }
   });
 
   it("carries the scheme, and the machine it opens on beside it", () => {
-    const address = serviceAddress("127.0.0.1", 8080, AGENT, "http://");
-    expect(address).toEqual({
+    expect(serviceAddress("127.0.0.1", 8080, AGENT, "http://")).toEqual({
       copy: "http://localhost:8080",
       on: "Edge box",
+      open: false,
+      reach: "only on that machine",
     });
   });
 

@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
-import { Copy, Trash2 } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Copy, Trash2, X } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
 import { useEmbeddedServerActivity } from "@/hooks/useEmbeddedServerActivity";
 import { formatBytes, formatClockTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
+import { t, tf } from "@/i18n/catalog";
 import { itemMatchesQuery } from "@/hooks/useListFilter";
 import type { AccessLogEntry, DetailedServerStats, TopEntry } from "@/types/embeddedServer";
 
@@ -22,25 +23,26 @@ interface Props {
   live: boolean;
   /** Set when the server runs on a remote agent rather than this computer. */
   hostAgent?: ActivityHostAgent;
+  onClose: () => void;
 }
 
-/** Empty-state copy when the backend has no log for the server. */
-export function unavailableMessage(hostAgent?: ActivityHostAgent): {
+/** What the panel says when there is nothing to read. */
+export function unavailableMessage(
+  live: boolean,
+  hostAgent?: ActivityHostAgent
+): {
   title: string;
   description: string;
 } {
   if (hostAgent && !hostAgent.supportsActivity) {
     return {
-      title: "Access log not supported by this agent version",
-      description: `Update ${hostAgent.name} to see this server's access log and detailed stats.`,
+      title: t("server.activity.unavailable"),
+      description: tf("server.activity.oldAgent", { agent: hostAgent.name }),
     };
   }
-  return {
-    title: "No access log yet",
-    description: hostAgent
-      ? `The log appears once the server has run on ${hostAgent.name}.`
-      : "The log appears once the server has run on this computer.",
-  };
+  return live
+    ? { title: t("server.activity.unavailable"), description: t("server.activity.noAnswer") }
+    : { title: t("server.activity.notYet"), description: t("server.activity.appearsWhenRun") };
 }
 
 /** The visible, searchable fields of an access-log entry. */
@@ -117,10 +119,11 @@ function TopList({ title, items }: { title: string; items: TopEntry[] }) {
 
 /**
  * Expandable per-server activity panel: detailed stats, current transfers, top
- * paths/clients and a filterable, clearable access log (PROD-034, PROD-036).
+ * paths/clients and a filterable, clearable list of requests (PROD-034,
+ * PROD-036). Closed from its own heading, which is always there (#6063).
  */
-export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props) {
-  const { view, available, error, clear } = useEmbeddedServerActivity(serverId, live);
+export function EmbeddedServerActivityPanel({ serverId, live, hostAgent, onClose }: Props) {
+  const { view, available, error, clear, retry } = useEmbeddedServerActivity(serverId, live);
   const [filter, setFilter] = useState("");
 
   const visible = useMemo(
@@ -137,9 +140,9 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
     try {
       await writeClipboard(text);
       // toast-policy: no-in-place-surface — the entries are on the clipboard
-      toast.success(`Copied ${visible.length} log entries`);
+      toast.success(`Copied ${visible.length} requests`);
     } catch (err) {
-      toast.error("Failed to copy access log", { description: errorMessage(err) });
+      toast.error("Failed to copy the requests", { description: errorMessage(err) });
     }
   };
 
@@ -147,27 +150,76 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
     try {
       await clear();
     } catch (err) {
-      toast.error("Failed to clear access log", { description: errorMessage(err) });
+      toast.error("Failed to clear the requests", { description: errorMessage(err) });
     }
   };
 
-  if (!available) {
-    const message = unavailableMessage(hostAgent);
-    return (
-      <div className="server-activity" data-testid={`server-activity-${serverId}`}>
-        <EmptyState title={message.title} description={message.description} />
-      </div>
-    );
-  }
-
-  const stats = view.stats;
-  return (
+  const panel = (content: ReactNode) => (
     <div
       className="server-activity"
       data-testid={`server-activity-${serverId}`}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
+      <div className="server-activity__header">
+        <span className="server-activity__title">{t("service.action.activity")}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label={t("server.activity.close")}
+          icon={<X size={12} />}
+          onClick={onClose}
+          data-testid={`server-activity-close-${serverId}`}
+        />
+      </div>
+      {content}
+    </div>
+  );
+  const retryButton = (
+    <Button
+      variant="secondary"
+      size="sm"
+      onClick={retry}
+      data-testid={`server-activity-retry-${serverId}`}
+    >
+      {t("service.action.retry")}
+    </Button>
+  );
+
+  const { stats } = view;
+  if (!available) {
+    const message = unavailableMessage(live, hostAgent);
+    const helps = live && (!hostAgent || hostAgent.supportsActivity);
+    return panel(
+      <EmptyState
+        title={message.title}
+        description={message.description}
+        action={helps ? retryButton : undefined}
+      />
+    );
+  }
+  if (!stats && error) {
+    return panel(
+      <EmptyState
+        title={t("server.activity.unavailable")}
+        description={error}
+        action={retryButton}
+      />
+    );
+  }
+  if (stats && stats.totalRequests === 0 && stats.totalConnections === 0) {
+    return panel(
+      <EmptyState
+        title={t("server.activity.nobody")}
+        description={t("server.activity.nobody.hint")}
+        data-testid={`server-activity-empty-${serverId}`}
+      />
+    );
+  }
+
+  return panel(
+    <>
       {stats && <StatsGrid stats={stats} dropped={view.dropped} />}
       {stats && stats.currentTransfers.length > 0 && (
         <div className="server-activity__top" data-testid={`server-activity-transfers-${serverId}`}>
@@ -191,15 +243,15 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
           size="sm"
           value={filter}
           onValueChange={setFilter}
-          placeholder="Filter log"
-          aria-label="Filter access log"
+          placeholder="Filter requests"
+          aria-label="Filter requests"
           data-testid={`server-activity-filter-${serverId}`}
         />
         <Button
           variant="ghost"
           size="sm"
           iconOnly
-          aria-label="Copy access log"
+          aria-label="Copy requests"
           icon={<Copy size={12} />}
           disabled={visible.length === 0}
           onClick={handleCopy}
@@ -209,7 +261,7 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
           variant="ghost"
           size="sm"
           iconOnly
-          aria-label="Clear access log"
+          aria-label="Clear requests"
           icon={<Trash2 size={12} />}
           errorToast={false}
           onClick={handleClear}
@@ -223,7 +275,7 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
           data-testid={`server-activity-empty-${serverId}`}
         />
       ) : (
-        <ol className="server-activity__log" aria-label="Access log">
+        <ol className="server-activity__log" aria-label="Requests">
           {visible.map((e) => (
             <li
               key={e.seq}
@@ -254,6 +306,6 @@ export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props
           ))}
         </ol>
       )}
-    </div>
+    </>
   );
 }

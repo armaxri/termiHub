@@ -395,6 +395,18 @@ fn there_is_one_start_at_a_time_and_none_while_it_may_run() {
     );
 }
 
+/// "a" waits for `on`, and the row can say until when: in [`WAIT_LIMIT`].
+fn assert_waits_for(services: &Services, on: &WaitFor) {
+    let Some(View::Waiting { on: shown, until }) = view(services) else {
+        panic!("not waiting");
+    };
+    assert_eq!(&shown, on);
+    assert_eq!(services.waits_until("a"), Some(until));
+    let left = (until - Local::now()).num_seconds();
+    let limit = WAIT_LIMIT.as_secs() as i64;
+    assert!((limit - 60..=limit).contains(&left), "{left} s");
+}
+
 #[test]
 fn a_wait_starts_once_and_a_stop_ends_it_for_good() {
     let services = Services::default();
@@ -402,11 +414,11 @@ fn a_wait_starts_once_and_a_stop_ends_it_for_good() {
     let edge = WaitFor::Agent("edge".into());
     assert!(services.wait("a", edge.clone(), now));
     assert!(!services.wait("a", edge.clone(), now), "no change");
-    assert_eq!(view(&services), Some(View::Waiting(edge.clone())));
+    assert_waits_for(&services, &edge);
     let ticket = services.begin_waiting("a").expect("waits");
     assert!(services.begin_waiting("a").is_none(), "not twice");
     services.finish(ticket, Outcome::Failed, now);
-    assert!(!services.is_waiting("a"));
+    assert!(!services.waits_until("a").is_some());
 
     services.wait("a", edge, now);
     assert_eq!(services.stop("a"), StopPlan::StoppedWaiting);
@@ -449,7 +461,7 @@ fn only_the_user_undoes_the_users_stop() {
     let edge = WaitFor::Agent("edge".into());
     services.wait_to_restart("a", edge.clone(), Instant::now());
     assert!(!services.stop_wins("edge", "a", StartedBy::Wait));
-    assert_eq!(view(&services), Some(View::Waiting(edge)));
+    assert_waits_for(&services, &edge);
     // A stop after it does.
     services.stop("a");
     assert!(services.stop_wins("edge", "a", StartedBy::Wait));

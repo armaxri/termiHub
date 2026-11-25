@@ -15,12 +15,33 @@ import {
   orderTunnelRows,
 } from "@/utils/tunnelChain";
 import { isWideBind } from "@/utils/serviceAddress";
+import { serviceCounts } from "@/utils/serviceModel";
+import { tunnelServiceState } from "@/utils/serviceState";
 import { TunnelListItem } from "./TunnelListItem";
 import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
 
 const DISCONNECTED: TunnelStatus = "disconnected";
+
+/** `tunnel`, listening on another port. */
+function withLocalPort(tunnel: TunnelConfig, localPort: number): TunnelConfig {
+  const { tunnelType } = tunnel;
+  switch (tunnelType.type) {
+    case "local":
+      return {
+        ...tunnel,
+        tunnelType: { type: "local", config: { ...tunnelType.config, localPort } },
+      };
+    case "dynamic":
+      return {
+        ...tunnel,
+        tunnelType: { type: "dynamic", config: { ...tunnelType.config, localPort } },
+      };
+    case "remote":
+      return tunnel;
+  }
+}
 
 export function TunnelSidebar() {
   const tunnels = useAppStore((s) => s.tunnels);
@@ -94,6 +115,24 @@ export function TunnelSidebar() {
 
   const handleDelete = tunnelDelete.requestDelete;
 
+  // "Use 8081" beside "Port 8080 is already in use" (#6063).
+  const handleUsePort = useCallback(
+    async (tunnelId: string, port: number) => {
+      const tunnel = tunnels.find((t) => t.id === tunnelId);
+      if (!tunnel) return;
+      try {
+        await saveTunnel(withLocalPort(tunnel, port));
+      } catch (err) {
+        toast.error(`Failed to change the port of "${tunnel.name}"`, {
+          description: errorMessage(err),
+        });
+        return;
+      }
+      await startTunnel(tunnelId);
+    },
+    [tunnels, saveTunnel, startTunnel]
+  );
+
   // Stopping a live tunnel drops every connection flowing through it — confirm
   // first (UX-021). A tunnel with no live forwards has nothing to lose, so stop
   // directly (e.g. cancelling a hung connect).
@@ -132,6 +171,9 @@ export function TunnelSidebar() {
   // parent, then flatten to the nav order. Keyboard nav walks the same visible
   // order, including nested companion rows.
   const rows = useMemo(() => orderTunnelRows(tunnels), [tunnels]);
+  const counts = serviceCounts(
+    tunnels.map((t) => ({ state: tunnelServiceState(tunnelStates[t.id]?.status) }))
+  );
   const rowTunnels = useMemo(() => rows.map((r) => r.tunnel), [rows]);
 
   // Roving-tabindex keyboard navigation over the flat tunnel list, matching the
@@ -166,73 +208,73 @@ export function TunnelSidebar() {
           data-testid="tunnel-empty-message"
         />
       ) : (
-        <div
-          className="tunnel-sidebar__list"
-          data-testid="tunnel-list"
-          role="tree"
-          aria-label="SSH tunnels"
-          onKeyDown={nav.onKeyDown}
-        >
-          {rows.map(({ tunnel, parent }, index) => {
-            const { ref, ...itemProps } = nav.getItemProps(index);
-            // A parent's combined pair status folds both live states so the row
-            // reads "does localhost:PORT work?" rather than juggling two rows.
-            const companion = parent ? undefined : findCompanion(tunnels, tunnel.id);
-            const pairStatus = combinedPairStatus(
-              tunnelStates[tunnel.id]?.status ?? DISCONNECTED,
-              (companion ? tunnelStates[companion.id]?.status : undefined) ?? DISCONNECTED,
-              !!companion
-            );
-            // Combined status the companion row also renders (degraded → inline fix).
-            const parentPairStatus = parent
-              ? combinedPairStatus(
-                  tunnelStates[parent.id]?.status ?? DISCONNECTED,
-                  tunnelStates[tunnel.id]?.status ?? DISCONNECTED,
-                  true
-                )
-              : undefined;
-            return (
-              <TunnelListItem
-                key={tunnel.id}
-                tunnel={tunnel}
-                state={tunnelStates[tunnel.id]}
-                context={context}
-                onStart={startTunnel}
-                onStop={handleStop}
-                onReconnect={handleReconnect}
-                onEdit={handleEdit}
-                onDuplicate={handleDuplicate}
-                onDelete={handleDelete}
-                nested={!!parent}
-                pairStatus={parent ? parentPairStatus : companion ? pairStatus : undefined}
-                companionRedundant={!!companion && isCompanionRedundant(tunnel)}
-                onRemoveCompanion={companion ? () => handleDelete(companion.id) : undefined}
-                rowRef={ref}
-                rowProps={itemProps}
-              />
-            );
-          })}
-        </div>
+        <>
+          <p className="service-counts" data-testid="tunnel-counts">
+            {counts}
+          </p>
+          <div
+            className="tunnel-sidebar__list"
+            data-testid="tunnel-list"
+            role="tree"
+            aria-label="SSH tunnels"
+            onKeyDown={nav.onKeyDown}
+          >
+            {rows.map(({ tunnel, parent }, index) => {
+              const { ref, ...itemProps } = nav.getItemProps(index);
+              // A parent's combined pair status folds both live states so the row
+              // reads "does localhost:PORT work?" rather than juggling two rows.
+              const companion = parent ? undefined : findCompanion(tunnels, tunnel.id);
+              const pairStatus = combinedPairStatus(
+                tunnelStates[tunnel.id]?.status ?? DISCONNECTED,
+                (companion ? tunnelStates[companion.id]?.status : undefined) ?? DISCONNECTED,
+                !!companion
+              );
+              // Combined status the companion row also renders (degraded → inline fix).
+              const parentPairStatus = parent
+                ? combinedPairStatus(
+                    tunnelStates[parent.id]?.status ?? DISCONNECTED,
+                    tunnelStates[tunnel.id]?.status ?? DISCONNECTED,
+                    true
+                  )
+                : undefined;
+              return (
+                <TunnelListItem
+                  key={tunnel.id}
+                  tunnel={tunnel}
+                  state={tunnelStates[tunnel.id]}
+                  context={context}
+                  onStart={startTunnel}
+                  onStop={handleStop}
+                  onReconnect={handleReconnect}
+                  onEdit={handleEdit}
+                  onDuplicate={handleDuplicate}
+                  onDelete={handleDelete}
+                  onUsePort={handleUsePort}
+                  nested={!!parent}
+                  pairStatus={parent ? parentPairStatus : companion ? pairStatus : undefined}
+                  companionRedundant={!!companion && isCompanionRedundant(tunnel)}
+                  onRemoveCompanion={companion ? () => handleDelete(companion.id) : undefined}
+                  rowRef={ref}
+                  rowProps={itemProps}
+                />
+              );
+            })}
+          </div>
+        </>
       )}
       <ConfirmDeleteDialog {...tunnelDelete.dialogProps} />
       <ConfirmDialog
         open={pendingLifecycle !== null}
         variant="danger"
-        title={
-          pendingLifecycle?.kind === "reconnect"
-            ? "Reconnect active tunnel?"
-            : "Stop active tunnel?"
-        }
+        title={pendingLifecycle?.kind === "reconnect" ? "Restart the tunnel?" : "Stop the tunnel?"}
         message={
           pendingLifecycle
             ? pendingLifecycle.kind === "reconnect"
-              ? `Reconnecting "${pendingLifecycle.name}" tears it down and re-establishes it, ` +
-                `dropping every connection currently forwarded through it. Continue?`
-              : `Stopping "${pendingLifecycle.name}" drops every connection currently forwarded ` +
-                `through it. Continue?`
+              ? `Restarting "${pendingLifecycle.name}" drops every connection that goes through it now.`
+              : `Stopping "${pendingLifecycle.name}" drops every connection that goes through it now.`
             : ""
         }
-        confirmLabel={pendingLifecycle?.kind === "reconnect" ? "Reconnect" : "Stop"}
+        confirmLabel={pendingLifecycle?.kind === "reconnect" ? "Restart" : "Stop"}
         confirmVariant="danger"
         testIdBase="confirm-tunnel-lifecycle"
         data-testid="confirm-tunnel-lifecycle-dialog"

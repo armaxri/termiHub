@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use tauri::test::{mock_app, MockRuntime};
 use tauri::Manager;
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
+use termihub_core::util::service_cause::ServiceCause;
 
 use super::EmbeddedServerManager;
 use crate::app_tasks::AppTasks;
@@ -155,6 +156,13 @@ impl Harness {
         assert_eq!(state.status, ServerStatus::Error, "{state:?}");
         let error = state.error.unwrap_or_default();
         assert!(error.contains(reason), "{error:?} does not say {reason:?}");
+        // Its button must fit its words (#6063).
+        let offline = error.contains("agent is not connected");
+        assert_eq!(
+            state.cause,
+            offline.then_some(ServiceCause::AgentOffline),
+            "{error:?}"
+        );
         let last = self
             .events
             .lock()
@@ -269,7 +277,7 @@ fn an_offline_agent_means_not_started() {
     );
     let h = run(dir.path(), &agent, &[("edge", "Edge box")]);
     h.manager.start_server("web").expect_err("offline");
-    h.assert_refused("web", "agent Edge box is not connected");
+    h.assert_refused("web", "its agent is not connected");
     assert!(agent.requests().is_empty());
 }
 
@@ -303,7 +311,7 @@ fn a_renamed_agent_keeps_hosting_and_is_named_as_it_is_now() {
     let offline = Arc::new(FakeAgent::offline());
     let h = run(dir.path(), &offline, &[("edge", "New name")]);
     h.manager.start_server("web").expect_err("offline");
-    h.assert_refused("web", "agent New name is not connected");
+    h.assert_refused("web", "its agent is not connected");
 }
 
 #[test]
@@ -319,7 +327,7 @@ fn an_agent_that_is_too_old_means_not_started() {
     );
     let h = run(dir.path(), &agent, &[("edge", "Edge box")]);
     h.manager.start_server("web").expect_err("too old");
-    h.assert_refused("web", "agent Edge box is too old");
+    h.assert_refused("web", "its agent is too old");
 }
 
 #[test]
@@ -335,7 +343,7 @@ fn an_agent_that_refuses_means_not_started() {
     );
     let h = run(dir.path(), &agent, &[("edge", "Edge box")]);
     h.manager.start_server("web").expect_err("refused");
-    h.assert_refused("web", "agent Edge box could not start it");
+    h.assert_refused("web", "its agent could not start it");
 }
 
 /// Every host this build cannot read: from a newer build, or damaged.

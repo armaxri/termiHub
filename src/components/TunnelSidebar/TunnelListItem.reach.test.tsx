@@ -4,7 +4,7 @@
  * the agent warns (not reachable from this computer), a widened / SSH-server bind
  * reads plainly, and desktop tunnels show no note.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -66,6 +66,7 @@ function renderItem(tunnel: TunnelConfig, state: TunnelState): void {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );
@@ -100,7 +101,7 @@ describe("TunnelListItem — reported reachability note (#2199)", () => {
 
   it("says on which machine a loopback bind on the agent opens (#6028)", () => {
     renderItem(AGENT_TUNNEL, stateWith("agentOnly", "connected", "127.0.0.1:8080"));
-    expect(address()).toContain("localhost:8080 on build-box");
+    expect(address()).toBe("localhost:8080only on that machine");
     expect(rowTooltip()).toContain("Bound 127.0.0.1:8080: reachable only on build-box");
   });
 

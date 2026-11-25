@@ -181,7 +181,7 @@ describe("tunnelSlice — start/reconnect toast resolves on connected, not on ac
     pushView({ t1: makeState("t1", "connected") }, [t1]);
 
     await useAppStore.getState().reconnectTunnel("t1");
-    expect(toastMock.loading).toHaveBeenCalledWith("Reconnecting db…");
+    expect(toastMock.loading).toHaveBeenCalledWith("Restarting db…");
     expect(toastMock.success).not.toHaveBeenCalled();
 
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);

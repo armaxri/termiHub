@@ -37,7 +37,7 @@ describe("tunnelRowTooltip (#5770)", () => {
     );
   });
 
-  it("adds the traffic, a reachability note with its bound address and a pair label", () => {
+  it("adds the traffic, and a reachability note with its bound address", () => {
     const lines = tunnelRowTooltip(LOCAL, {
       sshLabel: "bastion",
       host: LOCAL_HOST,
@@ -45,12 +45,10 @@ describe("tunnelRowTooltip (#5770)", () => {
       upRate: 1024,
       reach: "reachable on build-box's network",
       boundAddress: "0.0.0.0:5432",
-      pair: "Linked · connected",
     });
     expect(lines.slice(4)).toEqual([
       "↑ 2.0 KB (1 KB/s) · ↓ 0 B · 1 / 4 connections",
       "Bound 0.0.0.0:5432: reachable on build-box's network",
-      "Linked · connected",
     ]);
   });
 
