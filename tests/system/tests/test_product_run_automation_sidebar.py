@@ -67,8 +67,8 @@ def _layout(**over: Any) -> dict[str, Any]:
     good: dict[str, Any] = {
         "sidebar": _box(48, 0, 200, 560),
         "name": _box(60, 100, 70, 16),
-        "marker": _box(132, 100, 12, 12),
-        "switch": _box(150, 98, 28, 16),
+        "marker": _box(72, 124, 110, 30),
+        "switch": _box(190, 130, 28, 16),
         "run": _box(190, 95, 26, 26),
         "moreOpacity": "0",
     }
@@ -94,8 +94,9 @@ def test_grade_new_copy_passes():
 
 
 def test_grade_row_text():
-    row = "Deploy prep Pull and build Armed"
-    assert row_text_problems(row, "Deploy prep", "Pull and build", "Armed") == []
+    row = "Deploy prep Pull and build Triggers on: hotkey F8"
+    marker = "Triggers on: hotkey F8"
+    assert row_text_problems(row, "Deploy prep", "Pull and build", marker) == []
     assert row_text_problems("Deploy prep\nOn connect · prod", "Deploy prep") == [
         "settings text on the row: 'On connect · prod'"
     ]
@@ -107,10 +108,16 @@ def test_grade_row_layout_passes():
     assert row_layout_problems(_layout(marker=None, switch=None)) == []
 
 
-def test_grade_switch_on_a_second_line_fails():
-    # The R-077 shape: the marker and its switch under the name.
-    problems = row_layout_problems(_layout(switch=_box(60, 124, 28, 16)))
-    assert "the switch is not on the name's line" in problems
+def test_grade_switch_away_from_its_sentence_fails():
+    # The R-077 shape: one could not tell which row the switch belongs to.
+    problems = row_layout_problems(_layout(switch=_box(190, 170, 28, 16)))
+    assert problems == ["the switch is not beside its sentence"]
+    assert row_layout_problems(_layout(switch=_box(160, 130, 28, 16))) == [
+        "the switch covers its sentence"
+    ]
+    assert row_layout_problems(_layout(marker=_box(72, 98, 110, 50))) == [
+        "the marker covers the name"
+    ]
 
 
 def test_grade_hidden_run_control_fails():
@@ -258,7 +265,7 @@ class TestProductRunAutomationSidebar(
             "automation-sidebar.list",
             "A typed, a triggered and a scheduled automation share one list of names and states",
             expect="the Automations sidebar: 'Typed …' and 'Scheduled …' with only their names "
-            "and a Run button, 'Answer …' with 'Armed', its switch and Run on the name's line",
+            "and a Run button, 'Answer …' with 'Triggers on: …' and its switch under its name",
         ):
             name = f"pr-sidebar-{t}"
             self.switch_to_connections_sidebar()
@@ -293,7 +300,11 @@ class TestProductRunAutomationSidebar(
             listed = [i for i in stored if self.driver.exists(f"automation-item-{i}")]
             problems = list_problems(listed, list(rows.values()))
             for kind, aid in rows.items():
-                marker = "Armed" if kind == "triggered" else ""
+                marker = ""
+                if kind == "triggered":
+                    marker = self.driver.get_text(f"automation-armed-{aid}").strip()
+                    if not marker.startswith("Triggers on: matching output in "):
+                        problems.append(f"the trigger sentence reads {marker!r}")
                 text = self.row_text(f"automation-item-{aid}")
                 self.evidence(f"{kind}: {text!r}; tooltip {self.row_tooltip(f'automation-item-{aid}')!r}")
                 problems += row_text_problems(text, stored[aid]["name"], "", marker)

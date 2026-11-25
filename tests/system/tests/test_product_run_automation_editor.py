@@ -335,7 +335,7 @@ class TestProductRunAutomationEditor(
         with self.step(
             "automation-editor.trigger",
             "A trigger shows its settings under itself; Ctrl+C and the trigger are stored",
-            expect="the open 'When it runs' section: 'When you run it …', the Armed switch and "
+            expect="the open 'When it runs' section: 'When you run it …', the Triggers on switch and "
             "an On output match card with its connections and pattern",
             screenshot=False,
         ):
@@ -354,7 +354,7 @@ class TestProductRunAutomationEditor(
             problems = stored_keys_problems(stored, ["\x03"], "recorded", step=1)
             problems += trigger_problems(stored, ["on-output-match"])
             if armed != "true":
-                problems.append(f"the Armed switch reads {armed!r}")
+                problems.append(f"the Triggers switch reads {armed!r}")
             assert not problems, problems
 
     def test_50_schedule_link(self):

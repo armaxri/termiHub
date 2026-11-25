@@ -113,16 +113,18 @@ for (const viewport of [
       await check(page, "settings", id("import-migration-automations"));
       await page.locator(id("import-migration-automations-import-btn")).click();
       await page.locator(DIALOG).waitFor();
-      for (const note of [
-        "refused",
-        "left-out",
-        "disarmed",
-        "local-process",
-        "script-paths",
-        "outside",
+      const dialog = page.locator(DIALOG);
+      await expect(dialog).toContainText("Imported 4 of 5 automations");
+      await expect(page.locator(id("automation-import-refused-Odd one"))).toContainText("teleport");
+      for (const [name, says] of [
+        ["Partly known", "Left out, because this version does not know it: later"],
+        ["Notify", "Runs a program on this computer"],
+        ["Deploy", "/home/ops/deploy/scripts/release.sh"],
+        ["Deploy", "Runs an automation that is not in the file"],
       ]) {
-        await expect(page.locator(id(`automation-import-note-${note}`))).toHaveCount(1);
+        await expect(page.locator(id(`automation-import-entry-${name}`))).toContainText(says);
       }
+      await expect(dialog).toContainText("Triggers off: On connect");
       await check(page, "imported", DIALOG);
     });
 

@@ -832,7 +832,7 @@ class TestProductRunSettingsThemes(
             if has_header:
                 problems.append("the page repeats its title as a SCHEDULES section header")
             if not self.driver.exists("schedules-pause-toggle"):
-                problems.append("the Pause all switch is missing")
+                problems.append("the Pause all button is missing")
             assert not problems, "; ".join(problems)
 
         with self.step(

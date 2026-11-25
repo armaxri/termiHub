@@ -92,12 +92,12 @@ def test_grade_round_trip():
 
 
 def test_grade_disarmed():
-    assert disarmed_problems(_automation(triggersEnabled=False), "Off") == []
+    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers off: not on …") == []
     assert disarmed_problems(_automation(), None) == [
         "it is stored armed",
         "its row shows no marker",
     ]
-    assert disarmed_problems(_automation(triggersEnabled=False), "Armed") != []
+    assert disarmed_problems(_automation(triggersEnabled=False), "Triggers on: …") != []
 
 
 def test_grade_called():
@@ -108,11 +108,11 @@ def test_grade_called():
 
 
 def test_grade_palette():
-    assert palette_problems("Deploy→ prod-web", "Deploy", "prod-web") == []
+    assert palette_problems("Run Deploytypes 1 step in prod-web", "Deploy", "prod-web") == []
     assert palette_problems(None, "Deploy", "t") == ["'Deploy' is not found"]
-    assert len(palette_problems("Run macro: Deploymacro", "Deploy", "t")) == 3
+    assert len(palette_problems("Play macro: Deploymacro", "Deploy", "t")) == 3
     # The user's own name may hold the word.
-    assert palette_problems("My macro→ t", "My macro", "t") == []
+    assert palette_problems("Run My macrotypes 1 step in t", "My macro", "t") == []
 
 
 # ── live grade ────────────────────────────────────────────────────────────
@@ -167,8 +167,9 @@ class TestProductRunAutomationFiles(
         self.driver.click("automation-import-close")
         self.wait(lambda: not self.driver.exists(IMPORT_DIALOG), what="the dialog to close")
 
-    def _note(self, note: str) -> Optional[str]:
-        testid = f"automation-import-note-{note}"
+    def _entry(self, name: str) -> Optional[str]:
+        """What the import's result says about the automation called ``name``."""
+        testid = f"automation-import-entry-{name}"
         return self.driver.get_text(testid) if self.driver.exists(testid) else None
 
     def _palette(self, query: str) -> None:
@@ -231,10 +232,10 @@ class TestProductRunAutomationFiles(
             first.write_text(json.dumps(callee), encoding="utf-8")
             self._import(first)
             self.wait(lambda: self.driver.exists(IMPORT_DIALOG), what="the import dialog")
-            note = self._note("disarmed")
-            self.evidence(f"note {note!r}")
+            note = self._entry(f"Caller {t}")
+            self.evidence(f"caller {note!r}")
             self.shot(label="imported")
-            problems = [] if f"Caller {t}" in (note or "") else ["it does not say what is off"]
+            problems = [] if "Triggers off" in (note or "") else ["it does not say what is off"]
             self._close_import()
             originals = {n: self._named(f"{n} {t}") for n in ("Callee", "Caller")}
             problems += called_problems(originals["Caller"], originals["Callee"])
@@ -263,7 +264,7 @@ class TestProductRunAutomationFiles(
         with self.step(
             "automation-files.switched-off",
             "The hotkey of an imported automation does nothing until it is turned on",
-            expect="the Automations sidebar: the imported 'Caller' row reads 'Off' with its "
+            expect="the Automations sidebar: the imported 'Caller' row reads 'Triggers off …' with its "
             "switch off",
             screenshot=False,
         ):
@@ -320,13 +321,13 @@ class TestProductRunAutomationFiles(
             )
             self._import(old)
             self.wait(lambda: self.driver.exists(IMPORT_DIALOG), what="the import dialog")
-            outside = self._note("outside")
+            outside = self._entry(f"Old workflow {t}")
             self.evidence(f"outside {outside!r}")
             self.shot(label="old")
             self._close_import()
             problems = []
-            if f"Old workflow {t}" not in (outside or ""):
-                problems.append("the missing automation is not named")
+            if "an automation that" not in (outside or ""):
+                problems.append("the missing automation is not mentioned")
             macro = self._named(f"Old macro {t}") or {}
             kinds = [s.get("kind") for s in macro.get("steps") or []]
             if kinds != ["type-keys"]:
@@ -349,7 +350,7 @@ class TestProductRunAutomationFiles(
         with self.step(
             "automation-files.palette",
             "The palette lists an automation once, finds it by its old names and runs it",
-            expect="the command palette with the automation, a bolt and '→' the terminal's name",
+            expect="the command palette with 'Run' and the automation, and what it types in which terminal",
             screenshot=False,
         ):
             self.require("automation-files.round-trip")

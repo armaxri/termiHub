@@ -174,7 +174,7 @@ services, HTTP monitors, plugins) shows:
   description is optional, single line and at most 80 characters
   (`ITEM_DESCRIPTION_MAX_LENGTH` in `src/utils/itemDescription.ts`). No description, no line.
 - **A compact state marker, only when the state needs attention:** running, error or failed,
-  armed/off, connected, disabled, paused. A routine state that the dot already says
+  waiting, cannot run, connected, disabled, paused. A routine state that the dot already says
   ("connected") is not a marker.
 - **Its run control, when the list exists to run things:** an automation's Run, a tunnel's or
   service's Start / Stop (Retry after an error). It stays visible at rest on the row's
@@ -192,7 +192,6 @@ accessible description.
 | Do                                   | Don't                                             |
 | ------------------------------------ | ------------------------------------------------- |
 | Prod web · _Main shop front_         | Prod web · _deploy@10.0.0.4:22\_                  |
-| Answer on match · ⚡ Armed           | Answer on match · _On output match · prod-shell_  |
 | Release check                        | Release check · _echo start_ · _Last run: 5m ago_ |
 | Prod DB (dot: connected)             | Prod DB · LOCAL · _127.0.0.1:5432 → db:5432_      |
 | Docs share · _Error: port in use_    | Docs share · HTTP · _:8080 → /srv/docs_           |
@@ -205,6 +204,14 @@ itself, what, where, and whether the last run happened. Its row says its state w
 and the rule, the automation and the connections, why it will not run, and the last run with the
 whole reason. Those lines wrap and are never cut. Its switch shows on and off; a coloured dot
 always means an outcome. A schedule is **On**, **Off** or **Paused**, never "enabled" or "armed".
+
+**An automation's row is the other exception** (#6026): one decides there whether something may
+type by itself. Under its name it says, in sentences, which hotkeys and triggers start it
+("Triggers on: hotkey F8, connecting to prod"), or what does not while they are off and that it
+can still be run, with their switch; when a schedule runs it next; in which terminal it runs and
+at which step; and why it cannot run. An automation is never "off" or "armed": its **triggers** are
+**on** or **off**. The verbs are **Run**, **Record** and **Stop** (a stopped run is "Stopped", not
+"canceled"). What it types, its last run and its tags stay in the tooltip.
 
 Not list rows, so this rule does not apply: location context that says where a view is (the
 file browser's host label), detail areas (the status bar's SSH and serial chips, a service's

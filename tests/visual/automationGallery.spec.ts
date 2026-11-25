@@ -106,6 +106,7 @@ const STATES = {
   "schedules--editor-password": "Schedule an automation that may meet a password prompt.",
   "schedules--editor-waits": "Schedule an automation that waits for the user.",
   "palette--automations": "Find an automation by name and know what Enter does.",
+  "palette--triggers-off": "Run one whose triggers are off: does it still run?",
   "palette--no-terminal": "The same without a terminal, with one that cannot run.",
   "import--notes": "After an import: what came in, was switched off, left out, refused.",
 } as const;
@@ -690,7 +691,7 @@ for (const viewport of WINDOWS) {
         await page.locator("[role=tab]").first().click();
         await page.locator(id("automation-start-typing")).click();
         await expect(page.locator(id("automation-running-password"))).toHaveText("Waiting for you");
-        await expect(page.locator(id("automation-running-typing"))).toHaveText("Running");
+        await expect(page.locator(id("automation-item-typing"))).toContainText("50 % typed");
         await shot(page, "sidebar--waiting", SIDEBAR);
         await requestQuit(page);
         await shot(page, "run--quit", QUIT);
@@ -1057,6 +1058,11 @@ for (const viewport of WINDOWS) {
         await page.locator(id("command-palette-input")).fill("re");
         await page.locator(id("command-palette-item-automation:full")).waitFor();
         await shot(page, "palette--automations", id("command-palette"));
+        await page.locator(id("command-palette-input")).fill("night");
+        await expect(page.locator(id("command-palette-item-automation:off-trigger"))).toContainText(
+          "triggers off"
+        );
+        await shot(page, "palette--triggers-off", id("command-palette"));
       });
 
       test("palette, no terminal", async ({ page }) => {

@@ -113,7 +113,7 @@ class TestScheduledRuns(
         """Flip the "Pause all" switch like a user and wait for the backend."""
         if self._paused() == paused:
             return
-        self.wait(lambda: self.driver.exists(PAUSE_TOGGLE), what="the Pause all switch")
+        self.wait(lambda: self.driver.exists(PAUSE_TOGGLE), what="the Pause all button")
         self.driver.click(PAUSE_TOGGLE)
         self.wait(lambda: self._paused() == paused, what=f"scheduling paused={paused}")
 
