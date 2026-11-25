@@ -38,12 +38,18 @@ fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 
+/// Where `program` is. Not joined as a path, which Windows does with a backslash:
+/// the tests compare the text.
+fn bin(program: &str) -> String {
+    format!("/bin/{program}")
+}
+
 fn standing(m: &AutomationManager, chain: &[&str], program: &str, args: &[&str]) -> Standing {
     m.standing(
         &strings(chain),
         program,
         &strings(args),
-        Path::new("/bin").join(program).as_path(),
+        Path::new(&bin(program)),
     )
 }
 
@@ -52,7 +58,7 @@ fn confirm(m: &AutomationManager, chain: &[&str], program: &str, args: &[&str]) 
         &strings(chain),
         program,
         &strings(args),
-        Path::new("/bin").join(program).as_path(),
+        Path::new(&bin(program)),
     )
     .unwrap();
 }
@@ -510,12 +516,28 @@ fn a_confirmation_can_be_seen_and_taken_back() {
     assert!(asks(&m, &["b"], "make", &["one"]));
 }
 
-/// What a build before #6057 wrote still counts.
+/// What a build before #6057 wrote still counts, however the system writes paths.
+#[test]
+fn a_confirmation_kept_as_a_hash_is_the_one_kept_in_full() {
+    let args = strings(&["a b"]);
+    for path in [
+        "/bin/make",
+        r"C:\Program Files\make.exe",
+        r"\\nas\tools\make.exe",
+    ] {
+        // As that build computed it: from the text of the path.
+        let hash = sha256_hex(json!([path, args]).to_string().as_bytes());
+        let path = Path::new(path);
+        assert_eq!(command_hash(path, &args), hash);
+        assert_eq!(ConfirmedCommand::new(path, &args).key(), hash);
+    }
+}
+
 #[test]
 fn a_confirmation_kept_as_a_hash_still_counts_and_can_be_taken_back() {
     let dir = TempDir::new().unwrap();
     import(&manager(&dir), runs("a", "make", &[]));
-    let hash = command_hash(Path::new("/bin/make"), &[]);
+    let hash = command_hash(Path::new(&bin("make")), &[]);
     let old = json!({ "version": "1", "own": {}, "confirmed": { "a": [hash] } });
     fs::write(trust_file(&dir), old.to_string()).unwrap();
     let m = manager(&dir);
