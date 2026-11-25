@@ -185,9 +185,31 @@ const run = (over: Record<string, unknown>) => ({
   origin: "manual",
   ...over,
 });
+/** The nightly cleanup at 02:00 on a day: its run, and the schedule's attempt. */
+const nightlyRun = (month: string, day: string) =>
+  run({
+    id: `n${month}-${day}`,
+    automationId: "off-trigger",
+    automationName: "Nightly cleanup",
+    startedAt: `2026-${month}-${day}T02:00:00Z`,
+    endedAt: `2026-${month}-${day}T02:00:04Z`,
+    stepsCompleted: 1,
+    total: 1,
+    targetLabel: "Build Box",
+    origin: "scheduled",
+  });
+const nightlyAttempt = (month: string, day: string) => ({
+  at: `2026-${month}-${day}T02:00:04Z`,
+  startedAt: `2026-${month}-${day}T02:00:00Z`,
+  durationMs: 4000,
+  outcome: "completed",
+  message: "Ran on 1 terminal",
+  runIds: [`n${month}-${day}`],
+});
 const RUNS = [
   run({ id: "r2", origin: "palette", endedAt: "2026-10-01T12:01:12Z" }),
   run({ id: "r3", status: "cancelled", stepsCompleted: 2, origin: "hotkey" }),
+  nightlyRun("10", "01"),
   run({
     id: "r1",
     automationId: "failed",
@@ -215,6 +237,7 @@ const RUNS = [
     total: 2,
     endedAt: "2026-09-30T08:00:00Z",
   }),
+  nightlyRun("09", "30"),
 ];
 
 const schedule = (over: Record<string, unknown>) => ({
@@ -237,14 +260,8 @@ const MISSED = {
   missedDueAt: "2026-10-01T02:00:00Z",
   message: "termiHub was closed or the computer was asleep",
 };
-const COMPLETED = {
-  at: "2026-09-30T02:00:04Z",
-  startedAt: "2026-09-30T02:00:00Z",
-  durationMs: 4000,
-  outcome: "completed",
-  message: "Ran on 1 terminal",
-  runIds: ["gone"],
-};
+const CLEANED_TODAY = nightlyAttempt("10", "01");
+const CLEANED_YESTERDAY = nightlyAttempt("09", "30");
 /** Failed today at 01:00: the run `r1`. */
 const FAILED = {
   at: "2026-10-01T01:00:01Z",
@@ -256,11 +273,12 @@ const FAILED = {
 };
 const NIGHTLY = schedule({
   id: "s1",
-  name: "Backup every night",
+  name: "Clean up every night",
+  action: { kind: "automation", automationId: "off-trigger" },
   connectIfNeeded: true,
-  lastRunAt: COMPLETED.startedAt,
-  lastResult: COMPLETED,
-  history: [COMPLETED],
+  lastRunAt: CLEANED_TODAY.startedAt,
+  lastResult: CLEANED_TODAY,
+  history: [CLEANED_TODAY, CLEANED_YESTERDAY],
 });
 const HEALTH_CHECK = schedule({
   id: "s2",
@@ -271,23 +289,23 @@ const HEALTH_CHECK = schedule({
   confirmedAt: undefined,
   nextRunAt: undefined,
 });
-const SCHEDULES = { paused: false, schedules: [NIGHTLY, HEALTH_CHECK] };
-/** Two schedules whose last night went wrong. */
+const ARCHIVE = schedule({
+  id: "s3",
+  name: "Copy to the archive",
+  rule: { kind: "daily", time: "01:00" },
+  nextRunAt: "2026-10-02T01:00:00Z",
+  lastRunAt: FAILED.startedAt,
+  lastResult: FAILED,
+  history: [FAILED],
+});
+const SCHEDULES = { paused: false, schedules: [NIGHTLY, HEALTH_CHECK, ARCHIVE] };
+/** A night in which one was missed and one failed. */
 const TROUBLED = {
   paused: false,
-  schedules: [
-    { ...NIGHTLY, lastResult: MISSED, history: [MISSED, COMPLETED] },
-    schedule({
-      id: "s3",
-      name: "Copy to the archive",
-      rule: { kind: "daily", time: "01:00" },
-      nextRunAt: "2026-10-02T01:00:00Z",
-      lastRunAt: FAILED.startedAt,
-      lastResult: FAILED,
-      history: [FAILED],
-    }),
-  ],
+  schedules: [{ ...NIGHTLY, lastResult: MISSED, history: [MISSED, CLEANED_YESTERDAY] }, ARCHIVE],
 };
+/** The runs of that night: the missed one left none. */
+const TROUBLED_RUNS = RUNS.filter((r) => (r as { id?: string }).id !== "n10-01");
 const DELETED = {
   paused: false,
   schedules: [
@@ -615,9 +633,13 @@ for (const viewport of WINDOWS) {
       });
 
       /** Boot with these schedules and open their section. */
-      async function bootSchedules(page: Page, schedules: unknown, automations = LIBRARY) {
+      async function bootSchedules(
+        page: Page,
+        schedules: unknown,
+        { automations = LIBRARY, runs = RUNS } = {}
+      ): Promise<void> {
         await boot(page, theme, {
-          automationData: { automations, runs: RUNS, schedules: schedules as typeof SCHEDULES },
+          automationData: { automations, runs, schedules: schedules as typeof SCHEDULES },
         });
         await page.locator(id("schedules-section-toggle")).click();
         await page.locator(id("schedule-enable-s1")).waitFor();
@@ -683,7 +705,7 @@ for (const viewport of WINDOWS) {
       });
 
       test("schedules, missed and failed", async ({ page }) => {
-        await bootSchedules(page, TROUBLED);
+        await bootSchedules(page, TROUBLED, { runs: TROUBLED_RUNS });
         await page.locator(id("schedule-last-s3")).scrollIntoViewIfNeeded();
         await shot(page, "schedules--missed", SIDEBAR);
         await page.locator(id("schedule-more-s1")).click();
@@ -726,7 +748,7 @@ for (const viewport of WINDOWS) {
       });
 
       test("schedules, an automation that cannot run alone", async ({ page }) => {
-        await bootSchedules(page, SCHEDULES, UNATTENDED);
+        await bootSchedules(page, SCHEDULES, { automations: UNATTENDED });
         await newSchedule(page, "asks");
         await page.locator(id("schedule-editor-automation-note")).waitFor();
         await shot(page, "schedules--editor-asks", SCHEDULE_EDITOR);
