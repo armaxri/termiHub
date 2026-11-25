@@ -102,6 +102,19 @@ describe("what is typed at a password prompt", () => {
     expect(withoutSecrets(recorded).map((c) => c.data)).toEqual(["sudo -v\r", "ls\r"]);
   });
 
+  it("is kept apart while something waits for it, whatever the screen shows (#6025)", () => {
+    const { at, recorder } = setup();
+    at.screen = "Deploy hunter2";
+    const read = () => at.screen;
+    recorder.push("hunter2", read, "Deploy");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
+    recorder.reserve(read, "Deploy").fill("pasted");
+    // The wait is over without an Enter: what follows is not part of it.
+    at.screen = "$ ";
+    recorder.push("x", read);
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Deploy" }]);
+  });
+
   it("is flagged when the prompt masks it", () => {
     const { at, recorder, type } = setup();
     at.screen = "PIN: ";

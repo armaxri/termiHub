@@ -67,6 +67,11 @@ describe("the hotkey field", () => {
   it.each<[string, KeyboardEventInit, RegExp]>([
     ["a plain letter", { key: "k", code: "KeyK" }, /Add Ctrl, Alt or Cmd/],
     ["a plain function key", { key: "F5", code: "F5" }, /stays with terminal programs/],
+    [
+      "a key that cannot be written",
+      { key: "+", code: "Equal", ctrlKey: true },
+      /cannot be a hotkey/,
+    ],
     ["a dead key", { key: "Dead", code: "Backquote", ctrlKey: true }, /starts an accent/],
   ])("refuses %s and says why", async (_what, init, why) => {
     await open("Ctrl+Alt+K");

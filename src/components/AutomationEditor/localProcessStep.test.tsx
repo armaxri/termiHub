@@ -129,6 +129,7 @@ describe("the Run local process step", () => {
     click("automation-editor-step-toggle-1");
     expect(query("automation-editor-step-blocked-1")).toBeNull();
     expect(query("automation-editor-step-summary-1")?.textContent).toBe("");
+    expect(query("automation-editor-footer-note")).toBeNull();
   });
 });
 

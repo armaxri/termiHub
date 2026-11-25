@@ -371,6 +371,27 @@ describe("saving", () => {
       expect(typed(false)).toEqual(["wait-for-user", ["ls\r"]]);
     });
 
+    it("a paste is kept apart too while an automation waits (#6025)", () => {
+      useAppStore.setState({
+        automationWaits: [
+          {
+            runId: "r",
+            tabId: "a",
+            tabTitle: "a",
+            automationName: "Deploy",
+            until: Date.now() + 1000,
+            stillAsking: false,
+          },
+        ],
+      });
+      store().startRecording();
+      store()
+        .reserveRecordedPaste("a", () => "$ ")!
+        .fill("hunter2");
+      store().stopRecording();
+      expect(store().recordedTake?.secrets).toEqual([{ start: 0, end: 1, prompt: "Deploy" }]);
+    });
+
     it("alone leaves nothing to save", async () => {
       store().startRecording();
       for (const key of ["p", "\r"]) store().recordInput("a", key, () => "Password: ");
@@ -380,6 +401,26 @@ describe("saving", () => {
       ).rejects.toThrow("There is nothing to save");
       expect(saveAutomation).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("recording in a new terminal (A-004)", () => {
+  it("does not record a terminal the user left meanwhile", async () => {
+    useAppStore.setState({ addLocalShellTab: () => "b" });
+    expect(await store().recordInNewTerminal()).toBe(false);
+    expect(store().recording).toBeNull();
+  });
+
+  it("records it once it is connected and in front", async () => {
+    useAppStore.setState({ addLocalShellTab: () => "a" });
+    expect(await store().recordInNewTerminal()).toBe(true);
+    expect(store().recording?.tabId).toBe("a");
+  });
+
+  it("gives up when it is gone", async () => {
+    useAppStore.setState({ addLocalShellTab: () => "nowhere" });
+    expect(await store().recordInNewTerminal()).toBe(false);
+    expect(toast.error).toHaveBeenCalledTimes(1);
   });
 });
 
