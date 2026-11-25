@@ -114,7 +114,7 @@ for (const viewport of [
       await page.locator(id("import-migration-automations-import-btn")).click();
       await page.locator(DIALOG).waitFor();
       const dialog = page.locator(DIALOG);
-      await expect(dialog).toContainText("Imported 4 of 5 automations");
+      await expect(dialog).toContainText("Imported 5 of 6 automations");
       await expect(page.locator(id("automation-import-refused-Odd one"))).toContainText("teleport");
       for (const [name, says] of [
         ["Partly known", "Left out, because this version does not know it: later"],
