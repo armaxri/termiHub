@@ -95,7 +95,12 @@ export function HotkeyField({ index, binding, error, automations, onChange }: Ho
       return;
     }
     const refused = refusal(pressed.combo);
-    const written = serializeCombo(pressed.combo);
+    const { key } = pressed.combo;
+    // A letter as it is printed on its key.
+    const written = serializeCombo({
+      ...pressed.combo,
+      key: /^[a-z]$/.test(key) ? key.toUpperCase() : key,
+    });
     if (refused) {
       setNote(refused);
     } else if (!eventMatchesCombo(e.nativeEvent, parseBinding(written) as KeyCombo)) {

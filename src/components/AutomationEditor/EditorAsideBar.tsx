@@ -13,8 +13,7 @@ export function EditorAsideBar() {
     <div className="recording-bar" data-testid="automation-editor-aside">
       <Zap size={14} aria-hidden="true" />
       <span className="recording-bar__text" role="status">
-        {name ? `The automation “${name}”` : "The new automation"} is still open. Nothing is saved
-        yet.
+        {name ? `The automation “${name}”` : "The new automation"} is still open in the editor.
       </span>
       <Button
         size="sm"

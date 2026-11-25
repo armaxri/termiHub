@@ -218,6 +218,16 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    // Goes on with an automation that waits for the user (#6025). Unbound like
+    // Record: the bar above the terminals and the command palette have it.
+    action: "continue-automation",
+    label: "Continue the waiting automation",
+    category: "terminal",
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
+  {
     action: "toggle-session-logging",
     label: "Toggle session logging",
     category: "terminal",

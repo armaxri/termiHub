@@ -39,7 +39,7 @@ export function AddStepItems({ onAdd, nested, testId }: AddStepItemsProps) {
       <MenuItem
         key={kind}
         icon={<Icon size={14} />}
-        description={stepKindDescription(kind)}
+        hint={stepKindDescription(kind)}
         onSelect={() => onAdd(kind)}
         data-testid={testId(kind)}
       >

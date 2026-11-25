@@ -238,6 +238,14 @@ function closeActiveTabGroup(): void {
   }
 }
 
+/** Continue the automation that waits in the active terminal, else the one that waits longest. */
+function continueWaitingAutomation(): void {
+  const { automationWaits, continueAutomationWait } = useAppStore.getState();
+  const tabId = activeTerminalTab()?.id;
+  const wait = automationWaits.find((w) => w.tabId === tabId) ?? automationWaits[0];
+  if (wait) continueAutomationWait(wait.runId);
+}
+
 /** Cycle the active tab group selection by `delta` groups, wrapping around. */
 function cycleTabGroup(delta: 1 | -1): void {
   const groups = getLayoutTabGroups();
@@ -311,6 +319,10 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
       if (!activeTerminalTab()?.sessionId) return;
       window.dispatchEvent(new CustomEvent(TOGGLE_SESSION_LOGGING_EVENT));
     },
+  },
+  "continue-automation": {
+    isAvailable: () => useAppStore.getState().automationWaits.length > 0,
+    run: continueWaitingAutomation,
   },
   "play-macro": { isAvailable: () => true, run: runOrStopAutomation },
   "close-tab-group": { isAvailable: hasMultipleTabGroups, run: closeActiveTabGroup },

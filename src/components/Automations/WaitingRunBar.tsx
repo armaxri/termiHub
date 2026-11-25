@@ -6,7 +6,7 @@ import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree, useLayoutTabGroups } from "@/store/layoutSelectors";
 import { SHOW_WAITING_TERMINAL_EVENT } from "@/store/slices/automationWaitSlice";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
-import { formatClockTime } from "@/utils/formatters";
+import { formatTimeOfDay } from "@/utils/formatters";
 import { showTerminal } from "@/utils/showTerminal";
 import "./WaitingRunBar.css";
 
@@ -68,7 +68,7 @@ export function WaitingRunBar() {
                   : tf("automation.wait.then", { message: message.replace(/[.!]+$/, "") })}
               </span>{" "}
               <span>
-                {tf("automation.wait.until", { time: formatClockTime(new Date(wait.until)) })}
+                {tf("automation.wait.until", { time: formatTimeOfDay(new Date(wait.until)) })}
               </span>
             </span>
             <span className="waiting-run__actions">

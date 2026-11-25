@@ -10,6 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
 import { toast } from "@/components/ui";
+import { CONTEXT_COMMANDS } from "@/services/contextCommands";
 import { registerTerminalPromptReader } from "@/services/passwordPrompt";
 import { WAIT_FOR_USER_LIMIT_MS, type WaitForUserResult } from "@/services/workflowRunner";
 import { useAppStore } from "@/store/appStore";
@@ -176,6 +177,17 @@ describe("Continue", () => {
     click("automation-wait-continue-a");
     await flushAsync();
     expect(wait.result).toBe("continued");
+  });
+
+  it("is in the command palette for the keyboard, the active terminal's wait first", async () => {
+    const command = CONTEXT_COMMANDS["continue-automation"];
+    expect(command.isAvailable()).toBe(false);
+    const b = startWait("b");
+    const a = startWait("a");
+    expect(command.isAvailable()).toBe(true);
+    act(() => command.run());
+    await flushAsync();
+    expect([a.result, b.result]).toEqual(["continued", undefined]);
   });
 
   it("is too late after the limit, also when the computer slept through the timer", async () => {

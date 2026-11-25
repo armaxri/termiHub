@@ -244,6 +244,14 @@ export function formatClockTime(value: DateInput): string {
   return date ? date.toLocaleTimeString(resolveUiLocale()) : "";
 }
 
+/** The time of day of `value` as `HH:MM`, as {@link formatDayTime} writes it. */
+export function formatTimeOfDay(value: DateInput): string {
+  const date = toValidDate(value);
+  if (!date) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /**
  * Options for {@link formatLogTime}. Typed via an intersection because the
  * project's TS `lib` predates `fractionalSecondDigits` (ES2021), which every
@@ -337,8 +345,7 @@ export function formatDayTime(value: DateInput, now: Date = new Date()): string 
             month: "short",
             day: "numeric",
           });
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${day} ${formatTimeOfDay(date)}`;
 }
 
 /** Truncate string with ellipsis (default max length 60). */

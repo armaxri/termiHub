@@ -12,14 +12,14 @@ from typing import Any, Mapping, Optional, Sequence
 #: The toolbar's record row, its chip while recording, and their words.
 RECORD = "terminal-view-record"
 CHIP = "terminal-view-active-recording"
-CHIP_HERE = "Recording"
-CHIP_AT_PROMPT = "Recording: password prompt"
+CHIP_HERE = "Stop recording"
+CHIP_AT_PROMPT = "Stop recording (password kept apart)"
 #: The dialog a stopped recording opens, and the bar that keeps it.
 SAVE_DIALOG = "recording-save-dialog"
 KEPT_BAR = "recording-bar-unsaved"
 EDITOR_BAR = "recording-bar-editor"
 #: The buttons of the save dialog that must be in view.
-SAVE_BUTTONS = ("recording-save-discard", "recording-save-confirm")
+SAVE_BUTTONS = ("recording-save-keep", "recording-save-discard", "recording-save-confirm")
 #: Rounding slack for box comparisons, in CSS pixels.
 EPS = 1.0
 
@@ -64,14 +64,22 @@ def chip_problems(shown: Optional[str], want: Optional[str]) -> list[str]:
     return [] if shown.strip() == want else [f"the chip reads {shown!r}, not {want!r}"]
 
 
-def save_dialog_problems(summary: str, name: str, keys: int, want_name: str) -> list[str]:
-    """The dialog counts the keys and offers the typed line as the name."""
+def save_dialog_problems(summary: str, name: str, typed: str, want_name: str) -> list[str]:
+    """The dialog shows what was typed, counts nothing (A-003), and offers it as the name."""
     problems = []
-    if f"Recorded {keys} key" not in summary:
-        problems.append(f"the dialog says {summary!r}, not {keys} keys")
+    if "Recorded in" not in summary or typed not in summary:
+        problems.append(f"the dialog says {summary!r}, not that {typed!r} was recorded")
+    if " key" in summary:
+        problems.append(f"the dialog counts keys: {summary!r}")
     if name != want_name:
         problems.append(f"the offered name is {name!r}, not {want_name!r}")
     return problems
+
+
+def wait_problems(bar: str, name: str, tab: str) -> list[str]:
+    """The bar of a run that waits: which one, where, what to do, when it ends (#6025)."""
+    wanted = (f"“{name}” waits for you in {tab}", "Type your password, then Continue", "Stops at")
+    return [f"the bar does not say {text!r}: {bar!r}" for text in wanted if text not in bar]
 
 
 def save_layout_problems(

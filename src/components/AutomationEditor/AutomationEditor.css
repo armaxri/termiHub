@@ -161,6 +161,8 @@
 .automation-steps__insert {
   position: relative;
   height: 0;
+  /* It takes one of the two gaps it sits between. */
+  margin-top: calc(-1 * var(--spacing-xs));
 }
 
 .automation-steps__insert-button {

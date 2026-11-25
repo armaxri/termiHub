@@ -60,8 +60,8 @@ describe("the hotkey field", () => {
     expect(press({ key: "Control", ctrlKey: true })).toBe(true);
     expect(valueOf(FIELD)).toBe("");
     press({ key: "k", code: "KeyK", ctrlKey: true, altKey: true });
-    expect(valueOf(FIELD)).toBe("Ctrl+Alt+k");
-    expect((await editor.save()).triggers).toEqual([{ kind: "hotkey", binding: "Ctrl+Alt+k" }]);
+    expect(valueOf(FIELD)).toBe("Ctrl+Alt+K");
+    expect((await editor.save()).triggers).toEqual([{ kind: "hotkey", binding: "Ctrl+Alt+K" }]);
   });
 
   it.each<[string, KeyboardEventInit, RegExp]>([
