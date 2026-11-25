@@ -121,6 +121,10 @@ describe("what it reaches", () => {
     expect(reachSentence(open as TunnelType, HERE)).toBe(
       "It reaches what you enter above, through Build Box."
     );
+    const noPort = { ...made, config: { ...made.config, remoteHost: "db", remotePort: "" } };
+    expect(reachSentence(noPort as TunnelType, HERE)).toBe(
+      "It reaches what you enter above, through Build Box."
+    );
     const dynamic = { type: "dynamic", config: { localHost: "", localPort: "" } } as TunnelType;
     expect(reachSentence(dynamic, HERE)).toContain("host ?, port ?");
   });

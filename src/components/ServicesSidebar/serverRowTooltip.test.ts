@@ -37,7 +37,9 @@ describe("serverRowTooltip (#5770)", () => {
   ] as const)(
     "says what a TFTP port means to a device: %i, on an agent %s, %s (V-003)",
     (port, onAgent, platform, text) => {
-      expect(tftpPortNote(port, onAgent, platform)).toContain(text);
+      const note = tftpPortNote(port, onAgent, platform);
+      expect(note).toContain(text);
+      if (platform !== "linux" && !onAgent) expect(note).toBe(text);
     }
   );
 

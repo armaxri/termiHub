@@ -396,6 +396,15 @@ describe("its port (V-002, V-003)", () => {
     expect(byTestId("server-dialog-port-taken")).toBeNull();
   });
 
+  it("on another machine is not this computer's", async () => {
+    seed([DOCS]);
+    await render({ serverType: "http" });
+    type("port", "8080");
+    expect(byTestId("server-dialog-port-taken")).not.toBeNull();
+    await act(async () => byTestId("pick-agent")!.click());
+    expect(byTestId("server-dialog-port-taken")).toBeNull();
+  });
+
   it("of the server itself is not taken, nor one on another machine", async () => {
     seed([DOCS]);
     await render({ serverId: "srv-1" });

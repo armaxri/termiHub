@@ -64,5 +64,16 @@ describe("tunnelRowTooltip (#5770)", () => {
       "Dynamic (ssh -D) · localhost:1080",
       "Use the SSH server as a proxy for many destinations.",
     ]);
+    // How a browser uses it (V-005); not said for another machine's port.
+    const proxy = "Set your browser's or system's proxy to SOCKS5, host localhost, port 1080.";
+    expect(socks).toContain(proxy);
+    const there = tunnelRowTooltip(
+      {
+        ...LOCAL,
+        tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+      },
+      { sshLabel: "bastion", host: { label: "build-box", onAgent: true } }
+    );
+    expect(there).not.toContain(proxy);
   });
 });

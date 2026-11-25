@@ -261,7 +261,35 @@ describe("its port (V-002)", () => {
   it("of a remote tunnel is the server's", async () => {
     seed(DB);
     await render({ tunnelType: "remote" });
+    type("local-port", "15432");
     type("remote-port", "15432");
+    expect(byTestId("tunnel-editor-port-taken")).toBeNull();
+  });
+
+  it("is free again for another kind", async () => {
+    seed({
+      ...DB,
+      tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+    });
+    await render();
+    await act(async () => byTestId("tunnel-type-dynamic")!.click());
+    expect(field("local-port").value).toBe("1081");
+  });
+
+  it("on another machine is not this computer's", async () => {
+    seed(DB);
+    await render({ tunnelType: "local" });
+    type("local-port", "15432");
+    expect(byTestId("tunnel-editor-port-taken")).not.toBeNull();
+    act(() => field("host").focus());
+    act(() =>
+      field("host").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))
+    );
+    const agent = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((o) =>
+      o.textContent?.includes("Edge box")
+    )!;
+    act(() => agent.focus());
+    act(() => agent.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(byTestId("tunnel-editor-port-taken")).toBeNull();
   });
 
