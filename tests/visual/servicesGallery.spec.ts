@@ -45,7 +45,7 @@ const STATES = {
   "services--new-menu": "You want to reach a database behind a server: start.",
   "services--new-tunnel": "The tunnel's editor after choosing what it is for.",
   "services--search": "Find the service that uses port 15003.",
-  "services--search-word": "Search for what it is: \"file server\".",
+  "services--search-word": 'Search for what it is: "file server".',
   "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
