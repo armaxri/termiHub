@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { WRITE_SLICE_BYTES, writeSliced } from "./slicedWrite";
+import { TerminalOutputFlow } from "./terminalFlowControl";
 
 describe("writeSliced", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function target(refuseFrom = Infinity) {
     const writes: Uint8Array[] = [];
     const callbacks: (() => void)[] = [];
@@ -58,16 +63,72 @@ describe("writeSliced", () => {
     };
     setTimeout(tick);
     const parsed: number[] = [];
-    await new Promise<void>((resolve) => {
-      writeSliced(xterm, batch, (n, last) => {
-        parsed.push(n);
-        if (last) resolve();
+    try {
+      await new Promise<void>((resolve) => {
+        writeSliced(xterm, batch, (n, last) => {
+          parsed.push(n);
+          if (last) resolve();
+        });
       });
-    });
-    running = false;
+    } finally {
+      running = false;
+    }
     expect(parsed.reduce((a, b) => a + b, 0)).toBe(batch.length);
     // As one chunk xterm parses it all in a single turn.
     expect(turns).toBeGreaterThan(2);
+    xterm.dispose();
+  });
+
+  it("writes a hidden document's batch as one chunk, and slices again once shown", () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const t = target();
+    const onParsed = vi.fn();
+    const batch = bytes(3 * WRITE_SLICE_BYTES);
+    writeSliced(t, batch, onParsed);
+    expect(t.writes).toEqual([batch]);
+    t.callbacks[0]();
+    expect(onParsed.mock.calls).toEqual([[batch.length, true]]);
+
+    hidden.mockReturnValue(false);
+    writeSliced(t, batch, onParsed);
+    expect(t.writes).toHaveLength(4);
+  });
+
+  it("keeps a multibyte character that a slice boundary splits", async () => {
+    const xterm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+    const text = "a\u00e9\u65e5\ud83d\ude00z";
+    await new Promise<void>((resolve) => {
+      writeSliced(xterm, new TextEncoder().encode(text), (_n, last) => last && resolve(), 1);
+    });
+    expect(xterm.buffer.active.getLine(0)!.translateToString(true)).toBe(text);
+    xterm.dispose();
+  });
+
+  it("calls who waits for the output only once every slice of it is parsed", async () => {
+    const xterm = new Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+    const flow = new TerminalOutputFlow({ onPausedChange: () => {} });
+    flow.push(new TextEncoder().encode("0123456789"));
+    const screen = () => xterm.buffer.active.getLine(0)!.translateToString(true);
+    const seen: string[] = [];
+    flow.whenShown(() => seen.push(screen()));
+    flow.push(new TextEncoder().encode("later"));
+    const write = () =>
+      new Promise<void>((resolve) => {
+        writeSliced(
+          xterm,
+          flow.takeBatch()!,
+          (n, last) => {
+            flow.written(n);
+            if (last) resolve();
+          },
+          3
+        );
+      });
+    await write();
+    expect(seen).toEqual(["0123456789"]);
+    await write();
+    expect(screen()).toBe("0123456789later");
+    expect(seen).toHaveLength(1);
     xterm.dispose();
   });
 });

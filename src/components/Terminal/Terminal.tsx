@@ -1150,8 +1150,8 @@ export function Terminal({
           if (batch === null) return;
           const rest = writeSliced(xterm, batch, (bytes, last) => {
             outputFlow.written(bytes);
-            if (!last) return;
-            afterWrite();
+            if (last) afterWrite();
+            // After every slice: the last one never reports when xterm refuses it.
             if (outputFlow.hasStaged) scheduleFlush();
           });
           if (rest) {

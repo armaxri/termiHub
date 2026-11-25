@@ -6,6 +6,12 @@
  * single chunk therefore blocks the UI thread until all of it is parsed, seconds
  * on a slow machine, and neither a click nor Ctrl+C gets through meanwhile.
  * Sliced, xterm yields to input and painting between the slices.
+ *
+ * Each yield costs a timer turn, and webviews throttle those to about one a
+ * second while the document is hidden: a flood there would hold back its program
+ * (a build in a minimised window) for nobody's benefit. So a hidden document's
+ * batch is one chunk, parsed in one turn. A batch already handed over when the
+ * window is hidden drains at the throttled pace; the next one does not.
  */
 
 /** The part of xterm's `Terminal` this needs. */
@@ -19,7 +25,8 @@ export const WRITE_SLICE_BYTES = 16 * 1024;
 /**
  * Write `batch` to `target` in order, in slices of at most `sliceBytes`.
  * `onParsed` is called per slice once xterm has parsed it, with the slice's size
- * and whether it was the batch's last.
+ * and whether it was the batch's last. While the document is hidden the batch is
+ * one slice (see above).
  *
  * Returns what `target` refused (it threw) and the error, or `null` when it took
  * the whole batch. Slices taken before the refusal still report as parsed.
@@ -28,7 +35,7 @@ export function writeSliced(
   target: SlicedWriteTarget,
   batch: Uint8Array,
   onParsed: (bytes: number, last: boolean) => void,
-  sliceBytes: number = WRITE_SLICE_BYTES
+  sliceBytes: number = document.hidden ? Infinity : WRITE_SLICE_BYTES
 ): { refused: Uint8Array; error: unknown } | null {
   for (let at = 0; at < batch.length; at += sliceBytes) {
     const slice = batch.length <= sliceBytes ? batch : batch.subarray(at, at + sliceBytes);
