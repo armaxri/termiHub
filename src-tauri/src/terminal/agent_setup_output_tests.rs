@@ -92,9 +92,9 @@ fn the_setup_script_uses_plain_markers_and_one_summary_line() {
         assert!(script.contains(marker), "missing marker {marker:?}");
     }
     assert!(script.contains("Agent $VERSION_LABEL installed at $SHOWN_PATH."));
-    assert!(script.contains("Agent setup failed: $1"));
+    assert!(script.contains("Agent setup failed: ${REASON"));
     // A `set -e` abort still ends in a failure line.
-    assert!(script.contains("Agent setup failed: a setup step exited with status $status"));
+    assert!(script.contains("a setup step exited with status $code (see above)."));
 }
 
 #[test]

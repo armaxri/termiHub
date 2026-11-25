@@ -104,6 +104,21 @@ describe("agentSetupTabNotice (#5865)", () => {
     });
   });
 
+  it("says whether a failed POSIX run left an agent in place (#5999)", () => {
+    expect(agentSetupTabNotice(setupTab(), exit(10))).toEqual({
+      kind: "failed",
+      reason: "The new agent was not installed. The previous agent is still in place and starts.",
+    });
+    expect(agentSetupTabNotice(setupTab(), exit(11))).toEqual({
+      kind: "failed",
+      reason: "The new agent is installed and starts, but its service could not be set up.",
+    });
+    // Windows codes mean nothing, these two included.
+    expect(agentSetupTabNotice(setupTab({ reportsExit: false }), exit(10))).toEqual({
+      kind: "checking",
+    });
+  });
+
   it("leaves a dropped link (no exit code) to the plain session-end strip", () => {
     expect(agentSetupTabNotice(setupTab(), exit(null))).toBeNull();
   });
