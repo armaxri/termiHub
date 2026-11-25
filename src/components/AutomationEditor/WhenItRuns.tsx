@@ -26,7 +26,7 @@ import {
 import { TriggerCard } from "./TriggerCard";
 
 /** The trigger kinds, in the order the "Add trigger" menu offers them. */
-export const AUTOMATION_TRIGGER_KINDS: readonly AutomationTriggerKind[] = [
+const AUTOMATION_TRIGGER_KINDS: readonly AutomationTriggerKind[] = [
   "hotkey",
   "on-connect",
   "on-disconnect",

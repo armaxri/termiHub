@@ -46,10 +46,7 @@ export interface AutomationCycle {
 }
 
 /** Visit every step, nested ones included, depth first, in step order. */
-export function visitSteps(
-  steps: readonly RunnableStep[],
-  visit: (step: RunnableStep) => void
-): void {
+function visitSteps(steps: readonly RunnableStep[], visit: (step: RunnableStep) => void): void {
   for (const step of steps) {
     visit(step);
     if (step.kind === "conditional") {
@@ -129,7 +126,7 @@ export interface UnknownStepFound {
  * steps and called automations count, whichever branch they sit in; each
  * automation is visited once. A **pure** helper.
  */
-export function findUnknownStep(
+function findUnknownStep(
   root: Automation,
   resolve: (id: string) => Automation | undefined
 ): UnknownStepFound | null {

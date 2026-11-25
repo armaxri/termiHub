@@ -56,7 +56,7 @@ type KindOf<U, K> = Extract<U, { kind: K }>;
 const nonNegative = () => z.number().min(0);
 
 /** The retry backoff modes (PROD-045). */
-export const workflowRetryBackoffSchema = z.enum(["fixed", "exponential"]);
+const workflowRetryBackoffSchema = z.enum(["fixed", "exponential"]);
 
 /**
  * The bare retry-policy shape (field types only, no bounds). The editor builds
@@ -74,7 +74,7 @@ export const workflowStepRetryShape = {
  * count and a non-negative delay. Values above the runner's safety caps are
  * accepted here — the runner clamps them at run time.
  */
-export const workflowStepRetrySchema = z.object({
+const workflowStepRetrySchema = z.object({
   ...workflowStepRetryShape,
   count: z.number().int().min(0),
   delayMs: nonNegative().optional(),
@@ -91,7 +91,7 @@ const stepPolicyShape = {
  * A structured condition (PROD-0044). `right` precedes `op` so a file with bad
  * operands reports that before a bad operator, as the hand-written check did.
  */
-export const workflowConditionSchema = z.object({
+const workflowConditionSchema = z.object({
   left: z.string(),
   right: z.string(),
   op: z.enum(["eq", "ne", "gt", "lt", "gte", "lte", "contains"]),
@@ -102,7 +102,7 @@ const _conditionExact: AssertExact<
 > = true;
 
 /** A loop's mode: a fixed `count` or a `while` condition (PROD-044). */
-export const workflowLoopModeSchema = z.discriminatedUnion("kind", [
+const workflowLoopModeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("count"), count: nonNegative() }),
   z.object({ kind: z.literal("while"), condition: workflowConditionSchema }),
 ]);
@@ -245,7 +245,7 @@ const _stepKindsExact: AssertExact<
  * One workflow step — a discriminated union on `kind`, recursive via containers.
  * Typed as the workflow view's step, which a Type keys step passes through.
  */
-export const workflowStepSchema = z.discriminatedUnion(
+const workflowStepSchema = z.discriminatedUnion(
   "kind",
   stepOptions
 ) as unknown as z.ZodType<WorkflowStep>;
@@ -318,14 +318,14 @@ const _triggerKindsExact: AssertExact<
 > = true;
 
 /** One workflow trigger — a discriminated union on `kind`. */
-export const workflowTriggerSchema = z.discriminatedUnion("kind", triggerOptions);
+const workflowTriggerSchema = z.discriminatedUnion("kind", triggerOptions);
 
 // ---------------------------------------------------------------------------
 // Parameters and the workflow itself
 // ---------------------------------------------------------------------------
 
 /** One declared workflow parameter (PROD-0040). */
-export const workflowParameterSchema = z.object({
+const workflowParameterSchema = z.object({
   name: nonBlankStringSchema(),
   type: z.enum(["string", "number", "boolean", "enum"]),
   label: z.string().optional(),
