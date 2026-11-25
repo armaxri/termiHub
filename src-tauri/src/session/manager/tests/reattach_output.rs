@@ -249,9 +249,7 @@ async fn an_answer_that_a_later_replay_overtook_is_not_waited_for() {
         let manager = manager.clone();
         async move { manager.get_remote_session_buffer("sess-1").await }
     });
-    while spy.calls_to("send_request").is_empty() {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    spy.wait_for_request("session.getBuffer").await;
     agent
         .send_replay_start(REPLAY + 1, b"one two ".to_vec())
         .unwrap();
