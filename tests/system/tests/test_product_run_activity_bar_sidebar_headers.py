@@ -52,8 +52,7 @@ SHIPPED_BAR = [
     {"testId": "activity-bar-recent-sessions", "label": "Recent sessions", "icon": "history"},
     {"testId": "activity-bar-workspaces", "label": "Workspaces", "icon": "layout-grid"},
     {"testId": "activity-bar-automations", "label": "Automations", "icon": "zap"},
-    {"testId": "activity-bar-ssh-tunnels", "label": "SSH tunnels", "icon": "arrow-left-right"},
-    {"testId": "activity-bar-services", "label": "File servers", "icon": "server"},
+    {"testId": "activity-bar-services", "label": "Services", "icon": "server"},
     {"testId": "activity-bar-network-tools", "label": "Network tools", "icon": "stethoscope"},
     {"testId": "activity-bar-plugins", "label": "Plugins", "icon": "puzzle"},
     {"testId": "activity-bar-logs", "label": "Log viewer", "icon": "file-text"},
@@ -130,7 +129,7 @@ def test_grade_heading_case():
     assert any("written in capitals" in p for p in problems)
     assert heading_case_problems({"x": ("saved", "none")})
     # Acronyms inside sentence case are fine.
-    assert heading_case_problems({"tunnels": ("SSH tunnels", "none")}) == []
+    assert heading_case_problems({"network-tools": ("Network tools", "none")}) == []
 
 
 def test_grade_empty_line():

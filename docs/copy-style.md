@@ -206,6 +206,8 @@ The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
   waits by itself.
 - The run button is a filled square (Stop) or triangle (Start). Giving up waiting or starting is the
   word Cancel. Two actions never share a name; one that was pressed is not offered again.
+- The **New menu asks what it is for** ("Reach something on a server"), with the technical name under
+  it. An offline agent with several services in a group is said once, on its own line.
 - A **list says in numbers** what its rows say: running, error, not known, reconnecting, waiting.
   Pressing a number shows only its rows. "Not known" is what may run: it is never counted as off.
 - **Stop and Restart ask only when someone is connected** right now, and say how many.

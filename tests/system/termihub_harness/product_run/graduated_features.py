@@ -19,7 +19,6 @@ from typing import Collection
 
 #: The graduated views: sidebar view id → activity-bar item testId.
 GRADUATED_VIEWS: dict[str, str] = {
-    "tunnels": "activity-bar-ssh-tunnels",
     "services": "activity-bar-services",
     "network-tools": "activity-bar-network-tools",
     "automations": "activity-bar-automations",
@@ -27,16 +26,17 @@ GRADUATED_VIEWS: dict[str, str] = {
 
 #: Each graduated view's sidebar root testId (what opening it must show).
 GRADUATED_SIDEBARS: dict[str, str] = {
-    "tunnels": "tunnel-sidebar",
-    "services": "server-sidebar",
+    "services": "services-sidebar",
     "network-tools": "network-tools-sidebar",
     "automations": "automation-sidebar",
 }
 
-#: Items one Automations item replaced; they never show again.
+#: Items that one Automations item and one Services item replaced (#5818, #6028);
+#: they never show again.
 REPLACED_VIEWS: dict[str, str] = {
     "macros": "activity-bar-macros",
     "workflows": "activity-bar-workflows",
+    "tunnels": "activity-bar-ssh-tunnels",
 }
 
 #: What the switch's hint must still name (twin of ``EXPERIMENTAL_FEATURE_NAMES``).
@@ -60,7 +60,7 @@ def activity_bar_problems(
 
     ``present`` is the set of activity-bar item testIds that exist;
     ``hidden_views`` the view ids the user hid. Every graduated view shows
-    unless hidden; the views Automations replaced never show.
+    unless hidden; the replaced views never show.
     """
     problems: list[str] = []
     for view, test_id in GRADUATED_VIEWS.items():
@@ -72,7 +72,7 @@ def activity_bar_problems(
             problems.append(f"{view}: missing from the activity bar with experimental {state}")
     for view, test_id in REPLACED_VIEWS.items():
         if test_id in present:
-            problems.append(f"{view}: shows, but the Automations view replaced it")
+            problems.append(f"{view}: shows, but another view replaced it")
     return problems
 
 

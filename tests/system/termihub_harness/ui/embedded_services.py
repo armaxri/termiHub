@@ -16,13 +16,14 @@ from .base import HarnessMixin
 
 
 class EmbeddedServicesUi(HarnessMixin):
-    """Open the Services sidebar and create/start/stop/edit embedded servers."""
+    """Open the Services sidebar (tunnels and file servers) and drive file servers."""
 
     # Sidebar + dialog testids.
     ACTIVITY = "activity-bar-services"
-    SIDEBAR = "server-sidebar"
-    NEW_BTN = "server-new-btn"
-    EMPTY = "server-empty-message"
+    SIDEBAR = "services-sidebar"
+    NEW_BTN = "service-new-btn"
+    #: Shown while there is neither a tunnel nor a file server.
+    EMPTY = "services-empty"
     INDICATOR = "services-indicator"
     DIALOG_NAME = "server-dialog-name"
     DIALOG_ROOT = "server-dialog-root"
@@ -49,6 +50,13 @@ class EmbeddedServicesUi(HarnessMixin):
         self._ensure_sidebar("services", self.ACTIVITY)
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
 
+    def choose_new_service(self, entry: str) -> None:
+        """Pick ``entry`` ("tunnel-local", "server-ftp", …) in the New service menu."""
+        item = f"service-new-{entry}"
+        self.driver.click(self.NEW_BTN)
+        self.wait(lambda: self.driver.exists(item), what=f"the {entry} entry of New service")
+        self.driver.click(item)
+
     # ── Store reads ──────────────────────────────────────────────────────────
     def servers(self) -> list[dict[str, Any]]:
         """All configured embedded servers from the store (empty if none)."""
@@ -73,10 +81,10 @@ class EmbeddedServicesUi(HarnessMixin):
 
     # ── Dialog / CRUD ────────────────────────────────────────────────────────
     def open_new_dialog(self) -> None:
-        """Open the New Service dialog and wait for its name field."""
+        """Open the dialog of a new file server and wait for its name field."""
         self.open_services_sidebar()
-        self.driver.click(self.NEW_BTN)
-        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the New Service dialog")
+        self.choose_new_service("server-http")
+        self.wait(lambda: self.driver.exists(self.DIALOG_NAME), what="the file server dialog")
 
     def fill_dialog(
         self,

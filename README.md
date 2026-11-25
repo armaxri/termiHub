@@ -135,7 +135,7 @@ Prefer to build it yourself? See [Development](#development) below.
 ### SSH Features
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
-- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The **SSH tunnels** sidebar view lists every tunnel in one place. The three types, which the tunnel editor also explains on each type's card and when you hover or focus it (a tunnel hosted on a remote agent opens its port on the agent instead of your computer):
+- **SSH tunneling** — Local, remote, and dynamic (SOCKS5, SOCKS4 and SOCKS4a) port forwarding with session pooling. Add forwards to an SSH connection in its editor (**Port Forwarding** section). The **Services** sidebar view lists every tunnel in one place, beside the file servers. The three types, which the tunnel editor also explains on each type's card and when you hover or focus it (a tunnel hosted on a remote agent opens its port on the agent instead of your computer):
   - **Local** (`ssh -L`) — use something on the SSH server's side as if it ran here, e.g. a database only the server can reach at `localhost:5432`
   - **Remote** (`ssh -R`) — let the SSH server use something here, e.g. show a web app running on your computer to someone logged in on the server
   - **Dynamic** (`ssh -D`) — use the SSH server as a SOCKS proxy for many destinations, e.g. to browse an internal network
@@ -229,7 +229,7 @@ termiHub uses a VS Code-inspired three-column layout:
 └──────────┴────────────────┴──────────────────────────────────────────┘
 ```
 
-- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Automations, SSH tunnels, Services (embedded servers), Network tools and Plugins. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
+- **Activity Bar** — The narrow left column with icon buttons for the sidebar views: Connections, File browser, Recent sessions, Workspaces, Automations, Services (SSH tunnels and file servers), Network tools and Plugins. At the bottom, the **Log Viewer** button opens the live log, and the gear menu holds Settings, Keyboard shortcuts, Customize layout, Open connections, connection import/export, Updates, **Export diagnostics…** and About. Click an active icon to toggle the sidebar; right-click the bar to hide or show views.
 - **Sidebar** — Shows the view selected in the Activity Bar.
 - **Terminal View** — The main area with a tab bar, terminal content, toolbar (New terminal, Split, Close panel), and status bar.
 

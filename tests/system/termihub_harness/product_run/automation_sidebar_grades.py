@@ -125,17 +125,29 @@ def menu_problems(entries: Sequence[str], *, keystrokes: bool) -> list[str]:
     ]
 
 
-def migrated_layout_problems(before: Sequence[str], after: Sequence[str]) -> list[str]:
-    """The hidden activity-bar views after the settings migration (v4).
+#: The sidebar views that became one, per settings step: v4 (#5818), v5 (#6028).
+_MERGED_VIEWS = (
+    (("macros", "workflows"), "automations"),
+    (("tunnels", "services"), "services"),
+)
 
-    Both old views hidden: Automations is hidden, where the first one was. One
-    hidden: Automations shows. The other hidden views keep their order.
+
+def migrated_layout_problems(before: Sequence[str], after: Sequence[str]) -> list[str]:
+    """The hidden activity-bar views after the settings migration.
+
+    Both views of a pair hidden: the one that replaced them is hidden, where the
+    first one was. One hidden: it shows. The other hidden views keep their order.
     """
-    old = [v for v in before if v in ("macros", "workflows")]
-    want: list[str] = []
-    for view in before:
-        if view not in ("macros", "workflows"):
-            want.append(view)
-        elif len(set(old)) == 2 and "automations" not in want:
-            want.append("automations")
+    want = list(before)
+    for pair, merged in _MERGED_VIEWS:
+        both = set(pair) <= set(want)
+        kept: list[str] = []
+        placed = False
+        for view in want:
+            if view not in pair:
+                kept.append(view)
+            elif both and not placed:
+                placed = True
+                kept.append(merged)
+        want = kept
     return [] if list(after) == want else [f"hidden views {list(after)}, want {want}"]

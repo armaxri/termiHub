@@ -321,7 +321,7 @@ graph LR
 | **Terminal View**     | `src/components/Terminal/`         | Tab bar, split panels, xterm.js terminal instances                                                                                                                                                                                                                                 |
 | **File Editor**       | `src/components/FileEditor/`       | Monaco Editor for local and remote file editing                                                                                                                                                                                                                                    |
 | **Tunnel Editor**     | `src/components/TunnelEditor/`     | Visual SSH tunnel configuration with diagram                                                                                                                                                                                                                                       |
-| **Tunnel Sidebar**    | `src/components/TunnelSidebar/`    | Tunnel list with status indicators and actions                                                                                                                                                                                                                                     |
+| **Services Sidebar**  | `src/components/ServicesSidebar/`  | SSH tunnels and file servers in one list: groups, search, New by intent, rows (`ServiceListItem`)                                                                                                                                                                                  |
 | **DynamicForm**       | `src/components/DynamicForm/`      | Generic schema-driven form renderer — renders `SettingsField` definitions as UI widgets (text, password, select, file picker, key-value list, etc.)                                                                                                                                |
 | **Settings Panel**    | `src/components/Settings/`         | Two-panel settings with categories: General, Appearance, Terminal, External Files, Security, plus Customize Layout dialog                                                                                                                                                          |
 | **Log Viewer**        | `src/components/LogViewer/`        | Backend + frontend log entries, ordered by their `timestampMs` epoch-ms key (backlog merged chronologically on mount) and shown as locale `HH:MM:SS.mmm`; saved/copied logs use ISO-8601 UTC, secrets redacted (#4536)                                                             |
@@ -3142,7 +3142,13 @@ An agent that is reconnecting is connected but not reachable (`AgentRpcClient::i
 request to it would only queue, and be sent when nobody expects it any more. The records are in
 memory: a stop that is still owed when the app quits is lost.
 
-In the frontend, `src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
+In the frontend, `src/components/ServicesSidebar` shows both kinds in one list. Which rows it shows,
+in which groups and order, is `src/utils/serviceRows.ts` (pure): two groups in a fixed order, problem
+rows first and the saved order else, a chained pair together, and the rows of an offline agent under
+one line of it. While the pointer or the focus is in the list, the order on screen is held. The
+settings' hidden views were merged in settings v5 (`migrate_services_view`).
+
+`src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
 their words, dots and run buttons.
 
 ### One Model of a Service (#6028)

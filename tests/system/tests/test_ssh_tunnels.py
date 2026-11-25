@@ -49,6 +49,7 @@ import pytest
 from termihub_harness import (
     BridgeError,
     ConnectionsUi,
+    EmbeddedServicesUi,
     LocalThreadingHTTPServer,
     SSH_KEY_PATH,
     SSH_TUNNEL_PORT,
@@ -160,7 +161,9 @@ def _http_get(port: int) -> str:
 
 
 @pytest.mark.usefixtures("tunnel_target")
-class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, SystemTest):
+class TestSshTunnels(
+    TerminalUi, TabsUi, EmbeddedServicesUi, SidebarUi, ConnectionsUi, SettingsUi, SystemTest
+):
     @pytest.fixture(autouse=True)
     def _bind_target(self, tunnel_target):
         self.target = tunnel_target
@@ -176,11 +179,10 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         self.switch_to_connections_sidebar()
 
     # ── Editor / list UI (no live SSH server needed) ────────────────────────────
-    def test_sidebar_shows_new_tunnel_button(self):
-        """TUNNEL-01: the tunnels sidebar renders with the New Tunnel button."""
-        self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
-        self.wait(lambda: self.driver.exists("tunnel-new-btn"), what="the tunnels sidebar")
-        assert self.driver.exists("tunnel-sidebar")
+    def test_sidebar_shows_new_service_button(self):
+        """TUNNEL-01: the Services sidebar renders with the New service button."""
+        self.open_services_sidebar()
+        assert self.driver.exists(self.NEW_BTN)
 
     def test_editor_opens_with_all_fields(self):
         """TUNNEL-02: New Tunnel opens an editor with name, SSH select, type
@@ -407,7 +409,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         self._assert_forwards(port)
 
         # Stop it and turn "start with connection" off → a new terminal leaves it down.
-        self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+        self.open_services_sidebar()
         self._stop_tunnel(tid)
         self._assert_disconnected(tid)
         self._set_start_with_connection(tid, False)
@@ -421,8 +423,8 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
     # ── helpers ────────────────────────────────────────────────────────────────
     def _open_new_tunnel_editor(self):
         """Open a fresh tunnel editor (no SSH connection / save needed)."""
-        self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
-        self.driver.click("tunnel-new-btn")
+        self.open_services_sidebar()
+        self.choose_new_service("tunnel-local")
         self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
 
     def _create_tunnel(
@@ -565,7 +567,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         ]
         if not live:
             return
-        self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+        self.open_services_sidebar()
         for tid in live:
             if self.driver.exists(f"tunnel-stop-{tid}"):
                 self._stop_tunnel(tid)

@@ -153,9 +153,10 @@ def test_grade_menu():
     "before, after",
     [
         (["macros", "workflows"], ["automations"]),
-        (["tunnels", "workflows", "files", "macros"], ["tunnels", "automations", "files"]),
+        (["tunnels", "workflows", "files", "macros"], ["automations", "files"]),
+        (["tunnels", "macros", "services", "workflows"], ["services", "automations"]),
         (["macros"], []),
-        (["workflows", "services"], ["services"]),
+        (["workflows", "services"], []),
         ([], []),
     ],
 )
