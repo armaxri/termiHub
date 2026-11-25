@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slice 1 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 and 2 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -1753,11 +1753,12 @@
                 <td>Waiting</td>
                 <td>yellow</td>
                 <td>
-                  Will start by itself when its agent, SSH session or the credential store is there.
-                  The line says which
+                  Will start by itself when its agent or the credential store is there, for 30
+                  minutes. The line says which. There is no "Start now": the wait tries every
+                  second, so it would do nothing the wait does not
                 </td>
                 <td>Stop waiting</td>
-                <td>Start now</td>
+                <td></td>
               </tr>
               <tr>
                 <td>Starting</td>
@@ -1783,8 +1784,8 @@
               <tr>
                 <td>Stopping</td>
                 <td>yellow</td>
-                <td>Closing</td>
-                <td>none</td>
+                <td>Closing; an agent that is offline has not confirmed it yet</td>
+                <td>Stop</td>
                 <td></td>
               </tr>
               <tr>
@@ -1804,8 +1805,11 @@
               <tr>
                 <td>Not reachable</td>
                 <td>yellow, hollow</td>
-                <td>Its agent is offline: it may still run there, termiHub cannot tell</td>
-                <td>none</td>
+                <td>
+                  Its agent is offline or silent, or never answered the start: it may still run
+                  there, termiHub cannot tell
+                </td>
+                <td>Stop (kept until the agent is back)</td>
                 <td>Connect agent</td>
               </tr>
             </tbody>
@@ -1831,6 +1835,9 @@ stateDiagram-v2
   Running --> NotReachable: agent offline
   NotReachable --> Running: agent back, still runs
   NotReachable --> Stopped: agent back, gone
+  NotReachable --> Stopping: Stop
+  Starting --> NotReachable: the agent did not answer
+  Waiting --> Error: 30 minutes
   Running --> Stopping: Stop
   Stopping --> Stopped
   Error --> Starting: Retry
@@ -4389,7 +4396,11 @@ flowchart LR
           Slice 1 (right machine) is implemented: a file server's host is stored, nothing falls back
           to this computer, Duplicate and the portable list are fixed. F-1, F-4 and F-5 are done.
           The same class of bug was found and fixed for tunnels (a reconnect after a move, an
-          unreadable host, lost unknown fields) and for restoring a backup. Slices 2 to 14 are not
+          unreadable host, lost unknown fields) and for restoring a backup. Slice 2 (honest states)
+          is implemented: F-2 and F-3 are done for both kinds, with one record of what agents host
+          and one module for the nine states. A start without an answer is Not reachable, and a stop
+          is kept until the agent confirms it. "Connect agent" on the row comes with slice 10, the
+          product run step "agent killed and restarted" with slice 9. Slices 3 to 14 are not
           started. Step 0 of <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
       </section>

@@ -507,7 +507,7 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 **0.7.0 (additive, minor)** — adds agent-hosted embedded servers: the [`service.start`](#servicestart) / [`service.stop`](#servicestop) / [`service.status`](#servicestatus) lifecycle methods (#2192), alongside the read-only [`service.list`](#servicelist) discovery method carried over from the Service/Tool substrate (#2148). The agent hosts the HTTP/FTP/TFTP listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.7.0 agent simply lacks the methods, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop does not start the server at all: its row says that the agent is too old (#6028). It never falls back to hosting the server on the desktop; a pre-0.7.0 desktop never calls them.
 
-**0.6.0 (additive, minor)** — adds agent-hosted tunnel forwarding: the [`tunnel.start`](#tunnelstart) / [`tunnel.stop`](#tunnelstop) / [`tunnel.status`](#tunnelstatus) methods (#2185, #2198). The agent runs the SSH client and the listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.6.0 agent simply lacks the methods, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop surfaces the existing "not supported" path (hosting the tunnel locally as before); a pre-0.6.0 desktop never calls them.
+**0.6.0 (additive, minor)** — adds agent-hosted tunnel forwarding: the [`tunnel.start`](#tunnelstart) / [`tunnel.stop`](#tunnelstop) / [`tunnel.status`](#tunnelstatus) methods (#2185, #2198). The agent runs the SSH client and the listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.6.0 agent simply lacks the methods, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop surfaces the existing "not supported" path (the tunnel is not started, and never on the desktop instead); a pre-0.6.0 desktop never calls them.
 
 **0.5.0 (additive, minor)** — adds the ssh-agent relay: the [`agent.forward.data`](#agentforwarddata) / [`agent.forward.close`](#agentforwardclose) methods and the [`agent.forward.open`](#agentforwardopen) / [`agent.forward.data`](#agentforwarddata-notification) / [`agent.forward.close`](#agentforwardclose-notification) notifications (#1727). Backwards compatible in both directions: a 0.4.0 agent simply never opens a relay stream (SSH agent forwarding then falls back to the #1719 host-local model), and a 0.4.0 desktop ignores the notifications, so the forwarded channel is dropped as a graceful no-op — the same behaviour as no local agent.
 
@@ -3395,7 +3395,7 @@ session another client holds or this one detached from.
 
 ### Agent-hosted tunnels (`tunnel.*`)
 
-The `tunnel.*` methods run an SSH tunnel **on the agent** instead of on the desktop (S3, #2185). The agent opens its own SSH client and binds the listen socket; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. These methods are additive in protocol **0.6.0**: a pre-0.6.0 agent lacks them, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), the desktop surfaces the existing "not supported" path, and the tunnel is hosted locally as before.
+The `tunnel.*` methods run an SSH tunnel **on the agent** instead of on the desktop (S3, #2185). The agent opens its own SSH client and binds the listen socket; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. These methods are additive in protocol **0.6.0**: a pre-0.6.0 agent lacks them, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), and the desktop says that the agent is too old; the tunnel is not started, and never on the desktop instead.
 
 ```mermaid
 flowchart LR
@@ -3546,6 +3546,8 @@ Report whether an agent-hosted tunnel is currently forwarding, with live traffic
   "id": 42
 }
 ```
+
+**What the desktop makes of it (#6028).** Only an answer says whether a tunnel runs. `running: false` means stopped; an answer the desktop cannot read, a request that times out, or an agent that is not connected says nothing, and the row reads "Not reachable", never "Running". A `tunnel.start` that gets no answer is "Not reachable" too: the agent may have acted on it, so `running: false` counts only 30 s after the start. A `tunnel.stop` the agent has not answered is repeated until it does, so a stop pressed while the agent is gone takes effect when it is back.
 
 | Result Field              | Type      | Description                                                                 |
 | ------------------------- | --------- | --------------------------------------------------------------------------- |
@@ -3782,7 +3784,7 @@ This request is special in two ways: the agent's transport loop **dispatches it 
 
 ### Agent-hosted embedded servers (`service.*`)
 
-The `service.*` methods run an embedded server (HTTP / FTP / TFTP) **on the agent** instead of on the desktop (#2192). The agent creates the server from its `ServiceRegistry` by `serviceId` and binds the listen socket on the agent host; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. The lifecycle methods are additive in protocol **0.7.0**: a pre-0.7.0 agent lacks them, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), and the desktop surfaces the existing "not supported" path (hosting the embedded server locally on the desktop as before).
+The `service.*` methods run an embedded server (HTTP / FTP / TFTP) **on the agent** instead of on the desktop (#2192). The agent creates the server from its `ServiceRegistry` by `serviceId` and binds the listen socket on the agent host; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. The lifecycle methods are additive in protocol **0.7.0**: a pre-0.7.0 agent lacks them, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), and the desktop surfaces the existing "not supported" path (the server is not started, and never on the desktop instead).
 
 ```mermaid
 flowchart LR
@@ -4034,6 +4036,8 @@ Report whether an agent-hosted embedded server is currently running. Reading the
   "id": 53
 }
 ```
+
+**What the desktop makes of it (#6028).** Only an answer says whether an embedded server runs. `running: false` means stopped; an answer the desktop cannot read, a request that times out, or an agent that is not connected says nothing, and the row reads "Not reachable", never "Running". A `service.start` that gets no answer is "Not reachable" too: the agent may have acted on it, so `running: false` counts only 30 s after the start. A `service.stop` the agent has not answered is repeated until it does, so a stop pressed while the agent is gone takes effect when it is back.
 
 | Result Field | Type      | Description                                                                                                                            |
 | ------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------- |
