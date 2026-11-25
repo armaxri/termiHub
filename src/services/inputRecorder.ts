@@ -138,9 +138,8 @@ export class InputRecorder {
     const unknown: OpenRun = { prompt: "" };
     for (const { entry } of this.asked.splice(0)) entry.secret = this.open ?? unknown;
     const { readPrompt } = this;
-    let finished = false;
-    if (readPrompt) readSafely(readPrompt, (before) => finished || this.dropEchoedRun(before));
-    finished = true;
+    // An answer that comes later finds nothing to change.
+    if (readPrompt) readSafely(readPrompt, (before) => this.dropEchoedRun(before));
     const kept = this.entries.filter((e): e is Entry & { data: string } => e.data !== null);
     const chunks = kept.map(({ data, at }, i) => ({
       data,

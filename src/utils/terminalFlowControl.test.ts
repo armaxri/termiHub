@@ -228,6 +228,18 @@ describe("who waits for the output received so far (#6070)", () => {
     expect(pausedChanges).toEqual([]);
   });
 
+  it("counts a repaint that is not there yet behind output that came after it", () => {
+    const { flow } = makeFlow();
+    const done = flow.repainting(10);
+    flow.push(bytes(5));
+    const then = vi.fn();
+    flow.whenShown(then);
+    flow.written(flow.takeBatch()!.length);
+    expect(then).not.toHaveBeenCalled();
+    done();
+    expect(then).toHaveBeenCalledOnce();
+  });
+
   it("is never called when some of it was lost", () => {
     const { flow, overflows } = makeFlow();
     flow.push(bytes(600));

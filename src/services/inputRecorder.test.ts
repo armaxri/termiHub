@@ -209,6 +209,16 @@ describe("what is typed at a password prompt", () => {
     expect(recorder.finish().secrets).toEqual([{ start: 0, end: 1, prompt: "Password:" }]);
   });
 
+  it("is one answer when a paste ends it before it is judged (#6070)", () => {
+    const answers: ((before: string) => void)[] = [];
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("p", (then) => then("Password: "));
+    const paste = recorder.reserve((then) => answers.push(then));
+    paste.fill("w\r");
+    answers[0]("Password: ");
+    expect(recorder.finish().secrets).toEqual([{ start: 0, end: 2, prompt: "Password:" }]);
+  });
+
   it("is not dropped as an echo by an answer that comes after Stop (#6070)", () => {
     let late = (_: string) => {};
     const recorder = new InputRecorder(() => 0);

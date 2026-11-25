@@ -8,7 +8,7 @@
  *
  * The real dispatcher, output flow, sandbox host and xterm parser run here.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Terminal as RealTerminal } from "@xterm/xterm";
@@ -17,6 +17,7 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { __emitSessionViewForTest, type ProjectedSessionLifecycle } from "@/store/sessionBridge";
 import { bytesToBase64, terminalDispatcher } from "@/services/events";
+import { promptOfTerminal } from "@/services/passwordPrompt";
 import type { WaitForUserResult } from "@/services/workflowRunner";
 import {
   __resetSandboxHost,
@@ -145,6 +146,7 @@ interface Engine {
   real: RealTerminal;
   typed: (data: string) => void;
   unblock: () => void;
+  write: Mock;
 }
 const engine = () => terminals.list[terminals.list.length - 1] as Engine;
 
@@ -336,6 +338,33 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     await heldBack(state);
   });
 
+  it("in a plugin's parser, when a repaint drops and shows it", async () => {
+    const state = startWait();
+    slowParser();
+    arrive(PROMPT);
+    pressContinue();
+    mockReplay.mockResolvedValue({ data: encoder.encode(PROMPT), endOffset: streamed, epoch: 1 });
+    lose();
+    regain();
+    await heldBack(state);
+  });
+
+  it("without waiting for a frame, which a background window does not serve", () => {
+    startWait();
+    arrive(PROMPT);
+    const { write } = engine();
+    write.mockClear();
+    pressContinue();
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it("not of a terminal that is gone", () => {
+    expect(promptOfTerminal(tabId)).toBeDefined();
+    act(() => root.unmount());
+    expect(promptOfTerminal(tabId)).toBeUndefined();
+    root = createRoot(container);
+  });
+
   it("while the session is being repainted", async () => {
     const state = startWait();
     let shown = (_: unknown) => {};
@@ -435,6 +464,34 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     pressContinue();
     await settle();
     expect(state.result).toBe("continued");
+  });
+
+  it("nor at one in the same place of a full scrollback", async () => {
+    const state = startWait();
+    arrive("line\r\n".repeat(3000) + PROMPT);
+    await settle(80);
+    pressContinue();
+    await heldBack(state);
+    arrive(`\r\nSorry, try again.\r\n${PROMPT}`);
+    pressContinue();
+    await settle(60);
+    expect(state.result).toBeUndefined();
+  });
+
+  it.each([
+    ["shows another terminal", () => void store().addTab("Other", "local")],
+    ["loses the terminal to another window", () => store().setSessionOwners({ [SID]: "win-1" })],
+  ])("does not go on when the user %s while it looks", async (_, away) => {
+    const state = startWait();
+    terminals.block = true;
+    arrive("output");
+    await settle();
+    pressContinue();
+    act(away);
+    engine().unblock();
+    await settle(60);
+    expect(state.result).toBeUndefined();
+    expect(wait()).toBeDefined();
   });
 
   it("a run stopped while it looks is not continued", async () => {

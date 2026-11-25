@@ -221,6 +221,23 @@ describe("Continue", () => {
     expect(wait.result).toBe("continued");
   });
 
+  it("no longer asks once it can read the terminal (#6070)", () => {
+    const back = takeBack.splice(0);
+    back.forEach((fn) => fn());
+    startWait();
+    click("automation-wait-continue-a");
+    const read = (before: string) => {
+      prompt = before;
+      act(() => store().recheckWaitingPrompts());
+    };
+    takeBack = [
+      registerTerminalPrompt("a", { read: (then) => then(prompt), pin: () => () => true }),
+    ];
+    read("$ ");
+    expect(query("automation-wait-message-a")?.textContent).not.toContain("It cannot be told");
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue");
+  });
+
   it("insists on the prompt it was said of, not on the next one (#6070)", async () => {
     prompt = "Password: ";
     const wait = startWait();
