@@ -148,4 +148,10 @@
   justify-content: flex-start;
   height: auto;
   padding: var(--spacing-xs) var(--spacing-sm);
+  white-space: normal;
+}
+
+/* Narrower than the menu: the technical name goes on its own line. */
+.services-sidebar__start-button .services-sidebar__technical > span {
+  display: block;
 }

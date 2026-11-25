@@ -206,10 +206,14 @@ The row is `ServiceListItem`, its words are in `serviceModel.ts`. Rules for them
   waits by itself.
 - The run button is a filled square (Stop) or triangle (Start). Giving up waiting or starting is the
   word Cancel. Two actions never share a name; one that was pressed is not offered again.
-- The **New menu asks what it is for** ("Reach something on a server"), with the technical name under
-  it. An offline agent with several services in a group is said once, on its own line.
+- The **New menu asks what it is for** ("Reach something through a server"), with an example and the
+  technical name under it. The search finds all of these words.
+- An **offline agent** with several services is said once, with all of them, whatever kind they are.
+- A **group's line says its problems**, also while it is closed; only without any it says how many run.
+- **Delete is undone, not warned about**: the same dialog and the same Undo for both kinds. It says what
+  breaks ("1 open connection") and, of a file server, that the folder and its files stay.
 - A **list says in numbers** what its rows say: running, error, not known, reconnecting, waiting.
-  Pressing a number shows only its rows. "Not known" is what may run: it is never counted as off.
+  Pressing a number shows only its rows, and says so ("Only errors.") with Show all. "Not known" is what may run: it is never counted as off.
 - **Stop and Restart ask only when someone is connected** right now, and say how many.
 - An **empty list** says what its things are for and what they need.
 

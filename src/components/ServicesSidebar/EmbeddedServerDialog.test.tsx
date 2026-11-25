@@ -431,7 +431,7 @@ describe("EmbeddedServerDialog", () => {
       "FTP server. Needs an FTP program; others can upload if you allow it"
     );
     expect(cards[2]).toContain("Give files to a device");
-    expect(cards[2]).toContain("For switches, routers, network boot; no password");
+    expect(cards[2]).toContain("For switches, routers, phones; no password");
   });
 
   it("asks who can open a server for devices, which are never this computer (#6076)", async () => {

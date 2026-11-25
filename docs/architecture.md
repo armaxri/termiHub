@@ -3124,6 +3124,7 @@ stateDiagram-v2
   NotReachable --> [*]: the agent says it does not
   Running --> Stopping: Stop
   NotReachable --> Stopping: Stop
+  Stopping --> NotReachable: Keep running, before the agent got the stop
   Stopping --> [*]: the agent confirmed
 ```
 
@@ -3143,9 +3144,9 @@ request to it would only queue, and be sent when nobody expects it any more. The
 memory: a stop that is still owed when the app quits is lost.
 
 In the frontend, `src/components/ServicesSidebar` shows both kinds in one list. Which rows it shows,
-in which groups and order, is `src/utils/serviceRows.ts` (pure): two groups in a fixed order, problem
-rows first and the saved order else, a chained pair together, and the rows of an offline agent under
-one line of it. While the pointer or the focus is in the list, the order on screen is held. The
+in which groups and order, is `src/utils/serviceRows.ts` (pure): the services of each offline agent
+under one line of it, then two groups in a fixed order. In each the rows that need the user come first,
+else they are by name, and a chained pair stays together. While the pointer or the focus is in the list, the order on screen is held. The
 settings' hidden views were merged in settings v5 (`migrate_services_view`).
 
 `src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
@@ -3160,6 +3161,9 @@ each row says). Commands change a file server and answer with their own error; w
 arrives as a diff. While a server runs, its traffic is published once a second, and an unchanged
 view sends nothing. A start that fails stays on the row with its reason until a stop, a save or the
 next start.
+
+A deleted file server is kept in memory for two minutes, with its password, so that its Undo brings back
+everything; the credential store forgets the password at once.
 
 `src/utils/serviceModel.ts` turns a config, its state and the machines around it into one
 `ServiceModel`: what it is for in plain words (`tunnelTypeHelp.ts`, `shareTypeHelp.ts`), where it

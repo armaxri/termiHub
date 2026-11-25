@@ -521,7 +521,8 @@ function NewEntryLabel({ entry }: { entry: NewServiceEntry }) {
     <span className="services-sidebar__new-entry">
       <span>{entry.label}</span>
       <span className="services-sidebar__technical">
-        {entry.example ? `${entry.example} ${entry.technical}` : entry.technical}
+        {entry.example && <span>{entry.example} </span>}
+        <span>{entry.technical}</span>
       </span>
     </span>
   );

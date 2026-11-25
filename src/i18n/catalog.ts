@@ -757,7 +757,7 @@ const en = {
   "share.type.ftp.example": "Example: a scanner or a camera that stores its files by FTP.",
   "share.type.tftp.label": "TFTP server",
   "share.type.tftp.summary": "Give files to a device",
-  "share.type.tftp.fact": "For switches, routers, network boot; no password",
+  "share.type.tftp.fact": "For switches, routers, phones; no password",
   "share.type.tftp.lead": "Give files to devices that only speak TFTP.",
   "share.type.tftp.how":
     "Runs a TFTP server on {machine}. There is no sign-in: whoever reaches it gets files, and puts files unless it is only for download.",

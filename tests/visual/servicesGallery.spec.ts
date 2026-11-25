@@ -45,6 +45,8 @@ const STATES = {
   "services--new-menu": "You want to reach a database behind a server: start.",
   "services--new-tunnel": "The tunnel's editor after choosing what it is for.",
   "services--search": "Find the service that uses port 15003.",
+  "services--search-word": "Search for what it is: \"file server\".",
+  "services--only-errors": "You pressed the errors: what is wrong, and how to see all again?",
   "services--nothing": "You searched for something that is not there.",
   "services--empty": "There is no service yet: what is this for, and make one.",
   "services--palette": "Find the tunnels from the command palette.",
@@ -93,6 +95,7 @@ const STATES = {
   "servers--stop": "Stop a server while somebody downloads: what happens?",
   "servers--delete": "Delete a running server: what happens?",
   "servers--new": "Make a new file server: which kind is right?",
+  "servers--new-tftp": "Make a server that gives firmware to a switch.",
   "servers--new-missing": "Saving did nothing: what is missing?",
 } as const;
 type State = keyof typeof STATES;
@@ -113,7 +116,7 @@ const WHY = {
   away: "Its agent is offline. It may still run there; termiHub cannot tell.",
   silent: "Its agent did not answer the start. It may run there; termiHub keeps asking.",
   reconnecting: "Connection lost. Try 3 of 10 at 14:32:08.",
-  last: "Connection lost. Try 10 of 10 at 14:32:08, then it gives up.",
+  last: "Connection lost. Try 10 of 10 at 14:32:08, then start it yourself.",
 };
 /** What goes with each, as the backend sends it. */
 const AGENT = { cause: "agentOffline" };
@@ -633,6 +636,8 @@ const BOTH_ROWS: Partial<Record<State, { tunnels: Row[]; servers: Row[] }>> = {
   "services--new-menu": BOTH,
   "services--new-tunnel": BOTH,
   "services--search": BOTH,
+  "services--search-word": BOTH,
+  "services--only-errors": BOTH,
   "services--nothing": BOTH,
   "services--palette": BOTH,
   "services--narrow": BOTH,
@@ -825,6 +830,14 @@ for (const viewport of WINDOWS) {
         await shot(page, "servers--new-missing", "[role=dialog]");
       });
 
+      test("servers--new-tftp", async ({ page }) => {
+        await boot(page, theme, "servers--new-tftp");
+        await page.locator(id("service-new-btn")).click();
+        await page.locator(id("service-new-server-tftp")).click();
+        await page.locator(id("server-dialog-root")).fill("/srv/firmware");
+        await shot(page, "servers--new-tftp", "[role=dialog]");
+      });
+
       for (const state of Object.keys(BOTH_ROWS) as State[]) {
         test(state, async ({ page }) => {
           await boot(page, theme, state);
@@ -848,6 +861,15 @@ for (const viewport of WINDOWS) {
             case "services--search":
               await page.locator(id("services-search")).fill("15003");
               await expect(page.locator(".service-row")).toHaveCount(1);
+              break;
+            case "services--search-word":
+              await page.locator(id("services-search")).fill("file server");
+              await expect(page.locator("[data-testid^=tunnel-item-]")).toHaveCount(0);
+              break;
+            case "services--only-errors":
+              await page.locator(id("service-count-error")).click();
+              await page.locator(id("services-show-all")).waitFor();
+              await page.mouse.move(viewport.width - 20, viewport.height / 2);
               break;
             case "services--nothing":
               await page.locator(id("services-search")).fill("jenkisn");
