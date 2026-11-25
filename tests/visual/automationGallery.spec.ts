@@ -484,7 +484,11 @@ interface GalleryState {
   openSettingsTab(target: { category: string }): void;
   prepareAppQuit(): string;
   setCommandPaletteOpen(open: boolean): void;
-  recordInput(tabId: string, data: string, readPrompt?: () => string): void;
+  recordInput(
+    tabId: string,
+    data: string,
+    readPrompt?: (then: (before: string) => void) => void
+  ): void;
   recording: { tabId: string } | null;
 }
 
@@ -560,7 +564,7 @@ async function record(page: Page, keys: [string, string][]): Promise<void> {
   await page.evaluate((typed) => {
     for (const [data, prompt] of typed) {
       const state = window.__visual.store.getState() as unknown as GalleryState;
-      state.recordInput(state.recording!.tabId, data, () => prompt);
+      state.recordInput(state.recording!.tabId, data, (then) => then(prompt));
     }
   }, keys);
 }
@@ -1044,8 +1048,14 @@ for (const viewport of WINDOWS) {
         const bar = page.locator(id("automation-waits"));
         await bar.waitFor();
         await shot(page, "run--password-wait", id("automation-waits"));
-        await print(page, 2, "[sudo] password for arne: ");
-        await bar.locator("[data-testid^='automation-wait-continue-']").click();
+        // The prompt arrives and Continue is pressed in one go: it counts before it shows.
+        await page.evaluate(async (session) => {
+          const prompt = btoa("[sudo] password for arne: ");
+          await window.__visual.emit("terminal-output", { session_id: session, data: prompt });
+          document
+            .querySelector<HTMLElement>("[data-testid^='automation-wait-continue-']")!
+            .click();
+        }, `${VISUAL_SESSION_ID}-2`);
         await expect(bar).toContainText("still asks for a password");
         await shot(page, "run--password-still-asked", id("automation-waits"));
         await page.locator("[role=tab]").first().click();
@@ -1053,6 +1063,7 @@ for (const viewport of WINDOWS) {
         await expect(bar.locator("[data-testid^='automation-wait-continue-']")).toHaveCount(0);
         await shot(page, "run--password-wait-elsewhere", id("automation-waits"));
         await bar.locator("[data-testid^='automation-wait-show-']").click();
+        await expect(bar).toContainText("still asks for a password");
         await print(page, 2, "\r\n$ ");
         await expect(bar).not.toContainText("still asks");
         await shot(page, "run--password-typed", id("automation-waits"));

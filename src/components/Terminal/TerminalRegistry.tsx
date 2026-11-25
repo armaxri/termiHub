@@ -33,7 +33,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
-import { registerTerminalPromptReader, textBeforeCursor } from "@/services/passwordPrompt";
+import { readTerminalPrompt } from "@/services/passwordPrompt";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 import { getXtermTheme } from "@/themes";
 import { isFitReady, isProposedFitSafe } from "./safeFit";
@@ -649,10 +649,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
         slots.set(target.sessionId, reserveSessionInputSlot(target.sessionId, "paste"));
       }
       // Its place in a recording too (#5818), so it is recorded in that order.
-      const recorded = useAppStore.getState().reserveRecordedPaste(tabId, () => {
-        const xterm = xtermRegistryRef.current.get(tabId);
-        return xterm ? textBeforeCursor(xterm.buffer.active) : "";
-      });
+      const recorded = useAppStore
+        .getState()
+        .reserveRecordedPaste(tabId, (then) => readTerminalPrompt(tabId, then));
       const releaseSlots = () => {
         slots.forEach((slot) => slot.cancel());
         recorded?.cancel();
@@ -732,13 +731,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     // A scheduled run waits on this before typing into a tab it just opened
     // on a live session (#3527).
     registerTerminalReadyProbe((tabId) => sessionRegistryRef.current.has(tabId));
-    // Continue asks whether the terminal still wants a password (#6025).
-    registerTerminalPromptReader((tabId) => {
-      const xterm = xtermRegistryRef.current.get(tabId);
-      return xterm ? textBeforeCursor(xterm.buffer.active) : "";
-    });
     return () => {
-      registerTerminalPromptReader(null);
       registerTerminalInputInjector(null);
       registerTerminalReadyProbe(null);
     };

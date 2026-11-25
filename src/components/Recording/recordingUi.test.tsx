@@ -111,14 +111,14 @@ describe("the chip's words", () => {
 
   it("say that a password prompt is answered", () => {
     start();
-    act(() => store().recordInput("a", "x", () => "Password: "));
+    act(() => store().recordInput("a", "x", (then) => then("Password: ")));
     // Beside the Stop, not in it (B-011).
     expect(label()).toBe("Stop recording");
     expect(query("recording-bar-prompt")?.textContent).toBe(
       "Password prompt: what you type now is kept out of the recording. When saving you decide whether to store it."
     );
-    act(() => store().recordInput("a", "\r", () => "Password: "));
-    act(() => store().recordInput("a", "l", () => "$ "));
+    act(() => store().recordInput("a", "\r", (then) => then("Password: ")));
+    act(() => store().recordInput("a", "l", (then) => then("$ ")));
     expect(query("recording-bar-prompt")).toBeNull();
   });
 
