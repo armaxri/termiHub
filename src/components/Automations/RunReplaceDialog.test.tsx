@@ -77,6 +77,8 @@ describe("a run never stops another one unasked (#6042)", () => {
   };
 
   it("names the one it would stop, and starts nothing before the answer", async () => {
+    const cancelWorkflowRun = vi.fn();
+    useAppStore.setState({ cancelWorkflowRun });
     await start("steps");
     expect(q("run-replace-dialog")?.textContent).toContain("Run “Deploy”?");
     expect(q("run-replace-dialog")?.textContent).toContain(
@@ -85,6 +87,8 @@ describe("a run never stops another one unasked (#6042)", () => {
     expect(runWorkflow).not.toHaveBeenCalled();
     await act(async () => q("run-replace-confirm")!.click());
     expect(runWorkflow).toHaveBeenCalledTimes(1);
+    // Its own kind is stopped by the start, once nothing can stop that any more.
+    expect(cancelWorkflowRun).not.toHaveBeenCalled();
   });
 
   it("starts nothing when it is refused", async () => {
