@@ -21,7 +21,14 @@ vi.mock("@/services/localProcessApi", () => ({
     const path = `/bin/${program}`;
     return list.includes(program) || list.includes(path)
       ? { status: "allowed", path }
-      : { status: "ask", path, reason: `"${program}" (${path}) is not an allowed program.` };
+      : {
+          status: "ask",
+          path,
+          reason: `"${program}" (${path}) is not an allowed program.`,
+          remember: "program",
+          imported: [],
+          interpreter: false,
+        };
   }),
   invokeRunLocalProcess: spawn,
   cancelLocalProcess: vi.fn(() => Promise.resolve(true)),

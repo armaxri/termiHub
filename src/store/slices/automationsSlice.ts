@@ -4,6 +4,7 @@ import {
   clearAutomationRunHistory as apiClearAutomationRunHistory,
   deleteAutomation as apiDeleteAutomation,
   getAutomation as apiGetAutomation,
+  importAutomation as apiImportAutomation,
   listAutomationRuns as apiListAutomationRuns,
   listAutomations as apiListAutomations,
   saveAutomation as apiSaveAutomation,
@@ -155,7 +156,7 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
       let saved = 0;
       try {
         for (const automation of prepared.automations) {
-          await apiSaveAutomation(automation);
+          await apiImportAutomation(automation);
           saved += 1;
         }
       } catch (err) {
@@ -223,14 +224,16 @@ export const createAutomationsSlice: StateCreator<AppState, [], [], AutomationsS
       const original = get().automations.find((a) => a.id === automationId);
       if (!original) return;
       const { legacy: _legacy, ...copy } = structuredClone(original);
-      await get().saveAutomationToBackend({
+      const duplicate = {
         ...copy,
         id: newId("automation"),
         name: `Copy of ${original.name}`,
         // The backend stamps authoritative created/updated timestamps.
         createdAt: "",
         updatedAt: "",
-      });
+      };
+      await apiSaveAutomation(duplicate, original.id);
+      await get().loadAutomations();
     },
 
     loadAutomationRuns: async () => {

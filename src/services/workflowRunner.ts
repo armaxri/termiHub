@@ -409,6 +409,8 @@ export type LocalProcessAuthorization = boolean | { refused: string };
 
 /** Options threaded into a local-process spawn so it can observe cancellation. */
 export interface LocalProcessRunOptions {
+  /** The ids of the automations behind the command, outermost first (#6019). */
+  callChain: readonly string[];
   /** A cancel poll: when it flips true, the seam kills the process. */
   signal?: WorkflowStepSignal;
 }
@@ -416,7 +418,9 @@ export interface LocalProcessRunOptions {
 /**
  * The **authorization gate** for a `run-local-process` step (#1857). Resolves
  * `true` only when the user has both opted in *and* authorized this specific
- * program (via a persisted allowlist or an interactive confirmation). The runner
+ * program (via a persisted allowlist or an interactive confirmation). `callChain`
+ * are the automations behind the command: an imported one among them asks about
+ * the exact command (#6019). The runner
  * treats every other resolution — `false`, a refusal with its reason, or the seam
  * being absent — as "not authorized" and refuses to spawn: nothing runs a local
  * process without a `true` from here first. The backend decides again when the
@@ -425,6 +429,7 @@ export interface LocalProcessRunOptions {
 export type WorkflowAuthorizeLocalProcessSeam = (
   program: string,
   args: string[],
+  callChain: readonly string[],
   /** The step that asks continues on error: refusing it does not end the run. */
   goesOn?: boolean
 ) => Promise<LocalProcessAuthorization> | LocalProcessAuthorization;
@@ -1066,6 +1071,7 @@ export async function executeStep(
         ? await deps.authorizeLocalProcess(
             resolved.program,
             resolved.args,
+            callChain,
             resolved.continueOnError === true
           )
         : false;
@@ -1078,7 +1084,10 @@ export async function executeStep(
       // A cancel observed before the spawn aborts the run without spawning.
       if (cancelled()) return { ok: true, cancelled: true };
 
-      const result = await deps.runLocalProcess(resolved.program, resolved.args, { signal });
+      const result = await deps.runLocalProcess(resolved.program, resolved.args, {
+        callChain,
+        signal,
+      });
       if (result.cancelled) return { ok: true, cancelled: true };
       if (result.error !== undefined) return { ok: false, error: result.error };
       if (result.timedOut) {

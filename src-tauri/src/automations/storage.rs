@@ -47,6 +47,11 @@ impl<T: VersionedStore + Default + Serialize> StoreFile<T> {
         &self.file_path
     }
 
+    /// The directory the file is in.
+    pub fn dir(&self) -> &Path {
+        self.file_path.parent().unwrap_or(Path::new("."))
+    }
+
     /// Load through the shared schema-version gate.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<T>> {
         load_store_with_recovery::<T>(&self.file_path, T::STORE_NAME)

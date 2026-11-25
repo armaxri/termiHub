@@ -19,9 +19,21 @@ export async function getAutomation(automationId: string): Promise<Automation> {
   return await invoke<Automation>("get_automation", { automationId });
 }
 
-/** Save (add or update) an automation. Returns it with authoritative timestamps. */
-export async function saveAutomation(automation: Automation): Promise<Automation> {
-  return await invoke<Automation>("save_automation", { automation });
+/**
+ * Save (add or update) an automation. Returns it with authoritative timestamps. A
+ * new one that is a copy names its source in `copyOf`: the copy of an imported
+ * automation is an imported one (#6019).
+ */
+export async function saveAutomation(automation: Automation, copyOf?: string): Promise<Automation> {
+  return await invoke<Automation>("save_automation", { automation, copyOf: copyOf ?? null });
+}
+
+/**
+ * Save a new automation that came from a file. It asks before it first runs a local
+ * program (#6019); the backend keeps the mark, so nothing in the file can.
+ */
+export async function importAutomation(automation: Automation): Promise<Automation> {
+  return await invoke<Automation>("import_automation", { automation });
 }
 
 /** Delete an automation by id. */

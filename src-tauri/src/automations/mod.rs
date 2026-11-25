@@ -4,6 +4,7 @@
 //! - `config` and `convert` (slice 1): the persisted model and the pure
 //!   converters from the legacy macro and workflow shapes.
 //! - `store`, `storage`, `manager` (slice 2): `automations.json` and its CRUD.
+//! - `trust` (#6019): which automations may run local programs without asking.
 //! - `history`, `history_manager` (slice 2): `automation-runs.json`.
 //! - `legacy`, `migrate`, `migrate_runs` (slice 2): the boot migration from
 //!   the legacy files and the reconcile pass that merges back what an older
@@ -22,6 +23,7 @@ pub mod migrate;
 pub mod migrate_runs;
 pub mod storage;
 pub mod store;
+pub mod trust;
 
 #[cfg(test)]
 mod config_tests;
