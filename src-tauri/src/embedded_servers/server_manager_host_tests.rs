@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use tauri::test::{mock_app, MockRuntime};
 use tauri::Manager;
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
+use termihub_core::util::service_cause::ServiceCause;
 
 use super::EmbeddedServerManager;
 use crate::app_tasks::AppTasks;
@@ -155,6 +156,13 @@ impl Harness {
         assert_eq!(state.status, ServerStatus::Error, "{state:?}");
         let error = state.error.unwrap_or_default();
         assert!(error.contains(reason), "{error:?} does not say {reason:?}");
+        // Its button must fit its words (#6063).
+        let offline = error.contains("agent is not connected");
+        assert_eq!(
+            state.cause,
+            offline.then_some(ServiceCause::AgentOffline),
+            "{error:?}"
+        );
         let last = self
             .events
             .lock()

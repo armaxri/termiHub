@@ -148,6 +148,27 @@ fn start_on_a_busy_port_fails_and_succeeds_once_the_port_frees() {
 }
 
 #[test]
+fn a_start_that_fails_on_a_free_port_is_not_blamed_on_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let h = harness(dir.path(), None);
+    let (probe, port) = occupy_port();
+    drop(probe);
+    let mut config = http_on("web", port, root.path());
+    config.bind_host = "192.0.2.1".into(); // not an address of this computer
+    h.manager.save_config(config).unwrap();
+
+    h.manager.start_server("web").expect_err("cannot bind");
+    let state = h.state_of("web");
+    assert_eq!((state.status, state.cause), (ServerStatus::Error, None));
+    let reason = state.error.unwrap_or_default();
+    assert!(
+        reason.starts_with(&format!("Port {port} cannot be opened")),
+        "{reason}"
+    );
+}
+
+#[test]
 fn restart_when_the_port_was_taken_meanwhile_fails_then_recovers() {
     let dir = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();

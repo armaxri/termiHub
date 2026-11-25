@@ -522,3 +522,30 @@ async fn quitting_stops_what_can_be_reached_and_does_not_wait_for_the_rest() {
     run.manager.stop_all();
     assert_eq!(run.agent.requests().len(), asked);
 }
+
+/// "Retry now" (#6063) is a restart of a reconnecting tunnel: it does not stop it
+/// and start it, which would end its other tries.
+#[tokio::test(flavor = "multi_thread")]
+async fn retrying_a_reconnecting_tunnel_now_keeps_it_reconnecting() {
+    let run = db_on_edge(|_| {});
+    let retry_now = Arc::new(tokio::sync::Notify::new());
+    let cancel = tokio_util::sync::CancellationToken::new();
+    run.manager.reconnecting.lock().unwrap().insert(
+        "db".into(),
+        super::Reconnecting {
+            cancel: cancel.clone(),
+            retry_now: Arc::clone(&retry_now),
+            attempt: 1,
+        },
+    );
+    super::note_attempt(&run.manager.reconnecting, "db", 3);
+    run.assert_row(TunnelStatus::Reconnecting, "Connection lost. Try 3 of 10.");
+
+    run.manager.restart_tunnel("db").unwrap();
+    tokio::time::timeout(Duration::from_secs(1), retry_now.notified())
+        .await
+        .expect("asked to try now");
+    assert!(!cancel.is_cancelled());
+    run.assert_row(TunnelStatus::Reconnecting, "Try 3 of 10");
+    assert_eq!(run.sent(TUNNEL_START), 0);
+}

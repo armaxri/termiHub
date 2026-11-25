@@ -2112,11 +2112,7 @@ async fn supervise<R: Runtime>(
         &TUNNEL_RECONNECT_POLICY,
         &mut jitter,
         |attempt, delay| {
-            if let Ok(mut map) = reconnecting.lock() {
-                if let Some(entry) = map.get_mut(&tunnel_id) {
-                    entry.attempt = attempt;
-                }
-            }
+            note_attempt(&reconnecting, &tunnel_id, attempt);
             tracing::info!(
                 "Tunnel {tunnel_id} reconnecting — attempt {attempt} of \
                  {RECONNECT_MAX_ATTEMPTS} (retry in {}s)",
@@ -2170,6 +2166,19 @@ struct Reconnecting {
     retry_now: Arc<Notify>,
     /// Which try comes next, or runs.
     attempt: u32,
+}
+
+/// Keep which try of `tunnel_id` comes next, for its row.
+fn note_attempt(
+    reconnecting: &Mutex<HashMap<String, Reconnecting>>,
+    tunnel_id: &str,
+    attempt: u32,
+) {
+    if let Ok(mut map) = reconnecting.lock() {
+        if let Some(entry) = map.get_mut(tunnel_id) {
+            entry.attempt = attempt;
+        }
+    }
 }
 
 /// What the row of a reconnecting tunnel says.
