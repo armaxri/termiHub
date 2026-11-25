@@ -442,6 +442,23 @@ describe("runWorkflowOnTarget — fan-out retry reporting", () => {
   });
 });
 
+describe("Stop before the first step", () => {
+  it("is not lost: the run shows as running before it has begun", async () => {
+    let begin = () => {};
+    vi.mocked(dispatchWorkflowRunStarted).mockImplementationOnce(
+      () => new Promise((resolve) => (begin = () => resolve(undefined)))
+    );
+    const done = run(workflow([{ kind: "send-command", command: "make" }]));
+    await vi.waitFor(() => expect(dispatchWorkflowRunStarted).toHaveBeenCalled());
+    const { runId } = vi.mocked(dispatchWorkflowRunStarted).mock.calls[0][0] as { runId: string };
+    expect(cancelWorkflowRunById(runId)).toBe(true);
+    begin();
+    expect((await done).status).toBe("cancelled");
+    expect(mocks.injector).not.toHaveBeenCalled();
+    expect(activeWorkflowRunCount()).toBe(0);
+  });
+});
+
 describe("toastRunOutcome", () => {
   it("pluralises several tolerated step failures", () => {
     toastRunOutcome(
@@ -499,6 +516,19 @@ describe("toastRunOutcome", () => {
       SHOW_AUTOMATION_RUNS_EVENT,
       automation.id,
     ]);
+  });
+
+  it.each([
+    [0, "nope"],
+    [2, "Steps 1 to 2 were run. nope"],
+  ])("says what ran before step %i failed (B-010)", (failedStepIndex, description) => {
+    toastRunOutcome(
+      "wf",
+      { status: "failed", stepsCompleted: failedStepIndex, failedStepIndex, error: "nope" },
+      3,
+      "t"
+    );
+    expect(mocks.toast.error).toHaveBeenCalledWith(expect.any(String), { id: "t", description });
   });
 
   it("says that nothing was run when it did not start", () => {

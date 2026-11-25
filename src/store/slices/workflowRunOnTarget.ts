@@ -613,6 +613,15 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     // from transport construction, and dispatchWorkflowRunStarted below hits
     // the same failure and logs it (#4520).
   }
+  // Stoppable from the moment it shows as running, which is before its first step: a
+  // Stop pressed meanwhile would find no run and be lost.
+  let stoppedEarly = false;
+  activeWorkflowRuns.set(runId, {
+    done: new Promise(() => {}),
+    cancel: () => {
+      stoppedEarly = true;
+    },
+  });
   await dispatchWorkflowRunStarted({
     runId,
     workflowId,
@@ -694,6 +703,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     },
     paramValues
   );
+  if (stoppedEarly) handle.cancel();
   activeWorkflowRuns.set(runId, handle);
   fanout?.onStart?.(runId, () => handle.cancel());
 
