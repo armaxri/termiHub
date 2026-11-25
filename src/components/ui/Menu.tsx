@@ -154,7 +154,7 @@ export type DropdownMenuContentProps = React.ComponentPropsWithoutRef<
 export const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof RadixDropdownMenu.Content>,
   DropdownMenuContentProps
->(function DropdownMenuContent({ className, container, width, children, ...rest }, ref) {
+>(function DropdownMenuContent({ className, container, width, style, children, ...rest }, ref) {
   return (
     <RadixDropdownMenu.Portal container={container}>
       <RadixDropdownMenu.Content
@@ -162,6 +162,12 @@ export const DropdownMenuContent = React.forwardRef<
         className={cx("ui-menu__content", width === "wide" && "ui-menu__content--wide", className)}
         // A dialog clips what it holds, so its menu fits into it (and scrolls).
         collisionBoundary={container instanceof Element ? container : undefined}
+        style={
+          {
+            "--ui-menu-max-height": "var(--radix-dropdown-menu-content-available-height)",
+            ...style,
+          } as React.CSSProperties
+        }
         {...rest}
       >
         <MenuKindContext.Provider value="dropdown">{children}</MenuKindContext.Provider>
