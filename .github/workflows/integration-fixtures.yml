@@ -156,14 +156,15 @@ jobs:
       needs.changes.outputs.sidecar != 'false' ||
       needs.changes.outputs.scripts != 'false') }}
     # The instrumented (coverage) build on nightly/manual runs is slower than a
-    # plain `cargo test`; 60 min leaves room for it.
-    timeout-minutes: 60
+    # plain one; 75 min leaves room for it. Every suite step has a limit of its
+    # own, so one that hangs does not keep the later ones from running (#6030).
+    timeout-minutes: 75
 
     env:
       # Integration coverage (TOOL-005, #3656): manually dispatched runs
       # (including the nightly develop dispatch) measure the suite with cargo-llvm-cov and upload the lcov, which the
       # Coverage workflow (coverage.yml) merges into the unified report.
-      # Path-filtered develop push runs stay a plain `cargo test`.
+      # Path-filtered develop push runs stay uninstrumented.
       # The develop nightly is dispatched by scheduled-dispatch.yml (#4277).
       #
       # A CALLED run instruments only when its caller asks via the
@@ -176,8 +177,8 @@ jobs:
       # never reads, so it does not leak into coverage.yml's nightly merge; the
       # release coverage summary (scripts/internal/release-coverage-summary.mjs)
       # reads it instead. There a coverage problem must never fail the gate:
-      # the cargo-llvm-cov install is non-fatal and the suite falls back to a
-      # plain `cargo test` without it (MEASURE_COVERAGE_OPTIONAL).
+      # the cargo-llvm-cov install is non-fatal and the suite runs uninstrumented
+      # without it (MEASURE_COVERAGE_OPTIONAL).
       #
       # NOT on `schedule` either (#3664): the weekly cron grades main, and the
       # nightly merge reads develop's lcov from develop's instrumented run, the
@@ -224,6 +225,13 @@ jobs:
         uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-llvm-cov@0.9.1
+
+      # Gives every test of the core suite a time limit of its own (#6030).
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-nextest@0.9.143
+          fallback: none
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -310,6 +318,7 @@ jobs:
             up -d --build --wait
 
       - name: Run core integration suite against the fixtures
+        timeout-minutes: 45
         # `--all-features` enables the `docker` feature the integration tests
         # compile against; with the fixtures up, the `require_docker!` guards run
         # the tests instead of skipping them.
@@ -333,10 +342,12 @@ jobs:
           # TERMIHUB_REQUIRE_DOCKER instead of skipping.
           TERMIHUB_RDP_HELPER: ${{ github.workspace }}/rdp-sidecar/target/debug/termihub-rdp-helper
         #
-        # `--test-threads=1` is required: the suites share single-instance
+        # One test at a time (`test-threads = 1` in the `live-fixtures` profile,
+        # .config/nextest.toml) is required: the suites share single-instance
         # containers, and running them concurrently makes them stomp on shared
         # state (e.g. the network-fault-proxy's `tc` qdisc → "Exclusivity flag
-        # on, cannot modify").
+        # on, cannot modify"). The profile also ends a test that hangs and
+        # names it (#6030).
         #
         # Under MEASURE_COVERAGE the same tests run instrumented; `--no-report`
         # defers the lcov export to the always() step below, so a failing test
@@ -351,12 +362,19 @@ jobs:
             MEASURE_COVERAGE=false
           fi
           if [ "$MEASURE_COVERAGE" = "true" ]; then
-            cargo llvm-cov --no-report -p termihub-core --all-features -- --test-threads=1
+            # One process per test: merge their profiles into a small pool
+            # instead of one file each (see ci-rust-tests.sh).
+            LLVM_PROFILE_FILE_NAME="termihub-%8m.profraw" \
+              cargo llvm-cov nextest --no-report --profile live-fixtures \
+              -p termihub-core --all-features
           else
-            cargo test -p termihub-core --all-features -- --test-threads=1
+            cargo nextest run --profile live-fixtures -p termihub-core --all-features
+            # nextest runs no doc-tests.
+            cargo test --doc -p termihub-core --all-features
           fi
 
       - name: Run the Podman variant of the directory-mount spawn test and runtime routing
+        timeout-minutes: 15
         # core/tests/docker_spawn.rs::podman_spawn_mounts_directory_and_opens_cd_to_mount
         # (#1372, #4010): the same /workspace bind-mount spawn as the Docker
         # variant above, through an explicit `runtime: podman` session. Podman is
@@ -396,6 +414,7 @@ jobs:
           grep -q "runtime=Podman -> podman=true" runtime-routing.log
 
       - name: Run desktop SFTP suites against the fixtures
+        timeout-minutes: 20
         # src-tauri/tests/sftp_transfer.rs + sftp_transfer_resume.rs (#3039) drive
         # the desktop transfer executor against the `sftp-stress` fixture (the
         # `stress` profile above, port 2210; the resume drop tests also
@@ -419,6 +438,7 @@ jobs:
           -- --test-threads=1
 
       - name: Run desktop in-crate Docker tests against the fixtures
+        timeout-minutes: 15
         # The elevated SFTP save, read-only detection and SFTP-only fallback tests
         # (src-tauri/src/files/sftp.rs, against the default-profile `ssh-sudo`
         # :2212, `ssh-nosudo` :2213 and `ssh-sftp-only` :2215), the sudo-password
@@ -445,6 +465,7 @@ jobs:
           utils::remote_exec::tests::agent_deploy
 
       - name: Run the live VNC-through-a-real-agent test against the fixtures
+        timeout-minutes: 15
         # src-tauri/src/session/agent_port_forward_tests.rs
         # `live::live_vnc_through_a_real_agent_binary` (#5169, COV-009): the
         # desktop's graphical session manager reaches the `vnc` profile's
@@ -467,6 +488,7 @@ jobs:
           grep -q "test result: ok. 1 passed" live-vnc.log
 
       - name: Run the agent ssh-agent relay suite against the fixtures
+        timeout-minutes: 10
         # agent/tests/agent_forward_integration.rs (#4005, #1719/#1727): the real
         # termihub-agent, over --stdio and over --listen TCP, opens an SSH
         # session with forwardAgent to the default-profile `ssh-jumphost-bastion`
@@ -482,6 +504,7 @@ jobs:
         run: cargo test -p termihub-agent --test agent_forward_integration
 
       - name: Run the agent files-only suite against the fixtures
+        timeout-minutes: 10
         # agent/tests/ssh_files_only_integration.rs (#4081): the real
         # termihub-agent over --stdio opens an SSH session to the default-profile
         # `ssh-sftp-only` (ForceCommand internal-sftp). The refused shell must
@@ -496,6 +519,7 @@ jobs:
         run: cargo test -p termihub-agent --test ssh_files_only_integration
 
       - name: Run the agent-hosted tunnel suite against the fixtures
+        timeout-minutes: 10
         # agent/tests/tunnel_integration.rs (#4288, TBE2-001): the agent's own
         # tunnel registry opens SSH sessions to the default-profile
         # `ssh-tunnel-target` and forwards real traffic over local (-L), remote
@@ -510,6 +534,7 @@ jobs:
         run: cargo test -p termihub-agent --test tunnel_integration
 
       - name: Headless X detection in a clean container
+        timeout-minutes: 10
         # LinuxXEnv::detect() (#1055, #4005) against a real headless Linux box:
         # no DISPLAY, no Wayland, no X socket, no X server binary. The runner
         # itself is not a clean probe (it ships Xvfb and its env is not ours),

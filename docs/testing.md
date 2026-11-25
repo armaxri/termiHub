@@ -1322,10 +1322,12 @@ and core session-plumbing paths — never on a PR since #5461 — and via the re
 [Release integration gate](contributing.md#release-integration-gate)) brings the
 fixtures up and runs these suites with `TERMIHUB_REQUIRE_DOCKER=1` (#2970), so a
 missing fixture reds the lane. It brings up every profile a gated test needs
-(default, `stress`, `fault`, `network`, `ftp`, `vnc`, `rdp`) and runs both
-`cargo test -p termihub-core --all-features` and the desktop
+(default, `stress`, `fault`, `network`, `ftp`, `vnc`, `rdp`) and runs
+`termihub-core` with all features under nextest's `live-fixtures` profile, the desktop
 `sftp_transfer` / `sftp_transfer_resume` suites (#3039) and the in-crate
-`elevated_save` / `agent_deploy` tests (#3978), each with `--test-threads=1`. A new gated suite whose fixture sits in another profile must
+`elevated_save` / `agent_deploy` tests (#3978), each one test at a time. The profile ends a
+test that hangs after 5 minutes and fails it by name, and every suite step has a limit of its
+own, so one hang never hides the rest (#6030). A new gated suite whose fixture sits in another profile must
 add that profile to the lane's bring-up in the same PR, or it will hard-fail
 there.
 

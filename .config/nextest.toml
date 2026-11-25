@@ -107,3 +107,18 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 platform = 'cfg(windows)'
 filter = '(package(termihub-core) & kind(lib) & test(/^backends::local_shell::/)) | binary_id(termihub-agent::local_agent_integration)'
 slow-timeout = { period = "60s", terminate-after = 6 }
+
+# ── Live fixtures profile ────────────────────────────────────────────────────
+# core's whole suite against the Docker fixtures (integration-fixtures.yml).
+# One test at a time: the suites share single-instance containers. A test that
+# hangs is killed after 5 minutes and fails by name, and the rest still runs
+# (#6030: one hung RDP test used up the job's hour, and every later suite was
+# never started). The longest live test takes about 2 minutes.
+[profile.live-fixtures]
+test-threads = 1
+fail-fast = false
+retries = 0
+slow-timeout = { period = "60s", terminate-after = 5 }
+failure-output = "immediate-final"
+status-level = "pass"
+final-status-level = "slow"
