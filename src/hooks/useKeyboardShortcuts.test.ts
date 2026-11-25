@@ -38,7 +38,7 @@ vi.mock("@/services/landmarkFocus", () => ({
 
 vi.mock("@/services/workflowTriggers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/workflowTriggers")>()),
-  matchHotkeyWorkflow: vi.fn(() => null),
+  matchHotkeyAutomation: vi.fn(() => null),
 }));
 
 vi.mock("@/services/storage", () => ({
@@ -77,7 +77,7 @@ import {
   isShellReservedKey,
   isEventFromTerminal,
 } from "@/services/keybindings";
-import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
+import { matchHotkeyAutomation } from "@/services/workflowTriggers";
 import { cycleLandmarkFocus } from "@/services/landmarkFocus";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -91,7 +91,7 @@ const mockProcessKeyEvent = vi.mocked(processKeyEvent);
 const mockCancelChord = vi.mocked(cancelChord);
 const mockIsShellReservedKey = vi.mocked(isShellReservedKey);
 const mockIsEventFromTerminal = vi.mocked(isEventFromTerminal);
-const mockMatchHotkeyWorkflow = vi.mocked(matchHotkeyWorkflow);
+const mockMatchHotkey = vi.mocked(matchHotkeyAutomation);
 
 function KeyboardHarness() {
   useKeyboardShortcuts();
@@ -115,7 +115,7 @@ describe("useKeyboardShortcuts", () => {
     // each test starts with shortcuts dispatched normally.
     mockIsEventFromTerminal.mockReturnValue(false);
     mockIsShellReservedKey.mockReturnValue(false);
-    mockMatchHotkeyWorkflow.mockReturnValue(null);
+    mockMatchHotkey.mockReturnValue(null);
     useAppStore.setState(useAppStore.getInitialState());
     // split-right/-down assert the split synchronously; pin to the local reducer
     // (the retained resilience fallback) since the mutation cut (#2184) makes the
@@ -172,34 +172,34 @@ describe("useKeyboardShortcuts", () => {
 
   describe("workflow hotkey triggers", () => {
     it("runs the matched workflow and prevents default when no app action matched", () => {
-      const runWorkflow = vi.fn(() => Promise.resolve());
-      useAppStore.setState({ runWorkflow });
+      const runAutomation = vi.fn(() => Promise.resolve());
+      useAppStore.setState({ runAutomation });
       act(() => {
         root.render(createElement(KeyboardHarness));
       });
       mockProcessKeyEvent.mockReturnValue(null);
-      mockMatchHotkeyWorkflow.mockReturnValue("wf-1");
+      mockMatchHotkey.mockReturnValue("wf-1");
 
       const prevented = fireKey("h", { ctrlKey: true, altKey: true });
 
-      expect(runWorkflow).toHaveBeenCalledWith("wf-1", { triggeredBy: "hotkey" });
+      expect(runAutomation).toHaveBeenCalledWith("wf-1", { origin: "hotkey" });
       expect(prevented).toBe(true);
     });
 
     it("does not run a workflow when an app action matched the key", () => {
-      const runWorkflow = vi.fn(() => Promise.resolve());
-      useAppStore.setState({ runWorkflow });
+      const runAutomation = vi.fn(() => Promise.resolve());
+      useAppStore.setState({ runAutomation });
       act(() => {
         root.render(createElement(KeyboardHarness));
       });
       // An app action matched — the workflow-hotkey fallback must not be consulted.
       mockProcessKeyEvent.mockReturnValue("toggle-sidebar");
-      mockMatchHotkeyWorkflow.mockReturnValue("wf-1");
+      mockMatchHotkey.mockReturnValue("wf-1");
 
       fireKey("b", { metaKey: true });
 
-      expect(runWorkflow).not.toHaveBeenCalled();
-      expect(mockMatchHotkeyWorkflow).not.toHaveBeenCalled();
+      expect(runAutomation).not.toHaveBeenCalled();
+      expect(mockMatchHotkey).not.toHaveBeenCalled();
     });
   });
 

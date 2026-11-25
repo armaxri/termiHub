@@ -8,33 +8,40 @@
  * Four trigger kinds dispatch through here (on-output-match, which watches the
  * output stream, lives in {@link "@/services/workflowOutputTriggers"}):
  * - `manual` — surfaced as command-palette entries and the sidebar run action
- *   (no matching needed; those call `runWorkflow` directly).
- * - `hotkey` — {@link matchHotkeyWorkflow} maps a keyboard event to a workflow,
- *   reusing the shared keybinding parser so workflow hotkeys and app shortcuts
- *   speak the same combo language.
+ *   (no matching needed; those call `runAutomation` directly).
+ * - `hotkey` — {@link matchHotkeyAutomation} maps a keyboard event to an
+ *   automation, reusing the shared keybinding parser so automation hotkeys and
+ *   app shortcuts speak the same combo language.
  * - `on-connect` — {@link dispatchOnConnectTriggers} runs every workflow bound
  *   to a connection when a session for it finishes opening.
  * - `on-disconnect` — {@link dispatchOnDisconnectTriggers} runs every workflow
  *   bound to a connection when a session for it ends, filtered by whether the
  *   end was a drop or a user close (#3791).
  */
+import type { Automation } from "@/types/generated/Automation";
 import type { Workflow, WorkflowDisconnectCause } from "@/types/workflow";
 import type { TerminalExitReason } from "@/types/terminal";
 import type { KeyCombo } from "@/types/keybindings";
 import { parseBinding, eventMatchesCombo, isUnboundCombo } from "@/services/keybindings";
 
 /**
- * Find the first workflow whose `hotkey` trigger binding matches `event`.
+ * Find the first armed automation whose `hotkey` trigger binding matches `event`.
  *
- * Bindings are parsed through the shared {@link parseBinding} so a workflow
+ * Bindings are parsed through the shared {@link parseBinding} so an automation's
  * hotkey resolves identically to an app shortcut. Empty or explicitly unbound
- * bindings are skipped — a workflow whose hotkey was cleared must not fire — and
- * only single-combo bindings are considered (chords remain an app-shortcut
- * concept). Returns the matching workflow id, or `null` when none match.
+ * bindings are skipped — an automation whose hotkey was cleared must not fire —
+ * and only single-combo bindings are considered (chords remain an app-shortcut
+ * concept). One that is switched off does not fire: an imported automation
+ * arrives off, and the keys a file names must not work until the user says so
+ * (#5818). Returns the matching automation's id, or `null` when none match.
  */
-export function matchHotkeyWorkflow(event: KeyboardEvent, workflows: Workflow[]): string | null {
-  for (const workflow of workflows) {
-    for (const trigger of workflow.triggers) {
+export function matchHotkeyAutomation(
+  event: KeyboardEvent,
+  automations: readonly Pick<Automation, "id" | "triggers" | "triggersEnabled">[]
+): string | null {
+  for (const automation of automations) {
+    if (!workflowTriggersEnabled(automation)) continue;
+    for (const trigger of automation.triggers) {
       if (trigger.kind !== "hotkey") continue;
       const binding = trigger.binding?.trim();
       if (!binding) continue;
@@ -45,17 +52,16 @@ export function matchHotkeyWorkflow(event: KeyboardEvent, workflows: Workflow[])
       const combo: KeyCombo | undefined = Array.isArray(parsed) ? parsed[0] : parsed;
       if (!combo || combo.key === "") continue;
 
-      if (eventMatchesCombo(event, combo)) return workflow.id;
+      if (eventMatchesCombo(event, combo)) return automation.id;
     }
   }
   return null;
 }
 
 /**
- * Whether `workflow`'s automatic triggers (on-connect, on-disconnect,
- * on-output-match) may fire (#5674). A workflow disarmed from its row keeps its
- * trigger bindings but never fires automatically; an absent flag means armed.
- * Manual and hotkey runs are user-started and ignore it.
+ * Whether `workflow`'s triggers may fire (#5674). A disarmed one keeps its
+ * trigger bindings but only starts when the user runs it, or on a schedule; an
+ * absent flag means armed. Hotkeys follow it too (#5818, slice 11).
  */
 export function workflowTriggersEnabled(workflow: Pick<Workflow, "triggersEnabled">): boolean {
   return workflow.triggersEnabled !== false;

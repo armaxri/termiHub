@@ -2,17 +2,9 @@ import { StateCreator } from "zustand";
 
 import { toast } from "@/components/ui";
 import { claimWorkflowRunToast } from "./workflowRunToasts";
-import { newId } from "@/services/transport/ids";
-import { saveAutomation as apiSaveAutomation } from "@/services/automationApi";
-import {
-  parseWorkflowEnvelope,
-  resolveImportCollisions as resolveWorkflowImportCollisions,
-  summarizeLocalProcessSteps,
-  stripScriptSourcePaths,
-  type WorkflowImportResult,
-} from "@/services/workflowIo";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
-import { Workflow, WorkflowParameter, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
+import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
+import { Workflow, WorkflowParameter, WorkflowRun } from "@/types/workflow";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
 import { localProcessRefusal, localProcessRefusalToastId } from "../localProcessRefusal";
@@ -119,10 +111,10 @@ export interface RunWorkflowOptions {
   concurrency?: number;
   /**
    * What launched the run, recorded in the persisted run history (PROD-0046).
-   * Defaults to `"manual"` (palette / sidebar / toolbar); on-connect and hotkey
-   * dispatch pass their own value.
+   * Defaults to `"manual"` (sidebar / toolbar); the palette, hotkeys and triggers
+   * pass their own value.
    */
-  triggeredBy?: WorkflowRunTrigger;
+  triggeredBy?: AutomationRunOrigin;
 }
 
 /**
@@ -178,11 +170,6 @@ async function fetchWorkflow(
   return automation && !isMacroShaped(automation) ? automationToWorkflow(automation) : undefined;
 }
 
-/** Generate a unique workflow id. */
-function generateWorkflowId(): string {
-  return newId("workflow");
-}
-
 /**
  * Workflow Automation domain slice (#1852 / epic #1851, extracted under #2077
  * via #2881): the stored-workflow library plus the run/local-process
@@ -222,15 +209,6 @@ export interface WorkflowsSlice {
   loadWorkflowRuns: () => Promise<void>;
   /** Clear the persisted run history, then refresh the (now empty) list. */
   clearWorkflowRunHistory: () => Promise<void>;
-  /**
-   * Import workflows from an exported-workflow file's JSON, merging them into the
-   * library. Malformed/incompatible files reject with a clear error and leave
-   * the library untouched; imported workflows get fresh ids and de-duplicated
-   * names. Returns a {@link WorkflowImportResult} that also flags how many
-   * imported workflows carry a (guarded, never auto-authorized) `run-local-process`
-   * step so the caller can surface a security warning.
-   */
-  importWorkflows: (json: string) => Promise<WorkflowImportResult>;
   /**
    * Run a stored workflow's steps against a target terminal, dispatching each
    * step through the shared `send_input` seam and surfacing live progress.
@@ -287,7 +265,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
   setWorkflowTriggersEnabled: async (workflowId, enabled) => {
     // The stored automation itself, so nothing a view cannot show is lost (#6009).
     const stored = automationForRun(get(), workflowId);
-    if (!stored) throw new Error("Workflow not found");
+    if (!stored) throw new Error("Automation not found");
     // Absent means armed, so re-arming drops the key rather than storing `true`.
     const { triggersEnabled: _previous, ...rest } = stored;
     await get().saveAutomationToBackend(enabled ? rest : { ...rest, triggersEnabled: false });
@@ -302,41 +280,12 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
   // Clears only the runs this history shows; macro runs stay.
   clearWorkflowRunHistory: () => get().clearAutomationRuns(get().workflowRuns.map((r) => r.id)),
 
-  importWorkflows: async (json) => {
-    // parseWorkflowEnvelope throws on a malformed/incompatible file; let the
-    // error propagate so the caller can surface a recoverable toast.
-    const parsed = parseWorkflowEnvelope(json);
-    // #4310 (FEC2-001): an imported file never chooses which local file a
-    // run-script step reads — drop every sourcePath before anything is saved.
-    const { workflows: untrusted, removedPaths } = stripScriptSourcePaths(parsed);
-    const prepared = resolveWorkflowImportCollisions(
-      untrusted,
-      get().workflows,
-      generateWorkflowId
-    );
-    for (const workflow of prepared) {
-      await apiSaveAutomation(workflowToAutomation(workflow));
-    }
-    // Refresh once, after all saves, rather than per-workflow.
-    await get().loadAutomations();
-    // Flag any imported run-local-process steps: they are preserved (never
-    // stripped) so #1857's run-time guard applies, but they are NOT
-    // auto-authorized — the caller surfaces this to the user.
-    const { workflowsWithLocalProcess, localProcessSteps } = summarizeLocalProcessSteps(prepared);
-    return {
-      imported: prepared.length,
-      workflowsWithLocalProcess,
-      localProcessSteps,
-      removedScriptSourcePaths: removedPaths,
-    } satisfies WorkflowImportResult;
-  },
-
   runWorkflow: async (workflowId, opts) => {
     const workflow =
       get().workflows.find((w) => w.id === workflowId) ?? (await fetchWorkflow(get, workflowId));
     const state = get();
     if (!workflow) {
-      toast.error("Workflow not found");
+      toast.error("Automation not found");
       return;
     }
 
@@ -349,8 +298,8 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     if (requested.length === 0) {
       toast.error(
         multi
-          ? "No terminals selected to run the workflow against"
-          : "No active terminal to run the workflow against"
+          ? "No terminals selected to run the automation on"
+          : "No active terminal to run the automation on"
       );
       return;
     }
@@ -369,7 +318,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
 
     if (workflow.steps.length === 0) {
       // toast-policy: explains-outcome — nothing runs, and this says why
-      toast.info(`Workflow "${workflow.name}" has no steps to run`);
+      toast.info(`Automation "${workflow.name}" has no steps to run`);
       return;
     }
 
@@ -378,7 +327,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     const refusal = localProcessRefusal(state, workflow);
     if (refusal) {
       frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
-      toast.error(`Workflow "${workflow.name}" was not run`, {
+      toast.error(`Automation "${workflow.name}" was not run`, {
         id: localProcessRefusalToastId(workflow.id),
         description: refusal,
       });
@@ -400,7 +349,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       set({ workflowParamPrompt: null });
       if (collected === null) {
         // toast-policy: explains-outcome — the parameter prompt was dismissed, nothing runs
-        toast.info(`Workflow "${workflow.name}" canceled`);
+        toast.info(`Automation "${workflow.name}" canceled`);
         return;
       }
       paramValues = collected;
@@ -410,7 +359,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     if (activeFanout) activeFanout.cancelled = true;
     replaceActiveWorkflowRun();
 
-    const triggeredBy: WorkflowRunTrigger = opts?.triggeredBy ?? "manual";
+    const triggeredBy: AutomationRunOrigin = opts?.triggeredBy ?? "manual";
     const base = { set, get, workflow, paramValues, triggeredBy };
 
     if (!multi) {
@@ -435,7 +384,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     const toastId = `workflow-run-${workflowId}-fanout`;
     const statuses: FanoutTargetStatus[] = targets.map(() => "queued");
     const authDecisions = new Map<string, Promise<boolean>>();
-    const title = `Running workflow "${workflow.name}" on ${targets.length} terminals…`;
+    const title = `Running automation "${workflow.name}" on ${targets.length} terminals…`;
     const renderProgress = (note?: string) => {
       const line = describeFanoutProgress(statuses);
       toast.loading(title, { id: toastId, description: note ? `${line} — ${note}` : line });

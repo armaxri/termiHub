@@ -181,11 +181,18 @@ describe("triggers", () => {
 });
 
 describe("the Armed switch", () => {
-  it("shows with an automatic trigger, not for a hotkey", async () => {
-    await open([{ kind: "hotkey", binding: "F8" }]);
+  it("shows with any trigger, a hotkey too (#5818, slice 11)", async () => {
+    await open();
     expect(query("automation-editor-armed")).toBeNull();
-    await add("on-connect");
+    await add("hotkey");
     expect(query("automation-editor-armed")?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("says that off covers a hotkey", async () => {
+    await open([{ kind: "hotkey", binding: "F8" }], { off: true });
+    expect(query("automation-editor-when")?.textContent).toContain(
+      "Off: only a schedule or you can start it."
+    );
   });
 
   it("is stored only while off", async () => {

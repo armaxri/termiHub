@@ -68,6 +68,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Where an automation would run (R-083). */
+.command-palette__target {
+  flex-shrink: 1;
+  max-width: 40%;
+  padding-left: var(--spacing-md);
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .command-palette__type {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);

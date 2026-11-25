@@ -3,6 +3,8 @@
  * WA-FE2-003): they show the effective binding for the current platform —
  * including a user override — and drop the hint when the action is unbound.
  */
+import { buildCommands } from "./commands";
+import { parseKeybindingEnvelope } from "./keybindingIo";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearOverrides,
@@ -11,6 +13,7 @@ import {
   getActionAccelerator,
   getOverrides,
   modKeyAccelerator,
+  processKeyEvent,
   setOverrides,
   setOverride,
   unbindAction,
@@ -27,6 +30,37 @@ afterEach(() => {
   clearOverrides();
   if (originalUserAgent) Object.defineProperty(window.navigator, "userAgent", originalUserAgent);
   else delete (window.navigator as { userAgent?: string }).userAgent;
+});
+
+describe("bindings made before macros became automations (#5818)", () => {
+  /** An exported keybindings file of an older build. */
+  const OLD_FILE = JSON.stringify({
+    version: 1,
+    bindings: [
+      { action: "toggle-macro-recording", key: "Ctrl+Alt+R" },
+      { action: "play-macro", key: "Ctrl+Alt+P" },
+    ],
+  });
+  const press = (key: string) =>
+    processKeyEvent(new KeyboardEvent("keydown", { key, ctrlKey: true, altKey: true }));
+
+  it.each([
+    ["the stored settings", () => JSON.parse(OLD_FILE).bindings],
+    ["an exported file", () => parseKeybindingEnvelope(OLD_FILE)],
+  ])("still work from %s", (_name, read) => {
+    setOverrides(read());
+    expect(press("r")).toBe("toggle-macro-recording");
+    expect(press("p")).toBe("play-macro");
+    expect(getActionAccelerator("play-macro")).not.toBe("");
+  });
+
+  it("run what they ran, under the new names", () => {
+    setOverrides(JSON.parse(OLD_FILE).bindings);
+    const commands = new Map(buildCommands().map((c) => [c.id, c]));
+    expect(commands.get("toggle-macro-recording")?.label).toBe("Record automation (start/stop)");
+    expect(commands.get("play-macro")?.label).toBe("Run automation…");
+    expect(commands.get("play-macro")?.accelerator).toBeTruthy();
+  });
 });
 
 describe("withActionAccelerator", () => {

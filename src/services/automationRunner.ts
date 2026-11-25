@@ -46,7 +46,10 @@ export interface AutomationCycle {
 }
 
 /** Visit every step, nested ones included, depth first, in step order. */
-function visitSteps(steps: readonly RunnableStep[], visit: (step: RunnableStep) => void): void {
+export function visitSteps(
+  steps: readonly RunnableStep[],
+  visit: (step: RunnableStep) => void
+): void {
   for (const step of steps) {
     visit(step);
     if (step.kind === "conditional") {
@@ -59,7 +62,7 @@ function visitSteps(steps: readonly RunnableStep[], visit: (step: RunnableStep) 
 }
 
 /** Every automation id a step list references, depth first, in step order. */
-function referencedAutomations(steps: readonly RunnableStep[]): string[] {
+export function referencedAutomations(steps: readonly RunnableStep[]): string[] {
   const ids: string[] = [];
   visitSteps(steps, (step) => {
     if (step.kind === "run-automation") ids.push(step.automationId);

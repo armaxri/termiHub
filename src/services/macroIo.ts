@@ -1,11 +1,6 @@
 /**
- * Import/export of macros as portable JSON files (#1677).
- *
- * These are pure helpers: serialising a set of macros into a small versioned
- * envelope, validating/parsing an envelope back into macros (with zod, #4386), and
- * resolving id/name collisions when merging imported macros into an existing
- * library. File IO (the save/open dialogs) lives in the UI layer; keeping the
- * serialise/validate/collision logic here makes it unit-testable in isolation.
+ * Validated reading of the `macros` list older builds exported (#1677, #4386).
+ * `automationFileIo.ts` turns each entry into an automation that types its keys.
  */
 
 import { z } from "zod";
@@ -19,41 +14,9 @@ import {
   nonBlankStringSchema,
   parseImportEnvelope,
 } from "@/services/importEnvelope";
-import { newId } from "@/services/transport/ids";
 
-/**
- * Current version of the macro export envelope. Bump only on an incompatible
- * change to the on-disk shape; the parser rejects any other version so a newer
- * file fails loudly rather than importing as a corrupt macro.
- */
+/** The version of every file with a `macros` list. */
 export const MACRO_EXPORT_VERSION = 1;
-
-/**
- * The stable, explicit on-disk shape for exported macros. A versioned wrapper
- * around the macro list — deliberately NOT the raw internal store — so the file
- * format can evolve independently of the runtime {@link Macro} type.
- */
-export interface MacroExportEnvelope {
-  /** Envelope schema version; see {@link MACRO_EXPORT_VERSION}. */
-  version: number;
-  /** The exported macros. */
-  macros: Macro[];
-}
-
-/** Suffix appended to imported macro names that collide with an existing one. */
-const COLLISION_SUFFIX = "imported";
-
-/**
- * Serialise macros into a pretty-printed export envelope string ready to write
- * to a `.json` file. Works for a single macro (`[macro]`) or the whole library.
- */
-export function serializeMacros(macros: Macro[]): string {
-  const envelope: MacroExportEnvelope = {
-    version: MACRO_EXPORT_VERSION,
-    macros,
-  };
-  return `${JSON.stringify(envelope, null, 2)}\n`;
-}
 
 /**
  * Schema for one macro entry of an imported file (#4386). Tolerant of a missing
@@ -128,57 +91,4 @@ export function parseMacroEnvelope(json: string): Macro[] {
     createdAt,
     updatedAt,
   }));
-}
-
-/** Default fresh-id generator; mirrors the store's `generateMacroId`. */
-function defaultGenerateId(): string {
-  return newId("macro");
-}
-
-/**
- * Given a desired name and the set of names already in use, return a unique name
- * by appending "(imported)", then "(imported 2)", "(imported 3)", … until it no
- * longer collides. Leaves the name untouched when there is no collision.
- */
-function uniqueName(name: string, used: Set<string>): string {
-  if (!used.has(name)) return name;
-  let candidate = `${name} (${COLLISION_SUFFIX})`;
-  let n = 2;
-  while (used.has(candidate)) {
-    candidate = `${name} (${COLLISION_SUFFIX} ${n})`;
-    n += 1;
-  }
-  return candidate;
-}
-
-/**
- * Prepare imported macros for merging into an existing library. Every imported
- * macro is given a **fresh id** (so it never overwrites an existing macro, even
- * when the file was exported from this same instance), has its create/update
- * timestamps cleared (the backend re-stamps them on save), and gets a
- * **deterministically de-duplicated name** — a name that already exists (in the
- * library or earlier in this same batch) is suffixed with "(imported)".
- *
- * @param imported Macros parsed from a file (see {@link parseMacroEnvelope}).
- * @param existing The current library, used for name-collision detection.
- * @param generateId Injectable id generator (defaults to a crypto-based uuid).
- */
-export function resolveImportCollisions(
-  imported: Macro[],
-  existing: Macro[],
-  generateId: () => string = defaultGenerateId
-): Macro[] {
-  const usedNames = new Set(existing.map((m) => m.name));
-  return imported.map((macro) => {
-    const name = uniqueName(macro.name, usedNames);
-    usedNames.add(name);
-    return {
-      ...macro,
-      id: generateId(),
-      name,
-      // Cleared so the backend stamps authoritative timestamps on save.
-      createdAt: "",
-      updatedAt: "",
-    };
-  });
 }

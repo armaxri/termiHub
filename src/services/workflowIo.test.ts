@@ -1,21 +1,17 @@
 /**
- * Tests for workflow import/export serialisation (#1852).
- *
- * Covers the round-trip (serialise → parse), strict validation of the
- * discriminated step/trigger unions and the envelope version, and the
- * fresh-id + name-dedupe collision resolution used when merging an imported
- * file into an existing library.
+ * Tests for reading the `workflows` list of a file (#1852): what a valid file
+ * reads back as, and strict validation of the discriminated step/trigger unions
+ * and the envelope version.
  */
 import { describe, it, expect } from "vitest";
-import {
-  serializeWorkflows,
-  parseWorkflowEnvelope,
-  resolveImportCollisions,
-  summarizeLocalProcessSteps,
-  stripScriptSourcePaths,
-  WORKFLOW_EXPORT_VERSION,
-} from "./workflowIo";
+import { parseStepEntries, WORKFLOW_EXPORT_VERSION } from "./workflowIo";
 import type { Workflow } from "@/types/workflow";
+
+/** A `workflows` file as older builds exported it. */
+const serializeWorkflows = (workflows: Workflow[]) =>
+  `${JSON.stringify({ version: WORKFLOW_EXPORT_VERSION, workflows }, null, 2)}
+`;
+const parseWorkflowEnvelope = (json: string) => parseStepEntries(json, "workflows");
 
 function sampleWorkflow(overrides: Partial<Workflow> = {}): Workflow {
   return {
@@ -182,106 +178,6 @@ describe("serializeWorkflows / parseWorkflowEnvelope", () => {
       triggers: [],
       createdAt: "",
       updatedAt: "",
-    });
-  });
-});
-
-describe("resolveImportCollisions", () => {
-  let counter = 0;
-  const genId = (): string => `gen-${(counter += 1)}`;
-
-  it("gives each imported workflow a fresh id and clears timestamps", () => {
-    counter = 0;
-    const imported = [sampleWorkflow({ id: "old", createdAt: "x", updatedAt: "y" })];
-    const [result] = resolveImportCollisions(imported, [], genId);
-
-    expect(result.id).toBe("gen-1");
-    expect(result.createdAt).toBe("");
-    expect(result.updatedAt).toBe("");
-  });
-
-  it("de-duplicates a name that collides with the existing library", () => {
-    counter = 0;
-    const existing = [sampleWorkflow({ name: "Login" })];
-    const imported = [sampleWorkflow({ name: "Login" })];
-    const [result] = resolveImportCollisions(imported, existing, genId);
-
-    expect(result.name).toBe("Login (imported)");
-  });
-
-  it("de-duplicates names that collide within the same batch", () => {
-    counter = 0;
-    const imported = [sampleWorkflow({ name: "Deploy" }), sampleWorkflow({ name: "Deploy" })];
-    const results = resolveImportCollisions(imported, [], genId);
-
-    expect(results.map((w) => w.name)).toEqual(["Deploy", "Deploy (imported)"]);
-  });
-
-  it("leaves a non-colliding name untouched", () => {
-    counter = 0;
-    const [result] = resolveImportCollisions([sampleWorkflow({ name: "Unique" })], [], genId);
-    expect(result.name).toBe("Unique");
-  });
-});
-
-describe("summarizeLocalProcessSteps", () => {
-  it("reports zero for workflows with no local-process steps", () => {
-    const wf = sampleWorkflow({ steps: [{ kind: "send-command", command: "ls" }] });
-    expect(summarizeLocalProcessSteps([wf])).toEqual({
-      workflowsWithLocalProcess: 0,
-      localProcessSteps: 0,
-    });
-  });
-
-  it("counts local-process steps and the workflows carrying them", () => {
-    const withLocal = sampleWorkflow({
-      name: "danger",
-      steps: [
-        { kind: "send-command", command: "ls" },
-        { kind: "run-local-process", program: "echo", args: ["a"] },
-        { kind: "run-local-process", program: "rm", args: ["-rf", "/"] },
-      ],
-    });
-    const clean = sampleWorkflow({ name: "safe", steps: [{ kind: "wait", delayMs: 10 }] });
-
-    expect(summarizeLocalProcessSteps([withLocal, clean])).toEqual({
-      workflowsWithLocalProcess: 1,
-      localProcessSteps: 2,
-    });
-  });
-
-  it("descends into conditional branches so a nested local-process is still counted", () => {
-    const wf = sampleWorkflow({
-      name: "hidden",
-      steps: [
-        {
-          kind: "conditional",
-          condition: { left: "${env}", op: "eq", right: "prod" },
-          then: [{ kind: "run-local-process", program: "deploy", args: [] }],
-          else: [{ kind: "run-local-process", program: "rollback", args: [] }],
-        },
-      ],
-    });
-    expect(summarizeLocalProcessSteps([wf])).toEqual({
-      workflowsWithLocalProcess: 1,
-      localProcessSteps: 2,
-    });
-  });
-
-  it("descends into a loop body so a nested local-process is still counted", () => {
-    const wf = sampleWorkflow({
-      name: "looped",
-      steps: [
-        {
-          kind: "loop",
-          loop: { kind: "count", count: 3 },
-          body: [{ kind: "run-local-process", program: "poll", args: [] }],
-        },
-      ],
-    });
-    expect(summarizeLocalProcessSteps([wf])).toEqual({
-      workflowsWithLocalProcess: 1,
-      localProcessSteps: 1,
     });
   });
 });
@@ -460,83 +356,6 @@ function rawEnvelope(...workflows: unknown[]): string {
 function rawStepsEnvelope(...steps: unknown[]): string {
   return rawEnvelope({ name: "X", steps });
 }
-
-describe("stripScriptSourcePaths (#4310, FEC2-001)", () => {
-  it("removes sourcePath from imported run-script steps and reports each removed path", () => {
-    const parsed = parseWorkflowEnvelope(
-      rawStepsEnvelope(
-        { kind: "run-script", script: "echo harmless", sourcePath: "~/.ssh/id_ed25519" },
-        { kind: "run-script", script: "uptime" }
-      )
-    );
-    const { workflows, removedPaths } = stripScriptSourcePaths(parsed);
-
-    expect(workflows[0].steps).toEqual([
-      { kind: "run-script", script: "echo harmless" },
-      { kind: "run-script", script: "uptime" },
-    ]);
-    expect(removedPaths).toEqual(["~/.ssh/id_ed25519"]);
-  });
-
-  it("strips sourcePath nested inside conditional branches and loop bodies", () => {
-    const parsed = parseWorkflowEnvelope(
-      rawStepsEnvelope(
-        {
-          kind: "conditional",
-          condition: { left: "a", op: "eq", right: "a" },
-          then: [{ kind: "run-script", script: "t", sourcePath: "/then.sh" }],
-          else: [{ kind: "run-script", script: "e", sourcePath: "/else.sh" }],
-        },
-        {
-          kind: "loop",
-          loop: { kind: "count", count: 2 },
-          body: [{ kind: "run-script", script: "b", sourcePath: "/body.sh" }],
-        }
-      )
-    );
-    const { workflows, removedPaths } = stripScriptSourcePaths(parsed);
-
-    expect(JSON.stringify(workflows)).not.toContain("sourcePath");
-    expect(removedPaths).toEqual(["/then.sh", "/else.sh", "/body.sh"]);
-  });
-
-  it("reports nothing and keeps steps intact when no step carries a sourcePath", () => {
-    const wf = sampleWorkflow();
-    const { workflows, removedPaths } = stripScriptSourcePaths([wf]);
-    expect(workflows).toEqual([wf]);
-    expect(removedPaths).toEqual([]);
-  });
-
-  it("does not mutate the input workflows", () => {
-    const parsed = parseWorkflowEnvelope(
-      rawStepsEnvelope({ kind: "run-script", script: "s", sourcePath: "/x.sh" })
-    );
-    stripScriptSourcePaths(parsed);
-    expect(parsed[0].steps[0]).toEqual({ kind: "run-script", script: "s", sourcePath: "/x.sh" });
-  });
-
-  it("ignores a forged 'user-chosen' marker in the imported JSON", () => {
-    const parsed = parseWorkflowEnvelope(
-      rawStepsEnvelope({
-        kind: "run-script",
-        script: "s",
-        sourcePath: "/home/u/.aws/credentials",
-        sourcePathConfirmed: true,
-        userChosen: true,
-        trusted: true,
-      })
-    );
-    // The validator only copies known fields, so a forged marker never survives…
-    expect(parsed[0].steps[0]).toEqual({
-      kind: "run-script",
-      script: "s",
-      sourcePath: "/home/u/.aws/credentials",
-    });
-    // …and the import strip removes the path itself regardless.
-    const { workflows } = stripScriptSourcePaths(parsed);
-    expect(workflows[0].steps[0]).toEqual({ kind: "run-script", script: "s" });
-  });
-});
 
 describe("parseWorkflowEnvelope run-script / wait / run-local-process rejections (TFE2-005)", () => {
   it("rejects a run-script missing its script", () => {

@@ -147,7 +147,7 @@ describe("stepSummary (#5637)", () => {
     );
     expect(stepSummary({ kind: "run-automation", automationId: "a1" }, library)).toBe("tail log");
     expect(stepSummary({ kind: "run-automation", automationId: "gone" }, library)).toBe(
-      "Deleted automation"
+      "Missing automation"
     );
     expect(stepSummary({ kind: "run-automation", automationId: "" })).toBe(EMPTY_STEP_SUMMARY);
     expect(stepSummary({ kind: "run-local-process", program: "echo", args: ["a b"] })).toBe(

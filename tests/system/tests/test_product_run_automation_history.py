@@ -215,7 +215,7 @@ class TestProductRunAutomationHistory(
             self.driver.press_key("p", meta=mac, ctrl=not mac, shift=not mac)
             self.wait(lambda: self.driver.exists("command-palette-input"), what="the palette")
             self.driver.type("command-palette-input", f"History macro {t}")
-            item = f"command-palette-item-macro:{mid}"
+            item = f"command-palette-item-automation:{mid}"
             self.wait(lambda: self.driver.exists(item), what="the macro in the palette")
             self.driver.click(item)
             self._played(marker, 4)

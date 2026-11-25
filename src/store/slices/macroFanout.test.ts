@@ -83,7 +83,7 @@ describe("describeMacroFanoutOutcome (PROD-042)", () => {
   it("is a success only when every requested terminal got the whole macro", () => {
     expect(describeMacroFanoutOutcome("M", { ...base, status: "completed" })).toEqual({
       kind: "success",
-      message: 'Played macro "M" on 3 terminals',
+      message: 'Ran automation "M" on 3 terminals',
     });
   });
 
@@ -96,7 +96,7 @@ describe("describeMacroFanoutOutcome (PROD-042)", () => {
       skipped: 1,
     });
     expect(s.kind).toBe("error");
-    expect(s.message).toBe('Played macro "M" on 1 of 3 terminals');
+    expect(s.message).toBe('Ran automation "M" on 1 of 3 terminals');
     expect(s.description).toBe(
       "1 skipped (not connected) · 1 stopped early (disconnected mid-playback)"
     );

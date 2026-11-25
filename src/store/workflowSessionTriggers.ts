@@ -54,12 +54,12 @@ let triggeredInFlight = 0;
 /** Why a triggered run cannot start now, or `null` when it can. */
 function busyReason(state: AppState): string | null {
   if (triggeredInFlight > 0 || activeWorkflowRunCount() > 0) {
-    return "another workflow run is in progress";
+    return "another automation is running";
   }
   if (state.workflowParamPrompt || state.localProcessPrompt) {
-    return "another workflow is waiting for input";
+    return "another automation is waiting for input";
   }
-  if (state.macroPlayback) return "a macro is playing";
+  if (state.macroPlayback) return "another automation is typing";
   return null;
 }
 
@@ -97,7 +97,7 @@ function launchTriggeredRun(
   const refusal = localProcessRefusal(store.get(), workflow);
   if (refusal) {
     frontendLog("workflow", `${triggeredBy} trigger for "${workflow.name}" refused: ${refusal}`);
-    toast.error(`Workflow "${workflow.name}" was not run`, {
+    toast.error(`Automation "${workflow.name}" was not run`, {
       id: localProcessRefusalToastId(workflow.id),
       description: refusal,
     });
@@ -106,7 +106,7 @@ function launchTriggeredRun(
   const params = unattendedParamValues(workflow.parameters ?? []);
   if ("missing" in params) {
     // toast-policy: explains-outcome — an automatic trigger did not run, and this says why
-    toast.info(`Workflow "${workflow.name}" was not run`, {
+    toast.info(`Automation "${workflow.name}" was not run`, {
       description: `Parameter "${params.missing}" needs a default value to run from a trigger`,
     });
     return false;

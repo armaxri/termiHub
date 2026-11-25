@@ -4,7 +4,7 @@ The live grade is hand-triggered only (``scripts/internal/product-run.sh``;
 deselected without ``--product-run``). The UI review of run
 ``20261123T215628Z`` saw a "Closed “Terminal” · Reopen" toast over the
 connection editor's Initial command field (R-064), a success toast over the
-status bar's lock indicator (R-163), and stale "Played macro…" / "Disabled
+status bar's lock indicator (R-163), and stale "Ran automation…" / "Disabled
 schedule…" toasts lingering next to a new confirm dialog (R-168).
 
 Now the status bar is a toast keep-clear zone, so the stack always starts
@@ -134,10 +134,10 @@ def test_grade_ignores_hidden_and_touching_items():
 
 
 def test_grade_stale_toasts_beside_a_dialog_fail():
-    toasts = [_item("Played macro “deploy”", _rect(444, 500, 340, 40))]
-    problems = stale_toast_problems(toasts, ["Played macro", "Disabled schedule"])
-    assert problems == ["the stale 'Played macro' toast still shows beside the dialog"]
-    assert stale_toast_problems([], ["Played macro"]) == []
+    toasts = [_item("Ran automation “deploy”", _rect(444, 500, 340, 40))]
+    problems = stale_toast_problems(toasts, ["Ran automation", "Disabled schedule"])
+    assert problems == ["the stale 'Ran automation' toast still shows beside the dialog"]
+    assert stale_toast_problems([], ["Ran automation"]) == []
 
 
 # ── live grade ────────────────────────────────────────────────────────────

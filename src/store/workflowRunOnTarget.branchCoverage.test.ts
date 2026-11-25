@@ -199,7 +199,7 @@ describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
     );
     expect(result.status).toBe("failed");
     expect(mocks.toast.error).toHaveBeenCalledWith(
-      'Workflow "slow" failed at step 1',
+      'Automation "slow" failed at step 1',
       expect.objectContaining({ description: expect.stringMatching(/timed out/) })
     );
   });
@@ -438,14 +438,14 @@ describe("toastRunOutcome", () => {
       "t"
     );
     expect(mocks.toast.info).toHaveBeenCalledWith(
-      'Ran workflow "wf" with 2 tolerated step failures',
+      'Ran automation "wf" with 2 tolerated step failures',
       { id: "t", description: "Step 1: boom" }
     );
   });
 
   it("falls back to the completed-step count when no failed index is known", () => {
     toastRunOutcome("wf", { status: "failed", stepsCompleted: 1, error: "nope" }, 3, "t");
-    expect(mocks.toast.error).toHaveBeenCalledWith('Workflow "wf" failed at step 2', {
+    expect(mocks.toast.error).toHaveBeenCalledWith('Automation "wf" failed at step 2', {
       id: "t",
       description: "nope",
     });
