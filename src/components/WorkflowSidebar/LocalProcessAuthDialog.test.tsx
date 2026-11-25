@@ -33,11 +33,11 @@ function render() {
 }
 
 /** Open the prompt via the store and return the resolver spy. */
-function openPrompt(program: string, args: string[]) {
+function openPrompt(program: string, args: string[], path = program) {
   const resolve = vi.fn();
   act(() => {
     useAppStore.setState({
-      localProcessPrompt: { program, args, workflowName: "Deploy", resolve },
+      localProcessPrompt: { program, path, args, workflowName: "Deploy", resolve },
     });
   });
   return resolve;
@@ -57,6 +57,16 @@ afterEach(() => {
 });
 
 describe("LocalProcessAuthDialog", () => {
+  it("shows the file that would start when the program is only a name (#5994)", () => {
+    render();
+    openPrompt("make", ["test"], "/usr/bin/make");
+    expect(query("local-process-auth-program")!.textContent).toBe("make");
+    expect(query("local-process-auth-path")!.textContent).toBe("/usr/bin/make");
+    expect(document.body.textContent).toContain("with any arguments");
+    openPrompt("/usr/bin/make", []);
+    expect(query("local-process-auth-path")).toBeNull();
+  });
+
   it("is not rendered when there is no pending prompt", () => {
     render();
     expect(query("local-process-auth-dialog")).toBeNull();
