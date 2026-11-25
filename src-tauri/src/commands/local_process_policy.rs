@@ -25,7 +25,8 @@
 //! # What this does not protect against
 //!
 //! - **A compromised window.** The list lives in the settings, which the window
-//!   writes (`save_settings`), and the window reports the user's approval. Code
+//!   writes (`save_settings`) and a restored backup brings (#6018), and the window
+//!   reports the user's approval. Code
 //!   running in a window can also open a local shell and type into it. This check
 //!   protects against automations (files, imports, triggers) and against a mistake
 //!   in the frontend, not against the frontend itself.
