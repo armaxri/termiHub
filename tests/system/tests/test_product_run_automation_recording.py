@@ -40,10 +40,10 @@ from termihub_harness import (
 from termihub_harness.product_run import ProductRunUi
 from termihub_harness.product_run.automation_recording_grades import (
     CHIP,
-    CHIP_AT_PROMPT,
     CHIP_HERE,
     EDITOR_BAR,
     KEPT_BAR,
+    PROMPT_BAR,
     RECORD,
     SAVE_BUTTONS,
     SAVE_DIALOG,
@@ -106,7 +106,7 @@ def test_grade_chip():
     assert chip_problems("Stop recording", CHIP_HERE) == []
     assert chip_problems(None, None) == []
     assert chip_problems(None, CHIP_HERE) == ["no recording chip"]
-    assert chip_problems("Stop recording", CHIP_AT_PROMPT) != []
+    assert chip_problems("Stop recording (password kept apart)", CHIP_HERE) != []
     assert chip_problems("Recording", None) == ["the chip still reads 'Recording'"]
 
 
@@ -119,7 +119,7 @@ def test_grade_save_dialog():
 
 def test_grade_wait():
     bar = (
-        "“Prompt” waits for you in web. Type your password, then Continue. "
+        "“Prompt” waits for you in web. Type your password and press Enter in the terminal, then Continue. "
         "Stops at 6:05:00 PM if you do nothing."
     )
     assert wait_problems(bar, "Prompt", "web") == []
@@ -317,7 +317,7 @@ class TestProductRunAutomationRecording(
         with self.step(
             "automation-recording.password",
             "What is typed at a password prompt is announced while recording and not stored",
-            expect="the chip 'Stop recording (password kept apart)'; then Save recording naming the "
+            expect="the bar 'Password prompt: what you type now is not recorded …'; then Save recording naming the "
             "prompt, with 'Leave it out' chosen",
             screenshot=False,
         ):
@@ -334,7 +334,11 @@ class TestProductRunAutomationRecording(
             )
             self._start()
             self._press(secret)
-            problems = chip_problems(self._chip(), CHIP_AT_PROMPT)
+            # Said beside the Stop, not in it (#6045).
+            self.wait(
+                lambda: self.driver.exists(PROMPT_BAR), what="the password prompt's bar"
+            )
+            problems = chip_problems(self._chip(), CHIP_HERE)
             self.shot(label="prompt")
             self._press("\r")
             self.wait_for_output(f"PR_LEN_{len(secret)}", tab_id=tab)
@@ -364,7 +368,7 @@ class TestProductRunAutomationRecording(
             "automation-recording.wait",
             "Replayed, the left-out password is a wait: nothing is typed until Continue",
             expect="a yellow bar above the terminal: the automation waits for you, type your "
-            "password, then Continue; Stop and Continue; the tab's badge says it waits",
+            "password and press Enter, then Continue; Stop and Continue; the tab's badge says it waits",
             screenshot=False,
         ):
             self.require("automation-recording.password")
@@ -402,7 +406,7 @@ class TestProductRunAutomationRecording(
     def test_36_password_wait_stopped(self):
         with self.step(
             "automation-recording.wait-stop",
-            "Stop ends a waiting run; nothing more is typed and the History says canceled",
+            "Stop ends a waiting run; nothing more is typed and the History says Stopped",
             expect="the bar gone and nothing typed into the terminal",
             screenshot=False,
         ):
