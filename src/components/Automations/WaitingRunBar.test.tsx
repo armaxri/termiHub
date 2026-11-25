@@ -310,6 +310,39 @@ describe("Continue", () => {
     expect(reads).toHaveLength(before);
   });
 
+  it("reads the terminal that took over the tab while it looked (#6077)", () => {
+    vi.useFakeTimers();
+    const old: ((before: string) => void)[] = [];
+    takeBack.push(
+      registerTerminalPrompt("a", { read: (then) => void old.push(then), arrived: () => 0, pin })
+    );
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    prompt = "Password: ";
+    takeBack.push(
+      registerTerminalPrompt("a", { read: (then) => then(prompt), arrived: () => 0, pin })
+    );
+    act(() => old[0]("$ "));
+    expect(wait.result).toBeUndefined();
+    expect(query("automation-wait-message-a")?.textContent).toContain("still asks for a password");
+  });
+
+  it("holds back for a prompt it saw on the way, though it never settled (#6077)", () => {
+    vi.useFakeTimers();
+    let arrived = 0;
+    const reads: ((before: string) => void)[] = [];
+    const read = (then: (before: string | null) => void) => void reads.push(then);
+    takeBack.push(registerTerminalPrompt("a", { read, arrived: () => arrived, pin }));
+    startWait();
+    click("automation-wait-continue-a");
+    arrived += 1;
+    act(() => reads[0]("Password: "));
+    arrived += 1;
+    act(() => reads[1]("Password: hunt"));
+    act(() => void vi.advanceTimersByTime(PROMPT_CHECK_LIMIT_MS));
+    expect(query("automation-wait-message-a")?.textContent).toContain("still asks for a password");
+  });
+
   it("says that it looks when it takes a moment, and asks when it takes too long (#6070)", () => {
     vi.useFakeTimers();
     takeBack.push(registerTerminalPrompt("a", { read: () => {}, arrived: () => 0, pin }));
