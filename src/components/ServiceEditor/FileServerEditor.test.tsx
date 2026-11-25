@@ -48,7 +48,7 @@ import { leaveField } from "@/test/leaveField";
 import { withTooltip } from "@/test/tooltip";
 import type { EmbeddedServerConfig, ServerStatus } from "@/types/embeddedServer";
 import type { ServerEditorMeta, TerminalTab } from "@/types/terminal";
-import { clearEditorBuffers } from "@/utils/editorBufferRegistry";
+import { clearEditorBuffers, readFormDraft } from "@/utils/editorBufferRegistry";
 import { FileServerEditor } from "./FileServerEditor";
 
 const TAB = "tab-1";
@@ -242,6 +242,8 @@ describe("a new one", () => {
     openFolder.mockResolvedValueOnce(null);
     await press("root-choose");
     expect((field("root") as HTMLInputElement).value).toBe("/srv/other");
+    expect(note()).toBe("");
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("is called like a typed folder when the user leaves the field", async () => {
@@ -263,6 +265,11 @@ describe("a new one", () => {
     expect(checked("bind-here")).toBe("false");
     expect(field("signin")).toBeNull();
     expect(field("dirlisting")).toBeNull();
+    // Chosen now, although it is another kind's preset.
+    await press("bind-here");
+    await press("proto-ftp");
+    await press("proto-tftp");
+    expect(checked("bind-here")).toBe("true");
     await press("bind-network");
     await press("proto-ftp");
     expect(checked("bind-network")).toBe("true");
@@ -413,6 +420,14 @@ describe("a saved one", () => {
     expect(saved()).not.toHaveProperty("host");
   });
 
+  it("keeps who can open it when its kind changes (#6076)", async () => {
+    seed([DOCS]);
+    await render({ serverId: "srv-1" });
+    await act(async () => byTestId("server-editor-change-type")!.click());
+    await press("proto-tftp");
+    expect(checked("bind-here")).toBe("true");
+  });
+
   it("is not reset by its state or its traffic", async () => {
     seed([DOCS], "running");
     await render({ serverId: "srv-1" });
@@ -446,6 +461,13 @@ describe("a saved one", () => {
     expect(saved().host).toEqual({ kind: "agent", agentId: "a1" });
   });
 
+  it("that does not run is moved without a word", async () => {
+    seed([DOCS], "stopped");
+    await render({ serverId: "srv-1" });
+    await act(async () => byTestId("pick-agent")!.click());
+    expect(byTestId("server-dialog-runloc-field")?.textContent).not.toContain("Saving stops it");
+  });
+
   it("on an unreadable machine keeps it", async () => {
     seed([{ ...DOCS, host: { kind: "moon" } as never }]);
     await render({ serverId: "srv-1" });
@@ -472,13 +494,18 @@ it.each(["http", "ftp"] as const)(
         ? { httpAuth: { username: "web", password: "" } }
         : { ftpAuth: { type: "credentials" as const, username: "web", password: "" } };
     const host = { kind: "agent", agentId: "a1" } as never;
-    seed([{ ...DOCS, serverType, ...auth, host, autoStart: true }]);
+    seed([{ ...DOCS, serverType, ...auth, host, autoStart: true, maxTransferBytes: 5 }]);
     await render({ copyOf: "srv-1" });
     expect(field("copy-hint")?.textContent).toContain("password");
     expect(note()).toBe("Still needed: a password");
     type("password", "new-secret");
     await press("save");
-    expect(saved()).toMatchObject({ name: "Copy of Docs", host, autoStart: false });
+    expect(saved()).toMatchObject({
+      name: "Copy of Docs",
+      host,
+      autoStart: false,
+      maxTransferBytes: 5,
+    });
     expect(saved().id).not.toBe("srv-1");
     expect(JSON.stringify(saved())).toContain("new-secret");
   }
@@ -554,10 +581,12 @@ describe("a tab that moves to another window (#4500)", () => {
     expect(record.tab.editorDirty).toBe(true);
     expect(record.tab.formDraft?.kind).toBe("server-editor");
     expect(JSON.stringify(record)).not.toContain("secret");
+    expect(record.tab.serverEditorMeta).toEqual({ serverId });
 
     act(() => root.unmount());
     root = createRoot(container);
     const moved = hydrateInDestination(record, "panel-dst");
+    expect(useAppStore.getState().tabContent[moved].serverEditorMeta).toEqual({ serverId });
     await render({ serverId }, moved);
     expect((field("name") as HTMLInputElement).value).toBe("Mine");
     expect((field("username") as HTMLInputElement).value).toBe("team");
@@ -565,6 +594,43 @@ describe("a tab that moves to another window (#4500)", () => {
     expect(useAppStore.getState().editorDirtyTabs[moved]).toBe(true);
     expect(actions.saveEmbeddedServer).not.toHaveBeenCalled();
   });
+});
+
+it("a tab without changes moves without a draft", async () => {
+  seed([DOCS]);
+  seedSingleTab({ id: "tab-src", contentType: "server-editor" } as TerminalTab);
+  await render({ serverId: "srv-1" }, "tab-src");
+  expect(readFormDraft("tab-src")).toBeNull();
+  type("name", "Mine");
+  expect(readFormDraft("tab-src")).not.toBeNull();
+});
+
+it("a moved draft is kept when its server arrives later", async () => {
+  const tab = {
+    id: "tab-src",
+    sessionId: null,
+    title: "Edit: Docs",
+    connectionType: "local",
+    contentType: "server-editor",
+    config: { type: "local", config: {} },
+    panelId: "panel-src",
+    isActive: true,
+    serverEditorMeta: { serverId: "srv-1" },
+  } as TerminalTab;
+  seed([DOCS]);
+  seedSingleTab(tab);
+  await render({ serverId: "srv-1" }, "tab-src");
+  type("name", "Mine");
+  const record = await moveTabs();
+  act(() => root.unmount());
+  root = createRoot(container);
+  act(() => seed([]));
+  const moved = hydrateInDestination(record, "panel-dst");
+  await render({ serverId: "srv-1" }, moved);
+  act(() => seed([DOCS]));
+  await flushAsync();
+  expect((field("name") as HTMLInputElement).value).toBe("Mine");
+  expect(useAppStore.getState().editorDirtyTabs[moved]).toBe(true);
 });
 
 it("has no accessibility violations, also with a warning and an error", async () => {

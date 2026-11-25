@@ -119,6 +119,9 @@ describe("appStore — openServerEditorTab (#6028)", () => {
     open(null, { serverType: "ftp" });
     open(null, { copyOf: "srv-1" });
     expect(editors()).toHaveLength(4);
+    open("srv-2");
+    open(null, { copyOf: "srv-2" });
+    expect(editors()).toHaveLength(6);
     open(null, { serverType: "ftp" });
     const ftp = editors()[1];
     const leaf = getAllLeaves(layoutState().rootPanel).find((l) => l.tabs.includes(ftp));

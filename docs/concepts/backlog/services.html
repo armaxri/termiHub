@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 to 5 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 5 and 7 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -1720,11 +1720,12 @@
           closes and the row shows the address.
         </p>
         <p>
-          Order of the Settings form, for every type: what it does (type cards of the family, one
-          help line) · name and description · through which server (tunnels) and Run on · what (host
-          and port, or folder) · where to open it (port) · the sentence "On … , … reaches … through
-          …" · Who can open it · What they can do and Sign-in (file servers) · Start. The diagram
-          and the raw endpoint lines move under "Show path".
+          Order of the Settings form, for every type: what one came for first (changed in round 3 of
+          the review). The title is what it is for, with a link to change that; then what (folder,
+          or host and port) · through which server (tunnels) · Run on and the port · Who can open
+          it, with the warning and the address that comes out of it · What they can do and Sign-in
+          (file servers) · name and description · Start. The diagram and the raw endpoint lines move
+          under "Show path".
         </p>
         <h3>3.5 States and actions</h3>
         <p>
@@ -4441,8 +4442,13 @@ flowchart LR
             >#6076</a
           >) put each offline agent with the services of both kinds above the groups, made a group
           say its problems also while it is closed, brought Undo for file servers (from slice 11)
-          and "Keep running", and presets nobody for a TFTP server (from slice 7). Slices 6 to 14
-          are not started. Step 0 of
+          and "Keep running", and presets nobody for a TFTP server (from slice 7). Slice 7 (file
+          server tab) is implemented: <code>server-editor</code> on a shared shell, the safer
+          defaults and a warning whenever others can reach the server (F-8, F-10, F-11). The
+          confirmation for 0.0.0.0 is gone: the warning stays on screen instead. An agent's
+          addresses are typed, the RPC that lists them is
+          <a href="https://github.com/armaxri/termiHub/issues/">#</a>; the sub-tab Activity comes
+          with slice 9. Slices 6 and 8 to 14 are not started. Step 0 of
           <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>

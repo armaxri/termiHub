@@ -194,7 +194,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
     setWantsAddress(next === "address");
     if (next === "here") setValue("bindHost", "127.0.0.1");
     else if (next === "network") setValue("bindHost", "0.0.0.0");
-    else setValue("bindHost", (!onAgent && addresses[0]?.value) || "");
+    else setValue("bindHost", addresses[0]?.value ?? "");
   };
   const whoChoices = [
     {

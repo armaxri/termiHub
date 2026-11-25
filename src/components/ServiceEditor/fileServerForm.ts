@@ -192,7 +192,7 @@ export function configOf(
   const { host: _stored, httpAuth: _http, ftpAuth: _ftp, ...kept } = base ?? {};
   const { serverType: type } = form;
   const credentials = { username: form.username, password: form.password };
-  const signIn = form.signIn && hasSignIn(type);
+  const { signIn } = form;
   return {
     ...kept,
     id,

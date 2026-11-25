@@ -3204,6 +3204,10 @@ model is pure, and the rules live there, not in components:
   one that no service of this computer is set to. "Connect agent" is `connectAgent.ts`, the same
   steps as on the agent's row. A cause is known for what runs on this computer; an agent's own start
   failures come as text only.
+- **Editing** is a tab: `src/components/ServiceEditor` has the shell (title, fields, Save), the tab's
+  dealings (`useEditorTab`: unsaved changes, closing) and the file server's form. What the form may save
+  and what it warns of is `fileServerForm.ts` (pure). A password leaves neither the form nor, with
+  "Move tabs", its window.
 - **Actions** come in one order with one set of words and keys. An action that cannot act is absent.
   "Open in browser" is absent for a server on another machine's localhost.
 
