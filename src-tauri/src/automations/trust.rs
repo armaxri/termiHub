@@ -11,8 +11,8 @@
 //!   user saves here.
 //! - **`confirmed`**: for every other automation, the exact commands the user
 //!   confirmed: the resolved file and every argument.
-//! - **`imported`**: ids known not to be the user's own, kept after a delete, so a
-//!   copy that is still open in an editor does not come back as the user's own.
+//! - **`deleted`**: ids of deleted automations that were not the user's own, so a copy
+//!   that is still open in an editor does not come back as the user's own.
 //!
 //! # Why a file cannot set or clear it
 //!
@@ -66,9 +66,9 @@ pub struct AutomationTrust {
     /// Automation id to the commands confirmed for it ([`command_hash`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub confirmed: BTreeMap<String, BTreeSet<String>>,
-    /// Ids known not to be the user's own.
+    /// Ids of deleted automations that were not the user's own.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub imported: BTreeSet<String>,
+    pub deleted: BTreeSet<String>,
     /// Keys this build does not know, kept verbatim.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -85,7 +85,7 @@ impl Default for AutomationTrust {
             version: "1".to_string(),
             own: BTreeMap::new(),
             confirmed: BTreeMap::new(),
-            imported: BTreeSet::new(),
+            deleted: BTreeSet::new(),
             extra: Map::new(),
         }
     }
@@ -275,12 +275,10 @@ impl TrustBook {
             }
         };
         let mut book = Self { trust, storage };
+        // A damaged file was reset to an empty one by the load, so the next start
+        // is no first start either.
         if first_start {
             book.adopt(library);
-            book.save();
-        } else if !book.storage.path().exists() {
-            // A damaged file was moved away: without this the next start would be
-            // a first start again and take everything for the user's own.
             book.save();
         }
         (book, warnings)
@@ -322,7 +320,7 @@ impl TrustBook {
         let own = match (before, origin) {
             // An edit makes nothing one's own.
             (Some(before), _) => self.is_own(before),
-            (None, SaveOrigin::User) => !self.trust.imported.contains(&saved.id),
+            (None, SaveOrigin::User) => !self.trust.deleted.contains(&saved.id),
             (None, SaveOrigin::Import) => false,
             (None, SaveOrigin::CopyOf(source)) => {
                 library
@@ -330,7 +328,7 @@ impl TrustBook {
                     .iter()
                     .find(|a| a.id == source)
                     .is_some_and(|source| self.is_own(source))
-                    && !self.trust.imported.contains(&saved.id)
+                    && !self.trust.deleted.contains(&saved.id)
             }
         };
         let was = self.trust.clone();
@@ -338,7 +336,6 @@ impl TrustBook {
             self.trust.own.insert(saved.id.clone(), fingerprint(saved));
         } else {
             self.trust.own.remove(&saved.id);
-            self.trust.imported.insert(saved.id.clone());
         }
         if self.trust != was {
             self.save();
@@ -348,7 +345,7 @@ impl TrustBook {
     /// Note that `automation` was deleted.
     pub fn deleted(&mut self, automation: &Automation) {
         if !self.is_own(automation) {
-            self.trust.imported.insert(automation.id.clone());
+            self.trust.deleted.insert(automation.id.clone());
         }
         self.trust.own.remove(&automation.id);
         self.trust.confirmed.remove(&automation.id);

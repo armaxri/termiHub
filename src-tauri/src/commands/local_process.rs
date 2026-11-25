@@ -529,6 +529,42 @@ mod tests {
         assert!(!dir.path().join("e").exists());
     }
 
+    /// Without the automations nothing is known about a command, so a program on the
+    /// list does not start by itself.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn without_the_automations_the_list_does_not_count() {
+        use crate::utils::config_paths::ConfigDirOverride;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(ConfigDirOverride(dir.path().to_path_buf()));
+        app.manage(LocalProcessRegistry::default());
+        SettingsStorage::new(app.handle())
+            .unwrap()
+            .save(&AppSettings {
+                experimental_features_enabled: Some(true),
+                workflow_local_process_enabled: true,
+                workflow_local_process_allowlist: vec!["/usr/bin/touch".into()],
+                ..AppSettings::default()
+            })
+            .unwrap();
+        let marker = dir.path().join("spawned");
+        let result = run_local_process(
+            "run-1".into(),
+            "/usr/bin/touch".into(),
+            vec![marker.display().to_string()],
+            vec!["mine".into()],
+            Some(5_000),
+            None,
+            app.state(),
+            app.handle().clone(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!marker.exists());
+    }
+
     /// The real command against settings on disk: with any control off it returns
     /// an error and no process is created; with all on it runs.
     #[cfg(unix)]

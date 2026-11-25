@@ -29,15 +29,13 @@ def question_problems(
 
 
 def trust_problems(trust: Any, automation_id: str, *, confirmed: int) -> list[str]:
-    """``automation-trust.json`` marks the automation as imported, with this many
-    confirmed commands."""
+    """``automation-trust.json`` does not list the automation as the user's own, and has
+    this many confirmed commands for it."""
     if not isinstance(trust, dict):
         return [f"{TRUST_FILE} is not a JSON object"]
     problems: list[str] = []
     if automation_id in (trust.get("own") or {}):
         problems.append("the imported automation is listed as the user's own")
-    if automation_id not in (trust.get("imported") or []):
-        problems.append("the imported automation is not listed as imported")
     commands = (trust.get("confirmed") or {}).get(automation_id) or []
     if len(commands) != confirmed:
         problems.append(f"{len(commands)} commands are confirmed, not {confirmed}")

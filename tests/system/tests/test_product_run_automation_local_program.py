@@ -71,12 +71,11 @@ def test_grade_question():
 
 
 def test_grade_trust():
-    trust = {"own": {"mine": "x"}, "imported": ["theirs"], "confirmed": {"theirs": ["h"]}}
+    trust = {"own": {"mine": "x"}, "confirmed": {"theirs": ["h"]}}
     assert trust_problems(trust, "theirs", confirmed=1) == []
     assert trust_problems(trust, "theirs", confirmed=2) == ["1 commands are confirmed, not 2"]
     assert trust_problems(trust, "mine", confirmed=0) == [
         "the imported automation is listed as the user's own",
-        "the imported automation is not listed as imported",
     ]
     assert trust_problems(None, "theirs", confirmed=0) == [f"{TRUST_FILE} is not a JSON object"]
 

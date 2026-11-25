@@ -31,6 +31,7 @@ fn generous() -> BackupSection {
             "version": <AppSettings as VersionedStore>::CURRENT_VERSION.to_string(),
             "theme": "dark",
             "experimentalFeaturesEnabled": true,
+            "frontendPluginsEnabled": true,
             "workflowLocalProcessEnabled": true,
             "workflowLocalProcessAllowlist": ["/bin/sh", "/usr/bin/make"],
             "workflowScriptSourceAllowlist": ["/tmp/x.sh"],
@@ -55,6 +56,7 @@ fn settings(dir: &Path) -> Value {
 fn every_permission_key_is_a_setting() {
     let all = serde_json::to_value(AppSettings {
         experimental_features_enabled: Some(true),
+        frontend_plugins_enabled: Some(true),
         workflow_local_process_enabled: true,
         workflow_local_process_allowlist: vec!["a".into()],
         workflow_script_source_allowlist: vec!["a".into()],
@@ -79,6 +81,7 @@ fn a_first_restore_on_a_new_machine_leaves_every_permission_off() {
     assert_eq!(doc["theme"], "dark", "the rest is restored");
     let loaded: AppSettings = serde_json::from_value(doc).unwrap();
     assert_eq!(loaded.experimental_features_enabled, None);
+    assert_eq!(loaded.frontend_plugins_enabled, None);
     assert!(!loaded.workflow_local_process_enabled);
     assert!(loaded.workflow_local_process_allowlist.is_empty());
     assert!(loaded.workflow_script_source_allowlist.is_empty());
@@ -91,6 +94,7 @@ fn a_restore_neither_adds_to_nor_takes_from_what_this_machine_allows() {
         "version": <AppSettings as VersionedStore>::CURRENT_VERSION.to_string(),
         "theme": "light",
         "experimentalFeaturesEnabled": true,
+        "frontendPluginsEnabled": false,
         "workflowLocalProcessEnabled": true,
         "workflowLocalProcessAllowlist": ["/usr/bin/true"],
         "workflowScriptSourceAllowlist": ["/mine.sh"],
@@ -134,7 +138,7 @@ fn the_preview_says_what_is_kept_and_what_the_backup_would_have_allowed() {
     assert!(generous[0].contains("stays as it is here"), "{generous:?}");
     assert!(
         generous[1].contains(
-            "experimental features turned on, running local programs turned on, \
+            "experimental features turned on, JavaScript plugins turned on, running local programs turned on, \
              2 allowed programs, 1 allowed script file, 1 confirmed workspace command"
         ),
         "{generous:?}"

@@ -204,9 +204,11 @@ pub const LOCAL_SETTINGS_KEYS: &[&str] = &[
 /// able to let an automation start a program, read a script file or run an imported
 /// workspace command. On a machine without them they stay off and empty, and the
 /// user gives them again when something asks. `experimentalFeaturesEnabled` is one
-/// of the switches a local program needs.
+/// of the switches a local program needs; the code of a frontend plugin can do all
+/// that the window can.
 pub const LOCAL_PERMISSION_KEYS: &[&str] = &[
     "experimentalFeaturesEnabled",
+    "frontendPluginsEnabled",
     "workflowLocalProcessEnabled",
     "workflowLocalProcessAllowlist",
     "workflowScriptSourceAllowlist",
@@ -857,13 +859,16 @@ fn kept_permissions(backup: &Value) -> Vec<String> {
     };
     let on = |key: &str| backup.get(key).and_then(Value::as_bool) == Some(true);
     let mut notes = vec![
-        "What may run on this computer stays as it is here: experimental features, running \
-         local programs, the allowed programs and script files, and confirmed workspace commands."
+        "What may run on this computer stays as it is here: experimental features, JavaScript \
+         plugins, running local programs, the allowed programs and script files, and confirmed workspace commands."
             .to_string(),
     ];
     let mut left_out = Vec::new();
     if on("experimentalFeaturesEnabled") {
         left_out.push("experimental features turned on".to_string());
+    }
+    if on("frontendPluginsEnabled") {
+        left_out.push("JavaScript plugins turned on".to_string());
     }
     if on("workflowLocalProcessEnabled") {
         left_out.push("running local programs turned on".to_string());

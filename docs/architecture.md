@@ -2341,7 +2341,7 @@ object above, sealed with the backup passphrase and gated exactly like a vault e
 refused where that is unavailable, while the rest of the backup still works).
 
 A restore never grants what may run on this machine (#6018): the settings section keeps this
-machine's experimental switch, local-program switch, allowed programs and script files and confirmed
+machine's experimental, JavaScript-plugin and local-program switches, allowed programs and script files and confirmed
 workspace commands (`LOCAL_PERMISSION_KEYS`), and the preview says so and what the backup would have
 allowed. On a machine without them they stay off. A restored automation asks before its first local
 program unless it is the one made here.

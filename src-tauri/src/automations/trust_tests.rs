@@ -282,6 +282,13 @@ fn deleting_and_saving_it_again_does_not_make_it_ones_own() {
     // It was still open in an editor.
     m.save(a).unwrap();
     assert!(asks(&m, &["theirs"], "make", &[]));
+    // Also one that a restore brought.
+    restore(&dir, &[runs("restored", "make", &[])]);
+    let m = manager(&dir);
+    let restored = m.get("restored").unwrap();
+    m.delete("restored").unwrap();
+    m.save(restored).unwrap();
+    assert!(asks(&m, &["restored"], "make", &[]));
     // One's own stays one's own.
     let mine = m.save(runs("mine", "make", &[])).unwrap();
     m.delete("mine").unwrap();

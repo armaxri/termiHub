@@ -949,24 +949,6 @@ describe("appStore — workflow run slice (#1852)", () => {
           expect(confirmLocalProcess.mock.calls[0][2]).toEqual(chain);
           expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({ automationChain: chain });
         });
-
-        it("an answer for one's own does not carry over to an imported one", async () => {
-          // Both run the same command, one after the other, in one fan-out.
-          useAppStore.setState(
-            automationLibraryState([
-              auto("outer", [lpStep, { kind: "run-automation", automationId: "w1" }]),
-              auto("w1", [lpStep]),
-            ])
-          );
-          const run = useAppStore.getState().runAutomation("outer");
-          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
-          useAppStore.getState().resolveLocalProcessPrompt("once");
-          await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1));
-          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
-          useAppStore.getState().resolveLocalProcessPrompt("cancel");
-          await run;
-          expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
-        });
       });
 
       it("a canceled question starts nothing", async () => {
@@ -1988,6 +1970,32 @@ describe("appStore — workflow run slice (#1852)", () => {
         vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => [r.tabId, r.status])
       );
       expect(byTab).toEqual({ "tab-a": "failed", "tab-b": "completed" });
+    });
+
+    it("asks apart about the same command of one's own and of a called automation (#6019)", async () => {
+      seedTwoTerminals();
+      captureSends();
+      seedSettings({
+        experimentalFeaturesEnabled: true,
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: [],
+      });
+      useAppStore.setState(
+        automationLibraryState([
+          auto("outer", [lpStep, { kind: "run-automation", automationId: "inner" }]),
+          auto("inner", [lpStep]),
+        ])
+      );
+      const run = useAppStore
+        .getState()
+        .runAutomation("outer", { targetTabIds: ["tab-a", "tab-b"] });
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      useAppStore.getState().resolveLocalProcessPrompt("once");
+      await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      useAppStore.getState().resolveLocalProcessPrompt("cancel");
+      await run;
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(2);
     });
 
     it("asks for local-process authorization once for all concurrent targets", async () => {

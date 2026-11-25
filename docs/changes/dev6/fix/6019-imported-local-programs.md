@@ -14,5 +14,5 @@
 ### Security
 
 - **Restoring settings no longer brings another computer's permissions** (#6018) — Experimental features,
-  running local programs, the allowed programs and script files and the confirmed workspace commands stay
+  JavaScript plugins, running local programs, the allowed programs and script files and the confirmed workspace commands stay
   as they are on this computer. The restore preview says so, and what the backup would have allowed.
