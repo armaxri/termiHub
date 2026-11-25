@@ -265,11 +265,8 @@ pub(super) async fn close_writer<W: tokio::io::AsyncWrite + Unpin>(
 /// Longest a failed or finished attempt waits for the far end to close a file
 /// whose data no longer matters (a failed attempt's destination, a source).
 #[cfg_attr(
-    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
-    allow(
-        dead_code,
-        reason = "the FTP executor streams through its own primitive"
-    )
+    not(any(feature = "ssh", feature = "docker")),
+    allow(dead_code, reason = "only a remote end is waited for")
 )]
 pub(super) const RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
