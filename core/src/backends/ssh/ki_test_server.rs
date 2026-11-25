@@ -118,6 +118,17 @@ pub struct Observed {
     pub authenticated: usize,
     /// Session channels whose shell was started (see the ordering note above).
     pub shells: usize,
+    /// What reached the shells, in order (poll it, as for `shells`).
+    pub shell_events: Vec<ShellEvent>,
+}
+
+/// Something a client sent to its shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellEvent {
+    /// Typed bytes, as they came in one channel message.
+    Input(Vec<u8>),
+    /// A window change to `(cols, rows)`.
+    Resize(u32, u32),
 }
 
 struct KiServer {
@@ -247,6 +258,23 @@ impl russh::server::Handler for KiServer {
         Ok(())
     }
 
+    async fn window_change_request(
+        &mut self,
+        _channel: ChannelId,
+        col_width: u32,
+        row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.observed
+            .lock()
+            .expect("observed")
+            .shell_events
+            .push(ShellEvent::Resize(col_width, row_height));
+        Ok(())
+    }
+
     /// The "shell" echoes its input, so a client can round-trip data, and
     /// ends the way a typed line asks (see the module docs).
     async fn data(
@@ -255,6 +283,11 @@ impl russh::server::Handler for KiServer {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.observed
+            .lock()
+            .expect("observed")
+            .shell_events
+            .push(ShellEvent::Input(data.to_vec()));
         let line = String::from_utf8_lossy(data);
         let line = line.trim();
         if line == SHELL_DROP_LINK {
