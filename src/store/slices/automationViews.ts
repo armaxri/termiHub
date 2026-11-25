@@ -64,7 +64,8 @@ function sameChunks(a: MacroStep[], b: MacroStep[]): boolean {
 /**
  * The automation a macro view saves as. Untouched chunks keep the stored step
  * list as it is; edited chunks become one `type-keys` step that keeps the
- * stored step's saved timing (new macros type as recorded).
+ * stored step's saved timing (new macros type as recorded). What the view does
+ * not show of the stored automation stays (#6009).
  */
 export function macroToAutomation(macro: Macro, existing?: Automation): Automation {
   let steps: AutomationStep[];
@@ -75,15 +76,16 @@ export function macroToAutomation(macro: Macro, existing?: Automation): Automati
   } else {
     const prior = existing?.steps.find((s): s is TypeKeysStep => s.kind === "type-keys");
     const step: TypeKeysStep = {
+      ...prior,
       kind: "type-keys",
       chunks: macro.steps.map(({ data, delayMs }) => ({ data, delayMs })),
       timing: prior?.timing ?? "recorded",
       recorded: prior?.recorded ?? true,
     };
-    if (prior?.fixedDelayMs !== undefined) step.fixedDelayMs = prior.fixedDelayMs;
     steps = [step];
   }
-  const automation: Automation = {
+  return {
+    ...existing,
     id: macro.id,
     name: macro.name,
     description: macro.description,
@@ -93,8 +95,6 @@ export function macroToAutomation(macro: Macro, existing?: Automation): Automati
     createdAt: macro.createdAt,
     updatedAt: macro.updatedAt,
   };
-  if (existing?.legacy) automation.legacy = existing.legacy;
-  return automation;
 }
 
 /** A step in the workflow view: `run-automation` reads as `run-macro`. */
@@ -159,9 +159,13 @@ export function automationToWorkflow(automation: Automation): Workflow {
   return workflow;
 }
 
-/** The automation a workflow view saves as (`manual` has no automation kind). */
+/**
+ * The automation a workflow view saves as (`manual` has no automation kind).
+ * What the view does not show of the stored automation stays (#6009).
+ */
 export function workflowToAutomation(workflow: Workflow, existing?: Automation): Automation {
   const automation: Automation = {
+    ...existing,
     id: workflow.id,
     name: workflow.name,
     description: workflow.description,
@@ -171,9 +175,10 @@ export function workflowToAutomation(workflow: Workflow, existing?: Automation):
     createdAt: workflow.createdAt,
     updatedAt: workflow.updatedAt,
   };
+  delete automation.parameters;
+  delete automation.triggersEnabled;
   if (workflow.parameters?.length) automation.parameters = workflow.parameters;
   if (workflow.triggersEnabled === false) automation.triggersEnabled = false;
-  if (existing?.legacy) automation.legacy = existing.legacy;
   return automation;
 }
 

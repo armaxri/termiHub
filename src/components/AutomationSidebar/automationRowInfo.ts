@@ -28,6 +28,18 @@ export type ConnectionName = (connectionId: string) => string | undefined;
 /** Triggers that run an automation by themselves once a bound session acts. */
 type SessionTrigger = Exclude<AutomationTrigger, { kind: "hotkey" }>;
 
+/** A trigger of a kind this build knows; one a newer build wrote never fires. */
+function isSessionTrigger(trigger: AutomationTrigger): trigger is SessionTrigger {
+  switch (trigger.kind) {
+    case "on-connect":
+    case "on-disconnect":
+    case "on-output-match":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /**
  * The automation's automatic triggers (#5635): the ones that run it, and may
  * type into a terminal, without the user starting it. A trigger bound to no
@@ -36,7 +48,7 @@ type SessionTrigger = Exclude<AutomationTrigger, { kind: "hotkey" }>;
 export function automaticTriggers(automation: Automation): SessionTrigger[] {
   return automation.triggers.filter(
     (trigger): trigger is SessionTrigger =>
-      trigger.kind !== "hotkey" && trigger.connectionIds.length > 0
+      isSessionTrigger(trigger) && trigger.connectionIds.length > 0
   );
 }
 

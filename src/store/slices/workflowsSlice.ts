@@ -19,6 +19,7 @@ import { localProcessRefusal, localProcessRefusalToastId } from "../localProcess
 import { frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "../appStore";
 import { getActiveTab } from "../layoutHelpers";
+import { automationForRun } from "./automationStoreState";
 import { automationToWorkflow, isMacroShaped, workflowToAutomation } from "./automationViews";
 import {
   clampFanoutConcurrency,
@@ -284,11 +285,12 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
   },
 
   setWorkflowTriggersEnabled: async (workflowId, enabled) => {
-    const workflow = get().workflows.find((w) => w.id === workflowId);
-    if (!workflow) throw new Error("Workflow not found");
+    // The stored automation itself, so nothing a view cannot show is lost (#6009).
+    const stored = automationForRun(get(), workflowId);
+    if (!stored) throw new Error("Workflow not found");
     // Absent means armed, so re-arming drops the key rather than storing `true`.
-    const { triggersEnabled: _previous, ...rest } = workflow;
-    await get().saveWorkflowToBackend(enabled ? rest : { ...rest, triggersEnabled: false });
+    const { triggersEnabled: _previous, ...rest } = stored;
+    await get().saveAutomationToBackend(enabled ? rest : { ...rest, triggersEnabled: false });
   },
 
   deleteWorkflowFromBackend: (workflowId) => get().deleteAutomationFromBackend(workflowId),

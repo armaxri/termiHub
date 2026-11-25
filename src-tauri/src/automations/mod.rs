@@ -33,3 +33,5 @@ mod history_tests;
 mod manager_tests;
 #[cfg(test)]
 mod migrate_tests;
+#[cfg(test)]
+mod unknown_fields_tests;

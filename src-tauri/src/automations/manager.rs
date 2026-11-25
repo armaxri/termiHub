@@ -3,11 +3,12 @@
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
+use serde_json::Value;
 use tauri::{AppHandle, Runtime};
 
-use super::config::Automation;
+use super::config::{Automation, AutomationTrigger, UnknownTrigger};
 use super::storage::StoreFile;
-use super::store::AutomationStore;
+use super::store::{AutomationStore, UnreadableAutomation};
 use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
@@ -34,10 +35,12 @@ impl AutomationManager {
         let result = storage
             .load_with_recovery()
             .context("Failed to load automations")?;
+        let mut warnings = result.warnings;
+        warnings.extend(result.data.unreadable.iter().map(unreadable_warning));
         Ok(Self {
             store: Mutex::new(result.data),
             storage,
-            recovery_warnings: Mutex::new(result.warnings),
+            recovery_warnings: Mutex::new(warnings),
         })
     }
 
@@ -66,7 +69,23 @@ impl AutomationManager {
             .flat_map(|a| a.triggers.iter_mut())
             .filter_map(|t| t.connection_ids_mut().map(|ids| ids.iter_mut()))
             .flatten();
-        if !remap.apply_all(ids) {
+        let mut changed = remap.apply_all(ids);
+        // What this build cannot read must not be left with a dangling id (#6009).
+        for trigger in next.automations.iter_mut().flat_map(|a| &mut a.triggers) {
+            if let AutomationTrigger::Unknown(UnknownTrigger(raw)) = trigger {
+                changed |= remap_raw_connection_ids(raw.get_mut("connectionIds"), remap);
+            }
+        }
+        for entry in &mut next.unreadable {
+            let triggers = entry
+                .value
+                .get_mut("triggers")
+                .and_then(Value::as_array_mut);
+            for trigger in triggers.into_iter().flatten() {
+                changed |= remap_raw_connection_ids(trigger.get_mut("connectionIds"), remap);
+            }
+        }
+        if !changed {
             return Ok(false);
         }
         self.persist(&next)?;
@@ -102,11 +121,24 @@ impl AutomationManager {
         let now = chrono::Utc::now().to_rfc3339();
         let mut store = self.lock()?;
         let mut next = store.clone();
+        if next.unreadable.iter().any(|u| u.id == automation.id) {
+            return Err(TerminalError::AutomationError(format!(
+                "The id {} belongs to an automation that this version of termiHub cannot read",
+                automation.id
+            )));
+        }
         automation.updated_at = now.clone();
         if let Some(existing) = next.automations.iter_mut().find(|a| a.id == automation.id) {
             automation.created_at = existing.created_at.clone();
             if automation.legacy.is_none() {
                 automation.legacy = existing.legacy.clone();
+            }
+            // Nothing in this build can remove a field it does not know, so one
+            // that a caller did not send back was lost on the way (#6009).
+            for (key, value) in &existing.extra {
+                if !automation.extra.contains_key(key) {
+                    automation.extra.insert(key.clone(), value.clone());
+                }
             }
             *existing = automation.clone();
         } else {
@@ -145,5 +177,31 @@ impl AutomationManager {
         self.storage
             .save(store)
             .map_err(|e| TerminalError::AutomationError(e.to_string()))
+    }
+}
+
+/// Re-point the saved-connection ids in a raw `connectionIds` list.
+fn remap_raw_connection_ids(ids: Option<&mut Value>, remap: &ConnectionIdRemap) -> bool {
+    let strings = ids
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .filter_map(|v| match v {
+            Value::String(id) => Some(id),
+            _ => None,
+        });
+    remap.apply_all(strings)
+}
+
+/// Reports an automation that is kept but cannot be used here.
+fn unreadable_warning(entry: &UnreadableAutomation) -> RecoveryWarning {
+    RecoveryWarning {
+        file_name: AutomationStore::FILE_NAME.to_string(),
+        message: format!(
+            "The automation \"{}\" cannot be read by this version of termiHub. It is kept \
+             unchanged, but is not shown and does not run. It may come from a newer version.",
+            entry.name()
+        ),
+        details: Some(entry.error.clone()),
     }
 }

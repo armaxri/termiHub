@@ -52,6 +52,7 @@ fn update_keeps_created_at_and_provenance() {
     first.legacy = Some(AutomationLegacy {
         from: LegacySource::Macro,
         version: 1,
+        extra: Default::default(),
     });
     let first = mgr.save(first).unwrap();
 

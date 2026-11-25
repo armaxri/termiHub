@@ -363,6 +363,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "id": "wf", "name": "wf" })).unwrap();
         automation.triggers = vec![AutomationTrigger::OnConnect {
             connection_ids: vec!["Work/x".to_string()],
+            extra: Default::default(),
         }];
         app.state::<AutomationManager>().save(automation).unwrap();
         let now = chrono::Utc::now();
@@ -416,6 +417,7 @@ mod tests {
             wf.triggers,
             vec![AutomationTrigger::OnConnect {
                 connection_ids: vec!["Job/x".to_string()],
+                extra: Default::default()
             }]
         );
         let schedules = app

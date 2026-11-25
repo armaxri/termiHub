@@ -12,6 +12,7 @@
 //! - `legacyFrozenAt`: when the UI switched to this store (slice 4).
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::config::{Automation, LegacySource};
 
@@ -83,31 +84,162 @@ pub struct RecordedIdRemap {
     pub new_id: String,
 }
 
+/// An automation this build cannot read: it has a value (not just a key or a
+/// step kind) this build does not know. It is kept verbatim, at its place in the
+/// file, and is neither shown nor run (#6009).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnreadableAutomation {
+    /// Position in the stored list.
+    pub index: usize,
+    /// The automation's id, so nothing else takes it.
+    pub id: String,
+    /// The stored JSON.
+    pub value: Value,
+    /// Why it could not be read.
+    pub error: String,
+}
+
+impl UnreadableAutomation {
+    /// The stored name, or the id.
+    pub fn name(&self) -> &str {
+        self.value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.id)
+    }
+}
+
 /// Top-level schema for `automations.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(try_from = "StoreDocument", into = "StoreDocument")]
 pub struct AutomationStore {
     /// Schema version, read on load and gated by the migration layer.
     pub version: String,
-    /// All stored automations.
+    /// All stored automations this build can read.
     pub automations: Vec<Automation>,
+    /// The ones it cannot read, kept for the next write.
+    pub unreadable: Vec<UnreadableAutomation>,
     /// What the boot migration last synced from the legacy files. Absent on a
     /// store that was never migrated or that was restored from a backup.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migrated_from: Option<LegacyProvenance>,
     /// Legacy ids the conversion changed, for the schedules v3 rewrite.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub id_remaps: Vec<RecordedIdRemap>,
     /// When the UI switched to this store and the legacy files froze
     /// (RFC 3339; #5818 slice 4). Absent on a store written by a build from
     /// before the switch: the next boot then follows, once, the deletions
     /// made in the legacy files meanwhile (`super::migrate`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legacy_frozen_at: Option<String>,
     /// Unknown top-level keys, preserved verbatim for forward compatibility
     /// (PER-010).
+    pub extra: serde_json::Map<String, Value>,
+}
+
+/// The stored shape of [`AutomationStore`]: one list, in file order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoreDocument {
+    /// Schema version, read on load and gated by the migration layer.
+    version: String,
+    /// All stored automations.
+    automations: Vec<Value>,
+    /// What the boot migration last synced from the legacy files. Absent on a
+    /// store that was never migrated or that was restored from a backup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    migrated_from: Option<LegacyProvenance>,
+    /// Legacy ids the conversion changed, for the schedules v3 rewrite.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    id_remaps: Vec<RecordedIdRemap>,
+    /// When the UI switched to this store and the legacy files froze
+    /// (RFC 3339; #5818 slice 4). Absent on a store written by a build from
+    /// before the switch: the next boot then follows, once, the deletions
+    /// made in the legacy files meanwhile (`super::migrate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy_frozen_at: Option<String>,
+    /// Unknown top-level keys, preserved verbatim for forward compatibility
+    /// (PER-010).
     #[serde(flatten, default)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
+    extra: serde_json::Map<String, Value>,
+}
+
+/// One entry of the stored list: an automation, or an unreadable one.
+enum StoredEntry {
+    Readable(Box<Automation>),
+    Unreadable { id: String, error: String },
+}
+
+impl StoredEntry {
+    /// Read one entry; an error when it is no automation at all (no object
+    /// with an id), which the salvage then removes.
+    fn read(value: &Value) -> Result<Self, String> {
+        match serde_json::from_value::<Automation>(value.clone()) {
+            Ok(automation) => Ok(Self::Readable(Box::new(automation))),
+            Err(e) => match value.get("id").and_then(Value::as_str) {
+                Some(id) if !id.trim().is_empty() => Ok(Self::Unreadable {
+                    id: id.to_string(),
+                    error: e.to_string(),
+                }),
+                _ => Err(e.to_string()),
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StoredEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::read(&Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<StoreDocument> for AutomationStore {
+    type Error = String;
+
+    fn try_from(doc: StoreDocument) -> Result<Self, String> {
+        let mut automations = Vec::with_capacity(doc.automations.len());
+        let mut unreadable = Vec::new();
+        for (index, value) in doc.automations.into_iter().enumerate() {
+            match StoredEntry::read(&value)? {
+                StoredEntry::Readable(automation) => automations.push(*automation),
+                StoredEntry::Unreadable { id, error } => unreadable.push(UnreadableAutomation {
+                    index,
+                    id,
+                    value,
+                    error,
+                }),
+            }
+        }
+        Ok(Self {
+            version: doc.version,
+            automations,
+            unreadable,
+            migrated_from: doc.migrated_from,
+            id_remaps: doc.id_remaps,
+            legacy_frozen_at: doc.legacy_frozen_at,
+            extra: doc.extra,
+        })
+    }
+}
+
+impl From<AutomationStore> for StoreDocument {
+    fn from(store: AutomationStore) -> Self {
+        let mut automations: Vec<Value> = store
+            .automations
+            .into_iter()
+            // A serialized automation is always an object: it has string keys
+            // and no value that JSON cannot hold.
+            .map(|a| serde_json::to_value(a).unwrap_or_default())
+            .collect();
+        for entry in store.unreadable {
+            automations.insert(entry.index.min(automations.len()), entry.value);
+        }
+        Self {
+            version: store.version,
+            automations,
+            migrated_from: store.migrated_from,
+            id_remaps: store.id_remaps,
+            legacy_frozen_at: store.legacy_frozen_at,
+            extra: store.extra,
+        }
+    }
 }
 
 impl AutomationStore {
@@ -122,6 +254,7 @@ impl Default for AutomationStore {
         Self {
             version: Self::CURRENT_VERSION.to_string(),
             automations: Vec::new(),
+            unreadable: Vec::new(),
             migrated_from: None,
             id_remaps: Vec::new(),
             legacy_frozen_at: None,
@@ -136,8 +269,8 @@ impl crate::utils::migrate::VersionedStore for AutomationStore {
     const STORE_NAME: &'static str = AutomationStore::FILE_NAME;
     const CURRENT_VERSION: u32 = AutomationStore::CURRENT_VERSION;
 
-    fn salvage(value: serde_json::Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
-        crate::utils::migrate::salvage_list_store::<Self, Automation>(
+    fn salvage(value: Value, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, StoredEntry>(
             value,
             file_name,
             "automations",
