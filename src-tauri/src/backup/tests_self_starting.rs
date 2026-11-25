@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use super::restored_off;
 use super::sections::{spec, SECTIONS};
-use super::self_starting::RestoredStart;
+use super::self_starting::{switch_off, RestoredStart, Side};
 use super::tests::{choice, no_creds, raw_backup, read_doc, request, restore_and_boot, write_doc};
 use super::*;
 use crate::credential::vault::ConflictStrategy;
@@ -478,12 +478,16 @@ fn the_result_names_each_entry_and_what_would_start_it() {
     assert_eq!(off[1].next_run_at, None);
     assert_eq!(
         off[2].starts,
-        ["When termiHub starts", "When connecting to Other"]
+        [
+            "When termiHub starts, over Other",
+            "When connecting to Other",
+            "Opens 127.0.0.1:5432, to db:5432"
+        ]
     );
     assert_eq!(off[2].switches, ["autoStart", "startWithConnection"]);
     assert_eq!(
         off[3].starts,
-        ["When termiHub starts: opens port 8080 on 0.0.0.0"]
+        ["When termiHub starts: opens 0.0.0.0:8080, serving /srv"]
     );
     assert!(!off[2].same_here);
     let here: Vec<_> = off.iter().map(|o| (o.exists_here, o.on_here)).collect();
@@ -654,4 +658,113 @@ fn a_changed_schedule_that_is_off_has_to_be_confirmed_again() {
     let after = item(d, "schedules", "schedules", "s");
     assert_eq!(after["confirmedAt"], Value::Null);
     assert_eq!(after["lastRunAt"], "2026-01-02T00:00:00+00:00");
+}
+
+#[test]
+fn every_way_to_start_is_named() {
+    let triggers = json!([
+        {"kind": "manual"},
+        {"kind": "on-disconnect", "connectionIds": ["A", "B", "C"]},
+        {"kind": "on-output-match", "connectionIds": ["A"], "pattern": "ready"},
+        {"kind": "later"}
+    ]);
+    let schedule_with = |rule: Value, targets: Value| {
+        let mut s = schedule("s");
+        s["rule"] = rule;
+        s["targets"] = targets;
+        s
+    };
+    let over = |kind: &str| {
+        let mut t = tunnel("t");
+        t["startWithConnection"] = json!(false);
+        t["tunnelType"]["type"] = json!(kind);
+        t
+    };
+    let one = json!({"kind": "connections", "connectionIds": ["A"]});
+    for (section_id, list, entry, starts) in [
+        (
+            "automations",
+            "automations",
+            json!({"id": "a", "name": "A", "steps": [], "triggers": triggers}),
+            vec![
+                "When disconnecting from A, B and C",
+                "When the output of A matches “ready”",
+                "Trigger later",
+            ],
+        ),
+        (
+            "schedules",
+            "schedules",
+            schedule_with(
+                json!({"kind": "interval", "everyMinutes": 1}),
+                json!({"kind": "group", "groupId": "g"}),
+            ),
+            vec!["Every minute on g"],
+        ),
+        (
+            "schedules",
+            "schedules",
+            schedule_with(json!({"kind": "interval", "everyMinutes": 15}), one.clone()),
+            vec!["Every 15 minutes on A"],
+        ),
+        (
+            "schedules",
+            "schedules",
+            schedule_with(
+                json!({"kind": "weekly", "days": ["mon", "sun"], "time": "07:00"}),
+                one,
+            ),
+            vec!["Mon, Sun at 07:00 on A"],
+        ),
+        (
+            "tunnels",
+            "tunnels",
+            over("remote"),
+            vec![
+                "When termiHub starts, over Build Box",
+                "Opens db:5432 on the server, to 127.0.0.1:5432 here",
+            ],
+        ),
+        (
+            "tunnels",
+            "tunnels",
+            over("dynamic"),
+            vec![
+                "When termiHub starts, over Build Box",
+                "Opens 127.0.0.1:5432, to anywhere",
+            ],
+        ),
+    ] {
+        let before = Default::default();
+        let mut after = before_with(section_id, doc(section_id, list, json!([entry])));
+        let off = switch_off(&before, &mut after, chrono::Utc::now(), &chrono::Utc);
+        assert_eq!(off[0].starts, starts, "{section_id}");
+    }
+}
+
+/// A group that is here is named, and a change of its members turns off what uses it.
+#[test]
+fn a_changed_group_turns_off_the_schedule_that_uses_it() {
+    let mut on_group = schedule("s");
+    on_group["targets"] = json!({"kind": "group", "groupId": "g"});
+    let settings = |member: &str| json!({"broadcastGroups": [{"id": "g", "name": "Web", "connectionIds": [member]}]});
+    for (member, off) in [("A", false), ("B", true)] {
+        let mut before = before_with(
+            "schedules",
+            doc("schedules", "schedules", json!([on_group.clone()])),
+        );
+        before.insert("settings", settings("A"));
+        let mut after = before.clone();
+        after.insert("settings", settings(member));
+        let switched = switch_off(&before, &mut after, chrono::Utc::now(), &chrono::Utc);
+        let starts: Vec<_> = switched.iter().flat_map(|s| s.starts.clone()).collect();
+        let expected: &[&str] = if off { &["Daily at 02:00 on Web"] } else { &[] };
+        assert_eq!(starts, expected);
+    }
+}
+
+fn before_with(id: &'static str, doc: Value) -> Side {
+    let mut side = Side::default();
+    side.insert(id, doc);
+    side
 }

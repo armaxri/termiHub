@@ -111,3 +111,14 @@
   margin: 0;
   padding-left: var(--spacing-lg);
 }
+
+/* What an earlier restore left off, under the two buttons (#6056). */
+.backup-restore__still-off {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}

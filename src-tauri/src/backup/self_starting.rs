@@ -40,7 +40,7 @@ pub struct RestoredStart {
     pub id: String,
     /// Its name.
     pub name: String,
-    /// What would start it, one line each: "Hotkey Ctrl+Alt+R".
+    /// What would start it, one line each ("Hotkey Ctrl+Alt+R"), and what it opens.
     pub starts: Vec<String>,
     /// When a schedule would run next.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,9 +107,13 @@ const SCHEDULE_STATE: &[&str] = &[
 
 /// The documents of one side: this machine as it is, or as the restore leaves it.
 #[derive(Default, Clone)]
-struct Side(HashMap<&'static str, Value>);
+pub(super) struct Side(HashMap<&'static str, Value>);
 
 impl Side {
+    pub(super) fn insert(&mut self, section: &'static str, doc: Value) {
+        self.0.insert(section, doc);
+    }
+
     fn doc(&self, section: &str) -> &Value {
         self.0.get(section).unwrap_or(&Value::Null)
     }
@@ -260,7 +264,7 @@ impl<'a> Digest<'a> {
 
 /// Switch off in `after` what `before` does not have on in the same way. Returns
 /// what was switched off.
-fn switch_off<Tz: TimeZone>(
+pub(super) fn switch_off<Tz: TimeZone>(
     before: &Side,
     after: &mut Side,
     now: DateTime<Utc>,
@@ -416,11 +420,12 @@ fn describe(section: &str, item: &Value, switches: &[String], after: &Side) -> V
                     "on-connect" => {
                         Some(format!("When connecting to {}", names(&t["connectionIds"])))
                     }
-                    "on-disconnect" => {
-                        Some(format!("When {} disconnects", names(&t["connectionIds"])))
-                    }
+                    "on-disconnect" => Some(format!(
+                        "When disconnecting from {}",
+                        names(&t["connectionIds"])
+                    )),
                     "on-output-match" => Some(format!(
-                        "When {} prints “{}”",
+                        "When the output of {} matches “{}”",
                         names(&t["connectionIds"]),
                         text(t, "pattern")
                     )),
@@ -434,14 +439,41 @@ fn describe(section: &str, item: &Value, switches: &[String], after: &Side) -> V
                 "startWithConnection" => {
                     format!("When connecting to {}", name(&item["sshConnectionId"]))
                 }
-                _ => "When termiHub starts".to_string(),
+                _ => format!(
+                    "When termiHub starts, over {}",
+                    name(&item["sshConnectionId"])
+                ),
             })
+            .chain(describe_tunnel(&item["tunnelType"]))
             .collect(),
         _ => vec![format!(
-            "When termiHub starts: opens port {} on {}",
+            "When termiHub starts: opens {}:{}, serving {}",
+            text(item, "bindHost"),
             item["port"],
-            text(item, "bindHost")
+            text(item, "rootDirectory")
         )],
+    }
+}
+
+/// Which port a tunnel opens, and where that leads.
+fn describe_tunnel(tunnel: &Value) -> Option<String> {
+    let config = &tunnel["config"];
+    let end = |side: &str| {
+        format!(
+            "{}:{}",
+            text(config, &format!("{side}Host")),
+            config[format!("{side}Port")]
+        )
+    };
+    match tunnel["type"].as_str()? {
+        "local" => Some(format!("Opens {}, to {}", end("local"), end("remote"))),
+        "remote" => Some(format!(
+            "Opens {} on the server, to {} here",
+            end("remote"),
+            end("local")
+        )),
+        "dynamic" => Some(format!("Opens {}, to anywhere", end("local"))),
+        _ => None,
     }
 }
 
@@ -489,7 +521,7 @@ fn here(config_dir: &Path) -> Side {
             continue;
         };
         if let CurrentDoc::Present(doc) = sections::read_current(spec, config_dir) {
-            side.0.insert(id, doc);
+            side.insert(id, doc);
         }
     }
     side
@@ -510,7 +542,7 @@ pub fn quieten(
         };
         if let Some((_, text)) = files.iter().find(|(name, _)| name == spec.file_name) {
             let doc = serde_json::from_str(text).map_err(|e| e.to_string())?;
-            after.0.insert(id, doc);
+            after.insert(id, doc);
             chosen.insert(id);
         }
     }
@@ -580,7 +612,7 @@ pub fn preview(docs: Vec<(&'static str, Value)>, config_dir: &Path) -> Vec<Resto
                 (Some(starter), Some(here)) => with_missing(doc, here, starter.list),
                 _ => doc,
             };
-            after.0.insert(id, merged);
+            after.insert(id, merged);
         }
     }
     switch_off(&before, &mut after, Utc::now(), &chrono::Local)

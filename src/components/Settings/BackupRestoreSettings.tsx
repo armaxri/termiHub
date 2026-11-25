@@ -55,8 +55,8 @@ export function BackupRestoreSettings() {
         </Button>
       </div>
       {entries.length > 0 && (
-        <div className="credential-vault__actions" data-testid="backup-restored-off">
-          <span className="settings-panel__description">{restoredOffText(entries.length)}</span>
+        <div className="backup-restore__still-off" data-testid="backup-restored-off">
+          <span>{restoredOffText(entries.length)}</span>
           <Button
             variant="secondary"
             size="sm"

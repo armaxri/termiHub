@@ -17,7 +17,7 @@ id: string,
  */
 name: string, 
 /**
- * What would start it, one line each: "Hotkey Ctrl+Alt+R".
+ * What would start it, one line each ("Hotkey Ctrl+Alt+R"), and what it opens.
  */
 starts: Array<string>, 
 /**

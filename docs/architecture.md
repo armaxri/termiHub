@@ -2277,7 +2277,10 @@ sequenceDiagram
   must have the command confirmed, because a caller also chooses the parameter values. Unconfirmed,
   it is asked about (exact command, what would not show is written out) or, unattended, refused. The
   first start with this check lists the whole library as the user's own. "Always allow" of a program
-  that runs whatever it is told to (`local_process_interpreters.rs`) is asked about twice.
+  that runs whatever it is told to (`local_process_interpreters.rs`) is asked about twice. Settings ▸
+  Security lists the confirmed commands per automation, with revoke one, all of an automation and all,
+  and warns at an allowed program of that kind (#6057); the file keeps the command itself, an older
+  entry only its hash.
 - **Schedules in the UI** (`src/components/Schedules/`, #6024) — a row says its state with the next
   run, the rule, the automation, the connections, why it will not run and how the last run ended
   with the whole reason (`scheduleStatus.ts`). The editor asks the scheduler for the next run before
@@ -2348,6 +2351,18 @@ machine's experimental, JavaScript-plugin and local-program switches, allowed pr
 workspace commands (`LOCAL_PERMISSION_KEYS`), and the preview says so and what the backup would have
 allowed. On a machine without them they stay off. A restored automation asks before its first local
 program unless it is the one made here.
+
+Nor does it start anything by itself (#6056, `backup/self_starting.rs`): an enabled schedule, an armed
+trigger (also of the frozen workflow file), a tunnel's `autoStart` and `startWithConnection` and a file
+server's `autoStart` are restored off, and a workspace that is not the one here holds its commands back
+like an imported one. What is on here stays on when it still does the same: the entry, the automations
+it runs, the connections, agents and broadcast groups it uses are compared over the whole restore, so an
+entry of a section that was not chosen is switched off too when the restore changes what it starts. A
+schedule that stays on keeps when it ran here; a changed one has to be confirmed again, also when it is
+off. The preview lists what arrives off and what would start it. The list travels with the staged
+restore and becomes `restored-off.json` when it is applied; the next start asks once which entries to
+turn on (`components/RestoredOff/`), and Settings ▸ Backup & restore offers it until it is dealt with.
+HTTP monitors load stopped and macros have no triggers.
 
 ```json
 {

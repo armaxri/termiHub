@@ -536,3 +536,12 @@ fn a_confirmation_that_cannot_be_taken_back_stays() {
     assert!(m.revoke_confirmed(None, None).is_err());
     assert_eq!(standing(&m, &["a"], "make", &[]), Standing::Confirmed);
 }
+
+/// The system tests compute the same key (`confirmed_keys`).
+#[test]
+fn the_key_of_a_command_is_stable() {
+    assert_eq!(
+        command_hash(Path::new("/bin/make"), &["ä b".to_string()]),
+        "7b8428be9b6a25de82332d1d5a207a70f354f723b285036c7116ee0eca811ab0"
+    );
+}
