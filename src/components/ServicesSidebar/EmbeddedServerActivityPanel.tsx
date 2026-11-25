@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Copy, Trash2, X } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
+import "./EmbeddedServer.css";
 import { useEmbeddedServerActivity } from "@/hooks/useEmbeddedServerActivity";
 import { formatBytes, formatClockTime } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
