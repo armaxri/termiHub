@@ -76,6 +76,7 @@ const PREVIEW: BackupRestorePreview = {
   createdAt: "2026-11-13T00:00:00Z",
   appVersion: "0.1.0",
   encrypted: true,
+  switchedOff: [],
   sections: [
     section({ id: "settings", label: "Settings", supportsMerge: false, ...EMPTY }),
     section({ id: "tunnels", label: "Tunnels", ...EMPTY }),

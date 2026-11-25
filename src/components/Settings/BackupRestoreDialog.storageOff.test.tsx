@@ -69,6 +69,7 @@ const OFF_PREVIEW: BackupRestorePreview = {
   createdAt: "2026-11-13T00:00:00Z",
   appVersion: "0.1.0",
   encrypted: true,
+  switchedOff: [],
   sections: SECTIONS,
   credentials: { available: false, unavailableReason: OFF_REASON, preview: null },
 };
