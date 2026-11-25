@@ -599,7 +599,7 @@ function toolbar(page: Page, index: number) {
  * Commands the app sends on its own timer, not because of an action: the
  * services poll and the debounced settings save after a sidebar resize.
  */
-const BACKGROUND_COMMANDS = ["record_frontend_log", "get_embedded_server_states", "save_settings"];
+const BACKGROUND_COMMANDS = ["record_frontend_log", "save_settings"];
 
 /**
  * What an action visibly did: the IPC commands it sent (intents by kind), the

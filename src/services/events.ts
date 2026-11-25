@@ -7,7 +7,6 @@ import type { AppUpdateProgress } from "@/types/generated/AppUpdateProgress";
 import { TAURI_EVENT } from "./eventNames";
 import { LogEntry } from "@/types/terminal";
 import { CredentialStoreStatusInfo } from "@/types/credential";
-import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerError, XServerProgress } from "@/types/xserver";
 import type { SshHostKeyPromptClosedPayload, SshHostKeyPromptPayload } from "@/types/sshHostKey";
 import type { ConnectionIdChange } from "@/types/connection";
@@ -744,15 +743,6 @@ export async function onCredentialStoreStatusChanged(
 export async function onCredentialStoreUnlockNeeded(callback: () => void): Promise<UnlistenFn> {
   return await listen(TAURI_EVENT.credentialStoreUnlockNeeded, () => {
     callback();
-  });
-}
-
-/** Subscribe to embedded server status change events. */
-export async function onEmbeddedServerStatusChanged(
-  callback: (state: ServerState) => void
-): Promise<UnlistenFn> {
-  return await listen<ServerState>(TAURI_EVENT.embeddedServerStatusChanged, (event) => {
-    callback(event.payload);
   });
 }
 

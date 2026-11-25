@@ -392,8 +392,8 @@ pub(crate) fn guarded_unlock(
 /// now-usable store — finishing a plaintext migration that waited for the
 /// unlock, or keeping session-only passwords once a store is enabled (#3514).
 fn sync_embedded_server_secrets(app_handle: &AppHandle) {
-    if let Some(servers) =
-        app_handle.try_state::<crate::embedded_servers::server_manager::EmbeddedServerManager>()
+    if let Some(servers) = app_handle
+        .try_state::<Arc<crate::embedded_servers::server_manager::EmbeddedServerManager>>()
     {
         servers.sync_secrets();
     }

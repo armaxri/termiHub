@@ -280,7 +280,7 @@ fn run_app_teardown(app_handle: &tauri::AppHandle) {
             mgr.stop_all();
         }
         if let Some(mgr) =
-            handle.try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+            handle.try_state::<Arc<embedded_servers::server_manager::EmbeddedServerManager>>()
         {
             mgr.stop_all();
         }
@@ -951,10 +951,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::network::clear_http_monitor_history,
             commands::network::set_network_tool_run_location,
             // Embedded servers
-            commands::embedded_servers::list_embedded_servers,
             commands::embedded_servers::save_embedded_server,
             commands::embedded_servers::delete_embedded_server,
-            commands::embedded_servers::get_embedded_server_states,
             commands::embedded_servers::get_embedded_server_activity,
             commands::embedded_servers::clear_embedded_server_activity,
             commands::embedded_servers::start_embedded_server,

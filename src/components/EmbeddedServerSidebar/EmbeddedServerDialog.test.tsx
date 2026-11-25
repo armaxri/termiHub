@@ -14,6 +14,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
 }));
 
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
+import { withTooltip } from "@/test/tooltip";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 
@@ -22,7 +23,7 @@ let root: Root;
 
 async function render(ui: React.ReactElement) {
   await act(async () => {
-    root.render(ui);
+    root.render(withTooltip(ui));
   });
   await flushAsync();
 }
@@ -409,6 +410,20 @@ describe("EmbeddedServerDialog", () => {
       '[data-testid="server-dialog-http-password"]'
     ) as HTMLInputElement;
     expect(pass.placeholder).toBe("");
+  });
+
+  it("says in plain words what each kind of server is for (#6036)", async () => {
+    await render(<EmbeddedServerDialog {...baseProps} />);
+    const cards = (["http", "ftp", "tftp"] as const).map((kind) => {
+      const card = document.querySelector<HTMLElement>(
+        `[data-testid="server-dialog-proto-${kind}"]`
+      )!;
+      return card.closest("label")?.textContent ?? card.textContent;
+    });
+    expect(cards[0]).toContain("Web server");
+    expect(cards[0]).toContain("Open a folder in a browser (HTTP)");
+    expect(cards[1]).toContain("Upload and download files (FTP)");
+    expect(cards[2]).toContain("Give files to a device (TFTP)");
   });
 
   it("switching protocol away from HTTP hides the auth section (PROD-0035)", async () => {

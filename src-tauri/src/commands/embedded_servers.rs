@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use tauri::{AppHandle, Manager, State};
 
 use crate::embedded_servers::activity::ActivitySnapshot;
-use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState};
+use crate::embedded_servers::config::EmbeddedServerConfig;
 use crate::embedded_servers::server_manager::{
     clear_agent_activity, fetch_agent_activity, ActivityRoute, EmbeddedServerManager,
 };
@@ -60,7 +62,7 @@ async fn off_main_thread<T: Send + 'static>(
 ) -> Result<T, TerminalError> {
     tokio::task::spawn_blocking(move || {
         let manager = app_handle
-            .try_state::<EmbeddedServerManager>()
+            .try_state::<Arc<EmbeddedServerManager>>()
             .ok_or_else(|| {
                 TerminalError::EmbeddedServerError("Services are unavailable".to_string())
             })?;
@@ -68,14 +70,6 @@ async fn off_main_thread<T: Send + 'static>(
     })
     .await
     .map_err(|e| TerminalError::EmbeddedServerError(format!("Task join error: {e}")))?
-}
-
-/// Return all saved embedded server configurations.
-#[tauri::command]
-pub fn list_embedded_servers(
-    manager: State<'_, EmbeddedServerManager>,
-) -> Result<Vec<EmbeddedServerConfig>, TerminalError> {
-    manager.get_configs()
 }
 
 /// Add or update an embedded server configuration.
@@ -96,14 +90,6 @@ pub async fn delete_embedded_server(
     off_main_thread(app_handle, move |manager| manager.delete_config(&server_id)).await
 }
 
-/// Get the current runtime state of all configured servers.
-#[tauri::command]
-pub fn get_embedded_server_states(
-    manager: State<'_, EmbeddedServerManager>,
-) -> Result<Vec<ServerState>, TerminalError> {
-    manager.get_states()
-}
-
 /// Read a server's access log and detailed statistics (PROD-034, PROD-036).
 ///
 /// Returns only entries newer than `since_seq` (all retained entries when
@@ -118,7 +104,7 @@ pub fn get_embedded_server_states(
 pub async fn get_embedded_server_activity(
     server_id: String,
     since_seq: Option<u64>,
-    manager: State<'_, EmbeddedServerManager>,
+    manager: State<'_, Arc<EmbeddedServerManager>>,
 ) -> Result<Option<ActivitySnapshot>, TerminalError> {
     match manager.activity_route(&server_id)? {
         ActivityRoute::Desktop => manager.get_activity(&server_id, since_seq),
@@ -140,7 +126,7 @@ pub async fn get_embedded_server_activity(
 #[tauri::command]
 pub async fn clear_embedded_server_activity(
     server_id: String,
-    manager: State<'_, EmbeddedServerManager>,
+    manager: State<'_, Arc<EmbeddedServerManager>>,
 ) -> Result<(), TerminalError> {
     match manager.activity_route(&server_id)? {
         ActivityRoute::Desktop => manager.clear_activity(&server_id),

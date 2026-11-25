@@ -3,17 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import {
-  EmbeddedServerConfig,
-  NetworkInterface,
-  ServerActivity,
-  ServerState,
-} from "@/types/embeddedServer";
-
-/** Return all saved embedded server configurations. */
-export async function listEmbeddedServers(): Promise<EmbeddedServerConfig[]> {
-  return await invoke<EmbeddedServerConfig[]>("list_embedded_servers");
-}
+import { EmbeddedServerConfig, NetworkInterface, ServerActivity } from "@/types/embeddedServer";
 
 /** Add or update an embedded server configuration. */
 export async function saveEmbeddedServer(config: EmbeddedServerConfig): Promise<void> {
@@ -23,11 +13,6 @@ export async function saveEmbeddedServer(config: EmbeddedServerConfig): Promise<
 /** Delete an embedded server configuration by ID. */
 export async function deleteEmbeddedServer(serverId: string): Promise<void> {
   await invoke("delete_embedded_server", { serverId });
-}
-
-/** Get the current runtime state of all configured servers. */
-export async function getEmbeddedServerStates(): Promise<ServerState[]> {
-  return await invoke<ServerState[]>("get_embedded_server_states");
 }
 
 /**

@@ -8,10 +8,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 const mockedInvoke = vi.mocked(invoke);
 
 import {
-  listEmbeddedServers,
   saveEmbeddedServer,
   deleteEmbeddedServer,
-  getEmbeddedServerStates,
   startEmbeddedServer,
   stopEmbeddedServer,
   createAndStartServer,
@@ -23,35 +21,6 @@ import {
 describe("embeddedServerApi", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-  });
-
-  describe("listEmbeddedServers", () => {
-    it("invokes list_embedded_servers and returns configs", async () => {
-      const configs = [
-        {
-          id: "srv-1",
-          name: "TFTP",
-          type: "tftp",
-          port: 69,
-          bindAddress: "0.0.0.0",
-          enabled: false,
-        },
-      ];
-      mockedInvoke.mockResolvedValue(configs);
-
-      const result = await listEmbeddedServers();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("list_embedded_servers");
-      expect(result).toEqual(configs);
-    });
-
-    it("returns empty array when no servers configured", async () => {
-      mockedInvoke.mockResolvedValue([]);
-
-      const result = await listEmbeddedServers();
-
-      expect(result).toEqual([]);
-    });
   });
 
   describe("saveEmbeddedServer", () => {
@@ -79,18 +48,6 @@ describe("embeddedServerApi", () => {
       await deleteEmbeddedServer("srv-1");
 
       expect(mockedInvoke).toHaveBeenCalledWith("delete_embedded_server", { serverId: "srv-1" });
-    });
-  });
-
-  describe("getEmbeddedServerStates", () => {
-    it("invokes get_embedded_server_states and returns states", async () => {
-      const states = [{ id: "srv-1", status: "running", port: 69, error: null }];
-      mockedInvoke.mockResolvedValue(states);
-
-      const result = await getEmbeddedServerStates();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("get_embedded_server_states");
-      expect(result).toEqual(states);
     });
   });
 

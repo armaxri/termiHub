@@ -5,6 +5,7 @@ import {
   type ServerStats,
 } from "@/types/embeddedServer";
 import { formatBytes } from "@/utils/formatters";
+import { shareTypeHelp } from "@/utils/shareTypeHelp";
 
 /** The URL a server listens on, e.g. `http://127.0.0.1:8080`. */
 export function serverUrl(config: EmbeddedServerConfig): string {
@@ -13,7 +14,7 @@ export function serverUrl(config: EmbeddedServerConfig): string {
 
 /**
  * The service row's tooltip lines (#5770): the protocol and address it
- * listens on, the folder it serves, read-only, where it runs and —
+ * listens on, what it is for, the folder it serves, read-only, where it runs and —
  * while it runs — its traffic. The row itself shows only the name, the
  * description and markers that need attention. See docs/copy-style.md ->
  * "List rows".
@@ -27,6 +28,7 @@ export function serverRowTooltip(
       protocol: PROTOCOL_LABELS[config.serverType],
       url: serverUrl(config),
     }),
+    shareTypeHelp(config.serverType).lines[0],
     tf("server.tooltip.root", { path: config.rootDirectory }),
   ];
   if (config.readOnly) out.push(t("server.tooltip.readOnly"));
