@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { matchSorter } from "match-sorter";
 import { TerminalSquare, LayoutGrid, Radio, ChevronLeft, Zap } from "lucide-react";
-import { getActiveTab, useAppStore } from "@/store/appStore";
+import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { buildCommands } from "@/services/commands";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { isMacroShaped } from "@/store/slices/automationViews";
-import { runBlockedReason } from "@/utils/runBlocked";
+import { runBlockedReason, runBlockedShort } from "@/utils/runBlocked";
 import { openRunPicker } from "@/services/contextCommands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -65,12 +65,14 @@ type PaletteEntry =
       /** What else finds it: the verb, its former names, its tags. */
       aliases: string[];
       automationId: string;
-      /** What Enter does with it, after the terminal's name (A-048). */
-      does: string;
+      /** What Enter does with it (A-048). */
+      automation: Automation;
       /** Its triggers are off. */
       triggersOff: boolean;
       /** Why it cannot run; it is inert then. */
       blocked: string | null;
+      /** The same in a few words, on the row (B-039). */
+      blockedShort: string | null;
     }
   | {
       kind: "broadcast";
@@ -121,14 +123,13 @@ function automationAliases({ name, tags }: Pick<Automation, "name" | "tags">): s
   return [`Run automation: ${name}`, `Run macro: ${name}`, `Run workflow: ${name}`, ...tags];
 }
 
-/** What running an automation does, in the palette's words: "types 5 steps". */
-function automationDoes(automation: Automation): string {
+/** What running an automation in `terminal` does: "types into bash, 5 steps" (B-040). */
+function automationDoes(automation: Automation, terminal: string): string {
   const { steps } = automation;
   const local = steps.length > 0 && steps.every((s) => s.kind === "run-local-process");
-  if (local) return "runs on this computer";
-  return isMacroShaped(automation)
-    ? "types its keys"
-    : `types ${steps.length} step${steps.length === 1 ? "" : "s"}`;
+  const count = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
+  if (local) return `runs on this computer, ${count}`;
+  return isMacroShaped(automation) ? `types into ${terminal}` : `types into ${terminal}, ${count}`;
 }
 
 /** Why an entry does nothing. */
@@ -189,6 +190,11 @@ export function CommandPalette(): React.ReactElement {
   const runAutomation = useAppStore((s) => s.runAutomation);
   const experimental = useExperimentalFeatures();
   // Where an automation would type (R-083): the active terminal tab's title.
+  // "asks where" needs something to choose from (C-024).
+  const anyTerminal = useAppStore((s) =>
+    collectLiveTabs(s).some((tab) => tab.contentType === "terminal")
+  );
+  const recording = useAppStore((s) => s.recording !== null);
   const runTarget = useAppStore((s) => {
     const tab = getActiveTab(s);
     return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
@@ -210,6 +216,12 @@ export function CommandPalette(): React.ReactElement {
 
   // All entries (commands first, then connections) in declaration order — the
   // order shown when the query is empty.
+  // What it does now, not what it can do (C-024).
+  const recordLabel = recording
+    ? "Stop recording"
+    : runTarget === null
+      ? "Open a terminal and record"
+      : `Start recording in ${runTarget}`;
   const entries = useMemo<PaletteEntry[]>(() => {
     if (mode === "broadcast") {
       return automations.map((a) => ({
@@ -222,10 +234,10 @@ export function CommandPalette(): React.ReactElement {
     const commandEntries: PaletteEntry[] = buildCommands().map((cmd) => ({
       kind: "command",
       key: `command:${cmd.id}`,
-      label: cmd.label,
+      label: cmd.id === "toggle-macro-recording" ? recordLabel : cmd.label,
       accelerator: cmd.accelerator,
       available: cmd.available,
-      aliases: COMMAND_ALIASES[cmd.id] ?? [],
+      aliases: [...(COMMAND_ALIASES[cmd.id] ?? []), cmd.label],
       run: cmd.run,
     }));
     const connectionEntries: PaletteEntry[] = connections.map((conn) => ({
@@ -241,9 +253,10 @@ export function CommandPalette(): React.ReactElement {
       label: a.name,
       aliases: automationAliases(a),
       automationId: a.id,
-      does: automationDoes(a),
+      automation: a,
       triggersOff: a.triggers.length > 0 && a.triggersEnabled === false,
       blocked: runBlockedReason(a, (id) => automations.find((x) => x.id === id), experimental),
+      blockedShort: runBlockedShort(a, (id) => automations.find((x) => x.id === id), experimental),
     }));
     // Only offered while broadcasting (#3430); disabled when the group has no
     // connected terminal or there is no automation to pick.
@@ -293,6 +306,7 @@ export function CommandPalette(): React.ReactElement {
     workspaces,
     rootPanel,
     activePanelId,
+    recordLabel,
   ]);
 
   // Ranked results. An empty query returns every entry in declaration order.
@@ -473,10 +487,12 @@ export function CommandPalette(): React.ReactElement {
                     <>
                       <span className="command-palette__target">
                         {entry.blocked !== null
-                          ? "Cannot run"
+                          ? `Cannot run: ${entry.blockedShort}`
                           : runTarget === null
-                            ? "asks where"
-                            : `${entry.does} in ${runTarget}`}
+                            ? anyTerminal
+                              ? "asks where"
+                              : "open a terminal first"
+                            : automationDoes(entry.automation, runTarget)}
                         {entry.triggersOff ? " · triggers off" : ""}
                       </span>
                       <span className="command-palette__type">automation</span>

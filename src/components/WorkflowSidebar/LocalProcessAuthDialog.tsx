@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button } from "@/components/ui";
+import { t } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import "./LocalProcessAuthDialog.css";
 
@@ -12,7 +13,7 @@ import "./LocalProcessAuthDialog.css";
  * executes a program on the user's own machine, unlike every other workflow step.
  *
  * Three outcomes, mirroring the store's {@link LocalProcessAuthDecision}:
- * - **Cancel** — refuse; the step does not run (the safe default, focused).
+ * - **Don't allow** — refuse; the step fails (the safe default, focused).
  * - **Allow once** — run this time only; nothing is remembered.
  * - **Always allow** — run and remember the program on the allowlist.
  *
@@ -40,7 +41,7 @@ export function LocalProcessAuthDialog() {
             onClick={() => resolve("cancel")}
             data-testid="local-process-auth-cancel"
           >
-            Cancel
+            Don&apos;t allow
           </Button>
           <Button
             variant="secondary"
@@ -50,7 +51,7 @@ export function LocalProcessAuthDialog() {
             Allow once
           </Button>
           <Button
-            variant="danger"
+            variant="ghost"
             onClick={() => resolve("always")}
             data-testid="local-process-auth-always"
           >
@@ -101,6 +102,9 @@ export function LocalProcessAuthDialog() {
           <p className="local-process-auth__note">
             &ldquo;Always allow&rdquo; remembers this file, with any arguments and for every
             automation; manage or revoke it later under Settings &rarr; Security.
+          </p>
+          <p className="local-process-auth__refuse" data-testid="local-process-auth-refuse">
+            {t(prompt.goesOn ? "automation.program.goesOn" : "automation.program.stops")}
           </p>
         </div>
       )}

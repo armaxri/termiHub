@@ -460,12 +460,16 @@ describe("a bad file imports nothing", () => {
 
 describe("a file of a newer build", () => {
   it.each<[string, object, string]>([
-    ["the automation", { later: true }, "later"],
-    ["a step", { steps: [{ kind: "wait", delayMs: 1, later: 1 }] }, "step 1: later"],
+    ["the automation", { later: true }, "a setting (“later”)"],
+    [
+      "a step",
+      { steps: [{ kind: "wait", delayMs: 1, later: 1 }] },
+      "a setting of step 1 (“later”)",
+    ],
     [
       "a chunk",
       { steps: [{ kind: "type-keys", chunks: [{ data: "x", delayMs: 0, later: 1 }] }] },
-      "step 1: later",
+      "a setting of step 1 (“later”)",
     ],
     [
       "a nested step",
@@ -478,16 +482,28 @@ describe("a file of a newer build", () => {
           },
         ],
       },
-      "step 1: later",
+      "a setting of step 1 (“later”)",
     ],
-    ["a trigger", { triggers: [{ kind: "hotkey", binding: "F8", later: 1 }] }, "trigger 1: later"],
-    ["a value it asks for", { parameters: [{ name: "p", type: "string", later: 1 }] }, "later"],
+    [
+      "a trigger",
+      { triggers: [{ kind: "hotkey", binding: "F8", later: 1 }] },
+      "a setting of trigger 1 (“later”)",
+    ],
+    [
+      "a value it asks for",
+      { parameters: [{ name: "p", type: "string", later: 1 }] },
+      "a setting of value 1 (“later”)",
+    ],
   ])("loses an unknown key of %s, and says which (A-050)", (_where, over, part) => {
     const result = importFile(
       exported(automation({ ...over, name: "New" } as Partial<Automation>))
     );
     expect(leftOut(result)).toEqual([["New", part]]);
-    expect(JSON.stringify(result.automations)).not.toContain("later");
+    const [{ importedInPart, ...taken }] = result.automations;
+    expect(JSON.stringify(taken)).not.toContain("later");
+    // Its row says so until it was saved once; a file cannot say so, nor is it exported (B-041).
+    expect(importedInPart).toEqual([part]);
+    expect(exported(result.automations[0])).not.toContain("importedInPart");
   });
 
   it("says so for old lists too, and only for the entry it is true of", () => {
@@ -498,8 +514,8 @@ describe("a file of a newer build", () => {
       workflows: [{ name: "W", steps: [{ kind: "wait", delayMs: 1, later: 1 }] }],
     });
     expect(leftOut(result)).toEqual([
-      ["N", "later"],
-      ["W", "step 1: later"],
+      ["N", "a setting (“later”)"],
+      ["W", "a setting of step 1 (“later”)"],
     ]);
   });
 
@@ -510,11 +526,13 @@ describe("a file of a newer build", () => {
           triggersEnabled: true,
           parameters: [],
           legacy: { from: "macro", version: 1 },
+          importedInPart: ["x"],
         })
       )
     );
     expect(leftOut(result)).toEqual([]);
     expect(result.automations[0]).not.toHaveProperty("legacy");
+    expect(result.automations[0]).not.toHaveProperty("importedInPart");
   });
 
   it.each<[string, object, string]>([

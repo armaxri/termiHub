@@ -181,12 +181,43 @@ describe("ScheduleEditorHost keeps what the user did not change (#5983)", () => 
       const info = vi.spyOn(toast, "info");
       await saveAs({ enabled: false });
       expect(info).toHaveBeenCalledTimes(1);
-      expect(info).toHaveBeenCalledWith("Saved “Nightly”, switched off", {
-        description: "Switch it on in the Schedules list.",
-      });
+      expect(info).toHaveBeenCalledWith(
+        "Saved “Nightly”, switched off",
+        expect.objectContaining({ description: "Switch it on in the Schedules list." })
+      );
       // The editor and its status line are gone by then.
       expect(q("schedule-editor-dialog")).toBeNull();
       info.mockRestore();
+    });
+
+    it("Switch on… in that message asks which hosts first (B-030)", async () => {
+      const info = vi.spyOn(toast, "info");
+      await saveAs({ enabled: false });
+      const { action } = info.mock.calls[0][1] as { action: { onClick: () => void } };
+      await act(async () => action.onClick());
+      expect(q("schedule-enable-confirm")).not.toBeNull();
+      info.mockRestore();
+    });
+
+    it.each([
+      ["asks which hosts first", undefined],
+      ["only switches when they were confirmed", "2026-01-01T00:00:00Z"],
+    ])("Save and switch on %s", async (_what, confirmedAt) => {
+      const setScheduleEnabled = vi.fn(() => Promise.resolve(stored));
+      const off = { ...stored, enabled: false, confirmedAt };
+      act(() => useAppStore.setState({ schedules: [off], setScheduleEnabled }));
+      saveSchedule.mockResolvedValueOnce(off);
+      await open();
+      await act(async () => q("schedule-editor-save-on")!.click());
+      await flushAsync();
+      if (confirmedAt) {
+        expect(setScheduleEnabled).toHaveBeenCalledWith("s1", true, false);
+        expect(q("schedule-enable-confirm")).toBeNull();
+      } else {
+        expect(setScheduleEnabled).not.toHaveBeenCalled();
+        await act(async () => q("schedule-enable-confirm-confirm")!.click());
+        expect(setScheduleEnabled).toHaveBeenCalledWith("s1", true, true);
+      }
     });
 
     it("says nothing of it when it stays on, and shows the row", async () => {

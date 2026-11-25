@@ -410,7 +410,7 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
       fanout: { authDecisions },
     });
     expect(result).toMatchObject({ status: "failed", failedStepIndex: 1 });
-    expect(result.error).toContain("not authorized");
+    expect(result.error).toContain("not allowed to run");
   });
 
   it("refuses an un-allowlisted program in an unattended run without prompting", async () => {
@@ -442,6 +442,23 @@ describe("runWorkflowOnTarget — fan-out retry reporting", () => {
   });
 });
 
+describe("Stop before the first step", () => {
+  it("is not lost: the run shows as running before it has begun", async () => {
+    let begin = () => {};
+    vi.mocked(dispatchWorkflowRunStarted).mockImplementationOnce(
+      () => new Promise((resolve) => (begin = () => resolve(undefined)))
+    );
+    const done = run(workflow([{ kind: "send-command", command: "make" }]));
+    await vi.waitFor(() => expect(dispatchWorkflowRunStarted).toHaveBeenCalled());
+    const { runId } = vi.mocked(dispatchWorkflowRunStarted).mock.calls[0][0] as { runId: string };
+    expect(cancelWorkflowRunById(runId)).toBe(true);
+    begin();
+    expect((await done).status).toBe("cancelled");
+    expect(mocks.injector).not.toHaveBeenCalled();
+    expect(activeWorkflowRunCount()).toBe(0);
+  });
+});
+
 describe("toastRunOutcome", () => {
   it("pluralises several tolerated step failures", () => {
     toastRunOutcome(
@@ -467,7 +484,7 @@ describe("toastRunOutcome", () => {
     toastRunOutcome("wf", { status: "failed", stepsCompleted: 1, error: "nope" }, 3, "t");
     expect(mocks.toast.error).toHaveBeenCalledWith("“wf” failed at step 2", {
       id: "t",
-      description: "nope",
+      description: "Step 1 was run. nope",
     });
   });
 
@@ -501,6 +518,19 @@ describe("toastRunOutcome", () => {
     ]);
   });
 
+  it.each([
+    [0, "nope"],
+    [2, "Steps 1 to 2 were run. nope"],
+  ])("says what ran before step %i failed (B-010)", (failedStepIndex, description) => {
+    toastRunOutcome(
+      "wf",
+      { status: "failed", stepsCompleted: failedStepIndex, failedStepIndex, error: "nope" },
+      3,
+      "t"
+    );
+    expect(mocks.toast.error).toHaveBeenCalledWith(expect.any(String), { id: "t", description });
+  });
+
   it("says that nothing was run when it did not start", () => {
     toastRunOutcome(
       "wf",
@@ -526,7 +556,11 @@ describe("runWorkflowOnTarget — a step that waits for the user (#6025)", () =>
     ]);
 
   it("asks the user, in the terminal's own session, and goes on", async () => {
-    const waitForUser = vi.fn(async (_request: unknown) => "continued" as const);
+    let dismissed = 0;
+    const waitForUser = vi.fn(async (_request: unknown) => {
+      dismissed = mocks.toast.dismiss.mock.calls.length;
+      return "continued" as const;
+    });
     state = { ...state, waitForUser };
     const result = await run(waits(), { targetLabel: "prod-web" });
     expect(result.status).toBe("completed");
@@ -537,10 +571,12 @@ describe("runWorkflowOnTarget — a step that waits for the user (#6025)", () =>
       automationName: "wf",
       message: "Type your password",
     });
-    expect(mocks.toast.loading).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ description: "Waiting for you" })
-    );
+    // No spinner while it waits: the bar says it, and the next step brings it back (B-004).
+    const texts = mocks.toast.loading.mock.calls.map(([, options]) => options.description);
+    expect(texts[0]).toBe("Step 1 of 3 in prod-web");
+    expect(texts).not.toContain("Waiting for you");
+    expect(dismissed).toBe(1);
+    expect(texts[texts.length - 1]).toBe("Step 3 of 3 in prod-web");
     expect(mocks.injector).toHaveBeenCalledTimes(2);
   });
 

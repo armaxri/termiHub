@@ -95,6 +95,7 @@ pub fn from_macro(source: &Macro) -> Automation {
             version: MacroStore::CURRENT_VERSION,
             extra: Default::default(),
         }),
+        imported_in_part: Vec::new(),
         extra: automation_extra(&source.extra),
     }
 }
@@ -118,6 +119,7 @@ pub fn from_workflow(source: &Workflow) -> Automation {
             version: WorkflowStore::CURRENT_VERSION,
             extra: Default::default(),
         }),
+        imported_in_part: Vec::new(),
         extra: automation_extra(&source.extra),
     }
 }

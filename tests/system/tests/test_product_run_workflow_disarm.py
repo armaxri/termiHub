@@ -105,8 +105,8 @@ class TestProductRunWorkflowDisarm(
             "workflow-disarm.off",
             "One click on the row switch disarms the workflow; its trigger stays bound and "
             "matching output no longer runs it",
-            expect="#5674: the 'Disarm check' row now reads 'Triggers off: not on … "
-            "You can still run it.' next to an off "
+            expect="#5674: the 'Disarm check' row now reads 'Triggers off: … does "
+            "not start it. You can still run it.' next to an off "
             "(grey) switch, its trigger (in the tooltip) unchanged; the local "
             "terminal shows PR_DISARM_FIRE_OFF but no PR_DISARM_ANSWER_42 line",
         ):

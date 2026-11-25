@@ -2135,7 +2135,10 @@ the `workflow-run` region and `macroPlayback`, "Waiting for you" from `automatio
 marker from the run history (`automationRowInfo.summarizeRuns`: a run failed and nothing completed
 since), and "Cannot run" from `utils/runBlocked.ts`, which the palette and the run picker use too. A
 failed run's toast asks for the editor or the history through window events that
-`AutomationEditorHost` handles, as the stores must not import the views. Closing the last window or
+`AutomationEditorHost` handles, as the stores must not import the views. `runAutomation` asks
+(`RunReplaceDialog`) before a run stops the one in progress, and an On connect trigger never does.
+How far a run is has one wording, `utils/runProgress.ts`. What an import left out is
+`Automation.importedInPart`, which the row shows and the editor's Save drops. Closing the last window or
 quitting asks first while an automation runs (`WindowCloseRequest.runs`). The sidebar replaced the
 `macros` and `workflows` sidebar views: settings v4 (`migrate_automations_view` in
 `src-tauri/src/connection/settings.rs`) maps the hidden activity-bar views (hidden only when both

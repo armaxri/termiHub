@@ -210,7 +210,8 @@ type by itself. Under its name it says, in sentences, which hotkeys and triggers
 ("Triggers on: hotkey F8, connecting to prod"), or what does not while they are off and that it
 can still be run, with their switch; when a schedule runs it next; in which terminal it runs and
 at which step; and why it cannot run. An automation is never "off" or "armed": its **triggers** are
-**on** or **off**. The verbs are **Run**, **Record** and **Stop** (a stopped run is "Stopped", not
+**on** or **off**. Progress is the step it is at ("step 2 of 3", "2/3" on a tab) or the share of the keys
+("50 % typed"), never the steps that are done. The verbs are **Run**, **Record** and **Stop** (a stopped run is "Stopped", not
 "canceled"). What it types, its last run and its tags stay in the tooltip.
 
 Not list rows, so this rule does not apply: location context that says where a view is (the

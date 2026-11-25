@@ -366,9 +366,9 @@ export const importedWorkflowSchema = z.object({
   updatedAt: z.string().catch(""),
 });
 const _workflowExact: AssertExact<z.output<typeof importedWorkflowSchema>, Workflow> = true;
-/* An automation has the same fields, plus the provenance an import drops. */
+/* An automation has the same fields, plus the provenance and the import mark, which an import drops. */
 const _automationFieldsExact: AssertExact<
-  Exclude<keyof Automation, "legacy">,
+  Exclude<keyof Automation, "legacy" | "importedInPart">,
   keyof z.output<typeof importedWorkflowSchema>
 > = true;
 
@@ -383,6 +383,7 @@ export const KNOWN_TRIGGER_KINDS: ReadonlySet<string> = new Set(
 export const KNOWN_ENTRY_KEYS: readonly string[] = [
   ...Object.keys(importedWorkflowSchema.shape),
   "legacy",
+  "importedInPart",
 ];
 
 /* Reference the compile-time guards so `noUnusedLocals`/eslint stay quiet. */

@@ -30,7 +30,7 @@ export interface RunTargetTerminal {
   title: string;
   /** Whether input typed now would reach it (connected, not taken over). */
   live: boolean;
-  /** The machine it types into, and its tab group's name (A-035). */
+  /** The machine it types into, and its tab group's name when there are several (A-035). */
   where: string;
   group: string;
 }
@@ -47,10 +47,15 @@ export interface RunTargetOptions {
   panel: string[];
   /** The live terminals of the current tab group. */
   all: string[];
-  /** The current tab group's name (A-036). */
+  /** The current tab group's name when there are several, else empty (A-036). */
   groupName: string;
   /** The saved broadcast groups with their live member tabs. */
   groups: { id: string; name: string; tabIds: string[] }[];
+}
+
+/** The split holds every terminal of the group, so choosing it is choosing all. */
+export function samePanelAsAll(options: Pick<RunTargetOptions, "panel" | "all">): boolean {
+  return options.panel.length === options.all.length;
 }
 
 /** The default choice: the active terminal, run in parallel. */
@@ -95,6 +100,7 @@ export function initialRunTargetChoice(
     case "broadcast":
       return options.broadcast ? remembered : fallback;
     case "panel":
+      if (options.active && samePanelAsAll(options)) return { ...remembered, kind: "all" };
       return options.active ? remembered : fallback;
     case "group":
       return options.groups.some((g) => g.id === remembered.groupId) ? remembered : fallback;

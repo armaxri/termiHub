@@ -55,8 +55,8 @@ describe("values nobody is there to enter (A-047)", () => {
     });
     const calls = automation({ id: "c", steps: [{ kind: "run-automation", automationId: "w" }] });
     const find = (id: string) => (id === "w" ? waits : undefined);
-    expect(unattendedBlockedReason(waits, nobody)).toContain("stops to let you type");
-    expect(unattendedBlockedReason(calls, find)).toContain("stops to let you type");
+    expect(unattendedBlockedReason(waits, nobody)).toContain("step 1 waits for you");
+    expect(unattendedBlockedReason(calls, find)).toContain("step 1 waits for you");
     expect(unattendedBlockedReason(calls, nobody)).toBeNull();
   });
 

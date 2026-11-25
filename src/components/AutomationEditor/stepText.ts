@@ -9,6 +9,7 @@ import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { WorkflowComparisonOp, WorkflowCondition } from "@/types/workflow";
 import { t } from "@/i18n/catalog";
 import { formatMacroStepData } from "./keysFormat";
+import { resolveUiLocale } from "@/utils/locale";
 
 /** All step discriminants. */
 export type AutomationStepKind = AutomationStep["kind"];
@@ -91,7 +92,8 @@ export const MISSING_AUTOMATION = "Missing automation";
 
 /** A duration in seconds, the unit the editor uses (R-167): `0.5 s`, `12 s`. */
 export function formatSeconds(ms: number): string {
-  return `${ms / 1000} s`;
+  // As the number fields write it, which follow the system (B-025).
+  return `${(ms / 1000).toLocaleString(resolveUiLocale(), { maximumFractionDigits: 3, useGrouping: false })} s`;
 }
 
 /** `left op right` of a condition, for a one-line summary. */
@@ -133,7 +135,10 @@ export function stepSummary(
     case "run-local-process":
       return [step.program, ...step.args].join(" ").trim() || EMPTY_STEP_SUMMARY;
     case "conditional":
-      return `If ${conditionSummary(step.condition)} · ${stepCount(step.then.length)}`;
+      return (
+        `If ${conditionSummary(step.condition)} · ${stepCount(step.then.length)}` +
+        (step.else?.length ? `, otherwise ${step.else.length}` : "")
+      );
     case "loop":
       return step.loop.kind === "count"
         ? `${step.loop.count}× · ${stepCount(step.body.length)}`

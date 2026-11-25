@@ -60,7 +60,8 @@ export function useRunTargets(): RunTargetOptions {
         .flatMap((leaf) => leaf.tabs)
         .filter((t) => t.contentType === "terminal")
         .map((t) => {
-          groupOf.set(t.id, name);
+          // One group has no name on the screen, so naming it says nothing.
+          if (trees.length > 1) groupOf.set(t.id, name);
           return t;
         })
     );
@@ -91,7 +92,8 @@ export function useRunTargets(): RunTargetOptions {
       broadcast: broadcast.active ? onlyLive(broadcast.targetTabIds) : null,
       panel: source ? onlyLive(resolveBroadcastTargetTabIds(resolveState, "panel", source.id)) : [],
       all: onlyLive(currentGroupTabs),
-      groupName: tabGroups.find((g) => g.id === activeTabGroupId)?.name ?? "",
+      groupName:
+        tabGroups.length > 1 ? (tabGroups.find((g) => g.id === activeTabGroupId)?.name ?? "") : "",
       groups: groups.map((group) => ({
         id: group.id,
         name: group.name,

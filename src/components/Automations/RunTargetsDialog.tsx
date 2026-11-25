@@ -19,6 +19,7 @@ import {
   rememberRunTargetChoice,
   rememberedRunTargetChoice,
   resolveRunTargetChoice,
+  samePanelAsAll,
   type RunTargetChoice,
   type RunTargetKind,
   type RunTargetOptions,
@@ -61,6 +62,10 @@ export interface RunTargetsDialogProps {
 /** The radio options the current tabs support, in the concept's order. */
 function targetOptions(options: RunTargetOptions): RadioGroupOption[] {
   const list: RadioGroupOption[] = [];
+  const titleOf = new Map(options.terminals.map((t) => [t.id, t.title]));
+  // Which ones, not only how many: two choices can reach the same number (B-007).
+  const names = (ids: string[]) =>
+    ids.length === 0 ? "none live" : ids.map((id) => titleOf.get(id) ?? id).join(", ");
   const active = options.active;
   list.push({
     value: "active",
@@ -73,22 +78,23 @@ function targetOptions(options: RunTargetOptions): RadioGroupOption[] {
   if (options.broadcast) {
     list.push({
       value: "broadcast",
-      label: `Broadcast set (${options.broadcast.length})`,
+      label: `Broadcast set: ${names(options.broadcast)}`,
       "data-testid": "run-targets-target-broadcast",
     });
   }
-  if (active) {
+  // Without a split the two would be the same choice (C-012).
+  if (active && !samePanelAsAll(options)) {
     list.push({
       value: "panel",
-      label: `Terminals in this split (${options.panel.length})`,
+      label: `Terminals in this split: ${names(options.panel)}`,
       "data-testid": "run-targets-target-panel",
     });
   }
   list.push({
     value: "all",
     label: options.groupName
-      ? `All terminals in “${options.groupName}” (${options.all.length})`
-      : `All terminals (${options.all.length})`,
+      ? `All terminals in “${options.groupName}”: ${names(options.all)}`
+      : `All terminals: ${names(options.all)}`,
     "data-testid": "run-targets-target-all",
   });
   if (options.groups.length > 0) {
@@ -222,7 +228,9 @@ export function RunTargetsDialog({
         ? "This automation has no steps to run."
         : count === 0
           ? choice.kind === "active"
-            ? "This terminal is not connected."
+            ? options.terminals.length === 0
+              ? "No terminal is connected. Open one first."
+              : "This terminal is not connected."
             : "No live terminals in this choice."
           : null;
 
@@ -271,7 +279,7 @@ export function RunTargetsDialog({
           />
         </Field>
       )}
-      <Field label="On">
+      <Field label="Run in">
         <RadioGroup
           value={choice.kind}
           onValueChange={setKind}

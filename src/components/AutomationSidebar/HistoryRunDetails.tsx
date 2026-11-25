@@ -27,6 +27,11 @@ export interface HistoryRunDetailsProps {
   id: string;
 }
 
+/** A reason as a sentence: an error starts as it is, mostly without a capital. */
+function sentence(reason: string): string {
+  return reason[0].toUpperCase() + reason.slice(1);
+}
+
 /**
  * What a run says when its row is open (#5818, #6026): how it ended and at which
  * step of what kind, why, what to do next, who started it, how long it took, and
@@ -61,7 +66,7 @@ export function HistoryRunDetails({ run, schedule, id }: HistoryRunDetailsProps)
               className="automation-history__error"
               data-testid={`automation-run-error-${run.id}`}
             >
-              {run.error}
+              {sentence(run.error)}
             </dd>
           </>
         ) : null}

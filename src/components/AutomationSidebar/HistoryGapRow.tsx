@@ -1,8 +1,13 @@
-import { ChevronRight } from "lucide-react";
-import { StatusDot, TruncatedText } from "@/components/ui";
+import { useRef } from "react";
+import { ChevronRight, Pencil, Play } from "lucide-react";
+import { Button, StatusDot, TruncatedText } from "@/components/ui";
 import { attemptLabel, attemptTone } from "@/components/Schedules/scheduleStatus";
 import { t } from "@/i18n/catalog";
 import { formatAbsoluteTime, formatDayTime } from "@/utils/formatters";
+import { openRunPicker } from "@/services/contextCommands";
+import { useAppStore } from "@/store/appStore";
+import { nextStepAfterGap } from "./historyFormat";
+import { useRevealWhenOpened } from "./useRevealWhenOpened";
 import type { ScheduleGap } from "./historyEntries";
 
 /** Props of {@link HistoryGapRow}. */
@@ -20,8 +25,13 @@ export function HistoryGapRow({ gap, expanded, onToggle }: HistoryGapRowProps) {
   const { summary } = gap;
   const detailsId = `automation-gap-details-${gap.id}`;
   const label = attemptLabel(summary.kind);
+  const next = nextStepAfterGap(summary);
+  const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
+  const row = useRef<HTMLDivElement>(null);
+  useRevealWhenOpened(row, expanded);
   return (
     <div
+      ref={row}
       className="automation-history__run"
       role="listitem"
       data-testid={`automation-gap-${gap.id}`}
@@ -56,22 +66,46 @@ export function HistoryGapRow({ gap, expanded, onToggle }: HistoryGapRowProps) {
         </span>
       </button>
       {expanded ? (
-        <dl
-          className="automation-history__details automation-history__facts"
-          id={detailsId}
-          data-testid={detailsId}
-        >
-          <dt>{t("automationHistory.schedule")}</dt>
-          <dd>{gap.scheduleName}</dd>
-          <dt>Outcome</dt>
-          <dd>{label}</dd>
-          <dt>{summary.kind === "missed" ? t("automationHistory.due") : "When"}</dt>
-          <dd>{formatDayTime(summary.when)}</dd>
-          <dt>{t("automationHistory.reason")}</dt>
-          <dd data-testid={`automation-gap-reason-${gap.id}`}>
-            {summary.reason ?? t("schedule.last.unknownReason")}
-          </dd>
-        </dl>
+        <div className="automation-history__details" id={detailsId} data-testid={detailsId}>
+          <dl className="automation-history__facts">
+            <dt>{t("automationHistory.schedule")}</dt>
+            <dd>{gap.scheduleName}</dd>
+            <dt>Outcome</dt>
+            <dd>{label}</dd>
+            <dt>{summary.kind === "missed" ? t("automationHistory.due") : "When"}</dt>
+            <dd>{formatDayTime(summary.when)}</dd>
+            <dt>{t("automationHistory.reason")}</dt>
+            <dd data-testid={`automation-gap-reason-${gap.id}`}>
+              {summary.reason ?? t("schedule.last.unknownReason")}
+            </dd>
+            {next !== null ? (
+              <>
+                <dt>What to do</dt>
+                <dd data-testid={`automation-gap-next-${gap.id}`}>{next}</dd>
+              </>
+            ) : null}
+          </dl>
+          <div className="automation-history__actions">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Pencil size={12} />}
+              onClick={() => openScheduleEditor({ scheduleId: gap.scheduleId })}
+              data-testid={`automation-gap-edit-${gap.id}`}
+            >
+              Edit schedule
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Play size={12} />}
+              onClick={() => openRunPicker(gap.automationId)}
+              data-testid={`automation-gap-run-${gap.id}`}
+            >
+              Run now…
+            </Button>
+          </div>
+        </div>
       ) : null}
     </div>
   );

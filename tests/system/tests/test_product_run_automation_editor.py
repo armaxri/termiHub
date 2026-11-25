@@ -451,7 +451,7 @@ class TestProductRunAutomationEditor(
                 self.shot(label="steps")
                 problems = layout_problems(NARROW_WINDOW, dialog, rows, save)
                 self.expand_step(1)
-                self.driver.scroll_into_view("automation-editor-step-speed-1")
+                self.driver.scroll_into_view("automation-editor-keys-add-1")
                 self.shot(label="keys")
                 box = self.driver.measure_element("automation-editor-form")
                 if box["scrollWidth"] > box["clientWidth"] + 1:
