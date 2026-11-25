@@ -142,11 +142,24 @@ class TransferQueueReads(ProjectionHarness):
             self.driver.click(FILE_BROWSER_SUMMARY)
             self.wait(lambda: self.driver.exists(QUEUE), what="the panel to restore")
 
+    def wait_for_queue(self, accept, *, what: str, timeout: float = 30.0) -> list[dict]:
+        """Wait until ``accept(rows)``; a timeout ends with the rows as they were (#6046)."""
+        rows: list[dict] = []
+
+        def accepted():
+            nonlocal rows
+            rows = self.queue_entries()
+            return rows if accept(rows) else False
+
+        try:
+            return self.wait(accepted, what=what, timeout=timeout)
+        except AssertionError as exc:
+            shown = "\n".join(f"  | {row}" for row in rows) or "  | (no rows)"
+            raise AssertionError(f"{exc}\nthe transfer queue holds:\n{shown}") from None
+
     def wait_for_queue_size(self, size: int, *, timeout: float = 30.0) -> list[dict]:
-        return self.wait(
-            lambda: (
-                self.queue_entries() if len(self.queue_entries()) == size else False
-            ),
+        return self.wait_for_queue(
+            lambda rows: len(rows) == size,
             what=f"the transfer queue to hold {size} row(s)",
             timeout=timeout,
         )
@@ -206,26 +219,34 @@ class TestTransferQueueLiveTransfer(
             self.handle_password_prompt()
         return self.wait_file_browser_settled()
 
-    def test_real_sftp_paste_populates_the_transfer_queue(self):
-        """A real copy/paste drives its row to `completed`, carrying the remote path.
+    @pytest.fixture(autouse=True)
+    def _start_with_an_empty_queue(self):
+        """The suite shares one app, and the queue keeps its rows: each test, and
+        each rerun of one, starts without those of the attempt before (#6046)."""
+        self.projection_dispatch_intent("transfer.replace", {"queue": {}, "minimized": False})
+        self.wait_for_queue_size(0)
 
-        A paste within one remote session is a single server-side remote-to-remote
-        copy (``session_remote_to_remote_copy``): one backend transfer, so the
-        queue ends with one row. It is registered under the destination session
-        and named/pathed for the destination — the file the user pasted, never an
-        internal temp copy (#1531, #1573). (The pre-#4116 paste was a download to a
-        local temp file plus an upload, i.e. two rows.)
-        """
+    def reset_before_rerun(self) -> None:
+        self.reset_tabs()
+
+    def paste_a_file(self) -> tuple[str, str, str]:
+        """Copy a fresh remote file and paste it into a fresh folder beside it; wait
+        for the copy to complete. Returns the file's name, the folder's name and the
+        folder both were made in."""
         name = f"payload-{unique_name('tq')}.bin"
         dest = f"destdir-{unique_name('tq')}"
 
         self.connect_ssh_password(unique_name("transfer-queue"))
         self.open_sftp_browser()
 
-        # Seed a source file and an empty destination directory.
+        # Seed a source file and an empty destination directory, and wait until
+        # the shell is done with them: `sync` waits for every volume of the host,
+        # and what is typed after it only runs then.
         self.run_command(f"dd if=/dev/zero of={name} bs=1M count={self.FILE_MB} 2>/dev/null")
         self.run_command(f"mkdir -p {dest}")
         self.run_command("sync")
+        self.run_command("echo TQ_SEEDED:$((40+2)):")
+        self.wait_for_output("TQ_SEEDED:42:")
         self.wait_for_file_row(name)
 
         # Read the settled remote working directory only now, not from
@@ -276,16 +297,25 @@ class TestTransferQueueLiveTransfer(
         )
 
         # One remote-to-remote copy = one row, settling at `completed`.
-        entries = self.wait(
-            lambda: (
-                self.queue_entries()
-                if len(self.queue_entries()) == 1
-                and all(e["state"] == "completed" for e in self.queue_entries())
-                else False
-            ),
+        self.wait_for_queue(
+            lambda rows: len(rows) == 1 and all(e["state"] == "completed" for e in rows),
             what="the paste transfer to complete",
             timeout=120.0,
         )
+        return name, dest, source_dir
+
+    def test_real_sftp_paste_populates_the_transfer_queue(self):
+        """A real copy/paste drives its row to `completed`, carrying the remote path.
+
+        A paste within one remote session is a single server-side remote-to-remote
+        copy (``session_remote_to_remote_copy``): one backend transfer, so the
+        queue ends with one row. It is registered under the destination session
+        and named/pathed for the destination — the file the user pasted, never an
+        internal temp copy (#1531, #1573). (The pre-#4116 paste was a download to a
+        local temp file plus an upload, i.e. two rows.)
+        """
+        name, dest, source_dir = self.paste_a_file()
+        entries = self.queue_entries()
         (entry,) = entries
 
         # The copy is registered as an upload into the destination session.
@@ -342,9 +372,13 @@ class TestTransferQueueLiveTransfer(
 
     def test_clear_completed_empties_the_panel_after_a_real_transfer(self):
         """Clear Completed drops the settled rows, and the panel unmounts."""
-        # Runs after the paste test in the same suite (one app per class), so the
-        # queue still holds its completed row.
-        self.wait_for_queue_size(1)
+        self.paste_a_file()
+        # With every transfer completed the panel collapses a moment later (#5625).
+        self.wait(
+            lambda: not self.driver.exists(QUEUE),
+            what="the panel to collapse once the transfer completed",
+        )
+        self.restore_panel()
 
         self.driver.click(CLEAR_COMPLETED)
 
