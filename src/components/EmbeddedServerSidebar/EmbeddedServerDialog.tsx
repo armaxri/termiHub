@@ -105,7 +105,12 @@ const serverFormSchema = z
     maxConcurrentSessions: z.number().optional(),
   })
   .superRefine((form, ctx) => {
-    if (form.name.trim() === "") {
+    // The folder's name is taken when there is none.
+    if (
+      form.name.trim() === "" &&
+      form.rootDirectory.trim() !== "" &&
+      !folderName(form.rootDirectory)
+    ) {
       ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
     }
     if (form.rootDirectory.trim() === "") {
@@ -119,6 +124,11 @@ const serverFormSchema = z
       ctx.addIssue({ code: "custom", path: ["port"], message: "Port is required." });
     }
   });
+
+/** The last part of a folder's path, if it has one. */
+function folderName(folder: string): string | undefined {
+  return folder.split(/[\\/]/).filter(Boolean).pop()?.trim() || undefined;
+}
 
 /** Blank default config used when creating a new server. */
 function defaultConfig(): ServerFormState {
@@ -277,7 +287,7 @@ export function EmbeddedServerDialog({
 
   /** A server without a name is called like its folder. */
   const nameAfterFolder = (folder: string) => {
-    const last = folder.split(/[\\/]/).filter(Boolean).pop();
+    const last = folderName(folder);
     if (last && getValues().name.trim() === "") setValue("name", last);
   };
 
@@ -303,7 +313,12 @@ export function EmbeddedServerDialog({
     // Close only when the save actually succeeded; on failure the dialog stays
     // open (the sidebar surfaces the error via toast) so the user can retry.
     const saved = await onSave(
-      { ...values, port: values.port, description: normalizeItemDescription(values.description) },
+      {
+        ...values,
+        name: values.name.trim() === "" ? (folderName(values.rootDirectory) ?? "") : values.name,
+        port: values.port,
+        description: normalizeItemDescription(values.description),
+      },
       location
     );
     if (saved) onOpenChange(false);

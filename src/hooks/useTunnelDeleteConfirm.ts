@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { ConfirmDontAskAgain } from "@/components/ui";
+import { t, tf } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import {
@@ -11,6 +12,7 @@ import { tunnelDeleteConfirmMessage } from "@/utils/tunnelSummary";
 /** Props to spread onto a `ConfirmDeleteDialog` for a tunnel delete. */
 export interface TunnelDeleteDialogProps {
   open: boolean;
+  title: string;
   message: string;
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
@@ -45,28 +47,33 @@ export function useTunnelDeleteConfirm(): TunnelDeleteConfirm {
   const shouldConfirm = optOut.shouldConfirm;
 
   // `deleteTunnel` owns its success (Undo) and error toasts.
-  const confirm = useDeleteConfirm<{ id: string; message: string; undoable: boolean }>(
-    ({ id, undoable }) => {
-      if (undoable && takeOptOut()) persistUndoableDeleteOptOut();
-      void deleteTunnel(id, { undoable: true });
-    }
-  );
+  const confirm = useDeleteConfirm<{
+    id: string;
+    title: string;
+    message: string;
+    undoable: boolean;
+  }>(({ id, undoable }) => {
+    if (undoable && takeOptOut()) persistUndoableDeleteOptOut();
+    void deleteTunnel(id, { undoable: true });
+  });
   const request = confirm.request;
   const cancel = confirm.cancel;
 
   const requestDelete = useCallback(
     (tunnelId: string) => {
+      const name = tunnels.find((tunnel) => tunnel.id === tunnelId)?.name ?? "this tunnel";
+      const title = tf("service.delete.title", { name });
       const message = tunnelDeleteConfirmMessage(tunnels, tunnelStates, tunnelId);
       if (message) {
-        request({ id: tunnelId, message, undoable: false });
+        request({ id: tunnelId, title, message, undoable: false });
         return;
       }
       if (!shouldConfirm) {
         void deleteTunnel(tunnelId, { undoable: true });
         return;
       }
-      const name = tunnels.find((t) => t.id === tunnelId)?.name ?? "this tunnel";
-      request({ id: tunnelId, message: `Delete tunnel “${name}”?`, undoable: true });
+      const idle = `${t("service.delete.idle")} ${t("service.delete.undo")}`;
+      request({ id: tunnelId, title, message: idle, undoable: true });
     },
     [tunnels, tunnelStates, deleteTunnel, request, shouldConfirm]
   );
@@ -82,6 +89,7 @@ export function useTunnelDeleteConfirm(): TunnelDeleteConfirm {
       open: confirm.dialogProps.open,
       onConfirm: confirm.dialogProps.onConfirm,
       onCancel,
+      title: confirm.pending?.title ?? "",
       message: confirm.pending?.message ?? "",
       dontAskAgain: confirm.pending?.undoable ? optOut.dontAskAgain : undefined,
     },

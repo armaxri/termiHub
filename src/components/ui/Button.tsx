@@ -86,6 +86,12 @@ export interface ButtonProps extends Omit<
    * Set `false` when the caller reports the error itself.
    */
   errorToast?: boolean;
+  /**
+   * Flash success when an async `onClick` resolves. Defaults to `true`. Set
+   * `false` when resolving only means that it was asked for (a Stop that asks
+   * first), or the result shows elsewhere.
+   */
+  successFlash?: boolean;
   /** Test hook forwarded to the DOM node. */
   "data-testid"?: string;
 }
@@ -129,6 +135,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     onClick,
     pendingLabel,
     errorToast = true,
+    successFlash = true,
     disabled,
     ...rest
   },
@@ -220,6 +227,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       result.then(
         () => {
           if (!mounted.current) return;
+          if (!successFlash) {
+            setAsyncState("idle");
+            return;
+          }
           setAsyncState("success");
           successTimer.current = setTimeout(() => {
             if (mounted.current) setAsyncState("idle");
@@ -234,7 +245,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         }
       );
     },
-    [onClick, asyncState, errorToast, isSubmit]
+    [onClick, asyncState, errorToast, successFlash, isSubmit]
   );
 
   const pending = asyncState === "pending";

@@ -171,6 +171,8 @@ export interface TunnelSlice {
    * goes, so there is no toast; a try that fails is followed by the next one.
    */
   retryTunnelNow: (tunnelId: string) => Promise<void>;
+  /** Ask the agents about the tunnels they forward, now (#6068). */
+  checkTunnelsAgain: () => Promise<void>;
   /**
    * A terminal session for the saved SSH connection `connectionId` just
    * connected: start the tunnels bound to it with `startWithConnection`
@@ -344,6 +346,16 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     } catch (err) {
       frontendLog("app_store", `Failed to retry tunnel: ${errorMessage(err)}`);
       toast.error(`Failed to retry ${name}: ${errorMessage(err)}`);
+      throw err;
+    }
+  },
+
+  checkTunnelsAgain: async () => {
+    try {
+      throwIfRejected(await dispatchTunnelIntent("tunnel.checkAgain", {}), "check tunnels");
+    } catch (err) {
+      frontendLog("app_store", `Failed to check tunnels: ${errorMessage(err)}`);
+      toast.error(`Failed to check again: ${errorMessage(err)}`);
       throw err;
     }
   },

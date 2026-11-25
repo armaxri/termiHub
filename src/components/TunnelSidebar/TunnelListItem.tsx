@@ -89,6 +89,7 @@ export function TunnelListItem({
   );
   const connectAgent = useConnectAgent();
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
+  const checkTunnelsAgain = useAppStore((s) => s.checkTunnelsAgain);
   const retryTunnelNow = useAppStore((s) => s.retryTunnelNow);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
   const running = model.state === "running";
@@ -140,12 +141,15 @@ export function TunnelListItem({
   const onNextStep = (step: ServiceNextStep): void | Promise<void> => {
     switch (step.id) {
       case "chooseConnection":
+      case "chooseMachine":
       case "edit":
         return onEdit(tunnel.id);
       case "usePort":
         return step.port === undefined ? undefined : onUsePort(tunnel.id, step.port);
       case "connectAgent":
         return model.where.agentId === undefined ? undefined : connectAgent(model.where.agentId);
+      case "checkAgain":
+        return checkTunnelsAgain();
       case "unlock":
         return setUnlockDialogOpen(true);
       case "editConnection":

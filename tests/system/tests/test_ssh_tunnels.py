@@ -78,9 +78,9 @@ HOST = "127.0.0.1"
 #: What the forwarded HTTP service answers (the ssh-tunnel-target container's
 #: :8080 server, or :class:`_TunnelOkHandler` on the native-sshd path).
 TUNNEL_OK = "TUNNEL_TEST_OK"
-#: The confirm prompt Stop raises on a connected tunnel (UX-021).
-TUNNEL_STOP_DIALOG = "confirm-tunnel-lifecycle-dialog"
-TUNNEL_STOP_CONFIRM = "confirm-tunnel-lifecycle-confirm"
+#: The prompt Stop raises while someone is connected (UX-021, #6068).
+TUNNEL_STOP_DIALOG = "confirm-service-lifecycle-dialog"
+TUNNEL_STOP_CONFIRM = "confirm-service-lifecycle-confirm"
 #: macOS runs the live tests against the native loopback sshd, not Docker (#933);
 #: Windows does too when its lane provisioned the native sshd fixture (#5176),
 #: since its Docker daemon runs only Windows containers.

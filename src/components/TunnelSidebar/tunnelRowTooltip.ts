@@ -1,6 +1,6 @@
 import { t, tf } from "@/i18n/catalog";
 import { THIS_COMPUTER, type TunnelConfig, type TunnelStats } from "@/types/tunnel";
-import { formatBytes, formatRate } from "@/utils/formatters";
+import { localhostIn, serviceTrafficLine } from "@/utils/serviceTraffic";
 import { UNREADABLE_HOST } from "@/utils/hostChoice";
 import { tunnelPortMapping } from "@/utils/tunnelSummary";
 import { tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
@@ -41,7 +41,7 @@ export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipIn
     tf("tunnel.tooltip.forward", {
       type: help.label,
       flag: help.flag,
-      mapping: tunnelPortMapping(tunnel),
+      mapping: localhostIn(tunnelPortMapping(tunnel)),
     }),
     help.lines[0],
     tf("tunnel.tooltip.via", { connection: input.sshLabel }),
@@ -52,21 +52,15 @@ export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipIn
         : t("tunnel.tooltip.hostLocal"),
   ];
   if (input.stats) {
-    const up = formatRate(input.upRate ?? null);
-    const down = formatRate(input.downRate ?? null);
-    out.push(
-      tf("tunnel.tooltip.traffic", {
-        up: formatBytes(input.stats.bytesSent) + (up ? ` (${up})` : ""),
-        down: formatBytes(input.stats.bytesReceived) + (down ? ` (${down})` : ""),
-        active: input.stats.activeConnections,
-        total: input.stats.totalConnections,
-      })
-    );
+    out.push(serviceTrafficLine(input.stats, input.upRate, input.downRate));
   }
   if (input.reach) {
     out.push(
       input.boundAddress
-        ? tf("tunnel.tooltip.bound", { address: input.boundAddress, reach: input.reach })
+        ? tf("tunnel.tooltip.bound", {
+            address: localhostIn(input.boundAddress),
+            reach: input.reach,
+          })
         : input.reach
     );
   }

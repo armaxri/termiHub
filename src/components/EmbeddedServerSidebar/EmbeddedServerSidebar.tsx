@@ -2,16 +2,19 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { ConfirmDialog, toast, EmptyState } from "@/components/ui";
+import { Button, ConfirmDialog, toast, EmptyState } from "@/components/ui";
+import { onlyHealth, ServiceCounts } from "@/components/ServiceListItem";
+import { t, tf } from "@/i18n/catalog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
 import { isServiceActive, serverServiceState } from "@/utils/serviceState";
+import { useServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
 import { useServiceContext } from "@/hooks/useServiceContext";
 import { isWideBind } from "@/utils/serviceAddress";
-import { serviceCounts } from "@/utils/serviceModel";
+import { fileServerModel, serviceCounts, type ServiceHealth } from "@/utils/serviceModel";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
@@ -147,6 +150,30 @@ export function EmbeddedServerSidebar() {
     [servers, saveEmbeddedServer, startEmbeddedServer]
   );
 
+  const models = useMemo(
+    () => new Map(servers.map((s) => [s.id, fileServerModel(s, serverStates[s.id], context)])),
+    [servers, serverStates, context]
+  );
+  const lifecycle = useServiceLifecycleConfirm();
+  const requestLifecycle = lifecycle.request;
+  const modelOf = useCallback(
+    (id: string) => models.get(id) ?? { name: "this file server" },
+    [models]
+  );
+  const handleStop = useCallback(
+    (id: string) => requestLifecycle("stop", modelOf(id), () => stopEmbeddedServer(id)),
+    [requestLifecycle, modelOf, stopEmbeddedServer]
+  );
+  const handleRestart = useCallback(
+    (id: string) => requestLifecycle("restart", modelOf(id), () => restartEmbeddedServer(id)),
+    [requestLifecycle, modelOf, restartEmbeddedServer]
+  );
+  const [only, setOnly] = useState<ServiceHealth | null>(null);
+  const shown = useMemo(
+    () => onlyHealth(servers, only, (s) => models.get(s.id)?.health ?? "quiet"),
+    [servers, only, models]
+  );
+
   // Delete is destructive (and stops a running server), so gate it behind an
   // explicit confirmation — consistent with tunnels and workspaces (#1393).
   const requestDelete = serverDelete.request;
@@ -171,13 +198,9 @@ export function EmbeddedServerSidebar() {
   // `tree`, each row a `treeitem`, and Arrow/Home/End move between rows so a
   // keyboard user no longer tab-steps through every hidden action button.
   const nav = useFlatRovingNav<EmbeddedServerConfig, HTMLDivElement>(
-    servers,
+    shown,
     (server) => server.name,
     handleActivate
-  );
-
-  const counts = serviceCounts(
-    servers.map((s) => ({ state: serverServiceState(serverStates[s.id]?.status) }))
   );
 
   return (
@@ -198,15 +221,24 @@ export function EmbeddedServerSidebar() {
 
       {servers.length === 0 ? (
         <EmptyState
-          title="No file servers configured."
-          description={<>Click &quot;+ New file server&quot; to add one.</>}
+          className="service-empty"
+          title={t("server.empty.title")}
+          description={t("server.empty.text")}
+          action={
+            <Button variant="secondary" size="sm" onClick={handleNew}>
+              New file server
+            </Button>
+          }
           data-testid="server-empty-message"
         />
       ) : (
         <>
-          <p className="service-counts" data-testid="server-counts">
-            {counts}
-          </p>
+          <ServiceCounts
+            counts={serviceCounts([...models.values()])}
+            only={only}
+            onOnly={setOnly}
+            data-testid="server-counts"
+          />
           <div
             className="server-sidebar__list"
             data-testid="server-list"
@@ -214,7 +246,7 @@ export function EmbeddedServerSidebar() {
             aria-label="File servers"
             onKeyDown={nav.onKeyDown}
           >
-            {servers.map((cfg, index) => {
+            {shown.map((cfg, index) => {
               const { ref, ...rowProps } = nav.getItemProps(index);
               return (
                 <EmbeddedServerItem
@@ -224,8 +256,8 @@ export function EmbeddedServerSidebar() {
                   agents={agents}
                   context={context}
                   onStart={startEmbeddedServer}
-                  onStop={stopEmbeddedServer}
-                  onRestart={restartEmbeddedServer}
+                  onStop={handleStop}
+                  onRestart={handleRestart}
                   onEdit={handleEdit}
                   onDuplicate={handleDuplicate}
                   onDelete={handleDelete}
@@ -254,15 +286,25 @@ export function EmbeddedServerSidebar() {
       />
 
       <ConfirmDialog
+        {...lifecycle.dialogProps}
+        variant="danger"
+        confirmVariant="danger"
+        testIdBase="confirm-service-lifecycle"
+        data-testid="confirm-service-lifecycle-dialog"
+      />
+      <ConfirmDialog
         {...serverDelete.dialogProps}
-        title="Delete file server"
-        message={
+        variant="danger"
+        confirmVariant="danger"
+        title={tf("service.delete.title", { name: pendingServer?.name ?? "" })}
+        message={[
           pendingState === "notReachable"
-            ? `"${pendingServer?.name}" may still run on its agent, which is offline. Deleting it stops it there as soon as the agent is connected again. This cannot be undone.`
+            ? t("service.delete.notReachable")
             : isServiceActive(pendingState)
-              ? `This will stop and delete the running server "${pendingServer?.name}". This cannot be undone.`
-              : `Delete "${pendingServer?.name}"? This cannot be undone.`
-        }
+              ? t("service.delete.running")
+              : t("service.delete.idle"),
+          t("service.delete.noUndo"),
+        ].join(" ")}
         confirmLabel="Delete"
         data-testid="server-delete-confirm"
       />
