@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
 
 // Regression test for #1849: terminal output painted out of order (a later
 // prompt line rendered between an earlier command's output lines) until the tab
@@ -14,6 +15,7 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 // the refresh is issued on the output path.
 
 let capturedWriteCallback: (() => void) | null = null;
+let outputWrites: { bytes: number; parsed: () => void }[] = [];
 let capturedOnScrollHandler: (() => void) | null = null;
 const mockScrollToBottom = vi.fn();
 const mockRefresh = vi.fn();
@@ -31,8 +33,9 @@ vi.mock("@xterm/xterm", async () => {
       capturedOnScrollHandler = handler;
       return { dispose: vi.fn() };
     });
-    write = vi.fn((_data: unknown, cb?: () => void) => {
+    write = vi.fn((data: unknown, cb?: () => void) => {
       capturedWriteCallback = cb ?? null;
+      if (data instanceof Uint8Array && cb) outputWrites.push({ bytes: data.length, parsed: cb });
     });
     scrollToBottom = mockScrollToBottom;
     refresh = mockRefresh;
@@ -145,6 +148,7 @@ let root: Root;
 
 beforeEach(() => {
   capturedWriteCallback = null;
+  outputWrites = [];
   capturedOnScrollHandler = null;
   mockScrollToBottom.mockClear();
   mockRefresh.mockClear();
@@ -236,6 +240,26 @@ describe("Terminal output repaint (#1849)", () => {
     // repainted so no stale rows are left behind.
     expect(mockScrollToBottom).not.toHaveBeenCalled();
     expect(mockRefresh).toHaveBeenCalledWith(0, 23);
+  });
+
+  it("writes a flood in slices and repaints once, after the last (#6074)", async () => {
+    renderTerminal();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(outputCallback).not.toBeNull();
+    act(() => outputCallback!(new Uint8Array(2 * WRITE_SLICE_BYTES + 1)));
+    act(() => flushRaf());
+    expect(outputWrites.map((w) => w.bytes)).toEqual([WRITE_SLICE_BYTES, WRITE_SLICE_BYTES, 1]);
+    mockRefresh.mockClear();
+
+    act(() => outputWrites.slice(0, 2).forEach((w) => w.parsed()));
+    act(() => flushRaf());
+    expect(mockRefresh).not.toHaveBeenCalled();
+
+    act(() => outputWrites[2].parsed());
+    act(() => flushRaf());
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
   });
 
   it("skips the post-write scroll and repaint when the tab unmounts before the frame (#5464)", async () => {
