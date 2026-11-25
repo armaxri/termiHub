@@ -44,6 +44,7 @@ import {
   tunnelReachabilityWarning,
   WIDE_BIND_HOST,
 } from "@/utils/tunnelHost";
+import { isServiceActive, tunnelServiceState } from "@/utils/serviceState";
 import { tunnelTypeHelp, type TunnelTypeKind } from "@/utils/tunnelTypeHelp";
 import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunnelChain";
 import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
@@ -475,9 +476,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const savedStatus = existingTunnel && tunnelStates[existingTunnel.id]?.status;
   const movesRunning =
     existingTunnel !== undefined &&
-    (savedStatus === "connected" ||
-      savedStatus === "connecting" ||
-      savedStatus === "reconnecting") &&
+    isServiceActive(tunnelServiceState(savedStatus)) &&
     !sameHost(host, hostChoice(existingTunnel.host));
   const hostAgentName = isAgentHost(host)
     ? (remoteAgents.find((a) => a.id === host.agentId)?.name ?? host.agentId)

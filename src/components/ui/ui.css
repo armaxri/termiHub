@@ -1384,6 +1384,11 @@
 }
 
 /* A muted/stopped state keeps its tone but reads as inactive. */
+.status-dot--warning.status-dot--hollow {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--color-warning);
+}
+
 .status-dot--dimmed {
   opacity: 0.4;
 }

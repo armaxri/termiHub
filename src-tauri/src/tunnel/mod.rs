@@ -3,6 +3,7 @@ pub mod connecting;
 pub mod connection_refs;
 pub mod dynamic_forward;
 mod host;
+mod hosted;
 pub mod local_forward;
 pub mod projection;
 pub mod remote_forward;

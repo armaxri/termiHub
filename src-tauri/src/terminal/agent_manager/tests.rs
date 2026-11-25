@@ -1474,6 +1474,69 @@ async fn send_request_times_out_when_no_response_arrives() {
     drop(_command_rx);
 }
 
+/// #6028: an agent in the middle of a reconnect is connected, but a request to it
+/// only queues: it is not reachable.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reconnecting_agent_is_connected_but_not_reachable() {
+    let app = tauri::test::mock_app();
+    let manager = AgentConnectionManager::new(app.handle().clone());
+    let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    let conn = make_agent_connection_with_tx(command_tx);
+    let (alive, reconnecting) = (conn.alive.clone(), conn.reconnecting.clone());
+    manager
+        .agents
+        .lock()
+        .unwrap()
+        .insert("agent-1".to_string(), conn);
+    let client: &dyn AgentRpcClient = &manager;
+    assert!(client.is_reachable("agent-1"));
+    assert!(!client.is_reachable("other"));
+    reconnecting.store(true, Ordering::SeqCst);
+    assert!(client.is_connected("agent-1"));
+    assert!(!client.is_reachable("agent-1"));
+    reconnecting.store(false, Ordering::SeqCst);
+    alive.stop();
+    assert!(!client.is_reachable("agent-1"));
+}
+
+/// #6028: a request works on every thread that sends one: the main thread of a
+/// synchronous command and a plain startup thread have no runtime, the quit
+/// teardown is an async task. Each gets its answer instead of a panic.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn send_request_works_on_every_kind_of_thread() {
+    let app = tauri::test::mock_app();
+    let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+    let (command_tx, mut command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    manager.agents.lock().unwrap().insert(
+        "agent-1".to_string(),
+        make_agent_connection_with_tx(command_tx),
+    );
+    tokio::spawn(async move {
+        while let Some(AgentIoCommand::Request { response_tx, .. }) = command_rx.recv().await {
+            let _ = response_tx.send(Ok(serde_json::json!({"stopped": true})));
+        }
+    });
+    let ask = |m: &AgentConnectionManager<tauri::test::MockRuntime>| {
+        m.send_request(
+            "agent-1",
+            termihub_core::protocol::methods::SERVICE_STOP,
+            serde_json::json!({"instanceId": "web"}),
+        )
+        .expect("answered")
+    };
+    let m = manager.clone();
+    let plain = std::thread::spawn(move || ask(&m));
+    let plain = tokio::task::spawn_blocking(move || plain.join())
+        .await
+        .expect("join");
+    assert!(plain.is_ok(), "a plain thread gets its answer");
+    let m = manager.clone();
+    let task = tokio::spawn(async move { ask(&m) }).await;
+    assert!(task.is_ok(), "an async task gets its answer");
+    let m = manager.clone();
+    assert!(tokio::task::spawn_blocking(move || ask(&m)).await.is_ok());
+}
+
 /// #3959: the prompt-excluding request wait (used by `connection.create`) types
 /// its elapsed deadline as an agent timeout too, not an agent-reported error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

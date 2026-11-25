@@ -47,6 +47,13 @@ import {
   tunnelHostMachine,
   reportedReachability,
 } from "@/utils/tunnelHost";
+import {
+  isServiceActive,
+  serverServiceState,
+  serviceReason,
+  serviceStateLabel,
+  tunnelServiceState,
+} from "@/utils/serviceState";
 import { findCompanion, isCompanion, orderTunnelRows } from "@/utils/tunnelChain";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
@@ -275,8 +282,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const runningEmbeddedServers = useMemo(
     () =>
       embeddedServers.filter((s) => {
-        const status = embeddedServerStates[s.id]?.status;
-        return status === "running" || status === "starting" || status === "stopping";
+        return isServiceActive(serverServiceState(embeddedServerStates[s.id]?.status));
       }),
     [embeddedServers, embeddedServerStates]
   );
@@ -357,13 +363,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // `tunnel.stop` intent releases the leak and clears the persisted error (#1238).
   const activeTunnels = tunnels.filter((t) => {
     const state = tunnelStates[t.id];
-    return (
-      state &&
-      (state.status === "connected" ||
-        state.status === "connecting" ||
-        state.status === "reconnecting" ||
-        state.status === "error")
-    );
+    return state && (state.status === "error" || isServiceActive(tunnelServiceState(state.status)));
   });
 
   // Only surface a live X server: a managed one that is running, or an adopted
@@ -1173,7 +1173,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               // Map the tunnel status onto a badge; connecting/reconnecting share
               // the "connecting" badge, error surfaces its persisted message.
               const badge: BadgeVariant =
-                status === "connected" ? "connected" : status === "error" ? "error" : "connecting";
+                status === "connected" || status === "error" || status === "notReachable"
+                  ? status
+                  : "connecting";
               // Vantage badge: always state where the tunnel is hosted (S3, #2155),
               // then append any error message.
               const tunnelHost = resolveTunnelHost(t);
@@ -1201,7 +1203,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 hostText,
                 statsText,
                 reach?.label,
-                status === "error" && state?.error ? state.error : undefined,
+                serviceReason(tunnelServiceState(status), state?.error),
               ]
                 .filter(Boolean)
                 .join(" · ");
@@ -1337,7 +1339,13 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                       ? remoteAgents.find((a) => a.id === serverHost.agentId)?.name
                       : undefined
                   )}`}
-                  badge={status === "running" ? "up" : "connecting"}
+                  badge={
+                    status === "running"
+                      ? "up"
+                      : status === "notReachable"
+                        ? "notReachable"
+                        : "connecting"
+                  }
                   onKill={() => handleStopEmbeddedServer(s.id)}
                   killLabel="Stop"
                   data-testid={`open-connections-embedded-server-${s.id}`}
@@ -1576,6 +1584,7 @@ type BadgeVariant =
   | "stopped"
   | "orphaned"
   | "spawned"
+  | "notReachable"
   | "error";
 
 interface TransferRowProps {
@@ -1715,7 +1724,9 @@ function ConnectionRow({
           </Button>
         </Tooltip>
       )}
-      <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
+      <span className={`oc-row__badge oc-row__badge--${badge}`}>
+        {badge === "notReachable" ? serviceStateLabel(badge).toLowerCase() : badge}
+      </span>
       {actions}
       {onKill && (
         <Button

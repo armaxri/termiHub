@@ -180,7 +180,7 @@ pub fn reconcile_tunnels_with_connections<R: Runtime>(
     app_handle: &AppHandle<R>,
     live: LiveConnections,
 ) {
-    let Some(manager) = app_handle.try_state::<Arc<TunnelManager>>() else {
+    let Some(manager) = app_handle.try_state::<Arc<TunnelManager<R>>>() else {
         return;
     };
     manager.reconcile_connections(live);

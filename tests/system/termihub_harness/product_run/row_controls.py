@@ -26,6 +26,9 @@ EXPECTED_CONTROL: dict[str, dict[str, str]] = {
         "Starting": "Stop",
         "Running": "Stop",
         "Reconnecting": "Stop",
+        "Waiting": "Stop waiting",
+        "Stopping": "Stop",
+        "Not reachable": "Stop",
         "Error": "Retry",
     },
     "server": {
@@ -33,6 +36,8 @@ EXPECTED_CONTROL: dict[str, dict[str, str]] = {
         "Starting": "Stop",
         "Running": "Stop",
         "Stopping": "Stop",
+        "Waiting": "Stop waiting",
+        "Not reachable": "Stop",
         "Error": "Start",
     },
 }

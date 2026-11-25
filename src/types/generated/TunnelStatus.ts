@@ -3,4 +3,4 @@
 /**
  * Current status of a tunnel.
  */
-export type TunnelStatus = "disconnected" | "connecting" | "connected" | "reconnecting" | "error" | "missingConnection";
+export type TunnelStatus = "disconnected" | "waiting" | "connecting" | "connected" | "reconnecting" | "stopping" | "error" | "notReachable" | "missingConnection";

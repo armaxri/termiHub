@@ -81,7 +81,7 @@ pub fn tunnel_view_from(tunnels: Vec<TunnelConfig>, states: Vec<TunnelState>) ->
 }
 
 /// The current `tunnels` view model for a manager (its configs + live statuses).
-pub fn build_tunnel_view(manager: &TunnelManager) -> Value {
+pub fn build_tunnel_view<R: tauri::Runtime>(manager: &TunnelManager<R>) -> Value {
     let tunnels = manager.get_tunnels().unwrap_or_default();
     let states = manager.get_statuses().unwrap_or_default();
     tunnel_view_from(tunnels, states)
@@ -104,7 +104,7 @@ pub fn build_tunnel_view(manager: &TunnelManager) -> Value {
 pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     let (Some(projection), Some(manager)) = (
         app_handle.try_state::<ProjectionState>(),
-        app_handle.try_state::<Arc<TunnelManager>>(),
+        app_handle.try_state::<Arc<TunnelManager<R>>>(),
     ) else {
         return;
     };
@@ -131,7 +131,7 @@ pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
 pub fn publish_tunnel_stats<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     let (Some(projection), Some(manager)) = (
         app_handle.try_state::<ProjectionState>(),
-        app_handle.try_state::<Arc<TunnelManager>>(),
+        app_handle.try_state::<Arc<TunnelManager<R>>>(),
     ) else {
         return;
     };
@@ -293,8 +293,7 @@ pub fn register_tunnel_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         let id = tunnel_id(intent)?;
         let manager = manager_of(&handle)?;
         tauri::async_runtime::spawn_blocking(move || {
-            let _ = manager.stop_tunnel(&id);
-            let _ = manager.start_tunnel(&id);
+            let _ = manager.restart_tunnel(&id);
         });
         Ok(Vec::new())
     });

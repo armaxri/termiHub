@@ -23,13 +23,21 @@
 //! field) the server is **not started**: nothing falls back to this computer,
 //! and the row says why until a stop, a save or a good start. A server that is
 //! moved while it runs is stopped where it ran.
+//!
+//! # Honest states (#6028)
+//!
+//! [`HostedServices`] holds what is known about the agent-hosted ones. A server
+//! whose agent is gone is not reachable, not running; an automatic start that
+//! is not possible yet waits (visibly, for a bounded time, and only for the
+//! machine it belongs on); a stop the agent has not confirmed is kept until it
+//! does. Servers on this computer wait for the credential store the same way.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter, Runtime, Wry};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 use termihub_core::service::drain_broadcast;
 use termihub_core::util::entry_extra::{upsert_keeping_extra, without_extra};
 use termihub_core::util::service_host::{HostChoice, ServiceHost};
@@ -44,9 +52,14 @@ use super::service::{
     auto_start_error_state, service_id_for, EmbeddedServerService, STATUS_EVENT_KIND,
 };
 use super::storage::EmbeddedServerStorage;
+use crate::agent_service::hosted::{
+    is_unanswered, Busy, Change, Finished, HostedKind, HostedServices, Outcome, Reading, Sample,
+    StartedBy, StopPlan, Target, Ticket, View, WaitFor,
+};
 use crate::agent_service::{
-    agent_for_start, agent_rpc_client, agent_start_error, AgentHosted, AgentInstances,
-    AgentStatusPollDelegate, AgentStatusPoller, HOST_UNREADABLE,
+    agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
+    not_reachable_reason, stopping_reason, unanswered_start_failed, waited_too_long,
+    waiting_reason, AgentStatusPollDelegate, AgentStatusPoller, HOST_UNREADABLE,
 };
 use crate::app_tasks::AppTasks;
 use crate::connection::recovery::RecoveryWarning;
@@ -57,7 +70,8 @@ use crate::utils::errors::TerminalError;
 use termihub_core::protocol::methods::{
     EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
-    ServiceStopParams, EMBEDDED_SERVER_ACTIVITY, EMBEDDED_SERVER_CLEAR_ACTIVITY,
+    ServiceStopParams, EMBEDDED_SERVER_ACTIVITY, EMBEDDED_SERVER_CLEAR_ACTIVITY, SERVICE_START,
+    SERVICE_STATUS, SERVICE_STOP,
 };
 use termihub_core::service::{Service, ServiceStatus};
 
@@ -74,24 +88,46 @@ const SERVER_STATUS_EVENT: &str = "embedded-server-status-changed";
 /// (#2214). Matches the tunnel poller cadence (#2199).
 const STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// An embedded server hosted on a remote agent (#2214).
+/// The agent-hosted embedded servers (#2214), as [`HostedServices`] sees them.
 ///
 /// The listen socket, the served files, and the traffic counters all live on the
 /// agent; the desktop holds only *control* — which agent runs it — and the last
-/// [`ServerState`] the `service.status` poller sampled off the agent, so
-/// [`EmbeddedServerManager::get_states`] can project the agent-hosted server just
-/// like a desktop-hosted one.
-struct AgentServerHandle {
-    /// The agent hosting this server.
-    agent_id: String,
-    /// The most recent state sampled from the agent (seeded from the
-    /// `service.start` reply, refreshed each `service.status` poll tick).
-    last_state: ServerState,
-}
+/// [`ServerState`] the agent reported.
+pub(super) struct HostedServers;
 
-impl AgentHosted for AgentServerHandle {
-    fn agent_id(&self) -> &str {
-        &self.agent_id
+impl HostedKind for HostedServers {
+    type State = ServerState;
+
+    fn stop_request(id: &str) -> (&'static str, serde_json::Value) {
+        let params = ServiceStopParams {
+            instance_id: id.to_string(),
+        };
+        (
+            SERVICE_STOP,
+            serde_json::to_value(params).unwrap_or_default(),
+        )
+    }
+
+    fn status_request(id: &str) -> (&'static str, serde_json::Value) {
+        let params = ServiceStatusParams {
+            instance_id: id.to_string(),
+        };
+        (
+            SERVICE_STATUS,
+            serde_json::to_value(params).unwrap_or_default(),
+        )
+    }
+
+    fn read_status(
+        id: &str,
+        reply: &serde_json::Value,
+        _last: &ServerState,
+    ) -> Reading<ServerState> {
+        read_status_reply(id, reply)
+    }
+
+    fn is_news(before: &ServerState, after: &ServerState) -> bool {
+        before.status != after.status || before.error != after.error
     }
 }
 
@@ -107,14 +143,10 @@ pub struct EmbeddedServerManager<R: Runtime = Wry> {
     secrets: ServerSecrets,
     /// Live services keyed by config id (running **or** stopped-but-listed).
     services: Mutex<HashMap<String, EmbeddedServerService>>,
-    /// Servers currently hosted on a remote agent, keyed by config id (#2214).
-    /// Disjoint from `services` (which holds desktop-hosted servers): an
-    /// agent-hosted server's data path runs on the agent, so the desktop tracks
-    /// only the control handle here. `Arc`-shared so the periodic
-    /// `service.status` poller task can refresh each handle without a `&self`
-    /// reference. The shared [`AgentInstances`] tracker folds the map boilerplate
-    /// (DUP-020 follow-up, #2884).
-    agent_servers: AgentInstances<AgentServerHandle>,
+    /// What is known about the servers on agents, and about the automatic
+    /// starts that wait (#2214, #6028). Disjoint from `services`, which holds
+    /// the desktop-hosted servers.
+    hosted: HostedServices<HostedServers>,
     /// Why a server that belongs on an agent was not started, by config id
     /// (#6028): durable, so its row keeps saying it. Cleared by a good start,
     /// a stop, a save or a delete.
@@ -143,7 +175,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
             storage,
             secrets,
             services: Mutex::new(HashMap::new()),
-            agent_servers: AgentInstances::new(),
+            hosted: HostedServices::default(),
             refusals: Mutex::new(HashMap::new()),
             // App-owned (ARCH-007, #3105): teardown cancels + awaits the poller.
             agent_status_poller: AgentStatusPoller::with_tasks(AppTasks::for_app(app_handle)),
@@ -235,7 +267,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     pub fn delete_config(&self, server_id: &str) -> Result<(), TerminalError> {
         // An agent-hosted server is stopped on its agent; a desktop-hosted one
         // is shut down and dropped so its listen port closes (#1393).
-        self.stop_agent_service(server_id);
+        self.stop_hosted(server_id);
         if let Ok(mut services) = self.services.lock() {
             remove_local_service(&mut services, server_id);
         }
@@ -251,30 +283,65 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         // Polled by the UI, so this is where a migration that waited for the
         // credential store to unlock usually completes.
         self.sync_secrets();
-        let store = self.lock_configs()?;
-        let services = self.lock_services()?;
-        let agent_servers = self.lock_agent_servers()?;
-        let refusals = self.lock_refusals();
-        let states = store
-            .servers
-            .iter()
-            .map(|cfg| {
-                // An agent-hosted server (#2214) reports the last state sampled
-                // off the agent; otherwise fall back to the desktop service (or a
-                // synthetic Stopped state for a never-started server).
-                if let Some(handle) = agent_servers.get(&cfg.id) {
-                    handle.last_state.clone()
-                } else if let Some(reason) = refusals.get(&cfg.id) {
-                    auto_start_error_state(&cfg.id, reason)
-                } else {
-                    services
-                        .get(&cfg.id)
-                        .and_then(|svc| svc.state())
-                        .unwrap_or_else(|| stopped_state(&cfg.id))
-                }
-            })
-            .collect();
-        Ok(states)
+        let configs = self.get_configs()?;
+        configs.iter().map(|cfg| self.state_of(cfg)).collect()
+    }
+
+    /// What the row of `cfg` shows: what is known about it on its agent, else
+    /// why it was not started, else the desktop service's state.
+    fn state_of(&self, cfg: &EmbeddedServerConfig) -> Result<ServerState, TerminalError> {
+        let host = match cfg.host.choice() {
+            HostChoice::Agent(agent_id) => Some(agent_id),
+            _ => None,
+        };
+        if let Some(view) = self.hosted.view(&cfg.id, host) {
+            return Ok(self.hosted_state(&cfg.id, view));
+        }
+        if let Some(reason) = self.lock_refusals().get(&cfg.id) {
+            return Ok(auto_start_error_state(&cfg.id, reason));
+        }
+        Ok(self
+            .lock_services()?
+            .get(&cfg.id)
+            .and_then(|svc| svc.state())
+            .unwrap_or_else(|| stopped_state(&cfg.id)))
+    }
+
+    /// The row of a server that [`HostedServices`] decides.
+    fn hosted_state(&self, server_id: &str, view: View<ServerState>) -> ServerState {
+        let app = &self.app_handle;
+        let (status, error) = match view {
+            View::Running { state, .. } => return state,
+            View::Starting => (ServerStatus::Starting, None),
+            View::Stopping { agent_id } => (
+                ServerStatus::Stopping,
+                Some(stopping_reason(app, &agent_id)),
+            ),
+            View::Waiting(on) => (ServerStatus::Waiting, Some(waiting_reason(app, &on))),
+            View::NotReachable { agent_id, why, .. } => (
+                ServerStatus::NotReachable,
+                Some(not_reachable_reason(app, &agent_id, why)),
+            ),
+        };
+        ServerState {
+            status,
+            error,
+            ..stopped_state(server_id)
+        }
+    }
+
+    /// Tell every window what the row of `server_id` shows now.
+    fn announce(&self, server_id: &str) {
+        let Ok(configs) = self.get_configs() else {
+            return;
+        };
+        let Some(cfg) = configs.iter().find(|s| s.id == server_id) else {
+            return;
+        };
+        let Ok(state) = self.state_of(cfg) else {
+            return;
+        };
+        let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
     }
 
     /// Start a server by ID.
@@ -286,8 +353,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// from the agent poller, both reaching the [`SERVER_STATUS_EVENT`] Tauri
     /// event.
     pub fn start_server(&self, server_id: &str) -> Result<(), TerminalError> {
+        self.start(server_id, StartedBy::User)
+    }
+
+    fn start(&self, server_id: &str, by: StartedBy) -> Result<(), TerminalError> {
         self.sync_secrets();
-        let mut config = {
+        let config = {
             let store = self.lock_configs()?;
             store
                 .servers
@@ -307,19 +378,142 @@ impl<R: Runtime> EmbeddedServerManager<R> {
                 return Err(self.refuse(server_id, HOST_UNREADABLE.to_string()));
             }
         };
-        // Fill the passwords from the credential store (#3514); refuses with a
-        // clear message when the store is locked or has none. The resolved
-        // config reaches only the server itself (desktop or agent RPC).
-        self.secrets.resolve(&mut config)?;
-        if let Some(agent_id) = agent_id {
-            return self.start_agent_service(server_id, &config, &agent_id);
+        // Only the user may undo the user's stop.
+        if agent_id
+            .as_deref()
+            .is_some_and(|agent_id| self.hosted.stop_wins(agent_id, server_id, by))
+        {
+            return Ok(());
         }
-        self.lock_refusals().remove(server_id);
-        self.start_here(server_id, config)
+        if let Some(on) = self.not_ready(&config, agent_id.as_deref()) {
+            if by != StartedBy::User {
+                self.wait(server_id, on);
+                return Ok(());
+            }
+            // "Start now" on a waiting server that still cannot: it goes on waiting.
+            if self.hosted.is_waiting(server_id) {
+                return Err(TerminalError::EmbeddedServerError(waiting_reason(
+                    &self.app_handle,
+                    &on,
+                )));
+            }
+        }
+        let ticket = match by {
+            StartedBy::User => self.hosted.begin(server_id).map_err(|busy| {
+                TerminalError::EmbeddedServerError(match busy {
+                    Busy::Starting => format!("Server {server_id} is already starting"),
+                    Busy::Running => format!("Server {server_id} is already running on an agent"),
+                })
+            })?,
+            // Started, or stopped, another way meanwhile.
+            StartedBy::Itself => match self.hosted.begin(server_id) {
+                Ok(ticket) => ticket,
+                Err(_) => return Ok(()),
+            },
+            StartedBy::Wait => match self.hosted.begin_waiting(server_id) {
+                Some(ticket) => ticket,
+                None => return Ok(()),
+            },
+        };
+        match agent_id {
+            Some(agent_id) => self.start_on_agent(ticket, config, &agent_id, by),
+            None => self.start_here(ticket, config),
+        }
+    }
+
+    /// What an automatic start of `config` has to wait for, if anything.
+    fn not_ready(&self, config: &EmbeddedServerConfig, agent_id: Option<&str>) -> Option<WaitFor> {
+        if let Some(agent_id) = agent_id {
+            // A removed agent never comes back: the start refuses it.
+            if !agent_is_ready(&self.app_handle, agent_id)
+                && !agent_is_removed(&self.app_handle, agent_id)
+            {
+                return Some(WaitFor::Agent(agent_id.to_string()));
+            }
+        }
+        self.secrets
+            .needs_unlock(config)
+            .then_some(WaitFor::CredentialStore)
+    }
+
+    /// Let the automatic start of `server_id` wait for `on`.
+    fn wait(&self, server_id: &str, on: WaitFor) {
+        if self.hosted.wait(server_id, on, Instant::now()) {
+            self.lock_refusals().remove(server_id);
+            self.announce(server_id);
+        }
+        self.ensure_status_poller();
+    }
+
+    /// Start every waiting server that can start now, and end the waits that
+    /// took too long. Blocking: called on every tick of the poller.
+    pub fn start_ready(&self) {
+        self.start_ready_at(Instant::now());
+    }
+
+    fn start_ready_at(&self, now: Instant) {
+        for (id, on) in self.hosted.take_expired(now) {
+            let reason = waited_too_long(&self.app_handle, &on);
+            let _ = self.refuse(&id, reason);
+        }
+        for (id, _) in self.hosted.waiting() {
+            if let Err(e) = self.start(&id, StartedBy::Wait) {
+                self.record_failed_auto_start(&id, &e);
+            }
+        }
+        let app = &self.app_handle;
+        for id in self
+            .hosted
+            .forget_removed_agents(|agent_id| agent_is_removed(app, agent_id))
+        {
+            self.announce(&id);
+        }
+    }
+
+    /// End a start: `Ok(true)` when it counts, `Ok(false)` when a stop was
+    /// pressed meanwhile (what it started is stopped again).
+    fn finish(&self, ticket: Ticket, outcome: Outcome<ServerState>, server_id: &str) -> bool {
+        match self.hosted.finish(ticket, outcome, Instant::now()) {
+            Finished::Done => true,
+            Finished::Stopped => {
+                self.announce(server_id);
+                false
+            }
+            Finished::StopThere(agent_id) => {
+                self.settle_stop(&agent_id, server_id);
+                false
+            }
+        }
+    }
+
+    /// Open `config`'s listener on this computer. A stop pressed meanwhile
+    /// closes it again.
+    fn start_here(
+        &self,
+        ticket: Ticket,
+        mut config: EmbeddedServerConfig,
+    ) -> Result<(), TerminalError> {
+        let server_id = config.id.clone();
+        let started = self.secrets.resolve(&mut config).and_then(|()| {
+            self.lock_refusals().remove(&server_id);
+            self.listen_here(&server_id, config)
+        });
+        if !self.finish(ticket, Outcome::Failed, &server_id) {
+            if let Some(service) = self.lock_services()?.get_mut(&server_id) {
+                service.shutdown();
+            }
+            return Ok(());
+        }
+        // The row was "starting" until now; without a listener there is no
+        // event that says otherwise.
+        if started.is_err() {
+            self.announce(&server_id);
+        }
+        started
     }
 
     /// Open `config`'s listener on this computer: the only place that does.
-    fn start_here(
+    fn listen_here(
         &self,
         server_id: &str,
         config: EmbeddedServerConfig,
@@ -358,66 +552,112 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// [`EmbeddedServerConfig`] — mirroring
     /// [`tunnel_manager::start_agent_tunnel`](crate::tunnel::tunnel_manager). On
     /// success the agent-reported state is stored for the projection and streamed
-    /// to the frontend, and the `service.status` poller is (re)started.
-    fn start_agent_service(
+    /// to the frontend, and the `service.status` poller is (re)started. A start
+    /// that gets no answer leaves the server not reachable, not stopped (#6028).
+    fn start_on_agent(
         &self,
-        server_id: &str,
-        config: &EmbeddedServerConfig,
+        ticket: Ticket,
+        mut config: EmbeddedServerConfig,
         agent_id: &str,
+        by: StartedBy,
     ) -> Result<(), TerminalError> {
-        // Reject a double-start on an agent.
-        if self.lock_agent_servers()?.contains_key(server_id) {
-            return Err(TerminalError::EmbeddedServerError(format!(
-                "Server {server_id} is already running on an agent"
-            )));
+        let server_id = config.id.clone();
+        let server_id = server_id.as_str();
+        self.announce(server_id);
+        let failed = |this: &Self, ticket: Ticket, reason: String| {
+            if this.finish(ticket, Outcome::Failed, server_id) {
+                Err(this.refuse(server_id, reason))
+            } else {
+                Ok(())
+            }
+        };
+
+        // Fill the passwords from the credential store (#3514); refuses with a
+        // clear message when the store is locked or has none. The resolved
+        // config reaches only the agent RPC.
+        let params = self
+            .secrets
+            .resolve(&mut config)
+            .and_then(|()| service_start_params(server_id, &config));
+        let params = match params {
+            Ok(params) => params,
+            Err(e) => {
+                let counts = self.finish(ticket, Outcome::Failed, server_id);
+                self.announce(server_id);
+                return if counts { Err(e) } else { Ok(()) };
+            }
+        };
+        let client = match agent_for_start(&self.app_handle, agent_id) {
+            Ok(client) => client,
+            // The agent went away since it was ready: wait for it again.
+            Err(_) if by != StartedBy::User && !agent_is_removed(&self.app_handle, agent_id) => {
+                if self.finish(ticket, Outcome::Failed, server_id) {
+                    self.wait(server_id, WaitFor::Agent(agent_id.to_string()));
+                }
+                return Ok(());
+            }
+            Err(reason) => return failed(self, ticket, reason),
+        };
+        // An older stop the agent has not confirmed comes first.
+        if !self
+            .hosted
+            .send_owed_stop(client.as_ref(), agent_id, server_id, Instant::now())
+        {
+            let reason = stopping_reason(&self.app_handle, agent_id);
+            let counts = self.finish(ticket, Outcome::Failed, server_id);
+            self.announce(server_id);
+            return if counts {
+                Err(TerminalError::EmbeddedServerError(reason))
+            } else {
+                Ok(())
+            };
         }
 
-        let params = service_start_params(server_id, config)?;
-
-        let agent_manager = agent_for_start(&self.app_handle, agent_id)
-            .map_err(|reason| self.refuse(server_id, reason))?;
-
-        match agent_manager.send_request(
-            agent_id,
-            termihub_core::protocol::methods::SERVICE_START,
-            params,
-        ) {
+        let agent = agent_id.to_string();
+        match client.send_request(agent_id, SERVICE_START, params) {
             Ok(result) => {
                 let state = server_state_from_start_reply(server_id, &result);
-                {
-                    let mut agent_servers = self.lock_agent_servers()?;
-                    agent_servers.insert(
-                        server_id.to_string(),
-                        AgentServerHandle {
-                            agent_id: agent_id.to_string(),
-                            last_state: state.clone(),
-                        },
-                    );
-                }
-                // Moved or deleted while the agent was starting it: not there.
-                let still_there = {
-                    let store = self.lock_configs()?;
-                    host_in(&store, server_id) == Some(HostChoice::Agent(agent_id))
+                let outcome = Outcome::Started {
+                    agent_id: agent,
+                    state,
                 };
-                if !still_there {
-                    self.stop_agent_service(server_id);
-                    return Err(TerminalError::EmbeddedServerError(format!(
-                        "Server {server_id} was moved or deleted while it was starting"
-                    )));
+                if !self.finish(ticket, outcome, server_id) {
+                    return Ok(());
                 }
-                self.lock_refusals().remove(server_id);
-                let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
-                // Sample the agent's status periodically so a later transition
-                // (e.g. a crash → Error) and live stats reach the frontend.
-                self.ensure_status_poller();
-                tracing::info!("Embedded server {server_id} started on agent {agent_id}");
-                Ok(())
+            }
+            Err(e) if is_unanswered(&e) => {
+                tracing::warn!(%server_id, %agent_id, error = %e, "start got no answer");
+                let outcome = Outcome::Unanswered {
+                    agent_id: agent,
+                    state: stopped_state(server_id),
+                };
+                if !self.finish(ticket, outcome, server_id) {
+                    return Ok(());
+                }
             }
             Err(e) => {
                 let reason = agent_start_error(&self.app_handle, agent_id, &e);
-                Err(self.refuse(server_id, reason))
+                return failed(self, ticket, reason);
             }
         }
+        // Moved or deleted while the agent was starting it: not there.
+        let still_there = {
+            let store = self.lock_configs()?;
+            host_in(&store, server_id) == Some(HostChoice::Agent(agent_id))
+        };
+        if !still_there {
+            self.stop_hosted(server_id);
+            return Err(TerminalError::EmbeddedServerError(format!(
+                "Server {server_id} was moved or deleted while it was starting"
+            )));
+        }
+        self.lock_refusals().remove(server_id);
+        self.announce(server_id);
+        // Sample the agent's status periodically so a later transition
+        // (e.g. a crash → Error) and live stats reach the frontend.
+        self.ensure_status_poller();
+        tracing::info!("Embedded server {server_id} started on agent {agent_id}");
+        Ok(())
     }
 
     /// Record and announce why `server_id` was not started, and build the error
@@ -444,53 +684,49 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         self.refusals.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Stop an agent-hosted server, if `server_id` is one. Returns `true` when a
-    /// handle was found and a `service.stop` sent to the agent (best-effort — the
-    /// desktop drops its handle regardless so the UI reflects the stop).
-    fn stop_agent_service(&self, server_id: &str) -> bool {
-        let Some(handle) = self.agent_servers.remove(server_id) else {
-            return false;
-        };
-        if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
-            match serde_json::to_value(ServiceStopParams {
-                instance_id: server_id.to_string(),
-            }) {
-                Ok(params) => {
-                    if let Err(e) = agent_manager.send_request(
-                        &handle.agent_id,
-                        termihub_core::protocol::methods::SERVICE_STOP,
-                        params,
-                    ) {
-                        tracing::warn!(
-                            "Failed to stop agent-hosted embedded server {} on agent {}: {}",
-                            server_id,
-                            handle.agent_id,
-                            e
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to build service.stop params for {server_id}: {e}")
-                }
+    /// Stop `server_id` if it runs on an agent, starts or waits. Returns whether
+    /// there is nothing left to stop on this computer.
+    fn stop_hosted(&self, server_id: &str) -> bool {
+        match self.hosted.stop(server_id) {
+            StopPlan::Nothing => false,
+            StopPlan::StoppedWaiting => {
+                self.announce(server_id);
+                false
+            }
+            StopPlan::StartWillStop => {
+                self.announce(server_id);
+                true
+            }
+            StopPlan::StopThere(agent_id) => {
+                self.settle_stop(&agent_id, server_id);
+                true
             }
         }
-        let _ = self
-            .app_handle
-            .emit(SERVER_STATUS_EVENT, &stopped_state(server_id));
-        tracing::info!(
-            "Embedded server {} stopped on agent {}",
-            server_id,
-            handle.agent_id
-        );
-        true
+    }
+
+    /// Send the stop that agent `agent_id` owes for `server_id`; what it does
+    /// not confirm now, the poller sends again.
+    fn settle_stop(&self, agent_id: &str, server_id: &str) {
+        let confirmed = agent_rpc_client(&self.app_handle).is_some_and(|client| {
+            self.hosted
+                .send_owed_stop(client.as_ref(), agent_id, server_id, Instant::now())
+        });
+        if confirmed {
+            tracing::info!("Embedded server {server_id} stopped on agent {agent_id}");
+        } else {
+            tracing::warn!("Agent {agent_id} has not confirmed the stop of server {server_id}");
+            self.ensure_status_poller();
+        }
+        self.announce(server_id);
     }
 
     /// Stop a running server by ID (kept listed as `Stopped`).
+    ///
+    /// One that waits or starts is stopped too. One whose agent is gone rests
+    /// as `Stopping` until the agent is back and confirms it (#6028).
     pub fn stop_server(&self, server_id: &str) -> Result<(), TerminalError> {
         self.clear_refusal(server_id);
-        // Agent-hosted servers live in their own track: send `service.stop` to
-        // the agent and drop the control handle (#2214).
-        if self.stop_agent_service(server_id) {
+        if self.stop_hosted(server_id) {
             return Ok(());
         }
         let mut services = self.lock_services()?;
@@ -504,10 +740,7 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// hosting it, else on this desktop (which also covers an unknown server —
     /// its desktop read is simply `None`).
     pub fn activity_route(&self, server_id: &str) -> Result<ActivityRoute, TerminalError> {
-        let agent_servers = self.lock_agent_servers()?;
-        Ok(route_for(
-            agent_servers.get(server_id).map(|h| h.agent_id.as_str()),
-        ))
+        Ok(route_for(self.hosted.agent_id_of(server_id).as_deref()))
     }
 
     /// The agent RPC client, for reading an agent-hosted server's log.
@@ -552,8 +785,8 @@ impl<R: Runtime> EmbeddedServerManager<R> {
 
         // Tear down agent-hosted servers too (#2214): `service.stop` each one and
         // drop its handle, then abort the poller.
-        for id in self.agent_servers.ids() {
-            self.stop_agent_service(&id);
+        for id in self.hosted.live_ids() {
+            self.stop_hosted(&id);
         }
         self.agent_status_poller.stop();
     }
@@ -569,23 +802,23 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         };
         for cfg in configs {
             if cfg.auto_start {
-                if let Err(e) = self.start_server(&cfg.id) {
-                    // A refusal was announced with its reason already (#6028).
-                    if self.lock_refusals().contains_key(&cfg.id) {
-                        continue;
-                    }
-                    // Surface the failure (e.g. port busy at boot) as an Error
-                    // state so the sidebar shows the server red with a reason,
-                    // instead of silently leaving it stopped (GAP G7, #1145). A
-                    // pre-flight failure returns before the service emits, so the
-                    // manager emits the Error state here.
-                    let msg = e.to_string();
-                    tracing::warn!(id = %cfg.id, "Failed to auto-start embedded server: {msg}");
-                    let state = auto_start_error_state(&cfg.id, &msg);
-                    let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
+                if let Err(e) = self.start(&cfg.id, StartedBy::Itself) {
+                    self.record_failed_auto_start(&cfg.id, &e);
                 }
             }
         }
+    }
+
+    /// Surface a failed automatic start (e.g. port busy at boot) as an Error
+    /// state so the sidebar shows the server red with a reason, instead of
+    /// silently leaving it stopped (GAP G7, #1145).
+    fn record_failed_auto_start(&self, server_id: &str, error: &TerminalError) {
+        // A refusal was announced with its reason already (#6028).
+        if self.lock_refusals().contains_key(server_id) {
+            return;
+        }
+        tracing::warn!(id = %server_id, "Failed to auto-start embedded server: {error}");
+        let _ = self.refuse(server_id, error.to_string());
     }
 
     /// Ensure the single periodic agent `service.status` poller is running
@@ -593,10 +826,37 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     /// lifecycle and the [`EmbeddedServerPoll`] delegate supplies the
     /// service-specific poll + write-back/emit (DUP-020).
     fn ensure_status_poller(&self) {
-        self.agent_status_poller.ensure(EmbeddedServerPoll {
-            agent_servers: self.agent_servers.clone(),
+        self.agent_status_poller.ensure(self.status_poll());
+    }
+
+    fn status_poll(&self) -> EmbeddedServerPoll<R> {
+        EmbeddedServerPoll {
+            hosted: self.hosted.clone(),
             app: self.app_handle.clone(),
-        });
+        }
+    }
+
+    /// Show on the rows what a poll tick changed.
+    fn show_changes(&self, changes: Vec<Change>) {
+        for change in changes {
+            match change {
+                Change::Sampled { id, news } => {
+                    if news {
+                        self.announce(&id);
+                    }
+                }
+                Change::Presence(id) | Change::Stopped(id) => self.announce(&id),
+                Change::Gone {
+                    id,
+                    agent_id,
+                    unanswered: true,
+                } => {
+                    let reason = unanswered_start_failed(&self.app_handle, &agent_id);
+                    let _ = self.refuse(&id, reason);
+                }
+                Change::Gone { id, .. } => self.announce(&id),
+            }
+        }
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
@@ -614,14 +874,6 @@ impl<R: Runtime> EmbeddedServerManager<R> {
     ) -> Result<std::sync::MutexGuard<'_, HashMap<String, EmbeddedServerService>>, TerminalError>
     {
         self.services
-            .lock()
-            .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))
-    }
-
-    fn lock_agent_servers(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, AgentServerHandle>>, TerminalError> {
-        self.agent_servers
             .lock()
             .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))
     }
@@ -848,21 +1100,18 @@ fn server_state_from_start_reply(server_id: &str, reply: &serde_json::Value) -> 
     }
 }
 
-/// Parse an agent `service.status` reply into a [`ServerState`], or `None` when
-/// the instance is not running on the agent (#2214). Pure, so the parse is
+/// Read an agent `service.status` reply (#2214). Pure, so the parse is
 /// unit-testable without an agent mock.
-fn server_state_from_status_reply(
-    server_id: &str,
-    reply: &serde_json::Value,
-) -> Option<ServerState> {
-    // Deserialize into the shared `ServiceStatusResult` wire DTO (DUP-001); an
-    // unparseable reply or a not-running instance yields no sample.
-    let result = serde_json::from_value::<ServiceStatusResult>(reply.clone()).ok()?;
+fn read_status_reply(server_id: &str, reply: &serde_json::Value) -> Reading<ServerState> {
+    // Deserialize into the shared `ServiceStatusResult` wire DTO (DUP-001).
+    let Ok(result) = serde_json::from_value::<ServiceStatusResult>(reply.clone()) else {
+        return Reading::Unreadable;
+    };
     if !result.running {
-        return None;
+        return Reading::NotRunning;
     }
     let fallback = ServiceStatus::Stopped;
-    Some(
+    Reading::Running(
         result
             .state
             .as_ref()
@@ -908,18 +1157,17 @@ fn synth_state_from_service_status(server_id: &str, status: &ServiceStatus) -> S
 
 /// The embedded-server side of the shared agent status poller (DUP-020).
 ///
-/// Supplies the service-specific pieces to [`AgentStatusPoller`]: the live
-/// agent-server targets, the `service.status` batch (via
-/// [`poll_agent_server_states`]), and the write-back that re-emits
-/// [`SERVER_STATUS_EVENT`] only on a status/error transition — matching the
-/// desktop service, which emits on transitions, not every tick.
+/// Asks the agents what they host, sends the stops they owe, and lets the
+/// manager start what waited. [`SERVER_STATUS_EVENT`] is re-emitted only when a
+/// row changes, not every tick.
 struct EmbeddedServerPoll<R: Runtime> {
-    agent_servers: AgentInstances<AgentServerHandle>,
+    hosted: HostedServices<HostedServers>,
     app: AppHandle<R>,
 }
 
 impl<R: Runtime> AgentStatusPollDelegate for EmbeddedServerPoll<R> {
-    type Sample = ServerState;
+    type Target = Target<ServerState>;
+    type Sample = Sample<ServerState>;
 
     fn interval(&self) -> Duration {
         STATUS_POLL_INTERVAL
@@ -929,76 +1177,33 @@ impl<R: Runtime> AgentStatusPollDelegate for EmbeddedServerPoll<R> {
         agent_rpc_client(&self.app)
     }
 
-    fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
-        self.agent_servers.snapshot_targets()
+    fn snapshot_targets(&self) -> (Vec<Self::Target>, bool) {
+        (self.hosted.targets(), self.hosted.any())
     }
 
-    fn poll(client: Arc<dyn AgentRpcClient>, targets: &[(String, String)]) -> Vec<ServerState> {
-        poll_agent_server_states(client, targets)
+    fn on_tick(&self) {
+        if !self.hosted.needs_tick() {
+            return;
+        }
+        let app = self.app.clone();
+        // A start blocks on the agent.
+        tokio::task::spawn_blocking(move || {
+            if let Some(manager) = app.try_state::<EmbeddedServerManager<R>>() {
+                manager.start_ready();
+            }
+        });
     }
 
-    fn apply(&self, samples: Vec<ServerState>) {
-        let mut transitions = Vec::new();
-        if let Ok(mut map) = self.agent_servers.lock() {
-            for state in samples {
-                if let Some(handle) = map.get_mut(&state.server_id) {
-                    let changed = handle.last_state.status != state.status
-                        || handle.last_state.error != state.error;
-                    handle.last_state = state.clone();
-                    if changed {
-                        transitions.push(state);
-                    }
-                }
-            }
-        }
-        for state in &transitions {
-            let _ = self.app.emit(SERVER_STATUS_EVENT, state);
-        }
+    fn poll(client: Arc<dyn AgentRpcClient>, targets: &[Self::Target]) -> Vec<Self::Sample> {
+        HostedServices::<HostedServers>::poll(client.as_ref(), targets)
     }
-}
 
-/// Poll each agent-hosted server's live `service.status` over the agent RPC,
-/// returning the fresh [`ServerState`] per still-running server (#2214).
-///
-/// Free function (no `&self`) so the poller task can call it inside
-/// `spawn_blocking`. A failed RPC or a not-running instance simply contributes no
-/// sample, leaving the handle's last-known state in place.
-fn poll_agent_server_states(
-    client: Arc<dyn AgentRpcClient>,
-    targets: &[(String, String)],
-) -> Vec<ServerState> {
-    let mut out = Vec::with_capacity(targets.len());
-    for (server_id, agent_id) in targets {
-        let params = match serde_json::to_value(ServiceStatusParams {
-            instance_id: server_id.clone(),
-        }) {
-            Ok(params) => params,
-            Err(e) => {
-                tracing::debug!("Failed to build service.status params for {server_id}: {e}");
-                continue;
-            }
-        };
-        match client.send_request(
-            agent_id,
-            termihub_core::protocol::methods::SERVICE_STATUS,
-            params,
-        ) {
-            Ok(result) => {
-                if let Some(state) = server_state_from_status_reply(server_id, &result) {
-                    out.push(state);
-                }
-            }
-            Err(e) => {
-                tracing::debug!(
-                    "service.status poll for {} on agent {} failed: {}",
-                    server_id,
-                    agent_id,
-                    e
-                );
-            }
+    fn apply(&self, samples: Vec<Self::Sample>) {
+        let changes = self.hosted.apply(samples, Instant::now());
+        if let Some(manager) = self.app.try_state::<EmbeddedServerManager<R>>() {
+            manager.show_changes(changes);
         }
     }
-    out
 }
 
 /// Bridge a server's core [`EventChannel`](termihub_core::service::EventChannel)
@@ -1175,7 +1380,10 @@ mod tests {
     #[test]
     fn status_reply_not_running_yields_none() {
         let reply = json!({ "running": false });
-        assert!(server_state_from_status_reply("srv-1", &reply).is_none());
+        assert!(matches!(
+            read_status_reply("srv-1", &reply),
+            Reading::NotRunning
+        ));
     }
 
     /// A running `service.status` reply is parsed into the live state (#2214).
@@ -1192,7 +1400,9 @@ mod tests {
                 "startedAt": "2026-07-30T00:00:00Z"
             }
         });
-        let state = server_state_from_status_reply("srv-1", &reply).expect("running → some");
+        let Reading::Running(state) = read_status_reply("srv-1", &reply) else {
+            panic!("running");
+        };
         assert_eq!(state.status, ServerStatus::Running);
         assert_eq!(state.stats.total_connections, 3);
     }
@@ -1427,3 +1637,7 @@ mod failure_tests;
 #[cfg(test)]
 #[path = "server_manager_host_tests.rs"]
 mod host_tests;
+
+#[cfg(test)]
+#[path = "server_manager_state_tests.rs"]
+mod state_tests;

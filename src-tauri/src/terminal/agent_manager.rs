@@ -473,6 +473,18 @@ struct AgentConnection {
     reattach_config: RetainedAgentConfig,
 }
 
+/// Wait for `reply` on the calling thread, whatever kind it is (#6028): one
+/// without a runtime (the main thread of a synchronous command, a startup
+/// thread), a blocking-pool thread, or a worker in the middle of an async task
+/// (the quit teardown). Asking for the current runtime, or blocking on it from
+/// a worker, panics on the first and the last.
+fn wait_here<F: std::future::Future>(reply: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(runtime) => tokio::task::block_in_place(|| runtime.block_on(reply)),
+        Err(_) => tauri::async_runtime::block_on(reply),
+    }
+}
+
 /// Abstract interface over an agent connection manager.
 ///
 /// Implemented by [`AgentConnectionManager`] in production and by mock
@@ -541,6 +553,13 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 
     /// Check if an agent is connected.
     fn is_connected(&self, agent_id: &str) -> bool;
+
+    /// Whether agent `agent_id` can answer a request now: connected, and not in
+    /// the middle of a reconnect, when a request only queues until it is back
+    /// or times out (#6028). Defaults to [`is_connected`](Self::is_connected).
+    fn is_reachable(&self, agent_id: &str) -> bool {
+        self.is_connected(agent_id)
+    }
 
     /// Ids of every agent currently connected (live I/O task), sorted. Used by
     /// the diagnostics export to talk only to agents that are already connected
@@ -2254,8 +2273,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 .ok()?;
         }
         let wait = UPDATE_TOKEN_READ_TIMEOUT + std::time::Duration::from_secs(5);
-        tokio::runtime::Handle::current()
-            .block_on(async { tokio::time::timeout(wait, rx).await })
+        wait_here(async { tokio::time::timeout(wait, rx).await })
             .ok()?
             .ok()?
     }
@@ -2284,9 +2302,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
     /// (up to multi-minute) reconnect window. `timeout` is a parameter so tests
     /// can drive the elapsed path deterministically without the production wait.
     ///
-    /// Same runtime-context requirement as the previous `blocking_recv`: call
-    /// only from inside `spawn_blocking` or another non-async-task context (as
-    /// every `commands/agent.rs` site does).
+    /// Blocks the calling thread (see [`wait_here`]): prefer `spawn_blocking`
+    /// (as every `commands/agent.rs` site does).
     fn send_request_with_timeout(
         &self,
         agent_id: &str,
@@ -2338,9 +2355,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // frees this thread; a dropped sender (io_task gone / pending drained on drop)
         // surfaces as a connection-lost error rather than the old misleading
         // "timed out" string (CONC-003).
-        match tokio::runtime::Handle::current()
-            .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
-        {
+        match wait_here(async { tokio::time::timeout(timeout, resp_rx).await }) {
             // No reply within the deadline while the transport was up: typed as
             // an agent timeout, not an agent-reported error (#3959).
             Err(_elapsed) => Err(AgentRequestFailure::Local(TerminalError::agent_timeout(
@@ -2383,9 +2398,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|_| TerminalError::agent_transport_closed("Agent I/O task gone"))?;
         drop(agents);
 
-        match tokio::runtime::Handle::current()
-            .block_on(recv_excluding_prompts(resp_rx, timeout, &activity))
-        {
+        match wait_here(recv_excluding_prompts(resp_rx, timeout, &activity)) {
             Err(()) => Err(TerminalError::agent_timeout(timeout)),
             // The reply sender was dropped with no answer: the I/O task (and the
             // transport) went away under the request — typed, not text (#2840).
@@ -3243,6 +3256,13 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn is_connected(&self, agent_id: &str) -> bool {
         AgentConnectionManager::is_connected(self, agent_id)
+    }
+
+    fn is_reachable(&self, agent_id: &str) -> bool {
+        let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        agents
+            .get(agent_id)
+            .is_some_and(|c| c.alive.is_alive() && !c.reconnecting.load(Ordering::SeqCst))
     }
 
     fn begin_update_reconnect(

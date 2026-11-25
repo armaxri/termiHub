@@ -1,41 +1,45 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime, Wry};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
 use termihub_core::backends::ssh::parse_ssh_settings;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
 use termihub_core::connection::ConnectionTypeInfo;
-use termihub_core::protocol::methods::{
-    TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
-    TunnelStatusResult, TunnelStopParams,
-};
+use termihub_core::protocol::methods::{TunnelForwardSpec, TunnelStartParams, TUNNEL_START};
 use termihub_core::reconnect_backoff::{
     policy_for, reconnect_reducer, system_jitter, BackoffConfig, ReconnectEvent, ReconnectKind,
     ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
 use termihub_core::tunnel::ActiveForwarder;
+use termihub_core::util::service_host::HostChoice;
 use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
 
 use super::config::{
-    ReachableFrom, TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelStore, TunnelType,
+    TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelStore, TunnelType,
 };
 use super::connecting::{ConnectingTracker, FinishOutcome};
 use super::connection_refs::{ConnectionRefs, LiveConnections, TunnelControl};
 use super::dynamic_forward::DynamicForwarder;
 use super::host::{ensure_runs_here, resolve_tunnel_host, RunsHere};
+use super::hosted::{tunnel_state, HostedTunnel, HostedTunnels, Reasons};
 use super::local_forward::LocalForwarder;
 use super::remote_forward::RemoteForwarder;
 use super::storage::TunnelStorage;
+use crate::agent_service::hosted::{
+    is_unanswered, Away, Busy, Change, Finished, HostedServices, Outcome, Sample, StartedBy,
+    StopPlan, Target, Ticket, WaitFor,
+};
 use crate::agent_service::{
-    agent_for_start, agent_rpc_client, agent_start_error, AgentHosted, AgentInstances,
-    AgentStatusPollDelegate, AgentStatusPoller,
+    agent_for_start, agent_is_ready, agent_is_removed, agent_rpc_client, agent_start_error,
+    not_reachable_reason, stopping_reason, unanswered_start_failed, waited_too_long,
+    waiting_reason, AgentStatusPollDelegate, AgentStatusPoller,
 };
 use crate::app_tasks::AppTasks;
 use crate::connection::jump_host_resolver::ReferenceRole;
@@ -226,12 +230,18 @@ fn companion_action(parent_status: &TunnelStatus, companion_running: bool) -> Co
                 CompanionAction::Start
             }
         }
+        // The parent may still forward: its agent lost the desktop, not the
+        // tunnel. Holding the companion down would drop connections that work
+        // on every blip of the agent (#6028).
+        TunnelStatus::NotReachable => CompanionAction::None,
         // Parent is not connected (connecting / reconnecting / disconnected /
         // error / its SSH connection deleted) → hold the companion down so it never dangles at a dead port.
         TunnelStatus::Connecting
         | TunnelStatus::Reconnecting
         | TunnelStatus::Disconnected
         | TunnelStatus::Error
+        | TunnelStatus::Waiting
+        | TunnelStatus::Stopping
         | TunnelStatus::MissingConnection => {
             if companion_running {
                 CompanionAction::Stop
@@ -314,20 +324,17 @@ fn supervisor_cancel_token(tasks: &AppTasks) -> CancellationToken {
 
 /// The tunnel side of the shared agent status poller (DUP-020).
 ///
-/// Supplies the tunnel-specific pieces to [`AgentStatusPoller`]: the live
-/// agent-tunnel targets, the `tunnel.status` batch (via
-/// [`poll_agent_tunnel_stats`]), and the write-back that refreshes each handle's
-/// stats then republishes the `tunnels` region (#2199). `bound_address` /
-/// `reachable_from` are fixed at bind time (from the start reply), so only the
-/// stats are refreshed. `publish_tunnel_stats` runs every polled tick — a
-/// stats-only delta (#4574) that is a no-op when no sample changed.
-struct AgentTunnelPoll {
-    agent_tunnels: AgentInstances<AgentTunnelHandle>,
-    app: AppHandle,
+/// Asks the agents which tunnels they forward, sends the stops they owe, lets
+/// the manager start what waited (#6028), and republishes the `tunnels` region
+/// (#2199): stats-only (#4574) on a plain tick, in full when a row changes.
+struct AgentTunnelPoll<R: Runtime> {
+    hosted: HostedServices<HostedTunnels>,
+    app: AppHandle<R>,
 }
 
-impl AgentStatusPollDelegate for AgentTunnelPoll {
-    type Sample = (String, TunnelStats);
+impl<R: Runtime> AgentStatusPollDelegate for AgentTunnelPoll<R> {
+    type Target = Target<HostedTunnel>;
+    type Sample = Sample<HostedTunnel>;
 
     fn interval(&self) -> Duration {
         STATS_EMIT_INTERVAL
@@ -337,91 +344,69 @@ impl AgentStatusPollDelegate for AgentTunnelPoll {
         agent_rpc_client(&self.app)
     }
 
-    fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
-        self.agent_tunnels.snapshot_targets()
+    fn snapshot_targets(&self) -> (Vec<Self::Target>, bool) {
+        (self.hosted.targets(), self.hosted.any())
     }
 
-    fn poll(
-        client: Arc<dyn AgentRpcClient>,
-        targets: &[(String, String)],
-    ) -> Vec<(String, TunnelStats)> {
-        poll_agent_tunnel_stats(client, targets)
-    }
-
-    fn apply(&self, samples: Vec<(String, TunnelStats)>) {
-        if let Ok(mut map) = self.agent_tunnels.lock() {
-            for (tunnel_id, stats) in samples {
-                if let Some(handle) = map.get_mut(&tunnel_id) {
-                    handle.stats = stats;
-                }
-            }
+    fn on_tick(&self) {
+        if !self.hosted.needs_tick() {
+            return;
         }
-        // Project the refreshed stats onto the `tunnels` region (#2199) as a
-        // stats-only delta (#4574): only `states.<id>.stats` changed.
-        crate::tunnel::projection::publish_tunnel_stats(&self.app);
-    }
-}
-
-/// Poll each agent-hosted tunnel's live `tunnel.status` over the agent RPC,
-/// returning the fresh stats per still-running tunnel (#2199).
-///
-/// Free function (no `&self`) so the poller task can call it inside
-/// `spawn_blocking`. `targets` is a snapshot of `(tunnel_id, agent_id)` pairs. A
-/// failed RPC or a not-running tunnel simply contributes no sample, leaving the
-/// handle's last-known stats in place rather than flickering them to zero.
-fn poll_agent_tunnel_stats(
-    client: Arc<dyn AgentRpcClient>,
-    targets: &[(String, String)],
-) -> Vec<(String, TunnelStats)> {
-    let mut out = Vec::with_capacity(targets.len());
-    for (tunnel_id, agent_id) in targets {
-        // Build the request from the shared `TunnelStatusParams` DTO so the
-        // desktop and agent share one definition of the wire shape (DUP-001).
-        let params = match serde_json::to_value(TunnelStatusParams {
-            tunnel_id: tunnel_id.clone(),
-        }) {
-            Ok(params) => params,
-            Err(e) => {
-                tracing::debug!(
-                    "tunnel.status params serialize for {} failed: {}",
-                    tunnel_id,
-                    e
-                );
-                continue;
-            }
+        let Some(manager) = resolve_managed_arc::<TunnelManager<R>, _>(&self.app) else {
+            return;
         };
-        match client.send_request(
-            agent_id,
-            termihub_core::protocol::methods::TUNNEL_STATUS,
-            params,
-        ) {
-            Ok(result) => {
-                if let Some(stats) = stats_from_status_reply(&result) {
-                    out.push((tunnel_id.clone(), stats));
-                }
-            }
-            Err(e) => {
-                tracing::debug!(
-                    "tunnel.status poll for {} on agent {} failed: {}",
-                    tunnel_id,
-                    agent_id,
-                    e
-                );
-            }
+        // A start blocks on the agent.
+        tokio::task::spawn_blocking(move || manager.start_ready());
+    }
+
+    fn poll(client: Arc<dyn AgentRpcClient>, targets: &[Self::Target]) -> Vec<Self::Sample> {
+        HostedServices::<HostedTunnels>::poll(client.as_ref(), targets)
+    }
+
+    fn apply(&self, samples: Vec<Self::Sample>) {
+        let changes = self.hosted.apply(samples, Instant::now());
+        // Only the stats changed, as far as this call goes; a row that changed
+        // publishes the whole view below.
+        crate::tunnel::projection::publish_tunnel_stats(&self.app);
+        if let Some(manager) = resolve_managed_arc::<TunnelManager<R>, _>(&self.app) {
+            manager.show_changes(changes);
         }
     }
-    out
 }
 
-/// Extract the live [`TunnelStats`] from a `tunnel.status` reply, or `None` when
-/// the tunnel is not running on the agent or the reply carries no parseable
-/// stats (#2199). Pure, so the parse is unit-testable without an agent mock.
-fn stats_from_status_reply(result: &serde_json::Value) -> Option<TunnelStats> {
-    let status = serde_json::from_value::<TunnelStatusResult>(result.clone()).ok()?;
-    if !status.running {
-        return None;
+/// What to do about a tunnel whose agent says that it does not run there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GoneTunnel {
+    /// It ended with its agent, and may come back by itself.
+    StartAgain,
+    /// It ended with its agent.
+    Stopped,
+    /// Its unanswered start did not start it.
+    NotStarted,
+}
+
+/// Pure half of [`TunnelManager::show_changes`].
+fn gone_tunnel(unanswered: bool, reconnect_on_disconnect: bool) -> GoneTunnel {
+    match (unanswered, reconnect_on_disconnect) {
+        (true, _) => GoneTunnel::NotStarted,
+        (false, true) => GoneTunnel::StartAgain,
+        (false, false) => GoneTunnel::Stopped,
     }
-    status.stats
+}
+
+/// [`Reasons`] with the agents' names.
+struct AppReasons<'a, R: Runtime>(&'a AppHandle<R>);
+
+impl<R: Runtime> Reasons for AppReasons<'_, R> {
+    fn waiting(&self, on: &WaitFor) -> String {
+        waiting_reason(self.0, on)
+    }
+    fn stopping(&self, agent_id: &str) -> String {
+        stopping_reason(self.0, agent_id)
+    }
+    fn not_reachable(&self, agent_id: &str, why: Away) -> String {
+        not_reachable_reason(self.0, agent_id, why)
+    }
 }
 
 /// An active tunnel instance.
@@ -439,35 +424,6 @@ struct ActiveTunnel {
     /// exits cleanly — a user stop must never be mistaken for a real death and
     /// launder the tunnel into `Error`.
     supervisor_cancel: CancellationToken,
-}
-
-/// A tunnel hosted on a remote agent (S3, #2185, enriched #2199).
-///
-/// The desktop holds only *control* + *reported* state — which agent forwards
-/// it, where the agent bound its listen socket, and the last live stats sampled
-/// off the agent. The data path (listen socket, SSH session, forwarder) lives
-/// entirely on the agent, so there is no `ActiveForwarder` here. The
-/// endpoint details (`bound_address` / `reachable_from`) come from the agent's
-/// `tunnel.start` reply; `stats` is refreshed by the periodic `tunnel.status`
-/// poller (#2199) so the projection shows live up/down bytes + connection counts
-/// like a desktop tunnel, instead of frozen zeros.
-struct AgentTunnelHandle {
-    /// The agent forwarding this tunnel.
-    agent_id: String,
-    /// The `host:port` the listen socket bound on the tunnel host (the agent for
-    /// `-L`/`-D`, the SSH server for `-R`), as the agent reported it.
-    bound_address: String,
-    /// Who can reach the listen socket, as the agent classified its bind.
-    reachable_from: ReachableFrom,
-    /// Last live traffic counters sampled from the agent via `tunnel.status`.
-    /// Starts at zero and is refreshed each poll tick (#2199).
-    stats: TunnelStats,
-}
-
-impl AgentHosted for AgentTunnelHandle {
-    fn agent_id(&self) -> &str {
-        &self.agent_id
-    }
 }
 
 /// The saved tunnels read from disk, before a [`TunnelManager`] is built over
@@ -500,7 +456,7 @@ impl LoadedTunnels {
 ///
 /// Handles CRUD operations on tunnel configurations, starting/stopping tunnels,
 /// and tracking live tunnel state.
-pub struct TunnelManager {
+pub struct TunnelManager<R: Runtime = Wry> {
     tunnel_configs: Mutex<TunnelStore>,
     storage: TunnelStorage,
     /// `Arc`-shared so each per-tunnel supervisor task can hold a handle and
@@ -519,19 +475,15 @@ pub struct TunnelManager {
     /// task can register/deregister its own loop without `&self`.
     reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
     connecting: ConnectingTracker,
-    /// Tunnels currently hosted on a remote agent, keyed by tunnel id (S3,
-    /// #2185). Disjoint from `active_tunnels` (which holds desktop-hosted
-    /// forwarders): an agent-hosted tunnel's data path runs on the agent, so the
-    /// desktop tracks only the control handle here. `Arc`-shared so the periodic
-    /// `tunnel.status` poller task can refresh each handle's live stats without a
-    /// `&self` reference (#2199). The shared [`AgentInstances`] tracker folds the
-    /// map boilerplate (DUP-020 follow-up, #2884).
-    agent_tunnels: AgentInstances<AgentTunnelHandle>,
+    /// What is known about the tunnels on agents, and about the automatic starts
+    /// that wait (S3, #2185, #6028). Disjoint from `active_tunnels`, which holds
+    /// the desktop-hosted forwarders. Shared with the `tunnel.status` poller.
+    hosted: HostedServices<HostedTunnels>,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
     endpoint_pool: Arc<RefPool<Arc<LiveEndpoint>>>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     /// Handle to the single periodic live-stats emitter task (GAP 6, #1248).
     /// `Some` while at least one tunnel is active; the task self-reaps and clears
     /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
@@ -539,7 +491,7 @@ pub struct TunnelManager {
     /// The single periodic agent `tunnel.status` poller (#2199). Runs while at
     /// least one agent-hosted tunnel exists, self-reaping once none remain.
     /// Distinct from `stats_emitter` because agent tunnels live in their own track
-    /// (`agent_tunnels`) and are sampled over the agent RPC rather than from a
+    /// (`hosted`) and are sampled over the agent RPC rather than from a
     /// local forwarder; the shared [`AgentStatusPoller`] owns the task lifecycle
     /// (DUP-020).
     agent_stats_poller: AgentStatusPoller,
@@ -554,13 +506,13 @@ pub struct TunnelManager {
     connection_refs: ConnectionRefs,
 }
 
-impl TunnelManager {
+impl<R: Runtime> TunnelManager<R> {
     /// Build the manager over the tunnels [`LoadedTunnels::load`] read from
     /// disk (with recovery, so a corrupt file is handled gracefully). The
     /// `AppHandle`-bound half of startup, split from the load so the boot phase
     /// loads the file on a mock app (#5313). The caller reports
     /// `loaded.warnings` first; they are not kept on the manager.
-    pub fn from_loaded(app_handle: &AppHandle, loaded: LoadedTunnels) -> Self {
+    pub fn from_loaded(app_handle: &AppHandle<R>, loaded: LoadedTunnels) -> Self {
         let LoadedTunnels { storage, store, .. } = loaded;
         let tasks = AppTasks::for_app(app_handle);
 
@@ -571,7 +523,7 @@ impl TunnelManager {
             last_errors: Arc::new(Mutex::new(HashMap::new())),
             reconnecting: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
-            agent_tunnels: AgentInstances::new(),
+            hosted: HostedServices::default(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             stats_emitter: Arc::new(Mutex::new(None)),
@@ -599,11 +551,11 @@ impl TunnelManager {
     }
 
     /// Whether a tunnel currently has a live or in-flight presence — active
-    /// (desktop or agent), reconnecting, or mid-connect. Used to gate the
+    /// (desktop or agent), waiting to start, reconnecting, or mid-connect. Used to gate the
     /// companion ordered-lifecycle so a steady pair emits no churn (#2597).
     fn is_tunnel_active(&self, tunnel_id: &str) -> bool {
         map_contains(&self.active_tunnels, tunnel_id)
-            || self.agent_tunnels.contains(tunnel_id)
+            || self.hosted.is_engaged(tunnel_id)
             || map_contains(&self.reconnecting, tunnel_id)
             || self.connecting.is_connecting(tunnel_id)
     }
@@ -612,7 +564,7 @@ impl TunnelManager {
     /// active maps (as opposed to merely connecting / reconnecting). A chained
     /// companion may only start once its parent is connected (#2597).
     fn is_tunnel_connected(&self, tunnel_id: &str) -> bool {
-        map_contains(&self.active_tunnels, tunnel_id) || self.agent_tunnels.contains(tunnel_id)
+        map_contains(&self.active_tunnels, tunnel_id) || self.hosted.is_running(tunnel_id)
     }
 
     /// Save (add or update) a tunnel configuration.
@@ -703,10 +655,20 @@ impl TunnelManager {
 
     /// Get the current status of all tunnels.
     pub fn get_statuses(&self) -> Result<Vec<TunnelState>, TerminalError> {
-        let store = self
-            .tunnel_configs
-            .lock()
-            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+        // Copied first: naming an agent below asks the connection manager, which
+        // must not happen under a lock of this one.
+        let tunnels = self.get_tunnels()?;
+        let views: Vec<_> = tunnels
+            .iter()
+            .map(|config| {
+                let host = match config.host.choice() {
+                    HostChoice::Agent(agent_id) => Some(agent_id),
+                    _ => None,
+                };
+                let view = self.hosted.view(&config.id, host)?;
+                Some(tunnel_state(config, view, &AppReasons(&self.app_handle)))
+            })
+            .collect();
         let active = self
             .active_tunnels
             .lock()
@@ -715,15 +677,11 @@ impl TunnelManager {
             .reconnecting
             .lock()
             .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-        let agent_tunnels = self
-            .agent_tunnels
-            .lock()
-            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
 
-        let states = store
-            .tunnels
+        let states = tunnels
             .iter()
-            .map(|config| {
+            .zip(views)
+            .map(|(config, view)| {
                 if let Some(tunnel) = active.get(&config.id) {
                     TunnelState::desktop(
                         config.id.clone(),
@@ -731,21 +689,10 @@ impl TunnelManager {
                         None,
                         tunnel.forwarder.get_stats(),
                     )
-                } else if let Some(handle) = agent_tunnels.get(&config.id) {
-                    // Hosted on an agent (#2185): the data path runs on the
-                    // agent, so the desktop surfaces the agent-reported vantage
-                    // (which agent, where it bound, who can reach it) plus the
-                    // live stats last sampled by the `tunnel.status` poller
-                    // (#2199) — no longer frozen zeros.
-                    TunnelState {
-                        tunnel_id: config.id.clone(),
-                        status: TunnelStatus::Connected,
-                        error: None,
-                        stats: handle.stats.clone(),
-                        bound_on: Some(handle.agent_id.clone()),
-                        bound_address: Some(handle.bound_address.clone()),
-                        reachable_from: Some(handle.reachable_from),
-                    }
+                } else if let Some(state) = view {
+                    // Running on an agent, not reachable there, waiting, starting
+                    // or stopping (#2185, #6028).
+                    state
                 } else if reconnecting.contains_key(&config.id) {
                     // In a reconnect-backoff loop (#1246) — report `Reconnecting`
                     // so a reload does not briefly launder it back to Error.
@@ -784,8 +731,8 @@ impl TunnelManager {
     /// projection delta: a desktop tunnel reports its forwarder's counters, an
     /// agent-hosted one the stats last sampled by the `tunnel.status` poller —
     /// with the same desktop-first precedence `get_statuses` applies. Locks
-    /// `active_tunnels` then `agent_tunnels`, the same relative order as
-    /// `get_statuses`; a poisoned lock yields no samples for that track.
+    /// `active_tunnels` first; a poisoned lock yields no samples for that track.
+    /// A tunnel that is not reachable has no live stats (#6028).
     pub fn live_stats(&self) -> Vec<(String, TunnelStats)> {
         let mut out = Vec::new();
         if let Ok(active) = self.active_tunnels.lock() {
@@ -795,18 +742,21 @@ impl TunnelManager {
                     .map(|(id, tunnel)| (id.clone(), tunnel.forwarder.get_stats())),
             );
         }
-        if let Ok(agent_tunnels) = self.agent_tunnels.lock() {
-            for (id, handle) in agent_tunnels.iter() {
-                if !out.iter().any(|(seen, _)| seen == id) {
-                    out.push((id.clone(), handle.stats.clone()));
-                }
+        for (id, tunnel) in self.hosted.running() {
+            if !out.iter().any(|(seen, _)| *seen == id) {
+                out.push((id, tunnel.stats));
             }
         }
         out
     }
 
-    /// Start a tunnel by ID.
+    /// Start a tunnel by ID, on the user's request.
     pub fn start_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        self.start(tunnel_id, StartedBy::User)
+    }
+
+    /// Start a tunnel. An automatic start that is not possible yet waits (#6028).
+    fn start(&self, tunnel_id: &str, by: StartedBy) -> Result<(), TerminalError> {
         // Get tunnel config
         let config = {
             let store = self
@@ -837,22 +787,37 @@ impl TunnelManager {
         // directly), fall through and start the companion now.
         if let Some(parent_id) = config.companion_of.clone() {
             if !self.is_tunnel_connected(&parent_id) {
-                return self.start_tunnel(&parent_id);
+                return self.start(&parent_id, by);
             }
         }
 
         // Route by run-location (S3, #2155/#2185). Desktop-hosted tunnels (the
         // default) take the existing local forwarder path below; agent-hosted
         // tunnels are forwarded on the agent over the agent RPC.
-        match resolve_tunnel_host(&config.host) {
-            Ok(ResolvedLocation::Local) => {}
-            Ok(ResolvedLocation::Agent(agent_id)) => {
-                return self.start_agent_tunnel(tunnel_id, &config, &agent_id);
+        let agent_id = match resolve_tunnel_host(&config.host) {
+            Ok(ResolvedLocation::Local) => None,
+            Ok(ResolvedLocation::Agent(agent_id)) => Some(agent_id),
+            Err(message) => return Err(self.refuse(tunnel_id, message)),
+        };
+
+        // Only the user may undo the user's stop.
+        if agent_id
+            .as_deref()
+            .is_some_and(|agent_id| self.hosted.stop_wins(agent_id, tunnel_id, by))
+        {
+            return Ok(());
+        }
+        if let Some(on) = self.not_ready(&config, agent_id.as_deref()) {
+            if by != StartedBy::User {
+                self.wait(tunnel_id, on);
+                return Ok(());
             }
-            Err(message) => {
-                record_last_error(&self.last_errors, tunnel_id, message.clone());
-                self.emit_status(tunnel_id, TunnelStatus::Error);
-                return Err(TerminalError::TunnelError(message));
+            // "Start now" on a waiting tunnel that still cannot: it goes on waiting.
+            if self.hosted.is_waiting(tunnel_id) {
+                return Err(TerminalError::TunnelError(waiting_reason(
+                    &self.app_handle,
+                    &on,
+                )));
             }
         }
 
@@ -870,6 +835,187 @@ impl TunnelManager {
             }
         }
 
+        let ticket = match by {
+            StartedBy::User => self.hosted.begin(tunnel_id).map_err(|busy| {
+                TerminalError::TunnelError(match busy {
+                    Busy::Starting => format!("Tunnel {tunnel_id} is already connecting"),
+                    Busy::Running => format!("Tunnel {tunnel_id} is already active"),
+                })
+            })?,
+            // Started, or stopped, another way meanwhile.
+            StartedBy::Itself => match self.hosted.begin(tunnel_id) {
+                Ok(ticket) => ticket,
+                Err(_) => return Ok(()),
+            },
+            StartedBy::Wait => match self.hosted.begin_waiting(tunnel_id) {
+                Some(ticket) => ticket,
+                None => return Ok(()),
+            },
+        };
+        match agent_id {
+            Some(agent_id) => self.start_agent_tunnel(ticket, &config, &agent_id, by),
+            None => {
+                let started = self.start_desktop_tunnel(tunnel_id, &config);
+                if self.finish(ticket, Outcome::Failed, tunnel_id) {
+                    started
+                } else {
+                    // A stop pressed while it started.
+                    self.stop_tunnel(tunnel_id)
+                }
+            }
+        }
+    }
+
+    /// What an automatic start of `config` has to wait for, if anything.
+    fn not_ready(&self, config: &TunnelConfig, agent_id: Option<&str>) -> Option<WaitFor> {
+        if let Some(agent_id) = agent_id {
+            // A removed agent never comes back: the start refuses it.
+            if !agent_is_ready(&self.app_handle, agent_id)
+                && !agent_is_removed(&self.app_handle, agent_id)
+            {
+                return Some(WaitFor::Agent(agent_id.to_string()));
+            }
+        }
+        self.app_handle
+            .try_state::<ConnectionManager>()
+            .is_some_and(|connections| {
+                connections.jump_hosts_need_unlock(&config.ssh_connection_id)
+            })
+            .then_some(WaitFor::CredentialStore)
+    }
+
+    /// Let the automatic start of `tunnel_id` wait for `on`.
+    fn wait(&self, tunnel_id: &str, on: WaitFor) {
+        if self.hosted.wait(tunnel_id, on, Instant::now()) {
+            clear_last_error(&self.last_errors, tunnel_id);
+            self.emit_status(tunnel_id, TunnelStatus::Waiting);
+        }
+        self.ensure_status_poller();
+    }
+
+    /// Stop and start a tunnel, on the user's request. When it cannot start yet
+    /// it waits; the stop is done first either way.
+    pub fn restart_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        self.stop_tunnel(tunnel_id)?;
+        let config = self
+            .get_tunnels()?
+            .into_iter()
+            .find(|t| t.id == tunnel_id)
+            .ok_or_else(|| {
+                TerminalError::TunnelError(format!("Tunnel not found: {}", tunnel_id))
+            })?;
+        if let HostChoice::Agent(agent_id) = config.host.choice() {
+            if let Some(on) = self.not_ready(&config, Some(agent_id)) {
+                if self.hosted.wait_to_restart(tunnel_id, on, Instant::now()) {
+                    self.emit_status(tunnel_id, TunnelStatus::Waiting);
+                }
+                self.ensure_status_poller();
+                return Ok(());
+            }
+        }
+        self.start_tunnel(tunnel_id)
+    }
+
+    /// Start every waiting tunnel that can start now, and end the waits that
+    /// took too long. Blocking: called on every tick of the poller.
+    fn start_ready(&self) {
+        self.start_ready_at(Instant::now());
+    }
+
+    fn start_ready_at(&self, now: Instant) {
+        for (id, on) in self.hosted.take_expired(now) {
+            let _ = self.refuse(&id, waited_too_long(&self.app_handle, &on));
+        }
+        for (id, _) in self.hosted.waiting() {
+            if let Err(e) = self.start(&id, StartedBy::Wait) {
+                tracing::warn!("Failed to start waiting tunnel {id}: {e}");
+            }
+        }
+        let app = &self.app_handle;
+        for id in self
+            .hosted
+            .forget_removed_agents(|agent_id| agent_is_removed(app, agent_id))
+        {
+            self.emit_status(&id, TunnelStatus::Disconnected);
+        }
+    }
+
+    /// Show on the rows what a poll tick changed.
+    fn show_changes(self: &Arc<Self>, changes: Vec<Change>) {
+        for change in changes {
+            match change {
+                Change::Sampled { news: false, .. } => {}
+                Change::Sampled { id, .. } => self.emit_status(&id, TunnelStatus::Connected),
+                Change::Presence(id) => {
+                    let status = if self.hosted.is_running(&id) {
+                        TunnelStatus::Connected
+                    } else {
+                        TunnelStatus::NotReachable
+                    };
+                    self.emit_status(&id, status);
+                }
+                Change::Stopped(id) => self.emit_status(&id, TunnelStatus::Disconnected),
+                Change::Gone {
+                    id,
+                    agent_id,
+                    unanswered,
+                } => {
+                    let reconnect = self
+                        .get_tunnels()
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|t| t.id == id && t.reconnect_on_disconnect);
+                    match gone_tunnel(unanswered, reconnect) {
+                        GoneTunnel::NotStarted => {
+                            let reason = unanswered_start_failed(&self.app_handle, &agent_id);
+                            let _ = self.refuse(&id, reason);
+                        }
+                        GoneTunnel::Stopped => self.emit_status(&id, TunnelStatus::Disconnected),
+                        GoneTunnel::StartAgain => {
+                            self.emit_status(&id, TunnelStatus::Disconnected);
+                            let manager = Arc::clone(self);
+                            tokio::task::spawn_blocking(move || {
+                                if let Err(e) = manager.start(&id, StartedBy::Itself) {
+                                    tracing::warn!("Failed to start tunnel {id} again: {e}");
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record and announce why `tunnel_id` was not started, and build the error
+    /// for the caller.
+    fn refuse(&self, tunnel_id: &str, reason: String) -> TerminalError {
+        record_last_error(&self.last_errors, tunnel_id, reason.clone());
+        self.emit_status(tunnel_id, TunnelStatus::Error);
+        TerminalError::TunnelError(reason)
+    }
+
+    /// End a start: `true` when it counts, `false` when a stop was pressed
+    /// meanwhile (what it started on an agent is stopped again).
+    fn finish(&self, ticket: Ticket, outcome: Outcome<HostedTunnel>, tunnel_id: &str) -> bool {
+        match self.hosted.finish(ticket, outcome, Instant::now()) {
+            Finished::Done => true,
+            Finished::Stopped => {
+                self.emit_status(tunnel_id, TunnelStatus::Disconnected);
+                false
+            }
+            Finished::StopThere(agent_id) => {
+                self.settle_stop(&agent_id, tunnel_id);
+                false
+            }
+        }
+    }
+
+    /// Start a tunnel on this computer.
+    fn start_desktop_tunnel(
+        &self,
+        tunnel_id: &str,
+        config: &TunnelConfig,
+    ) -> Result<(), TerminalError> {
         // Mark as connecting so a Stop click during the handshake can cancel
         // this start before it is registered as active (#829). The returned
         // token is threaded into the SSH connect so a Stop aborts an in-flight
@@ -885,7 +1031,7 @@ impl TunnelManager {
         // handshake). On failure, surface it as `error` status instead of
         // leaving the tunnel stuck in `connecting` (#829) — unless a Stop was
         // requested mid-connect, in which case it has already gone disconnected.
-        let (forwarder, guards, liveness) = match self.build_forwarder(&config, cancel) {
+        let (forwarder, guards, liveness) = match self.build_forwarder(config, cancel) {
             Ok(built) => built,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
@@ -974,12 +1120,17 @@ impl TunnelManager {
     /// endpoint-semantics concept). On success the agent-reported `bound_address`
     /// / `reachable_from` are stored for the projection and the tunnel rests
     /// `Connected`.
+    ///
+    /// A start that gets no answer leaves the tunnel not reachable, not stopped
+    /// (#6028): it may run there, and the poller asks until the agent says.
     fn start_agent_tunnel(
         &self,
-        tunnel_id: &str,
+        ticket: Ticket,
         config: &TunnelConfig,
         agent_id: &str,
+        by: StartedBy,
     ) -> Result<(), TerminalError> {
+        let tunnel_id = config.id.as_str();
         // Build the agent's internally-tagged `TunnelForwardSpec` (a `mode`
         // discriminator plus the flattened forward config) via the shared type, so
         // the `mode` string is sourced from the agent enum's serde and can never
@@ -987,145 +1138,140 @@ impl TunnelManager {
         // agent (#2185, #2198).
         let forward = Self::forward_spec(&config.tunnel_type);
 
-        // Reject a double-start (already active on the desktop or an agent).
-        {
-            let active = self
-                .active_tunnels
-                .lock()
-                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-            let agent = self
-                .agent_tunnels
-                .lock()
-                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-            if active.contains_key(tunnel_id) || agent.contains_key(tunnel_id) {
-                return Err(TerminalError::TunnelError(format!(
-                    "Tunnel {} is already active",
-                    tunnel_id
-                )));
-            }
-        }
-
         self.emit_status(tunnel_id, TunnelStatus::Connecting);
+
+        let failed = |ticket: Ticket, reason: String| {
+            if self.finish(ticket, Outcome::Failed, tunnel_id) {
+                Err(self.refuse(tunnel_id, reason))
+            } else {
+                Ok(())
+            }
+        };
 
         // Resolve the SSH connection so the agent can open the session to the
         // "via" server itself; any inline jump-host chain is already expanded.
         let ssh_config = match self.resolve_ssh_config(&config.ssh_connection_id) {
             Ok(cfg) => cfg,
-            Err(e) => {
-                record_last_error(&self.last_errors, tunnel_id, e.to_string());
-                self.emit_status(tunnel_id, TunnelStatus::Error);
-                return Err(e);
+            Err(e) => return failed(ticket, e.to_string()),
+        };
+        let client = match agent_for_start(&self.app_handle, agent_id) {
+            Ok(client) => client,
+            // The agent went away since it was ready: wait for it again.
+            Err(_) if by != StartedBy::User && !agent_is_removed(&self.app_handle, agent_id) => {
+                if self.finish(ticket, Outcome::Failed, tunnel_id) {
+                    self.wait(tunnel_id, WaitFor::Agent(agent_id.to_string()));
+                }
+                return Ok(());
             }
+            Err(reason) => return failed(ticket, reason),
         };
-
-        let refuse = |reason: String| {
-            record_last_error(&self.last_errors, tunnel_id, reason.clone());
-            self.emit_status(tunnel_id, TunnelStatus::Error);
-            TerminalError::TunnelError(reason)
-        };
-        let agent_manager = agent_for_start(&self.app_handle, agent_id).map_err(refuse)?;
 
         // Build the tunnel.start request from the shared `TunnelStartParams` DTO
         // (DUP-001): the desktop and agent now share one definition of the params
         // wire shape. `forward` is the agent's internally-tagged
         // `TunnelForwardSpec` (built above): the forward-config fields plus a
         // `mode` discriminator.
-        let params = serde_json::to_value(TunnelStartParams {
+        let params = match serde_json::to_value(TunnelStartParams {
             tunnel_id: tunnel_id.to_string(),
             ssh_config,
             forward,
-        })
-        .map_err(|e| {
-            TerminalError::TunnelError(format!("Failed to serialize tunnel.start params: {}", e))
-        })?;
+        }) {
+            Ok(params) => params,
+            Err(e) => {
+                let reason = format!("Failed to serialize tunnel.start params: {e}");
+                return failed(ticket, reason);
+            }
+        };
 
-        match agent_manager.send_request(
-            agent_id,
-            termihub_core::protocol::methods::TUNNEL_START,
-            params,
-        ) {
+        // An older stop the agent has not confirmed comes first: it would refuse
+        // the start of a tunnel that still runs.
+        if !self
+            .hosted
+            .send_owed_stop(client.as_ref(), agent_id, tunnel_id, Instant::now())
+        {
+            let reason = stopping_reason(&self.app_handle, agent_id);
+            if !self.finish(ticket, Outcome::Failed, tunnel_id) {
+                return Ok(());
+            }
+            self.emit_status(tunnel_id, TunnelStatus::Stopping);
+            return Err(TerminalError::TunnelError(reason));
+        }
+
+        let agent = agent_id.to_string();
+        match client.send_request(agent_id, TUNNEL_START, params) {
             Ok(result) => {
-                // Parse the reply into the shared `TunnelStartResult` DTO. A
-                // malformed/absent reply falls back to the loopback-safe defaults
-                // (empty bound address, `AgentOnly`) so the UI never over-promises
-                // reachability (#2199).
-                let reply = serde_json::from_value::<TunnelStartResult>(result).unwrap_or(
-                    TunnelStartResult {
-                        bound_address: String::new(),
-                        reachable_from: ReachableFrom::AgentOnly,
-                    },
-                );
-                let bound_address = reply.bound_address;
-                let reachable_from = reply.reachable_from;
-                {
-                    let mut agent = self
-                        .agent_tunnels
-                        .lock()
-                        .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-                    agent.insert(
-                        tunnel_id.to_string(),
-                        AgentTunnelHandle {
-                            agent_id: agent_id.to_string(),
-                            bound_address: bound_address.clone(),
-                            reachable_from,
-                            stats: TunnelStats::default(),
-                        },
-                    );
-                }
-                clear_last_error(&self.last_errors, tunnel_id);
-                self.emit_status(tunnel_id, TunnelStatus::Connected);
-                // Sample the agent's live stats periodically so the projection's
-                // ↑/↓ bytes + conn count update instead of resting at zero (#2199).
-                self.ensure_status_poller();
+                let state = HostedTunnel::from_start_reply(result);
                 tracing::info!(
                     "Tunnel {} started on agent {} (bound {} on the agent, reachable from {:?})",
                     tunnel_id,
                     agent_id,
-                    bound_address,
-                    reachable_from
+                    state.bound_address,
+                    state.reachable_from
                 );
-                Ok(())
+                let outcome = Outcome::Started {
+                    agent_id: agent,
+                    state,
+                };
+                if !self.finish(ticket, outcome, tunnel_id) {
+                    return Ok(());
+                }
+                clear_last_error(&self.last_errors, tunnel_id);
+                self.emit_status(tunnel_id, TunnelStatus::Connected);
             }
-            Err(e) => Err(refuse(agent_start_error(&self.app_handle, agent_id, &e))),
+            Err(e) if is_unanswered(&e) => {
+                tracing::warn!(%tunnel_id, %agent_id, error = %e, "start got no answer");
+                let outcome = Outcome::Unanswered {
+                    agent_id: agent,
+                    state: HostedTunnel::default(),
+                };
+                if !self.finish(ticket, outcome, tunnel_id) {
+                    return Ok(());
+                }
+                clear_last_error(&self.last_errors, tunnel_id);
+                self.emit_status(tunnel_id, TunnelStatus::NotReachable);
+            }
+            Err(e) => {
+                let reason = agent_start_error(&self.app_handle, agent_id, &e);
+                return failed(ticket, reason);
+            }
         }
+        // Ask the agent from now on: the live stats (#2199), and whether it still
+        // runs there.
+        self.ensure_status_poller();
+        // Moved or deleted while the agent was starting it: not there.
+        let still_there = self
+            .get_tunnels()?
+            .iter()
+            .any(|t| t.id == tunnel_id && t.host.choice() == HostChoice::Agent(agent_id));
+        if !still_there {
+            self.stop_tunnel(tunnel_id)?;
+            return Err(TerminalError::TunnelError(format!(
+                "Tunnel {tunnel_id} was moved or deleted while it was starting"
+            )));
+        }
+        Ok(())
     }
 
-    /// Stop an agent-hosted tunnel, if `tunnel_id` is one. Returns `true` when a
-    /// handle was found and a `tunnel.stop` sent to the agent (best-effort — the
-    /// desktop drops its handle regardless so the UI reflects the stop).
-    fn stop_agent_tunnel(&self, tunnel_id: &str) -> bool {
-        let Some(handle) = self.agent_tunnels.remove(tunnel_id) else {
-            return false;
-        };
-        if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
-            // Build the request from the shared `TunnelStopParams` DTO (DUP-001).
-            match serde_json::to_value(TunnelStopParams {
-                tunnel_id: tunnel_id.to_string(),
-            }) {
-                Ok(params) => {
-                    if let Err(e) = agent_manager.send_request(
-                        &handle.agent_id,
-                        termihub_core::protocol::methods::TUNNEL_STOP,
-                        params,
-                    ) {
-                        tracing::warn!(
-                            "Failed to stop agent-hosted tunnel {} on agent {}: {}",
-                            tunnel_id,
-                            handle.agent_id,
-                            e
-                        );
-                    }
-                }
-                Err(e) => tracing::warn!(
-                    "tunnel.stop params serialize for {} failed: {}",
-                    tunnel_id,
-                    e
-                ),
+    /// Send the stop that agent `agent_id` owes for `tunnel_id`, off this thread
+    /// (a Stop runs on the UI thread). What the agent does not confirm now, the
+    /// poller sends again.
+    fn settle_stop(&self, agent_id: &str, tunnel_id: &str) {
+        self.emit_status(tunnel_id, TunnelStatus::Stopping);
+        let hosted = self.hosted.clone();
+        let app = self.app_handle.clone();
+        let (agent_id, tunnel_id) = (agent_id.to_string(), tunnel_id.to_string());
+        tauri::async_runtime::spawn_blocking(move || {
+            let confirmed = agent_rpc_client(&app).is_some_and(|client| {
+                hosted.send_owed_stop(client.as_ref(), &agent_id, &tunnel_id, Instant::now())
+            });
+            if confirmed {
+                tracing::info!("Tunnel {tunnel_id} stopped on agent {agent_id}");
+                emit_tunnel_status(&app, &tunnel_id, TunnelStatus::Disconnected);
+            } else {
+                tracing::warn!("Agent {agent_id} has not confirmed the stop of {tunnel_id}");
             }
-        }
-        self.emit_status(tunnel_id, TunnelStatus::Disconnected);
-        tracing::info!("Tunnel {} stopped on agent {}", tunnel_id, handle.agent_id);
-        true
+        });
+        self.ensure_status_poller();
     }
 
     /// Ensure the single periodic live-stats emitter task is running.
@@ -1170,7 +1316,7 @@ impl TunnelManager {
     /// poll + stats write-back / projection republish (DUP-020).
     fn ensure_status_poller(&self) {
         self.agent_stats_poller.ensure(AgentTunnelPoll {
-            agent_tunnels: self.agent_tunnels.clone(),
+            hosted: self.hosted.clone(),
             app: self.app_handle.clone(),
         });
     }
@@ -1467,10 +1613,18 @@ impl TunnelManager {
         // from the `Error` resting state to `Disconnected` (GAP 3, #1238).
         clear_last_error(&self.last_errors, tunnel_id);
 
-        // Agent-hosted tunnels live in their own track: send `tunnel.stop` to the
-        // agent and drop the control handle (S3, #2185).
-        if self.stop_agent_tunnel(tunnel_id) {
-            return Ok(());
+        // A tunnel on an agent (S3, #2185) or on its way there: its stop is owed
+        // until the agent confirms it, however long it is away (#6028).
+        match self.hosted.stop(tunnel_id) {
+            StopPlan::StopThere(agent_id) => {
+                self.settle_stop(&agent_id, tunnel_id);
+                return Ok(());
+            }
+            // A start on this computer is cancelled below; one on an agent stops
+            // what it started when it ends.
+            StopPlan::StartWillStop => self.emit_status(tunnel_id, TunnelStatus::Stopping),
+            StopPlan::StoppedWaiting => self.emit_status(tunnel_id, TunnelStatus::Disconnected),
+            StopPlan::Nothing => {}
         }
 
         let tunnel = {
@@ -1562,10 +1716,20 @@ impl TunnelManager {
             }
         }
 
-        // Tear down agent-hosted tunnels too (#2185) — `stop_agent_tunnel` sends
-        // `tunnel.stop` to each agent and drops the handle.
-        for tunnel_id in self.agent_tunnels.ids() {
-            self.stop_agent_tunnel(&tunnel_id);
+        // Tear down agent-hosted tunnels too (#2185), on this thread: nothing
+        // that runs later would still run.
+        let client = agent_rpc_client(&self.app_handle);
+        for tunnel_id in self.hosted.live_ids() {
+            if let StopPlan::StopThere(agent_id) = self.hosted.stop(&tunnel_id) {
+                if let Some(client) = &client {
+                    self.hosted.send_owed_stop(
+                        client.as_ref(),
+                        &agent_id,
+                        &tunnel_id,
+                        Instant::now(),
+                    );
+                }
+            }
         }
 
         // Abort the live-stats emitter promptly on shutdown rather than waiting
@@ -1596,7 +1760,7 @@ impl TunnelManager {
 
         for tunnel in tunnels {
             if tunnel.auto_start {
-                if let Err(e) = self.start_tunnel(&tunnel.id) {
+                if let Err(e) = self.start(&tunnel.id, StartedBy::Itself) {
                     tracing::warn!("Failed to auto-start tunnel {}: {}", tunnel.name, e);
                 }
             }
@@ -1627,7 +1791,7 @@ impl TunnelManager {
             if self.is_tunnel_active(&id) {
                 continue;
             }
-            if let Err(e) = self.start_tunnel(&id) {
+            if let Err(e) = self.start(&id, StartedBy::Itself) {
                 tracing::warn!(
                     tunnel_id = %id,
                     connection_id,
@@ -1694,7 +1858,7 @@ impl TunnelManager {
     }
 }
 
-impl TunnelControl for TunnelManager {
+impl<R: Runtime> TunnelControl for TunnelManager<R> {
     fn tunnel_configs(&self) -> Vec<TunnelConfig> {
         self.get_tunnels().unwrap_or_default()
     }
@@ -1783,7 +1947,11 @@ fn teardown_parts(mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
 
 /// Emit a tunnel status change event to the frontend (free function so the
 /// supervisor task can emit without `&self`).
-fn emit_tunnel_status(app_handle: &AppHandle, tunnel_id: &str, status: TunnelStatus) {
+fn emit_tunnel_status<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    tunnel_id: &str,
+    status: TunnelStatus,
+) {
     // Project the change onto the stateless-UI `tunnels` region (#2150) — the
     // only status channel since the legacy `tunnel-status-changed` event was
     // retired (DEAD2-004, #4344). This is the single status-emit choke point,
@@ -1806,8 +1974,12 @@ fn emit_tunnel_status(app_handle: &AppHandle, tunnel_id: &str, status: TunnelSta
 /// path or under any manager lock, preserving the choke point's deadlock
 /// discipline. The companion is not itself a parent, so its resulting emits do
 /// not recurse here.
-fn orchestrate_companion(app_handle: &AppHandle, parent_id: &str, parent_status: &TunnelStatus) {
-    let Some(manager) = resolve_managed_arc::<TunnelManager, _>(app_handle) else {
+fn orchestrate_companion<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    parent_id: &str,
+    parent_status: &TunnelStatus,
+) {
+    let Some(manager) = resolve_managed_arc::<TunnelManager<R>, _>(app_handle) else {
         return;
     };
     let Some(companion_id) = manager.companion_id_of(parent_id) else {
@@ -1837,11 +2009,11 @@ fn orchestrate_companion(app_handle: &AppHandle, parent_id: &str, parent_status:
 /// guards so the shared session drains exactly once), records the cause as the
 /// durable last-error (#1238), and emits the `Error` resting state.
 #[allow(clippy::too_many_arguments)]
-async fn supervise(
+async fn supervise<R: Runtime>(
     active_tunnels: Arc<Mutex<HashMap<String, ActiveTunnel>>>,
     last_errors: Arc<Mutex<HashMap<String, String>>>,
     reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     tunnel_id: String,
     death: Option<tokio::sync::oneshot::Receiver<()>>,
     liveness: Option<LivenessWatch>,
@@ -1908,7 +2080,7 @@ async fn supervise(
             );
             emit_tunnel_status(&app_handle, &tunnel_id, TunnelStatus::Reconnecting);
         },
-        |_attempt| match resolve_managed_arc::<TunnelManager, _>(&app_handle) {
+        |_attempt| match resolve_managed_arc::<TunnelManager<R>, _>(&app_handle) {
             Some(mgr) => mgr.attempt_reconnect(&tunnel_id),
             None => false,
         },
@@ -2085,10 +2257,10 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::{
         clear_last_error, companion_action, connection_bound_tunnel_ids, find_companion,
-        has_active_tunnels, last_error_for, record_last_error, resolve_managed_arc, resting_status,
-        run_reconnect_loop, stats_from_status_reply, tunnel_host_ssh_config,
-        type_supports_tunneling, wait_forwarder_death, wait_session_death, ActiveTunnel,
-        CompanionAction, ReconnectOutcome, TUNNEL_RECONNECT_POLICY,
+        gone_tunnel, has_active_tunnels, last_error_for, record_last_error, resolve_managed_arc,
+        resting_status, run_reconnect_loop, tunnel_host_ssh_config, type_supports_tunneling,
+        wait_forwarder_death, wait_session_death, ActiveTunnel, CompanionAction, GoneTunnel,
+        ReconnectOutcome, TUNNEL_RECONNECT_POLICY,
     };
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
     use tauri::Manager;
@@ -2919,41 +3091,6 @@ mod tests {
         );
     }
 
-    /// #2199: a running `tunnel.status` reply yields the parsed live stats, which
-    /// the poller writes back onto the agent handle so the projection shows real
-    /// ↑/↓ bytes + connection counts instead of frozen zeros.
-    #[test]
-    fn stats_from_running_status_reply_are_parsed() {
-        let reply = serde_json::json!({
-            "running": true,
-            "stats": {
-                "bytesSent": 2048,
-                "bytesReceived": 4096,
-                "activeConnections": 3,
-                "totalConnections": 7
-            },
-            "boundAddress": "127.0.0.1:5432",
-            "reachableFrom": "agentOnly"
-        });
-        let stats = stats_from_status_reply(&reply).expect("running reply yields stats");
-        assert_eq!(stats.bytes_sent, 2048);
-        assert_eq!(stats.bytes_received, 4096);
-        assert_eq!(stats.active_connections, 3);
-        assert_eq!(stats.total_connections, 7);
-    }
-
-    /// #2199: a not-running reply (tunnel gone on the agent) contributes no
-    /// sample, so the poller leaves the handle's last-known stats untouched
-    /// rather than flickering them to zero.
-    #[test]
-    fn stats_from_not_running_status_reply_are_ignored() {
-        let reply = serde_json::json!({ "running": false });
-        assert!(stats_from_status_reply(&reply).is_none());
-        // A running reply that somehow omits stats is likewise skipped.
-        let no_stats = serde_json::json!({ "running": true });
-        assert!(stats_from_status_reply(&no_stats).is_none());
-    }
-
     /// A tunnel's connect runs named after the tunnel (#5943): a host-key
     /// prompt raised by the handshake — which blocks on the calling thread —
     /// names the tunnel, and nothing leaks past the connect.
@@ -3061,6 +3198,9 @@ mod tests {
             TunnelStatus::Reconnecting,
             TunnelStatus::Disconnected,
             TunnelStatus::Error,
+            TunnelStatus::Waiting,
+            TunnelStatus::Stopping,
+            TunnelStatus::MissingConnection,
         ] {
             assert_eq!(
                 companion_action(&status, true),
@@ -3074,6 +3214,28 @@ mod tests {
                 "down companion left alone for parent {status:?}"
             );
         }
+    }
+
+    /// #6028: an agent that loses the desktop does not lose its tunnel, so the
+    /// hop to it keeps its connections; nor does a down hop come up on a guess.
+    #[test]
+    fn companion_action_leaves_the_companion_alone_while_the_parent_is_not_reachable() {
+        for running in [true, false] {
+            assert_eq!(
+                companion_action(&TunnelStatus::NotReachable, running),
+                CompanionAction::None
+            );
+        }
+    }
+
+    /// #6028: the agent is back without the tunnel.
+    #[test]
+    fn a_tunnel_that_is_gone_starts_again_only_when_it_reconnects() {
+        assert_eq!(gone_tunnel(false, false), GoneTunnel::Stopped);
+        assert_eq!(gone_tunnel(false, true), GoneTunnel::StartAgain);
+        // Its start got no answer: it did not run, so there is nothing to resume.
+        assert_eq!(gone_tunnel(true, true), GoneTunnel::NotStarted);
+        assert_eq!(gone_tunnel(true, false), GoneTunnel::NotStarted);
     }
 
     // ── DUP-019: typed agent-tunnel forward-spec wire bridge ─────────────
@@ -3125,25 +3287,25 @@ mod tests {
         // `preserve_order`), so the internally-tagged `mode` key lands exactly
         // where the old appended literal did. Changing any of these strings is a
         // WIRE BREAK — the agent deserializes them.
-        let local = serde_json::to_value(super::TunnelManager::forward_spec(&TunnelType::Local(
-            sample_local(),
-        )))
+        let local = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+            &TunnelType::Local(sample_local()),
+        ))
         .expect("serialize local forward");
         assert_eq!(
             serde_json::to_string(&local).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":5432,"mode":"local","remoteHost":"db.internal","remotePort":5433}"#
         );
 
-        let remote = serde_json::to_value(super::TunnelManager::forward_spec(&TunnelType::Remote(
-            sample_remote(),
-        )))
+        let remote = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+            &TunnelType::Remote(sample_remote()),
+        ))
         .expect("serialize remote forward");
         assert_eq!(
             serde_json::to_string(&remote).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":3000,"mode":"remote","remoteHost":"0.0.0.0","remotePort":8080}"#
         );
 
-        let dynamic = serde_json::to_value(super::TunnelManager::forward_spec(
+        let dynamic = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
             &TunnelType::Dynamic(sample_dynamic()),
         ))
         .expect("serialize dynamic forward");
@@ -3170,8 +3332,10 @@ mod tests {
                 TunnelType::Dynamic(c) => serde_json::to_value(c).unwrap(),
             };
             legacy["mode"] = serde_json::json!(mode);
-            let typed =
-                serde_json::to_value(super::TunnelManager::forward_spec(&tunnel_type)).unwrap();
+            let typed = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+                &tunnel_type,
+            ))
+            .unwrap();
             assert_eq!(
                 serde_json::to_string(&typed).unwrap(),
                 serde_json::to_string(&legacy).unwrap(),
@@ -3204,8 +3368,10 @@ mod tests {
             ),
         ];
         for (tunnel_type, agent_spec, expected_mode) in cases {
-            let wire =
-                serde_json::to_value(super::TunnelManager::forward_spec(&tunnel_type)).unwrap();
+            let wire = serde_json::to_value(super::TunnelManager::<tauri::Wry>::forward_spec(
+                &tunnel_type,
+            ))
+            .unwrap();
             let agent_mode = serde_json::to_value(&agent_spec).unwrap()["mode"].clone();
             assert_eq!(
                 wire["mode"], agent_mode,
@@ -3243,7 +3409,8 @@ mod tests {
         // sides, so the only thing this pins is the top-level camelCase wrapper
         // (`tunnelId`/`sshConfig`/`forward`) the desktop used to build by hand.
         let ssh_config = SshConfig::default();
-        let forward = super::TunnelManager::forward_spec(&TunnelType::Local(sample_local()));
+        let forward =
+            super::TunnelManager::<tauri::Wry>::forward_spec(&TunnelType::Local(sample_local()));
 
         // Pre-migration hand-built shape.
         let legacy = serde_json::json!({
@@ -3436,3 +3603,7 @@ mod tests {
         assert!(err.contains("conn-4") && err.contains("no host"), "{err}");
     }
 }
+
+#[cfg(test)]
+#[path = "tunnel_manager_agent_tests.rs"]
+mod agent_tests;

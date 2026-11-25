@@ -119,6 +119,22 @@ describe("tunnelSlice — start/reconnect toast resolves on connected, not on ac
     vi.clearAllMocks();
   });
 
+  // #6028: the row says how it goes on from here; a pending toast would never end.
+  it.each(["notReachable", "waiting", "stopping"] as const)(
+    "dismisses the pending toast when the start ends as %s",
+    async (status) => {
+      const t1 = makeTunnel("t1", "db");
+      await useAppStore.getState().loadTunnels();
+      pushView({ t1: makeState("t1", "disconnected") }, [t1]);
+      await useAppStore.getState().startTunnel("t1");
+      pushView({ t1: makeState("t1", "connecting") }, [t1]);
+      expect(toastMock.dismiss).not.toHaveBeenCalled();
+      pushView({ t1: makeState("t1", status, "why") }, [t1]);
+      expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
+      expect(toastMock.error).not.toHaveBeenCalled();
+    }
+  );
+
   it("holds the toast pending on ack and dismisses it only on connected", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();

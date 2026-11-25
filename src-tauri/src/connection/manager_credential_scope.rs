@@ -14,6 +14,7 @@ use crate::connection::config::{ConnectionFolder, SavedConnection};
 use crate::connection::credential_scope::{
     migrate_legacy_keys, owner_id, same_file, LegacyHolders, ScopeNotice,
 };
+use crate::connection::jump_host_resolver::{chain_has_reference, inline_hop_has_password};
 use crate::connection::placement::PlaceMode;
 use crate::connection::recovery::RecoveryWarning;
 use crate::connection::secret_fields::{
@@ -110,6 +111,24 @@ impl ConnectionManager {
         if let Err(e) = restore_saved_field_secrets(&*self.credential_store, &owner, settings) {
             tracing::warn!(connection_id, error = %e, "Could not restore saved connection secrets");
         }
+    }
+
+    /// Whether connecting through saved connection `connection_id` needs a
+    /// secret of its jump hosts that is behind the locked credential store
+    /// (#6028): its automatic start then waits for the unlock.
+    pub fn jump_hosts_need_unlock(&self, connection_id: &str) -> bool {
+        if self.credential_store.status() != CredentialStoreStatus::Locked {
+            return false;
+        }
+        let Ok((conn, _)) = self.transfer_connection(connection_id) else {
+            return false;
+        };
+        let settings = &conn.config.settings;
+        inline_hop_has_password(settings)
+            || (chain_has_reference(settings)
+                && self
+                    .resolve_jump_host_refs(&mut settings.clone(), Some(connection_id))
+                    .is_err())
     }
 
     /// The schema secrets other than `password` stored for connection

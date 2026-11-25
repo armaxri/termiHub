@@ -107,7 +107,8 @@ export function findCompanion(tunnels: TunnelConfig[], parentId: string): Tunnel
  * The combined status of a chained pair — the single value the UI shows so the
  * user reasons about "does `localhost:PORT` work?" rather than juggling two rows.
  *
- * - `none` — the parent has no companion (render the plain single-tunnel status).
+ * - `none` — the parent has no companion (render the plain single-tunnel status),
+ *   or it cannot be told (its agent is offline).
  * - `connected` — parent + companion both connected; `localhost:PORT` works.
  * - `connecting` — parent connected, companion still coming up (almost there).
  * - `degraded` — parent connected but companion down; the agent port works,
@@ -126,6 +127,9 @@ export function combinedPairStatus(
   hasCompanion: boolean
 ): PairStatus {
   if (!hasCompanion) return "none";
+  // Its agent is offline: the pair may work or not, and the parent's row says so
+  // (#6028). Nothing to add on a guess.
+  if (parentStatus === "notReachable") return "none";
   // The parent must be connected for the companion to carry traffic; otherwise
   // the whole pair is down (the companion is held down behind its parent).
   if (parentStatus !== "connected") return "down";

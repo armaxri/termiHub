@@ -3085,6 +3085,46 @@ kept an agent choice in memory only, so it cannot be recovered: the user has to 
 An older build that opens the file keeps the field but does not read it, and starts the server on
 this computer.
 
+### What a Service's Row Says (#6028)
+
+`HostedServices` (`src-tauri/src/agent_service/hosted.rs`) is the one record of what the desktop
+knows about its services on agents, for tunnels and file servers alike. Only the agent can say that
+one runs, so the record keeps apart what a row must not mix up:
+
+```mermaid
+stateDiagram-v2
+  [*] --> Waiting: starts by itself, agent or credential store not there
+  Waiting --> Starting: it is there
+  Waiting --> [*]: Stop waiting, or 30 minutes
+  [*] --> Starting: Start
+  Starting --> Running: the agent answered
+  Starting --> NotReachable: no answer
+  Running --> NotReachable: agent offline, or three status requests unanswered
+  NotReachable --> Running: the agent says it runs
+  NotReachable --> [*]: the agent says it does not
+  Running --> Stopping: Stop
+  NotReachable --> Stopping: Stop
+  Stopping --> [*]: the agent confirmed
+```
+
+- **Waiting** is for starts nobody pressed a button for: with the app, with a connection, or a
+  tunnel that comes back. It starts only the machine the service is stored for. A start the user
+  presses is refused with the reason instead.
+- **A stop wins.** It is owed until the agent confirms it, across a move or a delete of the service,
+  and nothing that starts by itself undoes it. A stop during a start is honoured when it ends.
+- **One start at a time.** A start, a wait and what may run there exclude each other, under one
+  lock. An answer about an earlier run of the same service is dropped by its sequence number.
+- **A start without an answer** may have worked. `running: false` ends that doubt only after 30 s.
+- A tunnel whose agent is back without it starts again only when it reconnects on disconnect. The
+  hop to this computer is left alone while its parent is not reachable.
+
+An agent that is reconnecting is connected but not reachable (`AgentRpcClient::is_reachable`): a
+request to it would only queue, and be sent when nobody expects it any more. The records are in
+memory: a stop that is still owed when the app quits is lost.
+
+In the frontend, `src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
+their words, dots and run buttons.
+
 ### Embedded FTP Server Front Relay
 
 The embedded FTP server (`core/src/embedded_servers/ftp_server.rs`) is built on

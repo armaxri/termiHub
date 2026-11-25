@@ -76,6 +76,9 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
     ["connected", "Stop", "Running"],
     ["reconnecting", "Stop", "Reconnecting"],
     ["error", "Retry", "Error"],
+    ["waiting", "Stop waiting", "Waiting"],
+    ["stopping", "Stop", "Stopping"],
+    ["notReachable", "Stop", "Not reachable"],
   ])("status %s: the run control is %s and the dot reads %s", (status, control, dot) => {
     render(status);
     expect(primaryLabels()).toEqual([control]);
@@ -105,7 +108,7 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
     expect(q('[data-testid="tunnel-primary-tun-1"]')).toBeNull();
     expect(q('[data-testid="tunnel-start-tun-1"]')).toBeNull();
     expect(q('[data-testid="tunnel-status-tun-1"]')!.getAttribute("title")).toBe(
-      "SSH connection deleted"
+      "Needs a connection"
     );
   });
 });
