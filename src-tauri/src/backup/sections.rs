@@ -783,6 +783,36 @@ pub fn merge(
     }
 }
 
+/// For a restore of services: an entry the backup has no host for keeps the one
+/// this machine stores (#6028). A backup from before the host was stored must
+/// not move a server that is set to an agent to this computer.
+pub fn keep_current_hosts(spec: &SectionSpec, doc: &mut Value, current: &Value) {
+    let Shape::List { field } = spec.shape else {
+        return;
+    };
+    if !HOSTED_SECTIONS.contains(&spec.id) {
+        return;
+    }
+    let (Some(items), Some(current)) = (
+        doc.get_mut(field).and_then(Value::as_array_mut),
+        current.get(field).and_then(Value::as_array),
+    ) else {
+        return;
+    };
+    for item in items {
+        let stored = current
+            .iter()
+            .find(|c| c.get("id").is_some() && c.get("id") == item.get("id"))
+            .and_then(|c| c.get("host"));
+        if let (Some(item), Some(host)) = (item.as_object_mut(), stored) {
+            item.entry("host").or_insert_with(|| host.clone());
+        }
+    }
+}
+
+/// The sections whose entries say which machine they run on.
+const HOSTED_SECTIONS: &[&str] = &["tunnels", "embeddedServers"];
+
 /// For a settings replace: keep this machine's credential-storage keys.
 pub fn preserve_local_settings(backup: &mut Value, current: Option<&Value>) {
     let Some(obj) = backup.as_object_mut() else {

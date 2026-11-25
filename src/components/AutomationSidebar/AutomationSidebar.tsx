@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { ArrowDownUp, CircleDot, Keyboard, ListPlus, Plus } from "lucide-react";
+import { ArrowDownUp, CircleDot, Keyboard, ListPlus, Plus, Square } from "lucide-react";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
@@ -59,7 +59,9 @@ export function AutomationSidebar() {
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const toggleRecording = useAppStore((s) => s.toggleRecording);
+  const recordInNewTerminal = useAppStore((s) => s.recordInNewTerminal);
   const recording = useAppStore((s) => s.recording !== null);
+  const recordingIntoEditor = useAppStore((s) => s.recording?.intoEditor != null);
   // Where Run types (R-113, R-119): the active terminal tab's title.
   const runTarget = useAppStore((s) => {
     const tab = getActiveTab(s);
@@ -271,14 +273,25 @@ export function AutomationSidebar() {
           },
           {
             id: "record",
-            label: recording ? "Stop recording" : "Record",
-            tooltip: recording
-              ? "Stop recording and name the automation"
-              : runTarget === null
-                ? "Open a terminal to record in"
-                : `Record what you type in ${runTarget}`,
-            disabled: !recording && runTarget === null,
-            icon: <CircleDot size={12} />,
+            label: recording && !recordingIntoEditor ? "Stop recording" : "Record",
+            tooltip: recordingIntoEditor
+              ? "The bar above the terminals stops it and returns to the automation"
+              : recording
+                ? "Stop recording and name the automation"
+                : runTarget === null
+                  ? "Open a terminal to record in"
+                  : `Record what you type in ${runTarget}`,
+            disabled: recordingIntoEditor || (!recording && runTarget === null),
+            icon:
+              recording && !recordingIntoEditor ? (
+                <Square
+                  size={12}
+                  fill="currentColor"
+                  className="automation-sidebar__stop-recording"
+                />
+              ) : (
+                <CircleDot size={12} />
+              ),
             onClick: toggleRecording,
             testId: "automation-record-btn",
           },
@@ -304,10 +317,18 @@ export function AutomationSidebar() {
                 <Button
                   size="sm"
                   icon={<CircleDot size={14} />}
-                  onClick={toggleRecording}
+                  onClick={
+                    !recording && runTarget === null
+                      ? () => void recordInNewTerminal()
+                      : toggleRecording
+                  }
                   data-testid="automation-empty-record-btn"
                 >
-                  {recording ? "Stop recording" : "Record"}
+                  {recording
+                    ? "Stop recording"
+                    : runTarget === null
+                      ? "Open a terminal and record"
+                      : "Record"}
                 </Button>
                 <Button
                   variant="secondary"

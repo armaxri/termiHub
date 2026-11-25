@@ -98,6 +98,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const recordedTabId = useAppStore((s) => s.recording?.tabId);
   const stopRecording = useAppStore((s) => s.stopRecording);
   const macroPlayback = useAppStore((s) => s.macroPlayback);
+  const automationWaits = useAppStore((s) => s.automationWaits);
   const cancelMacroPlaybackOnTab = useAppStore((s) => s.cancelMacroPlaybackOnTab);
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
   const { workflowRuns } = useProjectedWorkflowRun();
@@ -294,7 +295,12 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
               isRecording={recordedTabId === tab.id}
               onStopRecording={() => stopRecording()}
-              runningAutomation={runningAutomationOnTab(macroPlayback, workflowRuns, tab.id)}
+              runningAutomation={runningAutomationOnTab(
+                macroPlayback,
+                workflowRuns,
+                tab.id,
+                automationWaits
+              )}
               onStopAutomation={() => {
                 const running = runningAutomationOnTab(macroPlayback, workflowRuns, tab.id);
                 if (running?.stop.kind === "macro") cancelMacroPlaybackOnTab(tab.id);

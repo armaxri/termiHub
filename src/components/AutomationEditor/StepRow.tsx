@@ -3,19 +3,21 @@ import { flushSync } from "react-dom";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ChevronRight, GripVertical, TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { fromStepDraft, type StepDraft } from "./automationDraft";
 import { FailureOptions } from "./FailureOptions";
 import { useStepEditor } from "./stepEditorContext";
 import { StepFields } from "./StepFields";
 import {
+  LOCAL_PROCESS_STEP_REASON,
   UNKNOWN_STEP_REASON,
   isKnownStepKind,
   stepKindIcon,
   stepKindLabel,
   stepNotes,
   stepSummary,
+  type AutomationStepKind,
 } from "./stepMeta";
 import { StepRowMenu } from "./StepRowMenu";
 
@@ -32,6 +34,10 @@ export interface StepRowProps {
   onMove: (direction: -1 | 1, keepFocus: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  /** Path of the nested list it sits in, if any. */
+  nestedIn?: string;
+  /** Add a step after this one; returns what to do once the menu closed. */
+  onAddBelow: (kind: AutomationStepKind) => () => void;
 }
 
 /**
@@ -48,8 +54,11 @@ export function StepRow({
   onMove,
   onDuplicate,
   onDelete,
+  nestedIn,
+  onAddBelow,
 }: StepRowProps) {
-  const { automations, expanded, setExpanded, failureOpen, showFailure, errors } = useStepEditor();
+  const { automations, expanded, setExpanded, failureOpen, showFailure, errors, openSettings } =
+    useStepEditor();
   const experimental = useExperimentalFeatures();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: draft.uid,
@@ -67,9 +76,11 @@ export function StepRow({
   const blocked = !isKnownStepKind(step.kind)
     ? UNKNOWN_STEP_REASON
     : step.kind === "run-local-process" && !experimental
-      ? LOCAL_PROCESS_REASON
+      ? LOCAL_PROCESS_STEP_REASON
       : null;
-  const hasPolicy = step.continueOnError === true || step.retry !== undefined;
+  // A wait for the user never goes on by itself, so nothing of it can fail softly.
+  const hasFailure = step.kind !== "wait-for-user";
+  const hasPolicy = hasFailure && (step.continueOnError === true || step.retry !== undefined);
   const bodyId = `automation-step-body-${path}`;
 
   /** Open the row, then focus a field of it. */
@@ -154,10 +165,16 @@ export function StepRow({
           path={path}
           index={index}
           total={total}
-          onFailure={() => {
-            flushSync(() => showFailure(draft.uid));
-            openAndFocus(`#automation-step-on-failure-${path}`);
-          }}
+          nestedIn={nestedIn}
+          onAddBelow={onAddBelow}
+          onFailure={
+            hasFailure
+              ? () => {
+                  flushSync(() => showFailure(draft.uid));
+                  openAndFocus(`#automation-step-on-failure-${path}`);
+                }
+              : undefined
+          }
           onSpeed={
             step.kind === "type-keys"
               ? () => openAndFocus(`#automation-step-speed-${path}`)
@@ -175,15 +192,25 @@ export function StepRow({
           data-testid={`automation-editor-step-body-${path}`}
         >
           {blocked !== null && (
-            <p
+            <div
               className="automation-step__note automation-step__note--warning"
               data-testid={`automation-editor-step-blocked-${path}`}
             >
-              {blocked}
-            </p>
+              {blocked}{" "}
+              {blocked === LOCAL_PROCESS_STEP_REASON && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={openSettings}
+                  data-testid={`automation-editor-step-open-settings-${path}`}
+                >
+                  Open settings
+                </Button>
+              )}
+            </div>
           )}
           <StepFields draft={draft} path={path} stepNumber={index + 1} onChange={onChange} />
-          {(hasPolicy || failureOpen.has(draft.uid)) && (
+          {(hasPolicy || (hasFailure && failureOpen.has(draft.uid))) && (
             <FailureOptions
               path={path}
               step={draft.step}

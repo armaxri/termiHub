@@ -2,28 +2,31 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { useRunLocationStore } from "@/store/runLocationStore";
 import { ConfirmDialog, toast, EmptyState } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
-import { EmbeddedServerConfig } from "@/types/embeddedServer";
-import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
-import { THIS_COMPUTER, encodeRunLocation, type RunLocation } from "@/utils/runLocation";
+import { EmbeddedServerConfig, ServerStatus } from "@/types/embeddedServer";
+import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
 import "./EmbeddedServerSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
 
+/** Whether a server in `status` holds its port, so moving it stops it. */
+function isRunning(status: ServerStatus | undefined): boolean {
+  return status === "running" || status === "starting";
+}
+
+/** Whether `config` signs clients in with a password (kept in the credential store). */
+function hasPassword(config: EmbeddedServerConfig): boolean {
+  return !!config.httpAuth || config.ftpAuth?.type === "credentials";
+}
+
 /**
  * Services sidebar panel for managing embedded HTTP/FTP/TFTP servers.
  */
-/** Whether two run-locations name the same machine. */
-function sameRunLocation(a: RunLocation, b: RunLocation): boolean {
-  return encodeRunLocation(a) === encodeRunLocation(b);
-}
-
 export function EmbeddedServerSidebar() {
   const servers = useAppStore((s) => s.embeddedServers);
   const serverStates = useAppStore((s) => s.embeddedServerStates);
@@ -32,28 +35,10 @@ export function EmbeddedServerSidebar() {
   const deleteEmbeddedServer = useAppStore((s) => s.deleteEmbeddedServer);
   const startEmbeddedServer = useAppStore((s) => s.startEmbeddedServer);
   const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
-  const serverLocations = useRunLocationStore((s) => s.serverLocations);
-  const setServerLocation = useRunLocationStore((s) => s.setServerLocation);
-
-  // Record a server's run-location: mirror it UI-side (optimistic) and persist
-  // it on the desktop backend, which routes the server's next start. Roll back
-  // and surface a toast if the backend rejects the choice.
-  const handleRunLocationChange = useCallback(
-    (serverId: string, location: RunLocation) => {
-      const previous = serverLocations[serverId] ?? THIS_COMPUTER;
-      setServerLocation(serverId, location);
-      setEmbeddedServerRunLocation(serverId, location).catch((err: unknown) => {
-        setServerLocation(serverId, previous);
-        toast.error("Couldn't change run location", {
-          description: errorMessage(err),
-        });
-      });
-    },
-    [serverLocations, setServerLocation]
-  );
-
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<EmbeddedServerConfig | null>(null);
+  // A copy that has to be given its password before it is saved (#6028, F-4).
+  const [copyDraft, setCopyDraft] = useState<EmbeddedServerConfig | null>(null);
 
   // Delete confirmation for a server (running servers are stopped first). The
   // target is the server id; the dialog message depends on the live running
@@ -71,6 +56,7 @@ export function EmbeddedServerSidebar() {
 
   const handleNew = useCallback(() => {
     setEditingConfig(null);
+    setCopyDraft(null);
     setDialogOpen(true);
   }, []);
 
@@ -79,6 +65,7 @@ export function EmbeddedServerSidebar() {
       const cfg = servers.find((s) => s.id === id);
       if (cfg) {
         setEditingConfig(cfg);
+        setCopyDraft(null);
         setDialogOpen(true);
       }
     },
@@ -88,21 +75,23 @@ export function EmbeddedServerSidebar() {
   /**
    * Persist a server from the dialog. Resolves `true` when the save succeeded
    * (so the dialog closes) and `false` on failure (dialog stays open to retry).
+   *
+   * The host goes along only when the user chose another machine (#6028): the
+   * backend keeps the stored one otherwise, so a list that is out of date in
+   * this window cannot move the server.
    */
   const handleSave = useCallback(
-    async (config: EmbeddedServerConfig, location: RunLocation): Promise<boolean> => {
+    async (config: EmbeddedServerConfig, location: HostChoice): Promise<boolean> => {
       const isNew = !config.id;
-      const cfg = isNew
-        ? {
-            ...config,
-            id: newId("srv"),
-          }
-        : config;
+      const { host: stored, ...rest } = config;
+      const moved = location.kind !== "unreadable" && !sameHost(hostChoice(stored), location);
+      const cfg: EmbeddedServerConfig = {
+        ...rest,
+        ...(isNew ? { id: newId("srv") } : {}),
+        ...(location.kind !== "unreadable" && (isNew || moved) ? { host: location } : {}),
+      };
       try {
         await saveEmbeddedServer(cfg);
-        if (!sameRunLocation(serverLocations[cfg.id] ?? THIS_COMPUTER, location)) {
-          handleRunLocationChange(cfg.id, location);
-        }
         return true;
       } catch (err) {
         toast.error(`Failed to save "${cfg.name}"`, {
@@ -111,7 +100,7 @@ export function EmbeddedServerSidebar() {
         return false;
       }
     },
-    [saveEmbeddedServer, serverLocations, handleRunLocationChange]
+    [saveEmbeddedServer]
   );
 
   const handleDuplicate = useCallback(
@@ -124,6 +113,14 @@ export function EmbeddedServerSidebar() {
         name: `Copy of ${original.name}`,
         autoStart: false,
       };
+      // The password stays with the original, so a copy that needs one opens in
+      // the editor instead of being saved in a state that cannot start.
+      if (hasPassword(original)) {
+        setEditingConfig(null);
+        setCopyDraft({ ...dupe, id: "" });
+        setDialogOpen(true);
+        return;
+      }
       try {
         await saveEmbeddedServer(dupe);
       } catch (err) {
@@ -202,7 +199,7 @@ export function EmbeddedServerSidebar() {
                 config={cfg}
                 state={serverStates[cfg.id]}
                 agents={agents}
-                runLocation={serverLocations[cfg.id] ?? THIS_COMPUTER}
+                runLocation={hostChoice(cfg.host)}
                 onStart={startEmbeddedServer}
                 onStop={stopEmbeddedServer}
                 onEdit={handleEdit}
@@ -222,9 +219,9 @@ export function EmbeddedServerSidebar() {
         config={editingConfig}
         onSave={handleSave}
         agents={agents}
-        runLocation={
-          editingConfig ? (serverLocations[editingConfig.id] ?? THIS_COMPUTER) : THIS_COMPUTER
-        }
+        draft={copyDraft}
+        running={editingConfig ? isRunning(serverStates[editingConfig.id]?.status) : false}
+        runLocation={hostChoice((editingConfig ?? copyDraft)?.host)}
       />
 
       <ConfirmDialog

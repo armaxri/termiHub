@@ -78,7 +78,9 @@
 }
 
 .ui-btn.terminal-view__state-chip--broadcast,
-.ui-btn.terminal-view__state-chip--broadcast:hover {
+.ui-btn.terminal-view__state-chip--broadcast:hover,
+.ui-btn.terminal-view__state-chip--run,
+.ui-btn.terminal-view__state-chip--run:hover {
   color: var(--text-accent);
 }
 

@@ -25,7 +25,7 @@ describe("values nobody is there to enter (A-047)", () => {
   it("a required value without a default keeps it from running", () => {
     const asks = automation({ parameters: [{ name: "env", type: "string", required: true }] });
     expect(unattendedParamValues(asks.parameters!)).toEqual({ missing: "env" });
-    expect(unattendedBlockedReason(asks)).toContain("it asks for “env”");
+    expect(unattendedBlockedReason(asks, nobody)).toContain("it asks for “env”");
     expect(unattendedDefaults(asks)).toBeNull();
   });
 
@@ -36,14 +36,32 @@ describe("values nobody is there to enter (A-047)", () => {
         { name: "note", type: "string" },
       ],
     });
-    expect(unattendedBlockedReason(asks)).toBeNull();
+    expect(unattendedBlockedReason(asks, nobody)).toBeNull();
     expect(unattendedDefaults(asks)).toBe(
       "Does not ask, it uses the default values: Environment = dev, note = (empty)."
     );
   });
 
+  it("a step that waits for the user keeps it from running, also in one it runs (#6025)", () => {
+    const waits = automation({
+      id: "w",
+      steps: [
+        {
+          kind: "loop",
+          loop: { kind: "count", count: 1 },
+          body: [{ kind: "wait-for-user" }],
+        },
+      ],
+    });
+    const calls = automation({ id: "c", steps: [{ kind: "run-automation", automationId: "w" }] });
+    const find = (id: string) => (id === "w" ? waits : undefined);
+    expect(unattendedBlockedReason(waits, nobody)).toContain("stops to let you type");
+    expect(unattendedBlockedReason(calls, find)).toContain("stops to let you type");
+    expect(unattendedBlockedReason(calls, nobody)).toBeNull();
+  });
+
   it("says nothing when nothing is asked", () => {
-    expect(unattendedBlockedReason(automation())).toBeNull();
+    expect(unattendedBlockedReason(automation(), nobody)).toBeNull();
     expect(unattendedDefaults(automation())).toBeNull();
   });
 });

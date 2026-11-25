@@ -17,6 +17,7 @@ const AUTOMATION_CODE =
 
 const ALLOWED: Record<string, string> = {
   "components/AutomationEditor/AddStepMenu.tsx": "offers the Run local process step",
+  "components/AutomationEditor/AutomationEditorDialog.tsx": "Save and run says it cannot run",
   "components/AutomationEditor/StepRow.tsx": "says a Run local process step will not run",
   "components/Schedules/ScheduleEditorDialog.tsx": "offers no automation that reaches the step",
   "components/Schedules/useScheduleLabels.ts": "says why a schedule of one will not run",

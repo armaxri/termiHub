@@ -10,22 +10,22 @@
  * directly and the components stay thin renderers.
  */
 
-import type {
-  PortValue,
-  ReachableFrom,
-  RunLocation,
-  TunnelConfig,
-  TunnelType,
-} from "@/types/tunnel";
-import { THIS_COMPUTER } from "@/types/tunnel";
+import type { PortValue, ReachableFrom, TunnelConfig, TunnelType } from "@/types/tunnel";
+import { hostChoice, type HostChoice } from "@/utils/hostChoice";
 
-/** A tunnel's effective host, defaulting a missing field to This computer. */
-export function resolveTunnelHost(config: Pick<TunnelConfig, "host">): RunLocation {
-  return config.host ?? THIS_COMPUTER;
+/** What the UI calls a host this build cannot read (#6028). */
+const UNKNOWN_MACHINE = "an unknown machine";
+
+/**
+ * A tunnel's host, defaulting a missing field to This computer. A host this
+ * build cannot read stays unreadable (#6028).
+ */
+export function resolveTunnelHost(config: Pick<TunnelConfig, "host">): HostChoice {
+  return hostChoice(config.host);
 }
 
 /** Narrow a run-location to the agent variant. */
-export function isAgentHost(host: RunLocation): host is { kind: "agent"; agentId: string } {
+export function isAgentHost(host: HostChoice): host is { kind: "agent"; agentId: string } {
   return host.kind === "agent";
 }
 
@@ -35,17 +35,21 @@ export function isAgentHost(host: RunLocation): host is { kind: "agent"; agentId
  * resolved human name for the host agent, falling back to the raw id.
  */
 export function tunnelHostBadge(
-  host: RunLocation,
+  host: HostChoice,
   agentName?: string
-): { label: string; onAgent: boolean } {
+): { label: string; onAgent: boolean; unreadable?: boolean } {
   if (isAgentHost(host)) {
     return { label: agentName || host.agentId, onAgent: true };
+  }
+  if (host.kind === "unreadable") {
+    return { label: UNKNOWN_MACHINE, onAgent: false, unreadable: true };
   }
   return { label: "this computer", onAgent: false };
 }
 
 /** The concrete machine name used inside endpoint copy ("agent build-box"). */
-export function tunnelHostMachine(host: RunLocation, agentName?: string): string {
+export function tunnelHostMachine(host: HostChoice, agentName?: string): string {
+  if (host.kind === "unreadable") return UNKNOWN_MACHINE;
   return isAgentHost(host) ? `agent ${agentName || host.agentId}` : "this computer";
 }
 
@@ -77,7 +81,8 @@ export interface TunnelEndpointLine {
 }
 
 /** The "who can reach this" note for a listen socket on the tunnel host. */
-function listenReach(host: RunLocation, bindHost: string, agentName?: string): string {
+function listenReach(host: HostChoice, bindHost: string, agentName?: string): string {
+  if (host.kind === "unreadable") return "not started until you choose a machine";
   const loopback = isLoopbackBind(bindHost);
   if (isAgentHost(host)) {
     const name = agentName || host.agentId;
@@ -95,7 +100,7 @@ function listenReach(host: RunLocation, bindHost: string, agentName?: string): s
  */
 export function tunnelEndpointLines(
   tunnelType: TunnelType,
-  host: RunLocation,
+  host: HostChoice,
   opts: { agentName?: string; sshLabel?: string } = {}
 ): TunnelEndpointLine[] {
   const { agentName, sshLabel = "SSH connection" } = opts;
@@ -161,7 +166,7 @@ export function tunnelEndpointLines(
  */
 export function tunnelReachabilityWarning(
   tunnelType: TunnelType,
-  host: RunLocation,
+  host: HostChoice,
   agentName?: string
 ): { message: string; bindHost: string } | null {
   if (!isAgentHost(host)) return null;

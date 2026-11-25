@@ -4,10 +4,10 @@ import { ChevronDown, ChevronRight, KeyRound } from "lucide-react";
 import { Button, Field, Input, Modal, RadioGroup, Select } from "@/components/ui";
 import { withoutSecrets } from "@/services/inputRecorder";
 import type { RecordedTake, SaveTakeRequest } from "@/store/slices/recordingSlice";
-import { macroPreviewLines } from "@/components/AutomationEditor/keysFormat";
+import { recordingPreview } from "./recordingPreview";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 import { parseTags } from "@/utils/parseTags";
-import { recordedKeys, recordedTime, recordingName } from "@/utils/recordingText";
+import { recordedTime, recordingName } from "@/utils/recordingText";
 import "./Recording.css";
 
 /** Props of {@link RecordingSaveDialog}. Mount it with a fresh `key` per take. */
@@ -67,7 +67,7 @@ export function RecordingSaveDialog({
   const saveRef = useRef<HTMLButtonElement>(null);
 
   const chunks = keepSecrets ? take.chunks : plain;
-  const preview = useMemo(() => macroPreviewLines(plain), [plain]);
+  const preview = useMemo(() => recordingPreview(take, keepSecrets), [take, keepSecrets]);
   const nothingLeft = chunks.length === 0;
   const nameError = to === "new" && name.trim() === "" ? "Name is required." : undefined;
   const automationError = to === "existing" && !automationId ? "Choose an automation." : undefined;
@@ -117,7 +117,21 @@ export function RecordingSaveDialog({
       data-testid="recording-save-dialog"
       footer={
         <>
-          <Button variant="secondary" onClick={onDiscard} data-testid="recording-save-discard">
+          {/* What the X does, by name (A-009). */}
+          <Button
+            variant="ghost"
+            className="recording-save__keep"
+            onClick={onKeep}
+            data-testid="recording-save-keep"
+          >
+            Keep for later
+          </Button>
+          <Button
+            variant="ghost"
+            className="recording-save__discard"
+            onClick={onDiscard}
+            data-testid="recording-save-discard"
+          >
             Discard recording
           </Button>
           <Button
@@ -142,8 +156,7 @@ export function RecordingSaveDialog({
         )}
         <div className="recording-save__summary" data-testid="recording-save-summary">
           <span>
-            Recorded {recordedKeys(take.chunks.length)} in {take.tabTitle} (
-            {recordedTime(take.durationMs)})
+            Recorded in {take.tabTitle}, {recordedTime(take.durationMs)}
           </span>
           {preview.length > 0 && (
             <pre className="recording-save__preview">
@@ -167,7 +180,8 @@ export function RecordingSaveDialog({
                 options={[
                   {
                     value: "leave-out",
-                    label: "Leave it out: type it yourself when the automation runs",
+                    label:
+                      "Leave it out. The automation waits at this point until you have typed it.",
                     "data-testid": "recording-save-secrets-leave-out",
                   },
                   {
@@ -202,7 +216,12 @@ export function RecordingSaveDialog({
         )}
         {to === "new" ? (
           <>
-            <Field label="Name" htmlFor="recording-save-name" error={tried ? nameError : undefined}>
+            <Field
+              label="Name"
+              htmlFor="recording-save-name"
+              hint="You find it under Automations. Run it there with ▷."
+              error={tried ? nameError : undefined}
+            >
               <Input
                 ref={nameRef}
                 id="recording-save-name"
@@ -253,7 +272,7 @@ export function RecordingSaveDialog({
           <Field
             label="Automation"
             htmlFor="recording-save-automation"
-            hint="The recording becomes its last step."
+            hint="The recording goes after its last step."
             error={tried ? automationError : undefined}
           >
             <Select

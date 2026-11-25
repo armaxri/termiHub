@@ -79,7 +79,7 @@ def _automation(**over: Any) -> dict[str, Any]:
 
 
 def test_grade_plain_keys_pass():
-    assert disclosure_problems([], "Type keys ls⏎ 2 keys, recorded", recorded=True) == []
+    assert disclosure_problems([], "Type keys ls⏎ Recorded", recorded=True) == []
     assert disclosure_problems([], "Type keys ls⏎", recorded=False) == []
 
 
@@ -87,15 +87,16 @@ def test_grade_unasked_options_fail():
     problems = disclosure_problems(["automation-editor-when"], "Type keys ls", recorded=True)
     assert problems == [
         "automation-editor-when shows unasked",
-        "the keys row does not say 'recorded': 'Type keys ls'",
+        "the keys row does not say 'Recorded': 'Type keys ls'",
     ]
 
 
 def test_grade_footer():
-    assert footer_problems(["Cancel", "Save", "Save and run"], is_new=True) == []
-    assert footer_problems(["Cancel", "Save and run", "Save"], is_new=False) == []
-    assert footer_problems(["Cancel", "Save and run", "Save"], is_new=True) != []
-    assert footer_problems(["Cancel", "Save"], is_new=False) != []
+    assert footer_problems(["Cancel", "Save and run…", "Save"]) == []
+    assert footer_problems(["Cancel", "Save and run in web", "Save"], "web") == []
+    assert footer_problems(["Cancel", "Save and run in db", "Save"], "web") != []
+    assert footer_problems(["Cancel", "Save", "Save and run…"]) != []
+    assert footer_problems(["Cancel", "Save"]) != []
 
 
 def test_grade_layout_passes():
@@ -200,7 +201,7 @@ class TestProductRunAutomationEditor(
             "Save and run types into the terminal",
             expect="the New automation dialog: Name, Description, one Type keys step with its "
             "row of keys and a Typing speed; closed 'When it runs' and 'Tags'; footer Cancel, "
-            "Save, Save and run",
+            "Save and run in <terminal>, Save",
             screenshot=False,
         ):
             name = f"pr-editor-{t}"
@@ -217,14 +218,14 @@ class TestProductRunAutomationEditor(
             footer = self._footer()
             self.evidence(f"shown {shown}; row {row!r}; footer {footer}")
             problems = disclosure_problems(shown, row, recorded=False)
-            problems += footer_problems(footer, is_new=True)
+            problems += footer_problems(footer, name)
             self.driver.type("automation-editor-name", f"Typed {t}")
             self.driver.type("automation-editor-keys-text-0-0", f"echo PR_EDIT_$((40+2))_{t}")
             self.driver.press_key("Enter", "automation-editor-keys-text-0-0")
             typed = self.driver.get_value("automation-editor-keys-text-0-0")
             self.evidence(f"keys after Enter: {typed!r}")
             self.shot(label="keys")
-            if not typed.endswith("\\r"):
+            if not typed.endswith("⏎"):
                 problems.append(f"Enter in the keys gave {typed!r}")
             if not self.editor_open():
                 problems.append("Enter in the keys closed the editor")
@@ -252,7 +253,7 @@ class TestProductRunAutomationEditor(
             shown = [i for i in ON_REQUEST if self.driver.exists(i)]
             row = self.driver.get_text("automation-editor-step-0")
             problems = disclosure_problems(shown, row, recorded=False)
-            problems += footer_problems(self._footer(), is_new=False)
+            problems += footer_problems(self._footer(), f"pr-editor-{self.tag}")
             self.shot(label="stored")
             self.save_editor()
             time.sleep(1.0)  # a rewrite would land within this
@@ -264,7 +265,7 @@ class TestProductRunAutomationEditor(
         with self.step(
             "automation-editor.speed",
             "A Type keys step's speed is saved and used by every start (#5820)",
-            expect="the Type keys step with Typing speed 'Instant' and no delay fields",
+            expect="the Type keys step with Typing speed 'No delay' and no delay fields",
             screenshot=False,
         ):
             self.require("automation-editor.keys")
@@ -302,8 +303,8 @@ class TestProductRunAutomationEditor(
             "Steps are added from the grouped menu, moved with the arrow keys, deleted and "
             "brought back",
             expect="the New automation dialog with the Add step menu open: Type keys, Run "
-            "command, Wait, Wait for output, then More: Condition, Loop, Run script, Run "
-            "automation",
+            "command, Wait, Wait for output, then More: Wait for you, Condition, Loop, Run "
+            "script, Run automation, each with what it does",
             screenshot=False,
         ):
             self.require("automation-editor.keys")

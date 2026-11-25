@@ -239,6 +239,21 @@ pub enum AutomationStep {
         timeout_ms: Option<u64>,
     },
 
+    /// Stop and wait until the user says to go on, so that they can type into
+    /// the terminal themselves: what a recording leaves out at a password prompt
+    /// (#6025). It never goes on by itself, whatever its error handling says. An
+    /// older build does not know the kind and refuses the whole automation.
+    #[serde(rename_all = "camelCase")]
+    WaitForUser {
+        /// Per-step error handling. The runner ignores it for this step.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
+        /// What the user is asked to do; absent means a general wording.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(optional))]
+        message: Option<String>,
+    },
+
     /// A step of a kind this build does not know, kept verbatim (#6009).
     /// The runner refuses every automation that can reach one.
     #[serde(untagged)]
@@ -258,6 +273,7 @@ pub const KNOWN_STEP_KINDS: &[&str] = &[
     "conditional",
     "loop",
     "wait-for-output",
+    "wait-for-user",
 ];
 
 /// The trigger kinds that never read as unknown: the ones this build knows, and

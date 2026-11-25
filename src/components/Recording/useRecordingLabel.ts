@@ -7,14 +7,15 @@ import { t, tf } from "@/i18n/catalog";
  * What the toolbar's recording chip says (#5818, slice 8): that a password prompt
  * is answered, that the terminal is not connected (the recording waits for it),
  * or which terminal is recorded when it is not the active one. `null` while
- * nothing is recorded.
+ * nothing is recorded, and while the recording goes into the open automation: the
+ * strip above the terminals has its one Stop then (A-010).
  */
 export function useRecordingLabel(): string | null {
   const recording = useAppStore((s) => s.recording);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id);
   // Re-renders when a session drops or comes back.
   useProjectedSessionLifecycleMaps();
-  if (!recording) return null;
+  if (!recording || recording.intoEditor !== null) return null;
   if (recording.atPrompt) return t("terminalToolbar.chip.recordingPrompt");
   if (effectiveExited(currentSessionView()[recording.tabId])) {
     return t("terminalToolbar.chip.recordingPaused");

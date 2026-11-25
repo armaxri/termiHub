@@ -96,7 +96,7 @@ describe("OpenPortsPanel — Button migration", () => {
   });
 
   it("drops the stale list when Run on switches vantage (PROD-033)", async () => {
-    useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
+    useRunLocationStore.setState({ networkToolLocations: {} });
     vi.mocked(networkOpenPorts).mockResolvedValue([
       { protocol: "TCP", localAddr: "0.0.0.0:22", pid: 100, process: "sshd" },
     ]);

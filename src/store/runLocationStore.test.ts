@@ -6,7 +6,6 @@ describe("runLocationStore", () => {
   beforeEach(() => {
     useRunLocationStore.setState({
       networkToolLocations: {},
-      serverLocations: {},
       systemMonitorLocations: {},
     });
   });
@@ -23,21 +22,6 @@ describe("runLocationStore", () => {
 
     setNetworkToolLocation("ping", THIS_COMPUTER);
     expect(useRunLocationStore.getState().networkToolLocations.ping).toEqual(THIS_COMPUTER);
-  });
-
-  it("records a server's run-location independently of tools", () => {
-    const { setServerLocation, setNetworkToolLocation } = useRunLocationStore.getState();
-    setServerLocation("srv-1", { kind: "agent", agentId: "a2" });
-    setNetworkToolLocation("dns", { kind: "agent", agentId: "a1" });
-
-    expect(useRunLocationStore.getState().serverLocations["srv-1"]).toEqual({
-      kind: "agent",
-      agentId: "a2",
-    });
-    expect(useRunLocationStore.getState().networkToolLocations.dns).toEqual({
-      kind: "agent",
-      agentId: "a1",
-    });
   });
 
   it("records a system monitor's run-location keyed by monitor key (#2593)", () => {

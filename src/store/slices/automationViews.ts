@@ -104,6 +104,7 @@ function toWorkflowStep(step: AutomationStep): WorkflowStep {
     }
     case "loop":
       return { ...step, body: step.body.map(toWorkflowStep) };
+    case "wait-for-user":
     case "type-keys":
       // Not editable in the workflow view (slice 7 adds the editor); carried
       // through opaquely so an edit of the other steps keeps it.

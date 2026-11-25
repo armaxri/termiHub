@@ -9,7 +9,9 @@ import {
   Cpu,
   Eye,
   FileCode,
+  CircleHelp,
   GitBranch,
+  Hand,
   Keyboard,
   Play,
   Repeat,
@@ -25,6 +27,7 @@ import type { TypingSpeed } from "@/types/generated/TypingSpeed";
 import type { WorkflowComparisonOp, WorkflowCondition } from "@/types/workflow";
 import { DEFAULT_FIXED_DELAY_MS } from "@/services/macroPlayback";
 import { t } from "@/i18n/catalog";
+import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import { formatMacroStepData } from "./keysFormat";
 
 /** All step discriminants. */
@@ -39,6 +42,7 @@ export const AUTOMATION_STEP_KINDS: readonly AutomationStepKind[] = [
   "send-command",
   "wait",
   "wait-for-output",
+  "wait-for-user",
   "conditional",
   "loop",
   "run-script",
@@ -129,11 +133,12 @@ const STEP_ICONS: Record<AutomationStepKind, ComponentType<{ size?: number | str
   conditional: GitBranch,
   loop: Repeat,
   "wait-for-output": Eye,
+  "wait-for-user": Hand,
 };
 
 /** The icon component for a step kind. */
 export function stepKindIcon(kind: AutomationStepKind): ComponentType<{ size?: number | string }> {
-  return isKnownStepKind(kind) ? STEP_ICONS[kind] : Play;
+  return isKnownStepKind(kind) ? STEP_ICONS[kind] : CircleHelp;
 }
 
 /**
@@ -150,11 +155,31 @@ const STEP_LABELS: Record<AutomationStepKind, string> = {
   conditional: "Condition",
   loop: "Loop",
   "wait-for-output": "Wait for output",
+  "wait-for-user": "Wait for you",
 };
+
+/** What each kind does, in the words of the "Add step" menu (A-028). */
+const STEP_DESCRIPTIONS: Record<AutomationStepKind, string> = {
+  "type-keys": "Types keys exactly as you press them",
+  "send-command": "Types a command and presses Enter",
+  "run-script": "Types the lines of a script, one by one",
+  "run-automation": "Runs another automation in the same terminal",
+  wait: "Waits a number of seconds",
+  "run-local-process": "Starts a program on this computer, not in the terminal",
+  conditional: "Runs steps only if a comparison holds",
+  loop: "Repeats steps",
+  "wait-for-output": "Waits until the terminal shows a text",
+  "wait-for-user": "Stops until you press Continue, e.g. to type a password",
+};
+
+/** The "Add step" menu's second line for a step kind. */
+export function stepKindDescription(kind: AutomationStepKind): string {
+  return STEP_DESCRIPTIONS[kind];
+}
 
 /** Human-readable label shown in the "Add step" menu and each step row. */
 export function stepKindLabel(kind: AutomationStepKind): string {
-  return isKnownStepKind(kind) ? STEP_LABELS[kind] : kind;
+  return isKnownStepKind(kind) ? STEP_LABELS[kind] : `Unknown step (${kind})`;
 }
 
 /** Whether this build can run a step of `kind`; a newer termiHub may have written it (#6009). */
@@ -166,6 +191,11 @@ export function isKnownStepKind(kind: string): boolean {
 export const UNKNOWN_STEP_REASON =
   "Will not run: a newer version of termiHub made this step, and this one does not know it. " +
   "Nothing of the automation runs until you update termiHub or delete the step.";
+
+/** Why a "Run local process" step does not run while the switch is off (A-031). */
+export const LOCAL_PROCESS_STEP_REASON =
+  "Will not run: local programs are experimental and switched off. " +
+  `Nothing of the automation runs until you turn on ${EXPERIMENTAL_SETTING_PATH} or delete the step.`;
 
 /** Lucide icon component for each trigger kind. */
 const TRIGGER_ICONS: Record<AutomationTriggerKind, ComponentType<{ size?: number | string }>> = {
@@ -228,6 +258,8 @@ export function newStep(kind: AutomationStepKind): AutomationStep {
       // A small fixed count, so a new loop is bounded; the author can switch to
       // a while-condition.
       return { kind, loop: { kind: "count", count: 3 }, body: [] };
+    case "wait-for-user":
+      return { kind };
     case "wait-for-output":
       // Literal text is the safer default; `isRegex`/`timeoutMs` stay absent
       // until the author sets them.
@@ -309,6 +341,8 @@ export function stepSummary(
         ? pattern
         : `${pattern} · ${formatSeconds(step.timeoutMs)}`;
     }
+    case "wait-for-user":
+      return step.message?.trim() || t("automation.wait.message");
     default:
       return "";
   }
@@ -321,22 +355,19 @@ export const TYPING_SPEEDS: readonly TypingSpeed[] = ["recorded", "fixed", "inst
 export function typingSpeedLabel(speed: TypingSpeed, recorded: boolean): string {
   switch (speed) {
     case "recorded":
-      return recorded ? "As recorded" : "Delay per row";
+      return recorded ? "As recorded" : "Set for each row";
     case "fixed":
-      return "Same delay before every key";
+      return "Same delay everywhere";
     case "instant":
-      return "Instant";
+      return "No delay";
   }
 }
 
-/** What a collapsed Type keys row says about its keys and speed. */
+/** What a collapsed Type keys row says about its origin and speed. */
 function typingNotes(step: Extract<AutomationStep, { kind: "type-keys" }>): string[] {
   const notes: string[] = [];
-  if (step.recorded) {
-    const n = step.chunks.length;
-    notes.push(`${n} key${n === 1 ? "" : "s"}, recorded`);
-  }
-  if (step.timing === "instant") notes.push("Instant");
+  if (step.recorded) notes.push("Recorded");
+  if (step.timing === "instant") notes.push("No delay");
   if (step.timing === "fixed") {
     notes.push(`${step.fixedDelayMs ?? DEFAULT_FIXED_DELAY_MS} ms per key`);
   }

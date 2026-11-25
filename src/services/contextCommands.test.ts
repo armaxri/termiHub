@@ -73,6 +73,7 @@ describe("CONTEXT_COMMANDS registry", () => {
         "next-tab",
         "next-tab-group",
         "paste",
+        "continue-automation",
         "play-macro",
         "prev-tab",
         "prev-tab-group",

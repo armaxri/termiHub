@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::activity::ServerActivity;
 use crate::service::ServiceStatus;
 use crate::util::entry_extra::{EntryExtra, StoreEntry};
+use crate::util::service_host::ServiceHost;
 
 /// Protocol type for an embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,6 +157,12 @@ pub struct EmbeddedServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional, type = "number"))]
     pub max_concurrent_sessions: Option<u32>,
+    /// The machine this server runs on (#6028): absent is this computer. Kept
+    /// verbatim when this build cannot read it, and the server is then not
+    /// started at all. The desktop's own field: an agent is not sent it.
+    #[serde(default, skip_serializing_if = "ServiceHost::is_absent")]
+    #[cfg_attr(test, ts(optional, type = "import(\"./RunLocation\").RunLocation"))]
+    pub host: ServiceHost,
     /// Unknown fields of this entry in `embedded_servers.json`, kept verbatim
     /// so an older build's save does not erase them (#3951). Not part of the
     /// generated TS type; see [`crate::util::entry_extra`].
@@ -391,6 +398,7 @@ mod tests {
             http_auth: None,
             max_transfer_bytes: None,
             max_concurrent_sessions: None,
+            host: Default::default(),
             extra: Default::default(),
         };
         let json = serde_json::to_string(&config).unwrap();

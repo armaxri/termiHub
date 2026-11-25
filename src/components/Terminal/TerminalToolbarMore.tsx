@@ -19,6 +19,8 @@ export const TERMINAL_MENU_EDGE_PADDING = 8;
 
 /** Progress of a running automation, as the store reports it. */
 export interface PlaybackProgress {
+  /** The automation's name. */
+  macroName: string;
   played: number;
   total: number;
 }
@@ -29,8 +31,15 @@ export interface TerminalToolbarMoreProps {
   onToggleBroadcast: () => void;
   loggingActive: boolean;
   onToggleLogging: () => void;
-  /** What the recording chip says; `null` while nothing is recorded. */
+  /**
+   * What the recording chip says; `null` while nothing is recorded, or while the
+   * strip above the terminals stops it.
+   */
   recordingLabel: string | null;
+  /** Something is recorded, with or without a chip. */
+  recording: boolean;
+  /** What is typed now is kept apart: the user is at a password prompt. */
+  recordingAtPrompt: boolean;
   onToggleRecording: () => void;
   playback: PlaybackProgress | null;
   onRunAutomation: () => void;
@@ -62,11 +71,19 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
     loggingActive,
     onToggleLogging,
     recordingLabel,
+    recordingAtPrompt,
     onToggleRecording,
     playback,
     onStopPlayback,
   } = props;
   const moreLabel = t("terminalToolbar.more");
+  const playbackLabel = playback
+    ? tf("terminalToolbar.chip.playback", {
+        name: playback.macroName,
+        played: playback.played,
+        total: playback.total,
+      })
+    : "";
   const activeCount =
     Number(broadcastActive) +
     Number(loggingActive) +
@@ -99,7 +116,9 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
             <ActiveChip
               label={recordingLabel}
               tooltip={withActionAccelerator(
-                t("terminalToolbar.record.stop"),
+                recordingAtPrompt
+                  ? t("terminalToolbar.chip.recordingPromptTooltip")
+                  : recordingLabel,
                 "toggle-macro-recording"
               )}
               icon={<Square size={12} fill="currentColor" />}
@@ -110,19 +129,10 @@ export function TerminalToolbarMore(props: TerminalToolbarMoreProps) {
           )}
           {playback && (
             <ActiveChip
-              label={tf("terminalToolbar.chip.playback", {
-                played: playback.played,
-                total: playback.total,
-              })}
-              tooltip={withActionAccelerator(
-                tf("terminalToolbar.play.stop", {
-                  played: playback.played,
-                  total: playback.total,
-                }),
-                "play-macro"
-              )}
+              label={playbackLabel}
+              tooltip={withActionAccelerator(playbackLabel, "play-macro")}
               icon={<Square size={12} fill="currentColor" />}
-              tone="recording"
+              tone="run"
               onClick={onStopPlayback}
               testId="terminal-view-active-playback"
             />
@@ -179,7 +189,7 @@ function MoreMenuItems({
   onToggleBroadcast,
   loggingActive,
   onToggleLogging,
-  recordingLabel,
+  recording,
   onToggleRecording,
   playback,
   onRunAutomation,
@@ -212,9 +222,9 @@ function MoreMenuItems({
       <MenuCheckboxItem
         icon={<RowIcon toggle icon={<CircleDot size={14} />} />}
         shortcut={getActionAccelerator("toggle-macro-recording")}
-        checked={recordingLabel !== null}
+        checked={recording}
         onSelect={onToggleRecording}
-        data-active={recordingLabel !== null}
+        data-active={recording}
         data-testid="terminal-view-record"
       >
         {t("terminalToolbar.record.start")}
@@ -273,7 +283,7 @@ function ActiveChip({
   label: string;
   tooltip: string;
   icon: ReactNode;
-  tone: "broadcast" | "recording" | "active";
+  tone: "broadcast" | "recording" | "run" | "active";
   onClick: () => void;
   testId: string;
 }) {

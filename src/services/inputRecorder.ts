@@ -46,6 +46,8 @@ interface Entry {
 
 interface OpenRun {
   prompt: string;
+  /** Set apart whatever the screen shows (#6025): it is never dropped as an echo. */
+  kept?: boolean;
 }
 
 /** The screen must never get in the way of typing: what cannot be read is no prompt. */
@@ -84,17 +86,20 @@ export class InputRecorder {
     return this.open !== null;
   }
 
-  /** Record a chunk the session was sent. */
-  push(data: string, readPrompt?: ReadPrompt): void {
-    const secret = this.judge(readPrompt);
+  /**
+   * Record a chunk the session was sent. `apart` names why it is set apart like
+   * a password although no prompt shows: an automation waits for it (#6025).
+   */
+  push(data: string, readPrompt?: ReadPrompt, apart?: string): void {
+    const secret = this.judge(readPrompt, apart);
     this.entries.push({ data, at: this.now(), secret });
     this.count += 1;
     if (ENDS_ANSWER.test(data)) this.open = null;
   }
 
   /** Keep the place of a paste until its text is known. */
-  reserve(readPrompt?: ReadPrompt): RecordingSlot {
-    const entry: Entry = { data: null, at: this.now(), secret: this.judge(readPrompt) };
+  reserve(readPrompt?: ReadPrompt, apart?: string): RecordingSlot {
+    const entry: Entry = { data: null, at: this.now(), secret: this.judge(readPrompt, apart) };
     this.entries.push(entry);
     let open = true;
     return {
@@ -131,9 +136,15 @@ export class InputRecorder {
   }
 
   /** The run the next chunk belongs to, if it is typed at a password prompt. */
-  private judge(readPrompt: ReadPrompt | undefined): OpenRun | null {
+  private judge(readPrompt: ReadPrompt | undefined, apart?: string): OpenRun | null {
     this.readPrompt = readPrompt ?? null;
+    if (apart !== undefined) {
+      if (!this.open?.kept) this.open = { prompt: apart, kept: true };
+      return this.open;
+    }
     this.dropEchoedRun();
+    // The wait it was typed for is over.
+    if (this.open?.kept) this.open = null;
     if (!this.open && readPrompt) {
       const before = readSafely(readPrompt);
       if (isPasswordPrompt(before)) this.open = { prompt: before };
@@ -144,26 +155,41 @@ export class InputRecorder {
   /** Keys that show up behind the "prompt" were echoed: it was no password. */
   private dropEchoedRun(): void {
     const { open, readPrompt } = this;
-    if (!open || !readPrompt || !showsEcho(open.prompt, readSafely(readPrompt))) return;
+    if (!open || open.kept || !readPrompt || !showsEcho(open.prompt, readSafely(readPrompt)))
+      return;
     for (const entry of this.entries) if (entry.secret === open) entry.secret = null;
     this.open = null;
   }
 }
 
-/** The chunks without what was typed at password prompts; its time stays as a pause. */
-export function withoutSecrets({
+/** A part of a recording: keys to type, or a place where something was left out. */
+export type RecordedPart = { kind: "keys"; chunks: TypeKeysChunk[] } | { kind: "left-out" };
+
+/**
+ * The recording as the parts it consists of. What was typed at password prompts
+ * is left out, and a part of its own says where: the replay waits there for the
+ * user (#6025). The keys after it are typed at once when the user continues.
+ */
+export function recordedParts({
   chunks,
   secrets,
-}: Pick<Recorded, "chunks" | "secrets">): TypeKeysChunk[] {
-  const out: TypeKeysChunk[] = [];
-  let pause = 0;
+}: Pick<Recorded, "chunks" | "secrets">): RecordedPart[] {
+  const parts: RecordedPart[] = [];
   chunks.forEach((chunk, i) => {
+    const last = parts[parts.length - 1];
     if (secrets.some((run) => i >= run.start && i < run.end)) {
-      pause += chunk.delayMs;
-      return;
+      // A second try at the prompt, or the next prompt, is the same wait.
+      if (last?.kind !== "left-out") parts.push({ kind: "left-out" });
+    } else if (last?.kind === "keys") {
+      last.chunks.push(chunk);
+    } else {
+      parts.push({ kind: "keys", chunks: [{ ...chunk, delayMs: 0 }] });
     }
-    out.push(pause > 0 ? { ...chunk, delayMs: chunk.delayMs + pause } : chunk);
-    pause = 0;
   });
-  return out;
+  return parts;
+}
+
+/** The chunks without what was typed at password prompts. */
+export function withoutSecrets(recorded: Pick<Recorded, "chunks" | "secrets">): TypeKeysChunk[] {
+  return recordedParts(recorded).flatMap((part) => (part.kind === "keys" ? part.chunks : []));
 }

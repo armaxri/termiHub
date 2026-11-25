@@ -51,8 +51,9 @@ One primary button per footer. Cancel is on the left; the primary action is on t
   connection is saved to be used, so its editor reads Cancel · Test · Save ·
   **Save and connect**; editing an existing connection keeps **Save** primary (#5755).
   Tunnels follow the same rule: a new tunnel reads Cancel · Save · **Save and start**,
-  and editing an existing tunnel keeps **Save** primary (#5810). So do automations: a new one
-  reads Cancel · Save · **Save and run**, a stored one Cancel · Save and run · **Save** (#5818).
+  and editing an existing tunnel keeps **Save** primary (#5810). Automations
+  differ (#6025): **Save** is the primary of a new one too, because running types into a terminal;
+  **Save and run** beside it names that terminal.
 - Enter runs the primary from a form's own single-line fields, not from the rows of a list inside
   it: Enter after typing an automation step's command must not run the unfinished automation.
 - Label a button with a verb that says what happens: "Delete connection", "Save", "Reconnect".

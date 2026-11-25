@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::connection::id_changes::ConnectionIdRemap;
-use crate::run_location::RunLocation;
+use termihub_core::util::entry_extra::{EntryExtra, StoreEntry};
+use termihub_core::util::service_host::ServiceHost;
 
 // `LocalForwardConfig`, `RemoteForwardConfig`, `DynamicForwardConfig`, and
 // `TunnelStats` were lifted into core (#2185, #2198) so the shared forward
@@ -69,14 +70,12 @@ pub struct TunnelConfig {
     pub tunnel_type: TunnelType,
     /// Which machine hosts (runs the SSH client for) this tunnel.
     ///
-    /// [`RunLocation::ThisComputer`] (the default) is today's behaviour — the
-    /// forward runs on the desktop. [`RunLocation::Agent`] routes hosting to a
-    /// remote agent through the S1 run-location resolver (S3, #2155). Defaulted
-    /// on deserialize so tunnels saved before this field existed load as
-    /// desktop-hosted, and so agent hosting stays opt-in.
-    #[serde(default)]
-    #[cfg_attr(test, ts(as = "Option<RunLocation>", optional))]
-    pub host: RunLocation,
+    /// Absent or "this computer": the forward runs on the desktop. An agent
+    /// hosts it over the agent RPC (S3, #2155). Kept verbatim when this build
+    /// cannot read it, and the tunnel is then not started (#6028).
+    #[serde(default, skip_serializing_if = "ServiceHost::is_absent")]
+    #[cfg_attr(test, ts(optional, type = "import(\"./RunLocation\").RunLocation"))]
+    pub host: ServiceHost,
     /// Whether to start this tunnel automatically when the app launches.
     #[serde(default)]
     pub auto_start: bool,
@@ -106,6 +105,20 @@ pub struct TunnelConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub companion_of: Option<String>,
+    /// Unknown fields of this entry in `tunnels.json`, kept verbatim so this
+    /// build's save does not erase what a newer one wrote (#6028).
+    #[serde(flatten, default)]
+    #[cfg_attr(test, ts(skip))]
+    pub extra: EntryExtra,
+}
+
+impl StoreEntry for TunnelConfig {
+    fn entry_id(&self) -> &str {
+        &self.id
+    }
+    fn entry_extra_mut(&mut self) -> &mut EntryExtra {
+        &mut self.extra
+    }
 }
 
 /// Current status of a tunnel.
@@ -249,6 +262,24 @@ impl TunnelStore {
         remap.apply_all(self.tunnels.iter_mut().map(|t| &mut t.ssh_connection_id))
     }
 
+    /// Add `tunnel`, or replace the tunnel with its id. Returns whether a stored
+    /// tunnel now runs on another machine than before (#6028).
+    ///
+    /// A replaced tunnel keeps its unknown fields, and its stored host when the
+    /// incoming copy has none. A new one keeps the unknown fields it came with:
+    /// the Undo of a delete and a Duplicate send back what was stored.
+    pub fn upsert(&mut self, mut tunnel: TunnelConfig) -> bool {
+        let Some(stored) = self.tunnels.iter_mut().find(|t| t.id == tunnel.id) else {
+            self.tunnels.push(tunnel);
+            return false;
+        };
+        tunnel.host.keep_if_absent(&stored.host);
+        tunnel.extra = std::mem::take(&mut stored.extra);
+        let moved = tunnel.host.choice() != stored.host.choice();
+        *stored = tunnel;
+        moved
+    }
+
     /// The schema version this build reads and writes. The single source of
     /// truth for the store's version: the default document and the unified
     /// backup (PROD-068) both take it from here, so a bump is picked up
@@ -280,6 +311,7 @@ impl crate::utils::migrate::VersionedStore for TunnelStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use termihub_core::util::service_host::HostChoice;
 
     /// #5770: the description is optional and backward compatible — a file
     /// without one loads as none and saves without the key; a set one
@@ -314,11 +346,12 @@ mod tests {
                 remote_host: "db.internal".to_string(),
                 remote_port: 5432,
             }),
-            host: RunLocation::ThisComputer,
+            host: ServiceHost::this_computer(),
             auto_start: true,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TunnelConfig = serde_json::from_str(&json).unwrap();
@@ -346,11 +379,12 @@ mod tests {
                 local_host: "127.0.0.1".to_string(),
                 local_port: 3000,
             }),
-            host: RunLocation::ThisComputer,
+            host: ServiceHost::this_computer(),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: true,
             companion_of: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TunnelConfig = serde_json::from_str(&json).unwrap();
@@ -375,11 +409,12 @@ mod tests {
                 local_host: "127.0.0.1".to_string(),
                 local_port: 1080,
             }),
-            host: RunLocation::ThisComputer,
+            host: ServiceHost::this_computer(),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TunnelConfig = serde_json::from_str(&json).unwrap();
@@ -406,11 +441,12 @@ mod tests {
                     remote_host: "localhost".to_string(),
                     remote_port: 80,
                 }),
-                host: RunLocation::ThisComputer,
+                host: ServiceHost::this_computer(),
                 auto_start: false,
                 start_with_connection: false,
                 reconnect_on_disconnect: false,
                 companion_of: None,
+                extra: Default::default(),
             }],
         };
         let json = serde_json::to_string_pretty(&store).unwrap();
@@ -515,7 +551,7 @@ mod tests {
         assert!(!config.reconnect_on_disconnect);
         // A config saved before the run-location field existed loads as
         // desktop-hosted, so agent hosting is opt-in (S3, #2155).
-        assert_eq!(config.host, RunLocation::ThisComputer);
+        assert_eq!(config.host.choice(), HostChoice::ThisComputer);
     }
 
     #[test]
@@ -532,20 +568,21 @@ mod tests {
                 remote_host: "db.internal".to_string(),
                 remote_port: 5432,
             }),
-            host: RunLocation::Agent("build-box".to_string()),
+            host: ServiceHost::agent("build-box"),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["host"]["kind"], "agent");
         assert_eq!(json["host"]["agentId"], "build-box");
         let back: TunnelConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(back.host, RunLocation::Agent("build-box".to_string()));
+        assert_eq!(back.host.choice(), HostChoice::Agent("build-box"));
 
         // The serde default (no field in JSON) is desktop hosting.
-        assert_eq!(RunLocation::default(), RunLocation::ThisComputer);
+        assert_eq!(ServiceHost::default().choice(), HostChoice::ThisComputer);
     }
 
     #[test]
@@ -563,11 +600,12 @@ mod tests {
                 remote_host: "127.0.0.1".to_string(),
                 remote_port: 5432,
             }),
-            host: RunLocation::ThisComputer,
+            host: ServiceHost::this_computer(),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: Some("tun-parent".to_string()),
+            extra: Default::default(),
         };
         let json = serde_json::to_value(&companion).unwrap();
         assert_eq!(json["companionOf"], "tun-parent");
@@ -604,11 +642,12 @@ mod tests {
                 remote_host: "localhost".to_string(),
                 remote_port: 80,
             }),
-            host: RunLocation::ThisComputer,
+            host: ServiceHost::this_computer(),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
+            extra: Default::default(),
         };
         let json: serde_json::Value = serde_json::to_value(&config).unwrap();
         // Check camelCase renaming
@@ -633,11 +672,12 @@ mod tests {
                 local_host: "127.0.0.1".to_string(),
                 local_port: 1080,
             }),
-            host: RunLocation::ThisComputer,
+            host: ServiceHost::this_computer(),
             auto_start: false,
             start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
+            extra: Default::default(),
         };
         let mut store = TunnelStore {
             tunnels: vec![tunnel("t1", "Work/a"), tunnel("t2", "b"), tunnel("t3", "x")],
@@ -657,5 +697,78 @@ mod tests {
             .collect();
         assert_eq!(ids, ["b", "c", "x"]);
         assert!(!store.follow_connection_id_changes(&ConnectionIdRemap::new(&[])));
+    }
+
+    // ── Saving a tunnel (#6028) ─────────────────────────────────────────────
+
+    fn stored_tunnel(json: serde_json::Value) -> TunnelConfig {
+        let mut tunnel = serde_json::json!({
+            "id": "t", "name": "t", "sshConnectionId": "c", "autoStart": false,
+            "reconnectOnDisconnect": false,
+            "tunnelType": {"type": "dynamic", "config": {"localHost": "127.0.0.1", "localPort": 1}},
+        });
+        tunnel
+            .as_object_mut()
+            .unwrap()
+            .extend(json.as_object().unwrap().clone());
+        serde_json::from_value(tunnel).unwrap()
+    }
+
+    fn store_of(tunnel: TunnelConfig) -> TunnelStore {
+        TunnelStore {
+            tunnels: vec![tunnel],
+            ..TunnelStore::default()
+        }
+    }
+
+    #[test]
+    fn a_save_keeps_unknown_fields_and_a_host_the_editor_did_not_send() {
+        let host = serde_json::json!({"kind": "cluster", "clusterId": "a"});
+        let mut store = store_of(stored_tunnel(
+            serde_json::json!({"host": host, "future": {"deep": 1}}),
+        ));
+        assert!(!store.upsert(stored_tunnel(
+            serde_json::json!({"name": "renamed", "future": "from the editor"})
+        )));
+        let saved = serde_json::to_value(&store.tunnels[0]).unwrap();
+        assert_eq!(saved["name"], "renamed");
+        assert_eq!(saved["host"], host);
+        assert_eq!(saved["future"], serde_json::json!({"deep": 1}));
+    }
+
+    #[test]
+    fn a_restored_or_copied_tunnel_keeps_the_unknown_fields_it_came_with() {
+        let mut store = TunnelStore::default();
+        assert!(!store.upsert(stored_tunnel(serde_json::json!({"future": 1}))));
+        assert_eq!(
+            serde_json::to_value(&store.tunnels[0]).unwrap()["future"],
+            1
+        );
+    }
+
+    #[test]
+    fn only_another_machine_counts_as_moved() {
+        let agent = serde_json::json!({"host": {"kind": "agent", "agentId": "a"}});
+        let here = serde_json::json!({"host": {"kind": "thisComputer"}});
+        let cases = [
+            (serde_json::json!({}), here.clone(), false),
+            (here.clone(), agent.clone(), true),
+            (agent.clone(), agent.clone(), false),
+            (agent.clone(), here, true),
+            (agent, serde_json::json!({"name": "x"}), false),
+            (
+                serde_json::json!({"host": {"kind": "agent", "agentId": "a"}}),
+                serde_json::json!({"host": {"kind": "agent", "agentId": "b"}}),
+                true,
+            ),
+        ];
+        for (before, after, moved) in cases {
+            let mut store = store_of(stored_tunnel(before.clone()));
+            assert_eq!(
+                store.upsert(stored_tunnel(after.clone())),
+                moved,
+                "{before} -> {after}"
+            );
+        }
     }
 }

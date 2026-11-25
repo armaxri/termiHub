@@ -170,6 +170,11 @@ const waitForOutputStep = z.object({
   timeoutMs: nonNegative().optional(),
   ...stepPolicyShape,
 });
+const waitForUserStep = z.object({
+  kind: z.literal("wait-for-user"),
+  message: z.string().optional(),
+  ...stepPolicyShape,
+});
 
 /**
  * An automation's Type keys step (#5818). The exported list is of workflow
@@ -232,6 +237,7 @@ const stepOptions = [
   conditionalStep,
   loopStep,
   waitForOutputStep,
+  waitForUserStep,
   typeKeysStep,
 ] as const;
 

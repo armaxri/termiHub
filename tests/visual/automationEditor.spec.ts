@@ -124,6 +124,7 @@ for (const viewport of [
     test("triggers show their settings under themselves", async ({ page }) => {
       await openAutomations(page);
       await edit(page, "wf-2");
+      await page.locator(id("automation-editor-when-toggle")).click();
       await page.locator(id("automation-trigger-pattern-0")).scrollIntoViewIfNeeded();
       await check(page, "triggers");
     });
@@ -134,8 +135,8 @@ for (const viewport of [
       await page.locator(id("automation-new-keys")).click();
       await page.locator(DIALOG).waitFor();
       await check(page, "new-keys");
-      // aria-disabled, not disabled: a click says why (#5917); Playwright waits for neither.
-      await page.locator(id("automation-editor-save-run")).click({ force: true });
+      await expect(page.locator(id("automation-editor-footer-note"))).toContainText("To save:");
+      await page.locator(id("automation-editor-save-run")).click();
       await expect(page.locator(id("automation-editor-keys-error-0-0"))).toBeVisible();
       await expect(page.locator(id("automation-editor-name"))).toBeFocused();
       await check(page, "new-keys-errors");
@@ -144,6 +145,7 @@ for (const viewport of [
     test("the schedule editor opens over it, and Escape closes only that", async ({ page }) => {
       await openAutomations(page);
       await edit(page, "wf-2");
+      await page.locator(id("automation-editor-when-toggle")).click();
       await page.locator(id("automation-editor-add-trigger")).click();
       await page.locator(id("automation-editor-add-schedule")).click();
       const schedule = page.locator(id("schedule-editor-dialog"));

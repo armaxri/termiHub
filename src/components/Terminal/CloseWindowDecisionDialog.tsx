@@ -22,7 +22,6 @@ import { cancelQuit, quitWindowReady } from "@/services/api";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendError } from "@/utils/frontendLog";
 import { windowDisplayName } from "@/types/window";
-import { recordedKeys } from "@/utils/recordingText";
 import type {
   WindowCloseDirtyEditor,
   WindowCloseOtherTab,
@@ -314,7 +313,7 @@ export function CloseWindowDecisionDialog() {
           <div className="close-window-decision__row" data-testid="close-window-decision-recording">
             <CircleDot className="li close-window-decision__row-icon" aria-hidden="true" />
             <span className="close-window-decision__row-name">
-              Recording in {recording.tabTitle} ({recordedKeys(recording.keys)})
+              Recording in {recording.tabTitle}
             </span>
             <span className="close-window-decision__pill close-window-decision__pill--terminate">
               <Trash2 className="li" aria-hidden="true" /> Not saved — discarded

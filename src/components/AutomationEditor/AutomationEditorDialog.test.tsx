@@ -3,6 +3,7 @@
  * round trip of every golden automation, validation timing and the footer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -67,7 +68,11 @@ const open = async (automation: Automation, isNew = false) => {
   editor = await mountEditor(automation, { isNew });
 };
 const saveButton = () => query("automation-editor-save") as HTMLButtonElement;
-const blocked = () => saveButton().getAttribute("aria-disabled") === "true";
+/** What the footer says is missing; `null` when it can be saved. */
+const missing = () => {
+  const note = query("automation-editor-footer-note")?.textContent ?? "";
+  return note.startsWith("To save:") ? note : null;
+};
 const nameError = () => document.getElementById("automation-editor-name-error");
 
 beforeEach(() => {
@@ -138,6 +143,41 @@ describe("fields and steps", () => {
     expect(
       query("automation-editor-dialog")!.contains(query("automation-editor-add-step-wait"))
     ).toBe(true);
+  });
+
+  it("adds a step between two others, and right below one (A-029)", async () => {
+    await open(stored);
+    await chooseFrom("automation-editor-insert-step-1", "automation-editor-add-step-wait");
+    const kinds = () =>
+      [0, 1, 2, 3, 4].map((i) => query(`automation-editor-step-kind-${i}`)?.dataset.kind);
+    expect(kinds()).toEqual(["send-command", "wait", "wait", "run-automation", undefined]);
+    expect(document.activeElement).toBe(query("automation-editor-step-delay-1"));
+    openMenu("automation-editor-step-more-3");
+    press("automation-editor-step-add-below-3", "ArrowRight");
+    await flushAsync();
+    click("automation-editor-step-add-below-3-send-command");
+    await flushAsync();
+    await flushAsync();
+    expect(kinds()).toEqual(["send-command", "wait", "wait", "run-automation", "send-command"]);
+    expect(document.activeElement).toBe(query("automation-editor-step-command-4"));
+  });
+
+  it("a wait for the user has a wording, and no failure to tolerate (#6025)", async () => {
+    await open(stored);
+    await chooseFrom("automation-editor-add-step", "automation-editor-add-step-wait-for-user");
+    typeText("automation-editor-step-message-3", "Enter the token");
+    openMenu("automation-editor-step-more-3");
+    expect(query("automation-editor-step-failure-menu-3")).toBeNull();
+    act(() => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
+      );
+    });
+    await flushAsync();
+    expect((await editor.save()).steps[3]).toEqual({
+      kind: "wait-for-user",
+      message: "Enter the token",
+    });
   });
 
   it("moves a step with the arrow keys on its handle, keeping the focus there", async () => {
@@ -274,24 +314,21 @@ describe("the primary action (#5755, #5810)", () => {
   const isPrimary = (id: string) => query(id)!.className.includes("ui-btn--primary");
   const enter = (id: string) => press(id, "Enter");
 
-  it("is Save and run for a new automation", async () => {
-    await open(stored, true);
-    expect(footer()).toEqual(["Cancel", "Save", "Save and run"]);
-    expect(isPrimary("automation-editor-save-run")).toBe(true);
-    expect(isPrimary("automation-editor-save")).toBe(false);
-    enter("automation-editor-name");
-    await flushAsync();
-    expect(editor.onSave.mock.calls[0][0].run).toBe(true);
-  });
-
-  it("is Save for an existing one", async () => {
-    await open(stored);
-    expect(footer()).toEqual(["Cancel", "Save and run", "Save"]);
+  it.each([
+    ["a new automation", true],
+    ["an existing one", false],
+  ])("is Save for %s, and Enter only ever saves (A-021)", async (_what, isNew) => {
+    await open(stored, isNew);
+    expect(footer()).toEqual(["Cancel", "Save and run…", "Save"]);
     expect(isPrimary("automation-editor-save")).toBe(true);
+    expect(isPrimary("automation-editor-save-run")).toBe(false);
     typeText("automation-editor-description", "x");
-    enter("automation-editor-description");
+    for (const field of ["automation-editor-name", "automation-editor-description"]) enter(field);
+    click("automation-editor-tags-toggle");
+    enter("automation-editor-tags");
     await flushAsync();
-    expect(editor.onSave.mock.calls[0][0].run).toBe(false);
+    expect(editor.onSave).toHaveBeenCalled();
+    for (const [request] of editor.onSave.mock.calls) expect(request.run).toBe(false);
   });
 
   it("is never run by Enter in a step: typing a command must not run it", async () => {
@@ -311,12 +348,32 @@ describe("validation timing (#5917)", () => {
     name: "",
   });
 
-  it("opens a new automation clean, with Save reachable but blocked", async () => {
+  it("opens a new automation clean, says what is missing, and Save looks usable (A-023)", async () => {
     await open(blankKeys, true);
     expect(nameError()).toBeNull();
     expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
-    expect(blocked()).toBe(true);
+    expect(missing()).toBe("To save: give it a name and complete the steps.");
     expect(saveButton().disabled).toBe(false);
+    expect(saveButton().getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it("flags an empty command together with the name (A-022)", async () => {
+    await open(automationWith([{ kind: "send-command", command: " " }], { name: "" }), true);
+    click("automation-editor-save");
+    await flushAsync();
+    expect(editor.onSave).not.toHaveBeenCalled();
+    expect(nameError()?.textContent).toBe("Name is required.");
+    expect(document.getElementById("automation-step-command-0-error")?.textContent).toBe(
+      "Enter the command."
+    );
+    typeText("automation-editor-name", "Named");
+    click("automation-editor-save");
+    await flushAsync();
+    expect(editor.onSave).not.toHaveBeenCalled();
+    typeText("automation-editor-step-command-0", "ls");
+    expect(document.getElementById("automation-step-command-0-error")).toBeNull();
+    expect(missing()).toBeNull();
+    expect((await editor.save()).steps).toEqual([{ kind: "send-command", command: "ls" }]);
   });
 
   it("shows a field's error once it was edited and left, not the others'", async () => {
@@ -379,7 +436,6 @@ describe("validation timing (#5917)", () => {
         triggers: [{ kind: "on-output-match", connectionIds: ["c"], pattern: "" }],
       })
     );
-    click("automation-editor-when-toggle");
     expect(query("automation-editor-when")).toBeNull();
     click("automation-editor-save");
     await flushAsync();
@@ -389,7 +445,7 @@ describe("validation timing (#5917)", () => {
   it("blocks Save once every step is gone", async () => {
     await open(recorded);
     await chooseStep("0", "delete");
-    expect(blocked()).toBe(true);
+    expect(missing()).toBe("To save: add at least one step.");
     expect(document.activeElement).not.toBe(document.body);
   });
 });

@@ -7,6 +7,7 @@ export interface LocalProcessFieldsProps {
   step: Extract<AutomationStep, { kind: "run-local-process" }>;
   path: string;
   stepNumber: number;
+  error?: string;
   onChange: (step: AutomationStep) => void;
 }
 
@@ -15,14 +16,21 @@ export interface LocalProcessFieldsProps {
  * with spaces stays one literal argument. Each is passed to the program as its
  * own argv entry with no shell involved, so nothing here is ever re-split.
  */
-export function LocalProcessFields({ step, path, stepNumber, onChange }: LocalProcessFieldsProps) {
+export function LocalProcessFields({
+  step,
+  path,
+  stepNumber,
+  error,
+  onChange,
+}: LocalProcessFieldsProps) {
   const { args } = step;
   const setArgs = (next: string[]) => onChange({ ...step, args: next });
 
   return (
     <>
-      <Field label="Program" htmlFor={`automation-step-program-${path}`}>
+      <Field label="Program" htmlFor={`automation-step-program-${path}`} error={error}>
         <Input
+          error={Boolean(error)}
           id={`automation-step-program-${path}`}
           value={step.program}
           placeholder="e.g. /usr/bin/notify-send"

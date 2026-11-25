@@ -34,6 +34,7 @@ fn config(id: &str, server_type: ServerType, root: &std::path::Path) -> Embedded
         http_auth: None,
         max_transfer_bytes: None,
         max_concurrent_sessions: None,
+        host: Default::default(),
         extra: Default::default(),
     }
 }

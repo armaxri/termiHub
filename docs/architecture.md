@@ -2092,6 +2092,14 @@ step:
   substitution. The chunks are scheduled by `runMacroPlayback` with the step's saved timing
   (`recorded`, `fixed` or `instant`). Delays sleep through the runner's `wait` seam, so tests
   drive them with a fake clock. Agent-hosted and remote sessions need no protocol change.
+- **`wait-for-user`** (#6025) stops the run until the user presses Continue. The seam is
+  `AppState.waitForUser` (`store/slices/automationWaitSlice.ts`), which keeps the open waits of this
+  window; `WaitingRunBar` shows them and ends those whose terminal is gone. A wait that nobody
+  answers within `WAIT_FOR_USER_LIMIT_MS` (five minutes: longer than `sudo` asks, the next keys
+  would land in the shell) is a **fatal** outcome: `executeStepWithPolicy` neither retries nor
+  tolerates it, at any level. Runs nobody watches are refused before they type anything
+  (`reachesWaitForUser`): scheduled ones as skipped, triggered ones as a failed run in the History.
+  A recording gets such a step wherever it leaves a password out (`recordingSteps`).
 - **`run-automation`** runs another automation's steps inline on the same target. The chain of
   automation ids is passed down the call stack: a call back into the chain fails with the path
   (`"A" → "B" → "A"`), and nesting is capped at `MAX_AUTOMATION_DEPTH` (10).
@@ -3046,6 +3054,29 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   and editing go through the connection-type-agnostic `session_*` commands, which resolve the
   session's `file_browser()` (`src-tauri/src/session/file_ops.rs`). SSH converged on the same
   path (#2421). Uploads and downloads run through the Transfer Queue.
+
+### Where a Service Runs (#6028)
+
+An embedded server and an SSH tunnel store the machine they run on in their own entry
+(`host`, `core/src/util/service_host.rs`): absent or `thisComputer` is the desktop, `agent` names a
+remote agent by id. The rule is **the right machine or not at all**:
+
+- Only a host that reads as this computer reaches a listener here. For servers the check is the
+  first step of `EmbeddedServerManager::start_server` and is repeated under the config lock before
+  the bind; for tunnels the forwarder builder takes a `RunsHere` proof (`tunnel/host.rs`), so a
+  reconnect of a tunnel that was moved meanwhile is refused too.
+- An agent that is removed, not connected, too old, or refuses, and a host this build cannot read
+  (another kind, an unknown key beside a known one, `null`), start nothing. The reason is shown on
+  the row and kept until a stop, a save or a good start.
+- The raw value is kept verbatim through load, save, backup and restore, like the unknown fields of
+  the entry. A save without a host keeps the stored one (a list in another window may be out of
+  date), and so does restoring a backup that has none.
+- Moving a running service stops it where it ran; it is not started on the new machine by itself.
+
+A server without a `host` runs on this computer, as it did before the field existed. Older builds
+kept an agent choice in memory only, so it cannot be recovered: the user has to choose it once more.
+An older build that opens the file keeps the field but does not read it, and starts the server on
+this computer.
 
 ### Embedded FTP Server Front Relay
 

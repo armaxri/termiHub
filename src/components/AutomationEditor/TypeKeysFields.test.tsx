@@ -50,15 +50,22 @@ afterEach(() => editor.unmount());
 
 const keysOf = (automation: Automation) => automation.steps[0] as TypeKeysStep;
 const text = (row: number) => `automation-editor-keys-text-0-${row}`;
-const blocked = () => query("automation-editor-save")!.getAttribute("aria-disabled") === "true";
+const blocked = () => query("automation-editor-save")!.hasAttribute("data-invalid");
 
 describe("the keys", () => {
   it("shows control keys in the editable escape notation", async () => {
     await open();
-    expect(valueOf(text(0))).toBe("sudo -v\\r");
-    expect(valueOf(text(1))).toBe("\\e[A");
+    expect(valueOf(text(0))).toBe("sudo -v⏎");
+    expect(valueOf(text(1))).toBe("⎋[A");
     expect(valueOf(text(2))).toBe("\\x03");
-    expect(query("automation-editor-keys-hint-0")?.textContent).toContain("\\r");
+    expect(query("automation-editor-keys-hint-0")?.textContent).toContain("⏎");
+  });
+
+  it("keeps the escapes behind More keys (A-030)", async () => {
+    await open();
+    expect(query("automation-editor-keys-more-text-0")).toBeNull();
+    click("automation-editor-keys-more-0");
+    expect(query("automation-editor-keys-more-text-0")?.textContent).toContain("\\xHH");
   });
 
   it("corrects one row and keeps the others byte for byte", async () => {
@@ -76,15 +83,15 @@ describe("the keys", () => {
     act(() => input.focus());
     input.setSelectionRange(4, 7);
     press(text(0), "Enter");
-    expect(valueOf(text(0))).toBe("sudo\\r\\r");
-    expect(input.selectionStart).toBe(6);
+    expect(valueOf(text(0))).toBe("sudo⏎⏎");
+    expect(input.selectionStart).toBe(5);
     expect(editor.onSave).not.toHaveBeenCalled();
   });
 
   it("the Enter button adds one at the end", async () => {
     await open();
     click("automation-editor-keys-enter-0-1");
-    expect(valueOf(text(1))).toBe("\\e[A\\r");
+    expect(valueOf(text(1))).toBe("⎋[A⏎");
   });
 
   it("adds a row that follows with a short delay, focused", async () => {
@@ -106,7 +113,7 @@ describe("the keys", () => {
   it("moves and deletes rows with their delays, keeping the focus", async () => {
     await open();
     click("automation-editor-keys-down-0-0");
-    expect(valueOf(text(1))).toBe("sudo -v\\r");
+    expect(valueOf(text(1))).toBe("sudo -v⏎");
     click("automation-editor-keys-delete-0-0");
     expect(document.activeElement).toBe(query(text(0)));
     expect(keysOf(await editor.save()).chunks).toEqual([recorded.chunks[0], recorded.chunks[2]]);
@@ -169,7 +176,7 @@ describe("validation", () => {
     leaveField(query("automation-editor-keys-delay-0-1"));
     expect(query("automation-editor-keys-error-0-1")?.textContent).toBe("Delay must be 0 or more.");
     expect(blocked()).toBe(true);
-    await pick("automation-editor-step-speed-0", "Instant");
+    await pick("automation-editor-step-speed-0", "No delay");
     expect(blocked()).toBe(false);
   });
 });
@@ -178,7 +185,7 @@ describe("typing speed (#5820)", () => {
   it("is saved with the step and hides the delays that no longer count", async () => {
     await open();
     expect(query("automation-editor-step-speed-0")?.textContent).toContain("As recorded");
-    await pick("automation-editor-step-speed-0", "Instant");
+    await pick("automation-editor-step-speed-0", "No delay");
     expect(query("automation-editor-keys-delay-0-1")).toBeNull();
     const saved = keysOf(await editor.save());
     expect(saved).toEqual({ ...recorded, timing: "instant" });
@@ -186,7 +193,7 @@ describe("typing speed (#5820)", () => {
 
   it("takes a delay of its own when fixed", async () => {
     await open();
-    await pick("automation-editor-step-speed-0", "Same delay before every key");
+    await pick("automation-editor-step-speed-0", "Same delay everywhere");
     expect((query("automation-editor-step-fixed-delay-0") as HTMLInputElement).placeholder).toBe(
       "40"
     );
@@ -202,7 +209,7 @@ describe("typing speed (#5820)", () => {
 
   it("does not speak of a recording for hand-written keys", async () => {
     await open({ kind: "type-keys", chunks: [{ data: "a", delayMs: 0 }], timing: "recorded" });
-    expect(query("automation-editor-step-speed-0")?.textContent).toContain("Delay per row");
+    expect(query("automation-editor-step-speed-0")?.textContent).toContain("Set for each row");
   });
 });
 
@@ -217,7 +224,7 @@ describe("a long recording", () => {
     expect(query(text(SHOWN_KEY_ROWS - 1))).not.toBeNull();
     expect(query(text(SHOWN_KEY_ROWS))).toBeNull();
     const more = query("automation-editor-keys-show-all-0")!;
-    expect(more.textContent).toBe("Show all 240 keys");
+    expect(more.textContent).toBe("Show all 240 rows");
     click("automation-editor-keys-show-all-0");
     expect(query(text(239))).not.toBeNull();
   });

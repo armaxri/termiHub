@@ -469,3 +469,62 @@ describe("toastRunOutcome", () => {
     });
   });
 });
+
+describe("runWorkflowOnTarget — a step that waits for the user (#6025)", () => {
+  const waits = () =>
+    workflow([
+      { kind: "send-command", command: "sudo -v" },
+      { kind: "wait-for-user", message: "Type your password" } as unknown as WorkflowStep,
+      { kind: "send-command", command: "ls" },
+    ]);
+
+  it("asks the user, in the terminal's own session, and goes on", async () => {
+    const waitForUser = vi.fn(async (_request: unknown) => "continued" as const);
+    state = { ...state, waitForUser };
+    const result = await run(waits(), { targetLabel: "prod-web" });
+    expect(result.status).toBe("completed");
+    expect(waitForUser.mock.calls[0][0]).toMatchObject({
+      tabId: "tab-1",
+      sessionId: "sess-1",
+      tabTitle: "prod-web",
+      automationName: "wf",
+      message: "Type your password",
+    });
+    expect(mocks.toast.loading).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ description: "Waiting for you" })
+    );
+    expect(mocks.injector).toHaveBeenCalledTimes(2);
+  });
+
+  it("the history says that nobody continued", async () => {
+    state = { ...state, waitForUser: vi.fn(async () => "timed-out" as const) };
+    const result = await run(waits());
+    expect(result).toMatchObject({ status: "failed", failedStepIndex: 1 });
+    expect(mocks.recordAutomationRun).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining("nobody pressed Continue") })
+    );
+    expect(mocks.injector).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an unattended run", { unattended: true }],
+    ["a run without a session", { sessionless: true }],
+  ])("%s is not started, and the history says why", async (_what, extra) => {
+    const waitForUser = vi.fn();
+    state = { ...state, waitForUser };
+    const result = await run(waits(), { ...extra, triggeredBy: "on-output-match" });
+    expect(result.status).toBe("failed");
+    expect(result.stepsCompleted).toBe(0);
+    expect(mocks.injector).not.toHaveBeenCalled();
+    expect(waitForUser).not.toHaveBeenCalled();
+    expect(mocks.recordAutomationRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        origin: "on-output-match",
+        error: expect.stringContaining("nobody is there"),
+      })
+    );
+    expect(mocks.toast.error).toHaveBeenCalledTimes(1);
+  });
+});

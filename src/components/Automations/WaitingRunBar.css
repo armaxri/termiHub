@@ -1,0 +1,40 @@
+.waiting-runs {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-warning);
+}
+
+/* The text wraps rather than loses the sentence that says what to do. */
+.waiting-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-xs) var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-warning);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.waiting-run > svg {
+  flex-shrink: 0;
+}
+
+.waiting-run__text {
+  /* Geometry: below this the actions take a line of their own. */
+  --waiting-run-text-min: 220px;
+
+  flex: 1 1 var(--waiting-run-text-min);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.waiting-run__title {
+  font-weight: var(--font-weight-semibold);
+}
+
+.waiting-run__actions {
+  display: flex;
+  gap: var(--spacing-xs-sm);
+  margin-left: auto;
+}

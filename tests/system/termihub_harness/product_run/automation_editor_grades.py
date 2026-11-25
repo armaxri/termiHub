@@ -20,9 +20,8 @@ ON_REQUEST = (
     "automation-editor-tags",
     "automation-editor-step-policy-0",
 )
-#: The footer of a new automation and of a stored one; the last is the primary.
-FOOTER_NEW = ("Cancel", "Save", "Save and run")
-FOOTER_STORED = ("Cancel", "Save and run", "Save")
+#: The footer, of a new automation and of a stored one; the last is the primary (A-021).
+FOOTER = ("Cancel", "Save and run", "Save")
 #: The tallest a collapsed step row may be, in CSS pixels.
 MAX_ROW_PX = 48.0
 #: Rounding slack for box comparisons, in CSS pixels.
@@ -40,16 +39,17 @@ def disclosure_problems(shown: Sequence[str], keys_row: str, recorded: bool) -> 
     problems = [f"{testid} shows unasked" for testid in shown]
     if "Type keys" not in keys_row:
         problems.append(f"the keys row reads {keys_row!r}")
-    if recorded and "recorded" not in keys_row:
-        problems.append(f"the keys row does not say 'recorded': {keys_row!r}")
+    if recorded and "Recorded" not in keys_row:
+        problems.append(f"the keys row does not say 'Recorded': {keys_row!r}")
     return problems
 
 
-def footer_problems(labels: Sequence[str], is_new: bool) -> list[str]:
-    """The footer's buttons, Cancel first and the primary last (#5755, #5810)."""
-    want = FOOTER_NEW if is_new else FOOTER_STORED
-    got = tuple(label for label in labels if label in FOOTER_NEW)
-    return [] if got == want else [f"the footer reads {list(got)}, not {list(want)}"]
+def footer_problems(labels: Sequence[str], run_in: Optional[str] = None) -> list[str]:
+    """The footer's buttons, Cancel first and Save last; Save and run names its target."""
+    run = "Save and run…" if run_in is None else f"Save and run in {run_in}"
+    want = [FOOTER[0], run, FOOTER[2]]
+    got = [label for label in labels if label in want or label.startswith(FOOTER[1])]
+    return [] if got == want else [f"the footer reads {got}, not {want}"]
 
 
 def layout_problems(

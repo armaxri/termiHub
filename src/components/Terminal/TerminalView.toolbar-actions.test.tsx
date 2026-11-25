@@ -520,8 +520,8 @@ describe("TerminalView — running actions stay visible as chips (#5756)", () =>
     } as unknown as Parameters<typeof useAppStore.setState>[0]);
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
-    expect(button("terminal-view-active-recording")!.textContent).toBe("Recording");
-    expect(button("terminal-view-active-playback")!.textContent).toBe("Playing 1/3");
+    expect(button("terminal-view-active-recording")!.textContent).toBe("Stop recording");
+    expect(button("terminal-view-active-playback")!.textContent).toBe("Stop “Deploy” (1 of 3)");
 
     click("terminal-view-active-recording");
     click("terminal-view-active-playback");

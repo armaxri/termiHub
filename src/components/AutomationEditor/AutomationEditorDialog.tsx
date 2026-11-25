@@ -4,7 +4,9 @@ import { Button, Field, Input, LiveRegion, Modal, ModalClose } from "@/component
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import { useRevealOnSave } from "@/hooks/useRevealedErrors";
-import { useAppStore } from "@/store/appStore";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { reachesWaitForUser } from "@/services/automationRunner";
+import { getActiveTab, useAppStore } from "@/store/appStore";
 import type { RecordedTake } from "@/store/slices/recordingSlice";
 import { showTerminal } from "@/utils/showTerminal";
 import type { Automation } from "@/types/generated/Automation";
@@ -20,7 +22,15 @@ import {
   type AutomationDraft,
   type StepDraft,
 } from "./automationDraft";
-import { draftErrors, draftValues, stepsWithErrors, STEP_LIST_ERROR } from "./draftValidation";
+import { useAutomationEditor } from "./automationEditorStore";
+import { blockedSummary } from "./blockedSteps";
+import {
+  draftErrors,
+  draftValues,
+  missingSummary,
+  stepsWithErrors,
+  STEP_LIST_ERROR,
+} from "./draftValidation";
 import { EditorSection } from "./EditorSection";
 import { ParametersEditor } from "./ParametersEditor";
 import { insertRecording, recordedNote, withRecordedSecrets } from "./recordedSteps";
@@ -114,10 +124,10 @@ export function AutomationEditorDialog({
   const scheduleCount = useAppStore(
     (s) => s.schedules.filter((x) => x.action.automationId === automation.id).length
   );
-  const [whenOpen, setWhenOpen] = useState(
-    initial.triggers.length > 0 || (!isNew && scheduleCount > 0)
-  );
-  const [valuesOpen, setValuesOpen] = useState(initial.parameters.length > 0);
+  // What starts it comes first when something does (A-024); the heading says what.
+  const [whenFirst] = useState(initial.triggers.length > 0 || (!isNew && scheduleCount > 0));
+  const [whenOpen, setWhenOpen] = useState(false);
+  const [valuesOpen, setValuesOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const primaryRef = useRef<HTMLButtonElement>(null);
 
@@ -128,8 +138,17 @@ export function AutomationEditorDialog({
     [s.recordedTake, ...s.queuedTakes].some((take) => take?.forEditor)
   );
   const startRecording = useAppStore((s) => s.startRecording);
+  const recordInNewTerminal = useAppStore((s) => s.recordInNewTerminal);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
+  const runTarget = useAppStore((s) => {
+    const tab = getActiveTab(s);
+    return tab?.contentType === "terminal" ? tab.title || "Terminal" : null;
+  });
+  const experimental = useExperimentalFeatures();
+  const aside = useAutomationEditor((s) => s.aside);
+  const setAside = useAutomationEditor((s) => s.setAside);
   const takeForEditor = useAppStore((s) => s.takeForEditor);
-  const [recorded, setRecorded] = useState<{ take: RecordedTake; uid: string | null } | null>(null);
+  const [recorded, setRecorded] = useState<{ take: RecordedTake; uids: string[] } | null>(null);
   const [wentRecording, setWentRecording] = useState(false);
   const lastStepUid = useRef<string | null>(null);
   const recordRef = useRef<HTMLButtonElement>(null);
@@ -138,9 +157,9 @@ export function AutomationEditorDialog({
     if (!hasTake) return;
     const take = takeForEditor();
     if (!take) return;
-    const { steps, uid } = insertRecording(draft.steps, take, lastStepUid.current);
+    const { steps, uids } = insertRecording(draft.steps, take, lastStepUid.current);
     setDraft((d) => ({ ...d, steps }));
-    setRecorded({ take, uid });
+    setRecorded({ take, uids });
   }, [hasTake, takeForEditor, draft.steps]);
 
   useConnectionIdChanges((remap) => {
@@ -170,10 +189,14 @@ export function AutomationEditorDialog({
       setExpanded: (uid, open) => setExpandedSet((prev) => toggled(prev, uid, open)),
       failureOpen,
       showFailure: (uid) => setFailureOpen((prev) => toggled(prev, uid, true)),
+      openSettings: () => {
+        setAside(true);
+        openSettingsTab({ category: "general" });
+      },
       announce: setAnnouncement,
       renderStepList: (props) => <StepList {...props} />,
     }),
-    [automations, automation.id, errors, expanded, failureOpen]
+    [automations, automation.id, errors, expanded, failureOpen, openSettingsTab, setAside]
   );
 
   /** Open whatever hides an error, then show every error and focus the first. */
@@ -197,6 +220,8 @@ export function AutomationEditorDialog({
       revealErrors();
       return;
     }
+    // Refused anyway, and the footer says why.
+    if (run && blockedBy !== null) return;
     // An untouched automation is not written again: its file keeps its bytes.
     const changed = isNew || draftContentKey(draft) !== draftContentKey(initial);
     return onSave({
@@ -215,52 +240,65 @@ export function AutomationEditorDialog({
     exemptSelector: "[data-enter-exempt]",
   });
 
-  const saveAndRunIsPrimary = isNew;
-  const saveButton = (
-    <Button
-      ref={saveAndRunIsPrimary ? undefined : primaryRef}
-      variant={saveAndRunIsPrimary ? "secondary" : "primary"}
-      onClick={() => handleSave(false)}
-      aria-disabled={!canSave}
-      data-invalid={!canSave || undefined}
-      errorToast={false}
-      data-testid="automation-editor-save"
-    >
-      Save
-    </Button>
+  // Why running it would be refused, in a few words; it can be saved (A-032).
+  const blockedBy = useMemo(
+    () => blockedSummary(draft.steps, (id) => automations.find((a) => a.id === id), experimental),
+    [draft.steps, automations, experimental]
   );
-  const saveAndRunButton = (
-    <Button
-      ref={saveAndRunIsPrimary ? primaryRef : undefined}
-      variant={saveAndRunIsPrimary ? "primary" : "secondary"}
-      onClick={() => handleSave(true)}
-      aria-disabled={!canSave}
-      data-invalid={!canSave || undefined}
-      errorToast={false}
-      data-testid="automation-editor-save-run"
-    >
-      Save and run
-    </Button>
-  );
+  const missing = missingSummary(allErrors);
+  const footerNote = missing ?? blockedBy;
 
-  const handleRecord = (tabId: string) => {
-    if (!startRecording({ tabId, intoEditor: draft.name.trim() })) return;
+  const handleRecord = async (tabId: string | null) => {
+    const intoEditor = draft.name.trim();
+    const started =
+      tabId === null
+        ? await recordInNewTerminal({ intoEditor })
+        : startRecording({ tabId, intoEditor });
+    if (!started) return;
     setRecorded(null);
     setWentRecording(true);
-    showTerminal(tabId);
+    if (tabId !== null) showTerminal(tabId);
   };
 
   const storeSecrets = () => {
     if (!recorded) return;
-    patch({ steps: withRecordedSecrets(draft.steps, recorded.take, recorded.uid) });
+    patch({ steps: withRecordedSecrets(draft.steps, recorded.take, recorded.uids) });
     setRecorded({ ...recorded, take: { ...recorded.take, secrets: [] } });
   };
 
+  const waitsForUser = useMemo(
+    () => reachesWaitForUser(fromDraft(draft, base), (id) => automations.find((a) => a.id === id)),
+    [draft, base, automations]
+  );
   const stepUids = allUids(draft.steps);
-  const allExpanded = stepUids.length > 0 && stepUids.every((uid) => expanded.has(uid));
+  const anyExpanded = stepUids.some((uid) => expanded.has(uid));
+
+  const whenSection = (
+    <div data-enter-exempt>
+      <EditorSection
+        title="When it runs"
+        summary={whenItRunsSummary(draft.triggers, isNew ? 0 : scheduleCount)}
+        open={whenOpen}
+        onOpenChange={setWhenOpen}
+        data-testid="automation-editor-when-toggle"
+      >
+        <WhenItRuns
+          triggers={draft.triggers}
+          triggersEnabled={draft.triggersEnabled}
+          waitsForUser={waitsForUser}
+          automationId={isNew ? null : automation.id}
+          scheduleAfterSave={scheduleAfterSave}
+          errors={errors}
+          onTriggersChange={(triggers) => patch({ triggers })}
+          onTriggersEnabledChange={(triggersEnabled) => patch({ triggersEnabled })}
+          onScheduleAfterSaveChange={setScheduleAfterSave}
+        />
+      </EditorSection>
+    </div>
+  );
 
   // Not rendered while recording, rather than closed: the focus is free at once.
-  if (recordingHere) return null;
+  if (recordingHere || aside) return null;
 
   return (
     <Modal
@@ -277,16 +315,44 @@ export function AutomationEditorDialog({
       data-testid="automation-editor-dialog"
       footer={
         <>
+          {footerNote !== null && (
+            <span
+              className="automation-editor__footer-note"
+              data-testid="automation-editor-footer-note"
+            >
+              {footerNote}
+            </span>
+          )}
           {/* Routed through the Modal so a dirty form asks first (UX2-004). */}
           <ModalClose>
             <Button variant="secondary" data-testid="automation-editor-cancel">
               Cancel
             </Button>
           </ModalClose>
-          {/* One primary per footer, on the right (copy style guide). */}
-          {!saveAndRunIsPrimary && saveAndRunButton}
-          {saveButton}
-          {saveAndRunIsPrimary && saveAndRunButton}
+          {/* Save is the primary, on the right, in New and Edit (A-021). Both stay
+              enabled while something is missing: a click then shows it (A-023). */}
+          <Button
+            variant="secondary"
+            className="automation-editor__save-run"
+            onClick={() => handleSave(true)}
+            aria-disabled={blockedBy !== null}
+            errorToast={false}
+            data-testid="automation-editor-save-run"
+          >
+            <span className="automation-editor__save-run-label">
+              {runTarget === null ? "Save and run…" : `Save and run in ${runTarget}`}
+            </span>
+          </Button>
+          <Button
+            ref={primaryRef}
+            variant="primary"
+            onClick={() => handleSave(false)}
+            data-invalid={!canSave || undefined}
+            errorToast={false}
+            data-testid="automation-editor-save"
+          >
+            Save
+          </Button>
         </>
       }
     >
@@ -320,6 +386,8 @@ export function AutomationEditorDialog({
           </Field>
         </div>
 
+        {whenFirst && whenSection}
+
         <section
           className="automation-editor__section"
           aria-labelledby="automation-editor-steps-title"
@@ -338,10 +406,10 @@ export function AutomationEditorDialog({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setExpandedSet(new Set(allExpanded ? [] : stepUids))}
+                onClick={() => setExpandedSet(new Set(anyExpanded ? [] : stepUids))}
                 data-testid="automation-editor-steps-toggle-all"
               >
-                {allExpanded ? "Collapse all" : "Expand all"}
+                {anyExpanded ? "Collapse all" : "Expand all"}
               </Button>
             )}
           </div>
@@ -382,32 +450,13 @@ export function AutomationEditorDialog({
           </StepEditorProvider>
         </section>
 
-        <div data-enter-exempt>
-          <EditorSection
-            title="When it runs"
-            summary={whenItRunsSummary(draft.triggers, isNew ? 0 : scheduleCount)}
-            open={whenOpen}
-            onOpenChange={setWhenOpen}
-            data-testid="automation-editor-when-toggle"
-          >
-            <WhenItRuns
-              triggers={draft.triggers}
-              triggersEnabled={draft.triggersEnabled}
-              automationId={isNew ? null : automation.id}
-              scheduleAfterSave={scheduleAfterSave}
-              errors={errors}
-              onTriggersChange={(triggers) => patch({ triggers })}
-              onTriggersEnabledChange={(triggersEnabled) => patch({ triggersEnabled })}
-              onScheduleAfterSaveChange={setScheduleAfterSave}
-            />
-          </EditorSection>
-        </div>
+        {!whenFirst && whenSection}
 
         {showValues && (
           <div data-enter-exempt>
             <EditorSection
               title="Ask for values when it runs"
-              summary={draft.parameters.length > 0 ? String(draft.parameters.length) : undefined}
+              summary={draft.parameters.map((p) => p.label || p.name).join(", ") || undefined}
               open={valuesOpen}
               onOpenChange={setValuesOpen}
               data-testid="automation-editor-values-toggle"

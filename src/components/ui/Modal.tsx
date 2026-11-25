@@ -94,6 +94,31 @@ function ModalStatus({ status }: { status: InlineStatus | null }): React.ReactEl
 }
 
 /**
+ * Keeps `data-more-below` on the dialog's scrolling body while content goes on
+ * below its edge (A-024): the footer fades it out there. It ends with the body.
+ */
+function watchMoreBelow(body: HTMLDivElement | null): void {
+  if (!body || typeof ResizeObserver === "undefined") return;
+  const update = () => {
+    if (!body.isConnected) {
+      sizes.disconnect();
+      changes.disconnect();
+      return;
+    }
+    body.toggleAttribute(
+      "data-more-below",
+      body.scrollHeight - body.clientHeight - body.scrollTop > 1
+    );
+  };
+  const sizes = new ResizeObserver(update);
+  const changes = new MutationObserver(update);
+  sizes.observe(body);
+  changes.observe(body, { childList: true, subtree: true });
+  body.addEventListener("scroll", update, { passive: true });
+  update();
+}
+
+/**
  * Props for the shared {@link Modal} primitive — a token-styled skin over
  * `@radix-ui/react-dialog`. Focus trap, ESC-to-close, scroll lock, and
  * portalling all come from Radix. The overlay uses `--overlay-bg` +
@@ -347,7 +372,9 @@ export function Modal({
                 {description}
               </Dialog.Description>
             ) : null}
-            <div className="ui-modal__body">{children}</div>
+            <div className="ui-modal__body" ref={watchMoreBelow}>
+              {children}
+            </div>
             {/* The footer is a toast keep-clear zone of its own (#5618): when the
                 dialog is too tall to clear, the stack still never hides its
                 actions. */}

@@ -122,6 +122,15 @@ describe("embedded-servers slice (TFE-006)", () => {
     });
   });
 
+  describe("saveEmbeddedServer", () => {
+    it("keeps where a server runs when the save leaves it out (#6028)", async () => {
+      const host = { kind: "agent", agentId: "a1" } as const;
+      useAppStore.setState({ embeddedServers: [{ ...makeServer("srv-1", "A"), host }] });
+      await useAppStore.getState().saveEmbeddedServer(makeServer("srv-1", "Renamed"));
+      expect(useAppStore.getState().embeddedServers[0]).toMatchObject({ name: "Renamed", host });
+    });
+  });
+
   describe("refreshEmbeddedServerStates", () => {
     it("refreshes only the runtime states without touching the config list", async () => {
       useAppStore.setState({ embeddedServers: [makeServer("srv-1", "A")] });

@@ -3,7 +3,7 @@
  * automation that asks for a value without a default does not start, and one that
  * meets a password prompt has nobody to answer it.
  */
-import { visitSteps } from "@/services/automationRunner";
+import { reachesWaitForUser, visitSteps } from "@/services/automationRunner";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import { isMacroShaped } from "@/store/slices/automationViews";
 import type { Automation } from "@/types/generated/Automation";
@@ -40,8 +40,12 @@ export function unattendedParamValues(
 }
 
 /** Why an unattended run of `automation` does not start, or `null`. */
-export function unattendedBlockedReason(automation: Automation): string | null {
+export function unattendedBlockedReason(
+  automation: Automation,
+  resolve: (id: string) => Automation | undefined
+): string | null {
   if (isMacroShaped(automation)) return null;
+  if (reachesWaitForUser(automation, resolve)) return t("schedule.unattended.waits");
   const params = unattendedParamValues(automation.parameters ?? []);
   return "missing" in params ? tf("schedule.unattended.missing", { name: params.missing }) : null;
 }

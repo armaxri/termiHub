@@ -56,6 +56,18 @@ const STATES = {
   "editor--invalid": "Save was refused: see why and where.",
   "editor--local-process-off": "A step runs a program, but experimental features are off.",
   "editor--unknown-step": "A step of a newer version: see that it cannot run here.",
+  "editor--blocked-collapsed": "Closed, can one tell which step keeps it from running?",
+  "editor--settings-aside": "Open settings was chosen: the editor waits with its changes.",
+  "editor--add-trigger": "Choose what starts it.",
+  "editor--on-connect": "Make it run when a connection opens, below another trigger.",
+  "editor--hotkey": "Press the keys of a hotkey that an app shortcut already uses.",
+  "editor--wait-step": "Change how long a step waits.",
+  "editor--condition-step": "Run steps only for production.",
+  "editor--loop-step": "Repeat steps.",
+  "editor--wait-for-user-step": "A step at which the user types something, e.g. a password.",
+  "editor--step-menu": "Add a step right below this one.",
+  "editor--insert-step": "Add a step between two others, with the pointer.",
+  "editor--more-keys": "Type a key that has no letter.",
   "recording--chip": "Know that typing is being recorded, and stop it.",
   "recording--password-prompt": "Typing a password while recording: know that it is noticed.",
   "recording--save": "Name the recording, or add it to an automation.",
@@ -65,6 +77,10 @@ const STATES = {
   "run--target-picker": "Choose where to run.",
   "run--confirmation": "About to type into several terminals: check which.",
   "run--running": "The automation types into this terminal: see progress, stop it.",
+  "run--password-wait": "The run waits for a password: type it, then go on.",
+  "run--password-still-asked": "Continue was pressed too early: the terminal still asks.",
+  "run--password-wait-elsewhere": "A run waits in a terminal that does not show.",
+  "run--values": "The automation asks for a value before it runs.",
   "run--failed": "A run was refused or failed: see why.",
   "run--history": "Find out what ran, when, where and how it ended.",
   "editor--triggers-deleted": "The connection a trigger watched was deleted: see and fix it.",
@@ -82,6 +98,7 @@ const STATES = {
   "schedules--editor-deleted": "Edit a schedule whose connection was deleted.",
   "schedules--editor-asks": "Schedule an automation that asks for a value: can it run alone?",
   "schedules--editor-password": "Schedule an automation that may meet a password prompt.",
+  "schedules--editor-waits": "Schedule an automation that waits for the user.",
   "palette--automations": "Find an automation by name and see where it will run.",
   "import--notes": "After an import: what was switched off, left out, refused.",
 } as const;
@@ -329,6 +346,44 @@ const UNATTENDED = [
   }),
 ];
 
+/** One of every step that is edited in place, and what meets a password. */
+const BODIES = [
+  ...LIBRARY,
+  automation({
+    id: "bodies",
+    name: "Check the web tier",
+    steps: [
+      { kind: "wait", delayMs: 2500 },
+      {
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [{ kind: "send-command", command: "systemctl status nginx" }],
+        else: [{ kind: "send-command", command: "docker ps" }],
+      },
+      {
+        kind: "loop",
+        loop: { kind: "count", count: 3 },
+        body: [{ kind: "send-command", command: "curl -sf localhost/health" }],
+      },
+      { kind: "wait-for-user", message: "Type your password" },
+    ],
+    triggers: [
+      { kind: "hotkey", binding: "Ctrl+Alt+W" },
+      { kind: "on-connect", connectionIds: [BUILD_BOX] },
+    ],
+    parameters: [{ name: "env", type: "enum", options: ["dev", "prod"], default: "dev" }],
+  }),
+  automation({
+    id: "password",
+    name: "Restart the web server",
+    steps: [
+      { kind: "send-command", command: "sudo systemctl restart nginx" },
+      { kind: "wait-for-user", message: "Type your password" },
+      { kind: "send-command", command: "systemctl status nginx" },
+    ],
+  }),
+];
+
 /** An import that needs every note. */
 const IMPORT = JSON.stringify({
   version: 1,
@@ -391,8 +446,13 @@ async function boot(page: Page, theme: string, scenario: VisualScenario = {}): P
 }
 
 /** Boot with `count` connected terminals. */
-async function bootWithTerminals(page: Page, theme: string, count: number): Promise<void> {
-  await boot(page, theme, { terminal: true });
+async function bootWithTerminals(
+  page: Page,
+  theme: string,
+  count: number,
+  scenario: VisualScenario = {}
+): Promise<void> {
+  await boot(page, theme, { terminal: true, ...scenario });
   for (let i = 0; i < count; i += 1) {
     if ((await page.locator("[data-testid^='tab-close-']").count()) <= i) {
       await page.locator(id("terminal-view-new-terminal")).click();
@@ -403,7 +463,10 @@ async function bootWithTerminals(page: Page, theme: string, count: number): Prom
 
 /** Start recording from the toolbar and type `keys`, each after `prompt`. */
 async function record(page: Page, keys: [string, string][]): Promise<void> {
-  if ((await page.locator(id("terminal-view-active-recording")).count()) === 0) {
+  const recording = await page.evaluate(
+    () => (window.__visual.store.getState() as unknown as GalleryState).recording !== null
+  );
+  if (!recording) {
     await page.locator(id("automation-record-btn")).click();
     await page.locator(id("terminal-view-active-recording")).waitFor();
   }
@@ -546,7 +609,6 @@ for (const viewport of WINDOWS) {
           .toBeGreaterThanOrEqual(dialog.y);
         await shot(page, "editor--add-step", EDITOR);
         await page.locator(id("automation-editor-add-step-send-command")).click();
-        // Save is aria-disabled while something is missing; the click says what.
         // The closing menu may still hold the first click.
         await expect(async () => {
           await page.locator(id("automation-editor-save")).click({ force: true });
@@ -559,7 +621,7 @@ for (const viewport of WINDOWS) {
         await boot(page, theme);
         await edit(page, "full");
         await shot(page, "editor--full", EDITOR);
-        // Open already: this automation has triggers.
+        await page.locator(id("automation-editor-when-toggle")).click();
         await page.locator(id("automation-editor-triggers")).scrollIntoViewIfNeeded();
         await shot(page, "editor--triggers", EDITOR);
         await page.locator(id("automation-editor-cancel")).click();
@@ -572,9 +634,81 @@ for (const viewport of WINDOWS) {
       test("editor, a local process step with the switch off", async ({ page }) => {
         await boot(page, theme, { experimentalOff: true });
         await edit(page, "full");
+        await shot(page, "editor--blocked-collapsed", EDITOR);
         await page.locator(id("automation-editor-step-toggle-4")).click();
         await page.locator(id("automation-editor-step-4")).scrollIntoViewIfNeeded();
         await shot(page, "editor--local-process-off", EDITOR);
+        await page.locator(id("automation-editor-step-open-settings-4")).click();
+        await page.locator(id("automation-editor-aside")).waitFor();
+        await shot(page, "editor--settings-aside", id("automation-editor-aside"));
+        await page.locator(id("automation-editor-aside-return")).click();
+        await page.locator(EDITOR).waitFor();
+      });
+
+      const bodies = { automations: BODIES, runs: RUNS, schedules: SCHEDULES };
+
+      test("editor, step bodies", async ({ page }) => {
+        await boot(page, theme, { automationData: bodies });
+        await edit(page, "bodies");
+        const open = async (step: number, state: State) => {
+          const toggle = page.locator(id(`automation-editor-step-toggle-${step}`));
+          await toggle.click();
+          await page.locator(id(`automation-editor-step-${step}`)).scrollIntoViewIfNeeded();
+          await shot(page, state, EDITOR);
+          await toggle.click();
+        };
+        await open(0, "editor--wait-step");
+        await open(1, "editor--condition-step");
+        await open(2, "editor--loop-step");
+        await open(3, "editor--wait-for-user-step");
+        await page.locator(id("automation-editor-step-more-1")).click();
+        await page.locator(id("automation-editor-step-add-below-1")).press("ArrowRight");
+        await page.locator(id("automation-editor-step-add-below-1-wait")).waitFor();
+        await expect
+          .poll(async () => {
+            const menus = page.locator("[role=menu]");
+            const box = await menus.last().boundingBox();
+            return box !== null && box.y >= 0 && box.y + box.height <= viewport.height;
+          })
+          .toBe(true);
+        await shot(page, "editor--step-menu", EDITOR);
+        await page.keyboard.press("Escape");
+        await page.locator("[role=menu]").first().waitFor({ state: "hidden" });
+        await expect(page.locator(id("automation-editor-step-more-1"))).toBeFocused();
+        await page.locator(id("automation-editor-insert-step-2")).focus();
+        await shot(page, "editor--insert-step", EDITOR);
+      });
+
+      test("editor, triggers", async ({ page }) => {
+        await boot(page, theme, { automationData: bodies });
+        await edit(page, "bodies");
+        await page.locator(id("automation-editor-when-toggle")).click();
+        await page.locator(id("automation-editor-trigger-1")).scrollIntoViewIfNeeded();
+        await shot(page, "editor--on-connect", EDITOR);
+        await page.locator(id("automation-editor-add-trigger")).click();
+        await page.locator(id("automation-editor-add-schedule")).waitFor();
+        await expect
+          .poll(async () => {
+            const box = await page.locator("[role=menu]").boundingBox();
+            return box !== null && box.y >= 0 && box.y + box.height <= viewport.height;
+          })
+          .toBe(true);
+        await shot(page, "editor--add-trigger", EDITOR);
+        await page.keyboard.press("Escape");
+        const hotkey = page.locator(id("automation-trigger-binding-0"));
+        await hotkey.scrollIntoViewIfNeeded();
+        await hotkey.press("Control+Shift+P");
+        await hotkey.press("Control+Alt+R");
+        await expect(page.locator(id("automation-editor-trigger-0"))).toContainText("is used by");
+        await shot(page, "editor--hotkey", EDITOR);
+      });
+
+      test("editor, keys", async ({ page }) => {
+        await boot(page, theme);
+        await edit(page, "keys");
+        await page.locator(id("automation-editor-step-toggle-0")).click();
+        await page.locator(id("automation-editor-keys-more-0")).click();
+        await shot(page, "editor--more-keys", EDITOR);
       });
 
       test("recording", async ({ page }) => {
@@ -615,6 +749,39 @@ for (const viewport of WINDOWS) {
         await page.locator(id("run-targets-run")).click();
         await page.locator(id("run-targets-confirm-step")).waitFor();
         await shot(page, "run--confirmation", id("run-targets-dialog"));
+      });
+
+      test("run, a password", async ({ page }) => {
+        await bootWithTerminals(page, theme, 2, { automationData: bodies });
+        await page.locator(id("automation-start-password")).click();
+        const bar = page.locator(id("automation-waits"));
+        await bar.waitFor();
+        await shot(page, "run--password-wait", id("automation-waits"));
+        await page.evaluate(() => {
+          const store = window.__visual.store as unknown as {
+            getState(): { automationWaits: object[] };
+            setState(partial: unknown): void;
+          };
+          // What Continue does while the prompt is still on the screen.
+          const { automationWaits } = store.getState();
+          store.setState({
+            automationWaits: automationWaits.map((w) => ({ ...w, stillAsking: true })),
+          });
+        });
+        await expect(bar).toContainText("still asks for a password");
+        await shot(page, "run--password-still-asked", id("automation-waits"));
+        await page.locator("[role=tab]").first().click();
+        await bar.locator("[data-testid^='automation-wait-show-']").waitFor();
+        await shot(page, "run--password-wait-elsewhere", id("automation-waits"));
+        await bar.locator("[data-testid^='automation-wait-stop-']").click();
+        await bar.waitFor({ state: "hidden" });
+      });
+
+      test("run, values", async ({ page }) => {
+        await bootWithTerminals(page, theme, 1, { automationData: bodies });
+        await page.locator(id("automation-start-bodies")).click();
+        await page.locator("[role=dialog]").waitFor();
+        await shot(page, "run--values", "[role=dialog]");
       });
 
       test("run, failed", async ({ page }) => {
@@ -677,6 +844,7 @@ for (const viewport of WINDOWS) {
           },
         });
         await edit(page, "full");
+        await page.locator(id("automation-editor-when-toggle")).click();
         await page.locator(id("automation-trigger-connection-0-none")).scrollIntoViewIfNeeded();
         await shot(page, "editor--triggers-deleted", EDITOR);
       });
@@ -748,7 +916,7 @@ for (const viewport of WINDOWS) {
       });
 
       test("schedules, an automation that cannot run alone", async ({ page }) => {
-        await bootSchedules(page, SCHEDULES, { automations: UNATTENDED });
+        await bootSchedules(page, SCHEDULES, { automations: [...UNATTENDED, ...BODIES] });
         await newSchedule(page, "asks");
         await page.locator(id("schedule-editor-automation-note")).waitFor();
         await shot(page, "schedules--editor-asks", SCHEDULE_EDITOR);
@@ -756,6 +924,10 @@ for (const viewport of WINDOWS) {
         await newSchedule(page, "sudo");
         await page.locator(id("schedule-editor-automation-note")).waitFor();
         await shot(page, "schedules--editor-password", SCHEDULE_EDITOR);
+        await page.locator(id("schedule-editor-cancel")).click();
+        await newSchedule(page, "password");
+        await expect(page.locator(id("schedule-editor-automation-note"))).toContainText("stops");
+        await shot(page, "schedules--editor-waits", SCHEDULE_EDITOR);
       });
 
       test("palette", async ({ page }) => {

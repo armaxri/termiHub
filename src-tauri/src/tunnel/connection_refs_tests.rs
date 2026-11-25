@@ -33,11 +33,12 @@ fn tunnel(id: &str, ssh_connection_id: &str) -> TunnelConfig {
             remote_host: "db.internal".to_string(),
             remote_port: 5432,
         }),
-        host: crate::run_location::RunLocation::ThisComputer,
+        host: Default::default(),
         auto_start: false,
         start_with_connection: false,
         reconnect_on_disconnect: false,
         companion_of: None,
+        extra: Default::default(),
     }
 }
 
