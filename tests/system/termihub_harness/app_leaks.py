@@ -324,7 +324,10 @@ def is_leak_of_a_gone_session(proc: psutil.Process) -> bool:
     if not in_temp or not os.path.basename(config).startswith(CONFIG_DIR_PREFIX):
         return False
     target = os.path.realpath(TARGET_DIR)
-    return bool(exe) and os.path.commonpath([exe, target]) == target
+    try:
+        return bool(exe) and os.path.commonpath([exe, target]) == target
+    except ValueError:  # another drive (Windows)
+        return False
 
 
 def end_leaks_of_gone_sessions(

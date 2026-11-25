@@ -253,8 +253,8 @@ def test_an_orphan_of_a_finished_session_is_ended_and_names_its_test(target):
         {"exe": ""},
         {"owner": None},  # not launched by a harness
         {"owner": "not-a-pid"},
-        {"owner": str(os.getppid())},  # its session still runs
-        {"owner": str(os.getpid())},  # this session's: reap_leaks' business
+        {"owner": "parent"},  # its session still runs
+        {"owner": "self"},  # this session's: reap_leaks' business
         {"port": None},
         {"port": "?"},
         {"config": None},
@@ -265,13 +265,15 @@ def test_an_orphan_of_a_finished_session_is_ended_and_names_its_test(target):
         {"error": psutil.NoSuchProcess(3112)},
         {"error": OSError("gone")},
     ],
-    ids=str,
+    ids=lambda change: "-".join(change),
 )
 def test_anything_not_provably_our_own_orphan_is_never_touched(target, change):
-    proc = _OrphanProc(target, **change)
-    if change.get("owner") == str(os.getppid()):
+    pids = {"parent": os.getppid(), "self": os.getpid()}
+    owner = pids.get(change.get("owner"))
+    proc = _OrphanProc(target, **(change if owner is None else {"owner": str(owner)}))
+    if owner is not None:
         # Started after its owner, so that PID was not reused.
-        proc._created = psutil.Process(os.getppid()).create_time() + 1
+        proc._created = psutil.Process(owner).create_time() + 1
     ended = []
     assert app_leaks.end_leaks_of_gone_sessions([], [proc], end=ended.extend) == []
     assert ended == [] and app_leaks.ENDED_LEAKS == []
@@ -291,6 +293,24 @@ def test_a_reused_owner_pid_counts_as_gone(target):
     # The owner's PID belongs to a process started after the app was.
     orphan = _OrphanProc(target, owner=str(os.getppid()))
     assert app_leaks.is_leak_of_a_gone_session(orphan)
+
+
+def test_an_owner_that_cannot_be_read_is_not_gone(target, monkeypatch):
+    orphan = _OrphanProc(target)
+
+    def denied(pid):
+        raise psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(app_leaks.psutil, "Process", denied)
+    assert not app_leaks.is_leak_of_a_gone_session(orphan)
+
+
+def test_an_app_on_another_drive_is_not_under_this_target(target, monkeypatch):
+    def different_drives(_paths):
+        raise ValueError("Paths don't have the same drive")
+
+    monkeypatch.setattr(app_leaks.os.path, "commonpath", different_drives)
+    assert not app_leaks.is_leak_of_a_gone_session(_OrphanProc(target))
 
 
 def test_the_target_dir_is_this_checkouts():
