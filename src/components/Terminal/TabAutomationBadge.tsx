@@ -35,7 +35,7 @@ export function TabAutomationBadge({ tabId, info, onStop }: TabAutomationBadgePr
       >
         {info.waiting ? <Hand size={12} aria-hidden /> : <ListVideo size={12} aria-hidden />}
         <span className="tab__automation-progress" aria-hidden>
-          {info.waiting ? "waits" : `${info.completed}/${info.total}`}
+          {info.waiting ? "waits" : info.progress}
         </span>
       </span>
     </Tooltip>

@@ -9,7 +9,10 @@ export const EDIT_AUTOMATION_EVENT = "termihub:edit-automation";
 /** Show an automation's runs in the History. `AutomationEditorHost` does it. */
 export const SHOW_AUTOMATION_RUNS_EVENT = "termihub:show-automation-runs";
 
-/** The detail both events carry. */
+/** Ask where to run an automation again. `AutomationEditorHost` does it. */
+export const RUN_AUTOMATION_AGAIN_EVENT = "termihub:run-automation-again";
+
+/** The detail all of them carry. */
 export interface AutomationEventDetail {
   automationId: string;
 }
@@ -19,14 +22,23 @@ function ask(event: string, automationId: string): void {
   window.dispatchEvent(new CustomEvent(event, { detail }));
 }
 
-/** The two ways on from a failed run, as a toast's buttons. */
-export function failedRunActions(automationId: string): Pick<ToastOptions, "action" | "cancel"> {
+/** The two ways on from a failed run, as a toast's buttons: its editor or another run, and its runs. */
+export function failedRunActions(
+  automationId: string,
+  again = false
+): Pick<ToastOptions, "action" | "cancel"> {
   return {
-    action: {
-      label: "Edit",
-      testId: "automation-failed-edit",
-      onClick: () => ask(EDIT_AUTOMATION_EVENT, automationId),
-    },
+    action: again
+      ? {
+          label: "Run again…",
+          testId: "automation-failed-again",
+          onClick: () => ask(RUN_AUTOMATION_AGAIN_EVENT, automationId),
+        }
+      : {
+          label: "Edit",
+          testId: "automation-failed-edit",
+          onClick: () => ask(EDIT_AUTOMATION_EVENT, automationId),
+        },
     cancel: {
       label: "History",
       testId: "automation-failed-history",

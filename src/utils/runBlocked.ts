@@ -4,7 +4,7 @@
  * refused elsewhere (`automationRunner`, `localProcessRefusal`). All **pure**.
  */
 import { findUnknownStep, unknownStepReason } from "@/services/automationRunner";
-import { tf } from "@/i18n/catalog";
+import { t, tf } from "@/i18n/catalog";
 import type { Automation } from "@/types/generated/Automation";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import { localProcessBlockedReason } from "@/utils/localProcessGate";
@@ -23,4 +23,16 @@ export function runBlockedReason(
   return localProcessBlockedReason(automation, resolve, experimental) === null
     ? null
     : tf("automation.blocked.localProcess", { path: EXPERIMENTAL_SETTING_PATH });
+}
+
+/** The same in a few words: "needs a newer termiHub". */
+export function runBlockedShort(
+  automation: Automation,
+  resolve: ResolveAutomation,
+  experimental: boolean
+): string | null {
+  if (findUnknownStep(automation, resolve)) return t("automation.blockedShort.unknown");
+  return localProcessBlockedReason(automation, resolve, experimental) === null
+    ? null
+    : t("automation.blockedShort.local");
 }

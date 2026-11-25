@@ -4,6 +4,7 @@ import { toast } from "@/components/ui";
 import { claimWorkflowRunToast } from "./workflowRunToasts";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { Workflow, WorkflowParameter } from "@/types/workflow";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
@@ -137,6 +138,10 @@ export interface WorkflowParamPromptState {
   workflowName: string;
   /** The parameters to collect, in declaration order. */
   parameters: WorkflowParameter[];
+  /** The titles of the terminals it will run in. */
+  targets: string[];
+  /** The automation's steps, to say where a value is used. */
+  steps: readonly AutomationStep[];
   /** Resolver wired to the pending prompt promise (`null` = cancelled). */
   resolve: (values: WorkflowParamValues | null) => void;
 }
@@ -145,6 +150,8 @@ export interface WorkflowParamPromptState {
 export interface LocalProcessPromptState {
   /** The program the step wants to spawn, as written. */
   program: string;
+  /** Refusing it does not end the run: the step continues on error. */
+  goesOn?: boolean;
   /** The file that would start (#5994); the approval is for this file. */
   path: string;
   /** The discrete arguments it would be spawned with. */
@@ -311,7 +318,13 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     if (parameters.length > 0) {
       const collected = await new Promise<WorkflowParamValues | null>((resolve) => {
         set({
-          workflowParamPrompt: { workflowName: workflow.name, parameters, resolve },
+          workflowParamPrompt: {
+            workflowName: workflow.name,
+            parameters,
+            targets: targets.map((x) => x.title),
+            steps: automationForRun(get(), workflowId)?.steps ?? [],
+            resolve,
+          },
         });
       });
       set({ workflowParamPrompt: null });

@@ -158,6 +158,7 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setWorkflowRunViewForTest } from "./workflowRunBridge";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
@@ -2024,6 +2025,32 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
 
     await vi.waitFor(() => expect(injected).toContain("echo wf-a\n"));
+  });
+
+  it("never stops a run in progress, and says so (#6042)", async () => {
+    const error = vi.spyOn(toast, "error");
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r",
+        workflowId: "other",
+        workflowName: "Health check",
+        tabId: "t",
+        label: "web-1",
+        total: 2,
+        completed: 0,
+      },
+      output: null,
+    });
+    useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-1"])] });
+    seedUnconnectedTab("conn-1");
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(expect.stringMatching(/was not run$/), {
+        description: "“Health check” is running in web-1, at step 1 of 2.",
+      })
+    );
+    expect(injected).toEqual([]);
+    setWorkflowRunViewForTest({ run: null, output: null });
   });
 
   it.each([

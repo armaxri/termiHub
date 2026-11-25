@@ -127,7 +127,8 @@ export function blankScheduleForm(action?: ScheduleAction): ScheduleFormValues {
     targetsKind: "connections",
     connectionIds: [],
     groupId: "",
-    ruleKind: "interval",
+    // Once a day: a slip with minutes runs a backup 96 times (C-023).
+    ruleKind: "daily",
     everyMinutes: 15,
     time: "09:00",
     days: ["mon", "tue", "wed", "thu", "fri"],

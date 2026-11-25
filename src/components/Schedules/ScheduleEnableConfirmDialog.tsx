@@ -2,7 +2,9 @@ import { useCallback } from "react";
 import { ConfirmDialog } from "@/components/ui";
 import { t, tf } from "@/i18n/catalog";
 import { previewScheduleNextRun } from "@/services/scheduleApi";
-import type { ScheduleRule } from "@/types/schedule";
+import { RUN_PREVIEW_STEPS, stepCountText } from "@/components/Automations/runPreview";
+import "@/components/Automations/RunTargetsDialog.css";
+import type { MissedRunPolicy, ScheduleRule } from "@/types/schedule";
 import { formatDayTime } from "@/utils/formatters";
 import { describeRule } from "./scheduleForm";
 import { useNextRun } from "./useNextRun";
@@ -20,6 +22,11 @@ export interface ScheduleEnableConfirmDialogProps {
   hosts: string[];
   /** Why nothing will run, or `null`. */
   gone?: string | null;
+  /** What it types, a line per step. */
+  steps?: readonly string[];
+  stepCount?: number;
+  /** What happens to a run that is missed. */
+  missedRuns?: MissedRunPolicy;
   /** It also connects hosts that are not connected (#3527). */
   connects?: boolean;
   /** Switch the schedule on (confirmed). */
@@ -39,6 +46,9 @@ export function ScheduleEnableConfirmDialog({
   rule,
   hosts,
   gone = null,
+  steps = [],
+  stepCount = steps.length,
+  missedRuns = "skip",
   connects = false,
   onConfirm,
   onCancel,
@@ -72,6 +82,18 @@ export function ScheduleEnableConfirmDialog({
               {tf("schedule.confirm.gone", { reason: gone })}
             </p>
           ) : null}
+          {steps.length > 0 ? (
+            <div className="run-targets__types" data-testid="schedule-confirm-steps">
+              <p>{tf("schedule.confirm.does", { steps: stepCountText(stepCount) })}</p>
+              <ol>
+                {steps.map((line, i) => (
+                  <li key={i} className={i < RUN_PREVIEW_STEPS ? undefined : "run-targets__more"}>
+                    {line}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
           {next && !gone ? (
             <p data-testid="schedule-confirm-next">
               {tf("schedule.confirm.next", { when: formatDayTime(next) })}
@@ -79,6 +101,10 @@ export function ScheduleEnableConfirmDialog({
           ) : null}
           <p data-testid={connects ? "schedule-confirm-connects" : "schedule-confirm-skips"}>
             {t(connects ? "schedule.connect.confirm" : "schedule.confirm.skips")}
+          </p>
+          <p data-testid="schedule-confirm-awake">
+            {t("schedule.onlyWhileOpen")}{" "}
+            {t(missedRuns === "skip" ? "schedule.missed.skip" : "schedule.missed.once")}
           </p>
           <p>{t("schedule.confirm.foot")}</p>
         </div>

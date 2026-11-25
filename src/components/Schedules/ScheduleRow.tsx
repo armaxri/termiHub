@@ -26,6 +26,9 @@ export interface ScheduleRowProps {
   targets: string;
   /** Why it will not run, or `null`. */
   blocked: string | null;
+  /** Choosing another connection would let it run. */
+  repairable?: boolean;
+  onRepair?: () => void;
   /** It was just saved: tint the row briefly. */
   justSaved?: boolean;
   onToggle: (enabled: boolean) => void;
@@ -47,6 +50,8 @@ export function ScheduleRow({
   action,
   targets,
   blocked,
+  repairable = false,
+  onRepair,
   justSaved = false,
   onToggle,
   onEdit,
@@ -148,6 +153,19 @@ export function ScheduleRow({
               data-testid={`schedule-blocked-${s.id}`}
             >
               {blocked}
+              {repairable && (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="schedules__link"
+                    onClick={onRepair}
+                    data-testid={`schedule-repair-${s.id}`}
+                  >
+                    {t("schedule.repair")}
+                  </button>
+                </>
+              )}
             </span>
           ) : null}
           {last ? (
@@ -157,7 +175,22 @@ export function ScheduleRow({
               data-testid={`schedule-last-${s.id}`}
             >
               <StatusDot tone={attemptTone(last.kind)} size="sm" ariaHidden />
-              <span>{lastRunText(last)}</span>
+              <span>
+                {lastRunText(last)}
+                {last.kind !== "completed" && (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      className="schedules__link"
+                      onClick={onShowHistory}
+                      data-testid={`schedule-last-history-${s.id}`}
+                    >
+                      {t("schedule.menu.history")}
+                    </button>
+                  </>
+                )}
+              </span>
             </span>
           ) : null}
         </>

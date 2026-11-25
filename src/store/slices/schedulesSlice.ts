@@ -62,6 +62,8 @@ export interface ScheduleEditorState {
   scheduleId?: string;
   /** For a new schedule: the automation to pre-select. */
   action?: ScheduleAction;
+  /** Start at the connections, to repair them. */
+  startAtConnections?: boolean;
   /** The id a new schedule is saved under (minted when the editor opens). */
   draftId?: string;
 }

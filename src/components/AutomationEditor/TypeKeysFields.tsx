@@ -7,6 +7,7 @@ import { DEFAULT_FIXED_DELAY_MS, MAX_STEP_DELAY_MS } from "@/services/macroPlayb
 import type { TypingSpeed } from "@/types/generated/TypingSpeed";
 import { isImeComposing } from "@/utils/imeComposition";
 import { newKeyDraft, type KeyDraft, type StepDraft, type TypeKeysStep } from "./automationDraft";
+import { MoreKeys } from "./MoreKeys";
 import { useStepEditor } from "./stepEditorContext";
 import { TYPING_SPEEDS, typingSpeedLabel } from "./stepMeta";
 
@@ -70,6 +71,18 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
     inputs[index < 0 ? inputs.length + index : index]?.focus();
   };
 
+  /** Where the caret was last, in which row; the end of the last row before that. */
+  const caret = useRef<{ uid: string; at: number } | null>(null);
+  const insertAtCaret = (text: string) => {
+    const known = keys.findIndex((key) => key.uid === caret.current?.uid);
+    const index = known < 0 ? keys.length - 1 : known;
+    if (index < 0) return;
+    const row = keys[index];
+    const at = Math.min(known < 0 ? row.text.length : (caret.current?.at ?? 0), row.text.length);
+    update(index, { text: `${row.text.slice(0, at)}${text}${row.text.slice(at)}` });
+    caret.current = { uid: row.uid, at: at + text.length };
+  };
+
   const setSpeed = (timing: TypingSpeed) => onChange({ ...draft, step: { ...step, timing } });
 
   return (
@@ -94,15 +107,10 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
           onClick={() => setMoreKeys((v) => !v)}
           data-testid={`automation-editor-keys-more-${path}`}
         >
-          More keys
+          Special keys
         </Button>
       </p>
-      {moreKeys && (
-        <p className="type-keys__hint" data-testid={`automation-editor-keys-more-text-${path}`}>
-          Write <code>\t</code> for Tab <code>⇥</code>, <code>\e</code> for Esc <code>⎋</code>,{" "}
-          <code>\x03</code> for Ctrl+C (any <code>\xHH</code>), <code>\\</code> for a backslash.
-        </p>
-      )}
+      {moreKeys && <MoreKeys path={path} onInsert={insertAtCaret} />}
       <div className="type-keys__rows">
         {keys.slice(0, shown).map((key, i) => (
           <KeyRow
@@ -118,6 +126,10 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
               errors[`${errorBase}.${key.uid}.text`] ?? errors[`${errorBase}.${key.uid}.delayMs`]
             }
             textInvalid={errors[`${errorBase}.${key.uid}.text`] !== undefined}
+            only={keys.length === 1}
+            onCaret={(at) => {
+              caret.current = { uid: key.uid, at };
+            }}
             onChange={(patch) => update(i, patch)}
             onMove={(direction) => move(i, i + direction)}
             onDelete={
@@ -153,39 +165,42 @@ export function TypeKeysFields({ draft, step, path, stepNumber, onChange }: Type
           Add keys
         </Button>
       </div>
-      <div className="automation-step__inline">
-        <Field label="Typing speed" htmlFor={`automation-step-speed-${path}`}>
-          <Select
-            id={`automation-step-speed-${path}`}
-            value={speed}
-            onChange={(value) => setSpeed(value as TypingSpeed)}
-            options={TYPING_SPEEDS.map((value) => ({
-              value,
-              label: typingSpeedLabel(value, step.recorded === true),
-            }))}
-            data-testid={`automation-editor-step-speed-${path}`}
-          />
-        </Field>
-        {speed === "fixed" && (
-          <Field label="Delay (ms)" htmlFor={`automation-step-fixed-delay-${path}`}>
-            <NumberInput
-              id={`automation-step-fixed-delay-${path}`}
-              value={step.fixedDelayMs ?? ""}
-              min={0}
-              max={MAX_STEP_DELAY_MS}
-              step={10}
-              placeholder={String(DEFAULT_FIXED_DELAY_MS)}
-              onValueChange={(v) => {
-                const next = { ...step };
-                if (v === "") delete next.fixedDelayMs;
-                else next.fixedDelayMs = Math.max(0, Math.round(v));
-                onChange({ ...draft, step: next });
-              }}
-              data-testid={`automation-editor-step-fixed-delay-${path}`}
+      {/* With one row there is nothing between rows to time (B-012). */}
+      {(keys.length > 1 || speed !== "recorded") && (
+        <div className="automation-step__inline">
+          <Field label="Typing speed" htmlFor={`automation-step-speed-${path}`}>
+            <Select
+              id={`automation-step-speed-${path}`}
+              value={speed}
+              onChange={(value) => setSpeed(value as TypingSpeed)}
+              options={TYPING_SPEEDS.map((value) => ({
+                value,
+                label: typingSpeedLabel(value, step.recorded === true),
+              }))}
+              data-testid={`automation-editor-step-speed-${path}`}
             />
           </Field>
-        )}
-      </div>
+          {speed === "fixed" && (
+            <Field label="Delay (ms)" htmlFor={`automation-step-fixed-delay-${path}`}>
+              <NumberInput
+                id={`automation-step-fixed-delay-${path}`}
+                value={step.fixedDelayMs ?? ""}
+                min={0}
+                max={MAX_STEP_DELAY_MS}
+                step={10}
+                placeholder={String(DEFAULT_FIXED_DELAY_MS)}
+                onValueChange={(v) => {
+                  const next = { ...step };
+                  if (v === "") delete next.fixedDelayMs;
+                  else next.fixedDelayMs = Math.max(0, Math.round(v));
+                  onChange({ ...draft, step: next });
+                }}
+                data-testid={`automation-editor-step-fixed-delay-${path}`}
+              />
+            </Field>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -198,6 +213,10 @@ interface KeyRowProps {
   stepNumber: number;
   last: boolean;
   showDelay: boolean;
+  /** The only row: nothing to move it past, and it cannot be deleted. */
+  only: boolean;
+  /** The caret moved to this place in the text. */
+  onCaret: (at: number) => void;
   hintId: string;
   error?: string;
   textInvalid: boolean;
@@ -215,6 +234,8 @@ function KeyRow({
   stepNumber,
   last,
   showDelay,
+  only,
+  onCaret,
   hintId,
   error,
   textInvalid,
@@ -255,6 +276,7 @@ function KeyRow({
           value={draft.text}
           onChange={(e) => onChange({ text: e.target.value })}
           onKeyDown={handleKeyDown}
+          onSelect={(e) => onCaret(e.currentTarget.selectionStart ?? draft.text.length)}
           placeholder="e.g. ls -la⏎"
           spellCheck={false}
           autoComplete="off"
@@ -266,13 +288,13 @@ function KeyRow({
         <Button
           variant="ghost"
           size="sm"
-          iconOnly
           aria-label={`Add Enter to ${label}`}
-          title="Add Enter (⏎)"
           icon={<CornerDownLeft size={12} />}
           onClick={() => insertEnter(draft.text.length, draft.text.length)}
           data-testid={`automation-editor-keys-enter-${id}`}
-        />
+        >
+          Enter
+        </Button>
         {showDelay && (
           <span className="type-keys__delay">
             <NumberInput
@@ -285,41 +307,43 @@ function KeyRow({
               aria-label={`Delay before ${label} in milliseconds`}
               data-testid={`automation-editor-keys-delay-${id}`}
             />
-            <span className="type-keys__unit">ms</span>
+            <span className="type-keys__unit">ms before</span>
           </span>
         )}
-        <span className="type-keys__row-actions">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`Move ${label} up`}
-            disabled={number === 1}
-            icon={<ArrowUp size={12} />}
-            onClick={() => onMove(-1)}
-            data-testid={`automation-editor-keys-up-${id}`}
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`Move ${label} down`}
-            disabled={last}
-            icon={<ArrowDown size={12} />}
-            onClick={() => onMove(1)}
-            data-testid={`automation-editor-keys-down-${id}`}
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`Delete ${label}`}
-            disabled={!onDelete}
-            icon={<Trash2 size={12} />}
-            onClick={() => onDelete?.()}
-            data-testid={`automation-editor-keys-delete-${id}`}
-          />
-        </span>
+        {!only && (
+          <span className="type-keys__row-actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Move ${label} up`}
+              disabled={number === 1}
+              icon={<ArrowUp size={12} />}
+              onClick={() => onMove(-1)}
+              data-testid={`automation-editor-keys-up-${id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Move ${label} down`}
+              disabled={last}
+              icon={<ArrowDown size={12} />}
+              onClick={() => onMove(1)}
+              data-testid={`automation-editor-keys-down-${id}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Delete ${label}`}
+              disabled={!onDelete}
+              icon={<Trash2 size={12} />}
+              onClick={() => onDelete?.()}
+              data-testid={`automation-editor-keys-delete-${id}`}
+            />
+          </span>
+        )}
       </div>
       {error && (
         <p

@@ -127,9 +127,9 @@ describe("TabBar — running-automation badge (#5818)", () => {
     await render();
     const el = badge("c")!;
     expect(el.getAttribute("role")).toBe("img");
-    expect(el.getAttribute("aria-label")).toBe("Running automation “deploy” (2/5)");
-    expect(el.textContent).toBe("2/5");
-    expect(badge("a")?.getAttribute("aria-label")).toBe("Running automation “deploy” (4/5)");
+    expect(el.getAttribute("aria-label")).toBe("Running automation “deploy” (40 % typed)");
+    expect(el.textContent).toBe("40 %");
+    expect(badge("a")?.getAttribute("aria-label")).toBe("Running automation “deploy” (80 % typed)");
   });
 
   it("clears the badge on a target that dropped out mid-run, keeping the rest", async () => {
@@ -170,7 +170,9 @@ describe("TabBar — running-automation badge (#5818)", () => {
       output: null,
     });
     await render();
-    expect(badge("d")?.getAttribute("aria-label")).toBe("Running automation “Health check” (1/3)");
+    expect(badge("d")?.getAttribute("aria-label")).toBe(
+      "Running automation “Health check” (step 2 of 3)"
+    );
     act(() => badge("d")!.click());
     expect(cancelWorkflowRun).toHaveBeenCalledWith("r1");
   });

@@ -24,8 +24,8 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
   it("marks a single-terminal macro on its tab", () => {
     expect(runningAutomationOnTab(playback(), [], "a")).toEqual({
       name: "Deploy",
-      completed: 3,
-      total: 4,
+      progress: "75 %",
+      progressText: "75 % typed",
       waiting: false,
       stop: { kind: "macro" },
     });
@@ -34,8 +34,8 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
 
   it("uses each target's own progress on a multi-terminal macro", () => {
     const p = playback({ targetTabIds: ["a", "c"], targetProgress: { a: 1, c: 4 } });
-    expect(runningAutomationOnTab(p, [], "c")?.completed).toBe(4);
-    expect(runningAutomationOnTab(p, [], "a")?.completed).toBe(1);
+    expect(runningAutomationOnTab(p, [], "c")?.progress).toBe("100 %");
+    expect(runningAutomationOnTab(p, [], "a")?.progress).toBe("25 %");
     // A target whose run ended is no longer in targetTabIds.
     expect(runningAutomationOnTab(playback({ targetTabIds: ["c"] }), [], "a")).toBeNull();
   });
@@ -43,8 +43,9 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
   it("marks a running workflow with a stop for that run", () => {
     expect(runningAutomationOnTab(null, [run], "b")).toEqual({
       name: "Health",
-      completed: 1,
-      total: 2,
+      // The step it is at, not the steps that are done (B-002).
+      progress: "2/2",
+      progressText: "step 2 of 2",
       waiting: false,
       stop: { kind: "workflow", runId: "r1" },
     });
@@ -61,11 +62,11 @@ describe("runningAutomationOnTab (#5818 slice 5)", () => {
     expect(
       runningAutomationLabel({
         name: "Deploy",
-        completed: 2,
-        total: 5,
+        progress: "3/5",
+        progressText: "step 3 of 5",
         waiting: false,
         stop: { kind: "macro" },
       })
-    ).toBe("Running automation “Deploy” (2/5)");
+    ).toBe("Running automation “Deploy” (step 3 of 5)");
   });
 });

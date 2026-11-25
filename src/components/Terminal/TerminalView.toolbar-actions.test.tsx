@@ -311,7 +311,7 @@ describe("TerminalView — macro playback and dialogs (#5172)", () => {
     seed(leaf("a", [tab("t1", "a")]), "a");
     await renderView();
     const btn = button("terminal-view-run-automation")!;
-    expect(btn.textContent).toBe("Stop automation (2/5)");
+    expect(btn.textContent).toBe("Stop automation (40 % typed)");
     expect(btn.getAttribute("data-active")).toBe("true");
 
     click("terminal-view-run-automation");

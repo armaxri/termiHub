@@ -30,6 +30,10 @@ const SELECTED_REDIRECTS: [string, string][] = [
     "components/AutomationSidebar/AutomationSidebar.css",
     ".sidebar-list-item.automation-item--just-saved",
   ],
+  [
+    "components/AutomationSidebar/AutomationSidebar.css",
+    ".sidebar-list-item.automation-item--selected",
+  ],
 ];
 
 /**

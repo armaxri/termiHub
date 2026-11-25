@@ -13,6 +13,7 @@ import {
   automationRunTargets,
   automationRunTone,
   nextStepAfter,
+  nextStepAfterGap,
   runsOfAutomation,
 } from "./historyFormat";
 
@@ -88,7 +89,7 @@ describe("automation history format (#5818, slice 9)", () => {
     it("names the step that failed and what it does", () => {
       expect(automationRunOutcome(failed, steps)).toBe("Failed at step 2 of 2 (Run command: make)");
       expect(automationRunOutcome({ ...failed, continuedFailures: 2 }, steps)).toMatch(
-        / · 2 tolerated failures$/
+        / · 2 steps failed, the run went on$/
       );
     });
 
@@ -121,6 +122,17 @@ describe("automation history format (#5818, slice 9)", () => {
     if (next === null) expect(text).toBeNull();
     else expect(text).toMatch(next);
     expect(nextStepAfter({ status: "completed", error })).toBeNull();
+  });
+
+  it("says what to do about a time at which nothing ran (B-033)", () => {
+    expect(nextStepAfterGap({ kind: "missed", reason: null })).toContain("If a run is missed");
+    expect(
+      nextStepAfterGap({
+        kind: "skipped",
+        reason: "None of its connections was open, and the schedule is set to skip closed ones",
+      })
+    ).toContain("If a connection is closed");
+    expect(nextStepAfterGap({ kind: "skipped", reason: "something else" })).toBeNull();
   });
 
   it("formats duration and progress", () => {

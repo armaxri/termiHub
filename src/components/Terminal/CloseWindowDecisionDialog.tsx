@@ -29,6 +29,7 @@ import type {
   WindowCloseSessionRow,
 } from "@/types/window";
 import "./CloseWindowDecisionDialog.css";
+import { joinWords } from "@/utils/joinWords";
 
 /**
  * The close-with-live-tabs decision surface (#1903, epic #1899).
@@ -205,7 +206,7 @@ export function CloseWindowDecisionDialog() {
       title={isQuit ? "Quit termiHub?" : "Close this window?"}
       description={
         count > 0
-          ? `Choose what happens to this window's live sessions before ${isQuit ? "termiHub quits" : "it closes"}.`
+          ? `What ${isQuit ? "quitting" : "closing"} does to this window's live sessions.`
           : `This window has unsaved ${dirtyCount > 0 ? "editors" : "input"} that ${
               isQuit ? "quitting" : "closing it"
             } would discard.`
@@ -221,15 +222,20 @@ export function CloseWindowDecisionDialog() {
             Cancel
           </Button>
           <Button variant="danger" onClick={handleEnd} data-testid="close-window-decision-end">
-            {count > 0 ? (
+            {recording ? (
               <>
-                <Power className="li" aria-hidden="true" /> {isQuit ? "Quit" : "Close"} &amp; end
-                sessions
+                <Trash2 className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                {isQuit ? "Quit" : "Close"} without saving
+              </>
+            ) : count > 0 ? (
+              <>
+                <Power className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                {isQuit ? "Quit" : "Close"} &amp; end sessions
               </>
             ) : (
               <>
-                <Trash2 className="li" aria-hidden="true" /> Discard &amp;{" "}
-                {isQuit ? "quit" : "close"}
+                <Trash2 className="li close-window-decision__button-icon" aria-hidden="true" />{" "}
+                Discard &amp; {isQuit ? "quit" : "close"}
               </>
             )}
           </Button>
@@ -251,8 +257,10 @@ export function CloseWindowDecisionDialog() {
         <p>
           {count > 0 && (
             <>
-              This window owns {sessionCountPhrase(liveCount, startingCount)}. Choose what happens
-              to {count === 1 ? "it" : "them"} before {isQuit ? "termiHub quits" : "it closes"}.
+              This window owns {sessionCountPhrase(liveCount, startingCount)}.{" "}
+              {showMove
+                ? `Choose what happens to ${count === 1 ? "it" : "them"} before it closes.`
+                : outcomeSentence(request.sessions, runs.length, isQuit)}
             </>
           )}
           {count > 0 && dirtyCount > 0 && " "}
@@ -269,12 +277,12 @@ export function CloseWindowDecisionDialog() {
               </>
             ))}
           {recording && (count > 0 || dirtyCount > 0) && " "}
-          {recording && <>The recording is not saved and would be lost.</>}
-          {runs.length > 0 && (
+          {recording && <>The recording is not saved and will be lost.</>}
+          {runs.length > 0 && (count === 0 || showMove) && (
             <>
               {" "}
-              {runs.length === 1 ? "The running automation" : "The running automations"} would be
-              stopped{showMove ? ", also when the tabs move" : ""}.
+              {automationCount(runs.length)} will be stopped
+              {showMove ? ", also when the tabs move" : ""}.
             </>
           )}
         </p>
@@ -325,7 +333,7 @@ export function CloseWindowDecisionDialog() {
               Recording in {recording.tabTitle}
             </span>
             <span className="close-window-decision__pill close-window-decision__pill--terminate">
-              <Trash2 className="li" aria-hidden="true" /> Not saved — discarded
+              <Trash2 className="li" aria-hidden="true" /> Will be lost
             </span>
             <Button
               variant="secondary"
@@ -345,7 +353,7 @@ export function CloseWindowDecisionDialog() {
           >
             <Zap className="li close-window-decision__row-icon" aria-hidden="true" />
             <span className="close-window-decision__row-name close-window-decision__row-name--wrap">
-              “{run.name}” is running in {run.tabTitle}
+              “{run.name}” {run.waiting ? "waits for you" : "is running"} in {run.tabTitle}
             </span>
             <span className="close-window-decision__pill close-window-decision__pill--terminate">
               <Ban className="li" aria-hidden="true" /> Will be stopped
@@ -408,6 +416,31 @@ export function CloseWindowDecisionDialog() {
   );
 }
 
+/** `1 automation` / `2 automations`. */
+function automationCount(count: number): string {
+  return `${count} automation${count === 1 ? "" : "s"}`;
+}
+
+/** What closing does, when there is nothing to choose: "Quitting ends 2 sessions …" (B-008). */
+function outcomeSentence(
+  sessions: ReadonlyArray<WindowCloseSessionRow>,
+  runs: number,
+  isQuit: boolean
+): string {
+  const kept = sessions.filter((s) => !s.starting && s.outcome === "detach").length;
+  const ended = sessions.length - kept;
+  const does = [
+    ...(ended > 0
+      ? [`ends ${ended === sessions.length ? (ended === 1 ? "it" : "them") : ended}`]
+      : []),
+    ...(kept > 0
+      ? [`leaves ${kept === sessions.length ? (kept === 1 ? "it" : "them") : kept} running`]
+      : []),
+    ...(runs > 0 ? [`stops ${automationCount(runs)}`] : []),
+  ];
+  return `${isQuit ? "Quitting" : "Closing"} ${joinWords(does)}.`;
+}
+
 /**
  * `2 open sessions`, `1 connection that is still starting`, or both joined:
  * what the window owns, for the lead sentence (#5112).
@@ -423,12 +456,6 @@ function sessionCountPhrase(liveCount: number, startingCount: number): string {
     );
   }
   return joinWords(parts);
-}
-
-/** `A`, `A and B`, `A, B and C`: a list of words for prose. */
-function joinWords(words: ReadonlyArray<string>): string {
-  if (words.length <= 1) return words.join("");
-  return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 }
 
 /** `"A"`, `"A" and "B"`, `"A", "B" and "C"`: quoted tab titles for prose. */
@@ -545,7 +572,7 @@ function SessionRow({ session }: { session: WindowCloseSessionRow }) {
           className="close-window-decision__pill close-window-decision__pill--terminate"
           data-testid="close-window-decision-outcome-terminate"
         >
-          <Power className="li" aria-hidden="true" /> Would be terminated
+          <Power className="li" aria-hidden="true" /> Will be ended
         </span>
       )}
     </div>

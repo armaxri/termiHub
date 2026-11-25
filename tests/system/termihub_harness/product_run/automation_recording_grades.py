@@ -13,7 +13,7 @@ from typing import Any, Mapping, Optional, Sequence
 RECORD = "terminal-view-record"
 CHIP = "terminal-view-active-recording"
 CHIP_HERE = "Stop recording"
-CHIP_AT_PROMPT = "Stop recording (password kept apart)"
+PROMPT_BAR = "recording-bar-prompt"
 #: The dialog a stopped recording opens, and the bar that keeps it.
 SAVE_DIALOG = "recording-save-dialog"
 KEPT_BAR = "recording-bar-unsaved"
@@ -78,7 +78,7 @@ def save_dialog_problems(summary: str, name: str, typed: str, want_name: str) ->
 
 def wait_problems(bar: str, name: str, tab: str) -> list[str]:
     """The bar of a run that waits: which one, where, what to do, when it ends (#6025)."""
-    wanted = (f"“{name}” waits for you in {tab}", "Type your password, then Continue", "Stops at")
+    wanted = (f"“{name}” waits for you in {tab}", "press Enter in the terminal, then Continue", "Stops at")
     return [f"the bar does not say {text!r}: {bar!r}" for text in wanted if text not in bar]
 
 

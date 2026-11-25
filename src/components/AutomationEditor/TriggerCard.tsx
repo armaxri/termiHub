@@ -1,5 +1,6 @@
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui";
+import { tf } from "@/i18n/catalog";
 import type { SavedConnection } from "@/types/connection";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
@@ -16,6 +17,8 @@ export interface TriggerCardProps {
   index: number;
   connections: SavedConnection[];
   errors: OutputMatchErrors & { binding?: string };
+  /** Why it can never start the automation, in a few words, or `null`. */
+  blocked: string | null;
   /** The other automations. */
   automations: readonly Automation[];
   onChange: (trigger: AutomationTrigger) => void;
@@ -28,6 +31,7 @@ export function TriggerCard({
   index,
   connections,
   errors,
+  blocked,
   automations,
   onChange,
   onRemove,
@@ -59,6 +63,14 @@ export function TriggerCard({
           data-testid={`automation-editor-trigger-remove-${index}`}
         />
       </div>
+      {blocked !== null && (
+        <p
+          className="automation-step__note automation-step__note--warning"
+          data-testid={`automation-editor-trigger-blocked-${index}`}
+        >
+          {tf("automation.startBlocked.card", { reason: blocked })}
+        </p>
+      )}
       <div className="automation-triggers__fields">
         <TriggerFields
           trigger={trigger}
@@ -81,7 +93,7 @@ function TriggerFields({
   errors,
   automations,
   onChange,
-}: Omit<TriggerCardProps, "onRemove">) {
+}: Omit<TriggerCardProps, "onRemove" | "blocked">) {
   switch (trigger.kind) {
     case "hotkey":
       return (

@@ -111,6 +111,7 @@ export function AddStepMenu({ nestedIn, before, onAdd, onAdded }: AddStepMenuPro
             data-testid={`automation-editor-insert-step${place}-${before}`}
           >
             <Plus size={12} aria-hidden="true" />
+            <span className="automation-steps__insert-label">Add step here</span>
           </button>
         )}
       </DropdownMenuTrigger>

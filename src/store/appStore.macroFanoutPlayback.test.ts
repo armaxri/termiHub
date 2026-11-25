@@ -296,8 +296,13 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     expect(useAppStore.getState().macroPlayback?.tabId).toBe("b");
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toBeUndefined();
 
-    useAppStore.getState().cancelMacroPlayback();
-    await done;
+    // Not the terminal it types into: it goes on.
+    useAppStore.getState().cancelMacroPlaybackOnTab("a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAppStore.getState().macroPlayback).not.toBeNull();
+    useAppStore.getState().cancelMacroPlaybackOnTab("b");
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(done).resolves.toBe("cancelled");
   });
 
   it("stops one terminal from its badge while the others keep typing (#5818)", async () => {
@@ -406,6 +411,12 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
     await vi.advanceTimersByTimeAsync(1000);
     await expect(second).resolves.toBe("completed");
+  });
+
+  it("stopping where nothing types, or another terminal than the one that does, does nothing", async () => {
+    useAppStore.getState().cancelMacroPlayback();
+    useAppStore.getState().cancelMacroPlaybackOnTab("tab-a");
+    expect(useAppStore.getState().macroPlayback).toBeNull();
   });
 
   it("treats a single-element targetTabIds as a normal single-terminal run", async () => {

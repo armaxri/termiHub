@@ -14,9 +14,9 @@ import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { ScheduleView } from "@/types/schedule";
 import { errorMessage } from "@/utils/errorMessage";
 import { t } from "@/i18n/catalog";
-import { ScheduleEnableConfirmDialog } from "./ScheduleEnableConfirmDialog";
 import { ScheduleRow } from "./ScheduleRow";
-import { lastRunAttention } from "./scheduleStatus";
+import { ScheduleSwitchOn } from "./ScheduleSwitchOn";
+import { concernText, lastRunAttention } from "./scheduleStatus";
 import { useScheduleLabels } from "./useScheduleLabels";
 import "./Schedules.css";
 
@@ -69,9 +69,9 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
   });
 
   const enable = useCallback(
-    async (s: ScheduleView, enabled: boolean, confirmed: boolean) => {
+    async (s: ScheduleView, enabled: boolean) => {
       try {
-        await setScheduleEnabled(s.id, enabled, confirmed);
+        await setScheduleEnabled(s.id, enabled, false);
       } catch (err) {
         toast.error(`Failed to update schedule: ${errorMessage(err)}`);
       }
@@ -83,7 +83,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
     (s: ScheduleView, enabled: boolean) => {
       // The first enable must be confirmed; later toggles need no prompt.
       if (enabled && !s.confirmedAt) setConfirming(s);
-      else void enable(s, enabled, false);
+      else void enable(s, enabled);
     },
     [enable]
   );
@@ -116,8 +116,13 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
     return () => window.clearTimeout(timer);
   }, [justSaved, rowExists, open]);
 
-  const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
-
+  // Neither a closed section nor the fold hides a schedule that needs attention.
+  const concerns = schedules.map(lastRunAttention);
+  const failed = concerns.filter((c) => c === "error").length;
+  const notRun = concerns.filter((c) => c === "warning").length;
+  const count = collapse && schedules.length > 0 ? ` (${schedules.length})` : "";
+  const suffix = paused ? ` · ${t("schedule.state.paused")}` : count;
+  const concern = concernText(failed, notRun);
   // A verb, not a switch (A-019): an "off" switch beside "Schedules" read as if
   // the schedules were off.
   const pauseLabel = paused ? "Resume all schedules" : "Pause all schedules";
@@ -141,9 +146,6 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
       </Tooltip>
     );
 
-  // A closed section must not hide a schedule that needs attention.
-  const concerns = schedules.map(lastRunAttention);
-  const concern = concerns.includes("error") ? "error" : concerns.find(Boolean);
   const openNew = () => {
     collapse?.onChange(true);
     openScheduleEditor();
@@ -152,6 +154,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
   return (
     <section
       className={`schedules ${showTitle ? "" : "schedules--page"}`}
+      data-open={open ? "true" : "false"}
       data-testid="schedules-section"
       aria-label="Schedules"
     >
@@ -159,13 +162,9 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
         <SidebarSectionHeader
           ref={headerRef}
           title="Schedules"
-          icon={<CalendarClock size={12} aria-hidden="true" />}
-          suffix={
-            [
-              collapse && schedules.length > 0 ? ` (${schedules.length})` : "",
-              paused ? ` · ${t("schedule.state.paused")}` : "",
-            ].join("") || undefined
-          }
+          // The header of the sidebar is narrow: words before the icon (B-028, B-037).
+          icon={collapse ? undefined : <CalendarClock size={12} aria-hidden="true" />}
+          suffix={suffix || undefined}
           collapse={
             collapse
               ? {
@@ -179,15 +178,6 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           data-testid="schedules-header"
           actions={
             <>
-              {!open && concern ? (
-                <StatusDot
-                  tone={concern}
-                  label={t(
-                    concern === "error" ? "schedule.marker.lastFailed" : "schedule.marker.attention"
-                  )}
-                  testId="schedules-failed-dot"
-                />
-              ) : null}
               {pauseToggle}
 
               <Tooltip content="New schedule" side="top">
@@ -220,6 +210,18 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           {pauseToggle}
         </div>
       )}
+      {showTitle && concern !== "" ? (
+        // On a line of its own: the header keeps its words (C-002, C-022).
+        <button
+          type="button"
+          className="schedules__concern"
+          onClick={() => collapse?.onChange(true)}
+          data-testid="schedules-concern"
+        >
+          <StatusDot tone={failed > 0 ? "error" : "warning"} size="sm" ariaHidden />
+          {concern}
+        </button>
+      ) : null}
       {!open ? null : schedules.length === 0 ? (
         <div id={contentId}>
           <EmptyState
@@ -249,6 +251,8 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
               action={labels.actionLabel(s.action)}
               targets={labels.targets(s.targets).label}
               blocked={labels.blockedReason(s)}
+              repairable={labels.targets(s.targets).gone !== null}
+              onRepair={() => openScheduleEditor({ scheduleId: s.id, startAtConnections: true })}
               justSaved={justSaved?.id === s.id}
               onToggle={(next) => handleToggle(s, next)}
               onEdit={() => openScheduleEditor({ scheduleId: s.id })}
@@ -258,20 +262,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           ))}
         </div>
       )}
-      <ScheduleEnableConfirmDialog
-        open={confirming !== null}
-        scheduleName={confirming?.name ?? ""}
-        actionLabel={confirming ? labels.actionLabel(confirming.action) : ""}
-        rule={confirming?.rule ?? null}
-        hosts={confirmTargets?.hosts ?? []}
-        gone={confirmTargets?.gone ?? null}
-        connects={confirming?.connectIfNeeded === true}
-        onConfirm={async () => {
-          if (confirming) await enable(confirming, true, true);
-          setConfirming(null);
-        }}
-        onCancel={() => setConfirming(null)}
-      />
+      <ScheduleSwitchOn schedule={confirming} onDone={() => setConfirming(null)} />
       <ConfirmDeleteDialog
         {...scheduleDelete.dialogProps}
         message={scheduleDelete.pending ? `Delete schedule “${scheduleDelete.pending.name}”?` : ""}

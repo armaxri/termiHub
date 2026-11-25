@@ -353,9 +353,7 @@ describe("toolbar (R-037)", () => {
         },
       })
     );
-    expect(query("automation-record-btn")!.textContent).toBe("Record");
-    click("automation-record-btn");
-    expect(storeFns.toggleRecording).not.toHaveBeenCalled();
+    expect(query("automation-record-btn")).toBeNull();
   });
 
   it("folds Record into one menu only below the smallest sidebar", async () => {
@@ -462,7 +460,9 @@ describe("running", () => {
       output: null,
     });
     await render();
-    expect(query("automation-running-workflow-1")!.textContent).toBe("Running 2");
+    expect(query("automation-running-workflow-1")!.getAttribute("aria-label")).toBe("Running 2");
+    // It ends both, so it says so; each line has its own (B-003).
+    expect(query("automation-stop-workflow-1")!.textContent).toBe("Stop all 2");
     expect(query("automation-target-r1")!.textContent).toContain("in web-1, step 2 of 3");
     expect(query("automation-target-r2")!.textContent).toContain("in db-2, step 3 of 3");
     click("automation-target-stop-r2");
@@ -519,7 +519,7 @@ describe("markers", () => {
   it("says what no longer happens while they are off, and still offers Run (A-013)", async () => {
     await render([{ ...triggered, triggersEnabled: false }]);
     expect(query("automation-armed-workflow-2")!.textContent).toBe(
-      "Triggers off: not on matching output in prod. You can still run it."
+      "Triggers off: matching output in prod does not start it. You can still run it."
     );
     expect(query("automation-start-workflow-2")).not.toBeNull();
     click("automation-arm-toggle-workflow-2");
@@ -576,7 +576,11 @@ describe("markers", () => {
     });
     useAppStore.setState({ automationWaits: [{ runId: "r1" }] as never });
     await render();
-    expect(query("automation-running-workflow-1")!.textContent).toBe("Waiting for you");
+    // In words on the line under the name, which keeps its room (C-008).
+    expect(query("automation-running-workflow-1")!.getAttribute("aria-label")).toBe(
+      "Waiting for you"
+    );
+    expect(query("automation-target-r1")!.textContent).toContain("step 2 of 2 waits for you");
   });
 
   it("reports a failed disarm", async () => {
@@ -693,6 +697,7 @@ describe("row actions", () => {
     expect(query("confirm-delete-dialog")!.textContent).toContain(
       "Delete automation “Deploy prep”? This cannot be undone."
     );
+    expect(query("confirm-delete-dialog")!.textContent).not.toContain("It is used by");
     click("confirm-delete-confirm");
     await flushAsync();
     expect(storeFns.deleteAutomationFromBackend).toHaveBeenCalledWith("workflow-1");

@@ -10,6 +10,7 @@
  * authoritative `workflow-run` region.
  */
 import type { AutomationWait } from "@/store/slices/automationWaitSlice";
+import { currentStep, stepProgress, typedPercent, typedProgress } from "@/utils/runProgress";
 import type { MacroPlaybackState, WorkflowRunState } from "@/store/appStore";
 
 /** How the badge's Stop reaches the run. */
@@ -19,10 +20,10 @@ export type RunningAutomationStop = { kind: "macro" } | { kind: "workflow"; runI
 export interface RunningAutomationInfo {
   /** The automation's name. */
   name: string;
-  /** Steps done on this terminal. */
-  completed: number;
-  /** Steps in the automation. */
-  total: number;
+  /** How far it is there, short: "2/3" is step 2 of 3, "50 %" of the keys. */
+  progress: string;
+  /** The same as a sentence: "step 2 of 3", "50 % typed". */
+  progressText: string;
   /** It waits for the user there (#6025). */
   waiting: boolean;
   /** How to stop it on this terminal. */
@@ -44,10 +45,11 @@ export function runningAutomationOnTab(
     const targets = playback.targetTabIds;
     const onTab = targets ? targets.includes(tabId) : playback.tabId === tabId;
     if (onTab) {
+      const typed = playback.targetProgress?.[tabId] ?? playback.played;
       return {
         name: playback.macroName,
-        completed: playback.targetProgress?.[tabId] ?? playback.played,
-        total: playback.total,
+        progress: `${typedPercent(typed, playback.total)} %`,
+        progressText: typedProgress(typed, playback.total),
         waiting: false,
         stop: { kind: "macro" },
       };
@@ -57,15 +59,15 @@ export function runningAutomationOnTab(
   if (!run) return null;
   return {
     name: run.workflowName,
-    completed: run.completed,
-    total: run.total,
+    progress: `${currentStep(run.completed, run.total)}/${run.total}`,
+    progressText: stepProgress(run.completed, run.total).toLowerCase(),
     waiting: waits.some((w) => w.runId === run.runId),
     stop: { kind: "workflow", runId: run.runId },
   };
 }
 
-/** The badge's accessible name: `Running automation "Deploy" (2/5)`. */
+/** The badge's accessible name: `Running automation “Deploy” (step 2 of 5)`. */
 export function runningAutomationLabel(info: RunningAutomationInfo): string {
   if (info.waiting) return `Automation “${info.name}” waits for you`;
-  return `Running automation “${info.name}” (${info.completed}/${info.total})`;
+  return `Running automation “${info.name}” (${info.progressText})`;
 }

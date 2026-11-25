@@ -22,6 +22,7 @@ export interface ScheduleGap {
   id: string;
   automationId: string;
   automationName: string;
+  scheduleId: string;
   scheduleName: string;
   /** ISO time it was recorded: its place in the list. */
   at: string;
@@ -67,6 +68,7 @@ export function scheduleGaps(
           id: `${schedule.id}:${attempt.at}:${index}`,
           automationId,
           automationName: names.get(automationId) ?? t("schedule.action.deleted"),
+          scheduleId: schedule.id,
           scheduleName: schedule.name,
           at: attempt.at,
           summary: summarizeAttempt(attempt),

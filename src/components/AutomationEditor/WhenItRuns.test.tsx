@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
+import { act } from "react";
 import { useAppStore } from "@/store/appStore";
 import {
   automationWith,
@@ -23,6 +24,7 @@ import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connection
 import { flushAsync } from "@/test/flushAsync";
 import { leaveField } from "@/test/leaveField";
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { ScheduleView } from "@/types/schedule";
 
@@ -47,9 +49,13 @@ const schedule = {
 let editor: EditorHarness;
 async function open(
   triggers: AutomationTrigger[] = [],
-  { isNew = false, off = false } = {}
+  {
+    isNew = false,
+    off = false,
+    steps = [{ kind: "wait", delayMs: 1 }],
+  }: { isNew?: boolean; off?: boolean; steps?: AutomationStep[] } = {}
 ): Promise<void> {
-  const automation = automationWith([{ kind: "wait", delayMs: 1 }], { triggers });
+  const automation = automationWith(steps, { triggers });
   if (off) automation.triggersEnabled = false;
   editor = await mountEditor(automation, { isNew });
   if (query("automation-editor-when") === null) click("automation-editor-when-toggle");
@@ -179,10 +185,36 @@ describe("triggers", () => {
     click("automation-editor-when-toggle");
     await flushAsync();
     expect(query("automation-editor-when-waits")?.textContent).toContain(
-      "Schedules, On disconnect and On output match do not start it"
+      "Step 1 waits for you. Started on connect, it ends after 5 minutes without Continue."
     );
     await chooseStep("0", "delete");
     expect(query("automation-editor-when-waits")).toBeNull();
+  });
+
+  it("offers no trigger that can never start it without its reason (C-001)", async () => {
+    await open([{ kind: "on-output-match", connectionIds: ["conn-1"], pattern: "x" }], {
+      steps: [{ kind: "wait-for-user" }],
+    });
+    expect(query("automation-editor-trigger-blocked-0")!.textContent).toBe(
+      "Will not start it: step 1 waits for you."
+    );
+    expect(query("automation-editor-footer-note")!.textContent).toContain(
+      "The trigger On output match will not work: step 1 waits for you."
+    );
+    act(() => {
+      query("automation-editor-add-trigger")!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      );
+    });
+    for (const kind of ["trigger-on-disconnect", "trigger-on-output-match", "schedule"]) {
+      const entry = query(`automation-editor-add-${kind}`)!;
+      expect(entry.hasAttribute("data-disabled")).toBe(true);
+      expect(entry.textContent).toContain("Cannot start this: step 1 waits for you");
+    }
+    for (const kind of ["hotkey", "on-connect"]) {
+      const entry = query(`automation-editor-add-trigger-${kind}`)!;
+      expect(entry.hasAttribute("data-disabled")).toBe(false);
+    }
   });
 
   it("shows the limits that apply as placeholders (A-026)", async () => {

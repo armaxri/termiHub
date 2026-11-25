@@ -2135,7 +2135,10 @@ the `workflow-run` region and `macroPlayback`, "Waiting for you" from `automatio
 marker from the run history (`automationRowInfo.summarizeRuns`: a run failed and nothing completed
 since), and "Cannot run" from `utils/runBlocked.ts`, which the palette and the run picker use too. A
 failed run's toast asks for the editor or the history through window events that
-`AutomationEditorHost` handles, as the stores must not import the views. Closing the last window or
+`AutomationEditorHost` handles, as the stores must not import the views. `runAutomation` asks
+(`RunReplaceDialog`) before a run stops the one in progress, and an On connect trigger never does.
+How far a run is has one wording, `utils/runProgress.ts`. What an import left out is
+`Automation.importedInPart`, which the row shows and the editor's Save drops. Closing the last window or
 quitting asks first while an automation runs (`WindowCloseRequest.runs`). The sidebar replaced the
 `macros` and `workflows` sidebar views: settings v4 (`migrate_automations_view` in
 `src-tauri/src/connection/settings.rs`) maps the hidden activity-bar views (hidden only when both
@@ -2732,6 +2735,7 @@ equivalence tests over each fold shape, and the pre-existing projection tests.
 | `connections`       | whole-snapshot, by decision | single whole-view writer from disk; ordered arrays (see below) |
 | `plugin-sandbox`    | whole-snapshot, polled      | read-only; re-snapshots the plugin host every second (#4188)   |
 | `tunnels`           | hybrid (#4574)              | 1 Hz stats tick patches `states.<id>.stats`; rest whole        |
+| `services`          | whole-snapshot, by decision | a short list; 1 Hz only while a server runs (#6028)            |
 
 - **`agents` (hybrid).** The view holds the ordered `agents` list plus the `sessions`,
   `definitions` and `folders` maps. The three maps are keyed by agent id, so a definition, folder
@@ -3638,7 +3642,8 @@ Each domain was migrated behind flags via a **per-domain strangler-fig sequence*
 **Status: complete.** Every UI domain has been inverted onto its own region + `<domain>.*` intents
 and drives the live UI. The shared regions are seeded at boot by `boot::seed_projection_regions`
 (`src-tauri/src/boot/mod.rs`) plus `plugin_sandbox_projection::seed`: `tunnels` (the Phase-2
-pilot, #2150), `session-lifecycle` (#2152), `system-monitors` (#2224), `agents` and `connections` (#2283),
+pilot, #2150), `services` (file servers, #6028, changed by commands instead of intents),
+`session-lifecycle` (#2152), `system-monitors` (#2224), `agents` and `connections` (#2283),
 `settings` (#2227), `transfers` (#2229), and the **read-only** `plugin-sandbox` region (#4188, no
 intents — it reports each native plugin's OS-sandbox state). The client-scoped regions —
 `layout@<clientId>` (#2151), `restore-cohort@<clientId>` (#2206), `file-browser@<clientId>`,
