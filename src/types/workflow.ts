@@ -4,7 +4,7 @@
  *
  * A workflow is an *authored* (not recorded) ordered list of typed steps that
  * can be launched by one or more triggers. The wire types are generated from
- * their Rust source of truth (`src-tauri/src/workflows/{config,history}.rs`) via
+ * their Rust source of truth (`src-tauri/src/workflows/config.rs`) via
  * ts-rs (audit DUP-030, ts-rs rollout #3088), so the frontend cannot drift from
  * the backend's `#[serde(tag = "kind")]` kebab-case / camelCase shapes.
  */
@@ -21,9 +21,6 @@ export type { WorkflowCondition } from "./generated/WorkflowCondition";
 export type { WorkflowDisconnectCause } from "./generated/WorkflowDisconnectCause";
 export type { WorkflowParameterType } from "./generated/WorkflowParameterType";
 export type { WorkflowParameter } from "./generated/WorkflowParameter";
-export type { WorkflowRunHistoryStatus } from "./generated/WorkflowRunHistoryStatus";
-export type { WorkflowRunTrigger } from "./generated/WorkflowRunTrigger";
-export type { WorkflowRun } from "./generated/WorkflowRun";
 export type { Workflow } from "./generated/Workflow";
 
 /** All step discriminants. */

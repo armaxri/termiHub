@@ -1,7 +1,8 @@
 /**
  * "Run local process" stays behind the experimental switch (#5818, maintainer
  * decision): both Add step menus offer it only while the switch is on. A step
- * already there stays, can be edited and removed, and says why it will not run.
+ * already there stays, can be edited and removed, and says why it will not run. So
+ * does a step of a kind this build does not know (#6009).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
@@ -89,4 +90,17 @@ describe("the Run local process step", () => {
     expect(query("automation-editor-step-blocked-1")).toBeNull();
     expect(query("automation-editor-step-summary-1")?.textContent).toBe("");
   });
+});
+
+it.each(["take-snapshot", "constructor"])("a step of the unknown kind %s says so", async (kind) => {
+  editor = await mountEditor(automationWith([{ kind, volume: "data" } as never]));
+  expect(query("automation-editor-step-summary-0")?.textContent).toContain("Will not run");
+  expect(query("automation-editor-step-0")?.textContent).toContain(kind);
+  click("automation-editor-step-toggle-0");
+  expect(query("automation-editor-step-blocked-0")?.textContent).toContain(
+    "a newer version of termiHub made this step"
+  );
+  // It stays as it is until it is deleted.
+  typeText("automation-editor-name", "Renamed");
+  expect((await editor.save()).steps).toEqual([{ kind, volume: "data" }]);
 });

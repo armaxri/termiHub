@@ -41,11 +41,11 @@ vi.mock("@/themes", () => ({
 
 // The automation store's IPC (#5818, slice 4), emulated over the workflow
 // view: `savedWorkflows` is the library, `apiSaveWorkflow` sees each saved
-// workflow view and `apiRecordWorkflowRun` each recorded workflow run.
+// workflow view and `apiRecordWorkflowRun` each recorded run.
 const savedWorkflows: Workflow[] = [];
 const apis = vi.hoisted(() => ({
   apiSaveWorkflow: vi.fn(),
-  apiRecordWorkflowRun: vi.fn((_run: import("@/types/workflow").WorkflowRun) =>
+  apiRecordWorkflowRun: vi.fn((_run: import("@/types/generated/AutomationRun").AutomationRun) =>
     Promise.resolve([] as unknown[])
   ),
 }));
@@ -64,7 +64,7 @@ vi.mock("@/services/automationApi", async () => {
     deleteAutomation: vi.fn(() => Promise.resolve()),
     listAutomationRuns: vi.fn(() => Promise.resolve([])),
     recordAutomationRun: vi.fn((run: import("@/types/generated/AutomationRun").AutomationRun) =>
-      apis.apiRecordWorkflowRun(views.automationRunToWorkflowRun(run))
+      apis.apiRecordWorkflowRun(run)
     ),
     clearAutomationRunHistory: vi.fn(() => Promise.resolve([])),
   };
@@ -116,7 +116,7 @@ function seedTab(sessionId: string | null = "sess-1") {
 function recorded(): { triggeredBy: string; status: string }[] {
   return vi
     .mocked(apiRecordWorkflowRun)
-    .mock.calls.map(([run]) => ({ triggeredBy: run.triggeredBy, status: run.status }));
+    .mock.calls.map(([run]) => ({ triggeredBy: run.origin, status: run.status }));
 }
 
 describe("appStore — session-driven workflow triggers (#3791)", () => {
@@ -231,13 +231,13 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
   });
 
   describe("on-output-match", () => {
-    /** Install the triggers the way `loadWorkflows` does and capture the output tap. */
+    /** Install the triggers the way `loadAutomations` does and capture the output tap. */
     async function loadWithTap(triggers: WorkflowTrigger[]) {
       const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
       savedWorkflows.push(
         workflow("wf-m", [{ kind: "send-command", command: "uptime" }], triggers)
       );
-      await useAppStore.getState().loadWorkflows();
+      await useAppStore.getState().loadAutomations();
       const tap = setTap.mock.calls[setTap.mock.calls.length - 1]?.[0] ?? null;
       return tap;
     }
@@ -284,11 +284,11 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
     const steps: WorkflowStep[] = [{ kind: "run-local-process", program: "make", args: [] }];
     const fireOutput = async () => {
       const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
-      await useAppStore.getState().loadWorkflows();
+      await useAppStore.getState().loadAutomations();
       setTap.mock.calls[setTap.mock.calls.length - 1]?.[0]?.("sess-1", btoa("match\r\n"));
     };
     const fireDisconnect = async () => {
-      await useAppStore.getState().loadWorkflows();
+      await useAppStore.getState().loadAutomations();
       useAppStore.getState().setTerminalExited("tab-1", { code: null, reason: "dropped" });
     };
     const origins: [string, WorkflowTrigger, () => Promise<void>][] = [
@@ -373,7 +373,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       savedWorkflows.push(
         workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch])
       );
-      await useAppStore.getState().loadWorkflows();
+      await useAppStore.getState().loadAutomations();
       expect(lastTap(setTap)).not.toBeNull();
 
       await useAppStore.getState().setWorkflowTriggersEnabled("wf-m", false);
@@ -397,7 +397,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
         ...workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch]),
         triggersEnabled: false,
       });
-      await useAppStore.getState().loadWorkflows();
+      await useAppStore.getState().loadAutomations();
       expect(lastTap(setTap)).toBeNull();
 
       await useAppStore.getState().setWorkflowTriggersEnabled("wf-m", true);
@@ -417,7 +417,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
       savedWorkflows.push(
         workflow("wf-m", [{ kind: "send-command", command: "uptime" }], [outputMatch])
       );
-      await useAppStore.getState().loadWorkflows();
+      await useAppStore.getState().loadAutomations();
       const tap = lastTap(setTap) ?? null;
       // Disarmed in the store before the engine was recompiled.
       const [armed] = useAppStore.getState().workflows;

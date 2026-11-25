@@ -139,7 +139,7 @@ beforeEach(() => {
   mocks.frontendLog.mockReset();
   set.mockClear();
   // The real initial state (an empty layout), so tab lookups resolve nothing.
-  state = { ...useAppStore.getInitialState(), macros: [], workflowRuns: [], macroRuns: [] };
+  state = { ...useAppStore.getInitialState(), macros: [], automationRuns: [] };
 });
 
 describe("runWorkflowOnTarget — wait-for-output (PROD-044)", () => {
@@ -325,12 +325,12 @@ describe("runWorkflowOnTarget — run-macro and history", () => {
   });
 
   it("stores an empty history when the workflow record reply is not an array", async () => {
-    state.workflowRuns = [{ id: "stale" }] as AppState["workflowRuns"];
+    state.automationRuns = [{ id: "stale" }] as AppState["automationRuns"];
     mocks.recordAutomationRun.mockResolvedValueOnce(undefined);
 
     await run(workflow([{ kind: "wait", delayMs: 0 }]));
 
-    await vi.waitFor(() => expect(state.workflowRuns).toEqual([]));
+    await vi.waitFor(() => expect(state.automationRuns).toEqual([]));
   });
 
   it("never lets a synchronously-throwing history write fail the run", async () => {

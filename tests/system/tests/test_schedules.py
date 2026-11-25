@@ -177,7 +177,7 @@ class TestScheduledRuns(
         assert started >= due - timedelta(seconds=1), (started, due)
         run_ids = attempt.get("runIds") or []
         assert len(run_ids) == 1, attempt
-        runs = {r.get("id"): r for r in self.driver.get_state("macroRuns") or []}
+        runs = {r.get("id"): r for r in self.driver.get_state("automationRuns") or []}
         assert runs.get(run_ids[0], {}).get("origin") == "scheduled", runs.get(run_ids[0])
 
     # ── the journey ──────────────────────────────────────────────────────────

@@ -9,13 +9,13 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
-import { libraryViews, macroToAutomation, runViews, workflowToAutomation } from "./automationViews";
+import { libraryViews, macroToAutomation, workflowToAutomation } from "./automationViews";
 
 type SetState = (partial: Partial<AppState>) => void;
 
 /**
- * The state update for a new automation list: the list plus its macro and
- * workflow views, which every legacy surface reads (#5818, slice 4).
+ * The state update for a new automation list: the list plus its two views,
+ * which the run paths take (#5818, slice 4).
  */
 export function automationLibraryState(
   automations: Automation[]
@@ -23,12 +23,9 @@ export function automationLibraryState(
   return { automations, ...libraryViews(automations) };
 }
 
-/** The state update for a new run list: the list plus its two history views. */
-export function automationRunsState(
-  runs: unknown
-): Pick<AppState, "automationRuns" | "macroRuns" | "workflowRuns"> {
-  const list = Array.isArray(runs) ? (runs as AutomationRun[]) : [];
-  return { automationRuns: list, ...runViews(list) };
+/** The state update for a new run list. */
+export function automationRunsState(runs: unknown): Pick<AppState, "automationRuns"> {
+  return { automationRuns: Array.isArray(runs) ? (runs as AutomationRun[]) : [] };
 }
 
 /**

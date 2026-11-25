@@ -221,10 +221,10 @@ class TestProductRunAutomations(
         ):
             self.require("automations.workflow.edit", "automations.targets")
             wid = self.ids["workflow"]
-            before = len(self.workflow_runs(wid))
+            before = len(self.automation_runs(wid))
             self.run_automation_on(wid, [self.tabs["local"], self.tabs["ssh"]])
             runs = self.wait(
-                lambda: (lambda r: r if len(r) >= before + 2 else None)(self.workflow_runs(wid)),
+                lambda: (lambda r: r if len(r) >= before + 2 else None)(self.automation_runs(wid)),
                 timeout=60.0, what="two finished workflow runs",
             )
             for run in runs[-2:] if len(runs) >= 2 else runs:
@@ -273,9 +273,9 @@ class TestProductRunAutomations(
             # Split so only the command's output (not its echo) matches.
             self.driver.terminal_input(f"echo PR_TRIGGER_FI''RE_{t}", tab_id=tab)
             self.wait_for_output(f"PR_TRIGGER_ANSWER_42_{t}", tab_id=tab, timeout=30.0)
-            run = self.wait(lambda: next(iter(self.workflow_runs(wid)), None), what="the triggered run")
-            self.evidence(f"run: {run['status']} triggeredBy={run.get('triggeredBy')} tab={run.get('tabId')}")
-            assert run.get("triggeredBy") == "on-output-match", run
+            run = self.wait(lambda: next(iter(self.automation_runs(wid)), None), what="the triggered run")
+            self.evidence(f"run: {run['status']} origin={run.get('origin')} tab={run.get('tabId')}")
+            assert run.get("origin") == "on-output-match", run
             assert run.get("tabId") == tab, run
 
     # ── history + palette ────────────────────────────────────────────────────
@@ -289,7 +289,7 @@ class TestProductRunAutomations(
             screenshot=False,
         ):
             self.require("automations.macro.play.local")
-            runs = self.macro_runs(self.ids["macro"])
+            runs = self.automation_runs(self.ids["macro"])
             self.evidence("macro runs: " + "; ".join(
                 f"{r['status']} {r.get('origin')} {r.get('targetLabels')}" for r in runs))
             assert len(runs) >= 2 and all(r["status"] == "completed" for r in runs), runs
@@ -351,7 +351,7 @@ class TestProductRunAutomations(
             assert armed_tip.startswith("On output match"), f"trigger missing: {armed_tip!r}"
             assert f"pr-auto-local-{t}" in armed_tip, f"watched connection missing: {armed_tip!r}"
             assert "step" not in armed_tip.lower(), f"step count in the tooltip: {armed_tip!r}"
-            fresh = sorted(self.workflow_runs(manual), key=lambda r: r["startedAt"])[-2:]
+            fresh = sorted(self.automation_runs(manual), key=lambda r: r["startedAt"])[-2:]
             targets = []
             for run in fresh:
                 # The terminal is in the run's details, behind the row (#5818).
@@ -387,7 +387,7 @@ class TestProductRunAutomations(
             self.shot(label="palette")
             self.driver.click(item)
             self._played(tab, f"PR_MACRO_3_{t}", before)
-            origins = [r.get("origin") for r in self.macro_runs(self.ids["macro"])]
+            origins = [r.get("origin") for r in self.automation_runs(self.ids["macro"])]
             self.evidence(f"run origins: {origins}")
             assert "palette" in origins, "the palette run was not recorded as a palette run"
         if self.driver.exists("command-palette-input"):
@@ -423,7 +423,7 @@ class TestProductRunAutomations(
                 self.evidence(f"fired after {time.monotonic() - started:.0f}s: {attempt}")
                 self._played(tab, f"PR_MACRO_3_{t}", before)
                 assert attempt.get("outcome") == "completed", attempt
-                origins = [r.get("origin") for r in self.macro_runs(self.ids["macro"])]
+                origins = [r.get("origin") for r in self.automation_runs(self.ids["macro"])]
                 assert "scheduled" in origins, f"no scheduled macro run recorded: {origins}"
             finally:
                 self.set_schedule_enabled(sid, False)
@@ -527,7 +527,7 @@ class TestProductRunAutomations(
             label = self.driver.get_text("automation-history-clear").strip()
             self.evidence(f"clear action text: {label!r}")
             assert label.startswith("Clear"), f"the clear-history action has no label: {label!r}"
-            before = len(self.macro_runs(mid))
+            before = len(self.automation_runs(mid))
             self.driver.click("automation-history-clear")
             self.wait(
                 lambda: self.driver.exists("automation-history-clear-confirm-cancel"),
@@ -539,7 +539,7 @@ class TestProductRunAutomations(
                 lambda: not self.driver.exists("automation-history-clear-confirm-cancel"),
                 what="the confirmation to close",
             )
-            after = len(self.macro_runs(mid))
+            after = len(self.automation_runs(mid))
             assert after == before, f"cancelling the confirmation cleared runs: {before} -> {after}"
             self.driver.click("automation-history-show-all")
 
@@ -660,12 +660,11 @@ class TestProductRunAutomations(
 
     def _grade_macro_history_polish(self, mid: str) -> None:
         """Grade the history rows (R-082 one line) and their origin labels (#5818)."""
-        runs = self.macro_runs(mid)
+        runs = self.automation_runs(mid)
         assert runs, "no macro runs recorded to grade the history with"
         self.wait(lambda: self.driver.exists("automation-history-list"), what="the history")
-        # The macro view of a run keeps the macro origin names.
         labels = {"manual": "Run by you", "palette": "Run by you", "scheduled": "Run by schedule",
-                  "workflow-step": "Run by another automation"}
+                  "run-by-automation": "Run by another automation"}
         graded = 0
         for run in runs[:5]:
             toggle = f"automation-run-toggle-{run['id']}"

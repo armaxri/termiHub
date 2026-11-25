@@ -28,7 +28,8 @@ async function render() {
   act(() => {
     useAppStore.setState({
       schedules: [],
-      schedulesPaused: false,
+      // Nothing to pause without a schedule (R-135); a pause left on shows.
+      schedulesPaused: true,
       setSchedulesPaused: vi.fn(() => Promise.resolve()),
       openScheduleEditor: vi.fn(),
     } as never);

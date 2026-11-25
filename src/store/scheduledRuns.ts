@@ -38,7 +38,7 @@
 import { toast } from "@/components/ui";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import type { ScheduleFire, ScheduleTargets, WindowRunReport } from "@/types/schedule";
-import type { MacroRun } from "@/types/macro";
+import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { BroadcastGroup } from "@/types/terminal";
 import type { Workflow, WorkflowParameter } from "@/types/workflow";
 import type { Automation } from "@/types/generated/Automation";
@@ -231,7 +231,7 @@ async function runScheduledMacro(
   if (targets.length === 0) return skip("None of the target connections is connected");
   // Every terminal's playback writes its own record (#5818): the attempt links
   // exactly the ones written, and fails when any of them failed.
-  const recorded: MacroRun[] = [];
+  const recorded: AutomationRun[] = [];
   const status = await state.playMacro(macroId, {
     targetTabIds: targets,
     origin: "scheduled",
@@ -242,7 +242,7 @@ async function runScheduledMacro(
     targetsRun: recorded.length,
     ...(recorded.length > 0 ? { runIds: recorded.map((run) => run.id) } : {}),
   };
-  if (recorded.some((run) => run.status === "error")) {
+  if (recorded.some((run) => run.status === "failed")) {
     return {
       outcome: "failed",
       message: "A target terminal disconnected during playback",

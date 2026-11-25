@@ -158,7 +158,7 @@ pub(crate) fn normalize_description(value: Option<String>) -> Option<String> {
 }
 
 pub(crate) fn err(msg: impl Into<String>) -> TerminalError {
-    TerminalError::WorkflowError(msg.into())
+    TerminalError::AutomationError(msg.into())
 }
 
 pub(crate) fn validate_input(input: &ScheduleInput) -> Result<(), TerminalError> {

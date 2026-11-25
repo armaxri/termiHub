@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 /// `MacroPlaybackStatus` (`"completed" | "cancelled" | "error"`) so the
 /// persisted record matches the playback outcome over the wire.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum MacroRunStatus {
     /// Every step was injected.
@@ -16,10 +14,8 @@ pub enum MacroRunStatus {
     Error,
 }
 
-/// What launched the playback. Mirrors the frontend `MacroRunOrigin`.
+/// What launched the playback.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "kebab-case")]
 pub enum MacroRunOrigin {
     /// Played from the Macros sidebar or the terminal's playback dialog.
@@ -37,11 +33,8 @@ pub enum MacroRunOrigin {
 /// outcome, timing, targets, and provenance needed to browse recent playbacks.
 ///
 /// The tag-less enums serialize as plain strings and every struct field is
-/// camelCase, so the JSON shape matches the TypeScript `MacroRun` type exactly
-/// (mirroring [`crate::workflows::history::WorkflowRun`]).
+/// camelCase (mirroring [`crate::workflows::history::WorkflowRun`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct MacroRun {
     /// Unique identifier for this run record.
@@ -64,15 +57,13 @@ pub struct MacroRun {
     /// Number of terminals the playback was started on.
     pub target_count: u32,
     /// Display labels (tab titles) of the target terminals, capped to
-    /// [`crate::macros::history_manager::MAX_TARGET_LABELS`].
+    /// [`crate::automations::history_manager::MAX_TARGET_LABELS`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(test, ts(as = "Option<Vec<String>>", optional))]
     pub target_labels: Vec<String>,
     /// What launched the playback.
     pub origin: MacroRunOrigin,
     /// For a cancelled / errored playback: a human-readable reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
 }
 

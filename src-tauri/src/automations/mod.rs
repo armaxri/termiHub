@@ -1,5 +1,5 @@
 //! Automations: the single user-facing type that merges macros and workflows
-//! (#5818, concept `docs/concepts/partial/automations.html`).
+//! (#5818, concept `docs/concepts/implemented/automations.html`).
 //!
 //! - `config` and `convert` (slice 1): the persisted model and the pure
 //!   converters from the legacy macro and workflow shapes.

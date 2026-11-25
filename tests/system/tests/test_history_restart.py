@@ -253,8 +253,8 @@ class TestHistoryRestart(
             lambda: next(
                 (
                     r
-                    for r in self.driver.get_state("macroRuns") or []
-                    if r.get("macroId") == played_id and r.get("status") == "completed"
+                    for r in self.driver.get_state("automationRuns") or []
+                    if r.get("automationId") == played_id and r.get("status") == "completed"
                 ),
                 None,
             ),
@@ -289,7 +289,7 @@ class TestHistoryRestart(
         self.wait(
             lambda: self.driver.exists(f"automation-run-{run_id}"), what="the playback row after restart"
         )
-        restored = next(r for r in self.driver.get_state("macroRuns") or [] if r["id"] == run_id)
+        restored = next(r for r in self.driver.get_state("automationRuns") or [] if r["id"] == run_id)
         assert restored.get("status") == "completed"
         assert restored.get("origin") == "manual"
 
@@ -301,7 +301,7 @@ class TestHistoryRestart(
         )
         self.driver.click("automation-history-clear-confirm-confirm")
         self.wait(lambda: self.driver.exists("automation-history-empty"), what="the history to clear")
-        assert not self.driver.get_state("macroRuns")
+        assert not self.driver.get_state("automationRuns")
         self.wait(
             lambda: not self._stored_macro_runs(), what=f"the runs to leave {MACRO_RUNS_FILE}"
         )

@@ -346,7 +346,7 @@ class TestProductRunAutomationSidebar(
                 lambda: self.driver.exists(f"automation-start-{aid}"), what="Run after the stop"
             )
             run = self.wait(
-                lambda: next(iter(self.workflow_runs(aid)), None), what="the stopped run's record"
+                lambda: next(iter(self.automation_runs(aid)), None), what="the stopped run's record"
             )
             assert run.get("status") == "cancelled", run
 

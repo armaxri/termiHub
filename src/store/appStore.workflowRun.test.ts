@@ -57,13 +57,13 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-// The automation store's IPC (#5818, slice 4), emulated over the workflow and
-// macro views so the assertions below read in the legacy shapes: a saved
-// workflow lands in `savedWorkflows`, a recorded run in `recordedRuns` or
-// `recordedMacroRuns`, and `apiRecordWorkflowRun` sees each workflow run.
+// The automation store's IPC (#5818, slice 4): a saved automation lands in
+// `savedWorkflows` as its workflow view, a recorded run in `recordedRuns` or, for a
+// playback of typed keys, in `recordedMacroRuns`, and `apiRecordWorkflowRun` sees
+// each of the former.
 const savedWorkflows: Workflow[] = [];
-const recordedRuns: import("@/types/workflow").WorkflowRun[] = [];
-const recordedMacroRuns: import("@/types/macro").MacroRun[] = [];
+const recordedRuns: import("@/types/generated/AutomationRun").AutomationRun[] = [];
+const recordedMacroRuns: import("@/types/generated/AutomationRun").AutomationRun[] = [];
 const apis = vi.hoisted(() => ({
   apiListWorkflows: vi.fn(),
   apiDeleteWorkflow: vi.fn((_id: string) => Promise.resolve()),
@@ -75,12 +75,9 @@ vi.mock("@/services/automationApi", async () => {
   const views = await vi.importActual<typeof import("./slices/automationViews")>(
     "./slices/automationViews"
   );
-  const allRuns = () => [
-    ...recordedRuns.map(views.workflowRunToAutomationRun),
-    ...recordedMacroRuns.map(views.macroRunToAutomationRun),
-  ];
+  const allRuns = () => [...recordedRuns, ...recordedMacroRuns];
   apis.apiListWorkflows.mockImplementation(() => Promise.resolve([...savedWorkflows]));
-  apis.apiRecordWorkflowRun.mockImplementation((run: import("@/types/workflow").WorkflowRun) => {
+  apis.apiRecordWorkflowRun.mockImplementation((run: (typeof recordedRuns)[number]) => {
     recordedRuns.unshift(run);
     return Promise.resolve(allRuns());
   });
@@ -104,9 +101,9 @@ vi.mock("@/services/automationApi", async () => {
     deleteAutomation: (id: string) => apis.apiDeleteWorkflow(id),
     listAutomationRuns: () => apis.apiListWorkflowRuns(),
     recordAutomationRun: (run: import("@/types/generated/AutomationRun").AutomationRun) => {
-      if (!views.isMacroRun(run))
-        return apis.apiRecordWorkflowRun(views.automationRunToWorkflowRun(run));
-      recordedMacroRuns.unshift(views.automationRunToMacroRun(run));
+      // A playback of typed keys counts its targets.
+      if (run.targetCount === undefined) return apis.apiRecordWorkflowRun(run);
+      recordedMacroRuns.unshift(run);
       return Promise.resolve(allRuns());
     },
     clearAutomationRunHistory: (ids?: string[]) => apis.apiClearWorkflowRunHistory(ids),
@@ -598,8 +595,8 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     await vi.waitFor(() => expect(recordedRuns).toHaveLength(2));
     // Newest first: the callee finished first. No targetCount: not a playback.
-    expect(recordedRuns[0]).toMatchObject({ workflowId: "w1", status: "completed" });
-    expect(recordedRuns[1]).toMatchObject({ workflowId: "m1", status: "completed" });
+    expect(recordedRuns[0]).toMatchObject({ automationId: "w1", status: "completed" });
+    expect(recordedRuns[1]).toMatchObject({ automationId: "m1", status: "completed" });
     expect(recordedMacroRuns).toEqual([]);
     expect(JSON.stringify(recordedRuns)).not.toContain("tail -f");
   });
@@ -945,11 +942,6 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(() => useAppStore.getState().cancelWorkflowRun()).not.toThrow();
   });
 
-  it("saves a workflow to the backend and refreshes the library", async () => {
-    await useAppStore.getState().saveWorkflowToBackend(workflow("w1", [cmd("ls")]));
-    expect(useAppStore.getState().workflows.map((w) => w.id)).toEqual(["w1"]);
-  });
-
   describe("run-script sourcePath trust (#4310, FEC2-001)", () => {
     const script = (body: string, sourcePath?: string): WorkflowStep => ({
       kind: "run-script",
@@ -1037,20 +1029,20 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(apiRecordWorkflowRun).toHaveBeenCalledTimes(1);
       const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
-      expect(run.workflowId).toBe("w1");
-      expect(run.workflowName).toBe("Workflow w1");
+      expect(run.automationId).toBe("w1");
+      expect(run.automationName).toBe("Workflow w1");
       expect(run.status).toBe("completed");
       expect(run.stepsCompleted).toBe(2);
       expect(run.total).toBe(2);
       expect(run.tabId).toBe("tab-active");
       // The target terminal is named so history can tell targets apart (#5635).
       expect(run.targetLabel).toBe("term");
-      expect(run.triggeredBy).toBe("manual");
+      expect(run.origin).toBe("manual");
       expect(run.failedStepIndex).toBeUndefined();
       expect(typeof run.startedAt).toBe("string");
       expect(typeof run.endedAt).toBe("string");
       // The returned, capped list is mirrored into the store.
-      expect(useAppStore.getState().workflowRuns.map((r) => r.id)).toEqual([run.id]);
+      expect(useAppStore.getState().automationRuns.map((r) => r.id)).toEqual([run.id]);
     });
 
     it("records a failed run with the failed step index and error", async () => {
@@ -1103,7 +1095,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await useAppStore.getState().runWorkflow("w1", { triggeredBy: "hotkey" });
 
       const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
-      expect(run.triggeredBy).toBe("hotkey");
+      expect(run.origin).toBe("hotkey");
     });
 
     it("a history-write failure never fails or blocks the run", async () => {
@@ -1117,25 +1109,25 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(injected).toEqual(["a\n"]);
       expect(toast.success).not.toHaveBeenCalled();
       // The failed write left the store's history untouched.
-      expect(useAppStore.getState().workflowRuns).toEqual([]);
+      expect(useAppStore.getState().automationRuns).toEqual([]);
     });
 
-    it("loadWorkflowRuns swallows a rejection and leaves history untouched", async () => {
-      useAppStore.setState({ workflowRuns: [] });
+    it("loadAutomationRuns swallows a rejection and leaves history untouched", async () => {
+      useAppStore.setState({ automationRuns: [] });
       apiListWorkflowRuns.mockRejectedValueOnce(new Error("backend down"));
 
-      await expect(useAppStore.getState().loadWorkflowRuns()).resolves.toBeUndefined();
-      expect(useAppStore.getState().workflowRuns).toEqual([]);
+      await expect(useAppStore.getState().loadAutomationRuns()).resolves.toBeUndefined();
+      expect(useAppStore.getState().automationRuns).toEqual([]);
     });
 
-    it("clearWorkflowRunHistory empties the store list", async () => {
+    it("clearAutomationRuns empties the store list", async () => {
       seedConnectedTerminal();
       useAppStore.setState({ workflows: [workflow("w1", [cmd("a")])] });
       await useAppStore.getState().runWorkflow("w1");
-      expect(useAppStore.getState().workflowRuns.length).toBe(1);
+      expect(useAppStore.getState().automationRuns.length).toBe(1);
 
-      await useAppStore.getState().clearWorkflowRunHistory();
-      expect(useAppStore.getState().workflowRuns).toEqual([]);
+      await useAppStore.getState().clearAutomationRuns();
+      expect(useAppStore.getState().automationRuns).toEqual([]);
     });
   });
 
@@ -1146,23 +1138,23 @@ describe("appStore — workflow run slice (#1852)", () => {
       args,
     });
 
-    it("loadWorkflows swallows an Error rejection and leaves the library untouched", async () => {
+    it("loadAutomations swallows an Error rejection and leaves the library untouched", async () => {
       useAppStore.setState({ workflows: [workflow("keep", [cmd("ls")])] });
       vi.mocked(apiListWorkflows).mockRejectedValueOnce(new Error("backend down"));
 
-      await expect(useAppStore.getState().loadWorkflows()).resolves.toBeUndefined();
+      await expect(useAppStore.getState().loadAutomations()).resolves.toBeUndefined();
 
       expect(useAppStore.getState().workflows).toHaveLength(1);
       expect(useAppStore.getState().workflows[0].id).toBe("keep");
     });
 
-    it("loadWorkflows tolerates a non-Error rejection via the String(err) guard", async () => {
+    it("loadAutomations tolerates a non-Error rejection via the String(err) guard", async () => {
       vi.mocked(apiListWorkflows).mockRejectedValueOnce("kaboom");
-      await expect(useAppStore.getState().loadWorkflows()).resolves.toBeUndefined();
+      await expect(useAppStore.getState().loadAutomations()).resolves.toBeUndefined();
       expect(useAppStore.getState().workflows).toEqual([]);
     });
 
-    it("deleteWorkflowFromBackend removes the workflow after the backend delete resolves", async () => {
+    it("deleteAutomationFromBackend removes the workflow after the backend delete resolves", async () => {
       useAppStore.setState(
         automationLibraryState(
           [workflow("w1", [cmd("a")]), workflow("w2", [cmd("b")])].map((w) =>
@@ -1171,7 +1163,7 @@ describe("appStore — workflow run slice (#1852)", () => {
         )
       );
 
-      await useAppStore.getState().deleteWorkflowFromBackend("w1");
+      await useAppStore.getState().deleteAutomationFromBackend("w1");
 
       expect(apiDeleteWorkflow).toHaveBeenCalledWith("w1");
       const remaining = useAppStore.getState().workflows;
@@ -1473,7 +1465,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
 
       await vi.waitFor(() => expect(recordedRuns).toHaveLength(4));
-      expect(recordedRuns.map((r) => `${r.workflowId} ${r.tabId}`).sort()).toEqual([
+      expect(recordedRuns.map((r) => `${r.automationId} ${r.tabId}`).sort()).toEqual([
         "m1 tab-a",
         "m1 tab-b",
         "w1 tab-a",
@@ -1814,15 +1806,15 @@ describe("appStore — workflow run slice (#1852)", () => {
     });
 
     it("stores an empty history when the backend replies with a non-array", async () => {
-      useAppStore.setState({ workflowRuns: [{ id: "stale" }] as never });
+      useAppStore.setState({ automationRuns: [{ id: "stale" }] as never });
       vi.mocked(apiListWorkflowRuns).mockResolvedValueOnce(null as never);
-      await useAppStore.getState().loadWorkflowRuns();
-      expect(useAppStore.getState().workflowRuns).toEqual([]);
+      await useAppStore.getState().loadAutomationRuns();
+      expect(useAppStore.getState().automationRuns).toEqual([]);
 
-      useAppStore.setState({ workflowRuns: [{ id: "stale" }] as never });
+      useAppStore.setState({ automationRuns: [{ id: "stale" }] as never });
       vi.mocked(apiClearWorkflowRunHistory).mockResolvedValueOnce(undefined as never);
-      await useAppStore.getState().clearWorkflowRunHistory();
-      expect(useAppStore.getState().workflowRuns).toEqual([]);
+      await useAppStore.getState().clearAutomationRuns();
+      expect(useAppStore.getState().automationRuns).toEqual([]);
     });
   });
 });
@@ -2083,7 +2075,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     expect(injected).toEqual([{ tabId: "tab-a", data: "uptime\n" }]);
     await vi.waitFor(() => expect(apiRecordWorkflowRun).toHaveBeenCalledTimes(1));
     const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
-    expect(run.triggeredBy).toBe("scheduled");
+    expect(run.origin).toBe("scheduled");
     expect(run.tabId).toBe("tab-a");
     // The report links the schedule attempt to the run-history record (#3528).
     expect(report).toEqual({ outcome: "completed", targetsRun: 1, runIds: [run.id] });
@@ -2484,7 +2476,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       expect(report).toMatchObject({ outcome: "failed", targetsRun: 2 });
       expect(report.runIds).toHaveLength(2);
       await vi.waitFor(() => expect(recordedMacroRuns).toHaveLength(2));
-      expect(recordedMacroRuns.map((r) => r.status).sort()).toEqual(["completed", "error"]);
+      expect(recordedMacroRuns.map((r) => r.status).sort()).toEqual(["completed", "failed"]);
     });
 
     it("links no record when the playback did not start", async () => {

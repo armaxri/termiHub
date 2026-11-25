@@ -701,6 +701,16 @@ pnpm test:visual                        # whole suite, about a minute locally
 VISUAL_STRICT=1 pnpm test:visual        # ignore the allowlist (see below)
 ```
 
+For a usability review of the Automations surfaces, `automationGallery.spec.ts` takes one named
+screenshot per surface and state, at 800x600 and 1280x800, in dark and light:
+
+```bash
+pnpm exec playwright test -c tests/visual/playwright.config.ts automationGallery
+```
+
+They land in `tests/visual/test-results/screens/automations/`; `index.json` there lists each
+state with the situation the user is in.
+
 ### How it works
 
 - **Harness.** `tests/visual/harness/index.html` boots the unmodified

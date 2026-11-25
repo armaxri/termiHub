@@ -220,8 +220,8 @@ class TestProductRunAutomationStore(
                 )(self._stored(AUTOMATION_RUNS_FILE, "runs")),
                 what="both runs in automation-runs.json",
             )
-            assert self.macro_runs(self.ids["macro"]), "the macro history lists no run"
-            assert self.workflow_runs(self.ids["workflow"]), "the workflow history lists no run"
+            assert self.automation_runs(self.ids["macro"]), "the macro history lists no run"
+            assert self.automation_runs(self.ids["workflow"]), "the workflow history lists no run"
             self.shot(label="workflow-history")
             problems = frozen_problems(self.legacy, fingerprint(self.config_dir))
             self.evidence(f"{len(runs)} stored runs; legacy problems {problems}")

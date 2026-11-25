@@ -157,7 +157,7 @@ class TestProductRunAutomationRunPicker(
             # One record per terminal, each naming its own (#5818, slice 9).
             runs = self.wait(
                 lambda: (lambda r: r if len(r) >= 2 else None)(
-                    self.macro_runs(self.ids["macro"])
+                    self.automation_runs(self.ids["macro"])
                 ),
                 what="the macro's run on each terminal in the history",
             )
@@ -206,11 +206,11 @@ class TestProductRunAutomationRunPicker(
                 what="the stopped tab's badge to clear",
             )
             self.wait(
-                lambda: not stopped_one_problems(self.workflow_runs(wid), stopped, other),
+                lambda: not stopped_one_problems(self.automation_runs(wid), stopped, other),
                 timeout=WAIT_MS / 1000 + 30.0,
                 what="one canceled and one completed run",
             )
-            problems = stopped_one_problems(self.workflow_runs(wid), stopped, other)
+            problems = stopped_one_problems(self.automation_runs(wid), stopped, other)
             self.wait(lambda: not self._badged(), what="every badge to clear")
             done = f"PR_PICK_DONE_{t}"
             assert done in self.driver.read_terminal(other), "the other terminal did not finish"

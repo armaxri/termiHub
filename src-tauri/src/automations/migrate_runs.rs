@@ -150,7 +150,7 @@ fn first_record<T>(
             sha256: sha256.clone(),
             run_ids: ids.collect(),
         }),
-        LegacyRead::Unreadable => None,
+        LegacyRead::Unreadable(_) => None,
     }
 }
 
@@ -170,7 +170,7 @@ fn legacy_runs<T>(
             read: None,
             absent: true,
         },
-        LegacyRead::Unreadable => LegacyRuns {
+        LegacyRead::Unreadable(_) => LegacyRuns {
             file_name,
             read: None,
             absent: false,

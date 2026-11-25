@@ -46,10 +46,7 @@ export interface AutomationCycle {
 }
 
 /** Visit every step, nested ones included, depth first, in step order. */
-export function visitSteps(
-  steps: readonly RunnableStep[],
-  visit: (step: RunnableStep) => void
-): void {
+function visitSteps(steps: readonly RunnableStep[], visit: (step: RunnableStep) => void): void {
   for (const step of steps) {
     visit(step);
     if (step.kind === "conditional") {
@@ -66,8 +63,6 @@ export function referencedAutomations(steps: readonly RunnableStep[]): string[] 
   const ids: string[] = [];
   visitSteps(steps, (step) => {
     if (step.kind === "run-automation") ids.push(step.automationId);
-    // The legacy spelling, still accepted on read.
-    else if (step.kind === "run-macro") ids.push(step.macroId);
   });
   return ids;
 }
@@ -105,7 +100,6 @@ const RUNNABLE_KIND_MAP: Record<RunnableStep["kind"], true> = {
   "type-keys": true,
   "send-command": true,
   "run-script": true,
-  "run-macro": true,
   "run-automation": true,
   wait: true,
   "run-local-process": true,
@@ -132,7 +126,7 @@ export interface UnknownStepFound {
  * steps and called automations count, whichever branch they sit in; each
  * automation is visited once. A **pure** helper.
  */
-export function findUnknownStep(
+function findUnknownStep(
   root: Automation,
   resolve: (id: string) => Automation | undefined
 ): UnknownStepFound | null {

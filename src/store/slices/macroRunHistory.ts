@@ -6,17 +6,21 @@
  */
 import type { MacroPlaybackStatus } from "@/services/macroPlayback";
 import { newId } from "@/services/transport/ids";
-import type { Macro, MacroRun, MacroRunOrigin } from "@/types/macro";
+import type { AutomationRun } from "@/types/generated/AutomationRun";
+import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
+import type { Macro } from "@/types/macro";
 
 import type { AppState } from "../appStore";
 import { collectLiveTabs } from "../layoutHelpers";
 import { recordAutomationRun } from "./automationStoreState";
-import { macroRunToAutomationRun } from "./automationViews";
 
 /** The display label (tab title) of a terminal tab, for the run history. */
 export function macroTargetLabel(state: AppState, tabId: string): string {
   return collectLiveTabs(state).find((t) => t.id === tabId)?.title || "Terminal";
 }
+
+/** What can start a playback. */
+export type PlaybackOrigin = Extract<AutomationRunOrigin, "manual" | "palette" | "scheduled">;
 
 /** Everything needed to describe one finished playback. */
 export interface MacroRunDescription {
@@ -27,25 +31,26 @@ export interface MacroRunDescription {
   stepsPlayed: number;
   /** Display labels (tab titles) of the terminals the playback started on. */
   targetLabels: string[];
-  origin: MacroRunOrigin;
+  origin: PlaybackOrigin;
   error?: string;
 }
 
 /** Build the persisted record for a finished playback. */
-export function buildMacroRun(desc: MacroRunDescription): MacroRun {
-  const run: MacroRun = {
+export function buildMacroRun(desc: MacroRunDescription): AutomationRun {
+  const run: AutomationRun = {
     id: newId("mrun"),
-    macroId: desc.macro.id,
-    macroName: desc.macro.name,
+    automationId: desc.macro.id,
+    automationName: desc.macro.name,
     startedAt: desc.startedAt.toISOString(),
     endedAt: desc.endedAt.toISOString(),
-    status: desc.status,
-    stepsPlayed: desc.stepsPlayed,
-    totalSteps: desc.macro.steps.length,
+    status: desc.status === "error" ? "failed" : desc.status,
+    stepsCompleted: desc.stepsPlayed,
+    total: desc.macro.steps.length,
     targetCount: desc.targetLabels.length,
-    targetLabels: desc.targetLabels,
     origin: desc.origin,
   };
+  if (desc.targetLabels.length > 0) run.targetLabels = desc.targetLabels;
+  if (desc.targetLabels.length === 1) run.targetLabel = desc.targetLabels[0];
   if (desc.error) run.error = desc.error;
   return run;
 }
@@ -55,6 +60,9 @@ export function buildMacroRun(desc: MacroRunDescription): MacroRun {
  * store's lists. Never throws and never awaits the backend: a failed write is
  * only logged.
  */
-export function recordMacroRun(set: (partial: Partial<AppState>) => void, run: MacroRun): void {
-  recordAutomationRun(set, macroRunToAutomationRun(run), "macro_playback");
+export function recordMacroRun(
+  set: (partial: Partial<AppState>) => void,
+  run: AutomationRun
+): void {
+  recordAutomationRun(set, run, "macro_playback");
 }

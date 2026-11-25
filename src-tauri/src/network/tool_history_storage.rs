@@ -15,7 +15,7 @@ use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, Versioned
 const FILE_NAME: &str = "network-tool-history.json";
 
 /// Handles reading/writing the network-tool run-history JSON file (PROD-032).
-/// Mirrors [`crate::workflows::history_storage::WorkflowRunHistoryStorage`].
+/// Mirrors [`crate::automations::storage`].
 pub struct NetworkToolHistoryStorage {
     file_path: PathBuf,
 }

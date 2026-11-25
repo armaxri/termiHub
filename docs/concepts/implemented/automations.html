@@ -151,11 +151,11 @@
       <header class="concept-header">
         <h1>Automations: one type for macros and workflows</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial · slices 1–7, 9 and 10 of 12 implemented</span>
+          <span class="concept-status">Implemented · all 12 slices</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a></span
           >
-          <span><code>docs/concepts/partial/automations.html</code></span>
+          <span><code>docs/concepts/implemented/automations.html</code></span>
         </div>
       </header>
       <nav class="concept-toc">
@@ -179,8 +179,10 @@
       </nav>
       <section>
         <p>
-          Status: partially implemented. The maintainer decided the open questions on 2026-11-23
-          (see the end). Slices 1–11 have landed; the cleanup (12) is open. Umbrella issue:
+          Status: implemented, not yet seen in full in a running app (see "Not seen in a running
+          app" under Implementation Status). The maintainer decided the open questions on 2026-11-23
+          (see the end). It replaces <a href="macro-recording.html">Macro recording</a> and
+          <a href="workflow-automation.html">Workflow automation</a>. Umbrella issue:
           <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>. Originally written
           against <code>develop</code> in November 2026.
         </p>
@@ -1682,7 +1684,7 @@ flowchart LR
             <tbody>
               <tr>
                 <td>1 Model and converters</td>
-                <td>Done. Not wired into the app; no user-visible change</td>
+                <td>Done</td>
                 <td>
                   <code>src-tauri/src/automations/{config,convert}.rs</code>, golden files in
                   <code>src-tauri/src/automations/testdata/</code>, ts-rs types in
@@ -1829,21 +1831,58 @@ flowchart LR
                 </td>
               </tr>
               <tr>
-                <td>12</td>
-                <td>Open</td>
+                <td>12 Cleanup</td>
                 <td>
-                  Tracked in <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>
+                  Done. The macro and workflow commands, managers, writers and history views are
+                  removed; the readers of old files and old backups stay. What cannot be read of an
+                  old file is now reported at start, because no manager does it any more. Kept on
+                  purpose: the action ids, settings keys and test ids users and tests hold, the two
+                  internal run paths and their names, and <code>workflow_error</code> for local
+                  processes. The multi-terminal fan-out of step-by-step runs is
+                  <a href="https://github.com/armaxri/termiHub/issues/5984">#5984</a>
+                </td>
+                <td>
+                  <code>src-tauri/src/{macros,workflows}/</code> (readers),
+                  <code>automations/{legacy,migrate}.rs</code>; every surface and state in
+                  <code>tests/visual/automationGallery.spec.ts</code>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p>
+          Not seen in a running app. The slices were graded by unit, store and rendered (Chromium)
+          checks and by collected live steps that only run by hand
+          (<code>scripts/internal/product-run.sh</code>). Until a product run says otherwise, these
+          are unseen:
+        </p>
+        <ul>
+          <li>the live steps of the editor, recording and files grades (slices 7, 8 and 11);</li>
+          <li>
+            real password prompts, a real reconnect while recording, pastes from the system
+            clipboard, and closing a window with an unsaved recording;
+          </li>
+          <li>real open and save dialogs for import and export;</li>
+          <li>
+            the migration and reconcile pass on a user's own files, which are tested on fixtures;
+          </li>
+          <li>
+            every surface in WKWebView, WebView2 and WebKitGTK: the rendered checks run in Chromium.
+          </li>
+        </ul>
+        <p>
+          Review findings (#5818) that were decided differently or are open: R-068 (mark what an
+          automation typed) is <a href="https://github.com/armaxri/termiHub/issues/6021">#6021</a>;
+          R-018 keeps both homes of schedules by the maintainer's decision, and since slice 12 both
+          edit (R-017); R-120 keeps the history filter and Clear in a row of their own; R-170 keeps
+          "Armed" / "Off".
+        </p>
         <p>Model notes from slice 1:</p>
         <ul>
           <li>
             The leaf types that did not change (error handling, condition, loop mode, parameter,
             disconnect cause) are reused from the workflow model, so their JSON and TypeScript names
-            stay <code>Workflow*</code> until slice 12 moves them.
+            stay <code>Workflow*</code>.
           </li>
           <li>
             <code>type-keys</code> always writes its <code>timing</code>;
@@ -1864,7 +1903,11 @@ flowchart LR
             truth.
           </p>
         </blockquote>
-        <p><strong>Last synced:</strong> 2026-11-24, slice 1 · <strong>Status:</strong> partial</p>
+        <p>
+          <strong>Last synced:</strong> 2026-11-25, slice 12 · <strong>Status:</strong> in sync,
+          with the divergences below
+        </p>
+        <h3>Open divergences</h3>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1879,17 +1922,53 @@ flowchart LR
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Model 3.2 and converters 4.1</td>
-                <td>Implemented in <code>src-tauri/src/automations/</code></td>
-                <td>In sync</td>
-                <td>None</td>
+                <td>3.2: one engine, <code>runAutomationOnTargets</code>, for several terminals</td>
+                <td>Typed keys use it; step-by-step runs have their own fan-out</td>
+                <td>Code divergence</td>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/5984">#5984</a>, after the
+                  local-process allowlist work it would collide with (#5994)
+                </td>
               </tr>
               <tr>
                 <td>2</td>
-                <td>Store, migration, runner, UI (slices 2–12)</td>
-                <td>Not implemented</td>
-                <td>Missing</td>
-                <td>Implement per slice, then re-sync</td>
+                <td>A wait runs as long as it says</td>
+                <td>The runner cuts a wait above 5 s, which the editor says</td>
+                <td>Code divergence</td>
+                <td><a href="https://github.com/armaxri/termiHub/issues/6008">#6008</a></td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>3.5: password prompts are recognised</td>
+                <td>By their words only, also in a local shell</td>
+                <td>Design reality</td>
+                <td><a href="https://github.com/armaxri/termiHub/issues/6014">#6014</a></td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>3.3 and 3.5 wireframes (icon buttons, Cancel, 0/80 counter)</td>
+                <td>Differ as the rows of slices 6 to 8 and 11 say</td>
+                <td>Design reality</td>
+                <td>None: the rows are the true picture</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>2026-11-25</td>
+                <td>1–12</td>
+                <td>Every slice implemented; sections 1 and 2 describe what it replaced</td>
               </tr>
             </tbody>
           </table>

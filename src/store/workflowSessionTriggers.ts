@@ -27,7 +27,8 @@ import {
   type SessionEndCause,
 } from "@/services/workflowTriggers";
 import type { TerminalExitReason } from "@/types/terminal";
-import type { Workflow, WorkflowRunTrigger } from "@/types/workflow";
+import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
+import type { Workflow } from "@/types/workflow";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "./appStore";
@@ -79,7 +80,7 @@ interface TriggeredTarget {
 function launchTriggeredRun(
   store: WorkflowTriggerStore,
   workflow: Workflow,
-  triggeredBy: WorkflowRunTrigger,
+  triggeredBy: AutomationRunOrigin,
   target: TriggeredTarget
 ): boolean {
   // Matching already skips disarmed workflows; re-check here so a workflow

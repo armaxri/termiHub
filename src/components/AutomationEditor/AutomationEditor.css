@@ -1,8 +1,12 @@
 /* One flex column inside the Modal body — the dialog's only scroll container
    (#5637). Fields and sections are spaced by the gap, never by margins. */
 .automation-editor {
+  /* Geometry: room for the Add step menu while there are few steps. */
+  --automation-editor-min-height: 400px;
+
   display: flex;
   flex-direction: column;
+  min-height: var(--automation-editor-min-height);
   gap: var(--spacing-md);
 }
 
