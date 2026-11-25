@@ -814,14 +814,14 @@ Step = everything WorkflowStep has today, plus:
 │ Description [Pull, build and restart the web tier         ]  0/80 │
 │                                                                   │
 │ Steps                                            [● Record steps] │
-│  ⋮⋮ 1  ⌨ Type keys    git pull⏎  (6 keys, recorded)        ⋯  ▾   │
+│  ⋮⋮ 1  ⌨ Type keys    git pull⏎  (Recorded)                ⋯  ▾   │
 │  ⋮⋮ 2  ▷ Run command  make build ENV=${env}                ⋯  ▾   │
 │  ⋮⋮ 3  ⏱ Wait for output  "Build OK"  · 30 s                ⋯  ▾   │
 │  ⋮⋮ 4  ⏸ Wait  500 ms                                       ⋯      │
 │  [+ Add step ▾]                                                   │
 │      Type keys · Run command · Wait · Wait for output             │
-│      ─ More ─  Condition · Loop · Run script · Run automation ·   │
-│                Run local process                                  │
+│      ─ More ─  Wait for you · Condition · Loop · Run script ·     │
+│                Run automation · Run local process                 │
 │                                                                   │
 │ When it runs                                                      │
 │  ◉ When I run it (sidebar, palette, terminal menu)                │
@@ -831,7 +831,7 @@ Step = everything WorkflowStep has today, plus:
 │ ▸ Ask for values when it runs (parameters)            (collapsed) │
 │ ▸ Tags                                                (collapsed) │
 ├───────────────────────────────────────────────────────────────────┤
-│                                     Cancel  ·  Save  ·  [Save and run] │
+│ To save: …            Cancel  ·  Save and run in bash  ·  [Save]  │
 └───────────────────────────────────────────────────────────────────┘</pre
         >
         <ul>
@@ -842,6 +842,10 @@ Step = everything WorkflowStep has today, plus:
             Type keys that is the chunk list in escape notation, with "Add Enter", per-chunk delay,
             reordering and the inline validation from
             <a href="https://github.com/armaxri/termiHub/issues/3440">#3440</a>.
+          </li>
+          <li>
+            What starts an automation is named before its steps when something does; the section
+            opens on demand. A hotkey is pressed, not written, and says who else uses the keys.
           </li>
           <li>
             "When I run it" always applies and cannot be turned off. This replaces the "Manual"
@@ -855,23 +859,26 @@ Step = everything WorkflowStep has today, plus:
             confirmation and history.
           </li>
           <li>
-            One primary button in the footer: <strong>Save</strong> when editing an existing
-            automation, <strong>Save and run</strong> when it is new (as with connections,
-            <a href="https://github.com/armaxri/termiHub/issues/5755">#5755</a>). Copy-style rules
-            apply.
+            The footer is the same for a new and a stored automation (<a
+              href="https://github.com/armaxri/termiHub/issues/6025"
+              >#6025</a
+            >): <strong>Save</strong> is the primary, on the right, and Enter only ever saves.
+            <strong>Save and run</strong> is the secondary button and names its terminal. Both stay
+            usable while something is missing; the footer says what, or why it cannot run. An empty
+            field a step cannot do without keeps it from being saved.
           </li>
         </ul>
         <h3 id="3-5-recording">3.5 Recording</h3>
         <pre class="wireframe">
-Terminal "…" → Record automation         ─▶  tab shows ● Recording · [Stop] [Cancel]
+Terminal "…" → Record automation         ─▶  toolbar chip [■ Stop recording], ● on the tab
 Stop ─▶ ┌ Save recording ────────────────────────────────┐
-        │ Recorded 14 keys (3.2 s): git pull⏎make⏎       │
+        │ Recorded in bash, 3.2 s: git pull⏎make⏎        │
         │ ◉ New automation   Name [            ]         │
         │ ○ Add to  [Deploy prep          ▾] at the end  │
-        │                       Cancel · [Save]          │
+        │ Keep for later       Discard recording · [Save]│
         └────────────────────────────────────────────────┘
 Editor "● Record steps" ─▶ the editor collapses to a bar above the target terminal
-        ("Recording into 'Deploy prep' · Stop"); Stop inserts a Type keys step
+        ("Recording into 'Deploy prep' · Cancel · Stop and return"); it inserts a Type keys step
         at the selected position and reopens the editor, with the draft kept.</pre
         >
         <ul>
@@ -892,6 +899,23 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
             user asks for that (an automation is stored unencrypted). It is recognised by the text
             before the cursor, so a prompt that says neither password, passphrase, PIN nor the like
             is not. Credential dialogs are not terminal input and are never recorded.
+          </li>
+          <li>
+            <strong>Where a password was left out, the replay waits</strong>
+            (<a href="https://github.com/armaxri/termiHub/issues/6025">#6025</a>): a
+            <code>wait-for-user</code> step, "Wait for you", which can be added by hand too. The run
+            stops, the terminal keeps the focus, and a bar above the terminals says which automation
+            waits where and what to do, with <strong>Continue</strong> and <strong>Stop</strong>.
+            Nothing else goes on: whether a prompt was answered cannot be told from outside (a wrong
+            password asks again), so only Continue counts, and while the terminal still shows a
+            password prompt the first Continue only says so. After five minutes, or when the
+            terminal is closed or disconnects, the run fails and the History says why; neither
+            "continue if it fails" nor a retry, of the step or of anything around it, can tolerate
+            that. What is typed meanwhile is kept apart if it is recorded, like a password. Several
+            terminals wait on their own. A run nobody watches (a schedule, On disconnect, On output
+            match) does not start at all. An older build does not know the kind and refuses the
+            automation. Recordings made before this kept only a pause in the place; they cannot be
+            told from one whose password is stored, and type on.
           </li>
           <li>
             <strong>Lifecycle:</strong> a dropped connection pauses the recording and it goes on
@@ -1859,8 +1883,11 @@ flowchart LR
         <ul>
           <li>the live steps of the editor, recording and files grades (slices 7, 8 and 11);</li>
           <li>
-            real password prompts, a real reconnect while recording, pastes from the system
-            clipboard, and closing a window with an unsaved recording;
+            real password prompts, the wait for a left-out one (<a
+              href="https://github.com/armaxri/termiHub/issues/6025"
+              >#6025</a
+            >), a real reconnect while recording, pastes from the system clipboard, and closing a
+            window with an unsaved recording;
           </li>
           <li>real open and save dialogs for import and export;</li>
           <li>
