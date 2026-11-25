@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
+import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { frontendLog } from "@/utils/frontendLog";
@@ -16,6 +17,8 @@ import { isLoopbackBind } from "@/utils/tunnelHost";
 export function useServiceContext(needsNetwork: boolean): ServiceContext {
   const { remoteAgents } = useProjectedAgents();
   const { connections } = useProjectedConnections();
+  const tunnels = useAppStore((s) => s.tunnels);
+  const servers = useAppStore((s) => s.embeddedServers);
   const [networkAddress, setNetworkAddress] = useState<string>();
 
   useEffect(() => {
@@ -34,8 +37,17 @@ export function useServiceContext(needsNetwork: boolean): ServiceContext {
     };
   }, [needsNetwork]);
 
+  const usedPorts = useMemo(() => {
+    const ports = new Set<number>();
+    for (const { tunnelType } of tunnels) {
+      if (tunnelType.type !== "remote") ports.add(Number(tunnelType.config.localPort));
+    }
+    for (const server of servers) ports.add(server.port);
+    return ports;
+  }, [tunnels, servers]);
+
   return useMemo(
-    () => ({ agents: remoteAgents, connections, networkAddress }),
-    [remoteAgents, connections, networkAddress]
+    () => ({ agents: remoteAgents, connections, networkAddress, usedPorts }),
+    [remoteAgents, connections, networkAddress, usedPorts]
   );
 }

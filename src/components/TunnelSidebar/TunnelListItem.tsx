@@ -1,16 +1,18 @@
 import type React from "react";
 import { AlertTriangle, Link2 } from "lucide-react";
+import { useConnectAgent } from "@/hooks/useConnectAgent";
+import { useAppStore } from "@/store/appStore";
 import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceListItem";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { useByteRate } from "@/hooks/useByteRate";
-import { tunnelModel, type ServiceContext } from "@/utils/serviceModel";
+import { tunnelModel, type ServiceContext, type ServiceNextStep } from "@/utils/serviceModel";
 import {
   resolveTunnelHost,
   isAgentHost,
   tunnelHostBadge,
   reportedReachability,
 } from "@/utils/tunnelHost";
-import { pairStatusLabel, type PairStatus } from "@/utils/tunnelChain";
+import type { PairStatus } from "@/utils/tunnelChain";
 import { tunnelRowTooltip } from "./tunnelRowTooltip";
 
 interface TunnelListItemProps {
@@ -31,6 +33,8 @@ interface TunnelListItemProps {
   onEdit: (tunnelId: string) => void;
   onDuplicate: (tunnelId: string) => void;
   onDelete: (tunnelId: string) => void;
+  /** Listen on another port of this computer, and start. */
+  onUsePort: (tunnelId: string, port: number) => void | Promise<void>;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
@@ -41,9 +45,8 @@ interface TunnelListItemProps {
    */
   nested?: boolean;
   /**
-   * The combined pair status when this row belongs to a chained pair — shown as a
-   * "Linked · …" chip so the user reasons about whether `localhost:PORT` works. On
-   * the nested companion row a `degraded` status also renders the inline fix.
+   * The combined pair status when this row belongs to a chained pair: whether
+   * `localhost:PORT` works here, which the parent's row says when it does not.
    */
   pairStatus?: PairStatus;
   /**
@@ -70,6 +73,7 @@ export function TunnelListItem({
   onEdit,
   onDuplicate,
   onDelete,
+  onUsePort,
   rowRef,
   rowProps,
   nested = false,
@@ -77,7 +81,16 @@ export function TunnelListItem({
   companionRedundant = false,
   onRemoveCompanion,
 }: TunnelListItemProps) {
-  const model = tunnelModel(tunnel, state, context);
+  const model = tunnelModel(
+    tunnel,
+    state,
+    context,
+    pairStatus && { role: nested ? "hop" : "parent", status: pairStatus }
+  );
+  const connectAgent = useConnectAgent();
+  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
+  const retryTunnelNow = useAppStore((s) => s.retryTunnelNow);
+  const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
   const running = model.state === "running";
   // Live up/down throughput (PROD-038), smoothed from the cumulative counters.
   const sampling = running && !!state?.stats;
@@ -93,9 +106,6 @@ export function TunnelListItem({
     running && state?.reachableFrom
       ? reportedReachability(state.reachableFrom, hostBadge.label)
       : null;
-  const pairLabel =
-    !nested && pairStatus && pairStatus !== "none" ? pairStatusLabel(pairStatus) : null;
-  const pairWarn = pairStatus === "degraded" || pairStatus === "down";
   const tooltip = tunnelRowTooltip(tunnel, {
     sshLabel: context.connections.find((c) => c.id === tunnel.sshConnectionId)?.name ?? "Unknown",
     host: hostBadge,
@@ -104,7 +114,6 @@ export function TunnelListItem({
     downRate,
     reach: reach?.label,
     boundAddress: state?.boundAddress,
-    pair: pairLabel && !pairWarn ? pairLabel : null,
   });
 
   const onAction = (action: ServiceRowAction): void | Promise<void> => {
@@ -128,19 +137,26 @@ export function TunnelListItem({
     }
   };
 
+  const onNextStep = (step: ServiceNextStep): void | Promise<void> => {
+    switch (step.id) {
+      case "chooseConnection":
+      case "edit":
+        return onEdit(tunnel.id);
+      case "usePort":
+        return step.port === undefined ? undefined : onUsePort(tunnel.id, step.port);
+      case "connectAgent":
+        return model.where.agentId === undefined ? undefined : connectAgent(model.where.agentId);
+      case "unlock":
+        return setUnlockDialogOpen(true);
+      case "editConnection":
+        return openConnectionEditorTab(tunnel.sshConnectionId);
+      case "retryNow":
+        return retryTunnelNow(tunnel.id);
+    }
+  };
+
   const extras = (
     <>
-      {pairLabel && pairWarn && (
-        <span
-          className="tunnel-item__pair"
-          data-testid={`tunnel-pair-status-${tunnel.id}`}
-          data-warn={pairWarn}
-        >
-          <AlertTriangle size={11} className="tunnel-item__pair-icon" />
-          <Link2 size={11} className="tunnel-item__pair-icon" aria-hidden="true" />
-          <span>{pairLabel}</span>
-        </span>
-      )}
       {companionRedundant && onRemoveCompanion && (
         <span className="tunnel-item__redundant" data-testid={`tunnel-redundant-${tunnel.id}`}>
           <AlertTriangle size={11} className="tunnel-item__redundant-icon" />
@@ -158,37 +174,6 @@ export function TunnelListItem({
           </button>
         </span>
       )}
-      {nested && pairStatus === "degraded" && (
-        <span
-          className="tunnel-item__degraded-fix"
-          data-testid={`tunnel-degraded-fix-${tunnel.id}`}
-        >
-          <AlertTriangle size={11} className="tunnel-item__degraded-icon" />
-          <span>Hop down — localhost is unreachable.</span>
-          <button
-            type="button"
-            className="tunnel-item__inline-action"
-            onClick={(e) => {
-              e.stopPropagation();
-              return onStart(tunnel.id);
-            }}
-            data-testid={`tunnel-degraded-retry-${tunnel.id}`}
-          >
-            Retry
-          </button>
-          <button
-            type="button"
-            className="tunnel-item__inline-action"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(tunnel.id);
-            }}
-            data-testid={`tunnel-degraded-port-${tunnel.id}`}
-          >
-            Use a different local port
-          </button>
-        </span>
-      )}
     </>
   );
 
@@ -197,14 +182,10 @@ export function TunnelListItem({
       model={model}
       tooltip={tooltip}
       onAction={onAction}
-      onNextStep={() => onEdit(tunnel.id)}
+      onNextStep={onNextStep}
       extras={extras}
       className={nested ? "tunnel-item--nested" : undefined}
-      nameMark={
-        nested && (
-          <Link2 size={12} className="tunnel-item__link-icon" aria-label="Chained companion" />
-        )
-      }
+      nameMark={nested && <Link2 size={12} className="tunnel-item__link-icon" aria-hidden="true" />}
       rowRef={rowRef}
       rowProps={rowProps}
     />

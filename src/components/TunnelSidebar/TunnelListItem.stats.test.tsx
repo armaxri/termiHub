@@ -52,6 +52,7 @@ async function renderItem(tunnel: TunnelConfig, state: TunnelState): Promise<voi
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );

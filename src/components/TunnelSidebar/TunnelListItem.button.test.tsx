@@ -65,6 +65,7 @@ function renderItem(state: TunnelState | undefined, handlers: Handlers = {}): vo
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );

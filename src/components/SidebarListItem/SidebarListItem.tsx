@@ -130,6 +130,17 @@ export function overlayCoversName(m: {
   return m.nameLeft + stub + m.actions > m.header;
 }
 
+/** Between a row and its tooltip, in px. */
+const TOOLTIP_GAP = 6;
+
+/** How far the tooltip of `name` has to keep off it to stand beside its row. */
+function distanceToRowEnd(name: HTMLElement | null): number {
+  const row = name?.closest(".sidebar-list-item");
+  if (!name || !row) return TOOLTIP_GAP;
+  const rest = row.getBoundingClientRect().right - name.getBoundingClientRect().right;
+  return Math.max(0, rest) + TOOLTIP_GAP;
+}
+
 /**
  * The shared sidebar list-item shell: status dot / badge / name / actions /
  * details. Management sidebars (services and workspaces today; tunnels to
@@ -167,6 +178,8 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
     ref
   ) {
     const headerRef = useRef<HTMLDivElement | null>(null);
+    const nameRef = useRef<HTMLSpanElement | null>(null);
+    const [tooltipOffset, setTooltipOffset] = useState(TOOLTIP_GAP);
     const [stacked, setStacked] = useState(false);
     const hasPrimary = primaryAction != null;
     const hasActions = actions != null || hasPrimary;
@@ -228,8 +241,14 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
     const nameEl =
       tooltipLines.length > 0 ? (
         <Tooltip
-          side="bottom"
+          // Beside the row: below it, the tooltip would lie on the next rows and
+          // take their hover (#6063).
+          side="right"
           align="start"
+          sideOffset={tooltipOffset}
+          onOpenChange={(open) => {
+            if (open) setTooltipOffset(distanceToRowEnd(nameRef.current));
+          }}
           data-testid={tooltipTestId}
           content={
             <span className="sidebar-list-item__tooltip">
@@ -242,7 +261,11 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
             </span>
           }
         >
-          <span className="sidebar-list-item__name ui-truncate" data-testid={nameTestId}>
+          <span
+            ref={nameRef}
+            className="sidebar-list-item__name ui-truncate"
+            data-testid={nameTestId}
+          >
             {name}
           </span>
         </Tooltip>

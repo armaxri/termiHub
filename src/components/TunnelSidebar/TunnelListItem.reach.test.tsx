@@ -4,7 +4,7 @@
  * the agent warns (not reachable from this computer), a widened / SSH-server bind
  * reads plainly, and desktop tunnels show no note.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -66,6 +66,7 @@ function renderItem(tunnel: TunnelConfig, state: TunnelState): void {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );

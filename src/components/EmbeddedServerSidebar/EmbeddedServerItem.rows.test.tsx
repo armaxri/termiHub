@@ -45,6 +45,7 @@ function render(state?: ServerState) {
           onEdit={vi.fn()}
           onDuplicate={vi.fn()}
           onDelete={vi.fn()}
+          onUsePort={vi.fn()}
         />
       </TooltipProvider>
     );
@@ -100,6 +101,7 @@ describe("EmbeddedServerItem — names, not settings (#5770)", () => {
             onEdit={vi.fn()}
             onDuplicate={vi.fn()}
             onDelete={vi.fn()}
+            onUsePort={vi.fn()}
           />
         </TooltipProvider>
       );

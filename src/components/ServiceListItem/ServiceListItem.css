@@ -1,5 +1,17 @@
 /* The row of a service (#6028). The layout is the shared SidebarListItem's;
-   nothing on it is cut: names, the kind line, the address and the reason wrap. */
+   names, the kind line and the reason wrap, they are never cut. An address and a
+   machine's name stay on one line and lose their middle (the whole is in a
+   tooltip). Rows are dense: about eight healthy ones fit at 800x600 (#6063). */
+
+.service-row.sidebar-list-item {
+  padding-top: var(--spacing-xxs);
+  padding-bottom: var(--spacing-xs);
+}
+
+.service-row .sidebar-list-item__details {
+  gap: 0;
+  padding-top: 0;
+}
 
 .service-row .sidebar-list-item__name {
   white-space: normal;
@@ -38,23 +50,92 @@
 }
 
 .service-row__state[data-state="error"],
+.service-row__state[data-state="needsConnection"],
 .service-row__reason[data-state="error"] {
   color: var(--color-error);
 }
 
+.service-row__technical {
+  color: var(--text-muted);
+}
+
+.service-row__machine {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  max-width: 100%;
+  align-self: flex-start;
+  color: var(--text-primary);
+}
+
+.service-row__machine-icon,
+.service-row__risk > svg {
+  flex-shrink: 0;
+}
+
+.middle-ellipsis {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: pre;
+}
+
+.middle-ellipsis__head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.middle-ellipsis__tail {
+  flex-shrink: 0;
+}
+
+/* The address with Copy right beside it, then who reaches it. */
+.service-row__address {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--spacing-xs);
+}
+
 .service-row__address-text {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
   user-select: text;
 }
 
 .service-row__address-text code {
+  display: flex;
+  min-width: 0;
   font-family: var(--font-mono);
   color: var(--text-primary);
 }
 
-/* Copy follows the address like a word of it, so it never squeezes it. */
-.service-row__address .ui-btn {
-  vertical-align: middle;
-  margin-left: var(--spacing-xxs);
+/* Beside the text, not taller than it: the line keeps its height. */
+.service-row__address-text .ui-btn {
+  flex-shrink: 0;
+  margin: calc(-1 * var(--spacing-xs)) 0;
+  color: var(--text-primary);
+}
+
+.service-row__risk {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--color-warning);
+}
+
+.service-row__reason[data-state="running"] {
+  color: var(--color-warning);
+}
+
+.service-counts {
+  margin: 0;
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 
 .service-row__next {

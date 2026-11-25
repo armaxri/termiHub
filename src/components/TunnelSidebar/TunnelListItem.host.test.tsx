@@ -4,7 +4,7 @@
  * name for agent-hosted ones. Since #5770 this is in the row's tooltip (its
  * accessible description), not on the row.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -57,6 +57,7 @@ function renderItem(tunnel: TunnelConfig): void {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );

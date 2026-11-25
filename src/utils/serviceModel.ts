@@ -8,7 +8,13 @@
  */
 import { t, tf, type MessageId } from "@/i18n/catalog";
 import type { RemoteAgentDefinition, SavedConnection } from "@/types/connection";
-import type { EmbeddedServerConfig, ServerState, ServerType } from "@/types/embeddedServer";
+import {
+  PROTOCOL_LABELS,
+  type EmbeddedServerConfig,
+  type ServerState,
+  type ServerType,
+} from "@/types/embeddedServer";
+import type { ServiceCause } from "@/types/generated/ServiceCause";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
 import {
@@ -21,13 +27,15 @@ import {
   serverServiceState,
   serviceReason,
   serviceRunAction,
+  serviceStateDot,
+  serviceStateLabel,
   tunnelServiceState,
   type ServiceRunAction,
   type ServiceState,
 } from "@/utils/serviceState";
-import { shareTypeHelp } from "@/utils/shareTypeHelp";
+import { hasHopName, type PairStatus } from "@/utils/tunnelChain";
 import { isAgentHost } from "@/utils/tunnelHost";
-import { tunnelTypeHelp, type TunnelTypeKind } from "@/utils/tunnelTypeHelp";
+import { tunnelTypeLabel, type TunnelTypeKind } from "@/utils/tunnelTypeHelp";
 
 export type ServiceKind = "tunnel" | "fileServer";
 
@@ -52,9 +60,21 @@ export interface ServiceAction {
 }
 
 /** What helps when a service cannot simply be started. */
+export type ServiceNextStepId =
+  | "chooseConnection"
+  | "usePort"
+  | "edit"
+  | "connectAgent"
+  | "unlock"
+  | "editConnection"
+  | "retryNow";
+
+/** The remedy for the reason beside it. */
 export interface ServiceNextStep {
-  id: "chooseConnection";
+  id: ServiceNextStepId;
   label: string;
+  /** `usePort`: which one. */
+  port?: number;
 }
 
 /** Traffic of a running service. */
@@ -84,13 +104,19 @@ export interface ServiceModel {
   description?: string;
   /** What it is for, in plain words: "Open a folder in a browser". */
   what: string;
+  /** The technical name of what it is: "Local", "FTP". */
+  technical: string;
   where: ServiceWhere;
-  /** What it is, and where when that is not this computer, as one line. */
-  kindLine: string;
   state: ServiceState;
+  /** The word for the state. */
+  stateLabel: string;
+  dot: ReturnType<typeof serviceStateDot>;
   /** Why it is in that state, when the user needs to know. */
   reason?: string;
-  nextStep?: ServiceNextStep;
+  /** What helps with the reason, the best first. */
+  nextSteps: ServiceNextStep[];
+  /** What others may do to it that the user should know. */
+  risk?: string;
   /** Only while it runs. */
   address?: ServiceAddress;
   /** Only while it runs. */
@@ -101,10 +127,19 @@ export interface ServiceModel {
 
 /** What a model needs besides the service itself. */
 export interface ServiceContext {
-  agents: readonly Pick<RemoteAgentDefinition, "id" | "name" | "config">[];
+  agents: readonly (Pick<RemoteAgentDefinition, "id" | "name" | "config"> &
+    Partial<Pick<RemoteAgentDefinition, "connectionState">>)[];
   connections: readonly SavedConnection[];
   /** This computer's address on the network, when known. */
   networkAddress?: string;
+  /** The ports that services of this computer use. */
+  usedPorts?: ReadonlySet<number>;
+}
+
+/** The part of a chained pair that a tunnel is (#2597). */
+export interface ServiceChain {
+  role: "parent" | "hop";
+  status: PairStatus;
 }
 
 /** The one order of actions, in buttons, menus and Activity. */
@@ -113,11 +148,11 @@ export const SERVICE_ACTION_ORDER: readonly ServiceActionId[] = [
   "stop",
   "stopWaiting",
   "retry",
+  "restart",
   "copyAddress",
   "openInBrowser",
   "activity",
   "edit",
-  "restart",
   "duplicate",
   "delete",
 ];
@@ -146,11 +181,13 @@ const SHORTCUTS: Partial<Record<ServiceActionId, string>> = {
   delete: "Delete",
 };
 
-function serviceActions(kind: ServiceKind, offered: ReadonlySet<ServiceActionId>): ServiceAction[] {
+function serviceActions(
+  state: ServiceState,
+  offered: ReadonlySet<ServiceActionId>
+): ServiceAction[] {
   return SERVICE_ACTION_ORDER.filter((id) => offered.has(id)).map((id) => {
-    const label = t(
-      id === "restart" && kind === "tunnel" ? "service.action.reconnect" : ACTION_LABELS[id]
-    );
+    const cancels = id === "stop" && state === "starting";
+    const label = t(cancels ? "service.action.cancelStart" : ACTION_LABELS[id]);
     return { id, label, shortcut: SHORTCUTS[id] };
   });
 }
@@ -160,9 +197,84 @@ function offeredIn(state: ServiceState, address: ServiceAddress | undefined): Se
   const offered = new Set<ServiceActionId>(["edit", "duplicate", "delete"]);
   const run = serviceRunAction(state);
   if (run) offered.add(run);
-  if (address) offered.add("copyAddress");
+  if (address?.copy) offered.add("copyAddress");
   if (state === "running") offered.add("restart");
   return offered;
+}
+
+/** The next port after `port` that no service here is set to. */
+function nextFreePort(port: number, context: ServiceContext): number | undefined {
+  for (let next = port + 1; next <= 65535; next += 1) {
+    if (!context.usedPorts?.has(next)) return next;
+  }
+  return undefined;
+}
+
+/** What helps with `cause` in `state`; `port` is the one it listens on here. */
+function nextStepsFor(
+  state: ServiceState,
+  cause: ServiceCause | undefined,
+  where: ServiceWhere,
+  port: number | undefined,
+  context: ServiceContext
+): ServiceNextStep[] {
+  if (state === "needsConnection") {
+    return [{ id: "chooseConnection", label: t("service.next.chooseConnection") }];
+  }
+  if (state === "reconnecting") return [{ id: "retryNow", label: t("service.next.retryNow") }];
+  switch (cause) {
+    case "portInUse": {
+      const edit: ServiceNextStep = { id: "edit", label: t("service.next.edit") };
+      const next = port === undefined ? undefined : nextFreePort(port, context);
+      return next === undefined
+        ? [edit]
+        : [
+            {
+              id: "usePort",
+              label: tf("service.next.usePort", { port: String(next) }),
+              port: next,
+            },
+            edit,
+          ];
+    }
+    case "agentOffline": {
+      const agent = context.agents.find((a) => a.id === where.agentId);
+      // A removed one cannot be connected; one on its way needs no help.
+      const helps = agent && (agent.connectionState ?? "disconnected") === "disconnected";
+      return helps ? [{ id: "connectAgent", label: t("service.next.connectAgent") }] : [];
+    }
+    case "storeLocked":
+      return [{ id: "unlock", label: t("service.next.unlock") }];
+    case "connection":
+      return [{ id: "editConnection", label: t("service.next.editConnection") }];
+    default:
+      return [];
+  }
+}
+
+/** State, words, reason and remedies: the same for both kinds. */
+function stateParts(
+  state: ServiceState,
+  reported: { error?: string; cause?: ServiceCause } | undefined,
+  where: ServiceWhere,
+  port: number | undefined,
+  context: ServiceContext
+): Pick<ServiceModel, "state" | "stateLabel" | "dot" | "reason" | "nextSteps"> {
+  // The stop is owed, not under way: it may still run for a long time.
+  const pending = state === "stopping" && reported?.cause === "agentOffline";
+  const stateLabel = pending ? t("service.state.stopPending") : serviceStateLabel(state);
+  const dot = serviceStateDot(state);
+  const reason =
+    state === "needsConnection"
+      ? t("service.reason.needsConnection")
+      : serviceReason(state, reported?.error);
+  return {
+    state,
+    stateLabel,
+    dot: { ...dot, label: stateLabel, title: stateLabel, pulse: dot.pulse && !pending },
+    reason,
+    nextSteps: reason ? nextStepsFor(state, reported?.cause, where, port, context) : [],
+  };
 }
 
 function whereOf(host: HostChoice, agents: ServiceContext["agents"]): ServiceWhere {
@@ -182,24 +294,47 @@ function whereOf(host: HostChoice, agents: ServiceContext["agents"]): ServiceWhe
 function listenerOn(host: HostChoice, context: ServiceContext): Listener {
   if (!isAgentHost(host)) return { on: "here", network: context.networkAddress };
   const agent = context.agents.find((a) => a.id === host.agentId);
-  return { on: "there", name: agent?.name ?? host.agentId, host: agent?.config?.host };
+  return {
+    on: "there",
+    name: agent?.name ?? host.agentId,
+    host: agent?.config?.host || undefined,
+    shown: true,
+  };
 }
 
-/**
- * What it is, and where unless that is this computer or the row says it anyway,
- * beside the address or in the reason.
- */
-function kindLine(
-  what: string,
-  host: HostChoice,
-  where: ServiceWhere,
-  said: readonly (string | undefined)[]
-): string {
-  const { name } = where;
-  const named = name !== undefined && said.some((text) => text?.includes(name));
-  return host.kind === "thisComputer" || named
-    ? what
-    : tf("service.kindLine", { what, where: where.label });
+/** What a tunnel is for, by the names of its ends. */
+function tunnelPurpose(config: TunnelConfig, host: HostChoice, context: ServiceContext): string {
+  const connection = context.connections.find((c) => c.id === config.sshConnectionId);
+  const server = connection?.name ?? t("service.what.unknownServer");
+  switch (config.tunnelType.type) {
+    case "local":
+      return tf("service.what.local", { server });
+    case "remote":
+      return tf(
+        host.kind === "thisComputer" ? "service.what.remote" : "service.what.remote.there",
+        { server }
+      );
+    case "dynamic":
+      return tf("service.what.dynamic", { server });
+  }
+}
+
+/** What others can do with a file server, as it is set. */
+function fileServerPurpose(config: EmbeddedServerConfig): string {
+  switch (config.serverType) {
+    case "http":
+      return t("service.what.http");
+    case "ftp":
+      return t(config.readOnly ? "service.what.ftp.readOnly" : "service.what.ftp.write");
+    case "tftp":
+      return t(config.readOnly ? "service.what.tftp.readOnly" : "service.what.tftp.write");
+  }
+}
+
+/** Whether whoever reaches it may put files there, without signing in. */
+function anyoneMayUpload(config: EmbeddedServerConfig): boolean {
+  if (config.serverType === "http" || config.readOnly) return false;
+  return config.serverType === "tftp" || config.ftpAuth?.type !== "credentials";
 }
 
 /** The address of a running tunnel: where others connect to it. */
@@ -214,7 +349,7 @@ function tunnelAddress(
     // It listens on the SSH server, whoever hosts it.
     const connection = context.connections.find((c) => c.id === config.sshConnectionId);
     const server = connection?.config.config as { host?: unknown } | undefined;
-    const name = connection?.name ?? "SSH server";
+    const name = connection?.name ?? t("service.what.unknownServer");
     const listener: Listener = {
       on: "there",
       name,
@@ -232,38 +367,43 @@ function tunnelAddress(
   );
 }
 
-/** The model of a tunnel. */
+/** The port a tunnel listens on here, if it does. */
+function localPortOf(config: TunnelConfig, host: HostChoice): number | undefined {
+  if (host.kind !== "thisComputer" || config.tunnelType.type === "remote") return undefined;
+  const { localPort } = config.tunnelType.config;
+  return typeof localPort === "number" ? localPort : undefined;
+}
+
+/** The model of a tunnel; `chain` when it is one half of a chained pair. */
 export function tunnelModel(
   config: TunnelConfig,
   state: TunnelState | undefined,
-  context: ServiceContext
+  context: ServiceContext,
+  chain?: ServiceChain
 ): ServiceModel {
   const host = hostChoice(config.host);
   const where = whereOf(host, context.agents);
   const type = config.tunnelType.type;
-  const what = tunnelTypeHelp(type, host).summary;
   const serviceState = tunnelServiceState(state?.status);
   const running = serviceState === "running";
   const address = running ? tunnelAddress(config, state, host, context) : undefined;
-  const needsConnection = serviceState === "needsConnection";
-  const reason = needsConnection
-    ? t("service.reason.needsConnection")
-    : serviceReason(serviceState, state?.error);
   const stats = running ? state?.stats : undefined;
+  const parts = stateParts(serviceState, state, where, localPortOf(config, host), context);
+  // It runs there, but what the pair is for, using it here, does not work.
+  const halfWay = chain?.role === "parent" && chain.status === "degraded";
   return {
+    ...parts,
+    ...(halfWay
+      ? { dot: { ...parts.dot, tone: "warning" }, reason: t("service.chain.notHere") }
+      : {}),
     id: config.id,
     kind: "tunnel",
     type,
-    name: config.name,
+    name: chain?.role === "hop" && hasHopName(config) ? t("service.chain.hopName") : config.name,
     description: config.description,
-    what,
+    what: tunnelPurpose(config, host, context),
+    technical: tunnelTypeLabel(type),
     where,
-    kindLine: kindLine(what, host, where, [address?.on, reason]),
-    state: serviceState,
-    reason,
-    nextStep: needsConnection
-      ? { id: "chooseConnection", label: t("service.next.chooseConnection") }
-      : undefined,
     address,
     counters: stats && {
       sent: stats.bytesSent,
@@ -271,7 +411,7 @@ export function tunnelModel(
       active: stats.activeConnections,
       total: stats.totalConnections,
     },
-    actions: serviceActions("tunnel", offeredIn(serviceState, address)),
+    actions: serviceActions(serviceState, offeredIn(serviceState, address)),
   };
 }
 
@@ -283,7 +423,6 @@ export function fileServerModel(
 ): ServiceModel {
   const host = hostChoice(config.host);
   const where = whereOf(host, context.agents);
-  const what = shareTypeHelp(config.serverType, host).summary;
   const serviceState = serverServiceState(state?.status);
   const running = serviceState === "running";
   const address = running
@@ -297,20 +436,23 @@ export function fileServerModel(
   const offered = offeredIn(serviceState, address);
   offered.add("activity");
   // Not for one that opens elsewhere: the browser here would find another localhost.
-  if (address && !address.on && config.serverType === "http") offered.add("openInBrowser");
-  const reason = serviceReason(serviceState, state?.error);
+  if (address?.copy && !address.on && config.serverType === "http") offered.add("openInBrowser");
   const stats = running ? state?.stats : undefined;
+  const port = host.kind === "thisComputer" ? config.port : undefined;
   return {
+    ...stateParts(serviceState, state, where, port, context),
     id: config.id,
     kind: "fileServer",
     type: config.serverType,
     name: config.name,
     description: config.description,
-    what,
+    what: fileServerPurpose(config),
+    technical: PROTOCOL_LABELS[config.serverType],
     where,
-    kindLine: kindLine(what, host, where, [address?.on, reason]),
-    state: serviceState,
-    reason,
+    risk:
+      address?.open && anyoneMayUpload(config)
+        ? t(host.kind === "thisComputer" ? "service.risk.upload.here" : "service.risk.upload.there")
+        : undefined,
     address,
     counters: stats && {
       sent: stats.bytesSent,
@@ -318,6 +460,18 @@ export function fileServerModel(
       active: stats.activeConnections,
       total: stats.totalConnections,
     },
-    actions: serviceActions("fileServer", offered),
+    actions: serviceActions(serviceState, offered),
   };
+}
+
+/** How many of a list run, and how many do not work. */
+export function serviceCounts(models: readonly Pick<ServiceModel, "state">[]): string {
+  const count = (states: readonly ServiceState[]) =>
+    models.filter((model) => states.includes(model.state)).length;
+  const running = String(count(["running"]));
+  const total = String(models.length);
+  const attention = count(["error", "needsConnection", "notReachable", "reconnecting"]);
+  return attention === 0
+    ? tf("service.counts", { running, total })
+    : tf("service.counts.attention", { running, total, attention: String(attention) });
 }

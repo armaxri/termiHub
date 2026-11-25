@@ -52,6 +52,7 @@ function render(status: ServerStatus) {
           onEdit={vi.fn()}
           onDuplicate={vi.fn()}
           onDelete={vi.fn()}
+          onUsePort={vi.fn()}
         />
       </TooltipProvider>
     );

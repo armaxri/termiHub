@@ -4,7 +4,7 @@
  * the other actions are a hover group; the status dot names its state in a
  * tooltip and as its accessible name.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TunnelListItem } from "./TunnelListItem";
@@ -43,6 +43,7 @@ function render(status?: TunnelStatus) {
           onEdit={noop}
           onDuplicate={noop}
           onDelete={noop}
+          onUsePort={vi.fn()}
         />
       )
     );

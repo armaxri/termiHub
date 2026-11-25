@@ -3,11 +3,13 @@ import { useState } from "react";
 import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceListItem";
 import { toast } from "@/components/ui";
 import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
+import { useConnectAgent } from "@/hooks/useConnectAgent";
+import { useAppStore } from "@/store/appStore";
 import { errorMessage } from "@/utils/errorMessage";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { isAgentHost } from "@/utils/runLocation";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
-import { fileServerModel, type ServiceContext } from "@/utils/serviceModel";
+import { fileServerModel, type ServiceContext, type ServiceNextStep } from "@/utils/serviceModel";
 import { t, tf } from "@/i18n/catalog";
 import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 import { serverRowTooltip } from "./serverRowTooltip";
@@ -25,6 +27,8 @@ interface Props {
   onEdit: (id: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Listen on another port, and start. */
+  onUsePort: (id: string, port: number) => void | Promise<void>;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
@@ -74,12 +78,15 @@ export function EmbeddedServerItem({
   onEdit,
   onDuplicate,
   onDelete,
+  onUsePort,
   rowRef,
   rowProps,
 }: Props) {
   const [showActivity, setShowActivity] = useState(false);
   const model = fileServerModel(config, state, context);
   const host = hostChoice(config.host);
+  const connectAgent = useConnectAgent();
+  const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
   const tooltip = serverRowTooltip(config, {
     stats: model.state === "running" ? state?.stats : undefined,
     runsOn: runsOnText(host, agents),
@@ -116,11 +123,30 @@ export function EmbeddedServerItem({
     }
   };
 
+  const onNextStep = (step: ServiceNextStep): void | Promise<void> => {
+    switch (step.id) {
+      case "usePort":
+        return step.port === undefined ? undefined : told("start", onUsePort(config.id, step.port));
+      case "connectAgent":
+        return model.where.agentId === undefined ? undefined : connectAgent(model.where.agentId);
+      case "unlock":
+        return setUnlockDialogOpen(true);
+      case "edit":
+        return onEdit(config.id);
+      case "chooseConnection":
+      case "editConnection":
+      case "retryNow":
+        // A file server has no SSH connection.
+        return;
+    }
+  };
+
   return (
     <ServiceListItem
       model={model}
       tooltip={tooltip}
       onAction={onAction}
+      onNextStep={onNextStep}
       activity={
         showActivity ? (
           <EmbeddedServerActivityPanel

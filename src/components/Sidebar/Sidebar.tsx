@@ -14,7 +14,7 @@ const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
   files: "File browser",
   tunnels: "SSH tunnels",
-  services: "Services",
+  services: "File servers",
   workspaces: "Workspaces",
   automations: "Automations",
   "network-tools": "Network tools",

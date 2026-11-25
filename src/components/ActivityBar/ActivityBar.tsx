@@ -59,7 +59,7 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   // as "quick action"; the clapperboard read as video (#5848).
   { view: "automations", icon: Zap, iconName: "zap", label: "Automations" },
   { view: "tunnels", icon: ArrowLeftRight, iconName: "arrow-left-right", label: "SSH tunnels" },
-  { view: "services", icon: Server, iconName: "server", label: "Services" },
+  { view: "services", icon: Server, iconName: "server", label: "File servers" },
   { view: "network-tools", icon: Stethoscope, iconName: "stethoscope", label: "Network tools" },
   { view: "plugins", icon: Puzzle, iconName: "puzzle", label: "Plugins" },
 ];

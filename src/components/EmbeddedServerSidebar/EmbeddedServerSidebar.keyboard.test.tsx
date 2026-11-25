@@ -95,7 +95,7 @@ describe("EmbeddedServerSidebar — keyboard navigation & list semantics (A11Y-0
 
     const list = query("server-list")!;
     expect(list.getAttribute("role")).toBe("tree");
-    expect(list.getAttribute("aria-label")).toBe("Services");
+    expect(list.getAttribute("aria-label")).toBe("File servers");
 
     const first = query("server-item-srv-1")!;
     expect(first.getAttribute("role")).toBe("treeitem");

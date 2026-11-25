@@ -94,6 +94,7 @@ describe("TunnelListItem — chained pair (#2597)", () => {
     onEdit: noop,
     onDuplicate: noop,
     onDelete: noop,
+    onUsePort: noop,
   };
 
   it("nests the companion with a link badge; 'this computer' is in its tooltip", () => {
