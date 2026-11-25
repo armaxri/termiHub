@@ -79,7 +79,9 @@ describe("a run never stops another one unasked (#6042)", () => {
 
   it("asks once, not again for a second start", async () => {
     await start("steps");
+    const asked = useAppStore.getState().runReplacePrompt;
     await start("steps");
+    expect(useAppStore.getState().runReplacePrompt).toBe(asked);
     await act(async () => q("run-replace-confirm")!.click());
     expect(runWorkflow).toHaveBeenCalledTimes(1);
   });

@@ -259,13 +259,16 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     render();
     const runs = [
       { key: "r1", name: "Deploy", tabTitle: "prod-web" },
-      { key: "r2", name: "Backup", tabTitle: "db-1" },
+      { key: "r2", name: "Backup", tabTitle: "db-1", waiting: true },
     ];
     act(() =>
       useAppStore.getState().setPendingWindowClose(request({ sessions: [], runs, mode: "quit" }))
     );
     expect(q("close-window-decision-run-r1").textContent).toContain(
       "“Deploy” is running in prod-web"
+    );
+    expect(q("close-window-decision-run-r2").textContent).toContain(
+      "“Backup” waits for you in db-1"
     );
     expect(q("close-window-decision-run-r2").textContent).toContain("Will be stopped");
     expect(q("close-window-decision-dialog").textContent).toContain(

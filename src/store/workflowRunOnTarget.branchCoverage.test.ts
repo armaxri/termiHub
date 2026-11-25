@@ -526,7 +526,11 @@ describe("runWorkflowOnTarget — a step that waits for the user (#6025)", () =>
     ]);
 
   it("asks the user, in the terminal's own session, and goes on", async () => {
-    const waitForUser = vi.fn(async (_request: unknown) => "continued" as const);
+    let dismissed = 0;
+    const waitForUser = vi.fn(async (_request: unknown) => {
+      dismissed = mocks.toast.dismiss.mock.calls.length;
+      return "continued" as const;
+    });
     state = { ...state, waitForUser };
     const result = await run(waits(), { targetLabel: "prod-web" });
     expect(result.status).toBe("completed");
@@ -541,7 +545,7 @@ describe("runWorkflowOnTarget — a step that waits for the user (#6025)", () =>
     const texts = mocks.toast.loading.mock.calls.map(([, options]) => options.description);
     expect(texts[0]).toBe("Step 1 of 3 in prod-web");
     expect(texts).not.toContain("Waiting for you");
-    expect(mocks.toast.dismiss).toHaveBeenCalled();
+    expect(dismissed).toBe(1);
     expect(texts[texts.length - 1]).toBe("Step 3 of 3 in prod-web");
     expect(mocks.injector).toHaveBeenCalledTimes(2);
   });
