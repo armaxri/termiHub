@@ -14,7 +14,8 @@ tunnelId: string,
  */
 status: TunnelStatus, 
 /**
- * Error message, if any.
+ * Why it failed, or what a waiting, stopping or not reachable one is
+ * waiting for (#6028).
  */
 error?: string, 
 /**

@@ -28,11 +28,15 @@
 //! publish). The per-service start/stop control paths — whose event and error
 //! semantics genuinely diverge — stay in their managers.
 
+pub mod hosted;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, Runtime};
+
+use self::hosted::{Away, WaitFor};
 
 use crate::app_tasks::AppTasks;
 use crate::connection::manager::ConnectionManager;
@@ -85,6 +89,16 @@ fn agent_label<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
     }
 }
 
+/// Whether the agent that a service runs on was removed.
+pub fn agent_is_removed<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> bool {
+    matches!(saved_agent(app, agent_id), SavedAgent::Removed)
+}
+
+/// Whether agent `agent_id` can be asked to start a service now.
+pub fn agent_is_ready<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> bool {
+    agent_rpc_client(app).is_some_and(|client| client.is_reachable(agent_id))
+}
+
 /// The client to start a service on agent `agent_id`, or the reason to show on
 /// the service's row when that agent cannot be asked (#6028). The caller starts
 /// nothing then, least of all on this computer.
@@ -92,14 +106,14 @@ pub fn agent_for_start<R: Runtime>(
     app: &AppHandle<R>,
     agent_id: &str,
 ) -> Result<Arc<dyn AgentRpcClient>, String> {
-    if matches!(saved_agent(app, agent_id), SavedAgent::Removed) {
+    if agent_is_removed(app, agent_id) {
         return Err(
             "Not started: the agent it runs on was removed. Edit it and choose a machine."
                 .to_string(),
         );
     }
     agent_rpc_client(app)
-        .filter(|client| client.is_connected(agent_id))
+        .filter(|client| client.is_reachable(agent_id))
         .ok_or_else(|| {
             let name = agent_label(app, agent_id);
             format!("Not started: agent {name} is not connected. Connect it, then start again.")
@@ -107,7 +121,8 @@ pub fn agent_for_start<R: Runtime>(
 }
 
 /// The reason to show on a service's row when agent `agent_id` did not start
-/// it (#6028).
+/// it (#6028). Not for an [unanswered](hosted::is_unanswered) start: that one
+/// may run there.
 pub fn agent_start_error<R: Runtime>(
     app: &AppHandle<R>,
     agent_id: &str,
@@ -122,6 +137,68 @@ pub fn agent_start_error<R: Runtime>(
     }
 }
 
+/// What a waiting service's row says.
+pub fn waiting_reason<R: Runtime>(app: &AppHandle<R>, on: &WaitFor) -> String {
+    match on {
+        WaitFor::Agent(agent_id) => {
+            let name = agent_label(app, agent_id);
+            format!("Waiting for agent {name}. Starts by itself when the agent is connected.")
+        }
+        WaitFor::CredentialStore => {
+            "Waiting for the credential store. Starts by itself when you unlock it.".to_string()
+        }
+    }
+}
+
+/// What the row of a service says whose wait is over.
+pub fn waited_too_long<R: Runtime>(app: &AppHandle<R>, on: &WaitFor) -> String {
+    let minutes = hosted::WAIT_LIMIT.as_secs() / 60;
+    match on {
+        WaitFor::Agent(agent_id) => {
+            let name = agent_label(app, agent_id);
+            format!(
+                "Not started: agent {name} was not connected within {minutes} minutes. Connect \
+                 it, then start again."
+            )
+        }
+        WaitFor::CredentialStore => format!(
+            "Not started: the credential store stayed locked for {minutes} minutes. Unlock it, \
+             then start again."
+        ),
+    }
+}
+
+/// What the row of a service says that is not reachable.
+pub fn not_reachable_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str, why: Away) -> String {
+    if agent_is_removed(app, agent_id) {
+        return "The agent it runs on was removed. It may still run there; termiHub cannot tell."
+            .to_string();
+    }
+    let name = agent_label(app, agent_id);
+    let what = match why {
+        Away::Offline => "is offline. It may still run there",
+        Away::Silent => "does not answer. It may still run there",
+        Away::StartUnanswered => "did not answer the start. It may run there",
+    };
+    format!("Agent {name} {what}; termiHub cannot tell.")
+}
+
+/// What the row of a service says whose stop the agent has not confirmed.
+pub fn stopping_reason<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
+    let name = agent_label(app, agent_id);
+    if agent_is_ready(app, agent_id) {
+        format!("Waiting for agent {name} to stop it.")
+    } else {
+        format!("Agent {name} is offline. Stops as soon as the agent is connected again.")
+    }
+}
+
+/// What the row of a service says whose unanswered start turned out not to run.
+pub fn unanswered_start_failed<R: Runtime>(app: &AppHandle<R>, agent_id: &str) -> String {
+    let name = agent_label(app, agent_id);
+    format!("Not started: agent {name} did not answer the start, and it does not run there.")
+}
+
 /// The service-specific parts of one agent status-poll tick.
 ///
 /// The generic [`AgentStatusPoller`] drives the loop; the delegate supplies which
@@ -130,8 +207,10 @@ pub fn agent_start_error<R: Runtime>(
 /// map and an [`AppHandle`], so it can read/write handles and emit events from the
 /// poller task without a `&self` manager reference.
 pub trait AgentStatusPollDelegate: Send + 'static {
-    /// One parsed status sample per still-running instance (e.g. a `ServerState`,
-    /// a `(tunnel_id, TunnelStats)`, a `(monitor_id, HttpCheckResult)`).
+    /// One instance to poll, e.g. its `(instance_id, agent_id)`.
+    type Target: Send + 'static;
+
+    /// One answer to apply (e.g. a `(monitor_id, HttpCheckResult)`).
     type Sample: Send + 'static;
 
     /// How often to sample. Defaults to one second (the cadence all three
@@ -145,7 +224,7 @@ pub trait AgentStatusPollDelegate: Send + 'static {
     /// [`agent_rpc_client`]`(&app)`.
     fn client(&self) -> Option<Arc<dyn AgentRpcClient>>;
 
-    /// Snapshot the `(instance_id, agent_id)` targets to poll this tick, plus
+    /// Snapshot the targets to poll this tick, plus
     /// whether **any** agent-hosted instance remains at all.
     ///
     /// The pair decides the loop's fate: `any_remaining == false` stops the poller
@@ -153,12 +232,16 @@ pub trait AgentStatusPollDelegate: Send + 'static {
     /// true` skips only this tick (e.g. every instance is paused) and keeps the
     /// poller alive. Managers without a paused state simply return
     /// `any_remaining = !targets.is_empty()`.
-    fn snapshot_targets(&self) -> (Vec<(String, String)>, bool);
+    fn snapshot_targets(&self) -> (Vec<Self::Target>, bool);
 
-    /// Run the blocking `*.status` RPC batch for `targets` and return one sample
-    /// per still-running instance. Runs on a `spawn_blocking` thread (the RPC is
+    /// Runs at the start of every tick that polls or keeps waiting, on the
+    /// poller's async task: it must not block.
+    fn on_tick(&self) {}
+
+    /// Run the blocking `*.status` RPC batch for `targets` and return the
+    /// samples. Runs on a `spawn_blocking` thread (the RPC is
     /// blocking), so it takes no `&self` — pass owned/`Arc` data only.
-    fn poll(client: Arc<dyn AgentRpcClient>, targets: &[(String, String)]) -> Vec<Self::Sample>;
+    fn poll(client: Arc<dyn AgentRpcClient>, targets: &[Self::Target]) -> Vec<Self::Sample>;
 
     /// Apply the polled samples: write them back into the per-service handles and
     /// bridge any fresh update to the frontend. Runs on the poller's async task
@@ -233,10 +316,19 @@ impl AgentStatusPoller {
                 // RPC so a slow agent never blocks a start/stop.
                 let (targets, any_remaining) = delegate.snapshot_targets();
                 // No agent-hosted instance left: stop polling and clear the slot so
-                // a later start re-spawns the task.
+                // a later start re-spawns the task. Decided under the slot lock:
+                // an instance added meanwhile either is seen here, or its
+                // `ensure` finds the slot empty and spawns a new task (#6028).
                 if !any_remaining {
-                    break;
+                    let Ok(mut slot) = poller_slot.lock() else {
+                        return;
+                    };
+                    if !delegate.snapshot_targets().1 {
+                        *slot = None;
+                        return;
+                    }
                 }
+                delegate.on_tick();
                 // Instances remain but none is pollable this tick (e.g. all
                 // paused): keep the poller alive, skip the tick.
                 if targets.is_empty() {
@@ -315,7 +407,7 @@ pub trait AgentHosted {
 ///
 /// Each of the three managers kept an identical
 /// `Arc<Mutex<HashMap<instance_id, Handle>>>` plus the same hand-rolled
-/// `contains` / `remove` / `ids` / `clear` / `agent_id` and status-poll-target
+/// `ids` / `clear` / `agent_id` and status-poll-target
 /// helpers around it, differing only in the per-protocol handle type. This wraps
 /// that map once, keyed by instance id and generic over the handle `H`.
 ///
@@ -324,9 +416,9 @@ pub trait AgentHosted {
 /// a `&self` reference — exactly the `Arc::clone` the delegates did by hand.
 ///
 /// **Poison policy.** The convenience readers/mutators here
-/// ([`remove`](Self::remove), [`ids`](Self::ids), [`clear`](Self::clear),
-/// [`contains`](Self::contains), [`agent_id_of`](Self::agent_id_of),
-/// [`snapshot_targets`](Self::snapshot_targets)) treat a poisoned lock as
+/// ([`ids`](Self::ids), [`clear`](Self::clear),
+/// [`agent_id_of`](Self::agent_id_of),
+/// [`snapshot_targets_where`](Self::snapshot_targets_where)) treat a poisoned lock as
 /// "empty/absent/no-op", matching what every teardown, lookup and poll-snapshot
 /// site already did. The guarded *start* paths (the double-start check and the
 /// insert) instead surface a poisoned lock as the manager's own error, so they use
@@ -352,16 +444,6 @@ impl<H> AgentInstances<H> {
     #[allow(clippy::type_complexity)]
     pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, HashMap<String, H>>> {
         self.map.lock()
-    }
-
-    /// Whether an instance is tracked. A poisoned lock reads as absent.
-    pub fn contains(&self, id: &str) -> bool {
-        self.map.lock().map(|m| m.contains_key(id)).unwrap_or(false)
-    }
-
-    /// Remove and return an instance's handle. A poisoned lock returns `None`.
-    pub fn remove(&self, id: &str) -> Option<H> {
-        self.map.lock().ok()?.remove(id)
     }
 
     /// A snapshot of every tracked instance id. A poisoned lock returns empty.
@@ -391,18 +473,11 @@ impl<H: AgentHosted> AgentInstances<H> {
             .map(|h| h.agent_id().to_string())
     }
 
-    /// Snapshot the `(instance_id, agent_id)` poll targets plus whether **any**
-    /// instance remains, for [`AgentStatusPollDelegate::snapshot_targets`]. A
-    /// poisoned lock returns `(empty, false)`, stopping the poller exactly as the
-    /// old hand-rolled `break` did.
-    pub fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
-        self.snapshot_targets_where(|_| true)
-    }
-
-    /// Like [`snapshot_targets`](Self::snapshot_targets) but polls only instances
-    /// matching `include`; `any_remaining` still reflects **all** tracked
-    /// instances, so an excluded-but-listed instance (e.g. a paused monitor) keeps
-    /// the poller alive instead of stopping it.
+    /// Snapshot the `(instance_id, agent_id)` targets of the instances matching
+    /// `include`, plus whether **any** instance remains at all, so an
+    /// excluded-but-listed instance (e.g. a paused monitor) keeps the poller alive
+    /// instead of stopping it. A poisoned lock returns `(empty, false)`, stopping
+    /// the poller.
     pub fn snapshot_targets_where(
         &self,
         include: impl Fn(&H) -> bool,
@@ -459,6 +534,7 @@ mod tests {
     }
 
     impl AgentStatusPollDelegate for TestDelegate {
+        type Target = (String, String);
         type Sample = u32;
 
         fn interval(&self) -> Duration {
@@ -735,10 +811,8 @@ mod tests {
     }
 
     #[test]
-    fn agent_instances_insert_contains_remove_ids_clear() {
+    fn agent_instances_insert_ids_clear() {
         let instances = AgentInstances::<Handle>::new();
-        assert!(!instances.contains("a"));
-
         instances
             .lock()
             .unwrap()
@@ -747,17 +821,10 @@ mod tests {
             .lock()
             .unwrap()
             .insert("b".into(), handle("h2", false));
-        assert!(instances.contains("a"));
-        assert!(!instances.contains("z"));
 
         let mut ids = instances.ids();
         ids.sort();
         assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
-
-        let removed = instances.remove("a").expect("handle present");
-        assert_eq!(removed.agent_id(), "h1");
-        assert!(!instances.contains("a"));
-        assert!(instances.remove("a").is_none(), "second remove is None");
 
         instances.clear();
         assert!(instances.ids().is_empty());
@@ -772,21 +839,6 @@ mod tests {
             .insert("m".into(), handle("edge", false));
         assert_eq!(instances.agent_id_of("m").as_deref(), Some("edge"));
         assert_eq!(instances.agent_id_of("missing"), None);
-    }
-
-    #[test]
-    fn agent_instances_snapshot_targets_reports_all_pairs() {
-        let instances = AgentInstances::<Handle>::new();
-        assert_eq!(instances.snapshot_targets(), (Vec::new(), false));
-
-        instances
-            .lock()
-            .unwrap()
-            .insert("t1".into(), handle("h1", false));
-        let (mut targets, any_remaining) = instances.snapshot_targets();
-        targets.sort();
-        assert_eq!(targets, vec![("t1".to_string(), "h1".to_string())]);
-        assert!(any_remaining);
     }
 
     #[test]

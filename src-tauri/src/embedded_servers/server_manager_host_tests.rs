@@ -15,6 +15,7 @@ use tauri::{Listener, Manager};
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
 
 use super::{EmbeddedServerManager, SERVER_STATUS_EVENT};
+use crate::app_tasks::AppTasks;
 use crate::connection::config::SavedRemoteAgent;
 use crate::connection::manager::ConnectionManager;
 use crate::credential::NullStore;
@@ -27,15 +28,29 @@ use crate::utils::errors::TerminalError;
 
 const FILE: &str = "embedded_servers.json";
 
-struct Harness {
-    manager: EmbeddedServerManager<MockRuntime>,
-    events: Arc<Mutex<Vec<ServerState>>>,
-    _app: tauri::App<MockRuntime>,
+pub(super) struct Harness {
+    pub(super) manager: EmbeddedServerManager<MockRuntime>,
+    pub(super) events: Arc<Mutex<Vec<ServerState>>>,
+    pub(super) app: tauri::App<MockRuntime>,
 }
 
 /// One app run over `dir`. `agents` are the saved agents (`id`, `name`).
-fn run(dir: &Path, agent: &Arc<FakeAgent>, agents: &[(&str, &str)]) -> Harness {
+pub(super) fn run(dir: &Path, agent: &Arc<FakeAgent>, agents: &[(&str, &str)]) -> Harness {
+    run_with(dir, agent, agents, FakeStore::new(UNLOCKED))
+}
+
+/// [`run`] over a credential store of its own.
+pub(super) fn run_with(
+    dir: &Path,
+    agent: &Arc<FakeAgent>,
+    agents: &[(&str, &str)],
+    store: Arc<FakeStore>,
+) -> Harness {
     let app = mock_app();
+    // The status poller ends at once: a test ticks by hand (or not at all).
+    let tasks = AppTasks::new();
+    tasks.cancellation_token().cancel();
+    app.manage(tasks);
     app.manage(ConfigDirOverride(dir.to_path_buf()));
     let client: Arc<dyn AgentRpcClient> = agent.clone();
     app.manage(client);
@@ -57,17 +72,16 @@ fn run(dir: &Path, agent: &Arc<FakeAgent>, agents: &[(&str, &str)]) -> Harness {
             .unwrap()
             .push(serde_json::from_str(event.payload()).expect("ServerState"));
     });
-    let manager =
-        EmbeddedServerManager::new(app.handle(), FakeStore::new(UNLOCKED)).expect("manager");
+    let manager = EmbeddedServerManager::new(app.handle(), store).expect("manager");
     Harness {
         manager,
         events,
-        _app: app,
+        app,
     }
 }
 
 impl Harness {
-    fn state(&self, id: &str) -> ServerState {
+    pub(super) fn state(&self, id: &str) -> ServerState {
         self.manager
             .get_states()
             .unwrap()
@@ -77,7 +91,7 @@ impl Harness {
     }
 
     /// Whether a listener of `id` is open on this computer.
-    fn listens_here(&self, id: &str) -> bool {
+    pub(super) fn listens_here(&self, id: &str) -> bool {
         self.manager
             .services
             .lock()
@@ -87,7 +101,7 @@ impl Harness {
     }
 
     /// `id` did not start anywhere, and its row says `reason`.
-    fn assert_refused(&self, id: &str, reason: &str) {
+    pub(super) fn assert_refused(&self, id: &str, reason: &str) {
         assert!(
             !self.listens_here(id),
             "{id} opened a port on this computer"
@@ -109,7 +123,7 @@ impl Harness {
 }
 
 /// A stored HTTP server on any free port; `host` is the raw field, when there.
-fn server(id: &str, root: &Path, host: Option<Value>) -> Value {
+pub(super) fn server(id: &str, root: &Path, host: Option<Value>) -> Value {
     let mut server = json!({
         "id": id, "name": id, "serverType": "http", "bindHost": "127.0.0.1", "port": 0,
         "rootDirectory": root.to_string_lossy(), "autoStart": true, "readOnly": true,
@@ -120,7 +134,7 @@ fn server(id: &str, root: &Path, host: Option<Value>) -> Value {
     server
 }
 
-fn write(dir: &Path, servers: Vec<Value>) {
+pub(super) fn write(dir: &Path, servers: Vec<Value>) {
     let doc = json!({"version": "2", "servers": servers});
     std::fs::write(dir.join(FILE), doc.to_string()).unwrap();
 }
@@ -137,7 +151,11 @@ fn stored(dir: &Path, id: &str) -> Value {
         .clone()
 }
 
-fn edit(h: &Harness, id: &str, change: impl FnOnce(&mut Value)) -> Result<(), TerminalError> {
+pub(super) fn edit(
+    h: &Harness,
+    id: &str,
+    change: impl FnOnce(&mut Value),
+) -> Result<(), TerminalError> {
     let config = h.manager.get_configs().unwrap();
     let mut value =
         serde_json::to_value(config.iter().find(|c| c.id == id).expect("listed")).unwrap();
@@ -146,7 +164,7 @@ fn edit(h: &Harness, id: &str, change: impl FnOnce(&mut Value)) -> Result<(), Te
     h.manager.save_config(config)
 }
 
-fn on_agent(id: &str) -> Value {
+pub(super) fn on_agent(id: &str) -> Value {
     json!({"kind": "agent", "agentId": id})
 }
 
@@ -205,7 +223,7 @@ fn an_offline_agent_means_not_started() {
         vec![server("web", root.path(), Some(on_agent("edge")))],
     );
     let h = run(dir.path(), &agent, &[("edge", "Edge box")]);
-    h.manager.start_auto_servers();
+    h.manager.start_server("web").expect_err("offline");
     h.assert_refused("web", "agent Edge box is not connected");
     assert!(agent.requests().is_empty());
 }
@@ -466,7 +484,7 @@ fn a_server_moved_away_before_its_port_opens_does_not_open() {
     let as_it_was = h.manager.get_configs().unwrap().remove(0);
     edit(&h, "web", |s| s["host"] = on_agent("edge")).unwrap();
     h.manager
-        .start_here("web", as_it_was)
+        .listen_here("web", as_it_was)
         .expect_err("moved meanwhile");
     assert!(!h.listens_here("web"));
 }
@@ -499,7 +517,7 @@ fn a_server_moved_while_the_agent_starts_it_is_stopped_there() {
         }
         edit(&h, "web", |s| s["host"] = json!({"kind": "thisComputer"})).unwrap();
         gate.open();
-        start.join().unwrap().expect_err("moved meanwhile");
+        start.join().unwrap().expect("stopped, not failed");
     });
     assert!(agent.requests().iter().any(|(m, _)| m == SERVICE_STOP));
     assert_eq!(h.state("web").status, ServerStatus::Stopped);

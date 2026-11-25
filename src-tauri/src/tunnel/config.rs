@@ -128,10 +128,17 @@ impl StoreEntry for TunnelConfig {
 #[serde(rename_all = "camelCase")]
 pub enum TunnelStatus {
     Disconnected,
+    /// Will start by itself when its agent is connected or the credential
+    /// store is unlocked (#6028).
+    Waiting,
     Connecting,
     Connected,
     Reconnecting,
+    /// Stopped by the user; its agent has not confirmed it yet (#6028).
+    Stopping,
     Error,
+    /// Its agent is offline or does not answer: it may still run there (#6028).
+    NotReachable,
     /// Its SSH connection was deleted (#2850): the tunnel is kept but cannot
     /// start until it is edited to use another SSH connection.
     MissingConnection,
@@ -154,6 +161,10 @@ impl From<TunnelStatus> for termihub_core::connection::lifecycle::SessionStatus 
             TunnelStatus::Connected => SessionStatus::Connected,
             TunnelStatus::Reconnecting => SessionStatus::Reconnecting,
             TunnelStatus::Error => SessionStatus::Failed,
+            // No live session this desktop knows of.
+            TunnelStatus::Waiting | TunnelStatus::Stopping | TunnelStatus::NotReachable => {
+                SessionStatus::Disconnected
+            }
             // A resting, not-running state: nothing failed at runtime, the
             // tunnel just cannot start until it is repointed (#2850).
             TunnelStatus::MissingConnection => SessionStatus::Disconnected,
@@ -175,6 +186,9 @@ mod tunnel_status_map_tests {
             (TunnelStatus::Connected, SessionStatus::Connected),
             (TunnelStatus::Reconnecting, SessionStatus::Reconnecting),
             (TunnelStatus::Error, SessionStatus::Failed),
+            (TunnelStatus::Waiting, SessionStatus::Disconnected),
+            (TunnelStatus::Stopping, SessionStatus::Disconnected),
+            (TunnelStatus::NotReachable, SessionStatus::Disconnected),
             (TunnelStatus::MissingConnection, SessionStatus::Disconnected),
         ];
         for (input, expected) in cases {
@@ -193,7 +207,8 @@ pub struct TunnelState {
     pub tunnel_id: String,
     /// Current status.
     pub status: TunnelStatus,
-    /// Error message, if any.
+    /// Why it failed, or what a waiting, stopping or not reachable one is
+    /// waiting for (#6028).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,

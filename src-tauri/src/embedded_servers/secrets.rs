@@ -364,6 +364,15 @@ impl ServerSecrets {
         Ok(())
     }
 
+    /// Whether starting `config` needs a password that is behind the locked
+    /// credential store.
+    pub fn needs_unlock(&self, config: &EmbeddedServerConfig) -> bool {
+        self.store.status() == CredentialStoreStatus::Locked
+            && active_slots(config)
+                .into_iter()
+                .any(|slot| !self.lock_held().contains_key(&(config.id.clone(), slot)))
+    }
+
     /// On start: fill in every password `config` needs.
     ///
     /// Fails with a user-facing message when the store is locked or holds no

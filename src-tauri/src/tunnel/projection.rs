@@ -293,8 +293,7 @@ pub fn register_tunnel_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         let id = tunnel_id(intent)?;
         let manager = manager_of(&handle)?;
         tauri::async_runtime::spawn_blocking(move || {
-            let _ = manager.stop_tunnel(&id);
-            let _ = manager.start_tunnel(&id);
+            let _ = manager.restart_tunnel(&id);
         });
         Ok(Vec::new())
     });

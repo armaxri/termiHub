@@ -3,4 +3,4 @@
 /**
  * Current status of an embedded server.
  */
-export type ServerStatus = "stopped" | "starting" | "running" | "stopping" | "error";
+export type ServerStatus = "stopped" | "waiting" | "starting" | "running" | "stopping" | "error" | "notReachable";

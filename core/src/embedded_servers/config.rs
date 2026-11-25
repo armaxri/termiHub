@@ -202,10 +202,16 @@ impl StoreEntry for EmbeddedServerConfig {
 #[serde(rename_all = "camelCase")]
 pub enum ServerStatus {
     Stopped,
+    /// Will start by itself when its agent is connected or the credential
+    /// store is unlocked (#6028). Desktop only: an agent never reports it.
+    Waiting,
     Starting,
     Running,
     Stopping,
     Error,
+    /// Its agent is offline or does not answer: it may still run there (#6028).
+    /// Desktop only.
+    NotReachable,
 }
 
 impl ServerStatus {
@@ -266,6 +272,8 @@ pub struct ServerStats {
 pub struct ServerState {
     pub server_id: String,
     pub status: ServerStatus,
+    /// Why it failed, or what a waiting, stopping or not reachable one is
+    /// waiting for (#6028).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub error: Option<String>,
@@ -478,6 +486,8 @@ mod tests {
         // agent-RPC ServiceStatus adjacently-tagged object. Lock every variant.
         for (status, wire) in [
             (ServerStatus::Stopped, "\"stopped\""),
+            (ServerStatus::Waiting, "\"waiting\""),
+            (ServerStatus::NotReachable, "\"notReachable\""),
             (ServerStatus::Starting, "\"starting\""),
             (ServerStatus::Running, "\"running\""),
             (ServerStatus::Stopping, "\"stopping\""),
