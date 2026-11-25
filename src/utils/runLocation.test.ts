@@ -50,4 +50,20 @@ describe("runLocation helpers", () => {
     const options = runLocationOptions(AGENTS, false);
     expect(options).toEqual([{ value: RUN_LOCATION_THIS, label: "This computer" }]);
   });
+
+  it("keeps a machine it cannot offer selectable only as what it is (#6028)", () => {
+    expect(encodeRunLocation({ kind: "unreadable" })).toBe("unreadable");
+    expect(runLocationOptions(AGENTS, true, { kind: "unreadable" }).at(-1)).toEqual({
+      value: "unreadable",
+      label: "Unknown machine",
+      disabled: true,
+    });
+    expect(runLocationOptions(AGENTS, true, { kind: "agent", agentId: "gone" }).at(-1)).toEqual({
+      value: "agent:gone",
+      label: "Removed agent",
+      disabled: true,
+    });
+    // A machine that is on offer adds nothing.
+    expect(runLocationOptions(AGENTS, true, { kind: "agent", agentId: "a1" })).toHaveLength(3);
+  });
 });

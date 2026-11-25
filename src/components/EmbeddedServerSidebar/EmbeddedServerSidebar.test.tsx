@@ -200,4 +200,59 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     expect(toastError).toHaveBeenCalledTimes(1);
     expect(toastSuccess).not.toHaveBeenCalled();
   });
+
+  it("copies where the server runs, and not its auto-start (#6028, F-4)", async () => {
+    const saveEmbeddedServer = vi.fn((_c: EmbeddedServerConfig) => Promise.resolve());
+    const host = { kind: "agent", agentId: "a1" } as const;
+    seedStore(saveEmbeddedServer, [{ ...makeServer("srv-1", "Original"), host, autoStart: true }]);
+    await renderSidebar();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="server-duplicate-srv-1"]')!.click();
+    });
+    await flush();
+    const copy = saveEmbeddedServer.mock.calls[0][0];
+    expect(copy).toMatchObject({ name: "Copy of Original", host, autoStart: false });
+    expect(copy.id).not.toBe("srv-1");
+  });
+
+  it.each([
+    [
+      { serverType: "http", httpAuth: { username: "web", password: "" } },
+      "server-dialog-http-password",
+    ],
+    [
+      { serverType: "ftp", ftpAuth: { type: "credentials", username: "u", password: "" } },
+      "server-dialog-ftp-password",
+    ],
+  ] as const)(
+    "asks for the password of a copy, which does not have one (#6028, F-4)",
+    async (auth, passwordId) => {
+      const saveEmbeddedServer = vi.fn((_c: EmbeddedServerConfig) => Promise.resolve());
+      const host = { kind: "agent", agentId: "a1" } as const;
+      seedStore(saveEmbeddedServer, [
+        { ...makeServer("srv-1", "Original"), ...auth, host } as EmbeddedServerConfig,
+      ]);
+      await renderSidebar();
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="server-duplicate-srv-1"]')!
+          .click();
+      });
+      await flush();
+      // Nothing is saved yet: the copy opens in the editor.
+      expect(saveEmbeddedServer).not.toHaveBeenCalled();
+      expect(
+        document.querySelector('[data-testid="server-dialog-copy-hint"]')?.textContent
+      ).toContain("password");
+      const password = document.querySelector<HTMLInputElement>(`[data-testid="${passwordId}"]`)!;
+      expect(password.placeholder).not.toContain("leave blank to keep");
+      setInputValue(password, "new-secret");
+      await clickDialogSave();
+      const copy = saveEmbeddedServer.mock.calls[0][0];
+      expect(copy).toMatchObject({ name: "Copy of Original", host, autoStart: false });
+      expect(copy.id).not.toBe("srv-1");
+      expect(copy.id).not.toBe("");
+      expect(JSON.stringify(copy)).toContain("new-secret");
+    }
+  );
 });
