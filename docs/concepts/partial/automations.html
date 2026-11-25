@@ -1793,18 +1793,20 @@ flowchart LR
                   without a terminal; palette and hotkey runs go through
                   <code>runAutomation</code> and are recorded as such. Export writes
                   <code>{version: 1, automations}</code> only; import also reads
-                  <code>macros</code>, <code>workflows</code> and the one file with both. Unknown
-                  keys survive at every level; steps that run an automation of the file run its
-                  copy, any other keeps its id and is reported; exporting one automation takes along
-                  the ones it runs. An import arrives switched off and loses script file references.
-                  An older build refuses the new file ("missing "macros" array", "it holds no
-                  automations") and imports nothing; this build refuses a newer one. Differs from
-                  3.3: import and Export all are in Settings → Import &amp; migration (maintainer
-                  decision on one-time actions), the sidebar links there; Export of one automation
-                  stays in its row's menu. Off now covers hotkeys too, so a key named by a file does
-                  nothing until the user turns it on. No code but the "Run local process" step's
-                  asks for the experimental switch (<code>experimentalAutomations.test.ts</code>
-                  lists each place). Wording outside the sidebar follows (<a
+                  <code>macros</code>, <code>workflows</code> and the one file with both. Nothing
+                  this build knows is lost. A file is not trusted: a key it does not know is left
+                  out and the entry named, an entry with a step or trigger kind it does not know is
+                  refused by name. Steps that run an automation of the file run its copy, any other
+                  keeps its id and is reported; exporting one automation takes along the ones it
+                  runs. An import arrives switched off and loses script file references. An older
+                  build refuses the new file ("missing "macros" array", "it holds no automations")
+                  and imports nothing; this build refuses a newer one. Differs from 3.3: import and
+                  Export all are in Settings → Import &amp; migration (maintainer decision on
+                  one-time actions), the sidebar links there; Export of one automation stays in its
+                  row's menu. Off now covers hotkeys too, so a key named by a file does nothing
+                  until the user turns it on. No code but the "Run local process" step's asks for
+                  the experimental switch (<code>experimentalAutomations.test.ts</code> lists each
+                  place). Wording outside the sidebar follows (<a
                     href="https://github.com/armaxri/termiHub/issues/6005"
                     >#6005</a
                   >)

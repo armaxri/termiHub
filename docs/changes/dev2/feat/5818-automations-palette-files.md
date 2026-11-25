@@ -4,9 +4,10 @@
   Typing "run macro" or "run workflow" still finds it. Without an open terminal it asks where to
   run. "Run automation on broadcast group…" offers every automation.
 - **One file format for automations.** Export writes one list; import also reads macro and workflow
-  files of older versions. Nothing is lost on the way: typing speed, triggers, values to ask for,
-  nested steps and fields a newer version added are kept, and steps that run another automation of
-  the file run its imported copy. Exporting one automation takes along the ones it runs. Older
+  files of older versions. Nothing is lost on the way: typing speed, triggers, values to ask for
+  and nested steps are kept, and steps that run another automation of the file run its imported
+  copy. What a newer version added and this one does not know is left out or refused, and the
+  dialog after the import says so by name. Exporting one automation takes along the ones it runs. Older
   versions of termiHub cannot read the new file and say so.
 - Import and Export all are in **Settings → Import & migration**; New → "Import or export…" in the
   Automations sidebar leads there. After an import a dialog says what needs a look.

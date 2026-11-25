@@ -39,6 +39,8 @@ const FILE = JSON.stringify({
       steps: [],
       triggers: [{ kind: "on-connect", connectionIds: ["c"] }],
     },
+    { name: "Odd one", steps: [{ kind: "teleport" }] },
+    { name: "Partly known", steps: [], later: true },
     { name: "Notify", steps: [{ kind: "run-local-process", program: "notify-send", args: [] }] },
     {
       name: "Deploy",
@@ -111,7 +113,14 @@ for (const viewport of [
       await check(page, "settings", id("import-migration-automations"));
       await page.locator(id("import-migration-automations-import-btn")).click();
       await page.locator(DIALOG).waitFor();
-      for (const note of ["disarmed", "local-process", "script-paths", "outside"]) {
+      for (const note of [
+        "refused",
+        "left-out",
+        "disarmed",
+        "local-process",
+        "script-paths",
+        "outside",
+      ]) {
         await expect(page.locator(id(`automation-import-note-${note}`))).toHaveCount(1);
       }
       await check(page, "imported", DIALOG);
