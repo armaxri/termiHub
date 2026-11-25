@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use tauri::test::MockRuntime;
 use tauri::Manager;
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STATUS, SERVICE_STOP};
+use termihub_core::util::service_cause::ServiceCause;
 
 use super::host_tests::{edit, on_agent, run_with, server, write, Harness};
 use super::EmbeddedServerManager;
@@ -101,6 +102,23 @@ fn told(h: &Harness, id: &str) -> ServerStatus {
     last.expect("announced").status.clone()
 }
 
+/// The cause that goes with what a row says: its button must fit its words.
+fn cause_of(said: &str) -> Option<ServiceCause> {
+    let offline = [
+        "agent is offline",
+        "agent is not connected",
+        "agent was not connected",
+        "when its agent connects",
+    ];
+    if offline.iter().any(|words| said.contains(words)) {
+        Some(ServiceCause::AgentOffline)
+    } else if said.contains("credential store") {
+        Some(ServiceCause::StoreLocked)
+    } else {
+        None
+    }
+}
+
 /// `id` shows `status`, every window was told so, and the row says `reason`.
 fn assert_row(h: &Harness, id: &str, status: ServerStatus, reason: &str) {
     let state = h.state(id);
@@ -108,6 +126,7 @@ fn assert_row(h: &Harness, id: &str, status: ServerStatus, reason: &str) {
     assert_eq!(told(h, id), status);
     let said = state.error.unwrap_or_default();
     assert!(said.contains(reason), "{said:?} does not say {reason:?}");
+    assert_eq!(state.cause, cause_of(&said), "{said:?}");
     assert!(!h.listens_here(id), "opened on this computer");
 }
 
@@ -153,7 +172,7 @@ fn an_agent_that_is_gone_means_not_reachable_and_back_means_running() {
         h,
         "web",
         ServerStatus::NotReachable,
-        "Agent Edge box is offline. It may still run there; termiHub cannot tell.",
+        "Its agent is offline. It may still run there; termiHub cannot tell.",
     );
     online(agent, true);
     tick(h);
@@ -197,7 +216,7 @@ fn a_start_while_it_may_run_there_is_not_sent() {
     tick(h);
     h.manager.start_server("web").expect_err("may run there");
     h.manager.start_auto_servers();
-    assert_row(h, "web", ServerStatus::NotReachable, "Edge box is offline");
+    assert_row(h, "web", ServerStatus::NotReachable, "Its agent is offline");
     assert_eq!(sent(agent, SERVICE_START), 1);
 }
 
@@ -240,7 +259,7 @@ fn a_start_without_an_answer_is_unknown_not_refused_and_the_agent_decides() {
             h,
             "web",
             ServerStatus::NotReachable,
-            "Agent Edge box did not answer the start. It may run there",
+            "Its agent did not answer the start. It may run there",
         );
         // It did start.
         machine.hosted.lock().unwrap().insert("web".into());
@@ -281,11 +300,11 @@ fn an_auto_start_waits_for_its_agent_and_then_starts_there_once() {
         h,
         "web",
         ServerStatus::Waiting,
-        "Waiting for agent Edge box",
+        "Starts when its agent connects, until ",
     );
     tick(h);
     tick(h);
-    assert_row(h, "web", ServerStatus::Waiting, "Edge box");
+    assert_row(h, "web", ServerStatus::Waiting, "its agent");
     assert_eq!(sent(agent, SERVICE_START), 0);
 
     online(agent, true);
@@ -321,7 +340,7 @@ fn a_wait_ends_with_the_reason_after_its_time() {
         h,
         "web",
         ServerStatus::Error,
-        "agent Edge box was not connected within 30 minutes",
+        "its agent was not connected within 30 minutes",
     );
     online(agent, true);
     tick(h);
@@ -336,10 +355,11 @@ fn start_now_on_a_waiting_server_goes_on_waiting_when_it_cannot() {
     h.manager.start_auto_servers();
     let err = h.manager.start_server("web").expect_err("offline");
     assert!(
-        err.to_string().contains("Waiting for agent Edge box"),
+        err.to_string()
+            .contains("Starts when its agent connects, until "),
         "{err}"
     );
-    assert_row(h, "web", ServerStatus::Waiting, "Edge box");
+    assert_row(h, "web", ServerStatus::Waiting, "its agent");
     online(agent, true);
     h.manager.start_server("web").expect("now");
     assert_row(h, "web", ServerStatus::Running, "");
@@ -385,7 +405,7 @@ fn a_rename_keeps_it_waiting() {
     online(agent, false);
     h.manager.start_auto_servers();
     edit(h, "web", |s| s["name"] = json!("renamed")).unwrap();
-    assert_row(h, "web", ServerStatus::Waiting, "Edge box");
+    assert_row(h, "web", ServerStatus::Waiting, "its agent");
 }
 
 #[test]
@@ -433,14 +453,14 @@ fn an_auto_start_waits_for_the_credential_store_then_starts() {
         &h,
         "here",
         ServerStatus::Waiting,
-        "Waiting for the credential store",
+        "Starts when you unlock the credential store, until ",
     );
     // Both are missing: first one, then the other.
     assert_row(
         &h,
         "there",
         ServerStatus::Waiting,
-        "Waiting for agent Edge box",
+        "Starts when its agent connects, until ",
     );
     online(&agent, true);
     tick(&h);
@@ -448,7 +468,7 @@ fn an_auto_start_waits_for_the_credential_store_then_starts() {
         &h,
         "there",
         ServerStatus::Waiting,
-        "Waiting for the credential store",
+        "Starts when you unlock the credential store, until ",
     );
     assert_eq!(sent(&agent, SERVICE_START), 0);
     store.set_status(UNLOCKED);
@@ -503,12 +523,12 @@ fn a_stop_while_the_agent_is_gone_wins_when_it_is_back() {
         h,
         "web",
         ServerStatus::Stopping,
-        "Agent Edge box is offline. Stops as soon as",
+        "Its agent is offline. It may still run there; it is stopped when",
     );
     // Nothing that starts by itself undoes it.
     h.manager.start_auto_servers();
     tick(h);
-    assert_row(h, "web", ServerStatus::Stopping, "Edge box");
+    assert_row(h, "web", ServerStatus::Stopping, "Its agent");
     assert!(machine.hosts("web"));
 
     online(agent, true);
@@ -541,7 +561,7 @@ fn a_stop_the_agent_does_not_answer_is_sent_again() {
         h,
         "web",
         ServerStatus::Stopping,
-        "Waiting for agent Edge box to stop it",
+        "Waiting for its agent to stop it",
     );
     tick(h);
     assert_row(h, "web", ServerStatus::Stopped, "");

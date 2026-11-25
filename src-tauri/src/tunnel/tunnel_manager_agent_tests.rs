@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use tauri::test::{mock_app, MockRuntime};
 use tauri::Manager;
 use termihub_core::protocol::methods::{TUNNEL_START, TUNNEL_STATUS, TUNNEL_STOP};
+use termihub_core::util::service_cause::ServiceCause;
 
 use super::{AgentTunnelPoll, LoadedTunnels, TunnelManager};
 use crate::agent_service::hosted::{UNKNOWN_SETTLE, WAIT_LIMIT};
@@ -92,6 +93,23 @@ fn tunnel(id: &str, change: impl FnOnce(&mut Value)) -> Value {
     tunnel
 }
 
+/// The cause that goes with what a row says: its button must fit its words.
+fn cause_of(said: &str) -> Option<ServiceCause> {
+    let offline = [
+        "agent is offline",
+        "agent is not connected",
+        "agent was not connected",
+        "when its agent connects",
+    ];
+    if offline.iter().any(|words| said.contains(words)) {
+        Some(ServiceCause::AgentOffline)
+    } else if said.contains("credential store") {
+        Some(ServiceCause::StoreLocked)
+    } else {
+        None
+    }
+}
+
 /// One app run with tunnel "db" on agent "edge" (Edge box).
 fn db_on_edge(change: impl FnOnce(&mut Value)) -> Run {
     run(vec![tunnel("db", change)], Arc::default(), json!([]))
@@ -161,6 +179,7 @@ impl Run {
         assert_eq!(row.status, status, "{row:?}");
         let said = row.error.unwrap_or_default();
         assert!(said.contains(reason), "{said:?} does not say {reason:?}");
+        assert_eq!(row.cause, cause_of(&said), "{said:?}");
         assert!(
             self.manager.active_tunnels.lock().unwrap().is_empty(),
             "opened on this computer"
@@ -213,7 +232,7 @@ async fn an_agent_that_is_gone_means_not_reachable_and_back_means_running() {
     run.tick();
     run.assert_row(
         TunnelStatus::NotReachable,
-        "Agent Edge box is offline. It may still run there; termiHub cannot tell.",
+        "Its agent is offline. It may still run there; termiHub cannot tell.",
     );
     assert!(run.manager.live_stats().is_empty());
     assert!(!run.manager.is_tunnel_connected("db"));
@@ -258,7 +277,7 @@ async fn a_start_without_an_answer_is_unknown_and_the_agent_decides() {
     run.manager.start_tunnel("db").expect("not a failed start");
     run.assert_row(
         TunnelStatus::NotReachable,
-        "Agent Edge box did not answer the start. It may run there",
+        "Its agent did not answer the start. It may run there",
     );
     run.machine.forwards.lock().unwrap().insert("db".into());
     run.tick();
@@ -291,9 +310,12 @@ async fn an_auto_start_and_a_start_with_the_connection_wait_for_the_agent() {
         };
         start();
         start();
-        run.assert_row(TunnelStatus::Waiting, "Waiting for agent Edge box");
+        run.assert_row(
+            TunnelStatus::Waiting,
+            "Starts when its agent connects, until ",
+        );
         run.tick();
-        run.assert_row(TunnelStatus::Waiting, "Edge box");
+        run.assert_row(TunnelStatus::Waiting, "its agent");
         assert_eq!(run.sent(TUNNEL_START), 0);
         run.online(true);
         run.tick();
@@ -309,7 +331,10 @@ async fn a_stop_while_waiting_wins_and_a_wait_is_bounded() {
     run.online(false);
     run.manager.start_auto_tunnels();
     let err = run.manager.start_tunnel("db").expect_err("start now");
-    assert!(err.to_string().contains("Waiting for agent"), "{err}");
+    assert!(
+        err.to_string().contains("Starts when its agent connects"),
+        "{err}"
+    );
     run.assert_row(TunnelStatus::Waiting, "");
     run.manager.stop_tunnel("db").unwrap();
     run.online(true);
@@ -334,7 +359,10 @@ async fn an_auto_start_waits_for_the_credential_store_of_its_jump_host() {
     let run = run(vec![tunnel("db", |_| {})], store.clone(), hops);
     store.locked.store(true, Ordering::SeqCst);
     run.manager.start_auto_tunnels();
-    run.assert_row(TunnelStatus::Waiting, "Waiting for the credential store");
+    run.assert_row(
+        TunnelStatus::Waiting,
+        "Starts when you unlock the credential store, until ",
+    );
     run.tick();
     assert_eq!(run.sent(TUNNEL_START), 0);
     store.locked.store(false, Ordering::SeqCst);
@@ -357,7 +385,7 @@ async fn a_stop_while_the_agent_is_gone_wins_when_it_is_back() {
     run.manager.stop_tunnel("db").unwrap();
     run.assert_row(
         TunnelStatus::Stopping,
-        "Agent Edge box is offline. Stops as soon as",
+        "Its agent is offline. It may still run there; it is stopped when",
     );
     run.manager.start_connection_tunnels("ssh");
     run.manager.start_auto_tunnels();
@@ -389,10 +417,7 @@ async fn a_stop_is_sent_without_waiting_for_the_agent_on_the_callers_thread() {
         gate.open();
         panic!("waits for the agent");
     }
-    run.assert_row(
-        TunnelStatus::Stopping,
-        "Waiting for agent Edge box to stop it",
-    );
+    run.assert_row(TunnelStatus::Stopping, "Waiting for its agent to stop it");
     gate.open();
     run.becomes(TunnelStatus::Disconnected);
 }
@@ -408,7 +433,10 @@ async fn a_restart_stops_first_and_waits_while_the_agent_is_gone() {
     run.online(false);
     run.tick();
     run.manager.restart_tunnel("db").unwrap();
-    run.assert_row(TunnelStatus::Waiting, "Waiting for agent Edge box");
+    run.assert_row(
+        TunnelStatus::Waiting,
+        "Starts when its agent connects, until ",
+    );
     run.tick();
     run.online(true);
     run.tick();

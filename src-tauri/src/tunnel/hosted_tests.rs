@@ -1,6 +1,7 @@
 //! What the row of an agent-hosted tunnel says (#6028).
 
 use serde_json::json;
+use termihub_core::util::service_cause::ServiceCause;
 
 use super::*;
 use crate::tunnel::config::{LocalForwardConfig, TunnelType};
@@ -8,14 +9,20 @@ use crate::tunnel::config::{LocalForwardConfig, TunnelType};
 struct Words;
 
 impl Reasons for Words {
-    fn waiting(&self, on: &WaitFor) -> String {
-        format!("waiting {on:?}")
+    fn waiting(&self, on: &WaitFor, until: DateTime<Local>) -> Reason {
+        Reason::new(
+            format!("waiting {on:?} {}", until.timestamp()),
+            Some(ServiceCause::StoreLocked),
+        )
     }
-    fn stopping(&self, agent_id: &str) -> String {
-        format!("stopping {agent_id}")
+    fn stopping(&self, agent_id: &str) -> Reason {
+        format!("stopping {agent_id}").into()
     }
-    fn not_reachable(&self, agent_id: &str, why: Away) -> String {
-        format!("away {agent_id} {why:?}")
+    fn not_reachable(&self, agent_id: &str, why: Away) -> Reason {
+        Reason::new(
+            format!("away {agent_id} {why:?}"),
+            Some(ServiceCause::AgentOffline),
+        )
     }
 }
 
@@ -88,14 +95,19 @@ fn a_tunnel_that_is_not_reachable_claims_no_address_and_no_traffic() {
 
 #[test]
 fn the_other_states_say_what_they_wait_for() {
-    let state = row(View::Waiting(WaitFor::CredentialStore));
+    let state = row(View::Waiting {
+        on: WaitFor::CredentialStore,
+        until: DateTime::from_timestamp(1700, 0).unwrap().into(),
+    });
     assert_eq!(state.status, TunnelStatus::Waiting);
-    assert_eq!(state.error.as_deref(), Some("waiting CredentialStore"));
+    assert_eq!(state.error.as_deref(), Some("waiting CredentialStore 1700"));
+    assert_eq!(state.cause, Some(ServiceCause::StoreLocked));
     let state = row(View::Stopping {
         agent_id: "edge".into(),
     });
     assert_eq!(state.status, TunnelStatus::Stopping);
     assert_eq!(state.error.as_deref(), Some("stopping edge"));
+    assert_eq!(state.cause, None);
     let state = row(View::Starting);
     assert_eq!(state.status, TunnelStatus::Connecting);
     assert_eq!(state.error, None);

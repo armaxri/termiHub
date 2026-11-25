@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::test::{mock_app, MockRuntime};
 use tauri::Manager;
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
+use termihub_core::util::service_cause::ServiceCause;
 use termihub_core::util::service_host::ServiceHost;
 
 use super::host_tests::watch;
@@ -130,14 +131,19 @@ fn start_on_a_busy_port_fails_and_succeeds_once_the_port_frees() {
     // Durable (#6028): the row says why until the next try.
     let state = h.state_of("web");
     assert_eq!(state.status, ServerStatus::Error);
-    assert!(state.error.unwrap_or_default().contains("already in use"));
+    assert_eq!(
+        state.error,
+        Some(format!("Port {port} is already in use on this computer."))
+    );
+    assert_eq!(state.cause, Some(ServiceCause::PortInUse));
 
     drop(blocker);
     h.manager.start_server("web").expect("the retry starts");
     let addr = h.local_addr("web").expect("listening");
     assert_eq!(addr.port(), port, "the retry honours the configured port");
     assert!(TcpStream::connect_timeout(&addr, Duration::from_secs(2)).is_ok());
-    assert_eq!(h.state_of("web").status, ServerStatus::Running);
+    let state = h.state_of("web");
+    assert_eq!((state.status, state.cause), (ServerStatus::Running, None));
     h.manager.stop_all();
 }
 
@@ -230,7 +236,7 @@ fn auto_start_with_a_locked_credential_store_waits_and_says_so() {
     assert_eq!(last.status, ServerStatus::Waiting);
     let reason = last.error.unwrap_or_default();
     assert!(
-        reason.contains("Waiting for the credential store"),
+        reason.contains("Starts when you unlock the credential store, until "),
         "{reason}"
     );
     assert!(h.local_addr("locked").is_none());
@@ -255,7 +261,7 @@ fn agent_hosting_without_an_agent_manager_is_an_error() {
 
     let err = h.manager.start_server("web").expect_err("no agent manager");
     assert!(
-        err.to_string().contains("agent edge is not connected"),
+        err.to_string().contains("its agent is not connected"),
         "{err}"
     );
 }
@@ -275,7 +281,7 @@ fn an_agent_refusing_to_host_surfaces_an_error_and_keeps_no_handle() {
 
     let err = h.manager.start_server("web").expect_err("agent refused");
     assert!(
-        err.to_string().contains("agent edge could not start it"),
+        err.to_string().contains("its agent could not start it"),
         "{err}"
     );
 

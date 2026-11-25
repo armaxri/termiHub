@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Local};
 use serde_json::Value;
 
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -116,7 +117,10 @@ pub enum View<S> {
     Stopping {
         agent_id: String,
     },
-    Waiting(WaitFor),
+    Waiting {
+        on: WaitFor,
+        until: DateTime<Local>,
+    },
 }
 
 /// Why a start was not begun.
@@ -247,9 +251,20 @@ struct Owed {
 struct Wait {
     on: WaitFor,
     until: Instant,
+    /// `until` on the clock, for the row.
+    until_clock: DateTime<Local>,
     /// The user asked to stop and start it: the stop that is still owed is the
     /// first half of it, and does not cancel the second.
     restart: bool,
+}
+
+impl Wait {
+    fn view<S>(&self) -> View<S> {
+        View::Waiting {
+            on: self.on.clone(),
+            until: self.until_clock,
+        }
+    }
 }
 
 struct Starting {
@@ -360,7 +375,7 @@ impl<K: HostedKind> HostedServices<K> {
         }
         let wait = inner.waits.get(id);
         if let Some(wait) = wait.filter(|wait| wait.restart) {
-            return Some(View::Waiting(wait.on.clone()));
+            return Some(wait.view());
         }
         if let Some(agent_id) = host {
             if inner
@@ -372,7 +387,7 @@ impl<K: HostedKind> HostedServices<K> {
                 });
             }
         }
-        wait.map(|wait| View::Waiting(wait.on.clone()))
+        wait.map(Wait::view)
     }
 
     /// Whether the agent of `id` says that it runs.
@@ -447,10 +462,13 @@ impl<K: HostedKind> HostedServices<K> {
             wait.restart |= restart;
             return changed;
         }
-        let until = now + WAIT_LIMIT;
-        inner
-            .waits
-            .insert(id.to_string(), Wait { on, until, restart });
+        let wait = Wait {
+            on,
+            until: now + WAIT_LIMIT,
+            until_clock: Local::now() + WAIT_LIMIT,
+            restart,
+        };
+        inner.waits.insert(id.to_string(), wait);
         true
     }
 
@@ -465,9 +483,9 @@ impl<K: HostedKind> HostedServices<K> {
             && !inner.waits.get(id).is_some_and(|wait| wait.restart)
     }
 
-    /// Whether the automatic start of `id` waits.
-    pub fn is_waiting(&self, id: &str) -> bool {
-        self.lock().waits.contains_key(id)
+    /// Until when the automatic start of `id` waits, if it waits.
+    pub fn waits_until(&self, id: &str) -> Option<DateTime<Local>> {
+        self.lock().waits.get(id).map(|wait| wait.until_clock)
     }
 
     /// The services that wait.
