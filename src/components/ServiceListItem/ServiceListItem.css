@@ -13,7 +13,7 @@
 
 /* The dot and a one-line name sit in the middle of the first line's height. */
 .service-row .sidebar-list-item__header > .status-dot {
-  margin-top: calc((var(--control-height-md) - 8px) / 2);
+  margin-top: calc((var(--control-height-md) - var(--spacing-sm)) / 2);
 }
 
 .service-row .sidebar-list-item__header > .sidebar-list-item__name {

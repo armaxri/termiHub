@@ -253,6 +253,13 @@ describe("what the row offers", () => {
     expect(toastError).toHaveBeenCalledWith("Failed to copy the address", {
       description: "no clipboard",
     });
+    // Nor does the menu say that it was copied.
+    writeText.mockRejectedValueOnce(new Error("no clipboard"));
+    await openMenu(serverIn("running"));
+    await act(async () => q("ctx-copy-url-s")!.click());
+    await flush();
+    expect(toastError).toHaveBeenCalledTimes(2);
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("says it was copied only from the menu, where nothing on screen changes", async () => {

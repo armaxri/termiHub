@@ -52,8 +52,8 @@ describe("useServiceContext (#6028)", () => {
   it("reads this computer's address, not loopback and not all interfaces", async () => {
     listNetworkInterfaces.mockResolvedValue([
       { name: "Loopback", addr: "127.0.0.1" },
-      { name: "en0", addr: "192.168.1.20" },
       { name: "All", addr: "0.0.0.0" },
+      { name: "en0", addr: "192.168.1.20" },
     ]);
     await render(true);
     expect(seen.networkAddress).toBe("192.168.1.20");

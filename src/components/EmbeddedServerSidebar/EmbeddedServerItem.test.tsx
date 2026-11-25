@@ -33,6 +33,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
 
 import { EmbeddedServerItem, hostAgentFor } from "./EmbeddedServerItem";
 import { NO_CONTEXT } from "@/test/serviceContext";
+import { serviceMenuItem } from "@/test/serviceMenu";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER } from "@/utils/runLocation";
 import { TooltipProvider } from "@/components/ui";
@@ -235,6 +236,18 @@ describe("EmbeddedServerItem", () => {
     expect(toastError).toHaveBeenCalledTimes(1);
     const [title] = toastError.mock.calls[0] as [string, unknown];
     expect(title).toContain("My HTTP");
+  });
+
+  it("restarts a running server from its menu, and says when that fails (#6028)", async () => {
+    const onRestart = vi.fn(() => Promise.reject(new Error("no")));
+    const onStart = vi.fn(() => Promise.resolve());
+    render(<EmbeddedServerItem {...baseProps({ state: runningState, onRestart, onStart })} />);
+    click(serviceMenuItem("server-restart-srv-1")!);
+    await flush();
+    expect(onRestart).toHaveBeenCalledWith("srv-1");
+    expect(onStart).not.toHaveBeenCalled();
+    const [title] = toastError.mock.calls[0] as [string, unknown];
+    expect(title).toBe("Failed to restart My HTTP");
   });
 
   it("toggles the activity panel (access log + stats, PROD-034/036)", async () => {
