@@ -86,12 +86,14 @@ export async function repaintIfResumed(
     resetCommandMarks();
     xterm.reset();
   };
-  repaint.takeTyped = collectTyped(xterm, signal);
+  const typing = collectTyped(xterm, signal);
+  repaint.takeTyped = typing.take;
   try {
     const { data, coming, ...end } = await getAgentSessionBuffer(sessionId);
     if (isCanceled()) return repaint;
     if (data.length > 0) {
       clear();
+      typing.beforeReplay();
       await new Promise<void>((resolve) => xterm.write(data, resolve));
       repaint.replayEnd = end;
     } else if (coming) {
@@ -109,10 +111,14 @@ export async function repaintIfResumed(
 }
 
 /**
- * Collect what the user types until the returned function takes it. xterm's
- * answers to queries in the repainted buffer are not typed and stay out.
+ * Collect what the user types until `take`. xterm's answers to queries in the
+ * repainted buffer are not typed and stay out; should xterm not tell the two
+ * apart, nothing is collected from `beforeReplay` on.
  */
-function collectTyped(xterm: XTerm, signal: AbortSignal): () => string[] {
+function collectTyped(
+  xterm: XTerm,
+  signal: AbortSignal
+): { beforeReplay: () => void; take: () => string[] } {
   const typed: string[] = [];
   const userInput = trackUserInput(xterm);
   const data = xterm.onData((text) => {
@@ -123,8 +129,13 @@ function collectTyped(xterm: XTerm, signal: AbortSignal): () => string[] {
     userInput.dispose();
   };
   signal.addEventListener("abort", stop, { once: true });
-  return () => {
-    stop();
-    return typed;
+  return {
+    beforeReplay: () => {
+      if (!userInput.known) stop();
+    },
+    take: () => {
+      stop();
+      return typed;
+    },
   };
 }

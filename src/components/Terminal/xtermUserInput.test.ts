@@ -10,6 +10,7 @@ afterEach(() => xterm.dispose());
 /** What `onData` carries, with the tracker's verdict. */
 function listen(): Array<[string, boolean]> {
   const tracker = trackUserInput(xterm);
+  expect(tracker.known).toBe(true);
   const seen: Array<[string, boolean]> = [];
   xterm.onData((data) => seen.push([data, tracker.take()]));
   return seen;
@@ -31,6 +32,7 @@ describe("trackUserInput (a real xterm)", () => {
   it("counts everything as the user's when the private event is gone", () => {
     xterm = new XTerm();
     const tracker = trackUserInput({} as XTerm);
+    expect(tracker.known).toBe(false);
     expect([tracker.take(), tracker.take()]).toEqual([true, true]);
     tracker.dispose();
   });
