@@ -304,8 +304,10 @@ describe("Continue", () => {
     act(() => void vi.advanceTimersByTime(PROMPT_CHECK_LIMIT_MS));
     expect(query("automation-wait-message-a")?.textContent).toContain("It cannot be told yet");
     arrived += 1;
+    // The bar looks now and then too.
+    const before = reads.length;
     act(() => reads[1]("$ "));
-    expect(reads).toHaveLength(2);
+    expect(reads).toHaveLength(before);
   });
 
   it("says that it looks when it takes a moment, and asks when it takes too long (#6070)", () => {
