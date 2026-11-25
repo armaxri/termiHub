@@ -104,6 +104,22 @@ describe("appStore — openTunnelEditorTab connection prefill (PROD-023)", () =>
       .map((t) => t.tunnelEditorMeta);
   }
 
+  it("carries the type the New menu asked for, and reuses only its tab (#6028)", () => {
+    const open = useAppStore.getState().openTunnelEditorTab;
+    open(null, { tunnelType: "remote" });
+    open(null, { tunnelType: "remote" });
+    open(null, { tunnelType: "dynamic" });
+    open(null);
+    expect(editorMetas()).toEqual([
+      { tunnelId: null, tunnelType: "remote" },
+      { tunnelId: null, tunnelType: "dynamic" },
+      { tunnelId: null },
+    ]);
+    // An existing tunnel has its own.
+    open("tun-9", { tunnelType: "remote" });
+    expect(editorMetas()[3]).toEqual({ tunnelId: "tun-9" });
+  });
+
   it("carries the connection on a new-tunnel editor and reuses only a matching tab", () => {
     const open = useAppStore.getState().openTunnelEditorTab;
     open(null, { sshConnectionId: "conn-1" });

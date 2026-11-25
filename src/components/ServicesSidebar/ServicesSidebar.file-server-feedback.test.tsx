@@ -13,7 +13,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { TooltipProvider } from "@/components/ui";
-import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
+import { ServicesSidebar } from "./ServicesSidebar";
 import { serviceMenuItem } from "@/test/serviceMenu";
 
 const toastSuccess = vi.fn();
@@ -42,6 +42,7 @@ vi.mock("@/store/appStore", () => {
   const state: Record<string, unknown> = {};
   const useAppStore = (selector: (s: Record<string, unknown>) => unknown) => selector(state);
   useAppStore.setState = (patch: Record<string, unknown>) => Object.assign(state, patch);
+  useAppStore.getState = () => state;
   return { useAppStore };
 });
 
@@ -74,7 +75,9 @@ function seedStore(
   servers: EmbeddedServerConfig[] = []
 ) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
+    sidebarView: "services",
     tunnels: [],
+    tunnelStates: {},
     embeddedServers: servers,
     embeddedServerStates: {},
     saveEmbeddedServer,
@@ -88,7 +91,7 @@ async function renderSidebar() {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <EmbeddedServerSidebar />
+        <ServicesSidebar />
       </TooltipProvider>
     );
   });
@@ -96,7 +99,9 @@ async function renderSidebar() {
 }
 
 async function openNewDialogAndFill() {
-  const newBtn = container.querySelector<HTMLButtonElement>('[data-testid="server-new-btn"]');
+  const newBtn = container.querySelector<HTMLButtonElement>(
+    '[data-testid="services-empty-server-http"]'
+  );
   await act(async () => {
     newBtn!.click();
   });

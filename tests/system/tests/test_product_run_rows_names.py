@@ -269,8 +269,8 @@ class TestProductRunRowsNames(
             )
             self.wait(lambda: self.find_connection(ssh) is not None, what="the SSH connection")
             name = f"Rows tunnel {t}"
-            self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
-            self.driver.click("tunnel-new-btn")
+            self.open_services_sidebar()
+            self.choose_new_service("tunnel-local")
             self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
             self.driver.type("tunnel-editor-name", name)
             self.driver.type("tunnel-editor-description", "Reaches the DB")
@@ -298,7 +298,7 @@ class TestProductRunRowsNames(
                 ),
                 what="the tunnel to save",
             )
-            self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+            self.open_services_sidebar()
             self._grade_row(
                 f"tunnel-item-{tunnel['id']}",
                 [
@@ -324,7 +324,7 @@ class TestProductRunRowsNames(
             "rows-names.service",
             "A file server's row shows its name, its protocol and its description; the address "
             "and folder are in the tooltip, and Run on is in the editor",
-            expect="the File servers sidebar: 'Rows service …' with a grey dot and 'HTTP' at its "
+            expect="the Services sidebar: 'Rows service …' with a grey dot and 'HTTP' at its "
             "end, 'Stopped · Lab firmware' muted under the name; no "
             "':port → folder' line and no 'Run on' selector on the row "
             "(#5770, #6063)",

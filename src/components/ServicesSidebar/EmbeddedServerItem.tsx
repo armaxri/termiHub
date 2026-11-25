@@ -10,7 +10,12 @@ import { errorMessage } from "@/utils/errorMessage";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { isAgentHost } from "@/utils/runLocation";
 import { hostChoice, type HostChoice } from "@/utils/hostChoice";
-import { fileServerModel, type ServiceContext, type ServiceNextStep } from "@/utils/serviceModel";
+import {
+  fileServerModel,
+  withoutAgent,
+  type ServiceContext,
+  type ServiceNextStep,
+} from "@/utils/serviceModel";
 import { t, tf } from "@/i18n/catalog";
 import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 import { serverRowTooltip } from "./serverRowTooltip";
@@ -30,6 +35,8 @@ interface Props {
   onDelete: (id: string) => void;
   /** Listen on another port, and start. */
   onUsePort: (id: string, port: number) => void | Promise<void>;
+  /** Whether the row stands under its agent's line, which says what it shares. */
+  underAgent?: boolean;
   /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
@@ -80,11 +87,13 @@ export function EmbeddedServerItem({
   onDuplicate,
   onDelete,
   onUsePort,
+  underAgent = false,
   rowRef,
   rowProps,
 }: Props) {
   const [showActivity, setShowActivity] = useState(false);
-  const model = fileServerModel(config, state, context);
+  const own = fileServerModel(config, state, context);
+  const model = underAgent ? withoutAgent(own) : own;
   const host = hostChoice(config.host);
   const connectAgent = useConnectAgent();
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);

@@ -21,8 +21,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
   checkEmbeddedServers,
 }));
 
-import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
-import { TunnelSidebar } from "@/components/TunnelSidebar";
+import { ServicesSidebar } from "./ServicesSidebar";
 import { useAppStore } from "@/store/appStore";
 import { seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { withTooltip } from "@/test/tooltip";
@@ -82,7 +81,7 @@ async function tunnel(over: Partial<TunnelConfig>, state: Partial<TunnelState>) 
     tunnels: [{ ...TUNNEL, ...over }],
     tunnelStates: { t: { tunnelId: "t", status: "error", error: "why", stats: STATS, ...state } },
   });
-  await act(async () => root.render(withTooltip(<TunnelSidebar />)));
+  await act(async () => root.render(withTooltip(<ServicesSidebar />)));
 }
 
 async function server(over: Partial<EmbeddedServerConfig>, state: Partial<ServerState>) {
@@ -92,7 +91,7 @@ async function server(over: Partial<EmbeddedServerConfig>, state: Partial<Server
       s: { serverId: "s", status: "error", error: "why", stats: STATS, ...state },
     },
   });
-  await act(async () => root.render(withTooltip(<EmbeddedServerSidebar />)));
+  await act(async () => root.render(withTooltip(<ServicesSidebar />)));
 }
 
 beforeEach(() => {
@@ -234,75 +233,5 @@ describe("the others", () => {
     expect(actions.retryTunnelNow).toHaveBeenCalledWith("t");
     expect(actions.reconnectTunnel).not.toHaveBeenCalled();
     expect(q("confirm-tunnel-lifecycle-dialog")).toBeNull();
-  });
-});
-
-it("both lists say how many run", async () => {
-  await tunnel({}, { status: "connected" });
-  expect(q("tunnel-counts")?.textContent).toBe("1 of 1 running");
-  await server({}, {});
-  expect(q("server-counts")?.textContent).toBe("0 of 1 running· 1 error");
-});
-
-describe("stopping a file server", () => {
-  const busy = { ...STATS, activeConnections: 1 };
-
-  it("asks when somebody is connected", async () => {
-    await server({}, { status: "running", stats: busy });
-    await press("server-stop-s");
-    expect(actions.stopEmbeddedServer).not.toHaveBeenCalled();
-    expect(q("confirm-service-lifecycle-dialog")?.textContent).toContain(
-      "1 connection is open now. It will be dropped."
-    );
-    await press("confirm-service-lifecycle-confirm");
-    expect(actions.stopEmbeddedServer).toHaveBeenCalledWith("s");
-    expect(q("confirm-service-lifecycle-dialog")).toBeNull();
-  });
-
-  it("and not when nobody is", async () => {
-    await server({}, { status: "running" });
-    await press("server-stop-s");
-    expect(actions.stopEmbeddedServer).toHaveBeenCalledWith("s");
-    expect(q("confirm-service-lifecycle-dialog")).toBeNull();
-  });
-});
-
-describe("the numbers of a list", () => {
-  const states = { a: "connected", b: "error", c: "error", d: "disconnected" } as const;
-
-  async function list() {
-    useAppStore.setState({
-      tunnels: Object.keys(states).map((id) => ({ ...TUNNEL, id, name: id })),
-      tunnelStates: Object.fromEntries(
-        Object.entries(states).map(([id, status]) => [
-          id,
-          { tunnelId: id, status, error: "why", stats: STATS },
-        ])
-      ),
-    });
-    await act(async () => root.render(withTooltip(<TunnelSidebar />)));
-  }
-  const shown = () =>
-    Array.from(container.querySelectorAll("[role=treeitem]")).map((row) =>
-      row.getAttribute("data-testid")?.slice(-1)
-    );
-
-  it("show only their rows, and all of them when pressed again", async () => {
-    await list();
-    expect(q("tunnel-counts")?.textContent).toBe("1 of 4 running· 2 error");
-    await press("service-count-error");
-    expect(shown()).toEqual(["b", "c"]);
-    expect(q("service-count-error")?.getAttribute("aria-pressed")).toBe("true");
-    await press("service-count-running");
-    expect(shown()).toEqual(["a"]);
-    await press("service-count-running");
-    expect(shown()).toEqual(["a", "b", "c", "d"]);
-  });
-
-  it("show all rows again when their last row is gone", async () => {
-    await list();
-    await press("service-count-error");
-    await act(async () => useAppStore.setState({ tunnelStates: {} }));
-    expect(shown()).toEqual(["a", "b", "c", "d"]);
   });
 });

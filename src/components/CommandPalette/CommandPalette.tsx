@@ -5,6 +5,9 @@ import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
+import { newServiceGroups } from "@/components/ServicesSidebar/newServiceEntries";
+import { showServicesView } from "@/components/ServicesSidebar/servicesView";
+import { t, tf } from "@/i18n/catalog";
 import { buildCommands } from "@/services/commands";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { isMacroShaped } from "@/store/slices/automationViews";
@@ -109,6 +112,23 @@ type PaletteEntry =
 type PaletteMode = "root" | "broadcast";
 
 /** What commands were called before, by action id. */
+/** Words that find the Services view (#6028): what it was called, and its parts. */
+const SERVICE_WORDS = [
+  "Show services",
+  "SSH tunnels",
+  "Tunnels",
+  "File servers",
+  "Embedded servers",
+  "Port forwarding",
+  "Forward a port",
+  "Proxy",
+  "SOCKS",
+  "Share a folder",
+  "HTTP",
+  "FTP",
+  "TFTP",
+];
+
 const COMMAND_ALIASES: Record<string, string[]> = {
   "toggle-macro-recording": ["Record macro"],
   "play-macro": ["Play macro", "Run macro", "Run workflow"],
@@ -240,6 +260,31 @@ export function CommandPalette(): React.ReactElement {
       aliases: [...(COMMAND_ALIASES[cmd.id] ?? []), cmd.label],
       run: cmd.run,
     }));
+    const serviceEntries: PaletteEntry[] = [
+      {
+        kind: "command",
+        key: "command:show-services",
+        label: t("service.palette.show"),
+        accelerator: null,
+        available: true,
+        aliases: SERVICE_WORDS,
+        run: showServicesView,
+      },
+      ...newServiceGroups().flatMap((group) =>
+        group.entries.map((entry): PaletteEntry => {
+          const label = tf("service.palette.new", { what: entry.label });
+          return {
+            kind: "command",
+            key: `command:new-service-${entry.id}`,
+            label,
+            accelerator: null,
+            available: true,
+            aliases: [label, entry.technical, ...entry.words],
+            run: entry.open,
+          };
+        })
+      ),
+    ];
     const connectionEntries: PaletteEntry[] = connections.map((conn) => ({
       kind: "connection",
       key: `connection:${conn.id}`,
@@ -285,6 +330,7 @@ export function CommandPalette(): React.ReactElement {
     }));
     return [
       ...commandEntries,
+      ...serviceEntries,
       ...broadcastEntries,
       ...automationEntries,
       ...workspaceEntries,

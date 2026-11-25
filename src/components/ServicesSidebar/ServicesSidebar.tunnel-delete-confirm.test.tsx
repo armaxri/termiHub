@@ -14,7 +14,7 @@ import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
 import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
-import { TunnelSidebar } from "./TunnelSidebar";
+import { ServicesSidebar } from "./ServicesSidebar";
 import { serviceMenuItem } from "@/test/serviceMenu";
 
 const mockDeleteTunnel = vi.fn((_id: string, _opts?: { undoable?: boolean }) => Promise.resolve());
@@ -62,6 +62,7 @@ async function flush() {
 function seedStore(tunnel: TunnelConfig, state?: TunnelState) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
     embeddedServers: [],
+    embeddedServerStates: {},
     tunnels: [tunnel],
     tunnelStates: state ? { [tunnel.id]: state } : {},
     connections: [],
@@ -94,7 +95,7 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
     await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
-          <TunnelSidebar />
+          <ServicesSidebar />
         </TooltipProvider>
       );
     });
@@ -128,7 +129,7 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
     await act(async () => {
       root.render(
         <TooltipProvider delayDuration={0}>
-          <TunnelSidebar />
+          <ServicesSidebar />
         </TooltipProvider>
       );
     });

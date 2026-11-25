@@ -869,9 +869,12 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
     /// v4 (#5818) replaces the `macros` and `workflows` sidebar views with the
     /// one `automations` view (`migrate_automations_view`).
     ///
+    /// v5 (#6028) replaces the `tunnels` view with the `services` view, which shows
+    /// both (`migrate_services_view`).
+    ///
     /// Each bump is also downgrade-safe: an older build refuses to overwrite a
     /// newer file (PER-004).
-    const CURRENT_VERSION: u32 = 4;
+    const CURRENT_VERSION: u32 = 5;
 
     fn migrate(
         mut value: serde_json::Value,
@@ -889,6 +892,9 @@ impl crate::utils::migrate::VersionedStore for AppSettings {
             }
             if from_version < 4 {
                 migrate_automations_view(obj);
+            }
+            if from_version < 5 {
+                migrate_services_view(obj);
             }
             obj.insert(
                 "version".to_string(),
@@ -929,19 +935,29 @@ fn migrate_close_confirm(obj: &mut serde_json::Map<String, serde_json::Value>) {
     );
 }
 
-/// The sidebar views the Automations view replaced in v4 (#5818).
-const RETIRED_AUTOMATION_VIEWS: [&str; 2] = ["macros", "workflows"];
-/// The view that replaced [`RETIRED_AUTOMATION_VIEWS`].
-const AUTOMATIONS_VIEW: &str = "automations";
-
 /// The v3 → v4 settings step (#5818): the `macros` and `workflows` views are one
 /// `automations` view.
+fn migrate_automations_view(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    merge_views(obj, ["macros", "workflows"], "automations");
+}
+
+/// The v4 → v5 settings step (#6028): the `tunnels` and `services` views are one
+/// `services` view.
+fn migrate_services_view(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    merge_views(obj, ["tunnels", "services"], "services");
+}
+
+/// Merge two sidebar views into one that replaces both.
 ///
 /// A user who hid both keeps it hidden, at the place of the first one in the
-/// list; a user who hid only one had chosen to see the other, so Automations
+/// list; a user who hid only one had chosen to see the other, so the new view
 /// shows. Every other hidden view keeps its order. A last-open view of either
-/// name becomes `automations`.
-fn migrate_automations_view(obj: &mut serde_json::Map<String, serde_json::Value>) {
+/// name becomes the new one. `merged` may be the name of one of them.
+fn merge_views(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    retired_views: [&str; 2],
+    merged: &str,
+) {
     let Some(layout) = obj
         .get_mut("layout")
         .and_then(serde_json::Value::as_object_mut)
@@ -951,23 +967,24 @@ fn migrate_automations_view(obj: &mut serde_json::Map<String, serde_json::Value>
     let retired = |value: &serde_json::Value| {
         value
             .as_str()
-            .is_some_and(|view| RETIRED_AUTOMATION_VIEWS.contains(&view))
+            .is_some_and(|view| retired_views.contains(&view))
     };
     if let Some(hidden) = layout
         .get_mut("hiddenActivityBarViews")
         .and_then(serde_json::Value::as_array_mut)
     {
-        let hid_both = RETIRED_AUTOMATION_VIEWS
+        let hid_both = retired_views
             .iter()
             .all(|view| hidden.iter().any(|v| v.as_str() == Some(view)));
-        let mut placed = hidden.iter().any(|v| v.as_str() == Some(AUTOMATIONS_VIEW));
+        let mut placed =
+            !retired_views.contains(&merged) && hidden.iter().any(|v| v.as_str() == Some(merged));
         let mut kept = Vec::with_capacity(hidden.len());
         for value in hidden.drain(..) {
             if !retired(&value) {
                 kept.push(value);
             } else if hid_both && !placed {
                 placed = true;
-                kept.push(serde_json::Value::String(AUTOMATIONS_VIEW.to_string()));
+                kept.push(serde_json::Value::String(merged.to_string()));
             }
         }
         *hidden = kept;
@@ -975,7 +992,7 @@ fn migrate_automations_view(obj: &mut serde_json::Map<String, serde_json::Value>
     if layout.get("sidebarView").is_some_and(retired) {
         layout.insert(
             "sidebarView".to_string(),
-            serde_json::Value::String(AUTOMATIONS_VIEW.to_string()),
+            serde_json::Value::String(merged.to_string()),
         );
     }
 }
@@ -1148,7 +1165,7 @@ mod tests {
 
         let result = storage.load_with_recovery().unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.data.version, "4");
+        assert_eq!(result.data.version, "5");
         assert!(result.data.power_monitoring_enabled);
     }
 
@@ -1179,7 +1196,7 @@ mod tests {
         assert!(result.warnings[0].message.contains("corrupt"));
         assert!(result.warnings[0].details.is_some());
         // Returns defaults
-        assert_eq!(result.data.version, "4");
+        assert_eq!(result.data.version, "5");
         assert!(result.data.power_monitoring_enabled);
 
         // Backup should exist
@@ -1320,7 +1337,7 @@ mod tests {
     /// every schema version, and a stored `false` stays off.
     #[test]
     fn a_stored_x11_forwarding_default_is_kept() {
-        for version in ["1", "2", "3", "4"] {
+        for version in ["1", "2", "3", "4", "5"] {
             for stored in [true, false] {
                 let json = format!(
                     r#"{{"version":"{version}","externalConnectionFiles":[],"defaultX11Forwarding":{stored}}}"#
@@ -1462,7 +1479,7 @@ mod tests {
             r#"{"version":"1","externalConnectionFiles":[],"defaultShellIntegration":true}"#,
         );
         assert!(!settings.default_shell_integration);
-        assert_eq!(settings.version, "4");
+        assert_eq!(settings.version, "5");
     }
 
     /// The reset only touches the shell-hook default, not its sibling toggles.
@@ -1489,7 +1506,7 @@ mod tests {
 
         let raw = std::fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk["version"], serde_json::json!("4"));
+        assert_eq!(on_disk["version"], serde_json::json!("5"));
 
         let reloaded = storage.load_with_recovery().unwrap().data;
         assert!(reloaded.default_shell_integration);
@@ -1510,7 +1527,7 @@ mod tests {
         storage.save(&settings).unwrap();
 
         let reloaded = storage.load_with_recovery().unwrap().data;
-        assert_eq!(reloaded.version, "4");
+        assert_eq!(reloaded.version, "5");
         assert!(reloaded.default_shell_integration);
     }
 
@@ -2164,7 +2181,7 @@ mod tests {
                 settings.close_live_session_confirm, expected,
                 "shortcut {shortcut:?}, pointer {pointer:?}"
             );
-            assert_eq!(settings.version, "4");
+            assert_eq!(settings.version, "5");
             // The old flags are gone, not parked in the catch-all.
             assert!(settings.extra.is_empty(), "{:?}", settings.extra);
         }
@@ -2208,9 +2225,9 @@ mod tests {
             (&["workflows", "macros"], &["automations"]),
             (
                 &["tunnels", "macros", "services", "workflows", "plugins"],
-                &["tunnels", "automations", "services", "plugins"],
+                &["services", "automations", "plugins"],
             ),
-            (&["tunnels", "workflows", "files"], &["tunnels", "files"]),
+            (&["tunnels", "workflows", "files"], &["files"]),
             // A hand-edited file that lists a view twice.
             (&["macros", "macros"], &[]),
             (&["automations", "macros", "workflows"], &["automations"]),
@@ -2232,8 +2249,58 @@ mod tests {
             );
             let layout = settings.layout.expect("layout kept");
             assert_eq!(layout.hidden_activity_bar_views, after, "from {before:?}");
-            assert_eq!(settings.version, "4");
+            assert_eq!(settings.version, "5");
         }
+    }
+
+    #[test]
+    fn v4_hidden_tunnel_and_service_views_become_services() {
+        // #6028: hidden only when both were; one hidden shows the one view.
+        let cases: [(&[&str], &[&str]); 8] = [
+            (&[], &[]),
+            (&["tunnels"], &[]),
+            (&["services"], &[]),
+            (&["tunnels", "services"], &["services"]),
+            (&["services", "tunnels"], &["services"]),
+            (
+                &["files", "tunnels", "plugins", "services"],
+                &["files", "services", "plugins"],
+            ),
+            (&["services", "services"], &[]),
+            (&["automations", "macros"], &["automations", "macros"]),
+        ];
+        for (before, after) in cases {
+            let settings = load_migrated(
+                &serde_json::json!({
+                    "version": "4",
+                    "externalConnectionFiles": [],
+                    "layout": {
+                        "activityBarPosition": "left",
+                        "sidebarPosition": "left",
+                        "sidebarVisible": true,
+                        "statusBarVisible": true,
+                        "hiddenActivityBarViews": before,
+                        "sidebarView": "tunnels",
+                    },
+                })
+                .to_string(),
+            );
+            let layout = settings.layout.expect("layout kept");
+            assert_eq!(layout.hidden_activity_bar_views, after, "from {before:?}");
+            assert_eq!(layout.sidebar_view.as_deref(), Some("services"));
+            assert_eq!(settings.version, "5");
+        }
+    }
+
+    #[test]
+    fn v5_hidden_services_stays_hidden() {
+        let doc = serde_json::json!({
+            "version": "5",
+            "layout": {"hiddenActivityBarViews": ["services"]},
+        });
+        let kept = <AppSettings as crate::utils::migrate::VersionedStore>::migrate(doc.clone(), 5)
+            .unwrap();
+        assert_eq!(kept["layout"], doc["layout"]);
     }
 
     #[test]
@@ -2271,7 +2338,7 @@ mod tests {
         let migrated =
             <AppSettings as crate::utils::migrate::VersionedStore>::migrate(no_layout.clone(), 3)
                 .unwrap();
-        no_layout["version"] = serde_json::json!("4");
+        no_layout["version"] = serde_json::json!("5");
         assert_eq!(migrated, no_layout);
 
         let odd = serde_json::json!({"version": "3", "layout": {"hiddenActivityBarViews": "macros", "sidebarView": 7}});
@@ -2486,7 +2553,7 @@ mod tests {
     fn as_current(legacy: &str) -> String {
         legacy
             .trim_end()
-            .replacen(r#""version": "1""#, r#""version": "4""#, 1)
+            .replacen(r#""version": "1""#, r#""version": "5""#, 1)
             .replacen(
                 r#""defaultShellIntegration": true"#,
                 r#""defaultShellIntegration": false"#,

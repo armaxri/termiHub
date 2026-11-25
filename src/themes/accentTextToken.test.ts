@@ -97,7 +97,7 @@ const MIGRATED: [string, string, string][] = [
     // #5744: the action sits on the warning tint, where plain --text-link misses AA.
     "--text-link-on-tint",
   ],
-  ["components/TunnelSidebar/TunnelSidebar.css", ".tunnel-item__inline-action", "--text-link"],
+  ["components/ServicesSidebar/TunnelListItem.css", ".tunnel-item__inline-action", "--text-link"],
   ["components/Settings/PluginSettingsSection.css", ".plugin-settings__saved", "--text-accent"],
   ["components/FileEditor/FileEditor.css", ".file-editor__remote-badge", "--text-accent"],
   ["components/LogViewer/LogViewer.css", ".log-viewer__level--INFO", "--text-accent"],

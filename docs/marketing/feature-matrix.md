@@ -39,7 +39,7 @@
 | Local forwarding  | `-L`-style local port forwarding with session pooling, set up in the SSH connection editor | Stable |
 | Remote forwarding | `-R`-style remote port forwarding, set up in the SSH connection editor                     | Stable |
 | Dynamic (SOCKS)   | Dynamic SOCKS5 / SOCKS4 / SOCKS4a proxy forwarding, set up in the SSH connection editor    | Stable |
-| SSH Tunnels view  | Separate sidebar for managing tunnels                                                      | Beta   |
+| Services view     | One sidebar for SSH tunnels and file servers                                               | Beta   |
 | Jump hosts        | Connect through one or more bastion hosts (`ProxyJump`-style chains)                       | Stable |
 | X11 forwarding    | Forward remote GUI apps to a local X server                                                | Stable |
 

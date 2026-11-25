@@ -60,15 +60,16 @@ async function boot(page: Page, theme: string): Promise<void> {
       sidebarView: string;
       setSidebarView(view: string): void;
     };
-    if (state.sidebarView !== "tunnels") state.setSidebarView("tunnels");
+    if (state.sidebarView !== "services") state.setSidebarView("services");
     window.__visual.applyTheme(t);
   }, theme);
-  await page.locator(id("tunnel-list")).waitFor();
+  await page.locator(id("services-list")).waitFor();
 }
 
 /** Open the editor for a new tunnel (Local is selected). */
 async function openEditor(page: Page): Promise<void> {
-  await page.locator(id("tunnel-new-btn")).click();
+  await page.locator(id("service-new-btn")).click();
+  await page.locator(id("service-new-tunnel-local")).click();
   await page.locator(EDITOR).waitFor();
   await page.locator(id("tunnel-editor-type-selector")).scrollIntoViewIfNeeded();
   await settle(page);

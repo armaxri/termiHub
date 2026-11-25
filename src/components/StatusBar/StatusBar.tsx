@@ -18,6 +18,7 @@ import {
   LineChart,
   ListTree,
 } from "lucide-react";
+import { showServicesView } from "@/components/ServicesSidebar/servicesView";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -407,7 +408,7 @@ function counted(count: number, one: string): string {
 
 /**
  * How many services run, tunnels and file servers alike (#6063). Opens the
- * sidebar of what runs: the tunnels when no file server does.
+ * Services view, and leaves it open.
  */
 function ServicesIndicator() {
   const tunnels = useAppStore(
@@ -417,7 +418,6 @@ function ServicesIndicator() {
     (s) =>
       Object.values(s.embeddedServerStates).filter((state) => state.status === "running").length
   );
-  const setSidebarView = useAppStore((s) => s.setSidebarView);
 
   if (tunnels + servers === 0) return null;
 
@@ -425,10 +425,7 @@ function ServicesIndicator() {
     tunnels > 0 && counted(tunnels, "tunnel"),
     servers > 0 && counted(servers, "file server"),
   ].filter(Boolean);
-  const view = servers > 0 ? "services" : "tunnels";
-  const label = `${kinds.join(" and ")} running — click to open ${
-    view === "services" ? "File servers" : "SSH tunnels"
-  }`;
+  const label = `${kinds.join(" and ")} running — click to open Services`;
 
   return (
     <Tooltip content={label} side="top">
@@ -436,7 +433,7 @@ function ServicesIndicator() {
         className="status-bar__item status-bar__item--interactive status-bar__item--with-icon"
         aria-label={label}
         data-testid="services-indicator"
-        onClick={() => setSidebarView(view)}
+        onClick={showServicesView}
       >
         <Server size={12} />
         {`${tunnels + servers} running`}

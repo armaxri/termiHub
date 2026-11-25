@@ -1,18 +1,3 @@
-.server-sidebar {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-}
-
-.server-sidebar__list {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-xs) 0;
-}
-
-/* Server rows compose the shared SidebarListItem shell (issue 1358). */
-
 /* ─── Dialog body text (LAN warning; shell/buttons via ui primitives) ─────── */
 
 .dialog__body {

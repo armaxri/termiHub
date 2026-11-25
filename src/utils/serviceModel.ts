@@ -114,6 +114,8 @@ export interface ServiceModel {
   /** The technical name of what it is: "Local", "FTP". */
   technical: string;
   where: ServiceWhere;
+  /** The machine as the row names it; not this computer. */
+  machine?: string;
   state: ServiceState;
   health: ServiceHealth;
   /** The word for the state. */
@@ -320,6 +322,31 @@ function whereOf(host: HostChoice, { agents, agentsKnown = true }: ServiceContex
     : { label: t("service.where.agentUnknown"), agentId: host.agentId };
 }
 
+/** How the row names the machine of a service that does not run here. */
+function machineOf(where: ServiceWhere, host: HostChoice): string | undefined {
+  return host.kind === "thisComputer" ? undefined : (where.name ?? where.label);
+}
+
+/** The offline agent that keeps `model` from working, if that is what does. */
+export function offlineAgentOf(model: ServiceModel): string | undefined {
+  return model.nextSteps.some((step) => step.id === "connectAgent")
+    ? model.where.agentId
+    : undefined;
+}
+
+/**
+ * `model` for a row under the line of its offline agent (#6028): the line names
+ * the agent, says that it is offline, and connects it.
+ */
+export function withoutAgent(model: ServiceModel): ServiceModel {
+  return {
+    ...model,
+    machine: undefined,
+    reason: model.state === "notReachable" ? undefined : model.reason,
+    nextSteps: model.nextSteps.filter((step) => step.id !== "connectAgent"),
+  };
+}
+
 /** The machine that listens for a service hosted on `host`. */
 function listenerOn(host: HostChoice, context: ServiceContext): Listener {
   if (!isAgentHost(host)) return { on: "here", network: context.networkAddress };
@@ -467,6 +494,7 @@ export function tunnelModel(
     what: chain?.role === "hop" ? t("service.chain.hopWhat") : tunnelPurpose(config, host, context),
     technical: tunnelTypeLabel(type),
     where,
+    machine: machineOf(where, host),
     address,
     counters: stats && {
       sent: stats.bytesSent,
@@ -522,6 +550,7 @@ export function fileServerModel(
     what: fileServerPurpose(config),
     technical: PROTOCOL_LABELS[config.serverType],
     where,
+    machine: machineOf(where, host),
     risk:
       address?.open && anyoneMayUpload(config)
         ? t(host.kind === "thisComputer" ? "service.risk.upload.here" : "service.risk.upload.there")

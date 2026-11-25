@@ -155,7 +155,7 @@ class TestProductRunTunnelServiceControls(
         with self.step(
             "row-controls.tunnel",
             "A stopped tunnel row shows a Start button at rest and a dot that says Stopped",
-            expect="the SSH tunnels sidebar: 'Controls tunnel …' with a grey dot, its name, and "
+            expect="the Services sidebar: 'Controls tunnel …' with a grey dot, its name, and "
             "a Play (Start) button on the right without hovering; hovering the dot shows "
             "'Stopped' (#5852)",
         ):
@@ -166,8 +166,8 @@ class TestProductRunTunnelServiceControls(
             )
             self.wait(lambda: self.find_connection(ssh) is not None, what="the SSH connection")
             name = f"Controls tunnel {t}"
-            self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
-            self.driver.click("tunnel-new-btn")
+            self.open_services_sidebar()
+            self.choose_new_service("tunnel-local")
             self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
             self.driver.type("tunnel-editor-name", name)
             self.wait(
@@ -190,7 +190,7 @@ class TestProductRunTunnelServiceControls(
                 what="the tunnel to save",
             )
             self.ids["tunnel"] = tunnel["id"]
-            self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
+            self.open_services_sidebar()
             row = f"tunnel-item-{tunnel['id']}"
             self.wait(lambda: self.driver.exists(row), what="the tunnel row")
             assert self._grade_row("tunnel", tunnel["id"]) == "Stopped"
@@ -202,7 +202,7 @@ class TestProductRunTunnelServiceControls(
             "row-controls.service",
             "A service row starts and stops from its always-visible button; the dot says "
             "Stopped, then Running",
-            expect="the File servers sidebar: 'Controls service …' with a green dot and a Stop "
+            expect="the Services sidebar: 'Controls service …' with a green dot and a Stop "
             "(filled square) button on the right without hovering; hovering the dot shows "
             "'Running' (#5852)",
         ):
