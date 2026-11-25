@@ -2106,7 +2106,15 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     );
 
     expect(report.outcome).toBe("skipped");
-    expect(report.message).toMatch(/connected/);
+    const connects = await executeScheduledRun(
+      fire({
+        connectWindow: "another",
+        targets: { kind: "connections", connectionIds: ["conn-offline"] },
+      }),
+      store
+    );
+    expect(connects.message).toBe("None of its connections was open");
+    expect(report.message).toMatch(/^None of its connections was open, and .* skip closed ones$/);
     expect(injected).toEqual([]);
   });
 
@@ -2476,6 +2484,9 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       expect(report).toMatchObject({ outcome: "failed", targetsRun: 2 });
       expect(report.runIds).toHaveLength(2);
       await vi.waitFor(() => expect(recordedMacroRuns).toHaveLength(2));
+      // The same words as the run's own record in the History (A-043).
+      const broken = recordedMacroRuns.find((r) => r.status === "failed")!;
+      expect(report.message).toBe(`${broken.targetLabels![0]}: ${broken.error}`);
       expect(recordedMacroRuns.map((r) => r.status).sort()).toEqual(["completed", "failed"]);
     });
 
@@ -2501,7 +2512,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
 
       expect(report).toEqual({
         outcome: "skipped",
-        message: "None of the target connections is connected",
+        message: "None of its connections was open, and the schedule is set to skip closed ones",
         targetsRun: 0,
       });
       expect(injected).toEqual([]);
@@ -2528,7 +2539,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       );
 
       expect(report.outcome).toBe("skipped");
-      expect(report.message).toMatch(/connected/);
+      expect(report.message).toMatch(/^None of its connections was open, and .* skip closed ones$/);
       expect(injected).toEqual([]);
     });
 

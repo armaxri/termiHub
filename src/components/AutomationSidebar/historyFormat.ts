@@ -117,12 +117,12 @@ export interface AutomationFilterOption {
 
 /**
  * The automations the history can be narrowed to: every automation with at
- * least one run (a deleted one too, by the name its newest run recorded),
+ * least one entry (a deleted one too, by the name its newest run recorded),
  * sorted by name. `names` maps ids to current names, so a renamed automation
  * shows its new name.
  */
 export function automationFilterOptions(
-  runs: readonly AutomationRun[],
+  runs: readonly Pick<AutomationRun, "automationId" | "automationName">[],
   names: ReadonlyMap<string, string>
 ): AutomationFilterOption[] {
   const seen = new Map<string, string>();

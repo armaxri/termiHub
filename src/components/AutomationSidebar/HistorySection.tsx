@@ -5,7 +5,9 @@ import { Button, ConfirmDialog, EmptyState, Select, Tooltip, toast } from "@/com
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
 import { errorMessage } from "@/utils/errorMessage";
 import { t } from "@/i18n/catalog";
+import { HistoryGapRow } from "./HistoryGapRow";
 import { HistoryRunRow } from "./HistoryRunRow";
+import { mergeHistory, scheduleGaps, schedulesOfRuns } from "./historyEntries";
 import { automationFilterOptions, runsOfAutomation } from "./historyFormat";
 import "./HistorySection.css";
 
@@ -28,7 +30,9 @@ export interface HistorySectionProps {
  * with one set of origin labels. Rows show the name, a status dot and when the
  * run ended; a row opens to show who started it, its outcome, its steps and
  * its terminals. The list can be narrowed to one automation, and "Clear…"
- * clears that automation's runs (or every run) after a confirmation.
+ * clears that automation's runs (or every run) after a confirmation. The times
+ * a schedule did not run stand between the runs (#6024), so one list answers
+ * what happened.
  * Metadata only: neither the typed input nor the terminal output is stored.
  */
 export function HistorySection({ automationId, onFilterChange, collapse }: HistorySectionProps) {
@@ -44,13 +48,24 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
   }, [loadAutomationRuns]);
 
   const names = useMemo(() => new Map(automations.map((a) => [a.id, a.name])), [automations]);
+  const schedules = useAppStore((s) => s.schedules);
+  const clearScheduleHistory = useAppStore((s) => s.clearScheduleHistory);
+  const allGaps = useMemo(() => scheduleGaps(schedules, names), [schedules, names]);
   const options = useMemo(
-    () => automationFilterOptions(automationRuns, names),
-    [automationRuns, names]
+    () => automationFilterOptions([...automationRuns, ...allGaps], names),
+    [automationRuns, allGaps, names]
   );
   const runs = useMemo(
     () => runsOfAutomation(automationRuns, automationId),
     [automationRuns, automationId]
+  );
+  const gaps = useMemo(
+    () => (automationId ? allGaps.filter((g) => g.automationId === automationId) : allGaps),
+    [allGaps, automationId]
+  );
+  const entries = useMemo(
+    () => mergeHistory(runs, gaps, schedulesOfRuns(schedules)),
+    [runs, gaps, schedules]
   );
   const filterName = automationId
     ? (names.get(automationId) ??
@@ -71,22 +86,27 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
   }, []);
 
   const clear = useCallback(
-    async (runIds?: string[]) => {
+    async (of: { runIds?: string[]; automationId: string | null }) => {
       setConfirmClear(false);
       try {
-        await clearAutomationRuns(runIds);
+        await clearAutomationRuns(of.runIds);
+        const ids = schedules
+          .filter((s) => of.automationId === null || s.action.automationId === of.automationId)
+          .filter((s) => (s.history ?? []).length > 0)
+          .map((s) => s.id);
+        if (ids.length > 0) await clearScheduleHistory(ids);
       } catch (err) {
         toast.error(`Failed to clear history: ${errorMessage(err)}`);
       }
     },
-    [clearAutomationRuns]
+    [clearAutomationRuns, clearScheduleHistory, schedules]
   );
 
   const handleConfirm = useCallback(
-    () => clear(automationId ? runs.map((r) => r.id) : undefined),
+    () => clear({ runIds: automationId ? runs.map((r) => r.id) : undefined, automationId }),
     [clear, automationId, runs]
   );
-  const handleClearAll = useCallback(() => clear(), [clear]);
+  const handleClearAll = useCallback(() => clear({ automationId: null }), [clear]);
 
   const selectOptions = useMemo(() => {
     const list = [{ value: ALL, label: t("automationHistory.filter.all") }, ...options];
@@ -97,7 +117,8 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
     return list;
   }, [options, automationId, filterName]);
 
-  const clearDisabled = automationId ? runs.length === 0 : automationRuns.length === 0;
+  const total = automationRuns.length + allGaps.length;
+  const clearDisabled = entries.length === 0;
 
   return (
     <section
@@ -146,7 +167,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
           )
         }
       />
-      {open && (automationRuns.length > 0 || automationId) ? (
+      {open && (total > 0 || automationId) ? (
         <div className="automation-history__filter-bar">
           <Select
             value={automationId ?? ALL}
@@ -182,7 +203,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
         confirmLabel="Clear history"
         confirmVariant="danger"
         alternateAction={
-          automationId && automationRuns.length > runs.length
+          automationId && total > entries.length
             ? { label: "Clear all history", variant: "secondary", onClick: handleClearAll }
             : undefined
         }
@@ -190,7 +211,7 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
         onConfirm={handleConfirm}
         onCancel={() => setConfirmClear(false)}
       />
-      {!open ? null : runs.length === 0 ? (
+      {!open ? null : entries.length === 0 ? (
         <div id={contentId}>
           <EmptyState
             title={automationId ? t("automationHistory.empty.filtered") : t("runHistory.empty")}
@@ -204,14 +225,24 @@ export function HistorySection({ automationId, onFilterChange, collapse }: Histo
           role="list"
           data-testid="automation-history-list"
         >
-          {runs.map((run) => (
-            <HistoryRunRow
-              key={run.id}
-              run={run}
-              expanded={expanded.has(run.id)}
-              onToggle={handleToggle}
-            />
-          ))}
+          {entries.map((entry) =>
+            entry.kind === "run" ? (
+              <HistoryRunRow
+                key={entry.run.id}
+                run={entry.run}
+                schedule={entry.schedule}
+                expanded={expanded.has(entry.run.id)}
+                onToggle={handleToggle}
+              />
+            ) : (
+              <HistoryGapRow
+                key={entry.gap.id}
+                gap={entry.gap}
+                expanded={expanded.has(entry.gap.id)}
+                onToggle={handleToggle}
+              />
+            )
+          )}
         </div>
       )}
     </section>

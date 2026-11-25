@@ -10,15 +10,27 @@
 
 .schedule-editor__row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--spacing-md);
+}
+
+.schedule-editor__row--when {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.schedule-editor__column {
+  display: flex;
+  flex-direction: column;
   gap: var(--spacing-sm);
+  min-width: 0;
 }
 
 .schedule-editor__connections {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xxs);
-  max-height: 160px;
+  max-height: 112px;
   overflow-y: auto;
   padding: var(--spacing-xs) var(--spacing-sm);
   border: 1px solid var(--border-primary);
@@ -65,13 +77,61 @@
 }
 
 .schedule-editor__note {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs-sm);
   margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.schedule-editor__note > svg {
+  flex-shrink: 0;
+  color: var(--color-info);
+}
+
+.schedule-editor__details {
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
-.schedule-confirm__hosts {
+.schedule-editor__details > summary {
+  cursor: pointer;
+}
+
+.schedule-editor__details > p {
   margin: var(--spacing-xs) 0 0;
+}
+
+/* Always in view: what will happen once this is saved (#6024). */
+.schedule-editor__summary {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-self: center;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.schedule-editor__summary > :first-child {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.schedule-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.schedule-confirm > p {
+  margin: 0;
+}
+
+.schedule-confirm__hosts {
+  margin: 0;
   padding-left: var(--spacing-lg);
   max-height: 160px;
   overflow-y: auto;
@@ -80,7 +140,7 @@
 .schedules {
   display: flex;
   flex-direction: column;
-  max-height: 40%;
+  max-height: 50%;
   border-top: 1px solid var(--border-primary);
 }
 
@@ -114,59 +174,34 @@
   padding: var(--spacing-xxs) 0;
 }
 
-.schedules__meta {
+/* What a schedule's row says (#6024): whole sentences, never cut. */
+.schedules__line {
   display: block;
   color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
-/* A failed last run is a state that needs attention (#5757): a compact marker
-   on the row; the run's details are in the row tooltip. */
-.schedules__last-failed {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--color-error);
-}
-
-.schedule-attempts {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-  margin: var(--spacing-xxs) 0 0;
-  padding: var(--spacing-xs) 0 0 var(--spacing-sm);
-  border-left: 1px solid var(--border-primary);
-  list-style: none;
-}
-
-.schedule-attempts__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xxs);
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-}
-
-.schedule-attempts__head {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--spacing-xs);
-}
-
-.schedule-attempts__outcome {
+.schedules__state[data-state="on"] {
   color: var(--text-primary);
 }
 
-.schedule-attempts__message,
-.schedule-attempts__runs {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.schedules__state[data-state="paused"] {
+  color: var(--color-warning);
+}
+
+.schedules__line--warning {
+  color: var(--color-warning);
+}
+
+.schedules__line--last {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+/* The dot sits on the first line of a text that wraps. */
+.schedules__line--last > :first-child {
+  flex-shrink: 0;
+  margin-top: 0.4em;
 }
 
 @media (prefers-reduced-motion: reduce) {

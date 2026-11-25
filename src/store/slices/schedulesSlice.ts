@@ -1,6 +1,7 @@
 import { StateCreator } from "zustand";
 
 import {
+  clearScheduleHistory as apiClearScheduleHistory,
   deleteSchedule as apiDeleteSchedule,
   listSchedules as apiListSchedules,
   saveSchedule as apiSaveSchedule,
@@ -40,6 +41,8 @@ export interface SchedulesSlice {
     enabled: boolean,
     confirmed: boolean
   ) => Promise<ScheduleView>;
+  /** Clear the recorded attempts of these schedules; the last result stays. */
+  clearScheduleHistory: (scheduleIds: string[]) => Promise<void>;
   /** Pause or resume all schedules. */
   setSchedulesPaused: (paused: boolean) => Promise<void>;
   /**
@@ -103,6 +106,15 @@ export const createSchedulesSlice: StateCreator<AppState, [], [], SchedulesSlice
       const view = await apiSetScheduleEnabled(scheduleId, enabled, confirmed);
       adopt(view);
       return view;
+    },
+
+    clearScheduleHistory: async (scheduleIds) => {
+      await apiClearScheduleHistory(scheduleIds);
+      set((state) => ({
+        schedules: state.schedules.map((s) =>
+          scheduleIds.includes(s.id) ? { ...s, history: [] } : s
+        ),
+      }));
     },
 
     setSchedulesPaused: async (paused) => {

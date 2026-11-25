@@ -34,7 +34,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "./appStore";
 import { collectLiveTabs } from "./layoutHelpers";
 import { localProcessRefusal, localProcessRefusalToastId } from "./localProcessRefusal";
-import { unattendedParamValues } from "./scheduledRuns";
+import { unattendedParamValues } from "@/utils/unattended";
 import { currentSessionView, regionExited } from "./sessionBridge";
 import { resolveConnectedTargets } from "./slices/workflowFanout";
 import { activeWorkflowRunCount, runWorkflowOnTarget } from "./slices/workflowRunOnTarget";

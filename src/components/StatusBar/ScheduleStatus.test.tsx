@@ -53,7 +53,7 @@ describe("ScheduleStatus (PROD-043)", () => {
   it("counts the enabled schedules and flags a running one", () => {
     useAppStore.setState({ schedules: [view("a", true), view("b", true, true), view("c", false)] });
     render();
-    expect(pill()!.textContent).toBe("2 schedules active · running");
+    expect(pill()!.textContent).toBe("2 schedules on · running");
   });
 
   it("says paused under the global pause", () => {

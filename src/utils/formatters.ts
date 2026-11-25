@@ -315,6 +315,32 @@ export function formatRelativeDay(days: number): string {
   return new Intl.RelativeTimeFormat(resolveUiLocale(), { numeric: "auto" }).format(days, "day");
 }
 
+/**
+ * When something happens or happened, to the minute, in the one format every
+ * schedule and run history uses (#6024): `today 02:00`, `yesterday 02:00`,
+ * `tomorrow 02:00`, else `Thu, Oct 1 02:00`, with the year when it is not this
+ * one. Days and dates are rendered in the UI locale (#4374), the time as `HH:MM`
+ * like the time a schedule is set to. Empty for an unparseable input.
+ */
+export function formatDayTime(value: DateInput, now: Date = new Date()): string {
+  const date = toValidDate(value);
+  if (!date) return "";
+  const dayStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((dayStart(date) - dayStart(now)) / (24 * 60 * 60 * 1000));
+  const day =
+    Math.abs(days) <= 1
+      ? formatRelativeDay(days)
+      : date.getFullYear() === now.getFullYear()
+        ? formatShortDate(date)
+        : date.toLocaleDateString(resolveUiLocale(), {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          });
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${day} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** Truncate string with ellipsis (default max length 60). */
 export function truncate(str: string, maxLength = 60): string {
   if (str.length <= maxLength) return str;

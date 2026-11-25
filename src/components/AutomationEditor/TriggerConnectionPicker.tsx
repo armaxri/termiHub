@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { DeletedConnections } from "@/components/Automations/DeletedConnections";
 import { Checkbox, EmptyState } from "@/components/ui";
 import { t } from "@/i18n/catalog";
 import type { SavedConnection } from "@/types/connection";
@@ -18,7 +19,9 @@ interface TriggerConnectionPickerProps {
 
 /**
  * The saved-connection checklist a connection-bound trigger
- * (on-connect, on-disconnect, on-output-match) binds to.
+ * (on-connect, on-disconnect, on-output-match) binds to. A bound connection that
+ * was deleted is named and can be removed, and a trigger with none left says
+ * that it starts nothing (A-025).
  */
 export function TriggerConnectionPicker({
   label,
@@ -32,15 +35,23 @@ export function TriggerConnectionPicker({
     onChange(checked ? [...selected, connectionId] : selected.filter((id) => id !== connectionId));
   };
 
+  const deleted = selected.filter((id) => !connections.some((c) => c.id === id));
+  const noneLeft = deleted.length === selected.length;
+
   return (
     <>
       <span id={labelId} className="automation-triggers__detail-label">
         {label}
       </span>
-      {connections.length === 0 ? (
+      {connections.length === 0 && deleted.length === 0 ? (
         <EmptyState title={t("workflow.trigger.connections.empty")} />
       ) : (
         <div className="automation-triggers__connections" role="group" aria-labelledby={labelId}>
+          <DeletedConnections
+            ids={deleted}
+            onRemove={(id) => toggle(id, false)}
+            testIdPrefix={testIdPrefix}
+          />
           {connections.map((conn) => (
             <label className="automation-triggers__connection" key={conn.id}>
               <Checkbox
@@ -54,8 +65,15 @@ export function TriggerConnectionPicker({
           ))}
         </div>
       )}
-      {connections.length > 0 && selected.length === 0 && (
-        <span className="automation-triggers__hint" data-testid={`${testIdPrefix}-none`}>
+      {(connections.length > 0 || deleted.length > 0) && noneLeft && (
+        <span
+          className={
+            deleted.length > 0
+              ? "automation-triggers__hint automation-triggers__hint--warning"
+              : "automation-triggers__hint"
+          }
+          data-testid={`${testIdPrefix}-none`}
+        >
           Choose at least one connection, or this never starts it.
         </span>
       )}

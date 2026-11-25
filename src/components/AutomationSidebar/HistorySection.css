@@ -81,6 +81,12 @@
   white-space: nowrap;
 }
 
+/* A scheduled time without a run says so: its dot alone would not (#6024). */
+.automation-history__outcome {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+}
+
 /* The disclosed details: a compact label/value grid under the row. */
 .automation-history__details {
   display: grid;

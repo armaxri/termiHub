@@ -11,6 +11,7 @@ import {
   formatBuildDate,
   formatClockTime,
   formatLogTime,
+  formatDayTime,
   formatRelativeDay,
   formatShortDate,
   truncate,
@@ -315,6 +316,47 @@ describe("UI-locale date helpers (#4374, I18N2-004)", () => {
 
   it("formatLogTime returns an empty string for an unparseable input", () => {
     expect(formatLogTime("not a date")).toBe("");
+  });
+
+  describe("formatDayTime: one format for schedules and runs (#6024)", () => {
+    const now = new Date(2026, 5, 1, 10, 0);
+    const of = (...date: [number, number, number, number, number]) =>
+      formatDayTime(new Date(...date).toISOString(), now);
+
+    it("names the days around today, else the date, and always HH:MM", () => {
+      setLocale("en-US");
+      expect(of(2026, 5, 1, 18, 5)).toBe("today 18:05");
+      expect(of(2026, 5, 2, 7, 0)).toBe("tomorrow 07:00");
+      expect(of(2026, 4, 31, 2, 0)).toBe("yesterday 02:00");
+      expect(of(2026, 5, 5, 9, 30)).toBe("Fri, Jun 5 09:30");
+      expect(of(2026, 4, 30, 23, 59)).toBe("Sat, May 30 23:59");
+      expect(formatDayTime("garbage", now)).toBe("");
+    });
+
+    it("adds the year when it is another one", () => {
+      setLocale("en-US");
+      expect(of(2025, 11, 24, 2, 0)).toBe("Dec 24, 2025 02:00");
+    });
+
+    it("counts days, not 24 hours", () => {
+      setLocale("en-US");
+      const late = new Date(2026, 5, 1, 23, 59);
+      expect(formatDayTime(new Date(2026, 5, 2, 0, 1), late)).toBe("tomorrow 00:01");
+    });
+
+    it("renders the relative day and the date in one locale (#4374)", () => {
+      setLocale("de-DE");
+      expect(of(2026, 5, 1, 18, 5)).toBe("heute 18:05");
+      expect(of(2026, 5, 2, 7, 0)).toBe("morgen 07:00");
+      expect(of(2026, 4, 31, 7, 0)).toBe("gestern 07:00");
+      const later = new Date(2026, 5, 5, 9, 30);
+      const date = new Intl.DateTimeFormat("de-DE", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      }).format(later);
+      expect(of(2026, 5, 5, 9, 30)).toBe(`${date} 09:30`);
+    });
   });
 
   it("formatRelativeDay names today/tomorrow in the UI locale", () => {

@@ -21,6 +21,10 @@ export interface AutomationSectionsState {
    * saves of the same one apart.
    */
   saved: { id: string; seq: number } | null;
+  /** The schedule saved last, marked and scrolled to the same way (#6024). */
+  savedSchedule: { id: string; seq: number } | null;
+  /** Mark a schedule's row as just saved. */
+  markScheduleSaved: (scheduleId: string) => void;
   /** Mark an automation's row as just saved. */
   markSaved: (automationId: string) => void;
   /** Open or close the Schedules section. */
@@ -40,18 +44,32 @@ export const useAutomationSections = create<AutomationSectionsState>((set) => ({
   historyAutomationId: null,
   saved: null,
   markSaved: (id) => set((s) => ({ saved: { id, seq: (s.saved?.seq ?? 0) + 1 } })),
+  savedSchedule: null,
+  markScheduleSaved: (id) =>
+    set((s) => ({ savedSchedule: { id, seq: (s.savedSchedule?.seq ?? 0) + 1 } })),
   setSchedulesOpen: (schedulesOpen) => set({ schedulesOpen }),
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
   setHistoryAutomationId: (historyAutomationId) => set({ historyAutomationId }),
   showHistoryOf: (historyAutomationId) => set({ historyOpen: true, historyAutomationId }),
 }));
 
-/**
- * Show the Automations view with its Schedules section open. Selecting the view
- * that already shows would close the sidebar, so that case leaves it alone.
- */
+/** Show the Automations view with its Schedules section open. */
 export function showSchedulesInSidebar(): void {
   useAutomationSections.getState().setSchedulesOpen(true);
+  showAutomationsView();
+}
+
+/** Show the Automations view with the History of one automation open (#6024). */
+export function showHistoryInSidebar(automationId: string): void {
+  useAutomationSections.getState().showHistoryOf(automationId);
+  showAutomationsView();
+}
+
+/**
+ * Selecting the view that already shows would close the sidebar, so that case
+ * leaves it alone.
+ */
+function showAutomationsView(): void {
   const { sidebarView, sidebarCollapsed, setSidebarView } = useAppStore.getState();
   if (sidebarView !== "automations" || sidebarCollapsed) setSidebarView("automations");
 }
