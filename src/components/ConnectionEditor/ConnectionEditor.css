@@ -381,7 +381,17 @@
   white-space: nowrap;
 }
 
+.port-forwarding__types-intro,
+.port-forwarding__types {
+  margin: 0;
+}
+
+.port-forwarding__types {
+  padding-left: var(--spacing-xl);
+}
+
 .port-forwarding__mapping,
+.port-forwarding__summary,
 .port-forwarding__status {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);

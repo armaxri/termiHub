@@ -16,6 +16,8 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
+import { TooltipProvider } from "@/components/ui";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 
 const saveTunnel = vi.fn((_config: TunnelConfig) => Promise.resolve());
@@ -72,7 +74,11 @@ let root: Root;
 
 async function render(connectionId: string | undefined) {
   await act(async () => {
-    root.render(<ConnectionPortForwardingSection connectionId={connectionId} />);
+    root.render(
+      <TooltipProvider delayDuration={0}>
+        <ConnectionPortForwardingSection connectionId={connectionId} />
+      </TooltipProvider>
+    );
   });
 }
 
@@ -86,6 +92,8 @@ async function click(el: HTMLElement | null) {
     el!.click();
   });
 }
+
+setupAgentsRegion();
 
 describe("ConnectionPortForwardingSection (PROD-023)", () => {
   beforeEach(() => {
@@ -118,9 +126,46 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
     expect(byTestId("port-forward-row-t3")).not.toBeNull();
     expect(byTestId("port-forward-row-t2")).toBeNull();
     expect(byTestId("port-forward-row-t1")!.textContent).toContain("127.0.0.1:5432 → db:5432");
-    expect(byTestId("port-forward-row-t1")!.textContent).toContain("-L");
+    expect(byTestId("port-forward-type-t1")!.textContent).toBe("Local (ssh -L)");
     expect(byTestId("port-forward-status-t1")!.textContent).toBe("connected");
     expect(byTestId("port-forward-status-t3")!.textContent).toBe("disconnected");
+  });
+
+  it("explains each type before the connection is saved (#6027)", async () => {
+    seed([]);
+    await render(undefined);
+    const items = byTestId("connection-port-forwarding-unsaved")!.querySelectorAll("li");
+    expect(Array.from(items, (li) => li.textContent)).toEqual([
+      "Local (ssh -L): Reach something on the SSH server's side",
+      "Remote (ssh -R): Let the SSH server reach something here",
+      "Dynamic (ssh -D): SOCKS5 proxy through the SSH server",
+    ]);
+  });
+
+  it("explains a forward on its row, on hover and to screen readers (#6027)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedAgentsRegion({ remoteAgents: [{ id: "agent-1", name: "build-box" } as any] });
+    seed([
+      tunnel("t1", "conn-1"),
+      tunnel("t2", "conn-1", { host: { kind: "agent", agentId: "agent-1" } }),
+    ]);
+    await render("conn-1");
+    expect(byTestId("port-forward-row-t1")!.textContent).toContain(
+      "Reach something on the SSH server's side"
+    );
+    const describedBy = byTestId("port-forward-edit-t1")!.getAttribute("aria-describedby");
+    expect(document.getElementById(describedBy!)?.textContent).toContain(
+      "Opens a port on this computer"
+    );
+    await act(async () => {
+      byTestId("port-forward-type-t2")!.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" })
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    expect(byTestId("port-forward-type-help-t2")!.textContent).toContain(
+      "Opens a port on agent build-box"
+    );
   });
 
   it("shows an empty state when nothing is attached", async () => {

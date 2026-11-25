@@ -75,4 +75,27 @@ describe("TunnelDiagram", () => {
     expect(text).toContain("Internet");
     expect(text).toContain("*:*");
   });
+
+  it("names the agent instead of this computer for an agent-hosted tunnel (#6027)", () => {
+    const local: TunnelType = {
+      type: "local",
+      config: { localHost: "127.0.0.1", localPort: 1, remoteHost: "db", remotePort: 2 },
+    };
+    const remote: TunnelType = {
+      type: "remote",
+      config: { localHost: "127.0.0.1", localPort: 1, remoteHost: "0.0.0.0", remotePort: 2 },
+    };
+    const dynamic: TunnelType = {
+      type: "dynamic",
+      config: { localHost: "127.0.0.1", localPort: 1 },
+    };
+    const first = (tunnelType: TunnelType) => {
+      act(() => root.render(<TunnelDiagram tunnelType={tunnelType} agentName="build-box" />));
+      return boxes()[0];
+    };
+    expect(first(local)).toContain("Agent build-box");
+    expect(first(dynamic)).toContain("Agent build-box");
+    expect(first(remote)).toContain("Agent-side target");
+    expect(container.textContent).not.toContain("Your PC");
+  });
 });

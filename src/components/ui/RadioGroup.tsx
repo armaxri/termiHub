@@ -1,5 +1,6 @@
 import React from "react";
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
+import { Tooltip, TooltipLines } from "./Tooltip";
 import "./ui.css";
 
 /** A single option for the declarative {@link RadioGroup} API. */
@@ -13,6 +14,15 @@ export interface RadioGroupOption {
    * it is wired to the radio as its accessible description.
    */
   description?: React.ReactNode;
+  /**
+   * A longer explanation, one sentence or idea per line. Only rendered by the
+   * `cards` variant: shown in a tooltip while the card is hovered or holds
+   * keyboard focus (selected or not), and always part of the radio's accessible
+   * description. Keep what the user needs at a glance in `description`; touch
+   * users never see the tooltip. Needs a `TooltipProvider` above. Do not
+   * combine with `title`: two tooltips would open.
+   */
+  help?: readonly string[];
   /** Disable this individual option. */
   disabled?: boolean;
   /** Native tooltip for the option (e.g. why it is disabled). */
@@ -115,6 +125,30 @@ export const RadioGroupItem = React.forwardRef<
   );
 });
 
+/**
+ * The Radix radio a card's help tooltip is attached to. Two of the tooltip
+ * trigger's injected props do not fit a radio:
+ * - its `data-state` (open or closed) would replace the radio's `checked` /
+ *   `unchecked`, and with it the selected style, so it is dropped;
+ * - its `onClick` closes the tooltip. The arrow keys select through a synthetic
+ *   click, so it only runs for a real pointer click (`detail` counts presses):
+ *   a keyboard user keeps the help of the card they moved to.
+ */
+const RadioCardItem = React.forwardRef<
+  React.ElementRef<typeof RadioGroupPrimitive.Item>,
+  RadioGroupPrimitive.RadioGroupItemProps & { "data-state"?: string }
+>(function RadioCardItem({ "data-state": _tooltipState, onClick, ...props }, ref) {
+  return (
+    <RadioGroupPrimitive.Item
+      ref={ref}
+      {...props}
+      onClick={(e) => {
+        if (e.detail > 0) onClick?.(e);
+      }}
+    />
+  );
+});
+
 /** Props for the internal card-option renderer. */
 interface RadioCardProps {
   option: RadioGroupOption;
@@ -126,20 +160,24 @@ interface RadioCardProps {
  * One option of the `cards` variant: the Radix radio itself is the card, so the
  * whole card is clickable, sits in the group's roving tab order, and exposes
  * `role="radio"` + `aria-checked`. The label names the radio and the
- * description describes it, so screen readers announce them separately.
+ * description (plus the help, when there is one) describes it, so screen
+ * readers announce them separately.
  */
 function RadioCard({ option, idPrefix }: RadioCardProps): React.ReactElement {
   const labelId = `${idPrefix}-label`;
   const descId = `${idPrefix}-desc`;
+  const helpId = `${idPrefix}-help`;
   const hasDescription = option.description !== undefined && option.description !== null;
-  return (
-    <RadioGroupPrimitive.Item
+  const help = option.help ?? [];
+  const describedBy = [hasDescription && descId, help.length > 0 && helpId].filter(Boolean);
+  const card = (
+    <RadioCardItem
       className="ui-radio-card"
       value={option.value}
       disabled={option.disabled}
       title={option.title}
       aria-labelledby={labelId}
-      aria-describedby={hasDescription ? descId : undefined}
+      aria-describedby={describedBy.length > 0 ? describedBy.join(" ") : undefined}
       data-testid={option["data-testid"]}
     >
       {/* Decorative: the card itself is the radio and carries aria-checked. */}
@@ -152,7 +190,24 @@ function RadioCard({ option, idPrefix }: RadioCardProps): React.ReactElement {
           {option.description}
         </span>
       )}
-    </RadioGroupPrimitive.Item>
+    </RadioCardItem>
+  );
+  if (help.length === 0) return card;
+  return (
+    <>
+      <Tooltip
+        content={<TooltipLines lines={help} />}
+        side="top"
+        data-testid={option["data-testid"] && `${option["data-testid"]}-help`}
+      >
+        {card}
+      </Tooltip>
+      {/* The help for assistive tech while no tooltip is open. `hidden` keeps it
+          out of the layout and the reading order; aria-describedby still reads it. */}
+      <span id={helpId} hidden>
+        {help.join(" ")}
+      </span>
+    </>
   );
 }
 

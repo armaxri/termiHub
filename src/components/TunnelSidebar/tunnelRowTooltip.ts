@@ -1,7 +1,8 @@
 import { t, tf } from "@/i18n/catalog";
-import type { TunnelConfig, TunnelStats } from "@/types/tunnel";
+import { THIS_COMPUTER, type TunnelConfig, type TunnelStats } from "@/types/tunnel";
 import { formatBytes, formatRate } from "@/utils/formatters";
 import { tunnelPortMapping } from "@/utils/tunnelSummary";
+import { tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 
 /** What the tunnel row's tooltip needs beyond the config (#5770). */
 export interface TunnelRowTooltipInput {
@@ -22,24 +23,24 @@ export interface TunnelRowTooltipInput {
   pair?: string | null;
 }
 
-/** `Local`, `Remote` or `Dynamic`. */
-export function tunnelTypeLabel(tunnel: TunnelConfig): string {
-  const type = tunnel.tunnelType.type;
-  return type.charAt(0).toUpperCase() + type.slice(1);
-}
-
 /**
- * The tunnel row's tooltip lines (#5770): the forwarding (type and ports), the
- * SSH connection it goes through, the machine that hosts it, and — while it
+ * The tunnel row's tooltip lines (#5770): the forwarding (type and ports), what
+ * that type does (#6027), the SSH connection it goes through, the machine that hosts it, and — while it
  * runs — its traffic. The row itself shows only the name, the description and
  * markers that need attention. See docs/copy-style.md -> "List rows".
  */
 export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipInput): string[] {
+  const help = tunnelTypeHelp(
+    tunnel.tunnelType.type,
+    input.host.onAgent ? { kind: "agent", agentId: input.host.label } : THIS_COMPUTER
+  );
   const out = [
     tf("tunnel.tooltip.forward", {
-      type: tunnelTypeLabel(tunnel),
+      type: help.label,
+      flag: help.flag,
       mapping: tunnelPortMapping(tunnel),
     }),
+    help.lines[0],
     tf("tunnel.tooltip.via", { connection: input.sshLabel }),
     input.host.onAgent
       ? tf("tunnel.tooltip.hostAgent", { agent: input.host.label })

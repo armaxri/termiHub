@@ -21,18 +21,6 @@ export function tunnelPortMapping(tunnel: TunnelConfig): string {
   }
 }
 
-/** Short type label matching the `ssh` flag for a tunnel type (`-L` / `-R` / `-D`). */
-export function tunnelTypeFlag(tunnel: TunnelConfig): string {
-  switch (tunnel.tunnelType.type) {
-    case "local":
-      return "-L";
-    case "remote":
-      return "-R";
-    case "dynamic":
-      return "-D";
-  }
-}
-
 /**
  * The confirmation message to show before deleting `tunnelId`, or `null` when
  * the delete is safe to run directly (an idle, unchained tunnel).

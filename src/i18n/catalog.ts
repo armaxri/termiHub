@@ -223,6 +223,37 @@ const en = {
     "The SSH connection this tunnel used was deleted. Choose another SSH connection.",
   "tunnel.editor.chooseSshConnection": "Choose an SSH connection",
 
+  // ── SSH tunnel types in plain words (#6027) ─────────────────────────────
+  // Read through `src/utils/tunnelTypeHelp.ts`. `{machine}` is the machine that
+  // hosts the tunnel ("this computer" or "agent build-box"), the same name the
+  // editor's endpoint lines use; the `.agent` variants replace "here".
+  "tunnel.type.local.label": "Local",
+  "tunnel.type.local.summary": "Reach something on the SSH server's side",
+  "tunnel.type.local.lead": "Use something on the SSH server's side as if it ran here.",
+  "tunnel.type.local.lead.agent":
+    "Use something on the SSH server's side as if it ran on {machine}.",
+  "tunnel.type.local.how":
+    "Opens a port on {machine} and sends its traffic through SSH to a host and port the SSH server can reach.",
+  "tunnel.type.local.example":
+    "Example: a database only the SSH server can reach, at localhost:5432 on {machine}.",
+  "tunnel.type.remote.label": "Remote",
+  "tunnel.type.remote.summary": "Let the SSH server reach something here",
+  "tunnel.type.remote.summary.agent": "Let the SSH server reach something on {machine}'s side",
+  "tunnel.type.remote.lead": "Let the SSH server use something here.",
+  "tunnel.type.remote.lead.agent": "Let the SSH server use something on {machine}'s side.",
+  "tunnel.type.remote.how":
+    "Opens a port on the SSH server and sends its traffic back through SSH to a host and port {machine} can reach.",
+  "tunnel.type.remote.example":
+    "Example: show a web app running on {machine} to someone logged in on the SSH server.",
+  "tunnel.type.dynamic.label": "Dynamic",
+  "tunnel.type.dynamic.summary": "SOCKS5 proxy through the SSH server",
+  "tunnel.type.dynamic.lead": "Use the SSH server as a proxy for many destinations.",
+  "tunnel.type.dynamic.how":
+    "Opens a SOCKS5 proxy on {machine}. Programs set to use it connect from the SSH server.",
+  "tunnel.type.dynamic.example": "Example: browse an internal network through the SSH server.",
+  "tunnel.type.dynamic.example.agent":
+    "Example: programs on {machine} reach an internal network through the SSH server.",
+
   // ── Credential store switch (Settings ▸ Security, #2839 / #3323 / #5629 / #5837) ──
   // Plain words and the option cards' names, never the internal mode names:
   // "saved passwords", "the OS Keychain", "your master-password vault".
@@ -471,7 +502,7 @@ const en = {
   "schedule.attempts.show": "Show recent attempts ({count})",
   "schedule.attempts.hide": "Hide recent attempts",
   // Tunnels, services, workspaces, agents and recent sessions (#5770).
-  "tunnel.tooltip.forward": "{type} · {mapping}",
+  "tunnel.tooltip.forward": "{type} ({flag}) · {mapping}",
   "tunnel.tooltip.via": "Via {connection}",
   "tunnel.tooltip.hostLocal": "Hosted on this computer",
   "tunnel.tooltip.hostAgent": "Hosted on agent {agent}",
