@@ -24,7 +24,6 @@ EDITOR_CANCEL = "automation-editor-cancel"
 # The shared unsaved-changes prompt the Modal raises when a dirty editor is
 # dismissed (#4314). "Just close" renders as "Discard changes" in this variant.
 UNSAVED_DIALOG = "unsaved-changes-dialog"
-UNSAVED_KEEP_EDITING = "unsaved-changes-cancel"
 UNSAVED_DISCARD = "unsaved-changes-just-close"
 
 

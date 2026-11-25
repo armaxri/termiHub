@@ -66,8 +66,6 @@ export function referencedAutomations(steps: readonly RunnableStep[]): string[] 
   const ids: string[] = [];
   visitSteps(steps, (step) => {
     if (step.kind === "run-automation") ids.push(step.automationId);
-    // The legacy spelling, still accepted on read.
-    else if (step.kind === "run-macro") ids.push(step.macroId);
   });
   return ids;
 }
@@ -105,7 +103,6 @@ const RUNNABLE_KIND_MAP: Record<RunnableStep["kind"], true> = {
   "type-keys": true,
   "send-command": true,
   "run-script": true,
-  "run-macro": true,
   "run-automation": true,
   wait: true,
   "run-local-process": true,

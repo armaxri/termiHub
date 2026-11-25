@@ -3,7 +3,7 @@
  *
  * Pins that the store's macro actions round-trip through the automation store
  * (#5818, slice 4: the macro view is a thin adapter over automationApi):
- * loadMacros populates state, and deleteMacroFromBackend only mutates state after the
+ * loadAutomations populates state, and deleteAutomationFromBackend only mutates state after the
  * backend delete resolves (and rethrows on failure without desyncing).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";

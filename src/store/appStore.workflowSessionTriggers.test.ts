@@ -231,7 +231,7 @@ describe("appStore — session-driven workflow triggers (#3791)", () => {
   });
 
   describe("on-output-match", () => {
-    /** Install the triggers the way `loadWorkflows` does and capture the output tap. */
+    /** Install the triggers the way `loadAutomations` does and capture the output tap. */
     async function loadWithTap(triggers: WorkflowTrigger[]) {
       const setTap = vi.spyOn(terminalDispatcher, "setOutputTap");
       savedWorkflows.push(

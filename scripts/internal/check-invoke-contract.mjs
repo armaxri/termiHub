@@ -63,11 +63,6 @@ export const INJECTED_TYPES = new Set([
   "GlobalScope",
 ]);
 
-/** Why the legacy macro and workflow commands have no caller (#5818). */
-const AUTOMATIONS_LEGACY =
-  "frozen legacy store since slice 4 of #5818 (the UI uses the automation commands); " +
-  "slice 12 removes it";
-
 /**
  * Registered commands with no production caller in src/ that are kept on
  * purpose, each with the reason. Keep this list short: a command that nothing
@@ -75,22 +70,7 @@ const AUTOMATIONS_LEGACY =
  *
  * @type {Map<string, string>}
  */
-export const ORPHAN_ALLOWLIST = new Map(
-  [
-    "list_macros",
-    "save_macro",
-    "delete_macro",
-    "list_macro_runs",
-    "record_macro_run",
-    "clear_macro_run_history",
-    "list_workflows",
-    "save_workflow",
-    "delete_workflow",
-    "list_workflow_runs",
-    "record_workflow_run",
-    "clear_workflow_run_history",
-  ].map((command) => [command, AUTOMATIONS_LEGACY])
-);
+export const ORPHAN_ALLOWLIST = new Map();
 
 /**
  * Convert a Rust parameter name to the invoke key Tauri expects (heck's

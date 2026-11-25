@@ -547,7 +547,9 @@ fn what_cannot_be_read_of_a_legacy_file_is_reported() {
     let warnings = legacy_warnings(&report.library);
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0].file_name, "macros.json");
-    assert!(warnings[0].message.starts_with("1 corrupt entry of macros.json"));
+    assert!(warnings[0]
+        .message
+        .starts_with("1 corrupt entry of macros.json"));
     let report = run_boot_migration(dir.path(), now()).unwrap();
     assert!(legacy_warnings(&report.library).is_empty());
 
@@ -557,7 +559,9 @@ fn what_cannot_be_read_of_a_legacy_file_is_reported() {
         let report = run_boot_migration(dir.path(), now()).unwrap();
         let warnings = legacy_warnings(&report.library);
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].message.contains("Could not read workflows.json"));
+        assert!(warnings[0]
+            .message
+            .contains("Could not read workflows.json"));
         assert!(warnings[0].details.is_some());
     }
     assert_eq!(
@@ -580,7 +584,9 @@ fn the_first_migration_reports_what_it_could_not_read() {
     let warnings = legacy_warnings(&report.library);
     let files: Vec<_> = warnings.iter().map(|w| w.file_name.as_str()).collect();
     assert_eq!(files, ["workflows.json", "macros.json"]);
-    assert!(warnings[1].message.starts_with("2 corrupt entries of macros.json"));
+    assert!(warnings[1]
+        .message
+        .starts_with("2 corrupt entries of macros.json"));
 }
 
 /// Rewrite `automations.json` as a build from before the switch-over (slices
