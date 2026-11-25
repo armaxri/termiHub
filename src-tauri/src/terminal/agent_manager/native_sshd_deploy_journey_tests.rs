@@ -14,11 +14,17 @@
 //!    `--stdio` + `initialize`) on A, a persistent session running a counter,
 //!    then a desktop disconnect: the `--stdio` agent exits, the session daemon
 //!    keeps the counter going.
+//!    - **Failed setup (#5999, POSIX)** — run the setup wizard's script with an
+//!      upload that does not start, and one that stops starting once installed,
+//!      under that daemon: it exits with the "previous agent kept" code and the
+//!      OLD agent still runs, with no copy next to it.
 //! 4. **Update** — install build B over A while that daemon runs. The result
 //!    must report B's version line, leave no backup behind, and the probe must
 //!    now see B.
 //! 5. **Reattach** — reconnect (now B's `--stdio`), find the SAME session id,
 //!    re-attach, and see the counter past its pre-update value and advancing.
+//! 6. **Setup over a running agent (#5999, POSIX)** — the setup script installs
+//!    build A over B while B's agent is connected.
 //!
 //! A and B are the same source built with different `TERMIHUB_BUILD_BRANCH`
 //! values, so their `--version` lines differ (`… (branch: <label>)`) while the
@@ -54,11 +60,14 @@ use super::windows_ssh_host_tests::{
 use crate::terminal::agent_binary::is_windows_os;
 use crate::terminal::agent_deploy::{install_agent_bytes, probe_remote_agent, AgentDeployResult};
 use crate::terminal::agent_install::{
-    detect_windows_shell, windows_free_slot_command, windows_install_plan, WindowsShell,
-    POSIX_BACKUP_SUFFIX,
+    detect_windows_shell, posix_upload_path, prepare_posix_upload_dir, windows_free_slot_command,
+    windows_install_plan, WindowsShell, POSIX_BACKUP_SUFFIX,
 };
+use crate::terminal::agent_setup_posix::{generate_setup_script, EXIT_PREVIOUS_KEPT};
 use crate::terminal::backend::{RemoteAgentConfig, SshConfig};
-use crate::utils::remote_exec::{detect_remote_info, run_remote_command};
+use crate::utils::remote_exec::{
+    detect_remote_info, run_remote_command, run_remote_command_checked, upload_bytes_via_sftp,
+};
 use crate::utils::ssh_auth::connect_and_authenticate;
 use termihub_core::backends::ssh::handler::SshSession;
 
@@ -457,6 +466,56 @@ async fn start_counter_session(
     }
 }
 
+/// Run the setup wizard's script for `bytes` as the setup does: a fresh upload
+/// dir, both files over SFTP, `sh` on the script. (An exec, not the setup tab's
+/// PTY: the login shell must not keep a history.)
+fn run_setup(session: &SshSession, path: &str, bytes: &[u8]) -> Result<String, String> {
+    let dir = prepare_posix_upload_dir(session).unwrap_or_else(|e| panic!("upload dir: {e}"));
+    let binary = posix_upload_path(&dir);
+    upload_bytes_via_sftp(session, bytes, &binary).expect("upload the agent");
+    let script = generate_setup_script(path, false, &binary);
+    upload_bytes_via_sftp(session, script.as_bytes(), &format!("{dir}/setup.sh"))
+        .expect("upload the script");
+    let result = run_remote_command_checked(session, &format!("sh '{dir}/setup.sh'"));
+    let left = run_remote_command(session, &format!("ls '{dir}' \"$(dirname '{path}')\""));
+    eprintln!("journey: setup script: {result:?}; left: {left:?}");
+    let left = left.unwrap_or_default();
+    for copy in [".previous", ".new.", "setup.sh"] {
+        assert!(!left.contains(copy), "{copy} left behind: {left}");
+    }
+    result.map_err(|e| e.to_string())
+}
+
+/// #5999: setups that cannot work, over the installed `version`, which must
+/// still run afterwards.
+fn assert_failed_setups_keep_the_agent(
+    journey: &Journey,
+    session: &SshSession,
+    path: &str,
+    version: &str,
+    remote_os: &str,
+) {
+    let uploads: [(&str, &[u8]); 3] = [
+        ("not a program", b"not a program: termiHub #5999\n"),
+        (
+            "does not start",
+            b"#!/bin/sh\necho termihub-agent 9.9.9\nexit 3\n",
+        ),
+        (
+            "does not start once installed",
+            b"#!/bin/sh\necho termihub-agent 9.9.9\ncase \"$0\" in *.new.*) ;; *) exit 3 ;; esac\n",
+        ),
+    ];
+    for (what, bytes) in uploads {
+        let err = run_setup(session, path, bytes).expect_err(what);
+        assert!(
+            err.contains(&format!("exit status {EXIT_PREVIOUS_KEPT}:")),
+            "{what}: the setup must say the previous agent was kept: {err}"
+        );
+        assert_probe_reports(journey, session, path, version, remote_os);
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn deploy_probe_update_and_reattach_journey() {
     let Some(journey) = live_journey() else {
@@ -509,6 +568,17 @@ async fn deploy_probe_update_and_reattach_journey() {
     drop(channel);
     drop(session);
     tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    // ── 3b. Setups that fail keep build A (#5999).
+    if !windows_host {
+        let (j, path, want) = (journey.clone(), agent_path.clone(), version_a.clone());
+        let os = host.remote_os.clone();
+        with_session(&journey, move |session| {
+            assert_failed_setups_keep_the_agent(&j, session, &path, &want, &os);
+        })
+        .await;
+        eprintln!("journey: failed setups kept build A {version_a:?}");
+    }
 
     // ── 4. Update to build B under the running session daemon.
     let j = journey.clone();
@@ -582,6 +652,19 @@ async fn deploy_probe_update_and_reattach_journey() {
         serde_json::json!({ "session_id": sid }),
     )
     .await;
+
+    // ── 6. The setup script over a connected agent (#5999).
+    if !windows_host {
+        let (j, path, want) = (journey.clone(), agent_path.clone(), version_a.clone());
+        let os = host.remote_os.clone();
+        let bytes = std::fs::read(&journey.agent_bin).expect("read build A");
+        with_session(&journey, move |session| {
+            let out = run_setup(session, &path, &bytes).expect("the setup over a running agent");
+            assert!(out.contains("installed at"), "{out}");
+            assert_probe_reports(&j, session, &path, &want, &os);
+        })
+        .await;
+    }
     drop(channel);
     drop(session);
 

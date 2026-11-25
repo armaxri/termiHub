@@ -2271,6 +2271,21 @@ sequenceDiagram
   window acknowledges the fire with the target connections it runs on itself, and the connect
   window asks `schedule_run_coverage` (waiting briefly until every other window acknowledged)
   and skips those, so each target runs once per fire, in the window that holds it.
+- **Files** (`src/services/automationFileIo.ts`, #5818) — an export is `{ version, automations }`;
+  an import also reads the `macros` / `workflows` lists of older builds. A file is not trusted:
+  every entry is validated (`workflowSchema.ts`) and its unknown keys are left out, which the import
+  dialog says by name; an entry with a step or trigger kind this build does not know is refused by
+  name. An import gets fresh ids, arrives with its triggers and hotkeys switched off, and loses any
+  script file reference (#4310). `run-automation` steps are pointed at
+  the imported copies by id, never by name; what the file does not hold is reported.
+- **Recording** (`src/store/slices/recordingSlice.ts`, `src/services/inputRecorder.ts`, #1674,
+  #5818) — one terminal of a window at a time. It taps what that tab sends on behalf of the user:
+  xterm's user input (`xtermUserInput.ts` drops the focus reports and query replies that share
+  `onData`), pastes (a slot is reserved when the paste is asked for, so it keeps its place while
+  the clipboard is read) and dropped paths. The recording lives in frontend memory only, and only a
+  save or a discard ends it; `prepareWindowClose` and `prepareAppQuit` ask while one exists. Input
+  typed while the text before the cursor is a password prompt, and not echoed, is kept apart and
+  stored only on request.
 - **Macro run history** (`src-tauri/src/macros/history*.rs`, #3543) — every started macro
   playback (manual, command palette, a workflow's `run-macro` step, scheduled) is recorded
   fire-and-forget in `macro-runs.json`: macro id + name, start/end, outcome, steps played,

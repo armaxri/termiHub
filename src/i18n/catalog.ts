@@ -506,7 +506,7 @@ const en = {
   "plugin.tooltip.id": "ID {id}",
 
   // ── Terminal toolbar (#5756) ────────────────────────────────────────────
-  // Layout icons stay visible; session and macro actions live in the "…"
+  // Layout icons stay visible; session and automation actions live in the "…"
   // menu, and an active one shows as a chip beside the icons.
   "terminalToolbar.newTerminal": "New terminal",
   "terminalToolbar.splitRight": "Split terminal right",
@@ -518,13 +518,16 @@ const en = {
   "terminalToolbar.broadcast.stop": "Stop broadcast",
   "terminalToolbar.logging.start": "Log session output",
   "terminalToolbar.logging.stop": "Stop logging output",
-  "terminalToolbar.record.start": "Record macro",
-  "terminalToolbar.record.stop": "Stop recording macro",
-  "terminalToolbar.play.start": "Play macro…",
-  "terminalToolbar.play.stop": "Stop macro playback ({played}/{total})",
+  "terminalToolbar.record.start": "Record automation",
+  "terminalToolbar.record.stop": "Stop recording",
+  "terminalToolbar.play.start": "Run automation…",
+  "terminalToolbar.play.stop": "Stop automation ({played}/{total})",
   "terminalToolbar.chip.broadcast": "Broadcasting",
   "terminalToolbar.chip.logging": "Logging",
   "terminalToolbar.chip.recording": "Recording",
+  "terminalToolbar.chip.recordingIn": "Recording in {tab}",
+  "terminalToolbar.chip.recordingPrompt": "Recording: password prompt",
+  "terminalToolbar.chip.recordingPaused": "Recording: not connected",
   "terminalToolbar.chip.playback": "Playing {played}/{total}",
 } as const;
 

@@ -1,0 +1,93 @@
+/* ── Save dialog ─────────────────────────────────────────────────────── */
+.recording-save {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.recording-save p {
+  margin: 0;
+}
+
+.recording-save__note {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.recording-save__summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.recording-save__preview {
+  margin: 0;
+  padding: var(--spacing-xs-sm) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.recording-save__secrets {
+  display: flex;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-sm);
+  background: var(--bg-warning);
+  font-size: var(--font-size-sm);
+}
+
+.recording-save__secrets > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs-sm);
+  min-width: 0;
+}
+
+.recording-save__secrets > svg {
+  flex-shrink: 0;
+}
+
+/* ── Bar above the terminals ─────────────────────────────────────────── */
+.recording-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.recording-bar > svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.recording-bar--active > svg {
+  color: var(--color-error);
+}
+
+.recording-bar__text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Tab badge ───────────────────────────────────────────────────────── */
+.tab__recording-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--color-error);
+}

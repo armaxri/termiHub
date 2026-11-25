@@ -10,7 +10,7 @@ Now the stack docks at the top edge in its compact form: errors stay visible
 as one line over the dialog head, while success/info toasts wait until the
 dialog closes. The grade runs a workflow, shrinks the window to 800x600, opens
 the workflow editor and checks no toast covers the dialog. Since #5859 a run in
-the visible terminal raises no "Ran workflow" toast at all (the output and the
+the visible terminal raises no "Ran automation" toast at all (the output and the
 run history show it), and none may appear beside the dialog or after the
 editor closes. No sshd: a local shell is enough.
 """
@@ -86,7 +86,7 @@ class TestProductRunToastNarrow(
         return items
 
     def _ran_toasts(self) -> list[dict[str, Any]]:
-        return [i for i in self._toast_items() if i["text"].startswith("Ran workflow")]
+        return [i for i in self._toast_items() if i["text"].startswith("Ran automation")]
 
     def _create_workflow(self, name: str, command: str) -> str:
         self.show_automations()
@@ -105,7 +105,7 @@ class TestProductRunToastNarrow(
             "toast shows at all (#5715, #5830, #5859)",
             expect="#5715/#5830 complaint: in an 800x600 window with the workflow editor open, "
             "no toast sits on the dialog (errors would dock as one line at the top edge); the "
-            "run raised no 'Ran workflow' toast, before or after Cancel",
+            "run raised no 'Ran automation' toast, before or after Cancel",
         ):
             workflow = self._create_workflow(f"Toast narrow {tag}", f"echo PR_TOAST_NARROW_{tag}")
             self.ensure_terminal()
@@ -130,14 +130,14 @@ class TestProductRunToastNarrow(
                             f"the open dialog {dialog}"
                         )
                     assert not self._ran_toasts(), (
-                        "a 'Ran workflow' success toast shows beside the dialog; a run in the "
+                        "a 'Ran automation' success toast shows beside the dialog; a run in the "
                         "visible terminal raises none (#5859)"
                     )
                 finally:
                     self.cancel_clean_editor()
                 time.sleep(0.5)
                 assert not self._ran_toasts(), (
-                    "a 'Ran workflow' toast showed after the editor closed"
+                    "a 'Ran automation' toast showed after the editor closed"
                 )
             finally:
                 self.driver.resize_window(*NORMAL_WINDOW)

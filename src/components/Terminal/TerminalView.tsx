@@ -19,7 +19,8 @@ import { Terminal } from "./Terminal";
 import { handleAgentStateChange, type AgentStateChangePayload } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { TerminalToolbarMore } from "./TerminalToolbarMore";
-import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
+import { RecordingBar } from "@/components/Recording";
+import { useRecordingLabel } from "@/components/Recording/useRecordingLabel";
 import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
@@ -30,7 +31,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { frontendWarn } from "@/utils/frontendLog";
 import { withActionAccelerator } from "@/services/keybindings";
 import {
-  OPEN_MACRO_PLAYBACK_EVENT,
+  OPEN_RUN_AUTOMATION_EVENT,
   TOGGLE_SESSION_LOGGING_EVENT,
 } from "@/services/contextCommands";
 import { t } from "@/i18n/catalog";
@@ -83,24 +84,24 @@ export function TerminalView() {
   const activePanelId = useActivePanelId();
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
-  const macroRecording = useAppStore((s) => s.macroRecording);
-  const toggleMacroRecording = useAppStore((s) => s.toggleMacroRecording);
-  const macroSaveDialogOpen = useAppStore((s) => s.macroSaveDialogOpen);
-  const macroRecordingStepCount = useAppStore((s) => s.macroRecordingSteps.length);
-  const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
-  const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
+  const recordingLabel = useRecordingLabel();
+  const toggleRecording = useAppStore((s) => s.toggleRecording);
   // The toolbar's active/pressed state is sourced from the authoritative
   // `broadcast` region (#2242).
   const broadcastActive = useProjectedBroadcast().active;
   const stopBroadcast = useAppStore((s) => s.stopBroadcast);
-  const macros = useAppStore((s) => s.macros);
+  const automations = useAppStore((s) => s.automations);
   const macroPlayback = useAppStore((s) => s.macroPlayback);
-  const playMacro = useAppStore((s) => s.playMacro);
+  const runAutomation = useAppStore((s) => s.runAutomation);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
-  const [macroPlaybackDialogOpen, setMacroPlaybackDialogOpen] = useState(false);
-  const macroPickerItems = useMemo(
-    () => macros.map((m) => ({ id: m.id, name: m.name, stepCount: m.steps.length })),
-    [macros]
+  // Open for one automation (the palette, without a terminal) or to pick one.
+  const [runDialog, setRunDialog] = useState<{ automationId?: string } | null>(null);
+  const runItems = useMemo(
+    () =>
+      automations
+        .filter((a) => runDialog?.automationId === undefined || a.id === runDialog.automationId)
+        .map((a) => ({ id: a.id, name: a.name, stepCount: a.steps.length })),
+    [automations, runDialog]
   );
   const [broadcastDialogOpen, setBroadcastDialogOpen] = useState(false);
   const [broadcastSourceTabId, setBroadcastSourceTabId] = useState<string | null>(null);
@@ -191,19 +192,20 @@ export function TerminalView() {
     }
   };
 
-  // The toggle-session-logging and play-macro shortcuts / palette entries
+  // The toggle-session-logging and run-automation shortcuts / palette entries
   // (#5779) reach this view's state through window events. The ref keeps the
   // listener on the latest handler, which closes over the logging set.
   const toggleLoggingRef = useRef(handleToggleLogging);
   toggleLoggingRef.current = handleToggleLogging;
   useEffect(() => {
     const onToggleLogging = () => void toggleLoggingRef.current();
-    const onOpenPlayback = () => setMacroPlaybackDialogOpen(true);
+    const onOpenPlayback = (e: Event) =>
+      setRunDialog((e as CustomEvent<{ automationId?: string } | null>).detail ?? {});
     window.addEventListener(TOGGLE_SESSION_LOGGING_EVENT, onToggleLogging);
-    window.addEventListener(OPEN_MACRO_PLAYBACK_EVENT, onOpenPlayback);
+    window.addEventListener(OPEN_RUN_AUTOMATION_EVENT, onOpenPlayback);
     return () => {
       window.removeEventListener(TOGGLE_SESSION_LOGGING_EVENT, onToggleLogging);
-      window.removeEventListener(OPEN_MACRO_PLAYBACK_EVENT, onOpenPlayback);
+      window.removeEventListener(OPEN_RUN_AUTOMATION_EVENT, onOpenPlayback);
     };
   }, []);
 
@@ -252,7 +254,7 @@ export function TerminalView() {
         <div className="terminal-view__toolbar">
           <TabGroupChips />
           {/* #5559 / #5756: the layout icons stay visible, each tooltip naming its
-              shortcut; session and macro actions live in the "…" menu, and a
+              shortcut; session and automation actions live in the "…" menu, and a
               running one shows as a chip beside the icons. #5849: "+" is the
               only plus on the toolbar, the split icons are split-square glyphs
               unlike the sidebar's panel glyph, and the sidebar toggle sits in
@@ -348,33 +350,29 @@ export function TerminalView() {
               onToggleBroadcast={handleToggleBroadcast}
               loggingActive={isActiveSessionLogging}
               onToggleLogging={() => void handleToggleLogging()}
-              macroRecording={macroRecording}
-              onToggleRecording={toggleMacroRecording}
-              macroPlayback={macroPlayback}
-              onPlayMacro={() => setMacroPlaybackDialogOpen(true)}
+              recordingLabel={recordingLabel}
+              onToggleRecording={toggleRecording}
+              playback={macroPlayback}
+              onRunAutomation={() => setRunDialog({})}
               onStopPlayback={cancelMacroPlayback}
             />
           </div>
         </div>
+        <RecordingBar />
         <div className="terminal-view__content" role="region" aria-label="Terminal">
           <TerminalHost />
           <SplitView />
         </div>
       </main>
-      <MacroRecordSaveDialog
-        open={macroSaveDialogOpen}
-        stepCount={macroRecordingStepCount}
-        onSave={(meta) => void saveRecordedMacro(meta)}
-        onDiscard={discardRecordedMacro}
-      />
       <RunTargetsDialog
-        open={macroPlaybackDialogOpen}
-        automations={macroPickerItems}
-        automationLabel="Macro"
-        emptyText="No macros saved yet. Record one with the terminal toolbar's record button first."
-        onOpenChange={setMacroPlaybackDialogOpen}
-        onRun={(macroId, targetTabIds, { parallel }) =>
-          void playMacro(macroId, { targetTabIds, parallel })
+        open={runDialog !== null}
+        automations={runItems}
+        emptyText="No automations yet. Record what you type in a terminal first."
+        onOpenChange={(open) => {
+          if (!open) setRunDialog(null);
+        }}
+        onRun={(id, targetTabIds, { parallel }) =>
+          void runAutomation(id, { targetTabIds, parallel })
         }
       />
       <BroadcastScopeDialog

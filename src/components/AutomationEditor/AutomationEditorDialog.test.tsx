@@ -194,11 +194,11 @@ describe("fields and steps", () => {
     await open(automationWith([{ kind: "run-automation", automationId: "gone" }], { id: "a-log" }));
     click("automation-editor-step-toggle-0");
     const picker = query("automation-editor-step-automation-0")!;
-    expect(picker.textContent).toContain("Deleted automation");
+    expect(picker.textContent).toContain("Missing automation");
     press("automation-editor-step-automation-0", "Enter");
     await flushAsync();
     const options = Array.from(document.querySelectorAll('[role="option"]'), (o) => o.textContent);
-    expect(options).toEqual(["Deleted automation", "Deploy prep"]);
+    expect(options).toEqual(["Missing automation", "Deploy prep"]);
   });
 
   it("has no accessibility violations, every section open", async () => {

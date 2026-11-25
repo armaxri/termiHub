@@ -20,6 +20,8 @@ import { SshKeyboardInteractivePrompt } from "@/components/SshKeyboardInteractiv
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
 import { WorkflowParamPromptDialog } from "@/components/WorkflowSidebar/WorkflowParamPromptDialog";
 import { ScheduleEditorHost } from "@/components/Schedules";
+import { RecordingHost } from "@/components/Recording";
+import { AutomationEditorHost } from "@/components/AutomationEditor";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog, MobaxtermImportHost } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
@@ -393,6 +395,8 @@ function App() {
           <SshKeyboardInteractivePrompt />
           <LocalProcessAuthDialog />
           <WorkflowParamPromptDialog />
+          <AutomationEditorHost />
+          <RecordingHost />
           <ScheduleEditorHost />
           <CustomizeLayoutDialog />
           <ExportDialog />

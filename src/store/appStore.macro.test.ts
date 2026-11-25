@@ -3,8 +3,7 @@
  *
  * Pins that the store's macro actions round-trip through the automation store
  * (#5818, slice 4: the macro view is a thin adapter over automationApi):
- * loadMacros populates state, saveMacroToBackend refreshes the list and returns
- * the stored macro, and deleteMacroFromBackend only mutates state after the
+ * loadMacros populates state, and deleteMacroFromBackend only mutates state after the
  * backend delete resolves (and rethrows on failure without desyncing).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -47,7 +46,6 @@ vi.mock("@/services/automationApi", () => ({
 import { useAppStore } from "./appStore";
 import {
   listAutomations as apiListMacros,
-  saveAutomation as apiSaveMacro,
   deleteAutomation as apiDeleteMacro,
 } from "@/services/automationApi";
 import type { Macro } from "@/types/macro";
@@ -107,33 +105,6 @@ describe("appStore — macro slice (#1673)", () => {
     vi.mocked(apiListMacros).mockRejectedValueOnce("kaboom");
     await expect(useAppStore.getState().loadMacros()).resolves.toBeUndefined();
     expect(useAppStore.getState().macros).toEqual([]);
-  });
-
-  it("saveMacroToBackend saves, refreshes the list, and returns the stored macro", async () => {
-    const stored = makeMacro("m-1", "Saved");
-    vi.mocked(apiSaveMacro).mockResolvedValueOnce(asAutomation(stored));
-    vi.mocked(apiListMacros).mockResolvedValueOnce([asAutomation(stored)]);
-
-    const result = await useAppStore.getState().saveMacroToBackend(makeMacro("m-1", "Saved"));
-
-    // Saved as one recorded type-keys step holding the chunks byte for byte.
-    expect(apiSaveMacro).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "m-1",
-        triggers: [],
-        steps: [
-          {
-            kind: "type-keys",
-            chunks: [{ data: "echo hi\r", delayMs: 0 }],
-            timing: "recorded",
-            recorded: true,
-          },
-        ],
-      })
-    );
-    expect(apiListMacros).toHaveBeenCalled();
-    expect(result).toEqual(stored);
-    expect(useAppStore.getState().macros).toHaveLength(1);
   });
 
   it("deleteMacroFromBackend removes the macro after the backend delete resolves", async () => {

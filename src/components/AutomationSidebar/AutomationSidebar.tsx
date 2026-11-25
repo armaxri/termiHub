@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { CircleDot, Download, Keyboard, ListPlus, Plus, Upload } from "lucide-react";
+import { ArrowDownUp, CircleDot, Keyboard, ListPlus, Plus } from "lucide-react";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
@@ -23,7 +23,7 @@ import { HistorySection } from "./HistorySection";
 import { summarizeRuns } from "./automationRowInfo";
 import { useAutomationSections } from "./automationSections";
 import { useAutomationEditors } from "./useAutomationEditors";
-import { useAutomationFiles } from "./useAutomationFiles";
+import { useAutomationFiles } from "@/components/Automations/useAutomationFiles";
 import { useRunningAutomations } from "./useRunningAutomations";
 import "./AutomationSidebar.css";
 
@@ -40,8 +40,9 @@ const NO_TARGETS: never[] = [];
  * The Automations sidebar (#5818, slice 6): the one place to find, run and
  * create an automation. It replaces the Macros and Workflows sidebars.
  *
- * Toolbar: New (step by step, typed keystrokes, Import, Export all) and Record,
- * every one named in text (R-037) and both in view at every width. The list holds every
+ * Toolbar: New (step by step, typed keystrokes, and a link to import and export,
+ * which live in the settings) and Record, every one named in text (R-037) and both
+ * in view at every width. The list holds every
  * automation, searchable by name, description and tag; rows show names and
  * state, never settings. Below it, the collapsible Schedules and History
  * sections and the output of a running local process.
@@ -56,8 +57,9 @@ export function AutomationSidebar() {
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
-  const toggleMacroRecording = useAppStore((s) => s.toggleMacroRecording);
-  const recording = useAppStore((s) => s.macroRecording);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
+  const toggleRecording = useAppStore((s) => s.toggleRecording);
+  const recording = useAppStore((s) => s.recording !== null);
   // Where Run types (R-113, R-119): the active terminal tab's title.
   const runTarget = useAppStore((s) => {
     const tab = getActiveTab(s);
@@ -83,19 +85,16 @@ export function AutomationSidebar() {
   const [rootRef, width] = useElementWidth<HTMLDivElement>();
   const compact = width !== null && width < AUTOMATIONS_COMPACT_WIDTH;
 
-  // The row just saved from an editor, marked briefly so the user sees which
-  // one changed (#5687). `seq` tells two saves of the same automation apart.
-  const [justSaved, setJustSaved] = useState<{ id: string; seq: number } | null>(null);
-  const justSavedSeq = useRef(0);
+  // The row just saved (from the editor or a recording), marked briefly so the
+  // user sees which one changed (#5687). What was saved before is not marked.
+  const saved = useAutomationSections((s) => s.saved);
+  const [unmarkedSeq, setUnmarkedSeq] = useState(saved?.seq ?? 0);
+  const justSaved = saved && saved.seq > unmarkedSeq ? saved : null;
   const scrolledSeq = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
-  const markSaved = useCallback((id: string) => {
-    justSavedSeq.current += 1;
-    setJustSaved({ id, seq: justSavedSeq.current });
-  }, []);
 
-  const files = useAutomationFiles();
+  const { exportOne } = useAutomationFiles();
 
   const deletion = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
@@ -124,8 +123,7 @@ export function AutomationSidebar() {
     [runAutomation, runTarget]
   );
 
-  const editors = useAutomationEditors({ onSaved: markSaved, onRun: handleRun });
-  const { edit, newFromAutomation, newFromKeys, newFromSteps } = editors;
+  const { edit, newFromAutomation, newFromKeys, newFromSteps } = useAutomationEditors();
 
   const handleStop = useCallback(
     (id: string) => {
@@ -166,7 +164,7 @@ export function AutomationSidebar() {
         );
       },
       onUseInNew: newFromAutomation,
-      onExport: files.exportOne,
+      onExport: exportOne,
       onDelete: (id) => {
         const automation = automations.find((a) => a.id === id);
         if (automation) requestDelete({ id: automation.id, name: automation.name });
@@ -176,7 +174,7 @@ export function AutomationSidebar() {
       automations,
       duplicateAutomation,
       edit,
-      files.exportOne,
+      exportOne,
       handleRun,
       handleStop,
       newFromAutomation,
@@ -189,10 +187,7 @@ export function AutomationSidebar() {
   // Unmark the saved row once its highlight has played out (#5687).
   useEffect(() => {
     if (!justSaved) return;
-    const timer = window.setTimeout(
-      () => setJustSaved((current) => (current === justSaved ? null : current)),
-      AUTOMATION_JUST_SAVED_MS
-    );
+    const timer = window.setTimeout(() => setUnmarkedSeq(justSaved.seq), AUTOMATION_JUST_SAVED_MS);
     return () => window.clearTimeout(timer);
   }, [justSaved]);
 
@@ -266,19 +261,11 @@ export function AutomationSidebar() {
               },
               { type: "separator", id: "files-sep" },
               {
-                id: "import",
-                label: "Import…",
-                icon: <Upload size={14} />,
-                onSelect: files.importFile,
-                testId: "automation-import-btn",
-              },
-              {
-                id: "export-all",
-                label: "Export all…",
-                icon: <Download size={14} />,
-                onSelect: files.exportAll,
-                disabled: automations.length === 0,
-                testId: "automation-export-all-btn",
+                id: "files",
+                label: "Import or export…",
+                icon: <ArrowDownUp size={14} />,
+                onSelect: () => openSettingsTab({ category: "import" }),
+                testId: "automation-files-btn",
               },
             ],
           },
@@ -287,9 +274,12 @@ export function AutomationSidebar() {
             label: recording ? "Stop recording" : "Record",
             tooltip: recording
               ? "Stop recording and name the automation"
-              : "Record what you type in the active terminal",
+              : runTarget === null
+                ? "Open a terminal to record in"
+                : `Record what you type in ${runTarget}`,
+            disabled: !recording && runTarget === null,
             icon: <CircleDot size={12} />,
-            onClick: toggleMacroRecording,
+            onClick: toggleRecording,
             testId: "automation-record-btn",
           },
         ]}
@@ -314,7 +304,7 @@ export function AutomationSidebar() {
                 <Button
                   size="sm"
                   icon={<CircleDot size={14} />}
-                  onClick={toggleMacroRecording}
+                  onClick={toggleRecording}
                   data-testid="automation-empty-record-btn"
                 >
                   {recording ? "Stop recording" : "Record"}
@@ -383,7 +373,6 @@ export function AutomationSidebar() {
         collapse={{ expanded: historyOpen, onChange: setHistoryOpen }}
       />
       <WorkflowRunOutput />
-      {editors.dialogs}
       <RunTargetsDialog
         open={runOnId !== null}
         automations={runOnItems}

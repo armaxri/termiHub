@@ -95,6 +95,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // workflow is typing into. Macro playback state is this window's own, and
   // the strip only renders this window's tabs, so only the window showing a
   // target tab marks it; workflow runs come from the `workflow-run` region.
+  const recordedTabId = useAppStore((s) => s.recording?.tabId);
+  const stopRecording = useAppStore((s) => s.stopRecording);
   const macroPlayback = useAppStore((s) => s.macroPlayback);
   const cancelMacroPlaybackOnTab = useAppStore((s) => s.cancelMacroPlaybackOnTab);
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
@@ -290,6 +292,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               }
               displayTitle={getTabDisplayTitle(tab, allTabs)}
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
+              isRecording={recordedTabId === tab.id}
+              onStopRecording={() => stopRecording()}
               runningAutomation={runningAutomationOnTab(macroPlayback, workflowRuns, tab.id)}
               onStopAutomation={() => {
                 const running = runningAutomationOnTab(macroPlayback, workflowRuns, tab.id);

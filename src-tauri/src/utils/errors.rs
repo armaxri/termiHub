@@ -291,13 +291,13 @@ pub enum TerminalError {
     #[error("Workspace error: {0}")]
     WorkspaceError(String),
 
-    #[error("Macro error: {0}")]
+    #[error("Automation error: {0}")]
     MacroError(String),
 
     #[error("Session history error: {0}")]
     SessionHistoryError(String),
 
-    #[error("Workflow error: {0}")]
+    #[error("Automation error: {0}")]
     WorkflowError(String),
 
     #[error("Automation error: {0}")]

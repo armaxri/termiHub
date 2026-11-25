@@ -578,22 +578,21 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
       {show("workflowLocalProcess") && (
         <div className="settings-panel__section">
-          <SettingsSectionHeading>Workflow local process execution</SettingsSectionHeading>
+          <SettingsSectionHeading>Local programs run by automations</SettingsSectionHeading>
           <p className="settings-panel__description">
-            The guarded <code>run-local-process</code> workflow step runs a program on this
-            computer. This is off by default. When enabled, each not-yet-trusted program still
-            requires a one-time confirmation before it can run; imported workflows are never
-            pre-authorized.
+            The “Run local process” step of an automation runs a program on this computer. This is
+            off by default. When enabled, each not-yet-trusted program still requires a one-time
+            confirmation before it can run; imported automations are never pre-authorized.
           </p>
 
           <SettingsField
-            label="Allow workflows to run local programs"
-            hint={`Master switch. While off, any run-local-process step is refused. The step is experimental: ${EXPERIMENTAL_SETTING_PATH} must be on too.`}
+            label="Allow automations to run local programs"
+            hint={`Master switch. While off, any “Run local process” step is refused. The step is experimental: ${EXPERIMENTAL_SETTING_PATH} must be on too.`}
           >
             <Toggle
               checked={localProcessEnabled}
               onCheckedChange={handleToggleLocalProcess}
-              aria-label="Allow workflows to run local programs"
+              aria-label="Allow automations to run local programs"
               data-testid="workflow-local-process-toggle"
             />
           </SettingsField>
@@ -603,8 +602,8 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               <span className="settings-panel__field-label">Allowed programs</span>
               {localProcessAllowlist.length === 0 ? (
                 <p className="settings-panel__description" data-testid="workflow-allowlist-empty">
-                  No programs are remembered yet. Choosing &ldquo;Always allow&rdquo; when a
-                  workflow runs one adds it here.
+                  No programs are remembered yet. Choosing &ldquo;Always allow&rdquo; when an
+                  automation runs one adds it here.
                 </p>
               ) : (
                 <ul className="settings-panel__list" data-testid="workflow-allowlist">

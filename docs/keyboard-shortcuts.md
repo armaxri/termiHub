@@ -76,16 +76,16 @@ binding:
 | Toggle sidebar           | `Cmd+B`                 | `Ctrl+Shift+B`                |
 | Broadcast input…         | `Cmd+Shift+B`           | `Alt+Shift+B`                 |
 | Log session output       | unbound                 | unbound                       |
-| Record macro             | unbound                 | unbound                       |
-| Play macro…              | unbound                 | unbound                       |
+| Record automation        | unbound                 | unbound                       |
+| Run automation…          | unbound                 | unbound                       |
 
-Session logging and macro record / play ship **unbound**: no free combo reads
+Session logging, recording and running ship **unbound**: no free combo reads
 naturally for them without taking a key that shells, tmux or vim use, and they
 are occasional actions. Bind them in **Settings → Keyboard shortcuts** (they
-are listed as "Toggle session logging", "Record macro (start/stop)" and
-"Play macro…"); the "…" menu row and the running-action chip then show the
-binding. All three also run from the command palette. "Play macro…" opens the
-macro picker, or stops a playback that is already running.
+are listed as "Toggle session logging", "Record automation (start/stop)" and
+"Run automation…"); the "…" menu row and the running-action chip then show the
+binding. All three also run from the command palette. "Run automation…" opens the
+run picker, or stops an automation that is typing keys.
 
 ## Function keys belong to the terminal program
 

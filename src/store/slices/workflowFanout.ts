@@ -156,25 +156,27 @@ export function toastFanoutSummary(
 
   if (failed.length > 0) {
     const detail = failed.map((o) => `${o.title}: ${o.result.error ?? "failed"}`).join("; ");
-    toast.error(`Workflow "${workflowName}" failed on ${terminalCount(failed.length)}`, {
+    toast.error(`Automation "${workflowName}" failed on ${terminalCount(failed.length)}`, {
       id: toastId,
       description: `${summary}. ${detail}`,
     });
     keepWorkflowRunFailure(toastId);
   } else if (cancelled) {
     // toast-policy: explains-outcome — says how far the canceled run got
-    toast.info(`Workflow "${workflowName}" canceled`, { id: toastId, description: summary });
+    toast.info(`Automation "${workflowName}" canceled`, { id: toastId, description: summary });
     collapseWorkflowRunOutcome(toastId);
   } else if (skipped > 0 || tolerated) {
     // toast-policy: explains-outcome — some terminals were skipped or tolerated failures
-    toast.info(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, {
+    toast.info(`Ran automation "${workflowName}" on ${terminalCount(completed)}`, {
       id: toastId,
       description: summary,
     });
     keepWorkflowRunFailure(toastId);
   } else {
     // toast-policy: background — the run spans several terminals, most of them off-screen
-    toast.success(`Ran workflow "${workflowName}" on ${terminalCount(completed)}`, { id: toastId });
+    toast.success(`Ran automation "${workflowName}" on ${terminalCount(completed)}`, {
+      id: toastId,
+    });
     collapseWorkflowRunOutcome(toastId);
   }
 }

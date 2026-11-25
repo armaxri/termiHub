@@ -87,6 +87,8 @@ import {
 } from "@/services/sessionInputGate";
 import { createShellRedrawWait } from "./shellRedrawWait";
 import { getRenderedCellWidth, remeasureCharSize } from "./xtermDimensions";
+import { trackUserInput } from "./xtermUserInput";
+import { textBeforeCursor } from "@/services/passwordPrompt";
 import { TERMINAL_MIN_CONTRAST_RATIO } from "./terminalContrast";
 import {
   CommandMarkTracker,
@@ -1286,7 +1288,11 @@ export function Terminal({
         });
 
         // Send user input to backend
-        const sendTyped = (data: string) => {
+        // What the terminal itself sends (focus reports, query replies) is no
+        // keystroke and is not recorded (#5818).
+        const userInput = trackUserInput(xterm);
+        const readPrompt = () => textBeforeCursor(xterm.buffer.active);
+        const sendTyped = (data: string, fromUser = true) => {
           // SM-003 (single-attach): another desktop/window controls this session
           // — never send it input until the user explicitly reclaims it.
           if (isTabEvicted(tabId)) return;
@@ -1311,24 +1317,23 @@ export function Terminal({
               // translation happens in the backend send_input choke point.
               if (targetSessionId) void sendInputDetached(targetSessionId, data, "broadcast input");
             }
-            // Tap the input stream for macro recording (#1674) once, for the
-            // source's keystrokes only. No-op unless a recording is active.
-            store.recordMacroInput(data);
+            // Tap the input stream for recording (#1674) once, for the source's
+            // keystrokes only. No-op unless this terminal is recorded.
+            if (fromUser) store.recordInput(tabId, data, readPrompt);
           } else if (sessionIdRef.current) {
             // Line-ending translation (Enter / paste) happens in the backend
             // send_input choke point using the session's configured ending.
             // xterm also emits focus reports and query replies here, which can
             // race a closing session (#5384): never leave them unhandled.
             void sendInputDetached(sessionIdRef.current, data, "typed input");
-            // Tap the input stream for macro recording (#1674). This is the
-            // single point where user-typed bytes flow to the PTY, so it
-            // captures input only (never terminal output). No-op unless a
-            // recording is active — the store guards on the recording flag.
-            store.recordMacroInput(data);
+            // Tap the input stream for recording (#1674). Typed bytes flow to the
+            // PTY here (a paste goes through pasteToTerminal), so this captures
+            // input only. No-op unless this terminal is recorded.
+            if (fromUser) store.recordInput(tabId, data, readPrompt);
           }
         };
-        const onDataDisposable = xterm.onData(sendTyped);
-        typedDuringRepaint.forEach(sendTyped);
+        const onDataDisposable = xterm.onData((data) => sendTyped(data, userInput.take()));
+        typedDuringRepaint.forEach((data) => sendTyped(data));
 
         // Send resize events after fit — deduplicated to avoid SIGWINCH storms.
         // Multiple fit() calls from TerminalSlot (sync+RAF), ResizeObserver,
@@ -1474,6 +1479,7 @@ export function Terminal({
           // acceptable and avoids awaiting the worker in a sync cleanup (#2136).
           discardSandboxSession(sessionId);
           onDataDisposable.dispose();
+          userInput.dispose();
           onResizeDisposable.dispose();
           offReclaimResize();
           offWindowReclaim();

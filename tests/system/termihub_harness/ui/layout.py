@@ -113,7 +113,7 @@ class LayoutUi(HarnessMixin):
         """Click a terminal-toolbar action, opening the "…" menu when it lives there.
 
         ``action`` is the action's ``data-testid`` (``terminal-view-broadcast``,
-        ``terminal-view-record-macro``, …); the layout icons are clicked inline.
+        ``terminal-view-record``, …); the layout icons are clicked inline.
         """
         self.invoke_toolbar_action(action, overflow=self.TERMINAL_MORE_ACTIONS)
 

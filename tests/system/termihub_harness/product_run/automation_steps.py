@@ -17,7 +17,7 @@ from ..ui.automation_sidebar import AutomationSidebarUi
 
 SCHEDULE_EDITOR = "schedule-editor-dialog"
 SCHEDULE_CONFIRM = "schedule-enable-confirm"
-#: The one run picker (#5818, slice 5) behind every "Run on…" and Play macro….
+#: The one run picker (#5818, slice 5) behind every "Run on…" and Run automation….
 RUN_TARGETS = "run-targets-dialog"
 #: A field inside a step row (``automation-editor-step-delay-1``): the row starts
 #: collapsed when a stored automation is opened (#5637).

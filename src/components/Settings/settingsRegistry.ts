@@ -541,12 +541,15 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "workflowLocalProcess",
-    label: "Workflow local process execution",
+    label: "Local programs run by automations",
     description:
-      "Allow workflows to run local programs on this computer, and manage which programs are allowed",
+      "Allow automations to run local programs on this computer, and manage which programs are allowed",
     category: "security",
     keywords: [
+      "automation",
       "workflow",
+      "workflow local process execution",
+      "allow workflows to run local programs",
       "local process",
       "run-local-process",
       "execute",
@@ -1035,6 +1038,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Move saved connections and folders between termiHub installs as a JSON file",
     category: "import",
     keywords: ["import", "export", "json", "connections", "share", "transfer", "file"],
+  },
+  {
+    id: "importExportAutomations",
+    label: "Import / export automations",
+    description: "Move automations between termiHub installs as a JSON file",
+    category: "import",
+    keywords: ["import", "export", "json", "automations", "macros", "workflows", "share", "file"],
   },
   {
     id: "portableMode",

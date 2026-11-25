@@ -191,7 +191,10 @@ pub fn posix_install_plan(remote_path: &str, upload_dir: &str) -> InstallPlan {
     let backup_path = format!("{remote_path}{POSIX_BACKUP_SUFFIX}");
     InstallPlan {
         backup_verify_command: format!("{backup_path} --version 2>/dev/null"),
-        backup_command: format!("cp -pf {remote_path} {backup_path}"),
+        // Removed first: a setup that was cut off may have left the backup as a
+        // hard link of the agent, which `cp` refuses to overwrite (#5999). The
+        // deploy only gets here while the installed agent runs.
+        backup_command: format!("rm -f {backup_path} && cp -pf {remote_path} {backup_path}"),
         restore_command: format!("mv -f {backup_path} {remote_path}"),
         discard_backup_command: format!("rm -f {backup_path}"),
         cleanup_stale_command: None,
@@ -1059,7 +1062,8 @@ mod tests {
         assert_eq!(plan.backup_path, ".local/bin/termihub-agent.previous");
         assert_eq!(
             plan.backup_command,
-            "cp -pf .local/bin/termihub-agent .local/bin/termihub-agent.previous",
+            "rm -f .local/bin/termihub-agent.previous && \
+             cp -pf .local/bin/termihub-agent .local/bin/termihub-agent.previous",
             "a copy keeps the install path populated and preserves +x"
         );
         assert_eq!(

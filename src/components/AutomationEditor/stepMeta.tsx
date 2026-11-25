@@ -243,6 +243,9 @@ export function newTrigger(kind: AutomationTriggerKind): AutomationTrigger {
 /** Shown in a collapsed step's summary when its main field is still empty. */
 export const EMPTY_STEP_SUMMARY = "Not set yet";
 
+/** Shown for a "Run automation" step whose automation is not in the library. */
+export const MISSING_AUTOMATION = "Missing automation";
+
 /** A duration in seconds, the unit the editor uses (R-167): `0.5 s`, `12 s`. */
 export function formatSeconds(ms: number): string {
   return `${ms / 1000} s`;
@@ -281,7 +284,7 @@ export function stepSummary(
     }
     case "run-automation":
       if (!step.automationId) return EMPTY_STEP_SUMMARY;
-      return automations.find((a) => a.id === step.automationId)?.name ?? "Deleted automation";
+      return automations.find((a) => a.id === step.automationId)?.name ?? MISSING_AUTOMATION;
     case "wait":
       return formatSeconds(step.delayMs);
     case "run-local-process":

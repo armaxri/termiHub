@@ -180,8 +180,7 @@
       <section>
         <p>
           Status: partially implemented. The maintainer decided the open questions on 2026-11-23
-          (see the end). Slices 1–7, 9 and 10 have landed; recording into the model (8), the palette
-          and file format (11) and the cleanup (12) are open. Umbrella issue:
+          (see the end). Slices 1–11 have landed; the cleanup (12) is open. Umbrella issue:
           <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>. Originally written
           against <code>develop</code> in November 2026.
         </p>
@@ -880,6 +879,24 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
             <a href="https://github.com/armaxri/termiHub/issues/5201">#5201</a> (dismissing the
             dialog keeps the recording) carries over.
           </li>
+          <li>
+            <strong>What is recorded:</strong> every byte the user's keys, pastes and dropped paths
+            send to the recorded terminal, with the time between them; not what another terminal
+            gets, and not what the terminal itself answers (focus reports, query replies).
+          </li>
+          <li>
+            <strong>Passwords:</strong> what is typed at a password prompt without an echo is marked
+            while it is recorded, left out when the recording is saved, and stored only when the
+            user asks for that (an automation is stored unencrypted). It is recognised by the text
+            before the cursor, so a prompt that says neither password, passphrase, PIN nor the like
+            is not. Credential dialogs are not terminal input and are never recorded.
+          </li>
+          <li>
+            <strong>Lifecycle:</strong> a dropped connection pauses the recording and it goes on
+            after the reconnect; the tab moving to another panel changes nothing; the session
+            ending, the tab being closed or moved to another window stops it and asks; closing the
+            window or quitting asks first. A crash or a reload loses it.
+          </li>
         </ul>
         <h3 id="3-6-run-picker-one-dialog-for-one-or-more-terminals">
           3.6 Run picker (one dialog for one or more terminals)
@@ -1032,9 +1049,9 @@ History                           [Deploy prep ×]  Clear…
                 Workflows items go away (slice 6).
               </li>
               <li>
-                <span class="callout">B</span> New ▾ (Step by step…, Typed keystrokes…, Import…,
-                Export all…) and Record. No bare icons: the review found the old record, import and
-                export icons unreadable (R-037).
+                <span class="callout">B</span> New ▾ (Step by step…, Typed keystrokes…, and Import
+                or export…, a link to Settings → Import &amp; migration) and Record. No bare icons:
+                the review found the old record, import and export icons unreadable (R-037).
               </li>
               <li>
                 <span class="callout">C</span> Rows follow the copy-style rule "List rows: names,
@@ -1276,6 +1293,10 @@ flowchart LR
             happens with any newer version. A v2 build therefore shows its own schedules as
             unreadable instead of discarding them. This is the accepted behavior for every versioned
             store.
+          </li>
+          <li>
+            An exported file of a new build is refused by an older one, which looks for a
+            <code>macros</code> or <code>workflows</code> list; nothing is imported.
           </li>
           <li>
             A backup from a new build restored into an older build: the older build skips the
@@ -1727,8 +1748,7 @@ flowchart LR
                   from 3.4: Description has no 0/80 counter (its field stops at 80), a step that
                   cannot run without experimental features says so in its row, "On a schedule…" of a
                   new automation opens the schedule editor right after Save, and Enter runs the
-                  primary action only from Name, Description and Tags, never from a step. "Record
-                  steps" comes with slice 8
+                  primary action only from Name, Description and Tags, never from a step
                 </td>
                 <td>
                   <code>src/components/AutomationEditor/</code> (<code>automationDraft.ts</code>,
@@ -1739,6 +1759,69 @@ flowchart LR
                 </td>
               </tr>
               <tr>
+                <td>8 Recording into the model</td>
+                <td>
+                  Done. Record automation in the toolbar's "…" menu (and the sidebar, palette and
+                  keybinding) records one terminal; its chip, the tab's badge and context menu say
+                  so and stop it. Stopping offers a new automation, named after the first typed
+                  line, or adding to one. "Record steps" in the editor hides the editor, whose draft
+                  stays, behind a bar with "Stop and return". Differs from 3.5: neither the chip nor
+                  the bar has a Cancel (stopping loses nothing: the dialog has Discard recording,
+                  which can be undone, and closing it keeps the recording in a bar above the
+                  terminals); the recording is inserted after the step that was focused last, else
+                  at the end; Description and Tags are behind a disclosure; the keybinding action
+                  ids stay <code>toggle-macro-recording</code> and <code>play-macro</code> so stored
+                  overrides keep working
+                </td>
+                <td>
+                  <code>src/store/slices/recordingSlice.ts</code>,
+                  <code>src/services/{inputRecorder,passwordPrompt}.ts</code>,
+                  <code>src/components/Terminal/xtermUserInput.ts</code>,
+                  <code>src/components/Recording/</code>,
+                  <code>src/components/AutomationEditor/</code>
+                  (<code>AutomationEditorHost.tsx</code>, <code>RecordStepsButton.tsx</code>,
+                  <code>recordedSteps.ts</code>); rendered checks in
+                  <code>tests/visual/recording.spec.ts</code>; grade in
+                  <code>test_product_run_automation_recording.py</code>
+                </td>
+              </tr>
+              <tr>
+                <td>11 Palette and files</td>
+                <td>
+                  Done. The palette lists every automation once, names the terminal it runs in
+                  (R-083), finds it by "Run macro:" / "Run workflow:" and its tags, and asks where
+                  without a terminal; palette and hotkey runs go through
+                  <code>runAutomation</code> and are recorded as such. Export writes
+                  <code>{version: 1, automations}</code> only; import also reads
+                  <code>macros</code>, <code>workflows</code> and the one file with both. Nothing
+                  this build knows is lost. A file is not trusted: a key it does not know is left
+                  out and the entry named, an entry with a step or trigger kind it does not know is
+                  refused by name. Steps that run an automation of the file run its copy, any other
+                  keeps its id and is reported; exporting one automation takes along the ones it
+                  runs. An import arrives switched off and loses script file references. An older
+                  build refuses the new file ("missing "macros" array", "it holds no automations")
+                  and imports nothing; this build refuses a newer one. Differs from 3.3: import and
+                  Export all are in Settings → Import &amp; migration (maintainer decision on
+                  one-time actions), the sidebar links there; Export of one automation stays in its
+                  row's menu. Off now covers hotkeys too, so a key named by a file does nothing
+                  until the user turns it on. No code but the "Run local process" step's asks for
+                  the experimental switch (<code>experimentalAutomations.test.ts</code> lists each
+                  place). Wording outside the sidebar follows (<a
+                    href="https://github.com/armaxri/termiHub/issues/6005"
+                    >#6005</a
+                  >)
+                </td>
+                <td>
+                  <code>src/services/automationFileIo.ts</code>,
+                  <code>src/components/Automations/AutomationImportDialog.tsx</code>,
+                  <code>src/components/Settings/AutomationFileSettings.tsx</code>,
+                  <code>CommandPalette.tsx</code>, <code>importAutomations</code> and
+                  <code>runAutomation</code> in <code>automationsSlice.ts</code>; rendered checks in
+                  <code>tests/visual/automationFiles.spec.ts</code>; grade in
+                  <code>test_product_run_automation_files.py</code>
+                </td>
+              </tr>
+              <tr>
                 <td>2–4, 9, 10</td>
                 <td>Done</td>
                 <td>
@@ -1746,7 +1829,7 @@ flowchart LR
                 </td>
               </tr>
               <tr>
-                <td>8, 11, 12</td>
+                <td>12</td>
                 <td>Open</td>
                 <td>
                   Tracked in <a href="https://github.com/armaxri/termiHub/issues/5818">#5818</a>

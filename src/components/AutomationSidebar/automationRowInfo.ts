@@ -52,9 +52,14 @@ export function automaticTriggers(automation: Automation): SessionTrigger[] {
   );
 }
 
-/** Whether the automatic triggers may fire; an absent flag means armed (#5674). */
+/** Whether the triggers may fire; an absent flag means armed (#5674). */
 export function triggersArmed(automation: Automation): boolean {
   return automation.triggersEnabled !== false;
+}
+
+/** The keys its hotkey triggers name. */
+export function hotkeyBindings(automation: Automation): string[] {
+  return automation.triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
 }
 
 /** The bound connections' names, the first few listed and the rest counted. */
@@ -94,18 +99,19 @@ export function armedMarkerDescription(
   automation: Automation,
   connectionName: ConnectionName
 ): string {
-  const triggers = automaticTriggers(automation)
-    .map(
-      (trigger) =>
-        `${triggerKindLabel(trigger.kind).toLowerCase()} of ${connectionList(
-          trigger.connectionIds,
-          connectionName
-        )}`
-    )
-    .join("; ");
-  return triggersArmed(automation)
-    ? tf("automation.armed.on", { triggers })
-    : tf("automation.armed.off", { triggers });
+  const automatic = automaticTriggers(automation).map(
+    (trigger) =>
+      `${triggerKindLabel(trigger.kind).toLowerCase()} of ${connectionList(
+        trigger.connectionIds,
+        connectionName
+      )}`
+  );
+  if (triggersArmed(automation)) {
+    return tf("automation.armed.on", { triggers: automatic.join("; ") });
+  }
+  // Off covers the hotkeys too (#5818, slice 11).
+  const hotkeys = hotkeyBindings(automation).map((binding) => `hotkey ${binding}`);
+  return tf("automation.armed.off", { triggers: [...automatic, ...hotkeys].join("; ") });
 }
 
 /** What the automation does first, as tooltip lines. */

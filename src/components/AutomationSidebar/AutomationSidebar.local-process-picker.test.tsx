@@ -160,7 +160,7 @@ describe("run picker and the local-process gate (#5988)", () => {
     await runFromPicker(false, count, parallel);
 
     expect(toast.error).toHaveBeenCalledWith(
-      'Workflow "Build" was not run',
+      'Automation "Build" was not run',
       expect.objectContaining({ description: LOCAL_PROCESS_REASON })
     );
     expect(injected).toEqual([]); // nothing typed

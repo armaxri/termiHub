@@ -17,6 +17,7 @@
  *   hand-written validators did by copying only the known fields: a forged
  *   extra key (for example a fake "already confirmed" marker) never survives an
  *   import, and a file written by a newer build that adds a key still imports.
+ *   The import says which entries lost a part (`automationFileIo.ts`).
  * - Numbers are finite (zod 4 rejects `Infinity`/`NaN`), which JSON cannot
  *   express anyway.
  *
@@ -32,6 +33,7 @@ import { z } from "zod";
 
 import { type AssertExact, nonBlankStringSchema } from "@/services/importEnvelope";
 import { validateOutputPattern } from "@/services/workflowOutputTriggers";
+import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type {
   Workflow,
@@ -130,6 +132,12 @@ const runMacroStep = z.object({
   macroId: z.string(),
   ...stepPolicyShape,
 });
+/** An automation's step; `run-macro` is its spelling in the workflow view. */
+const runAutomationStep = z.object({
+  kind: z.literal("run-automation"),
+  automationId: z.string(),
+  ...stepPolicyShape,
+});
 const waitStep = z.object({
   kind: z.literal("wait"),
   delayMs: nonNegative(),
@@ -195,6 +203,10 @@ const _runMacroExact: AssertExact<
   StepOut<typeof runMacroStep>,
   KindOf<WorkflowStep, "run-macro">
 > = true;
+const _runAutomationExact: AssertExact<
+  StepOut<typeof runAutomationStep>,
+  KindOf<AutomationStep, "run-automation">
+> = true;
 const _waitExact: AssertExact<StepOut<typeof waitStep>, KindOf<WorkflowStep, "wait">> = true;
 const _runLocalProcessExact: AssertExact<
   StepOut<typeof runLocalProcessStep>,
@@ -214,6 +226,7 @@ const stepOptions = [
   sendCommandStep,
   runScriptStep,
   runMacroStep,
+  runAutomationStep,
   waitStep,
   runLocalProcessStep,
   conditionalStep,
@@ -225,7 +238,7 @@ const stepOptions = [
 /* Every step kind has a schema, and no schema exists for a kind that does not. */
 const _stepKindsExact: AssertExact<
   z.output<(typeof stepOptions)[number]>["kind"],
-  WorkflowStep["kind"] | "type-keys"
+  WorkflowStep["kind"] | AutomationStep["kind"]
 > = true;
 
 /**
@@ -326,7 +339,7 @@ const _parameterExact: AssertExact<
 > = true;
 
 /**
- * One workflow as read from an imported file. Tolerant of a missing or
+ * One workflow, or one automation, as read from an imported file. Tolerant of a missing or
  * non-string `id`/`description`/timestamps (the importer re-stamps those) and of
  * missing `tags`/`triggers`/`parameters`, but strict about the load-bearing
  * `name`, `steps`, `triggers`, `tags` and `parameters` when present. Key order
@@ -347,6 +360,24 @@ export const importedWorkflowSchema = z.object({
   updatedAt: z.string().catch(""),
 });
 const _workflowExact: AssertExact<z.output<typeof importedWorkflowSchema>, Workflow> = true;
+/* An automation has the same fields, plus the provenance an import drops. */
+const _automationFieldsExact: AssertExact<
+  Exclude<keyof Automation, "legacy">,
+  keyof z.output<typeof importedWorkflowSchema>
+> = true;
+
+/** The kinds and the top-level keys an import takes; see `automationFileIo.ts`. */
+export const KNOWN_STEP_KINDS: ReadonlySet<string> = new Set(
+  stepOptions.map((option) => option.shape.kind.value)
+);
+export const KNOWN_TRIGGER_KINDS: ReadonlySet<string> = new Set(
+  triggerOptions.map((option) => option.shape.kind.value)
+);
+/** Keys an entry may have that are not imported on purpose: nothing is lost with them. */
+export const KNOWN_ENTRY_KEYS: readonly string[] = [
+  ...Object.keys(importedWorkflowSchema.shape),
+  "legacy",
+];
 
 /* Reference the compile-time guards so `noUnusedLocals`/eslint stay quiet. */
 void [
@@ -357,6 +388,7 @@ void [
   _sendCommandExact,
   _runScriptExact,
   _runMacroExact,
+  _runAutomationExact,
   _waitExact,
   _runLocalProcessExact,
   _conditionalExact,
@@ -371,4 +403,5 @@ void [
   _triggerKindsExact,
   _parameterExact,
   _workflowExact,
+  _automationFieldsExact,
 ];
