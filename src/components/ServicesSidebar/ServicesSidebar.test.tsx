@@ -218,6 +218,29 @@ describe("an offline agent", () => {
     ]);
   });
 
+  it("is said once for file servers, too, and Enter on its line connects it", async () => {
+    seed(
+      [],
+      [
+        [server("s", { host: EDGE }), "notReachable", AWAY],
+        [server("t", { host: EDGE }), "notReachable", AWAY],
+      ]
+    );
+    await render();
+    expect(shown()).toEqual([
+      "service-group-file-servers",
+      "service-agent-edge",
+      "server-item-s",
+      "server-item-t",
+    ]);
+    expect(q("server-machine-s")).toBeNull();
+    expect(q("server-reason-s")).toBeNull();
+    act(() => q("service-agent-edge")!.focus());
+    key(q("service-agent-edge")!, "Enter");
+    await flushAsync();
+    expect(connectAgent).toHaveBeenCalledOnce();
+  });
+
   it("with one service here is said on its row", async () => {
     seed([[tunnel("a", { host: EDGE }), "notReachable", AWAY]]);
     await render();
@@ -340,13 +363,14 @@ describe("making one", () => {
     ["http", "8080"],
     ["ftp", "2121"],
     ["tftp", "6969"],
-  ])("a %s server opens its dialog", async (type, _port) => {
+  ])("a %s server opens its dialog", async (type, port) => {
     await render();
     await click(`services-empty-server-${type}`);
     expect(
       q(`server-dialog-proto-${type}`)?.getAttribute("aria-checked") ??
         q(`server-dialog-proto-${type}`)?.getAttribute("data-state")
     ).toMatch(/true|checked/);
+    expect((q("server-dialog-port") as HTMLInputElement).value).toBe(port);
     expect(useServicesView.getState().requested).toBeNull();
   });
 

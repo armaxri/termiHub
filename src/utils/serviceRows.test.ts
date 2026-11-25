@@ -155,6 +155,11 @@ describe("the search", () => {
     expect(shown).toEqual(found);
   });
 
+  it("does not change the numbers of a group", () => {
+    const some = [entry("a", { health: "running" }), entry("b", { health: "running" })];
+    expect(rows(some, { query: "name b" })).toEqual(["tunnel 2/2", "b"]);
+  });
+
   it("goes with a number", () => {
     const some = [entry("a", { health: "error" }), entry("b", { health: "error" }), entry("c")];
     expect(rows(some, { only: "error", query: "name b" })).toEqual(["tunnel 0/3", "b"]);
