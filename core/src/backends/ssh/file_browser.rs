@@ -13,8 +13,8 @@ use std::io::SeekFrom;
 
 use russh_sftp::client::fs::File;
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::OpenFlags;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use russh_sftp::protocol::{OpenFlags, StatusCode};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 use crate::config::SshConfig;
@@ -297,16 +297,43 @@ pub struct SftpTransferChannel {
     sftp: SftpSession,
 }
 
+/// Whether `e` is the status a server gives without saying why.
+fn is_bare_failure(e: &russh_sftp::client::error::Error) -> bool {
+    matches!(e, russh_sftp::client::error::Error::Status(s) if s.status_code == StatusCode::Failure)
+}
+
+/// The error of a refused open. SFTP has no status for "in use": a server on
+/// Windows answers a bare `Failure` for a file that another handle has open, so
+/// for a file that is there that is named as the likely reason (#6040).
+async fn open_failed(
+    sftp: &SftpSession,
+    path: &str,
+    what: &str,
+    e: russh_sftp::client::error::Error,
+) -> FileError {
+    let in_use = is_bare_failure(&e)
+        && sftp
+            .metadata(path)
+            .await
+            .is_ok_and(|meta| meta.file_type().is_file());
+    let hint = if in_use {
+        ". The file may still be open, for example in a connection that was lost"
+    } else {
+        ""
+    };
+    FileError::OperationFailed(format!("{what}: {e}{hint}"))
+}
+
 impl SftpTransferChannel {
     /// Open an existing remote file for streaming reads (the download source).
     ///
     /// The returned handle implements [`AsyncRead`](tokio::io::AsyncRead), so the
     /// caller reads it in chunks without touching russh directly.
     pub async fn open_read(&self, path: &str) -> Result<File, FileError> {
-        self.sftp
-            .open(path)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("open remote file failed: {e}")))
+        match self.sftp.open(path).await {
+            Ok(file) => Ok(file),
+            Err(e) => Err(open_failed(&self.sftp, path, "open remote file failed", e).await),
+        }
     }
 
     /// Create (truncating) a remote file for streaming writes (the upload
@@ -315,10 +342,10 @@ impl SftpTransferChannel {
     /// The returned handle implements [`AsyncWrite`](tokio::io::AsyncWrite), so
     /// the caller writes it in chunks without touching russh directly.
     pub async fn create_write(&self, path: &str) -> Result<File, FileError> {
-        self.sftp
-            .create(path)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("create remote file failed: {e}")))
+        match self.sftp.create(path).await {
+            Ok(file) => Ok(file),
+            Err(e) => Err(open_failed(&self.sftp, path, "create remote file failed", e).await),
+        }
     }
 
     /// Create `path` as a new, empty remote file, failing when anything is
@@ -329,7 +356,6 @@ impl SftpTransferChannel {
     /// reported like any other failure (SFTP v3 has no dedicated status for
     /// it); re-check the path to tell a clash from a real error.
     pub async fn create_new(&self, path: &str) -> Result<(), FileError> {
-        use tokio::io::AsyncWriteExt;
         let mut file = self
             .sftp
             .open_with_flags(
@@ -381,13 +407,14 @@ impl SftpTransferChannel {
     /// An error at a non-zero `offset` lets the caller fall back to a
     /// restart-from-zero resume.
     pub async fn open_write_at(&self, path: &str, offset: u64) -> Result<File, FileError> {
-        let mut file = self
-            .sftp
-            .open_with_flags(path, OpenFlags::CREATE | OpenFlags::WRITE)
-            .await
-            .map_err(|e| {
-                FileError::OperationFailed(format!("open remote file for append failed: {e}"))
-            })?;
+        let flags = OpenFlags::CREATE | OpenFlags::WRITE;
+        let mut file = match self.sftp.open_with_flags(path, flags).await {
+            Ok(file) => file,
+            Err(e) => {
+                let what = "open remote file for append failed";
+                return Err(open_failed(&self.sftp, path, what, e).await);
+            }
+        };
         if offset > 0 {
             file.seek(SeekFrom::Start(offset)).await.map_err(|e| {
                 FileError::OperationFailed(format!("seek remote write to {offset} failed: {e}"))
@@ -442,6 +469,26 @@ impl SftpTransferChannel {
         })
     }
 
+    /// Remove a partial upload. A server on Windows refuses with a bare
+    /// `Failure` while the stopped upload's handle is still open, so that is
+    /// asked again for up to two seconds.
+    pub async fn remove_partial(&self, path: &str) -> Result<(), FileError> {
+        let mut again = 8;
+        loop {
+            match self.sftp.remove_file(path).await {
+                Err(e) if again > 0 && is_bare_failure(&e) => {
+                    again -= 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                removed => {
+                    return removed.map_err(|e| {
+                        FileError::OperationFailed(format!("remove remote file failed: {e}"))
+                    })
+                }
+            }
+        }
+    }
+
     /// Remove a remote file — used to clean up a partial upload on cancel/error.
     pub async fn remove_file(&self, path: &str) -> Result<(), FileError> {
         self.sftp
@@ -483,11 +530,10 @@ impl FileBrowser for SftpFileBrowser {
             }
         }
 
-        let file = state
-            .sftp
-            .open(path)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
+        let file = match state.sftp.open(path).await {
+            Ok(file) => file,
+            Err(e) => return Err(open_failed(&state.sftp, path, "open failed", e).await),
+        };
 
         // Defense-in-depth: cap the streaming read at the limit regardless of what
         // `stat` advertised, so a server that under-reports its size cannot slip a
@@ -517,13 +563,11 @@ impl FileBrowser for SftpFileBrowser {
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
 
-        let mut file = state
-            .sftp
-            .create(path)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("create failed: {e}")))?;
+        let mut file = match state.sftp.create(path).await {
+            Ok(file) => file,
+            Err(e) => return Err(open_failed(&state.sftp, path, "create failed", e).await),
+        };
 
-        use tokio::io::AsyncWriteExt;
         file.write_all(data)
             .await
             .map_err(|e| FileError::OperationFailed(format!("write failed: {e}")))?;
@@ -767,11 +811,10 @@ impl RangedFileAccess for SftpFileBrowser {
         let state = guard
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
-        let mut file = state
-            .sftp
-            .open(path)
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
+        let mut file = match state.sftp.open(path).await {
+            Ok(file) => file,
+            Err(e) => return Err(open_failed(&state.sftp, path, "open failed", e).await),
+        };
         if offset > 0 {
             file.seek(SeekFrom::Start(offset))
                 .await
@@ -787,18 +830,16 @@ impl RangedFileAccess for SftpFileBrowser {
 
     async fn write_range(&self, path: &str, offset: u64, data: &[u8]) -> Result<(), FileError> {
         let path = &self.resolve_home(path).await?;
-        use tokio::io::AsyncWriteExt;
         self.ensure_connected().await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
         let mut file = if offset == 0 {
-            state
-                .sftp
-                .create(path)
-                .await
-                .map_err(|e| FileError::OperationFailed(format!("create failed: {e}")))?
+            match state.sftp.create(path).await {
+                Ok(file) => file,
+                Err(e) => return Err(open_failed(&state.sftp, path, "create failed", e).await),
+            }
         } else {
             let present = state
                 .sftp
@@ -810,11 +851,10 @@ impl RangedFileAccess for SftpFileBrowser {
             if present != offset {
                 return Err(crate::files::ranged::offset_mismatch(path, present, offset));
             }
-            let mut file = state
-                .sftp
-                .open_with_flags(path, OpenFlags::WRITE)
-                .await
-                .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
+            let mut file = match state.sftp.open_with_flags(path, OpenFlags::WRITE).await {
+                Ok(file) => file,
+                Err(e) => return Err(open_failed(&state.sftp, path, "open failed", e).await),
+            };
             file.seek(SeekFrom::Start(offset))
                 .await
                 .map_err(|e| FileError::OperationFailed(format!("seek failed: {e}")))?;
@@ -932,17 +972,20 @@ fn sftp_copy_path<'a>(
                 }
             }
         } else {
-            let mut reader = sftp
-                .open(src)
-                .await
-                .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
-            let mut writer = sftp
-                .create(dest)
-                .await
-                .map_err(|e| FileError::OperationFailed(format!("create failed: {e}")))?;
-            // `tokio::io::copy` flushes the writer at EOF, so the bytes are
-            // committed before the file handles drop-close.
+            let mut reader = match sftp.open(src).await {
+                Ok(file) => file,
+                Err(e) => return Err(open_failed(sftp, src, "open failed", e).await),
+            };
+            let mut writer = match sftp.create(dest).await {
+                Ok(file) => file,
+                Err(e) => return Err(open_failed(sftp, dest, "create failed", e).await),
+            };
             tokio::io::copy(&mut reader, &mut writer)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("copy failed: {e}")))?;
+            // The copy is there only once the server has closed it (#6040).
+            writer
+                .shutdown()
                 .await
                 .map_err(|e| FileError::OperationFailed(format!("copy failed: {e}")))?;
         }

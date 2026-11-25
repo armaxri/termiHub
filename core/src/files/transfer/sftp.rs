@@ -29,15 +29,16 @@ use std::sync::Arc;
 
 use crate::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
 use crate::files::copy::run_chunked_copy;
+use tokio::io::AsyncWriteExt;
 use tracing::{debug, warn};
 
 pub use super::attempt::STALL_TIMEOUT;
 use super::attempt::{
-    apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
-    local_fingerprint, local_partial_size, map_copy_outcome, open_local_dest, open_local_read,
-    probe_timed_out, rehydrate_start_offset, settle_attempt, settle_writer, stop_reason,
+    apply_partial_gate, close_writer, drive_transfer, emit, guard_probe, guard_stall,
+    handle_attempt_error, local_fingerprint, local_partial_size, map_copy_outcome, open_local_dest,
+    open_local_read, probe_timed_out, rehydrate_start_offset, settle_attempt, stop_reason,
     trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe, Probed, ProgressReporter,
-    ResumeCursor, StopReason,
+    ResumeCursor, StopReason, RELEASE_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
@@ -110,7 +111,7 @@ where
         }
     })?;
 
-    let outcome = run_chunked_copy(
+    let copied = run_chunked_copy(
         &mut remote,
         &mut local,
         CHUNK_SIZE,
@@ -119,8 +120,19 @@ where
         on_progress,
         copy_error,
     )
-    .await?;
-    settle_writer(&mut local, &outcome).await;
+    .await;
+    // Done with the source: on Windows nothing else can replace or delete it
+    // while it is open. All its data is here, so a failure changes nothing.
+    if !matches!(
+        tokio::time::timeout(RELEASE_TIMEOUT, remote.shutdown()).await,
+        Ok(Ok(()))
+    ) {
+        debug!("could not close the SFTP download source (best-effort)");
+    }
+    let outcome = copied?;
+    close_writer(&mut local, &outcome)
+        .await
+        .map_err(|e| SftpTransferError::Ssh(format!("close local file: {e}")))?;
     Ok(map_copy_outcome(outcome))
 }
 
@@ -161,7 +173,7 @@ where
             .map_err(|e| SftpTransferError::Ssh(format!("create remote file: {e}")))?
     };
 
-    let outcome = run_chunked_copy(
+    let copied = run_chunked_copy(
         &mut local,
         &mut remote,
         CHUNK_SIZE,
@@ -170,9 +182,28 @@ where
         on_progress,
         copy_error,
     )
-    .await?;
-    settle_writer(&mut remote, &outcome).await;
-    Ok(map_copy_outcome(outcome))
+    .await;
+    let closed = match copied {
+        Ok(outcome) => close_writer(&mut remote, &outcome)
+            .await
+            .map(|()| outcome)
+            .map_err(|e| SftpTransferError::Ssh(format!("close remote file: {e}"))),
+        Err(e) => Err(e),
+    };
+    if closed.is_err() {
+        // Dropping the handle sends its close, and a server answers one
+        // channel's requests in order: the next attempt, on another channel,
+        // does not find the file still open (Windows locks it, #6040).
+        drop(remote);
+        let released = channel.remote_file_size(remote_path);
+        if tokio::time::timeout(RELEASE_TIMEOUT, released)
+            .await
+            .is_err()
+        {
+            debug!("a failed SFTP upload's file may still be open");
+        }
+    }
+    closed.map(map_copy_outcome)
 }
 
 /// Run attempts (with auto-retry/backoff) for one Active stint. Keeps the slot
@@ -364,7 +395,7 @@ async fn cleanup_partial(
         }
         TransferDirection::Upload => match browser.open_dedicated_channel().await {
             Ok(ch) => {
-                if let Err(e) = ch.remove_file(remote_path).await {
+                if let Err(e) = ch.remove_partial(remote_path).await {
                     debug!(error = %e, "could not remove partial SFTP upload (best-effort)");
                 }
             }
@@ -497,6 +528,10 @@ pub async fn run_sftp_remote_copy(
     )
     .await;
 }
+
+#[cfg(test)]
+#[path = "sftp_close_tests.rs"]
+mod close_tests;
 
 #[cfg(test)]
 mod tests {

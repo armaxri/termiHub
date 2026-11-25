@@ -51,9 +51,9 @@ use tracing::debug;
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::attempt::{
-    apply_resume_gate, drive_transfer, emit, guard_stall, local_fingerprint, local_partial_size,
-    map_copy_outcome, open_local_dest, open_local_read, rehydrate_start_offset, settle_attempt,
-    settle_writer, stop_reason, AttemptOutcome, AttemptsResult, ProgressReporter, ResumeCursor,
+    apply_resume_gate, close_writer, drive_transfer, emit, guard_stall, local_fingerprint,
+    local_partial_size, map_copy_outcome, open_local_dest, open_local_read, rehydrate_start_offset,
+    settle_attempt, stop_reason, AttemptOutcome, AttemptsResult, ProgressReporter, ResumeCursor,
     StopReason, STALL_TIMEOUT,
 };
 use super::registry::{TransferHandle, TransferRegistry};
@@ -185,7 +185,9 @@ where
         copy_error,
     )
     .await?;
-    settle_writer(&mut writer, &outcome).await;
+    close_writer(&mut writer, &outcome)
+        .await
+        .map_err(|e| LocalTransferError::Io(format!("close temp file: {e}")))?;
     drop(writer);
     if matches!(outcome, ChunkedCopyOutcome::Completed { .. }) {
         finalize(src, part, dest).await?;
