@@ -54,6 +54,8 @@ export interface SidebarRowKind {
   name: string;
   /** Selector of the row's action controls, inside the row. */
   actions: string;
+  /** Its name wraps (#6028): it is never cut, at any width. */
+  wraps?: boolean;
 }
 
 export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
@@ -77,6 +79,7 @@ export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
     row: "[data-testid^=tunnel-item-]",
     name: ".sidebar-list-item__name",
     actions: ".sidebar-list-item__actions button",
+    wraps: true,
   },
   {
     kind: "service",
@@ -84,6 +87,7 @@ export const SIDEBAR_ROWS: readonly SidebarRowKind[] = [
     row: ".sidebar-list-item",
     name: ".sidebar-list-item__name",
     actions: ".sidebar-list-item__actions button",
+    wraps: true,
   },
   {
     kind: "http-monitor",

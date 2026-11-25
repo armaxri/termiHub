@@ -24,7 +24,6 @@ vi.mock("@/services/events", () => ({
   onAgentUpdateAvailable: vi.fn(() => deferredRegistration()),
   onRemoteAgentUpdatePending: vi.fn(() => deferredRegistration()),
   onAgentUpdateReconnect: vi.fn(() => deferredRegistration()),
-  onEmbeddedServerStatusChanged: vi.fn(() => deferredRegistration()),
   onCredentialStoreLocked: vi.fn(() => deferredRegistration()),
   onCredentialStoreUnlocked: vi.fn(() => deferredRegistration()),
   onCredentialStoreStatusChanged: vi.fn(() => deferredRegistration()),
@@ -54,7 +53,6 @@ vi.mock("@/utils/frontendLog", async (importOriginal) => ({
 
 import { useAgentUpdateEvents } from "./useAgentUpdateEvents";
 import { useAgentUpdatePendingEvents } from "./useAgentUpdatePendingEvents";
-import { useEmbeddedServerEvents } from "./useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "./useCredentialStoreEvents";
 import { useOsFileDrop } from "./useOsFileDrop";
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
@@ -75,7 +73,6 @@ function useDropHost(): void {
 const cases: Array<[string, React.FC]> = [
   ["useAgentUpdateEvents", hookHost(useAgentUpdateEvents)],
   ["useAgentUpdatePendingEvents", hookHost(useAgentUpdatePendingEvents)],
-  ["useEmbeddedServerEvents", hookHost(useEmbeddedServerEvents)],
   ["useCredentialStoreEvents", hookHost(useCredentialStoreEvents)],
   ["useOsFileDrop", hookHost(useDropHost)],
   ["XServerConnectConsent", XServerConnectConsent],

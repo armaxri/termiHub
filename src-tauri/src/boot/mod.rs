@@ -1452,14 +1452,16 @@ pub(crate) fn init_secondary_managers_with<R: tauri::Runtime>(
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(500));
-                if let Some(mgr) =
-                    handle.try_state::<embedded_servers::server_manager::EmbeddedServerManager<R>>()
+                if let Some(mgr) = handle
+                    .try_state::<Arc<embedded_servers::server_manager::EmbeddedServerManager<R>>>()
                 {
                     mgr.start_auto_servers();
                 }
             });
 
-            app.manage(manager);
+            app.manage(Arc::new(manager));
+            // Managed after the projection, so the `services` region starts here.
+            embedded_servers::projection::publish_services(app.handle());
         }
         Err(e) => {
             tracing::error!("Failed to initialize embedded server manager: {e}");

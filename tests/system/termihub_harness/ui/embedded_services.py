@@ -124,7 +124,7 @@ class EmbeddedServicesUi(HarnessMixin):
     def _confirm_delete(self) -> None:
         """Answer the delete-service confirmation dialog (#1393).
 
-        Both the inline ``server-delete-*`` button and the context-menu
+        Both the row's "…" menu item ``server-delete-*`` and the context-menu
         ``ctx-delete-*`` item now only *arm* a confirm dialog; without clicking
         its confirm button the delete never reaches the backend, which surfaced as
         a silent timeout on the now-live nightly lane (#2670).
@@ -137,7 +137,8 @@ class EmbeddedServicesUi(HarnessMixin):
 
     def delete_server(self, server_id: str, name: str) -> None:
         """Delete a server and wait for it to vanish from the store."""
-        self.driver.click(f"server-delete-{server_id}")
+        self.open_server_menu(server_id)
+        self.driver.click(f"ctx-delete-{server_id}")
         self._confirm_delete()
         self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
 
@@ -145,14 +146,14 @@ class EmbeddedServicesUi(HarnessMixin):
     def open_server_menu(self, server_id: str) -> None:
         """Right-click a server row and wait for its context menu (issue #965).
 
-        ``EmbeddedServerItem`` wraps each row in a Radix context menu that mirrors
+        ``ServiceListItem`` wraps each row in a Radix context menu that mirrors
         the inline action buttons under ``ctx-*-${id}`` testids. We wait for the
-        Copy-URL item — present regardless of running state — so the menu is
-        confirmed open before any action is selected.
+        Edit item — present in every state — so the menu is confirmed open before
+        any action is selected.
         """
         self.driver.context_menu(f"server-item-{server_id}")
         self.wait(
-            lambda: self.driver.exists(f"ctx-copy-url-{server_id}"),
+            lambda: self.driver.exists(f"ctx-edit-{server_id}"),
             what="the server context menu",
         )
 

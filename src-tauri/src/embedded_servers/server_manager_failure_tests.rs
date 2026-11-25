@@ -12,11 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::test::{mock_app, MockRuntime};
-use tauri::{Listener, Manager};
+use tauri::Manager;
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
 use termihub_core::util::service_host::ServiceHost;
 
-use super::{EmbeddedServerManager, SERVER_STATUS_EVENT};
+use super::host_tests::watch;
+use super::EmbeddedServerManager;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState, ServerStatus};
 use crate::embedded_servers::secrets::tests::{http, FakeStore, LOCKED, UNLOCKED};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -28,7 +29,7 @@ const CLOSE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// A manager on the mock runtime that records every status event it emits.
 struct Harness {
-    manager: EmbeddedServerManager<MockRuntime>,
+    manager: Arc<EmbeddedServerManager<MockRuntime>>,
     store: Arc<FakeStore>,
     events: Arc<Mutex<Vec<ServerState>>>,
     _app: tauri::App<MockRuntime>,
@@ -41,15 +42,12 @@ fn harness(config_dir: &Path, agent: Option<Arc<FakeAgent>>) -> Harness {
         let client: Arc<dyn AgentRpcClient> = agent;
         app.manage(client);
     }
-    let events: Arc<Mutex<Vec<ServerState>>> = Arc::default();
-    let log = Arc::clone(&events);
-    app.handle().listen_any(SERVER_STATUS_EVENT, move |event| {
-        let state: ServerState = serde_json::from_str(event.payload()).expect("ServerState");
-        log.lock().unwrap().push(state);
-    });
+    let events = watch(&app);
     let store = FakeStore::new(UNLOCKED);
     let manager = EmbeddedServerManager::new(app.handle(), store.clone())
         .expect("manager builds on the mock runtime");
+    let manager = Arc::new(manager);
+    app.manage(Arc::clone(&manager));
     Harness {
         manager,
         store,
@@ -129,7 +127,10 @@ fn start_on_a_busy_port_fails_and_succeeds_once_the_port_frees() {
         h.local_addr("web").is_none(),
         "nothing listens after a failed start"
     );
-    assert_eq!(h.state_of("web").status, ServerStatus::Stopped);
+    // Durable (#6028): the row says why until the next try.
+    let state = h.state_of("web");
+    assert_eq!(state.status, ServerStatus::Error);
+    assert!(state.error.unwrap_or_default().contains("already in use"));
 
     drop(blocker);
     h.manager.start_server("web").expect("the retry starts");
@@ -162,7 +163,7 @@ fn restart_when_the_port_was_taken_meanwhile_fails_then_recovers() {
         .expect_err("restart hits the conflict");
     assert!(err.to_string().contains("already in use"), "{err}");
     let state = h.state_of("web");
-    assert_eq!(state.status, ServerStatus::Stopped, "not stuck Running");
+    assert_eq!(state.status, ServerStatus::Error, "not stuck Running");
     assert_eq!(state.started_at, None);
 
     drop(blocker);
@@ -206,7 +207,10 @@ fn auto_start_failure_surfaces_an_error_and_the_rest_still_start() {
         h.local_addr("manual").is_none(),
         "auto_start: false is not started"
     );
-    assert!(h.events_for("manual").is_empty());
+    assert!(h
+        .events_for("manual")
+        .iter()
+        .all(|s| s.status == ServerStatus::Stopped));
     h.manager.stop_all();
 }
 

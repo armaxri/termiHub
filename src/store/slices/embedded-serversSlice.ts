@@ -1,12 +1,10 @@
 import { StateCreator } from "zustand";
 
 import {
-  listEmbeddedServers,
   saveEmbeddedServer as apiSaveEmbeddedServer,
   deleteEmbeddedServer as apiDeleteEmbeddedServer,
   startEmbeddedServer as apiStartEmbeddedServer,
   stopEmbeddedServer as apiStopEmbeddedServer,
-  getEmbeddedServerStates,
   createAndStartServer as apiCreateAndStartServer,
 } from "@/services/embeddedServerApi";
 import {
@@ -15,31 +13,43 @@ import {
   ServerState as EmbeddedServerState,
   ServerType,
 } from "@/types/embeddedServer";
+import { createTransport, ProjectionClient } from "@/services/transport";
 import { THIS_COMPUTER } from "@/types/tunnel";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
 
+/** The projection region id of the file servers (twin of the Rust const). */
+const SERVICES_REGION = "services";
+
 /**
- * Embedded HTTP/FTP/TFTP server domain slice (#2113): the embedded-server config
- * list, live server states, and the CRUD/lifecycle actions that drive them.
- * Extracted verbatim from the monolithic root store as a behavior-preserving
- * Zustand slice — every action still receives the shared `set`/`get` typed
- * against the full {@link AppState}, so the public store shape and behavior are
- * unchanged. Mirrors the SSH tunnel slice (#2077).
+ * The projected `services` view, the twin of the Rust `services_view_from`
+ * (`src-tauri/src/embedded_servers/projection.rs`).
+ */
+interface ServicesView {
+  servers: EmbeddedServerConfig[];
+  states: Record<string, EmbeddedServerState>;
+}
+
+let _client: ProjectionClient | null = null;
+
+/**
+ * Embedded HTTP/FTP/TFTP server domain slice (#2113), a cache of the shared
+ * `services` region (#6028, F-6): `loadEmbeddedServers` subscribes, and the list,
+ * the states and the traffic of every window come from there. The actions only
+ * ask the backend; what they changed arrives as a diff, in every window.
  */
 export interface EmbeddedServersSlice {
   embeddedServers: EmbeddedServerConfig[];
   embeddedServerStates: Record<string, EmbeddedServerState>;
   loadEmbeddedServers: () => Promise<void>;
-  /** Refresh only the live runtime states (stats/uptime) without reloading the config list. */
-  refreshEmbeddedServerStates: () => Promise<void>;
   saveEmbeddedServer: (config: EmbeddedServerConfig) => Promise<void>;
   deleteEmbeddedServer: (serverId: string) => Promise<void>;
   startEmbeddedServer: (serverId: string) => Promise<void>;
   stopEmbeddedServer: (serverId: string) => Promise<void>;
-  updateEmbeddedServerState: (state: EmbeddedServerState) => void;
+  /** Stop a running server and start it again. */
+  restartEmbeddedServer: (serverId: string) => Promise<void>;
   quickShareServer: (path: string, protocol: ServerType) => Promise<string>;
 }
 
@@ -52,47 +62,23 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
 
   loadEmbeddedServers: async () => {
     try {
-      const servers = await listEmbeddedServers();
-      const stateList = await getEmbeddedServerStates();
-      const embeddedServerStates: Record<string, EmbeddedServerState> = {};
-      for (const s of stateList) {
-        embeddedServerStates[s.serverId] = s;
-      }
-      set({ embeddedServers: servers, embeddedServerStates });
+      // Re-subscribing (a re-init, a restored backup) drops the old client first.
+      _client?.stop();
+      const client = new ProjectionClient(createTransport(), SERVICES_REGION);
+      client.onChange((state) => {
+        const view = (state.view ?? {}) as Partial<ServicesView>;
+        set({ embeddedServers: view.servers ?? [], embeddedServerStates: view.states ?? {} });
+      });
+      await client.start();
+      _client = client;
     } catch (err) {
-      frontendLog("app_store", `Failed to load embedded servers: ${errorMessage(err)}`);
-    }
-  },
-
-  refreshEmbeddedServerStates: async () => {
-    try {
-      const stateList = await getEmbeddedServerStates();
-      const embeddedServerStates: Record<string, EmbeddedServerState> = {};
-      for (const s of stateList) {
-        embeddedServerStates[s.serverId] = s;
-      }
-      set({ embeddedServerStates });
-    } catch (err) {
-      frontendLog(
-        "embedded_server",
-        `Failed to refresh embedded server states: ${errorMessage(err)}`
-      );
+      frontendLog("app_store", `Failed to subscribe to services projection: ${errorMessage(err)}`);
     }
   },
 
   saveEmbeddedServer: async (config) => {
     try {
       await apiSaveEmbeddedServer(config);
-      set((state) => {
-        const exists = state.embeddedServers.some((s) => s.id === config.id);
-        const embeddedServers = exists
-          ? // A save without a host keeps the stored one, as the backend does (#6028).
-            state.embeddedServers.map((s) =>
-              s.id === config.id ? { ...config, host: config.host ?? s.host } : s
-            )
-          : [...state.embeddedServers, config];
-        return { embeddedServers };
-      });
     } catch (err) {
       frontendLog("app_store", `Failed to save embedded server: ${errorMessage(err)}`);
       throw err;
@@ -102,17 +88,9 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
   deleteEmbeddedServer: async (serverId) => {
     try {
       await apiDeleteEmbeddedServer(serverId);
-      set((state) => ({
-        embeddedServers: state.embeddedServers.filter((s) => s.id !== serverId),
-        embeddedServerStates: Object.fromEntries(
-          Object.entries(state.embeddedServerStates).filter(([k]) => k !== serverId)
-        ),
-      }));
     } catch (err) {
       // Propagate the failure so the caller (EmbeddedServerSidebar) can show
-      // an error toast — #1427. The server is only removed from the store on
-      // success above, so state stays correct on failure. Mirrors
-      // saveEmbeddedServer / deleteTunnel.
+      // an error toast (#1427).
       frontendLog(
         "embedded_server",
         `Failed to delete embedded server ${serverId}: ${errorMessage(err)}`
@@ -145,10 +123,9 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
     }
   },
 
-  updateEmbeddedServerState: (state) => {
-    set((s) => ({
-      embeddedServerStates: { ...s.embeddedServerStates, [state.serverId]: state },
-    }));
+  restartEmbeddedServer: async (serverId) => {
+    await get().stopEmbeddedServer(serverId);
+    await get().startEmbeddedServer(serverId);
   },
 
   quickShareServer: async (path, protocol) => {
@@ -164,9 +141,6 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
       directoryListing: protocol === "http" ? true : undefined,
       host: THIS_COMPUTER,
     };
-    const serverId = await apiCreateAndStartServer(config);
-    // Refresh server list so the new entry shows up in the sidebar.
-    await get().loadEmbeddedServers();
-    return serverId;
+    return await apiCreateAndStartServer(config);
   },
 });

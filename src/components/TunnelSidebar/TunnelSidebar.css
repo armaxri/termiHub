@@ -12,90 +12,15 @@
 }
 
 /*
- * Tunnel rows are composed from the shared `SidebarListItem` shell (issue 1383),
- * so the row layout (container, header, status dot, name, badge, actions,
- * details) lives in `SidebarListItem.css`. Only the tunnel-specific attention
- * lines — the errored resting row, the reconnecting row, an agent-only bind and
- * a degraded chain — remain here; the rest is in the row's tooltip (#5770).
+ * The row is the shared ServiceListItem (issue 6028). Only what a chained hop
+ * adds is here.
  */
-
-.tunnel-item__error {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--color-error);
-  min-width: 0;
-}
-
-.tunnel-item__error-icon {
-  flex-shrink: 0;
-}
-
-/* Keep the resting error row a single line; the full text lives in the
- * "View last error" toast and the row's native title tooltip. */
-.tunnel-item__error-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Amber reconnecting row: attempt counter + backoff countdown while a tunnel
- * with reconnect-on-disconnect retries under capped backoff (issue 1246). */
-.tunnel-item__reconnecting {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--color-warning);
-  min-width: 0;
-}
-
-.tunnel-item__reconnecting-icon {
-  flex-shrink: 0;
-}
-
-.tunnel-item__reconnecting-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Runtime reachability note from the agent's report (#2199). Neutral by
- * default; amber when the listen port is not reachable from this computer
- * (a loopback bind on the agent). */
-.tunnel-item__reach {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  color: var(--text-secondary);
-  min-width: 0;
-}
-
-.tunnel-item__reach[data-warn="true"] {
-  color: var(--color-warning);
-}
-
-.tunnel-item__reach-icon {
-  flex-shrink: 0;
-}
-
-.tunnel-item__reach-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* ── Chained-hop pair (#2597) ─────────────────────────────────────────────── */
 
 /* A companion row nests under its parent. */
 .tunnel-item--nested {
   padding-left: var(--spacing-lg);
-}
-
-.tunnel-item__companion-name {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  min-width: 0;
 }
 
 .tunnel-item__link-icon {
@@ -119,10 +44,9 @@
   flex-shrink: 0;
 }
 
-/* Redundant-hop notice + inline degraded fix + deleted SSH connection (#2850). */
+/* Redundant-hop notice + inline degraded fix. */
 .tunnel-item__redundant,
-.tunnel-item__degraded-fix,
-.tunnel-item__missing-connection {
+.tunnel-item__degraded-fix {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -131,8 +55,7 @@
 }
 
 .tunnel-item__redundant-icon,
-.tunnel-item__degraded-icon,
-.tunnel-item__missing-connection-icon {
+.tunnel-item__degraded-icon {
   flex-shrink: 0;
 }
 

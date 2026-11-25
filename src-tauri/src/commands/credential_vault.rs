@@ -38,7 +38,7 @@ pub(crate) fn known_owners(
     let mut owners = connection_manager
         .credential_owner_names()
         .map_err(|e| e.to_string())?;
-    if let Some(servers) = app_handle.try_state::<EmbeddedServerManager>() {
+    if let Some(servers) = app_handle.try_state::<Arc<EmbeddedServerManager>>() {
         owners.extend(servers.vault_owners());
     }
     // Shared named credentials (#3557), labelled "<name> (shared credential)".
@@ -66,7 +66,7 @@ pub(crate) fn derivable_owner_ids(
     let mut ids = connection_manager
         .credential_seed_owner_ids()
         .map_err(|e| e.to_string())?;
-    if let Some(servers) = app_handle.try_state::<EmbeddedServerManager>() {
+    if let Some(servers) = app_handle.try_state::<Arc<EmbeddedServerManager>>() {
         ids.extend(servers.vault_owners().into_iter().map(|(id, _)| id));
     }
     if let Some(named) = app_handle.try_state::<Arc<NamedCredentialRegistry>>() {

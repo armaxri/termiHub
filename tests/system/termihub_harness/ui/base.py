@@ -77,16 +77,21 @@ class HarnessMixin:
         return self.driver.get_attribute(test_id, "disabled") is not None
 
     def is_blocked(self, test_id: str) -> bool:
-        """Whether a control refuses to act, natively or via ``aria-disabled``.
+        """Whether a control refuses to act: ``disabled``, ``aria-disabled`` or
+        ``data-invalid``.
 
         Editor Save buttons stay focusable and clickable while their form is
-        invalid (``aria-disabled="true"``, #5284/#5917): clicking one reveals
+        invalid (#5284/#5917). Some say so with ``aria-disabled="true"``, some only
+        with ``data-invalid`` (the automation editor, A-023): clicking one reveals
         the errors instead of saving. :meth:`is_disabled` alone would read such
         a button as enabled.
         """
         if self.is_disabled(test_id):
             return True
-        return self.driver.get_attribute(test_id, "aria-disabled") == "true"
+        return any(
+            self.driver.get_attribute(test_id, name) == "true"
+            for name in ("aria-disabled", "data-invalid")
+        )
 
     def open_modals(self, *markers: str) -> list[str]:
         """Which of :data:`COMMON_MODAL_MARKERS` plus ``markers`` are mounted now."""

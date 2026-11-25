@@ -15,6 +15,7 @@ import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
 import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
 import { TunnelSidebar } from "./TunnelSidebar";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const mockDeleteTunnel = vi.fn((_id: string, _opts?: { undoable?: boolean }) => Promise.resolve());
 const mockUpdateSettings = vi.fn((_s: unknown) => Promise.resolve());
@@ -98,9 +99,7 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
     });
     await flush();
 
-    const deleteBtn = container.querySelector<HTMLButtonElement>(
-      '[data-testid="tunnel-delete-tun-1"]'
-    );
+    const deleteBtn = serviceMenuItem("tunnel-delete-tun-1");
     expect(deleteBtn).not.toBeNull();
     await act(async () => {
       deleteBtn!.click();
@@ -133,9 +132,7 @@ describe("TunnelSidebar — delete confirmation (GAP 7, #1141)", () => {
       );
     });
     await flush();
-    const deleteBtn = container.querySelector<HTMLButtonElement>(
-      `[data-testid="tunnel-delete-${id}"]`
-    );
+    const deleteBtn = serviceMenuItem(`tunnel-delete-${id}`);
     await act(async () => {
       deleteBtn!.click();
     });

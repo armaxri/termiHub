@@ -183,6 +183,13 @@ services, HTTP monitors, plugins) shows:
   "Running", "Error"; a plugin's "Enabled", "Disabled", "Error"), and so does a leading
   type icon ("Protocol parser").
 
+**Services** (SSH tunnels and file servers) say three things more, because a name alone does not
+tell what one is for or how to use it (maintainer, 2026-11-25,
+[#6028](https://github.com/armaxri/termiHub/issues/6028)): their state and what they are for in plain
+words ("Running · Open a folder in a browser"), the machine when that is not this computer, and,
+only while they run, the address with Copy. Why one does not run takes the address's place. Nothing
+on the row is cut: it wraps. The row is `ServiceListItem`, its words are in `serviceModel.ts`.
+
 Everything else is configuration or history and goes in the row's **tooltip**, the editor or a
 detail view, never on the row: host, user and port, the trigger and its target, step or command
 previews, the last run and where it went, prefixes, tags. Pass these lines to

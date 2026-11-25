@@ -11,7 +11,40 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
+import type { ProjectionCacheState } from "@/services/transport";
 import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
+
+const { regions, startMock } = vi.hoisted(() => ({
+  /** One entry per live region client, newest last. */
+  regions: [] as { region: string; push: (state: ProjectionCacheState) => void }[],
+  startMock: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("@/services/transport", () => ({
+  createTransport: () => ({ dispatch: vi.fn(), subscribe: vi.fn(), resync: vi.fn() }),
+  newClientId: () => "client-test",
+  newIntentId: () => "intent-test",
+  ProjectionClient: class {
+    private listener?: (state: ProjectionCacheState) => void;
+    private entry = {
+      region: "",
+      push: (state: ProjectionCacheState) => this.listener?.(state),
+    };
+    constructor(_transport: unknown, region: string) {
+      this.entry.region = region;
+      regions.push(this.entry);
+    }
+    onChange(listener: (state: ProjectionCacheState) => void) {
+      this.listener = listener;
+      return () => {};
+    }
+    start = startMock;
+    stop() {
+      const at = regions.indexOf(this.entry);
+      if (at >= 0) regions.splice(at, 1);
+    }
+  },
+}));
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -41,23 +74,20 @@ vi.mock("@/themes", () => ({
 }));
 
 vi.mock("@/services/embeddedServerApi", () => ({
-  listEmbeddedServers: vi.fn(() => Promise.resolve([])),
   saveEmbeddedServer: vi.fn(() => Promise.resolve()),
   deleteEmbeddedServer: vi.fn(() => Promise.resolve()),
   startEmbeddedServer: vi.fn(() => Promise.resolve()),
   stopEmbeddedServer: vi.fn(() => Promise.resolve()),
-  getEmbeddedServerStates: vi.fn(() => Promise.resolve([])),
   createAndStartServer: vi.fn(() => Promise.resolve("srv-new")),
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
 }));
 
 import { useAppStore } from "./appStore";
 import {
-  listEmbeddedServers as apiListEmbeddedServers,
+  deleteEmbeddedServer as apiDeleteEmbeddedServer,
   saveEmbeddedServer as apiSaveEmbeddedServer,
   startEmbeddedServer as apiStartEmbeddedServer,
   stopEmbeddedServer as apiStopEmbeddedServer,
-  getEmbeddedServerStates as apiGetEmbeddedServerStates,
   createAndStartServer as apiCreateAndStartServer,
 } from "@/services/embeddedServerApi";
 
@@ -87,125 +117,94 @@ describe("embedded-servers slice (TFE-006)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    regions.length = 0;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  describe("loadEmbeddedServers", () => {
-    it("populates the config list and keys the runtime states by serverId", async () => {
-      vi.mocked(apiListEmbeddedServers).mockResolvedValueOnce([
-        makeServer("srv-1", "A"),
-        makeServer("srv-2", "B"),
-      ]);
-      vi.mocked(apiGetEmbeddedServerStates).mockResolvedValueOnce([
-        runningState("srv-1"),
-        runningState("srv-2"),
-      ]);
+  describe("the services region (#6028)", () => {
+    const services = () => regions.filter((r) => r.region === "services");
+    const push = (servers: EmbeddedServerConfig[], states: ServerState[]) =>
+      services()[0].push({
+        version: 1,
+        view: { servers, states: Object.fromEntries(states.map((s) => [s.serverId, s])) },
+      });
 
+    it("shows what the region says, and follows it", async () => {
       await useAppStore.getState().loadEmbeddedServers();
-
+      expect(services()).toHaveLength(1);
+      push([makeServer("srv-1", "A"), makeServer("srv-2", "B")], [runningState("srv-1")]);
       expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["srv-1", "srv-2"]);
       expect(useAppStore.getState().embeddedServerStates["srv-1"].status).toBe("running");
-      expect(useAppStore.getState().embeddedServerStates["srv-2"].status).toBe("running");
+
+      // Another window deleted one.
+      push([makeServer("srv-2", "B")], []);
+      expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["srv-2"]);
+      expect(useAppStore.getState().embeddedServerStates).toEqual({});
     });
 
-    it("swallows a backend failure and leaves state untouched (read-only load)", async () => {
+    it("subscribes once, also after a reload", async () => {
+      await useAppStore.getState().loadEmbeddedServers();
+      await useAppStore.getState().loadEmbeddedServers();
+      expect(services()).toHaveLength(1);
+      push([makeServer("srv-1", "A")], []);
+      expect(useAppStore.getState().embeddedServers).toHaveLength(1);
+    });
+
+    it("treats a region that is not published yet as empty", async () => {
+      await useAppStore.getState().loadEmbeddedServers();
+      services()[0].push({ version: 0, view: null });
+      expect(useAppStore.getState().embeddedServers).toEqual([]);
+      expect(useAppStore.getState().embeddedServerStates).toEqual({});
+    });
+
+    it("keeps the list when it cannot subscribe", async () => {
       useAppStore.setState({ embeddedServers: [makeServer("keep", "K")] });
-      vi.mocked(apiListEmbeddedServers).mockRejectedValueOnce(new Error("boom"));
-
+      startMock.mockRejectedValueOnce("raw string failure");
       await expect(useAppStore.getState().loadEmbeddedServers()).resolves.toBeUndefined();
-
-      // The pre-existing state is not clobbered on failure.
       expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["keep"]);
     });
-  });
 
-  describe("saveEmbeddedServer", () => {
-    it("keeps where a server runs when the save leaves it out (#6028)", async () => {
-      const host = { kind: "agent", agentId: "a1" } as const;
-      useAppStore.setState({ embeddedServers: [{ ...makeServer("srv-1", "A"), host }] });
-      await useAppStore.getState().saveEmbeddedServer(makeServer("srv-1", "Renamed"));
-      expect(useAppStore.getState().embeddedServers[0]).toMatchObject({ name: "Renamed", host });
-    });
-  });
-
-  describe("refreshEmbeddedServerStates", () => {
-    it("refreshes only the runtime states without touching the config list", async () => {
-      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "A")] });
-      vi.mocked(apiGetEmbeddedServerStates).mockResolvedValueOnce([runningState("srv-1")]);
-
-      await useAppStore.getState().refreshEmbeddedServerStates();
-
-      expect(useAppStore.getState().embeddedServerStates["srv-1"].status).toBe("running");
-      // Config list untouched — refresh does not reload it.
-      expect(apiListEmbeddedServers).not.toHaveBeenCalled();
-      expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["srv-1"]);
-    });
-
-    it("swallows a states-fetch failure and leaves the prior states in place", async () => {
-      useAppStore.setState({ embeddedServerStates: { "srv-1": runningState("srv-1") } });
-      vi.mocked(apiGetEmbeddedServerStates).mockRejectedValueOnce(new Error("no states"));
-
-      await expect(useAppStore.getState().refreshEmbeddedServerStates()).resolves.toBeUndefined();
-
-      expect(useAppStore.getState().embeddedServerStates["srv-1"].status).toBe("running");
-    });
-  });
-
-  describe("saveEmbeddedServer", () => {
-    it("appends a brand-new server to the list", async () => {
+    it("a save and a delete change nothing here: the region does", async () => {
+      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Old")] });
       await useAppStore.getState().saveEmbeddedServer(makeServer("srv-1", "New"));
-
       expect(apiSaveEmbeddedServer).toHaveBeenCalledTimes(1);
-      expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["srv-1"]);
+      expect(useAppStore.getState().embeddedServers[0].name).toBe("Old");
+      await useAppStore.getState().deleteEmbeddedServer("srv-1");
+      expect(apiDeleteEmbeddedServer).toHaveBeenCalledWith("srv-1");
+      expect(useAppStore.getState().embeddedServers).toHaveLength(1);
     });
 
-    it("replaces an existing server in place rather than duplicating it", async () => {
-      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Old")] });
+    it.each([new Error("failed"), "raw string failure"])(
+      "a refused save and delete reach the caller (%s)",
+      async (reason) => {
+        vi.mocked(apiSaveEmbeddedServer).mockRejectedValueOnce(reason);
+        vi.mocked(apiDeleteEmbeddedServer).mockRejectedValueOnce(reason);
+        await expect(
+          useAppStore.getState().saveEmbeddedServer(makeServer("srv-2", "New"))
+        ).rejects.toBe(reason);
+        await expect(useAppStore.getState().deleteEmbeddedServer("srv-2")).rejects.toBe(reason);
+      }
+    );
+  });
 
-      await useAppStore
-        .getState()
-        .saveEmbeddedServer({ ...makeServer("srv-1", "Renamed"), port: 9090 });
-
-      const servers = useAppStore.getState().embeddedServers;
-      expect(servers).toHaveLength(1);
-      expect(servers[0].name).toBe("Renamed");
-      expect(servers[0].port).toBe(9090);
+  describe("restartEmbeddedServer", () => {
+    it("stops, then starts", async () => {
+      const order: string[] = [];
+      vi.mocked(apiStopEmbeddedServer).mockImplementationOnce(async () => void order.push("stop"));
+      vi.mocked(apiStartEmbeddedServer).mockImplementationOnce(
+        async () => void order.push("start")
+      );
+      await useAppStore.getState().restartEmbeddedServer("srv-1");
+      expect(order).toEqual(["stop", "start"]);
     });
 
-    it("updates only the matching server and passes every sibling through untouched", async () => {
-      // Two existing servers: saving an edit to srv-1 must replace srv-1 in place
-      // while srv-2 flows through the `.map` untouched (the sibling-passthrough
-      // branch of the replace path — line 87). A prior single-item test could not
-      // exercise the "keep this other one" arm.
-      const srv2 = makeServer("srv-2", "Keep");
-      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Old"), srv2] });
-
-      await useAppStore
-        .getState()
-        .saveEmbeddedServer({ ...makeServer("srv-1", "Renamed"), port: 9191 });
-
-      const servers = useAppStore.getState().embeddedServers;
-      expect(servers.map((s) => s.id)).toEqual(["srv-1", "srv-2"]);
-      const updated = servers.find((s) => s.id === "srv-1");
-      expect(updated?.name).toBe("Renamed");
-      expect(updated?.port).toBe(9191);
-      // The untouched sibling is the exact same object reference (passed through).
-      expect(servers.find((s) => s.id === "srv-2")).toBe(srv2);
-    });
-
-    it("rethrows and does not mutate the list when the backend save fails", async () => {
-      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Old")] });
-      vi.mocked(apiSaveEmbeddedServer).mockRejectedValueOnce(new Error("save failed"));
-
-      await expect(
-        useAppStore.getState().saveEmbeddedServer(makeServer("srv-2", "New"))
-      ).rejects.toThrow("save failed");
-
-      // srv-2 was never added because the backend call rejected before the set().
-      expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["srv-1"]);
+    it("does not start what it could not stop", async () => {
+      vi.mocked(apiStopEmbeddedServer).mockRejectedValueOnce(new Error("no"));
+      await expect(useAppStore.getState().restartEmbeddedServer("srv-1")).rejects.toThrow("no");
+      expect(apiStartEmbeddedServer).not.toHaveBeenCalled();
     });
   });
 
@@ -235,44 +234,9 @@ describe("embedded-servers slice (TFE-006)", () => {
     });
   });
 
-  describe("updateEmbeddedServerState", () => {
-    it("merges a single pushed state under its serverId, preserving others", () => {
-      useAppStore.setState({ embeddedServerStates: { "srv-1": runningState("srv-1") } });
-
-      const stopped: ServerState = { ...runningState("srv-2"), status: "stopped" };
-      useAppStore.getState().updateEmbeddedServerState(stopped);
-
-      expect(useAppStore.getState().embeddedServerStates["srv-1"].status).toBe("running");
-      expect(useAppStore.getState().embeddedServerStates["srv-2"].status).toBe("stopped");
-    });
-  });
-
-  // `loadEmbeddedServers` / `saveEmbeddedServer` stringify the rejection via
-  // `err instanceof Error ? err.message : String(err)`. The Error side is covered
-  // above; these pin the non-Error (raw string) side of that guard.
-  describe("non-Error rejections stringify via the String(err) branch", () => {
-    it("loadEmbeddedServers swallows a non-Error rejection", async () => {
-      useAppStore.setState({ embeddedServers: [makeServer("keep", "K")] });
-      vi.mocked(apiListEmbeddedServers).mockRejectedValueOnce("raw string failure");
-
-      await expect(useAppStore.getState().loadEmbeddedServers()).resolves.toBeUndefined();
-      expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["keep"]);
-    });
-
-    it("saveEmbeddedServer rethrows a non-Error rejection", async () => {
-      vi.mocked(apiSaveEmbeddedServer).mockRejectedValueOnce("raw string failure");
-
-      await expect(
-        useAppStore.getState().saveEmbeddedServer(makeServer("srv-1", "New"))
-      ).rejects.toBe("raw string failure");
-    });
-  });
-
   describe("quickShareServer", () => {
-    it("creates+starts an http share with directory listing on and refreshes the list", async () => {
+    it("creates+starts an http share with directory listing on", async () => {
       vi.mocked(apiCreateAndStartServer).mockResolvedValueOnce("srv-http");
-      vi.mocked(apiListEmbeddedServers).mockResolvedValueOnce([makeServer("srv-http", "Quick")]);
-      vi.mocked(apiGetEmbeddedServerStates).mockResolvedValueOnce([runningState("srv-http")]);
 
       const id = await useAppStore.getState().quickShareServer("/srv/www", "http");
 
@@ -282,8 +246,6 @@ describe("embedded-servers slice (TFE-006)", () => {
       expect(config.port).toBe(8080);
       expect(config.rootDirectory).toBe("/srv/www");
       expect(config.directoryListing).toBe(true);
-      // The freshly created share was loaded back into the list.
-      expect(useAppStore.getState().embeddedServers.map((s) => s.id)).toEqual(["srv-http"]);
     });
 
     it("leaves directoryListing undefined for a non-http (tftp) share", async () => {

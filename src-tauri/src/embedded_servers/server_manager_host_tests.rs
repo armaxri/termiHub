@@ -11,16 +11,19 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use tauri::test::{mock_app, MockRuntime};
-use tauri::{Listener, Manager};
+use tauri::Manager;
 use termihub_core::protocol::methods::{SERVICE_START, SERVICE_STOP};
 
-use super::{EmbeddedServerManager, SERVER_STATUS_EVENT};
+use super::EmbeddedServerManager;
 use crate::app_tasks::AppTasks;
+use crate::commands::projection::ProjectionState;
 use crate::connection::config::SavedRemoteAgent;
 use crate::connection::manager::ConnectionManager;
 use crate::credential::NullStore;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState, ServerStatus};
+use crate::embedded_servers::projection::{publish_services, SERVICES_REGION};
 use crate::embedded_servers::secrets::tests::{FakeStore, UNLOCKED};
+use crate::projection::{apply_ops, ProjectionError, ProjectionFrame, ProjectionSink};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::test_support::agent_rpc::{FakeAgent, Gate, Step};
 use crate::utils::config_paths::ConfigDirOverride;
@@ -29,7 +32,8 @@ use crate::utils::errors::TerminalError;
 const FILE: &str = "embedded_servers.json";
 
 pub(super) struct Harness {
-    pub(super) manager: EmbeddedServerManager<MockRuntime>,
+    pub(super) manager: Arc<EmbeddedServerManager<MockRuntime>>,
+    /// Every change of a server's state or reason that the windows were told.
     pub(super) events: Arc<Mutex<Vec<ServerState>>>,
     pub(super) app: tauri::App<MockRuntime>,
 }
@@ -65,19 +69,60 @@ pub(super) fn run_with(
         connections.save_agent(saved).expect("agent saved");
     }
     app.manage(connections);
-    let events: Arc<Mutex<Vec<ServerState>>> = Arc::default();
-    let log = Arc::clone(&events);
-    app.handle().listen_any(SERVER_STATUS_EVENT, move |event| {
-        log.lock()
-            .unwrap()
-            .push(serde_json::from_str(event.payload()).expect("ServerState"));
-    });
-    let manager = EmbeddedServerManager::new(app.handle(), store).expect("manager");
+    let events = watch(&app);
+    let manager = Arc::new(EmbeddedServerManager::new(app.handle(), store).expect("manager"));
+    app.manage(Arc::clone(&manager));
+    publish_services(app.handle());
+    events.lock().unwrap().clear();
     Harness {
         manager,
         events,
         app,
     }
+}
+
+/// A window over the `services` region: the states it was told, one per change
+/// of a server's status or reason.
+struct Window {
+    view: Mutex<Value>,
+    told: Arc<Mutex<Vec<ServerState>>>,
+}
+
+impl ProjectionSink for Window {
+    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
+        let mut view = self.view.lock().unwrap();
+        let before = view.clone();
+        match frame {
+            ProjectionFrame::Diff(diff) => apply_ops(&mut view, &diff.ops).unwrap(),
+            ProjectionFrame::Snapshot(snapshot) => *view = snapshot.view.clone(),
+        }
+        let Some(states) = view["states"].as_object() else {
+            return Ok(());
+        };
+        for (id, state) in states {
+            let old = &before["states"][id];
+            if old["status"] != state["status"] || old["error"] != state["error"] {
+                let state = serde_json::from_value(state.clone()).expect("ServerState");
+                self.told.lock().unwrap().push(state);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Manage the projection of `app` and open a window over its file servers.
+pub(super) fn watch(app: &tauri::App<MockRuntime>) -> Arc<Mutex<Vec<ServerState>>> {
+    let told = Arc::<Mutex<Vec<ServerState>>>::default();
+    let projection = ProjectionState::new();
+    let window = Window {
+        view: Mutex::new(Value::Null),
+        told: Arc::clone(&told),
+    };
+    projection
+        .projector
+        .subscribe(SERVICES_REGION, "s1", "window", Arc::new(window));
+    app.manage(projection);
+    told
 }
 
 impl Harness {

@@ -592,7 +592,7 @@
       <header class="concept-header">
         <h1>Services: one view for SSH tunnels and file servers</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · slices 1 and 2 of 14 implemented</span
+          <span class="concept-status">Backlog · slices 1 to 4 of 14 implemented</span
           ><span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a></span
           ><span><code>docs/concepts/backlog/services.html</code></span>
@@ -4400,8 +4400,18 @@ flowchart LR
           is implemented: F-2 and F-3 are done for both kinds, with one record of what agents host
           and one module for the nine states. A start without an answer is Not reachable, and a stop
           is kept until the agent confirms it. "Connect agent" on the row comes with slice 10, the
-          product run step "agent killed and restarted" with slice 9. Slices 3 to 14 are not
-          started. Step 0 of <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
+          product run step "agent killed and restarted" with slice 9. Slice 3 (one model) is
+          implemented: file servers are on the <code>services</code> region (F-6), nothing polls,
+          <code>serviceModel.ts</code> is the model of both kinds, and
+          <code>shareTypeHelp.ts</code> says what a web, FTP or TFTP server is for, in the tooltip
+          and on the dialog's cards (that part of
+          <a href="https://github.com/armaxri/termiHub/issues/6036">#6036</a>). Slice 4 (one row) is
+          implemented: both sidebars render <code>ServiceListItem</code> (F-7), with the gallery in
+          <code>tests/visual/servicesGallery.spec.ts</code>. Beyond section 3.3 the row always says
+          its state in words and what it is for, so no state is told by colour alone, and the
+          machine once, where it helps. "View last error" is gone: the reason is on the row in full.
+          Slices 5 to 14 are not started. Step 0 of
+          <a href="https://github.com/armaxri/termiHub/issues/6028">#6028</a>.
         </p>
         <p>
           The maintainer followed the three recommendations of section 8 (comment on

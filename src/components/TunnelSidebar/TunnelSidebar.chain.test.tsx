@@ -10,6 +10,7 @@ import { useAppStore } from "@/store/appStore";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { TooltipProvider } from "@/components/ui";
 import { TunnelSidebar } from "./TunnelSidebar";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const mockDeleteTunnel = vi.fn(() => Promise.resolve());
 
@@ -133,9 +134,9 @@ describe("TunnelSidebar — chained pair (#2597)", () => {
     });
     await renderSidebar();
 
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="tunnel-delete-p1"]')!.click();
-    });
+    const item = serviceMenuItem("tunnel-delete-p1")!;
+
+    await act(async () => item.click());
     await flush();
 
     const dialog = document.querySelector('[data-testid="confirm-delete-dialog"]');
@@ -151,9 +152,9 @@ describe("TunnelSidebar — chained pair (#2597)", () => {
     });
     await renderSidebar();
 
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="tunnel-delete-p1-hop"]')!.click();
-    });
+    const item = serviceMenuItem("tunnel-delete-p1-hop")!;
+
+    await act(async () => item.click());
     await flush();
 
     const dialog = document.querySelector('[data-testid="confirm-delete-dialog"]');

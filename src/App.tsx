@@ -48,7 +48,6 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSuperseded";
 import { useInterruptedFolderPastes } from "@/hooks/useInterruptedFolderPastes";
-import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { subscribeGuarded, useTauriListener } from "@/hooks/useTauriListener";
 import { usePluginEvents } from "@/hooks/usePluginEvents";
 import { useScheduledRuns } from "@/hooks/useScheduledRuns";
@@ -83,7 +82,6 @@ function App() {
   useTransferEvents();
   useSessionOwnershipSuperseded();
   useInterruptedFolderPastes();
-  useEmbeddedServerEvents();
   usePluginEvents();
   useScheduledRuns();
   usePluginUpdateSchedule();

@@ -14,6 +14,7 @@ import { useAppStore } from "@/store/appStore";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
+import { serviceMenuItem } from "@/test/serviceMenu";
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -170,9 +171,7 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     seedStore(saveEmbeddedServer, [makeServer("srv-1", "Original")]);
     await renderSidebar();
 
-    const dupBtn = container.querySelector<HTMLButtonElement>(
-      '[data-testid="server-duplicate-srv-1"]'
-    );
+    const dupBtn = serviceMenuItem("server-duplicate-srv-1");
     await act(async () => {
       dupBtn!.click();
     });
@@ -188,9 +187,7 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     seedStore(saveEmbeddedServer, [makeServer("srv-1", "Original")]);
     await renderSidebar();
 
-    const dupBtn = container.querySelector<HTMLButtonElement>(
-      '[data-testid="server-duplicate-srv-1"]'
-    );
+    const dupBtn = serviceMenuItem("server-duplicate-srv-1");
     await act(async () => {
       dupBtn!.click();
     });
@@ -206,9 +203,8 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
     const host = { kind: "agent", agentId: "a1" } as const;
     seedStore(saveEmbeddedServer, [{ ...makeServer("srv-1", "Original"), host, autoStart: true }]);
     await renderSidebar();
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('[data-testid="server-duplicate-srv-1"]')!.click();
-    });
+    const item = serviceMenuItem("server-duplicate-srv-1")!;
+    await act(async () => item.click());
     await flush();
     const copy = saveEmbeddedServer.mock.calls[0][0];
     expect(copy).toMatchObject({ name: "Copy of Original", host, autoStart: false });
@@ -233,11 +229,8 @@ describe("EmbeddedServerSidebar — save & duplicate feedback (#1342)", () => {
         { ...makeServer("srv-1", "Original"), ...auth, host } as EmbeddedServerConfig,
       ]);
       await renderSidebar();
-      await act(async () => {
-        container
-          .querySelector<HTMLButtonElement>('[data-testid="server-duplicate-srv-1"]')!
-          .click();
-      });
+      const item = serviceMenuItem("server-duplicate-srv-1")!;
+      await act(async () => item.click());
       await flush();
       // Nothing is saved yet: the copy opens in the editor.
       expect(saveEmbeddedServer).not.toHaveBeenCalled();

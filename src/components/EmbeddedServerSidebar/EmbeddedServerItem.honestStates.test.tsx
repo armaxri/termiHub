@@ -12,6 +12,7 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(() => Promise.resolve()) }));
 
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { TooltipProvider } from "@/components/ui";
 import type { EmbeddedServerConfig, ServerState, ServerStatus } from "@/types/embeddedServer";
 
@@ -45,6 +46,8 @@ function render(status: ServerStatus) {
           config={config}
           state={state}
           onStart={vi.fn()}
+          onRestart={vi.fn()}
+          context={NO_CONTEXT}
           onStop={onStop}
           onEdit={vi.fn()}
           onDuplicate={vi.fn()}
@@ -109,7 +112,7 @@ describe("EmbeddedServerItem — honest states (#6028)", () => {
 
   it("an error says why once", () => {
     render("error");
-    expect(q("server-reason-srv-1")).toBeNull();
+    expect(q("server-reason-srv-1")?.textContent).toBe(WHY);
     expect(container.textContent?.split(WHY)).toHaveLength(2);
   });
 });

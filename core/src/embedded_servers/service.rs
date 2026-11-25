@@ -475,13 +475,17 @@ impl EmbeddedServerService {
                     started_at: Some(active.started_at.clone()),
                 }
             }
-            None => ServerState {
-                server_id: config.id.clone(),
-                status: ServerStatus::Stopped,
-                error: None,
-                stats: ServerStats::default(),
-                started_at: None,
-            },
+            // Not listening: stopped, or why the last start failed.
+            None => {
+                let (status, error) = ServerStatus::from_service_status(&self.status);
+                ServerState {
+                    server_id: config.id.clone(),
+                    status,
+                    error,
+                    stats: ServerStats::default(),
+                    started_at: None,
+                }
+            }
         })
     }
 
@@ -935,6 +939,28 @@ mod tests {
         assert_eq!(svc.status(), ServiceStatus::Stopped);
         assert!(!svc.is_live());
         assert!(svc.state().is_none());
+    }
+
+    /// #6028: the state is read from the service, not from an event that may
+    /// have passed, so a start that failed is listed as failed.
+    #[test]
+    fn a_failed_start_is_listed_as_failed_with_its_reason() {
+        let mut svc = EmbeddedServerService::new(ServerType::Http);
+        svc.config = Some(http_config(0));
+        svc.set_status_and_emit(
+            ServiceStatus::Failed("port gone".into()),
+            ServerStats::default(),
+            None,
+        );
+        let state = svc.state().expect("configured");
+        assert_eq!(state.status, ServerStatus::Error);
+        assert_eq!(state.error.as_deref(), Some("port gone"));
+        // A stop puts it away.
+        svc.shutdown();
+        assert_eq!(
+            svc.state().expect("configured").status,
+            ServerStatus::Stopped
+        );
     }
 
     #[test]

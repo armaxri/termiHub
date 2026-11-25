@@ -66,9 +66,20 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         self.open_new_workflow()
         assert self.editor_open()
         assert self.step_count() == 0
-        # A workflow with no steps cannot be saved.
+        # A workflow with no name and no steps cannot be saved. Save is not greyed
+        # out (A-023): the footer names what is missing, and Save points at it.
         assert self.driver.exists("automation-editor-no-steps")
         assert self.save_disabled()
+        assert self.driver.get_text("automation-editor-footer-note") == (
+            "To save: give it a name and add at least one step."
+        )
+        self.driver.click("automation-editor-save")
+        self.wait(
+            lambda: self.driver.get_text("automation-editor-no-steps")
+            == "Add at least one step.",
+            what="Save to say that a step is missing",
+        )
+        assert self.editor_open(), "Save closed an editor it cannot save"
         # Nothing was edited, so Cancel closes without the unsaved prompt.
         self.cancel_clean_editor()
 

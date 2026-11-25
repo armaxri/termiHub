@@ -25,9 +25,10 @@ import {
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { frontendWarn } from "@/utils/frontendLog";
+import { SHARE_TYPE_KINDS, shareTypeHelp } from "@/utils/shareTypeHelp";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import type { RemoteAgentDefinition } from "@/types/connection";
-import { THIS_COMPUTER } from "@/utils/runLocation";
+import { THIS_COMPUTER, isAgentHost } from "@/utils/runLocation";
 import { sameHost, type HostChoice } from "@/utils/hostChoice";
 import { t } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
@@ -161,6 +162,9 @@ export function EmbeddedServerDialog({
 }: Props) {
   const [lanWarning, setLanWarning] = useState(false);
   const [location, setLocation] = useState<HostChoice>(runLocation);
+  const locationName = isAgentHost(location)
+    ? agents.find((agent) => agent.id === location.agentId)?.name
+    : undefined;
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
     { name: "Loopback", addr: "127.0.0.1" },
     { name: "All interfaces", addr: "0.0.0.0" },
@@ -391,18 +395,23 @@ export function EmbeddedServerDialog({
 
           {/* Protocol */}
           <div className="server-dialog__label">
-            <span id="server-dialog-protocol-label">Protocol</span>
+            <span id="server-dialog-protocol-label">{t("share.type.label")}</span>
             <RadioGroup
-              className="server-dialog__radio-group"
+              variant="cards"
               orientation="horizontal"
               value={form.serverType}
               onValueChange={(v) => handleProtocolChange(v as ServerType)}
               aria-labelledby="server-dialog-protocol-label"
-              options={(["http", "ftp", "tftp"] as ServerType[]).map((type) => ({
-                value: type,
-                label: type.toUpperCase(),
-                "data-testid": `server-dialog-proto-${type}`,
-              }))}
+              options={SHARE_TYPE_KINDS.map((type) => {
+                const help = shareTypeHelp(type, location, locationName);
+                return {
+                  value: type,
+                  label: help.label,
+                  description: `${help.summary} (${help.protocol})`,
+                  help: help.lines,
+                  "data-testid": `server-dialog-proto-${type}`,
+                };
+              })}
             />
           </div>
 

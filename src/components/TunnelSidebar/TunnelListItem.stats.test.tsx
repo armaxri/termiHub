@@ -12,9 +12,9 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState, TunnelStats, TunnelStatus } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const noop = () => {};
 
@@ -45,7 +45,7 @@ async function renderItem(tunnel: TunnelConfig, state: TunnelState): Promise<voi
         <TunnelListItem
           tunnel={tunnel}
           state={state}
-          connections={[] as SavedConnection[]}
+          context={NO_CONTEXT}
           onStart={noop}
           onStop={noop}
           onReconnect={noop}

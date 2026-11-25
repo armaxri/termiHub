@@ -286,14 +286,22 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         assert "Edit tunnel" in title
         assert tunnel["name"] in title
 
+    def _tunnel_menu(self, tunnel_id: str, action: str) -> None:
+        """Choose ``action`` from a tunnel row's context menu (#6028)."""
+        self.wait(
+            lambda: self.driver.exists(f"tunnel-item-{tunnel_id}"), what="the tunnel row"
+        )
+        self.driver.context_menu(f"tunnel-item-{tunnel_id}")
+        self.wait(
+            lambda: self.driver.exists(f"tunnel-ctx-{action}-{tunnel_id}"),
+            what=f"the {action} item of the tunnel's menu",
+        )
+        self.driver.click(f"tunnel-ctx-{action}-{tunnel_id}")
+
     def test_duplicate_creates_a_copy(self):
         """TUNNEL-09: Duplicate makes a "Copy of <name>" tunnel."""
         tunnel = self._create_tunnel("tunnel-dup", local_port=18087 + _TUNNEL_OFFSET)
-        self.wait(
-            lambda: self.driver.exists(f"tunnel-duplicate-{tunnel['id']}"),
-            what="the duplicate control",
-        )
-        self.driver.click(f"tunnel-duplicate-{tunnel['id']}")
+        self._tunnel_menu(tunnel["id"], "duplicate")
         assert self.wait(
             lambda: self._tunnel_by_name(f"Copy of {tunnel['name']}"),
             what="the duplicated tunnel",
@@ -303,11 +311,7 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
         """TUNNEL-10: Delete removes the tunnel from the store and the list."""
         tunnel = self._create_tunnel("tunnel-del", local_port=18088 + _TUNNEL_OFFSET)
         tid = tunnel["id"]
-        self.wait(
-            lambda: self.driver.exists(f"tunnel-delete-{tid}"),
-            what="the delete control",
-        )
-        self.driver.click(f"tunnel-delete-{tid}")
+        self._tunnel_menu(tid, "delete")
         # An idle tunnel delete confirms first, then offers Undo (#5158).
         self.wait(
             lambda: self.driver.exists("confirm-delete-confirm"),

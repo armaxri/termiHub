@@ -1,0 +1,72 @@
+/* The row of a service (#6028). The layout is the shared SidebarListItem's;
+   nothing on it is cut: names, the kind line, the address and the reason wrap. */
+
+.service-row .sidebar-list-item__name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+.service-row .sidebar-list-item__header {
+  align-items: flex-start;
+}
+
+/* The dot and a one-line name sit in the middle of the first line's height. */
+.service-row .sidebar-list-item__header > .status-dot {
+  margin-top: calc((var(--control-height-md) - var(--spacing-sm)) / 2);
+}
+
+.service-row .sidebar-list-item__header > .sidebar-list-item__name {
+  padding: var(--spacing-xs) 0;
+}
+
+.service-row__marked-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.service-row__kind,
+.service-row__reason,
+.service-row__address {
+  overflow-wrap: anywhere;
+}
+
+.service-row__state {
+  color: var(--text-primary);
+}
+
+.service-row__state[data-state="error"],
+.service-row__reason[data-state="error"] {
+  color: var(--color-error);
+}
+
+.service-row__address-text {
+  user-select: text;
+}
+
+.service-row__address-text code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* Copy follows the address like a word of it, so it never squeezes it. */
+.service-row__address .ui-btn {
+  vertical-align: middle;
+  margin-left: var(--spacing-xxs);
+}
+
+.service-row__next {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.service-row__next:hover {
+  color: var(--text-primary);
+}

@@ -668,8 +668,8 @@ async fn the_poller_starts_what_waits_and_follows_the_agent() {
     let client: Arc<dyn AgentRpcClient> = agent.clone();
     app.manage(client);
     let manager = EmbeddedServerManager::new(app.handle(), FakeStore::new(UNLOCKED)).unwrap();
-    app.manage(manager);
-    let manager = app.state::<EmbeddedServerManager<MockRuntime>>();
+    app.manage(Arc::new(manager));
+    let manager = app.state::<Arc<EmbeddedServerManager<MockRuntime>>>();
     let becomes = |status: ServerStatus| {
         let manager = &manager;
         async move {

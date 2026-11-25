@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from termihub_harness.ui.base import HarnessMixin
 from termihub_harness.ui.terminal import TerminalUi, terminal_tail
 
 from test_transfer_queue import TransferQueueReads
@@ -73,3 +74,35 @@ def test_a_queue_wait_shows_the_rows():
     with pytest.raises(AssertionError, match=r"\(no rows\)"):
         _Queue([]).wait_for_queue_size(1)
     assert _Queue([row]).wait_for_queue_size(1) == [row]
+
+
+def test_a_queue_wait_for_no_rows_ends_when_there_are_none():
+    # The rows are falsy then; every test of the live suite starts with this wait.
+    assert _Queue([]).wait_for_queue_size(0) == []
+    with pytest.raises(AssertionError, match=r"hold 0 row\(s\)"):
+        _Queue([{"id": "t"}]).wait_for_queue_size(0)
+
+
+class _Button(HarnessMixin):
+    def __init__(self, **attributes):
+        self.driver = self
+        self.attributes = attributes
+
+    def get_attribute(self, _test_id, name):
+        return self.attributes.get(name.replace("-", "_"))
+
+
+@pytest.mark.parametrize(
+    ("attributes", "blocked"),
+    [
+        ({}, False),
+        ({"aria_disabled": "false"}, False),
+        ({"data_invalid": "false"}, False),
+        ({"disabled": ""}, True),
+        ({"aria_disabled": "true"}, True),
+        # An editor whose Save stays enabled and points at what is missing (A-023).
+        ({"data_invalid": "true"}, True),
+    ],
+)
+def test_a_save_that_refuses_is_blocked(attributes, blocked):
+    assert _Button(**attributes).is_blocked("save") is blocked
