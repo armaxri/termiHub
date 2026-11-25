@@ -569,3 +569,24 @@ for (const viewport of WINDOWS) {
     });
   }
 }
+
+// What a 600 px high window leaves at 140 % zoom: less than the menu needs.
+test("the add step menu fits into a short dialog and scrolls", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 428 });
+  await boot(page, "dark");
+  await newAutomation(page, "steps");
+  await page.locator(id("automation-editor-add-step")).click();
+  const menu = page.locator("[role=menu]");
+  await menu.waitFor();
+  const dialog = (await page.locator(EDITOR).boundingBox())!;
+  await expect.poll(async () => (await menu.boundingBox())!.y).toBeGreaterThanOrEqual(dialog.y);
+  const box = (await menu.boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(dialog.y + dialog.height);
+  for (const step of ["type-keys", "run-local-process"]) {
+    const entry = page.locator(id(`automation-editor-add-step-${step}`));
+    await entry.scrollIntoViewIfNeeded();
+    const at = (await entry.boundingBox())!;
+    expect(at.y).toBeGreaterThanOrEqual(box.y);
+    expect(at.y + at.height).toBeLessThanOrEqual(box.y + box.height);
+  }
+});
