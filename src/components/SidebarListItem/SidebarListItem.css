@@ -214,6 +214,12 @@
   color: var(--color-error);
 }
 
+/* Why the item is in its state: what it waits for, why it is not reachable
+   (#6028). In full: it is the answer to "what now". */
+.sidebar-list-item__reason {
+  overflow-wrap: anywhere;
+}
+
 /* The user's short description of the item (#5757): one muted line under the
    name, ellipsized with the full text in a tooltip. */
 .sidebar-list-item__description {

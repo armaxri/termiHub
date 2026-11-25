@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { connectionStateLabel, persistentRunStateLabel, serverStatusLabel } from "./statusLabel";
+import { connectionStateLabel, persistentRunStateLabel } from "./statusLabel";
 
 describe("statusLabel", () => {
   describe("connectionStateLabel (agents + tunnels)", () => {
@@ -45,22 +45,6 @@ describe("statusLabel", () => {
 
     it("reports a never-started (null) session as Stopped", () => {
       expect(persistentRunStateLabel(null)).toBe("Stopped");
-    });
-  });
-
-  describe("serverStatusLabel", () => {
-    it.each([
-      ["stopped", "Stopped"],
-      ["starting", "Starting"],
-      ["running", "Running"],
-      ["stopping", "Stopping"],
-      ["error", "Error"],
-    ] as const)("maps %s to a distinct non-colour label", (status, label) => {
-      expect(serverStatusLabel(status)).toBe(label);
-    });
-
-    it("reports a never-started (undefined) server as Stopped", () => {
-      expect(serverStatusLabel(undefined)).toBe("Stopped");
     });
   });
 });

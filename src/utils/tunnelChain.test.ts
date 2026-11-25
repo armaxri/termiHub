@@ -116,9 +116,23 @@ describe("combinedPairStatus", () => {
   });
 
   it("is 'down' whenever the parent itself is not connected", () => {
-    for (const parentStatus of ["disconnected", "connecting", "reconnecting", "error"] as const) {
+    for (const parentStatus of [
+      "disconnected",
+      "waiting",
+      "connecting",
+      "reconnecting",
+      "stopping",
+      "error",
+    ] as const) {
       expect(combinedPairStatus(parentStatus, "connected", true)).toBe("down");
     }
+  });
+});
+
+describe("combinedPairStatus with an agent that is offline (#6028)", () => {
+  it("claims neither up nor down", () => {
+    expect(combinedPairStatus("notReachable", "connected", true)).toBe("none");
+    expect(combinedPairStatus("notReachable", "disconnected", true)).toBe("none");
   });
 });
 

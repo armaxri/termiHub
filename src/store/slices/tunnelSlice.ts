@@ -9,7 +9,7 @@ import {
   type IntentAck,
   type Transport,
 } from "@/services/transport";
-import { TunnelConfig, TunnelState } from "@/types/tunnel";
+import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
@@ -92,6 +92,18 @@ function throwIfRejected(ack: IntentAck, what: string): void {
 }
 
 /**
+ * The statuses that answer a start besides an error: from here on the row says
+ * how it is going. `notReachable`: the agent did not answer the start; `waiting`:
+ * it starts by itself later; `stopping`: it was stopped meanwhile (#6028).
+ */
+const SETTLED_STATUSES: ReadonlySet<TunnelStatus> = new Set<TunnelStatus>([
+  "connected",
+  "notReachable",
+  "waiting",
+  "stopping",
+]);
+
+/**
  * Resolve the pending first-connect toast (#2169, UX-023) in place for any tunnel
  * THIS client dispatched a start/reconnect for whose projected status just
  * settled, then stop tracking it.
@@ -119,7 +131,7 @@ function resolveFirstConnectToasts(
       const detail = nextStates[id]?.error ?? "connection failed";
       toast.error(`Failed to ${verb} ${name}: ${detail}`, { id: toastId });
       _awaitingFirstConnect.delete(id);
-    } else if (nextStatus === "connected") {
+    } else if (nextStatus && SETTLED_STATUSES.has(nextStatus)) {
       toast.dismiss(toastId);
       _awaitingFirstConnect.delete(id);
     }

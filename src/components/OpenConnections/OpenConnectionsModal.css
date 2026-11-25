@@ -156,6 +156,7 @@
 .oc-row__badge--connecting,
 .oc-row__badge--reconnecting,
 .oc-row__badge--paused,
+.oc-row__badge--notReachable,
 .oc-row__badge--orphaned {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
   /* #5740: status text misses AA on its own tint (Light, Solarized); the tint keeps

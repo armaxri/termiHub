@@ -234,6 +234,61 @@ fn a_locked_store_restores_nothing_and_does_not_fail() {
     assert!(settings.get("sshPassword").is_none());
 }
 
+/// #6028: an automatic start through a jump host waits for the unlock only when
+/// a hop's secret is behind it.
+#[test]
+fn jump_hosts_need_unlock_only_for_a_secret_behind_the_locked_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::default());
+    let mgr = manager(dir.path(), &store);
+    let inline = mgr.save_connection(jump_ssh()).unwrap();
+    let referenced = mgr
+        .save_connection(conn(
+            "Inner",
+            "ssh",
+            json!({ "host": "inner", "username": "me", "authMethod": "agent",
+                    "proxyJump": [{ "connectionId": inline }] }),
+        ))
+        .unwrap();
+    let key = mgr
+        .save_connection(conn(
+            "Hop",
+            "ssh",
+            json!({ "host": "hop", "username": "me", "authMethod": "key" }),
+        ))
+        .unwrap();
+    let through_key = mgr
+        .save_connection(conn(
+            "Through key",
+            "ssh",
+            json!({ "host": "inner", "username": "me", "authMethod": "agent",
+                    "proxyJump": [{ "connectionId": key }] }),
+        ))
+        .unwrap();
+    let agent = json!([{ "host": "gw", "username": "me", "authMethod": "agent" }]);
+    let keyless = mgr
+        .save_connection(conn(
+            "Keyless",
+            "ssh",
+            json!({ "host": "inner", "username": "me", "authMethod": "agent", "proxyJump": agent }),
+        ))
+        .unwrap();
+    for id in [&inline, &referenced, &through_key, &keyless] {
+        assert!(!mgr.jump_hosts_need_unlock(id), "unlocked: {id}");
+    }
+    // The same files over a store that is locked.
+    let locked = Arc::new(RecordingStore {
+        fail_gets: true,
+        ..Default::default()
+    });
+    locked.locked.store(true, Ordering::SeqCst);
+    let mgr = manager(dir.path(), &locked);
+    assert!(mgr.jump_hosts_need_unlock(&inline));
+    assert!(mgr.jump_hosts_need_unlock(&through_key));
+    assert!(!mgr.jump_hosts_need_unlock(&keyless));
+    assert!(!mgr.jump_hosts_need_unlock("gone"));
+}
+
 #[test]
 fn plaintext_secrets_in_connections_json_are_moved_on_load() {
     let dir = tempfile::tempdir().unwrap();

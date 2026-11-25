@@ -75,6 +75,15 @@ describe("StatusDot", () => {
     expect(plain.classList.contains("status-dot--dimmed")).toBe(false);
   });
 
+  it("draws only the ring of a state that is not known for sure", () => {
+    render(<StatusDot tone="warning" hollow testId="dot" />);
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(dot.classList.contains("status-dot--hollow")).toBe(true);
+    render(<StatusDot tone="warning" testId="dot" />);
+    const plain = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(plain.classList.contains("status-dot--hollow")).toBe(false);
+  });
+
   it("hides the dot from assistive tech when ariaHidden is set", () => {
     render(<StatusDot tone="disabled" ariaHidden testId="dot" />);
     const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;

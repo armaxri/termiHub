@@ -332,7 +332,6 @@ const en = {
     "{method} enrollment changes.",
 
   // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
-  "tunnel.missingConnection.status": "SSH connection deleted",
   "tunnel.missingConnection.detail": "SSH connection deleted — choose another",
   "tunnel.missingConnection.choose": "Choose connection",
   "tunnel.editor.missingConnection":
@@ -703,6 +702,17 @@ const en = {
   "server.tooltip.here": "Runs on this computer",
   "server.tooltip.agent": "Runs on agent {agent}",
   "server.tooltip.agentRemoved": "Runs on an agent that was removed",
+  // The states of a service (#6028), tunnels and file servers alike.
+  "service.state.stopped": "Stopped",
+  "service.state.waiting": "Waiting",
+  "service.state.starting": "Starting",
+  "service.state.running": "Running",
+  "service.state.reconnecting": "Reconnecting",
+  "service.state.stopping": "Stopping",
+  "service.state.error": "Error",
+  "service.state.needsConnection": "Needs a connection",
+  "service.state.notReachable": "Not reachable",
+  "service.run.stopWaiting": "Stop waiting",
   // Where a service runs (#6028): a stored host this build does not know.
   "service.host.unreadable": "termiHub cannot read where it runs",
   "service.host.moveHint":

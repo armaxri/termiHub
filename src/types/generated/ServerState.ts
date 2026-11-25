@@ -5,4 +5,9 @@ import type { ServerStatus } from "./ServerStatus";
 /**
  * Combined runtime state for a server (returned to the frontend).
  */
-export type ServerState = { serverId: string, status: ServerStatus, error?: string, stats: ServerStats, startedAt?: string, };
+export type ServerState = { serverId: string, status: ServerStatus, 
+/**
+ * Why it failed, or what a waiting, stopping or not reachable one is
+ * waiting for (#6028).
+ */
+error?: string, stats: ServerStats, startedAt?: string, };
