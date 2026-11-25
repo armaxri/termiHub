@@ -13,6 +13,11 @@ fn settings(list: &[&str]) -> AppSettings {
     }
 }
 
+/// A command of the user's own automations.
+fn own(_: &Path) -> Standing {
+    Standing::Own
+}
+
 fn env() -> SearchEnv {
     SearchEnv {
         path: Some("/usr/bin:/bin".into()),
@@ -269,7 +274,8 @@ fn names_that_do_not_read_as_what_they_are_are_refused() {
         ("ma\u{feff}ke", "invisible"),
     ] {
         // Also when it is on the list, and when it was approved.
-        let reason = authorize(Some(&settings(&[name])), name, Some(name), &env()).unwrap_err();
+        let reason =
+            authorize(Some(&settings(&[name])), name, Some(name), &env(), own).unwrap_err();
         assert!(reason.contains(why), "{name:?}: {reason}");
         assert!(!reason.contains('\u{202e}'), "the name is not shown");
     }
@@ -363,19 +369,19 @@ fn every_switch_is_required_also_for_an_approved_program() {
             workflow_local_process_enabled: enabled,
             ..settings(&[p])
         };
-        let reason = authorize(Some(&off), p, Some(p), &env()).unwrap_err();
+        let reason = authorize(Some(&off), p, Some(p), &env(), own).unwrap_err();
         assert!(reason.contains(names) && reason.contains(p), "{reason}");
     }
-    assert!(authorize(None, p, Some(p), &env())
+    assert!(authorize(None, p, Some(p), &env(), own)
         .unwrap_err()
         .contains("cannot be read"));
-    assert!(authorize(Some(&settings(&[p])), p, None, &env()).is_ok());
+    assert!(authorize(Some(&settings(&[p])), p, None, &env(), own).is_ok());
 }
 
 #[test]
 #[cfg(unix)]
 fn a_refusal_names_the_program_the_file_and_where_to_allow_it() {
-    let reason = authorize(Some(&settings(&[])), "true", None, &env()).unwrap_err();
+    let reason = authorize(Some(&settings(&[])), "true", None, &env(), own).unwrap_err();
     for part in [
         "\"true\"",
         "/usr/bin/true",
@@ -399,10 +405,11 @@ fn an_approval_is_for_one_file() {
         path: Some(b.clone().into()),
         ..env()
     };
-    let LocalProcessCheck::Ask { path, .. } = check(Some(&settings(&[])), "tool", &shown) else {
+    let LocalProcessCheck::Ask { path, .. } = check(Some(&settings(&[])), "tool", &shown, own)
+    else {
         panic!("not listed: ask");
     };
-    let ok = authorize(Some(&settings(&[])), "tool", Some(&path), &shown).unwrap();
+    let ok = authorize(Some(&settings(&[])), "tool", Some(&path), &shown, own).unwrap();
     assert_eq!(ok.path, b.join("tool"));
     assert_eq!(ok.bare_name.as_deref(), Some("tool"));
     // PATH changed while the question was open.
@@ -410,25 +417,32 @@ fn an_approval_is_for_one_file() {
         path: Some(std::env::join_paths([&a, &b]).unwrap()),
         ..env()
     };
-    let reason = authorize(Some(&settings(&[])), "tool", Some(&path), &now).unwrap_err();
+    let reason = authorize(Some(&settings(&[])), "tool", Some(&path), &now, own).unwrap_err();
     assert!(reason.contains("was approved"), "{reason}");
     // The approval of one program is none for another.
-    assert!(authorize(Some(&settings(&[])), "/usr/bin/true", Some(&path), &shown).is_err());
+    assert!(authorize(
+        Some(&settings(&[])),
+        "/usr/bin/true",
+        Some(&path),
+        &shown,
+        own
+    )
+    .is_err());
 }
 
 #[test]
 #[cfg(unix)]
 fn the_verdict_tells_the_frontend_what_to_do() {
-    let allowed = check(Some(&settings(&["true"])), "true", &env());
+    let allowed = check(Some(&settings(&["true"])), "true", &env(), own);
     assert_eq!(
         allowed,
         LocalProcessCheck::Allowed {
             path: "/usr/bin/true".into()
         }
     );
-    let refused = check(None, "true", &env());
+    let refused = check(None, "true", &env(), own);
     assert!(matches!(refused, LocalProcessCheck::Refused { .. }));
-    let ask = serde_json::to_value(check(Some(&settings(&[])), "true", &env())).unwrap();
+    let ask = serde_json::to_value(check(Some(&settings(&[])), "true", &env(), own)).unwrap();
     assert_eq!(ask["status"], "ask");
     assert_eq!(ask["path"], "/usr/bin/true");
     assert!(ask["reason"].as_str().unwrap().contains("true"));
@@ -468,4 +482,94 @@ fn on_windows_a_bare_name_is_the_exe_on_path() {
         let judged = judge(Some(&settings(&[&full])), &other, &env).unwrap();
         assert_eq!(judged.listed.is_ok(), other == full, "{other}");
     }
+}
+
+fn unconfirmed(_: &Path) -> Standing {
+    Standing::Unconfirmed {
+        names: vec!["Outer".into(), "Inner".into()],
+    }
+}
+
+/// #6019: the list is for the user's own automations.
+#[test]
+#[cfg(unix)]
+fn the_list_does_not_count_for_an_automation_that_is_not_ones_own() {
+    let on = settings(&["true", "/usr/bin/true"]);
+    let start = |standing: Standing, approved: Option<&str>| {
+        authorize(Some(&on), "true", approved, &env(), |_| standing)
+    };
+    assert!(start(Standing::Own, None).is_ok());
+    let reason = start(unconfirmed(Path::new("")), None).unwrap_err();
+    assert!(
+        reason.contains("“Outer” and “Inner” came from a file"),
+        "{reason}"
+    );
+    assert!(reason.contains("/usr/bin/true"), "{reason}");
+    let reason = start(Standing::Unknown, None).unwrap_err();
+    assert!(
+        reason.contains("does not belong to a saved automation"),
+        "{reason}"
+    );
+    // The user's answer to the question, for this run and this file only.
+    for standing in [unconfirmed(Path::new("")), Standing::Unknown] {
+        assert!(start(standing.clone(), Some("/usr/bin/true")).is_ok());
+        assert!(start(standing, Some("/usr/bin/false")).is_err());
+    }
+}
+
+/// A confirmed command needs no entry of the list, but both switches.
+#[test]
+#[cfg(unix)]
+fn a_confirmed_command_starts_without_being_listed() {
+    let confirmed = |_: &Path| Standing::Confirmed;
+    assert!(authorize(Some(&settings(&[])), "true", None, &env(), confirmed).is_ok());
+    let off = AppSettings {
+        workflow_local_process_enabled: false,
+        ..settings(&["true"])
+    };
+    assert!(authorize(Some(&off), "true", None, &env(), confirmed).is_err());
+    let not_experimental = AppSettings {
+        experimental_features_enabled: None,
+        ..settings(&["true"])
+    };
+    assert!(authorize(Some(&not_experimental), "true", None, &env(), confirmed).is_err());
+}
+
+/// The question is about the file that starts.
+#[test]
+#[cfg(unix)]
+fn the_standing_is_asked_for_the_resolved_file() {
+    let mut asked = None;
+    let _ = authorize(Some(&settings(&[])), " true ", None, &env(), |path| {
+        asked = Some(path.to_path_buf());
+        Standing::Own
+    });
+    assert_eq!(asked.as_deref(), Some(Path::new("/usr/bin/true")));
+}
+
+#[test]
+#[cfg(unix)]
+fn the_check_says_what_always_would_remember() {
+    let ask = |program: &str, standing: Standing| {
+        serde_json::to_value(check(Some(&settings(&[])), program, &env(), |_| standing)).unwrap()
+    };
+    let mine = ask("true", Standing::Own);
+    assert_eq!(mine["remember"], "program");
+    assert_eq!(mine["imported"], serde_json::json!([]));
+    assert_eq!(mine["interpreter"], false);
+    let theirs = ask("sh", unconfirmed(Path::new("")));
+    assert_eq!(theirs["status"], "ask");
+    assert_eq!(theirs["remember"], "command");
+    assert_eq!(theirs["imported"], serde_json::json!(["Outer", "Inner"]));
+    assert_eq!(theirs["interpreter"], true);
+    assert_eq!(ask("true", Standing::Unknown)["remember"], "nothing");
+    // Listed, and still a question.
+    let listed = check(Some(&settings(&["true"])), "true", &env(), unconfirmed);
+    assert!(matches!(listed, LocalProcessCheck::Ask { .. }));
+    assert!(matches!(
+        check(Some(&settings(&[])), "true", &env(), |_| {
+            Standing::Confirmed
+        }),
+        LocalProcessCheck::Allowed { .. }
+    ));
 }

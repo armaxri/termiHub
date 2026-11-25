@@ -50,7 +50,8 @@ pub enum Shape {
     /// by the path-based folder / connection id and the agent id.
     Connections,
     /// `settings.json`: one object; replace only. The machine's own
-    /// credential-storage keys are always preserved (see [`LOCAL_SETTINGS_KEYS`]).
+    /// credential-storage keys and the permissions given on it are always preserved
+    /// (see [`LOCAL_SETTINGS_KEYS`] and [`LOCAL_PERMISSION_KEYS`]).
     Settings,
     /// A host-key trust store (`ssh_known_hosts.json`, `rdp_known_hosts.json`):
     /// one object mapping `host:port` to the list of trusted fingerprints,
@@ -196,6 +197,20 @@ pub const LOCAL_SETTINGS_KEYS: &[&str] = &[
     "credentialStorageMode",
     "credentialStorageChosen",
     "credentialAutoLockMinutes",
+];
+
+/// Settings keys that are permissions given on **this machine**: what may run on it
+/// without asking. They are never taken from a backup (#6018): a file must not be
+/// able to let an automation start a program, read a script file or run an imported
+/// workspace command. On a machine without them they stay off and empty, and the
+/// user gives them again when something asks. `experimentalFeaturesEnabled` is one
+/// of the switches a local program needs.
+pub const LOCAL_PERMISSION_KEYS: &[&str] = &[
+    "experimentalFeaturesEnabled",
+    "workflowLocalProcessEnabled",
+    "workflowLocalProcessAllowlist",
+    "workflowScriptSourceAllowlist",
+    "workspaceImportAllowlist",
 ];
 
 fn to_doc<T: Serialize>(value: &T) -> Value {
@@ -813,12 +828,13 @@ pub fn keep_current_hosts(spec: &SectionSpec, doc: &mut Value, current: &Value) 
 /// The sections whose entries say which machine they run on.
 const HOSTED_SECTIONS: &[&str] = &["tunnels", "embeddedServers"];
 
-/// For a settings replace: keep this machine's credential-storage keys.
+/// For a settings replace: keep this machine's credential-storage keys and the
+/// permissions given on it.
 pub fn preserve_local_settings(backup: &mut Value, current: Option<&Value>) {
     let Some(obj) = backup.as_object_mut() else {
         return;
     };
-    for key in LOCAL_SETTINGS_KEYS {
+    for key in LOCAL_SETTINGS_KEYS.iter().chain(LOCAL_PERMISSION_KEYS) {
         match current.and_then(|c| c.get(*key)) {
             Some(value) => {
                 obj.insert((*key).to_string(), value.clone());
@@ -828,6 +844,81 @@ pub fn preserve_local_settings(backup: &mut Value, current: Option<&Value>) {
             }
         }
     }
+}
+
+/// What a restore of `backup` leaves out to keep this machine's permissions, for the
+/// preview. Always says that they stay; names what the backup would have allowed.
+fn kept_permissions(backup: &Value) -> Vec<String> {
+    let count = |key: &str| {
+        backup
+            .get(key)
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len)
+    };
+    let on = |key: &str| backup.get(key).and_then(Value::as_bool) == Some(true);
+    let mut notes = vec![
+        "What may run on this computer stays as it is here: experimental features, running \
+         local programs, the allowed programs and script files, and confirmed workspace commands."
+            .to_string(),
+    ];
+    let mut left_out = Vec::new();
+    if on("experimentalFeaturesEnabled") {
+        left_out.push("experimental features turned on".to_string());
+    }
+    if on("workflowLocalProcessEnabled") {
+        left_out.push("running local programs turned on".to_string());
+    }
+    for (key, what) in [
+        ("workflowLocalProcessAllowlist", "allowed program"),
+        ("workflowScriptSourceAllowlist", "allowed script file"),
+        ("workspaceImportAllowlist", "confirmed workspace command"),
+    ] {
+        match count(key) {
+            0 => {}
+            1 => left_out.push(format!("1 {what}")),
+            n => left_out.push(format!("{n} {what}s")),
+        }
+    }
+    if !left_out.is_empty() {
+        notes.push(format!(
+            "Not restored from this backup: {}. Turn them on here, or allow them when something \
+             asks.",
+            left_out.join(", ")
+        ));
+    }
+    notes
+}
+
+/// How many automations of `doc` have a "Run local process" step.
+fn automations_with_local_programs(doc: &Value) -> usize {
+    fn has(value: &Value) -> bool {
+        match value {
+            Value::Object(map) => {
+                map.get("kind").and_then(Value::as_str) == Some("run-local-process")
+                    || map.values().any(has)
+            }
+            Value::Array(items) => items.iter().any(has),
+            _ => false,
+        }
+    }
+    doc.get("automations")
+        .and_then(Value::as_array)
+        .map_or(0, |list| list.iter().filter(|a| has(&a["steps"])).count())
+}
+
+/// What the user should know about permissions before restoring a section (#6018).
+pub fn permission_notes(spec: &SectionSpec, backup: &Value) -> Vec<String> {
+    if spec.shape == Shape::Settings {
+        return kept_permissions(backup);
+    }
+    if spec.id == "automations" && automations_with_local_programs(backup) > 0 {
+        return vec![
+            "Restored automations ask before they first run a local program, with the exact \
+             command. The ones you made here that are the same in the backup do not."
+                .to_string(),
+        ];
+    }
+    Vec::new()
 }
 
 /// The current store's state on disk.

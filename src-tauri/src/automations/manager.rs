@@ -1,5 +1,6 @@
 //! CRUD for stored automations (#5818, slice 2).
 
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
@@ -9,6 +10,7 @@ use tauri::{AppHandle, Runtime};
 use super::config::{Automation, AutomationTrigger, UnknownTrigger};
 use super::storage::StoreFile;
 use super::store::{AutomationStore, UnreadableAutomation};
+use super::trust::{SaveOrigin, Standing, TrustBook};
 use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
@@ -18,6 +20,8 @@ use crate::utils::errors::TerminalError;
 /// (`super::migrate::run_boot_migration`) runs before this loads.
 pub struct AutomationManager {
     store: Mutex<AutomationStore>,
+    /// Locked after `store`, never before it.
+    trust: Mutex<TrustBook>,
     storage: StoreFile<AutomationStore>,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
 }
@@ -37,7 +41,10 @@ impl AutomationManager {
             .context("Failed to load automations")?;
         let mut warnings = result.warnings;
         warnings.extend(result.data.unreadable.iter().map(unreadable_warning));
+        let (trust, trust_warnings) = TrustBook::load(storage.dir(), &result.data);
+        warnings.extend(trust_warnings);
         Ok(Self {
+            trust: Mutex::new(trust),
             store: Mutex::new(result.data),
             storage,
             recovery_warnings: Mutex::new(warnings),
@@ -112,7 +119,17 @@ impl AutomationManager {
     ///
     /// On update the original `createdAt` and the legacy provenance are kept;
     /// `updatedAt` is always set to now. Returns the stored automation.
-    pub fn save(&self, mut automation: Automation) -> Result<Automation, TerminalError> {
+    pub fn save(&self, automation: Automation) -> Result<Automation, TerminalError> {
+        self.save_from(automation, SaveOrigin::User)
+    }
+
+    /// [`Self::save`] of an automation that came from a file or is a copy (#6019).
+    /// Neither overwrites an automation that exists.
+    pub fn save_from(
+        &self,
+        mut automation: Automation,
+        origin: SaveOrigin,
+    ) -> Result<Automation, TerminalError> {
         if automation.id.trim().is_empty() {
             return Err(TerminalError::AutomationError(
                 "An automation needs an id".to_string(),
@@ -128,6 +145,17 @@ impl AutomationManager {
             )));
         }
         automation.updated_at = now.clone();
+        let before = store
+            .automations
+            .iter()
+            .find(|a| a.id == automation.id)
+            .cloned();
+        if before.is_some() && origin != SaveOrigin::User {
+            return Err(TerminalError::AutomationError(format!(
+                "An automation with the id {} exists already",
+                automation.id
+            )));
+        }
         if let Some(existing) = next.automations.iter_mut().find(|a| a.id == automation.id) {
             automation.created_at = existing.created_at.clone();
             if automation.legacy.is_none() {
@@ -148,6 +176,8 @@ impl AutomationManager {
             next.automations.push(automation.clone());
         }
         self.persist(&next)?;
+        self.lock_trust()?
+            .saved(&automation, before.as_ref(), origin, &store);
         *store = next;
         Ok(automation)
     }
@@ -163,8 +193,46 @@ impl AutomationManager {
             )));
         }
         self.persist(&next)?;
+        let mut trust = self.lock_trust()?;
+        for deleted in store.automations.iter().filter(|a| a.id == id) {
+            trust.deleted(deleted);
+        }
         *store = next;
         Ok(())
+    }
+
+    /// Whether the automations behind a command may run it (#6019).
+    pub fn standing(
+        &self,
+        chain: &[String],
+        program: &str,
+        args: &[String],
+        path: &Path,
+    ) -> Standing {
+        match (self.lock(), self.lock_trust()) {
+            (Ok(store), Ok(trust)) => trust.standing(&store, chain, program, args, path),
+            _ => Standing::Unknown,
+        }
+    }
+
+    /// Remember the user's confirmation of a command (#6019).
+    pub fn confirm_command(
+        &self,
+        chain: &[String],
+        program: &str,
+        args: &[String],
+        path: &Path,
+    ) -> Result<(), TerminalError> {
+        let store = self.lock()?;
+        self.lock_trust()?
+            .confirm(&store, chain, program, args, path)
+            .map_err(TerminalError::AutomationError)
+    }
+
+    fn lock_trust(&self) -> Result<MutexGuard<'_, TrustBook>, TerminalError> {
+        self.trust
+            .lock()
+            .map_err(|e| TerminalError::AutomationError(e.to_string()))
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, AutomationStore>, TerminalError> {

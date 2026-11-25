@@ -9,6 +9,7 @@ use crate::automations::config::Automation;
 use crate::automations::history::AutomationRun;
 use crate::automations::history_manager::AutomationRunHistoryManager;
 use crate::automations::manager::AutomationManager;
+use crate::automations::trust::SaveOrigin;
 use crate::utils::errors::TerminalError;
 
 /// List all stored automations.
@@ -29,13 +30,28 @@ pub fn get_automation(
 }
 
 /// Save (add or update) an automation. Returns the stored automation with
-/// authoritative timestamps.
+/// authoritative timestamps. A new one that is a copy names its source in `copy_of`:
+/// the copy of an imported automation is an imported one (#6019).
 #[tauri::command]
 pub fn save_automation(
     automation: Automation,
+    copy_of: Option<String>,
     manager: State<'_, AutomationManager>,
 ) -> Result<Automation, TerminalError> {
-    manager.save(automation)
+    match copy_of {
+        Some(source) => manager.save_from(automation, SaveOrigin::CopyOf(&source)),
+        None => manager.save(automation),
+    }
+}
+
+/// Save a new automation that came from a file. It asks before it first runs a
+/// local program (#6019).
+#[tauri::command]
+pub fn import_automation(
+    automation: Automation,
+    manager: State<'_, AutomationManager>,
+) -> Result<Automation, TerminalError> {
+    manager.save_from(automation, SaveOrigin::Import)
 }
 
 /// Delete an automation by id.

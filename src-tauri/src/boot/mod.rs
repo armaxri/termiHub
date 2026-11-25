@@ -237,6 +237,10 @@ pub(crate) fn resolve_and_manage_config_dir_with<R: tauri::Runtime>(
     // is constructed below.
     app.manage(utils::config_paths::ConfigDirOverride(config_dir.clone()));
 
+    // What the library holds before a restore is the user's own (#6019); what the
+    // restore brings is not.
+    crate::automations::trust::adopt_before_restore(&config_dir);
+
     // Swap in a committed backup restore (PROD-068) before any store below
     // loads, so no running store ever sees its file change underneath it.
     if let Some(w) = crate::backup::pending::apply_pending_restore(&config_dir) {

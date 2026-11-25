@@ -9,6 +9,8 @@
 //!    when [`super::local_process_policy`] says so, from the persisted settings:
 //!    experimental features and the opt-in must be on (#5988), and the program must
 //!    be on the user's list or be the file the user approved for this run (#5994).
+//!    A command of an automation that is not the user's own must have been confirmed
+//!    as it is, or be approved for this run (#6019).
 //!    It then starts exactly the file that was judged. That module states the rule
 //!    and what it does not protect against (the window itself, above all).
 //! 2. **Direct argv — never a shell.** The program is spawned with
@@ -23,12 +25,13 @@
 //! dependency so the guardrails can be unit-tested directly.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -36,6 +39,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use super::local_process_policy::{self, LocalProcessCheck, Program, SearchEnv};
+use crate::automations::manager::AutomationManager;
+use crate::automations::trust::Standing;
 use crate::connection::settings::{AppSettings, SettingsStorage};
 use crate::utils::errors::TerminalError;
 
@@ -152,13 +157,62 @@ fn persisted_settings<R: Runtime>(app_handle: &AppHandle<R>) -> Option<AppSettin
 #[tauri::command]
 pub fn check_local_process<R: Runtime>(
     program: String,
+    args: Vec<String>,
+    automation_chain: Vec<String>,
     app_handle: AppHandle<R>,
 ) -> LocalProcessCheck {
     local_process_policy::check(
         persisted_settings(&app_handle).as_ref(),
         &program,
         &SearchEnv::current(),
+        |path| standing(&app_handle, &automation_chain, &program, &args, path),
     )
+}
+
+/// What is known about the automations behind a command (#6019): `chain` are their
+/// ids, the one the run started with first.
+fn standing<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    chain: &[String],
+    program: &str,
+    args: &[String],
+    path: &Path,
+) -> Standing {
+    app_handle
+        .try_state::<AutomationManager>()
+        .map_or(Standing::Unknown, |manager| {
+            manager.standing(chain, program, args, path)
+        })
+}
+
+/// The user confirmed a command of an automation that is not their own (#6019): it
+/// is not asked about again. `path` is the file that was shown; when the program
+/// is another file by now, nothing is remembered.
+#[tauri::command]
+pub fn confirm_local_process<R: Runtime>(
+    program: String,
+    args: Vec<String>,
+    automation_chain: Vec<String>,
+    path: String,
+    app_handle: AppHandle<R>,
+) -> Result<(), TerminalError> {
+    let refused = TerminalError::AutomationError;
+    let judged = local_process_policy::judge(
+        persisted_settings(&app_handle).as_ref(),
+        &program,
+        &SearchEnv::current(),
+    )
+    .map_err(refused)?;
+    if judged.program.path.to_str() != Some(path.as_str()) {
+        return Err(TerminalError::AutomationError(format!(
+            "\"{path}\" was confirmed, but it is {} now.",
+            judged.program.path.display()
+        )));
+    }
+    app_handle
+        .try_state::<AutomationManager>()
+        .ok_or_else(|| TerminalError::AutomationError("No automations are loaded.".into()))?
+        .confirm_command(&automation_chain, &program, &args, &judged.program.path)
 }
 
 /// Clamp a caller-requested timeout into `[1ms, MAX_TIMEOUT_MS]`, applying the
@@ -315,10 +369,12 @@ async fn execute_local_process(
 /// output as [`EVENT_LOCAL_PROCESS_OUTPUT`] events and returning the exit
 /// outcome. Awaits completion so the caller learns the exit status.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // The arguments of the IPC call.
 pub async fn run_local_process<R: Runtime>(
     run_id: String,
     program: String,
     args: Vec<String>,
+    automation_chain: Vec<String>,
     timeout_ms: Option<u64>,
     approved_path: Option<String>,
     registry: State<'_, LocalProcessRegistry>,
@@ -331,6 +387,7 @@ pub async fn run_local_process<R: Runtime>(
         &program,
         approved_path.as_deref(),
         &SearchEnv::current(),
+        |path| standing(&app_handle, &automation_chain, &program, &args, path),
     )
     .map_err(|reason| {
         warn!(run_id, reason, "refused local-process step");
@@ -386,6 +443,92 @@ pub fn cancel_local_process(run_id: String, registry: State<'_, LocalProcessRegi
 mod tests {
     use super::*;
 
+    /// An automation of the user's own that runs `program` with any one argument.
+    #[cfg(unix)]
+    fn manage_automation<R: Runtime>(app: &tauri::App<R>, dir: &Path, program: &str) {
+        use crate::automations::storage::StoreFile;
+        let manager = AutomationManager::with_storage(StoreFile::in_dir(dir)).unwrap();
+        manager
+            .save(automation("mine", program))
+            .expect("the automation is saved");
+        app.manage(manager);
+    }
+
+    #[cfg(unix)]
+    fn automation(id: &str, program: &str) -> crate::automations::config::Automation {
+        serde_json::from_value(serde_json::json!({ "id": id, "name": id, "steps": [
+            { "kind": "run-local-process", "program": program, "args": ["${file}"] }
+        ]}))
+        .unwrap()
+    }
+
+    /// #6019: the command of an imported automation starts only when the user
+    /// confirmed or approved it, also when the program is on the list.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_of_an_imported_automation_is_confirmed_first() {
+        use crate::automations::trust::SaveOrigin;
+        use crate::utils::config_paths::ConfigDirOverride;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(ConfigDirOverride(dir.path().to_path_buf()));
+        app.manage(LocalProcessRegistry::default());
+        manage_automation(&app, dir.path(), "/usr/bin/touch");
+        app.state::<AutomationManager>()
+            .save_from(automation("theirs", "/usr/bin/touch"), SaveOrigin::Import)
+            .unwrap();
+        SettingsStorage::new(app.handle())
+            .unwrap()
+            .save(&AppSettings {
+                experimental_features_enabled: Some(true),
+                workflow_local_process_enabled: true,
+                workflow_local_process_allowlist: vec!["/usr/bin/touch".into()],
+                ..AppSettings::default()
+            })
+            .unwrap();
+        let marker = |name: &str| dir.path().join(name).display().to_string();
+        let run = |chain: &str, file: String, approved: Option<&str>| {
+            run_local_process(
+                "run-1".into(),
+                "/usr/bin/touch".into(),
+                vec![file],
+                vec![chain.into()],
+                Some(5_000),
+                approved.map(str::to_string),
+                app.state(),
+                app.handle().clone(),
+            )
+        };
+        // Attributed to one's own, to the imported one, to nothing.
+        assert!(run("mine", marker("a"), None).await.is_ok());
+        for chain in ["theirs", "gone"] {
+            let reason = run(chain, marker("b"), None).await.unwrap_err().to_string();
+            assert!(reason.contains("was not started"), "{reason}");
+            assert!(!dir.path().join("b").exists());
+        }
+        assert!(run("theirs", marker("c"), Some("/usr/bin/touch"))
+            .await
+            .is_ok());
+        assert!(run("theirs", marker("c"), None).await.is_err(), "once only");
+
+        let confirm = |file: String, path: &str| {
+            confirm_local_process(
+                "/usr/bin/touch".into(),
+                vec![file],
+                vec!["theirs".into()],
+                path.into(),
+                app.handle().clone(),
+            )
+        };
+        assert!(confirm(marker("d"), "/usr/bin/true").is_err());
+        assert!(run("theirs", marker("d"), None).await.is_err());
+        confirm(marker("d"), "/usr/bin/touch").unwrap();
+        assert!(run("theirs", marker("d"), None).await.is_ok());
+        assert!(run("theirs", marker("e"), None).await.is_err());
+        assert!(!dir.path().join("e").exists());
+    }
+
     /// The real command against settings on disk: with any control off it returns
     /// an error and no process is created; with all on it runs.
     #[cfg(unix)]
@@ -405,6 +548,7 @@ mod tests {
             let app = tauri::test::mock_app();
             app.manage(ConfigDirOverride(dir.path().to_path_buf()));
             app.manage(LocalProcessRegistry::default());
+            manage_automation(&app, dir.path(), "/usr/bin/touch");
             SettingsStorage::new(app.handle())
                 .unwrap()
                 .save(&AppSettings {
@@ -424,6 +568,7 @@ mod tests {
                 "run-1".into(),
                 "/usr/bin/touch".into(),
                 vec![marker.display().to_string()],
+                vec!["mine".into()],
                 Some(5_000),
                 None,
                 app.state(),
@@ -450,6 +595,7 @@ mod tests {
         let app = tauri::test::mock_app();
         app.manage(ConfigDirOverride(dir.path().to_path_buf()));
         app.manage(LocalProcessRegistry::default());
+        manage_automation(&app, dir.path(), "/usr/bin/touch");
         SettingsStorage::new(app.handle())
             .unwrap()
             .save(&AppSettings {
@@ -464,6 +610,7 @@ mod tests {
             "run-1".into(),
             "/usr/bin/touch".into(),
             vec![marker.display().to_string()],
+            vec!["mine".into()],
             Some(5_000),
             None,
             app.state(),
@@ -524,6 +671,7 @@ mod tests {
         let app = tauri::test::mock_app();
         app.manage(ConfigDirOverride(dir.path().to_path_buf()));
         app.manage(LocalProcessRegistry::default());
+        manage_automation(&app, dir.path(), "/usr/bin/touch");
         let storage = SettingsStorage::new(app.handle()).unwrap();
         storage
             .save(&AppSettings {
@@ -538,6 +686,7 @@ mod tests {
                 "run-1".into(),
                 "/usr/bin/touch".into(),
                 vec![marker.display().to_string()],
+                vec!["mine".into()],
                 Some(5_000),
                 Some(approved.into()),
                 app.state(),
@@ -580,6 +729,7 @@ mod tests {
                     "run-1".into(),
                     "/usr/bin/touch".into(),
                     vec![marker.display().to_string()],
+                    vec!["mine".into()],
                     Some(5_000),
                     approved,
                     app.state(),
@@ -591,7 +741,12 @@ mod tests {
                     "{raw}"
                 );
             }
-            let verdict = check_local_process("/usr/bin/touch".into(), app.handle().clone());
+            let verdict = check_local_process(
+                "/usr/bin/touch".into(),
+                Vec::new(),
+                vec!["mine".into()],
+                app.handle().clone(),
+            );
             assert!(
                 matches!(verdict, LocalProcessCheck::Refused { .. }),
                 "{raw}"

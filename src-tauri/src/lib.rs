@@ -901,6 +901,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::automations::list_automations,
             commands::automations::get_automation,
             commands::automations::save_automation,
+            commands::automations::import_automation,
             commands::automations::delete_automation,
             commands::automations::list_automation_runs,
             commands::automations::record_automation_run,
@@ -919,6 +920,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::schedules::schedule_run_coverage,
             commands::local_process::check_local_process,
             commands::local_process::run_local_process,
+            commands::local_process::confirm_local_process,
             commands::local_process::cancel_local_process,
             // Network diagnostics
             commands::network::network_port_scan,
