@@ -3122,6 +3122,27 @@ memory: a stop that is still owed when the app quits is lost.
 In the frontend, `src/utils/serviceState.ts` maps both kinds onto the same nine states and holds
 their words, dots and run buttons.
 
+### One Model of a Service (#6028)
+
+Both kinds reach the frontend as shared projection regions, so every window shows the same and
+nothing polls: `tunnels` (`src-tauri/src/tunnel/projection.rs`) and `services`
+(`src-tauri/src/embedded_servers/projection.rs`: the saved file servers without passwords, and what
+each row says). Commands change a file server and answer with their own error; what they changed
+arrives as a diff. While a server runs, its traffic is published once a second, and an unchanged
+view sends nothing. A start that fails stays on the row with its reason until a stop, a save or the
+next start.
+
+`src/utils/serviceModel.ts` turns a config, its state and the machines around it into one
+`ServiceModel`: what it is for in plain words (`tunnelTypeHelp.ts`, `shareTypeHelp.ts`), where it
+runs, its state with the reason and the next step, its counters, its address and its actions. The
+model is pure, and the rules live there, not in components:
+
+- **Address** (`serviceAddress.ts`): only while it runs, only what someone can type, or with the
+  machine it opens on. A wide bind is never shown; it becomes the address of the machine that
+  listens.
+- **Actions** come in one order with one set of words and keys. An action that cannot act is absent.
+  "Open in browser" is absent for a server on another machine's localhost.
+
 ### Embedded FTP Server Front Relay
 
 The embedded FTP server (`core/src/embedded_servers/ftp_server.rs`) is built on
