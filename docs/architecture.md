@@ -3047,6 +3047,29 @@ STREAM` and `MDTM` are supported, and `SIZE` + `MDTM` fingerprint the remote
   session's `file_browser()` (`src-tauri/src/session/file_ops.rs`). SSH converged on the same
   path (#2421). Uploads and downloads run through the Transfer Queue.
 
+### Where a Service Runs (#6028)
+
+An embedded server and an SSH tunnel store the machine they run on in their own entry
+(`host`, `core/src/util/service_host.rs`): absent or `thisComputer` is the desktop, `agent` names a
+remote agent by id. The rule is **the right machine or not at all**:
+
+- Only a host that reads as this computer reaches a listener here. For servers the check is the
+  first step of `EmbeddedServerManager::start_server` and is repeated under the config lock before
+  the bind; for tunnels the forwarder builder takes a `RunsHere` proof (`tunnel/host.rs`), so a
+  reconnect of a tunnel that was moved meanwhile is refused too.
+- An agent that is removed, not connected, too old, or refuses, and a host this build cannot read
+  (another kind, an unknown key beside a known one, `null`), start nothing. The reason is shown on
+  the row and kept until a stop, a save or a good start.
+- The raw value is kept verbatim through load, save, backup and restore, like the unknown fields of
+  the entry. A save without a host keeps the stored one (a list in another window may be out of
+  date), and so does restoring a backup that has none.
+- Moving a running service stops it where it ran; it is not started on the new machine by itself.
+
+A server without a `host` runs on this computer, as it did before the field existed. Older builds
+kept an agent choice in memory only, so it cannot be recovered: the user has to choose it once more.
+An older build that opens the file keeps the field but does not read it, and starts the server on
+this computer.
+
 ### Embedded FTP Server Front Relay
 
 The embedded FTP server (`core/src/embedded_servers/ftp_server.rs`) is built on
