@@ -5,6 +5,7 @@ import {
   type ServerStats,
 } from "@/types/embeddedServer";
 import { localhostIn, serviceTrafficLine } from "@/utils/serviceTraffic";
+import { tftpPortNote } from "@/components/ServiceEditor/PortNote";
 import { shareTypeHelp } from "@/utils/shareTypeHelp";
 
 /** The URL a server listens on, e.g. `http://127.0.0.1:8080`. */
@@ -21,7 +22,7 @@ export function serverUrl(config: EmbeddedServerConfig): string {
  */
 export function serverRowTooltip(
   config: EmbeddedServerConfig,
-  opts: { stats?: ServerStats; runsOn?: string } = {}
+  opts: { stats?: ServerStats; runsOn?: string; onAgent?: boolean } = {}
 ): string[] {
   const out = [
     tf("server.tooltip.listen", {
@@ -32,6 +33,8 @@ export function serverRowTooltip(
     tf("server.tooltip.root", { path: config.rootDirectory }),
   ];
   if (config.readOnly) out.push(t("server.tooltip.readOnly"));
+  // Devices ask on 69 (V-003).
+  if (config.serverType === "tftp") out.push(tftpPortNote(config.port, opts.onAgent ?? false));
   if (opts.runsOn) out.push(opts.runsOn);
   if (opts.stats) {
     out.push(serviceTrafficLine(opts.stats));

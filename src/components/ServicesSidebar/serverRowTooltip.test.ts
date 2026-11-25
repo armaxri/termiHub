@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { tftpPortNote } from "@/components/ServiceEditor/PortNote";
 import { serverRowTooltip, serverUrl } from "./serverRowTooltip";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 
@@ -22,6 +23,24 @@ describe("serverRowTooltip (#5770)", () => {
     ]);
   });
 
+  it.each([
+    [
+      6969,
+      false,
+      "linux",
+      "Devices usually ask on port 69. Set the device to port 6969, or use 69 here.",
+    ],
+    [69, false, "macos", "Devices ask on this port by default."],
+    [69, false, "windows", "Devices ask on this port by default."],
+    [69, false, "linux", "On Linux, only an administrator may open it"],
+    [69, true, "macos", "On Linux, the agent may open it only as an administrator"],
+  ] as const)(
+    "says what a TFTP port means to a device: %i, on an agent %s, %s (V-003)",
+    (port, onAgent, platform, text) => {
+      expect(tftpPortNote(port, onAgent, platform)).toContain(text);
+    }
+  );
+
   it("adds read only, the agent host and the traffic", () => {
     const lines = serverRowTooltip(
       { ...HTTP, serverType: "tftp", readOnly: true, port: 69 },
@@ -34,7 +53,9 @@ describe("serverRowTooltip (#5770)", () => {
       "TFTP · tftp://localhost:69",
       "Give files to devices that only speak TFTP.",
       "Serves /srv/fw",
-      "Read only",
+      "Download only",
+      // jsdom is neither Windows nor a Mac.
+      "Devices ask on this port by default. On Linux, only an administrator may open it: start termiHub so, or allow it (CAP_NET_BIND_SERVICE).",
       "Runs on agent build-box",
       "2 connections now, 5 in all · sent 2.0 KB · received 0 B",
     ]);

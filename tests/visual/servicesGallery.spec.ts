@@ -128,7 +128,7 @@ const WHY = {
   store: "Starts when you unlock the credential store, until 14:32. After that, start it yourself.",
   stopping:
     "Its agent is offline. It may still run there; it will be stopped when the agent is back.",
-  expired: "Not started: its agent was not connected within 30 minutes. Connect it, then retry.",
+  expired: "Not started: its agent was not connected within 30 minutes. Connect it, then start it again.",
   port: (port: number) => `Port ${port} is already in use on this computer.`,
   ssh: "Build Box refused the connection. Is its SSH server running?",
   away: "Its agent is offline. It may still run there; termiHub cannot tell.",

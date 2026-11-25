@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type React from "react";
 import {
   Activity,
@@ -329,7 +330,7 @@ export function ServiceListItem({
           <span>{model.risk}</span>
         </span>
       )}
-      {model.reason && (
+      {(model.reason || (onNextStep && model.nextSteps.length > 0)) && (
         <span
           className="service-row__reason"
           data-state={model.state}
@@ -339,7 +340,7 @@ export function ServiceListItem({
           {onNextStep &&
             model.nextSteps.map((step, index) => (
               <span key={step.id} className="service-row__step">
-                {" "}
+                {(model.reason || index > 0) && " "}
                 {index > 0 && <span aria-hidden="true">· </span>}
                 {nextStepButton(step, onNextStep)}
               </span>
@@ -406,12 +407,30 @@ export function ServiceListItem({
 
 /** An address that may break before its port, never inside it. */
 function BreakableAddress({ text }: { text: string }) {
+  // Breaks after the scheme and the dots of the host, never before the port (V-011).
   const at = text.lastIndexOf(":");
+  const scheme = text.indexOf("://") + 3;
+  const head = text.slice(scheme > 2 ? scheme : 0, at);
+  const dot = head.lastIndexOf(".");
+  const parts = (dot > 0 ? head.slice(0, dot + 1) : "").split(/(?<=\.)/).filter(Boolean);
   return (
     <>
-      {text.slice(0, at)}
-      <wbr />
-      <span className="service-row__port">{text.slice(at)}</span>
+      {scheme > 2 && (
+        <>
+          {text.slice(0, scheme)}
+          <wbr />
+        </>
+      )}
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {part}
+          <wbr />
+        </Fragment>
+      ))}
+      <span className="service-row__port">
+        {head.slice(dot + 1)}
+        {text.slice(at)}
+      </span>
     </>
   );
 }

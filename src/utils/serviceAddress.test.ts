@@ -19,9 +19,10 @@ describe("serviceAddress (#6028)", () => {
     ["0.0.0.0", HERE, "192.168.1.20:80", undefined, "anyone on your network"],
     ["::", HERE, "192.168.1.20:80", undefined, "anyone on your network"],
     ["*", HERE, "192.168.1.20:80", undefined, "anyone on your network"],
-    ["192.168.1.7", HERE, "192.168.1.7:80", undefined, "anyone on your network"],
-    ["fe80::1", HERE, "[fe80::1]:80", undefined, "anyone on your network"],
-    ["[fe80::1]", HERE, "[fe80::1]:80", undefined, "anyone on your network"],
+    ["192.168.1.7", HERE, "192.168.1.7:80", undefined, "anyone who reaches 192.168.1.7"],
+    ["fe80::1", HERE, "[fe80::1]:80", undefined, "anyone who reaches fe80::1"],
+    ["[fe80::1]", HERE, "[fe80::1]:80", undefined, "anyone who reaches [fe80::1]"],
+    // Bound to one address: who reaches that one (V-010).
     // Open to others, and nobody knows how: never a localhost.
     ["0.0.0.0", OFFLINE, undefined, undefined, NO_NETWORK],
     ["::", OFFLINE, undefined, undefined, NO_NETWORK],
@@ -29,11 +30,11 @@ describe("serviceAddress (#6028)", () => {
     ["127.0.0.1", SERVER, "localhost:80", "Build Box", "only on Build Box"],
     ["", SERVER, "localhost:80", "Build Box", "only on Build Box"],
     ["0.0.0.0", SERVER, "build.example:80", undefined, "anyone who reaches Build Box"],
-    ["10.0.0.4", SERVER, "10.0.0.4:80", undefined, "anyone who reaches Build Box"],
+    ["10.0.0.4", SERVER, "10.0.0.4:80", undefined, "anyone who reaches 10.0.0.4"],
     // The row names its agent anyway.
     ["127.0.0.1", AGENT, "localhost:80", "Edge box", "only on that machine"],
     ["0.0.0.0", AGENT, "edge.example:80", undefined, "anyone who reaches that machine"],
-    ["10.0.0.4", AGENT, "10.0.0.4:80", undefined, "anyone who reaches that machine"],
+    ["10.0.0.4", AGENT, "10.0.0.4:80", undefined, "anyone who reaches 10.0.0.4"],
     [
       "0.0.0.0",
       { ...SERVER, host: undefined },

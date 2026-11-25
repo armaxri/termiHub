@@ -53,6 +53,7 @@ describe("useServiceContext (#6028)", () => {
       networkAddress: undefined,
       usedPorts: new Set(),
       portHolders: new Map(),
+      portUsers: new Map(),
     });
     expect(listNetworkInterfaces).not.toHaveBeenCalled();
   });

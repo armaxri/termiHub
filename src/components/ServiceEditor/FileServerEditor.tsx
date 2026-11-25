@@ -49,6 +49,7 @@ import {
   type FileServerForm,
 } from "./fileServerForm";
 import { editorSubtitle, ServiceEditorShell, ServiceEditorWarning } from "./ServiceEditorShell";
+import { freePort, portTaken, PortTakenNote, tftpPortNote } from "./PortNote";
 import { WhoCanOpen } from "./WhoCanOpen";
 import { useEditorTab } from "./useEditorTab";
 
@@ -83,6 +84,9 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   const original = meta.copyOf ? servers.find(({ id }) => id === meta.copyOf) : undefined;
   const saved = savedSignIn(existing);
   const schema = useMemo(() => fileServerSchema(saved), [saved]);
+  // The ports the services of this computer are set to (V-002).
+  const { usedPorts } = useServiceContext(false);
+  const free = (port: number) => freePort(port, { usedPorts });
   /** What it starts with, before anything is typed. */
   const untouched = (): FileServerForm => {
     if (existing) return formOf(existing);
@@ -92,7 +96,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
           name: tf("server.editor.copyName", { name: original.name }),
           autoStart: false,
         }
-      : newForm(meta.serverType ?? "http");
+      : newForm(meta.serverType ?? "http", free);
   };
   // Unsaved values carried in from another window by "Move tabs" (#4500).
   const carried = useCarriedFormDraft<FileServerForm>(tabId, "server-editor");
@@ -145,7 +149,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   // Whether who can open it is still what a new server of this kind starts with.
   const [presetWho, setPresetWho] = useState(!existing && !original);
   const changeType = (type: ServerType) => {
-    const next = withType(getValues(), type, presetWho);
+    const next = withType(getValues(), type, presetWho, free);
     for (const [key, value] of Object.entries(next)) {
       setValue(key as keyof FileServerForm, value as never);
     }
@@ -182,6 +186,7 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
   const warning = openWarning(form);
 
   const context = useServiceContext(isWideBind(form.bindHost));
+  const taken = onAgent ? undefined : portTaken(form.port, existing?.id, context);
   const preview =
     form.bindHost.trim() !== "" && form.port !== ""
       ? fileServerModel(configOf(form, "", existing, true), PREVIEW, context).address
@@ -387,6 +392,19 @@ export function FileServerEditor({ tabId, meta, isVisible }: FileServerEditorPro
           />
         </Field>
       </div>
+
+      {taken && (
+        <PortTakenNote
+          testId="server-dialog"
+          taken={taken}
+          onUse={(port) => setValue("port", port)}
+        />
+      )}
+      {form.serverType === "tftp" && (
+        <p className="service-editor__hint" data-testid="server-dialog-tftp-port">
+          {tftpPortNote(form.port, onAgent)}
+        </p>
+      )}
 
       <WhoCanOpen
         testId="server-dialog"

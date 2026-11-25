@@ -184,11 +184,11 @@ pub fn waited_too_long(on: &WaitFor) -> Reason {
     let minutes = hosted::WAIT_LIMIT.as_secs() / 60;
     match on {
         WaitFor::Agent(_) => Reason::new(
-            format!("Not started: its agent was not connected within {minutes} minutes. Connect it, then retry."),
+            format!("Not started: its agent was not connected within {minutes} minutes. Connect it, then start it again."),
             Some(ServiceCause::AgentOffline),
         ),
         WaitFor::CredentialStore => Reason::new(
-            format!("Not started: the credential store stayed locked for {minutes} minutes. Unlock it, then retry."),
+            format!("Not started: the credential store stayed locked for {minutes} minutes. Unlock it, then start it again."),
             Some(ServiceCause::StoreLocked),
         ),
     }

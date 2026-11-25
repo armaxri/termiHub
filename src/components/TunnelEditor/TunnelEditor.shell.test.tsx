@@ -179,7 +179,11 @@ describe("who can open it", () => {
   it.each([
     ["local", "localhost:8080 · only this computer", "localhost:80 through Build Box"],
     ["remote", "localhost:8080 · only on Build Box", "localhost:3000 from this computer"],
-    ["dynamic", "socks5://localhost:1080 · only this computer", "browse through Build Box"],
+    [
+      "dynamic",
+      "socks5://localhost:1080 · only this computer",
+      "proxy to SOCKS5, host localhost, port 1080. It then browses through Build Box.",
+    ],
   ] as const)("is nobody else for a new %s tunnel (U-007)", async (kind, address, reaches) => {
     await render({ tunnelType: kind });
     expect(field("bind-here").getAttribute("aria-checked")).toBe("true");
@@ -265,14 +269,21 @@ it("starts as chosen", async () => {
   await render({ tunnelType: "dynamic" });
   type("name", "Proxy");
   expect(text("form")).toContain("Start when a session to Build Box opens");
+  // A new one reconnects, as connections do (V-007).
+  expect(field("reconnect").getAttribute("aria-checked")).toBe("true");
   await press("auto-start");
-  await press("reconnect");
   await press("save");
   expect(actions.saveTunnel.mock.calls[0][0]).toMatchObject({
     autoStart: true,
     startWithConnection: false,
     reconnectOnDisconnect: true,
   });
+});
+
+it("a saved tunnel keeps how it reconnects", async () => {
+  seed(DB);
+  await render({ tunnelId: "db" });
+  expect(field("reconnect").getAttribute("aria-checked")).toBe("false");
 });
 
 it("has no accessibility violations, with the kinds, a warning, an error and the path", async () => {

@@ -1,4 +1,5 @@
 import type { TunnelType } from "@/types/tunnel";
+import { t } from "@/i18n/catalog";
 import { bindField } from "./tunnelForm";
 import { validateHost, validatePort } from "@/utils/fieldValidation";
 
@@ -31,7 +32,9 @@ export function validateTunnelType(tunnelType: TunnelType): TunnelValidation {
     if (key.endsWith("Host")) {
       const host = typeof value === "string" ? value : "";
       const err = validateHost(host, key === bindField(tunnelType) ? "Address" : "Host");
-      if (err) errors[key] = err;
+      // What a local tunnel reaches is asked for in words (V-006).
+      const target = tunnelType.type === "local" && key === "remoteHost";
+      if (err) errors[key] = target && host.trim() === "" ? t("tunnel.editor.target.missing") : err;
     } else if (key.endsWith("Port")) {
       const port = typeof value === "number" || value === "" ? value : "";
       const err = validatePort(port, { label: "Port" });

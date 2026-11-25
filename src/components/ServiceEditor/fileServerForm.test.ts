@@ -222,7 +222,7 @@ describe("the warning, whenever others can reach it", () => {
     ],
     [
       { ...open, signIn: true },
-      "Anyone on your network can get these files. They need the password. Nothing is encrypted.",
+      "Anyone on your network can get these files. They need the password. Nothing is encrypted, the password neither.",
     ],
     [
       { ...open, serverType: "ftp", readOnly: false },

@@ -74,6 +74,21 @@ export function useServiceContext(needsNetwork: boolean): ServiceContext {
     return holders;
   }, [tunnels, servers, tunnelStates, serverStates]);
 
+  // Who is set to a port of this computer (V-002), whether it runs or not.
+  const portUsers = useMemo(() => {
+    const users = new Map<number, { id: string; name: string }>();
+    const add = (port: number, id: string, name: string) => {
+      if (!users.has(port)) users.set(port, { id, name });
+    };
+    for (const { id, name, host, tunnelType } of tunnels) {
+      if (tunnelType.type !== "remote" && isHere(host)) {
+        add(Number(tunnelType.config.localPort), id, name);
+      }
+    }
+    for (const { id, name, host, port } of servers) if (isHere(host)) add(port, id, name);
+    return users;
+  }, [tunnels, servers]);
+
   const usedPorts = useMemo(() => {
     const ports = new Set<number>();
     for (const { tunnelType, host } of tunnels) {
@@ -93,7 +108,8 @@ export function useServiceContext(needsNetwork: boolean): ServiceContext {
       networkAddress,
       usedPorts,
       portHolders,
+      portUsers,
     }),
-    [remoteAgents, agentsKnown, connections, networkAddress, usedPorts, portHolders]
+    [remoteAgents, agentsKnown, connections, networkAddress, usedPorts, portHolders, portUsers]
   );
 }

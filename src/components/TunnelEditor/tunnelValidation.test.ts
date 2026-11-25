@@ -41,7 +41,8 @@ describe("validateTunnelType", () => {
   it("rejects a blank host", () => {
     const { valid, errors } = validateTunnelType(local({ remoteHost: "  " }));
     expect(valid).toBe(false);
-    expect(errors.remoteHost).toBe("Host is required");
+    // Asked for in words (V-006).
+    expect(errors.remoteHost).toBe("Enter what to reach, for example db.internal.");
   });
 
   it("validates only the fields present on a dynamic forward", () => {

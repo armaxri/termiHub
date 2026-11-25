@@ -100,6 +100,7 @@ export function EmbeddedServerItem({
   const tooltip = serverRowTooltip(config, {
     stats: model.state === "running" ? state?.stats : undefined,
     runsOn: runsOnText(host, agents),
+    onAgent: host.kind === "agent",
   });
 
   /** Tell the user what failed, and keep it failed for the button. */
