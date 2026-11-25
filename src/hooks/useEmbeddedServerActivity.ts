@@ -64,6 +64,8 @@ export interface EmbeddedServerActivityState {
   error: string | null;
   /** Clear the server's log (and the local buffer). */
   clear: () => Promise<void>;
+  /** Read it again now. */
+  retry: () => Promise<void>;
 }
 
 /**
@@ -111,5 +113,5 @@ export function useEmbeddedServerActivity(
     await refresh();
   }, [serverId, refresh]);
 
-  return { view, available, error, clear };
+  return { view, available, error, clear, retry: refresh };
 }

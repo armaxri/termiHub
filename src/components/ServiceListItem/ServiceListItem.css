@@ -10,7 +10,7 @@
 
 .service-row .sidebar-list-item__details {
   gap: 0;
-  padding-top: 0;
+  padding: 0;
 }
 
 .service-row .sidebar-list-item__name {
@@ -29,6 +29,7 @@
 }
 
 .service-row .sidebar-list-item__header > .sidebar-list-item__name {
+  align-self: baseline;
   padding: var(--spacing-xs) 0;
 }
 
@@ -56,7 +57,10 @@
 }
 
 .service-row__technical {
-  color: var(--text-muted);
+  flex-shrink: 0;
+  align-self: baseline;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
 }
 
 .service-row__machine {
@@ -113,10 +117,15 @@
   color: var(--text-primary);
 }
 
-/* Beside the text, not taller than it: the line keeps its height. */
+/* Beside the text and no taller than its line. */
 .service-row__address-text .ui-btn {
   flex-shrink: 0;
-  margin: calc(-1 * var(--spacing-xs)) 0;
+  min-width: 0;
+  min-height: 0;
+  margin-left: var(--spacing-xxs);
+  width: var(--spacing-lg);
+  height: var(--spacing-lg);
+  padding: 0;
   color: var(--text-primary);
 }
 

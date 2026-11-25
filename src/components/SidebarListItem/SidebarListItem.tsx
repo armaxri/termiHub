@@ -59,6 +59,8 @@ export interface SidebarListItemProps extends React.HTMLAttributes<HTMLDivElemen
   badge?: React.ReactNode;
   /** Test hook forwarded to the badge element. */
   badgeTestId?: string;
+  /** After the name, before the actions: what kind of item it is, in a word. */
+  nameSuffix?: React.ReactNode;
   /** Optional detail lines shown beneath the header. */
   details?: React.ReactNode;
   /** Test hook for the row container. */
@@ -164,6 +166,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
       status,
       badge,
       badgeTestId,
+      nameSuffix,
       details,
       testId,
       className,
@@ -295,6 +298,7 @@ export const SidebarListItem = React.forwardRef<HTMLDivElement, SidebarListItemP
             </span>
           )}
           {nameEl}
+          {nameSuffix}
           {hasPrimary ? (
             <div className="sidebar-list-item__actions">
               <span className="sidebar-list-item__primary" data-testid={primaryActionTestId}>

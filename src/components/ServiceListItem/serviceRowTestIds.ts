@@ -17,6 +17,7 @@ export interface ServiceRowTestIds {
   kindTestId: string;
   addressTestId: string;
   reasonTestId: string;
+  technicalTestId: string;
   machineTestId: string;
   riskTestId: string;
   /** Beside the reason. */
@@ -42,6 +43,7 @@ function tunnelTestIds(id: string): ServiceRowTestIds {
     kindTestId: `tunnel-kind-${id}`,
     addressTestId: `tunnel-address-${id}`,
     reasonTestId: `tunnel-reason-${id}`,
+    technicalTestId: `tunnel-technical-${id}`,
     machineTestId: `tunnel-machine-${id}`,
     riskTestId: `tunnel-risk-${id}`,
     nextStepTestIds: {
@@ -107,6 +109,7 @@ function serverTestIds(id: string): ServiceRowTestIds {
     kindTestId: `server-kind-${id}`,
     addressTestId: `server-address-${id}`,
     reasonTestId: `server-reason-${id}`,
+    technicalTestId: `server-technical-${id}`,
     machineTestId: `server-machine-${id}`,
     riskTestId: `server-risk-${id}`,
     nextStepTestIds: {

@@ -65,7 +65,7 @@ function runsOnText(runLocation: HostChoice, agents: RemoteAgentDefinition[]): s
 
 /**
  * The row of a file server: the shared {@link ServiceListItem} (#6028), plus its
- * expandable access log (PROD-034/036).
+ * expandable Activity (PROD-034/036).
  */
 export function EmbeddedServerItem({
   config,
@@ -153,6 +153,7 @@ export function EmbeddedServerItem({
             serverId={config.id}
             live={model.state === "running"}
             hostAgent={hostAgentFor(host, agents)}
+            onClose={() => setShowActivity(false)}
           />
         ) : undefined
       }

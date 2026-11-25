@@ -265,7 +265,7 @@ export function ServiceListItem({
   const details = (
     <>
       {where.label !== t("service.where.here") && (
-        <Tooltip content={where.label} side="bottom" align="start">
+        <Tooltip content={where.label} side="right">
           <span className="service-row__machine" data-testid={ids.machineTestId}>
             <HardDrive size={11} className="service-row__machine-icon" aria-hidden="true" />
             <MiddleEllipsis text={where.name ?? where.label} />
@@ -283,8 +283,6 @@ export function ServiceListItem({
         </span>
         {" · "}
         {description ? <span data-testid={ids.descriptionTestId}>{description}</span> : model.what}
-        {" · "}
-        <span className="service-row__technical">{model.technical}</span>
       </span>
       {address && (
         <span className="service-row__address" data-testid={ids.addressTestId}>
@@ -359,6 +357,11 @@ export function ServiceListItem({
             ) : (
               model.name
             )
+          }
+          nameSuffix={
+            <span className="service-row__technical" data-testid={ids.technicalTestId}>
+              {model.technical}
+            </span>
           }
           onDoubleClick={() => performQuietly("edit")}
           status={<StatusDot {...model.dot} testId={ids.statusTestId} />}

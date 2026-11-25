@@ -21,6 +21,8 @@ export interface ShareTypeHelp {
   protocol: string;
   /** A short phrase for a card or a list line; no full stop. */
   summary: string;
+  /** What decides between the kinds, for a card; no full stop. */
+  fact: string;
   /** What it is for, how it works, an everyday example. */
   lines: readonly [lead: string, how: string, example: string];
 }
@@ -29,6 +31,7 @@ const TEXT = {
   http: {
     label: "share.type.http.label",
     summary: "share.type.http.summary",
+    fact: "share.type.http.fact",
     lead: "share.type.http.lead",
     how: "share.type.http.how",
     example: "share.type.http.example",
@@ -36,6 +39,7 @@ const TEXT = {
   ftp: {
     label: "share.type.ftp.label",
     summary: "share.type.ftp.summary",
+    fact: "share.type.ftp.fact",
     lead: "share.type.ftp.lead",
     how: "share.type.ftp.how",
     example: "share.type.ftp.example",
@@ -43,6 +47,7 @@ const TEXT = {
   tftp: {
     label: "share.type.tftp.label",
     summary: "share.type.tftp.summary",
+    fact: "share.type.tftp.fact",
     lead: "share.type.tftp.lead",
     how: "share.type.tftp.how",
     example: "share.type.tftp.example",
@@ -63,6 +68,7 @@ export function shareTypeHelp(
     label: t(text.label),
     protocol: PROTOCOL_LABELS[kind],
     summary: t(text.summary),
+    fact: t(text.fact),
     lines: [
       t(text.lead),
       tf(text.how, { machine: tunnelHostMachine(host, agentName) }),
