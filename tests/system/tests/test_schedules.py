@@ -129,6 +129,9 @@ class TestScheduledRuns(
         checkbox = f"schedule-editor-connection-{connection_id}"
         self.wait(lambda: self.driver.exists(checkbox), what="the target connection checkbox")
         self.driver.click(checkbox)
+        # Nothing is preselected (#6024): Save refuses until it is chosen.
+        assert self.is_blocked("schedule-editor-save"), "the closed-connection choice is preset"
+        self.driver.click("schedule-editor-closed-skip")
         self.driver.type("schedule-editor-every", "1")
         self.wait(lambda: not self.is_blocked("schedule-editor-save"), what="Save to enable")
         self.driver.click("schedule-editor-save")
@@ -140,7 +143,8 @@ class TestScheduledRuns(
         assert schedule["rule"] == {"kind": "interval", "everyMinutes": 1}
         assert schedule["action"] == {"kind": "automation", "automationId": macro_id}
         assert schedule["targets"] == {"kind": "connections", "connectionIds": [connection_id]}
-        assert not schedule["enabled"], "a new schedule must start disabled"
+        assert not schedule["enabled"], "a new schedule must start off"
+        assert not schedule.get("connectIfNeeded"), "'Skip it' was saved as 'Connect it'"
         return schedule["id"]
 
     def _enable_with_confirmation(self, schedule_id: str) -> None:
@@ -203,6 +207,11 @@ class TestScheduledRuns(
         assert len(history) == 1, history
         self._assert_completed_run(history[0], slot1)
         assert self._schedule(schedule_id)["lastResult"] == history[0]
+        last = f"schedule-last-{schedule_id}"
+        self.wait(lambda: self.driver.exists(last), what="the last run on the row")
+        assert self.driver.get_text(last).startswith("Last run completed (today "), (
+            self.driver.get_text(last)
+        )
 
         # Slot 2: paused. The tick passes the slot — the next run moves past it —
         # but nothing fires and no attempt is recorded.

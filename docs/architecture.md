@@ -2227,7 +2227,7 @@ sequenceDiagram
   automation run history with the `scheduled` origin; one that the local-process gate refuses (below)
   is skipped with the reason, before anything is connected or typed; a missing one is skipped with
   "The
-  automation no longer exists"; the status bar shows "N schedules active".
+  automation no longer exists"; the status bar shows "N schedules on".
 - **Run local process is experimental** (#5988) — with "Allow experimental features" off, no run
   starts that can reach the step (its own, in a conditional or loop, or through `run-automation`),
   whatever started it: sidebar, palette, hotkey, "Run on…", the on-connect / on-disconnect /
@@ -2237,7 +2237,17 @@ sequenceDiagram
   change during a run, and `run_local_process` checks the persisted settings whatever the frontend
   says (`authorize_spawn`). The `workflowLocalProcessEnabled` opt-in and the per-program allowlist
   (or prompt) are separate controls; a spawn needs all three.
-- **Connect if not connected** (#3527, opt-in per schedule, `connectIfNeeded`, default off) — the
+- **Schedules in the UI** (`src/components/Schedules/`, #6024) — a row says its state with the next
+  run, the rule, the automation, the connections, why it will not run and how the last run ended
+  with the whole reason (`scheduleStatus.ts`). The editor asks the scheduler for the next run before
+  saving (`preview_schedule_next_run`), so its clock and daylight-saving rules decide, and says
+  whether saving switches the schedule off (`scheduleSummary.ts` mirrors `ScheduleManager::save`).
+  A missed run records `missedDueAt` apart from its reason. The one History also lists the scheduled
+  times at which nothing ran, read from the schedules' attempts (`historyEntries.ts`); clearing the
+  History clears them (`clear_schedule_history`) and keeps each `lastResult`. What an automation
+  cannot do when nobody is there is `src/utils/unattended.ts`.
+- **If a connection is closed: connect it or skip it** (#3527, per schedule, `connectIfNeeded`; a new
+  schedule must choose, absent means skip) — the
   fire names one `connectWindow` (the main window, else the first listening one). That window
   connects each target with no connected terminal there through the shared saved-connection flow
   (`src/utils/connectSavedConnection.ts`) in its **unattended** mode, runs on those tabs too, and
