@@ -35,7 +35,7 @@ import { fireAndForget } from "@/utils/frontendLog";
 import { t, tf } from "@/i18n/catalog";
 import type { ServiceAction, ServiceActionId, ServiceModel } from "@/utils/serviceModel";
 import { serviceStateDot, serviceStateLabel } from "@/utils/serviceState";
-import { serviceRowTestIds } from "./serviceRowTestIds";
+import { serviceRowTestIds, type ServiceActionTestIds } from "./serviceRowTestIds";
 import "./ServiceListItem.css";
 
 /** What the owner of the service does; the row copies and opens by itself. */
@@ -153,7 +153,7 @@ export function ServiceListItem({
           iconOnly
           aria-label={action.label}
           aria-pressed={action.id === "activity" ? activity !== undefined : undefined}
-          data-testid={ids.actionTestIds[action.id]}
+          {...ids.actionTestIds[action.id]}
           icon={<Icon size={12} />}
           // Whoever acts shows its own failure.
           errorToast={false}
@@ -193,7 +193,7 @@ export function ServiceListItem({
   const shortcuts = [...new Set(model.actions.flatMap((a) => a.shortcut ?? []))].join(" ");
 
   /** Every action, in the model's order. */
-  const menuItems = (testIds: Record<ServiceActionId, string>) =>
+  const menuItems = (testIds: ServiceActionTestIds) =>
     model.actions.map((action, index) => {
       const Icon = ICONS[action.id];
       return (
@@ -201,7 +201,7 @@ export function ServiceListItem({
           <MenuItem
             danger={action.id === "delete"}
             onSelect={() => performFromMenu(action.id)}
-            data-testid={testIds[action.id]}
+            {...testIds[action.id]}
           >
             <Icon size={14} /> {action.label}
           </MenuItem>
