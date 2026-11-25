@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::session::output_capture::ScrollbackReplay;
+use crate::test_support::agent_rpc::Gate;
 
 /// Poll until `emitter` got `len` bytes for `session_id`; returns the chunks.
 async fn chunks_until(
@@ -227,6 +228,36 @@ async fn a_repaint_waits_for_the_replay_of_a_new_worker() {
         assert_eq!(repaint.data, b"one two ", "old worker's id {old_worker}");
         assert_eq!(repaint.end_offset, 12);
     }
+}
+
+/// An answer about a replay that another one overtook is known to be too old:
+/// the repaint takes the capture at once instead of waiting for its time limit.
+#[tokio::test]
+async fn an_answer_that_a_later_replay_overtook_is_not_waited_for() {
+    let gate = Gate::new();
+    let _release = gate.open_on_drop();
+    let reply = Step::Hang(gate.clone(), Box::new(buffer_reply(b"one ")));
+    let (manager, emitter, agent) = attached_to(reply).await;
+    agent.send_replay_start(REPLAY, b"one ".to_vec()).unwrap();
+    chunks_until(&emitter, "sess-1", 4).await;
+    let reading = tokio::spawn({
+        let manager = manager.clone();
+        async move { manager.get_remote_session_buffer("sess-1").await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    agent
+        .send_replay_start(REPLAY + 1, b"one two ".to_vec())
+        .unwrap();
+    chunks_until(&emitter, "sess-1", 12).await;
+    gate.open();
+
+    let repaint = tokio::time::timeout(Duration::from_secs(1), reading)
+        .await
+        .expect("the repaint waited")
+        .unwrap()
+        .unwrap();
+    assert_eq!(repaint.data, b"one two ");
+    assert_eq!(repaint.end_offset, 12);
 }
 
 /// When the rest does not come in time the repaint is what is here, and the
