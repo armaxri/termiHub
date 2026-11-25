@@ -1,16 +1,15 @@
 import { create } from "zustand";
 import { useAppStore } from "@/store/appStore";
 import type { ServerType } from "@/types/embeddedServer";
-import type { ServiceKind } from "@/utils/serviceModel";
 
 /**
  * What the Services sidebar (#6028) remembers while the app runs (termiHub keeps
  * no UI state in browser storage), and what elsewhere asks of it.
  */
 export interface ServicesView {
-  /** The groups the user closed. */
-  closed: ReadonlySet<ServiceKind>;
-  toggleGroup: (kind: ServiceKind) => void;
+  /** The groups the user closed, by id. */
+  closed: ReadonlySet<string>;
+  toggleGroup: (id: string) => void;
   /** A new file server that was asked for; `seq` tells two apart. */
   requested: { type: ServerType; seq: number } | null;
   requestFileServer: (type: ServerType) => void;
@@ -20,10 +19,10 @@ export interface ServicesView {
 
 export const useServicesView = create<ServicesView>((set) => ({
   closed: new Set(),
-  toggleGroup: (kind) =>
+  toggleGroup: (id) =>
     set((s) => {
       const closed = new Set(s.closed);
-      if (!closed.delete(kind)) closed.add(kind);
+      if (!closed.delete(id)) closed.add(id);
       return { closed };
     }),
   requested: null,

@@ -299,6 +299,16 @@ pub fn register_tunnel_intents(registry: &mut HandlerRegistry, app_handle: AppHa
     });
 
     let handle = app_handle.clone();
+    registry.route("tunnel.keepRunning", move |intent, _projector| {
+        let id = tunnel_id(intent)?;
+        let manager = manager_of(&handle)?;
+        manager
+            .keep_running(&id)
+            .map_err(|e| ("failed".to_string(), e.to_string()))?;
+        Ok(Vec::new())
+    });
+
+    let handle = app_handle.clone();
     registry.route("tunnel.checkAgain", move |_intent, _projector| {
         let manager = manager_of(&handle)?;
         // Waits for the agents' answers.

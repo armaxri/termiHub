@@ -562,3 +562,19 @@ async fn retrying_a_reconnecting_tunnel_now_keeps_it_reconnecting() {
     run.assert_row(TunnelStatus::Reconnecting, "Try 3 of 10");
     assert_eq!(run.sent(TUNNEL_START), 0);
 }
+
+/// "Keep running" (#6076).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_stop_can_be_taken_back() {
+    let run = db_on_edge(|_| {});
+    run.manager.start_tunnel("db").unwrap();
+    run.online(false);
+    run.manager.stop_tunnel("db").unwrap();
+    run.assert_row(TunnelStatus::Stopping, "Its agent is offline");
+    run.manager.keep_running("db").unwrap();
+    run.assert_row(TunnelStatus::NotReachable, "Its agent is offline");
+    run.online(true);
+    run.tick();
+    run.assert_row(TunnelStatus::Connected, "");
+    assert!(run.machine.forwards("db"), "not stopped");
+}

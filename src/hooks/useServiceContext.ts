@@ -11,6 +11,9 @@ import { hostChoice } from "@/utils/hostChoice";
 import { isWideBind } from "@/utils/serviceAddress";
 import { isLoopbackBind } from "@/utils/tunnelHost";
 
+/** Whether a service stored with `host` runs on this computer. */
+const isHere = (host: Parameters<typeof hostChoice>[0]) => hostChoice(host).kind === "thisComputer";
+
 /** How often this computer is asked for its address while it has none. */
 const NETWORK_RETRY_MS = 10_000;
 
@@ -55,10 +58,24 @@ export function useServiceContext(needsNetwork: boolean): ServiceContext {
     };
   }, [needsNetwork, waiting]);
 
+  const tunnelStates = useAppStore((s) => s.tunnelStates);
+  const serverStates = useAppStore((s) => s.embeddedServerStates);
+  // Who has a port open here now (#6076), so that a taken one can be named.
+  const portHolders = useMemo(() => {
+    const holders = new Map<number, { id: string; name: string }>();
+    for (const { id, name, host, tunnelType } of tunnels) {
+      if (tunnelType.type === "remote" || !isHere(host)) continue;
+      if (tunnelStates[id]?.status !== "connected") continue;
+      holders.set(Number(tunnelType.config.localPort), { id, name });
+    }
+    for (const { id, name, host, port } of servers) {
+      if (isHere(host) && serverStates[id]?.status === "running") holders.set(port, { id, name });
+    }
+    return holders;
+  }, [tunnels, servers, tunnelStates, serverStates]);
+
   const usedPorts = useMemo(() => {
     const ports = new Set<number>();
-    const isHere = (host: Parameters<typeof hostChoice>[0]) =>
-      hostChoice(host).kind === "thisComputer";
     for (const { tunnelType, host } of tunnels) {
       if (tunnelType.type !== "remote" && isHere(host)) {
         ports.add(Number(tunnelType.config.localPort));
@@ -69,7 +86,14 @@ export function useServiceContext(needsNetwork: boolean): ServiceContext {
   }, [tunnels, servers]);
 
   return useMemo(
-    () => ({ agents: remoteAgents, agentsKnown, connections, networkAddress, usedPorts }),
-    [remoteAgents, agentsKnown, connections, networkAddress, usedPorts]
+    () => ({
+      agents: remoteAgents,
+      agentsKnown,
+      connections,
+      networkAddress,
+      usedPorts,
+      portHolders,
+    }),
+    [remoteAgents, agentsKnown, connections, networkAddress, usedPorts, portHolders]
   );
 }

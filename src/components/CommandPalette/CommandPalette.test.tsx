@@ -207,8 +207,11 @@ describe("CommandPalette", () => {
     it("makes a new one", () => {
       const openTunnelEditorTab = vi.fn();
       setStore({ openTunnelEditorTab });
-      typeInto("reach something on");
-      expect(activeLabel()).toBe("New service: Reach something on a server");
+      typeInto("reach something through");
+      const label = "New service: Reach something through a server · SSH tunnel, local (ssh -L)";
+      expect(activeLabel()).toBe(label);
+      typeInto("such as a database");
+      expect(activeLabel()).toBe(label);
       keydown("Enter");
       expect(openTunnelEditorTab).toHaveBeenCalledWith(null, { tunnelType: "local" });
     });

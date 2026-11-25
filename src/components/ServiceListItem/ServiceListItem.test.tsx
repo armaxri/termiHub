@@ -162,11 +162,20 @@ describe("what the row says", () => {
   });
 
   it("keeps the end of a long machine's name, and all of it for a screen reader", () => {
-    const machine = "Edge gateway in the Frankfurt rack";
-    render({ ...serverIn("stopped"), machine });
-    const chip = q("server-machine-s")!;
-    expect(chip.textContent).toBe(machine);
-    expect(chip.querySelector(".middle-ellipsis__tail")?.textContent).toBe("urt rack");
+    const tailOf = (machine: string) => {
+      render({ ...serverIn("stopped"), machine });
+      const chip = q("server-machine-s")!;
+      expect(chip.textContent).toBe(machine);
+      return chip.querySelector(".middle-ellipsis__tail")?.textContent;
+    };
+    // Not cut inside a word (#6076), when there are words.
+    expect(tailOf("Edge gateway in the Frankfurt rack")).toBe(" Frankfurt rack");
+    expect(tailOf("Edge gateway, Frankfurt datacenter rack")).toBe(" datacenter rack");
+    expect(tailOf("edge-gateway-frankfurt-rack")).toBe("urt-rack");
+    expect(tailOf("edge gateway-frankfurt-rack")).toBe("urt-rack");
+    // A last word too short to tell two machines apart.
+    expect(tailOf("edge-gateway-frankfurt rack")).toBe("urt rack");
+    expect(tailOf("Edge box")).toBeUndefined();
   });
 
   it("says the state once to a screen reader: the dot's name", () => {

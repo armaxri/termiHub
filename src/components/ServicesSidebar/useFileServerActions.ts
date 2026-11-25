@@ -2,12 +2,17 @@ import { useCallback, useState } from "react";
 import { toast } from "@/components/ui";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { ServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
+import {
+  persistUndoableDeleteOptOut,
+  useUndoableDeleteOptOut,
+} from "@/hooks/useUndoableDeleteOptOut";
 import { t, tf } from "@/i18n/catalog";
 import { newId } from "@/services/transport/ids";
 import { useAppStore } from "@/store/appStore";
 import type { EmbeddedServerConfig, ServerType } from "@/types/embeddedServer";
 import { errorMessage } from "@/utils/errorMessage";
 import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
+import { serviceDeleteEffect } from "@/utils/serviceDelete";
 import type { ServiceModel } from "@/utils/serviceModel";
 import { isServiceActive, serverServiceState } from "@/utils/serviceState";
 
@@ -40,7 +45,7 @@ export function useFileServerActions(
   const start = useAppStore((s) => s.startEmbeddedServer);
   const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
   const restartEmbeddedServer = useAppStore((s) => s.restartEmbeddedServer);
-  const [open, setOpen] = useState(false);
+  const [dialogOpen, setOpen] = useState(false);
   const [editing, setEditing] = useState<Editing>(NOTHING);
 
   const show = useCallback((next: Partial<Editing>) => {
@@ -135,22 +140,42 @@ export function useFileServerActions(
   );
 
   // Delete is destructive (and stops a running server), so it asks first (#1393).
-  const deletion = useDeleteConfirm<string>(async (id) => {
-    const name = servers.find((server) => server.id === id)?.name ?? "";
-    try {
-      await deleteEmbeddedServer(id);
-    } catch (err) {
-      toast.error(`Failed to delete "${name}"`, { description: errorMessage(err) });
-    }
+  // Like a tunnel (#6076): it can be undone, so one that holds nothing open may be
+  // deleted without asking.
+  const optOut = useUndoableDeleteOptOut();
+  const { take: takeOptOut, reset: resetOptOut, shouldConfirm } = optOut;
+  const deleteNow = useCallback(
+    async (id: string) => {
+      const name = servers.find((server) => server.id === id)?.name ?? "";
+      try {
+        await deleteEmbeddedServer(id);
+      } catch (err) {
+        toast.error(`Failed to delete "${name}"`, { description: errorMessage(err) });
+      }
+    },
+    [servers, deleteEmbeddedServer]
+  );
+  const stateOf = useCallback((id: string) => serverServiceState(states[id]?.status), [states]);
+  const deletion = useDeleteConfirm<string>((id) => {
+    if (!isServiceActive(stateOf(id)) && takeOptOut()) persistUndoableDeleteOptOut();
+    return deleteNow(id);
   });
+  const { request: askToDelete, cancel: cancelDelete } = deletion;
+  const remove = useCallback(
+    (id: string) => {
+      if (isServiceActive(stateOf(id)) || shouldConfirm) askToDelete(id);
+      else void deleteNow(id);
+    },
+    [stateOf, shouldConfirm, askToDelete, deleteNow]
+  );
+  const onCancelDelete = useCallback(() => {
+    resetOptOut();
+    cancelDelete();
+  }, [resetOptOut, cancelDelete]);
+
   const pending = servers.find((server) => server.id === deletion.pending);
-  const pendingState = serverServiceState(pending && states[pending.id]?.status);
-  const says =
-    pendingState === "notReachable"
-      ? t("service.delete.notReachable")
-      : isServiceActive(pendingState)
-        ? t("service.delete.running")
-        : t("service.delete.idle");
+  const pendingState = pending ? stateOf(pending.id) : "stopped";
+  const open = (pending && states[pending.id]?.stats.activeConnections) ?? 0;
 
   const stored = editing.config ?? editing.draft;
   return {
@@ -161,14 +186,20 @@ export function useFileServerActions(
     edit,
     duplicate,
     usePort,
-    remove: deletion.request,
+    remove,
     deleteDialogProps: {
       ...deletion.dialogProps,
+      onCancel: onCancelDelete,
       title: tf("service.delete.title", { name: pending?.name ?? "" }),
-      message: `${says} ${t("service.delete.noUndo")}`,
+      message: [
+        serviceDeleteEffect(pendingState, open),
+        t("service.delete.folder"),
+        t("service.delete.undo"),
+      ].join(" "),
+      dontAskAgain: isServiceActive(pendingState) ? undefined : optOut.dontAskAgain,
     },
     editDialogProps: {
-      open,
+      open: dialogOpen,
       onOpenChange: setOpen,
       ...editing,
       onSave: save,

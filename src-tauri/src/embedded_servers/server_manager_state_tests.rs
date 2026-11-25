@@ -518,6 +518,28 @@ fn a_wait_for_the_credential_store_ends_with_the_reason() {
     assert!(!h.listens_here("here"));
 }
 
+/// "Keep running" (#6076).
+#[test]
+fn a_pending_stop_can_be_taken_back() {
+    let run = web_on_edge();
+    let Run {
+        h, agent, machine, ..
+    } = &run;
+    h.manager.start_server("web").unwrap();
+    online(agent, false);
+    h.manager.stop_server("web").unwrap();
+    assert_row(h, "web", ServerStatus::Stopping, "Its agent is offline");
+    h.manager.keep_running("web").unwrap();
+    assert_row(h, "web", ServerStatus::NotReachable, "Its agent is offline");
+    online(agent, true);
+    tick(h);
+    assert_row(h, "web", ServerStatus::Running, "");
+    assert!(machine.hosts("web"), "not stopped");
+    // Nothing to take back.
+    h.manager.keep_running("web").unwrap();
+    assert_row(h, "web", ServerStatus::Running, "");
+}
+
 // ─── A stop wins ─────────────────────────────────────────────────────────────
 
 #[test]

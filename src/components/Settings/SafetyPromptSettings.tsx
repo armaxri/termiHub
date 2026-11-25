@@ -106,7 +106,7 @@ export function SafetyPromptSettings({
           <SettingsSectionHeading>Delete confirmations</SettingsSectionHeading>
           <SettingsField
             label="Confirm before deletes that can be undone"
-            hint="Ask before deleting a connection folder, a custom theme or an idle tunnel."
+            hint="Ask before deleting a connection folder, a custom theme or an idle tunnel or file server."
             help="The Undo toast appears either way, so the delete can still be undone."
             hintTestId="settings-confirm-undoable-delete-hint"
             helpTestId="settings-confirm-undoable-delete-help"

@@ -1,69 +1,45 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { ChevronDown, ChevronRight, HardDrive, Plus } from "lucide-react";
 import { MiddleEllipsis, ServiceCounts } from "@/components/ServiceListItem";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
-import { Button, ConfirmDialog, EmptyState, SearchInput } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, SearchInput, Tooltip } from "@/components/ui";
 import type { ToolbarMenuEntry } from "@/components/ui";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
-import { useServiceContext } from "@/hooks/useServiceContext";
 import { useServiceLifecycleConfirm } from "@/hooks/useServiceLifecycleConfirm";
-import { t, tf } from "@/i18n/catalog";
+import { t, tf, type MessageId } from "@/i18n/catalog";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
-import type { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
-import { isWideBind } from "@/utils/serviceAddress";
 import {
-  fileServerModel,
+  offlineAgentOf,
   serviceCounts,
-  tunnelModel,
+  serviceProblems,
+  serviceRunningLabel,
   type ServiceHealth,
   type ServiceKind,
+  type ServiceModel,
 } from "@/utils/serviceModel";
 import {
+  activeFilter,
   serviceRowKey,
   serviceRows,
   type AgentRow,
   type GroupRow,
-  type ServiceEntry,
   type ServiceRow,
 } from "@/utils/serviceRows";
-import {
-  combinedPairStatus,
-  findCompanion,
-  isCompanionRedundant,
-  orderTunnelRows,
-  type PairStatus,
-} from "@/utils/tunnelChain";
+import { findCompanion, isCompanionRedundant } from "@/utils/tunnelChain";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { newServiceGroups, type NewServiceEntry } from "./newServiceEntries";
+import { GROUP_LABEL, pairStatusOf, useServiceEntries } from "./useServiceEntries";
 import { useServicesView } from "./servicesView";
 import { TunnelListItem } from "./TunnelListItem";
 import { useFileServerActions } from "./useFileServerActions";
 import { useTunnelActions } from "./useTunnelActions";
 import "./ServicesSidebar.css";
-
-const DISCONNECTED: TunnelStatus = "disconnected";
-
-/** Whether a pair works here, as both of its rows tell it; none when unchained. */
-function pairStatusOf(
-  tunnel: TunnelConfig,
-  parent: TunnelConfig | undefined,
-  tunnels: TunnelConfig[],
-  states: Record<string, TunnelState>
-): PairStatus | undefined {
-  const companion = parent ? tunnel : findCompanion(tunnels, tunnel.id);
-  if (!companion) return undefined;
-  return combinedPairStatus(
-    states[(parent ?? tunnel).id]?.status ?? DISCONNECTED,
-    states[companion.id]?.status ?? DISCONNECTED,
-    true
-  );
-}
 
 /**
  * The Services sidebar (#6028): every SSH tunnel and file server in one list, to
@@ -80,38 +56,10 @@ export function ServicesSidebar() {
   const servers = useAppStore((s) => s.embeddedServers);
   const serverStates = useAppStore((s) => s.embeddedServerStates);
   const { remoteAgents: agents } = useProjectedAgents();
-  const context = useServiceContext(
-    servers.some((server) => isWideBind(server.bindHost)) ||
-      tunnels.some(
-        ({ tunnelType }) => tunnelType.type !== "remote" && isWideBind(tunnelType.config.localHost)
-      )
-  );
+  const { entries, context } = useServiceEntries(true);
   const connectAgent = useConnectAgent();
 
-  const entries = useMemo<ServiceEntry[]>(() => {
-    const via = (id: string) => context.connections.find((c) => c.id === id)?.name;
-    return [
-      ...orderTunnelRows(tunnels).map(({ tunnel, parent }): ServiceEntry => {
-        const status = pairStatusOf(tunnel, parent, tunnels, tunnelStates);
-        return {
-          model: tunnelModel(
-            tunnel,
-            tunnelStates[tunnel.id],
-            context,
-            status && { role: parent ? "hop" : "parent", status }
-          ),
-          parentId: parent?.id,
-          texts: [tunnel.name, via(tunnel.sshConnectionId), ...portsOf(tunnel)],
-        };
-      }),
-      ...servers.map(
-        (server): ServiceEntry => ({
-          model: fileServerModel(server, serverStates[server.id], context),
-          texts: [server.rootDirectory, String(server.port)],
-        })
-      ),
-    ];
-  }, [tunnels, tunnelStates, servers, serverStates, context]);
+  const models = useMemo(() => entries.map((entry) => entry.model), [entries]);
 
   const modelOf = useCallback(
     (id: string) =>
@@ -142,6 +90,8 @@ export function ServicesSidebar() {
     () => serviceRows({ entries, query, only, closed, held }),
     [entries, query, only, closed, held]
   );
+  const filter = activeFilter(entries, only);
+  const searching = query.trim() !== "";
   useEffect(() => keepShown(rows.map(serviceRowKey)), [rows, keepShown]);
 
   const editService = useCallback(
@@ -153,7 +103,7 @@ export function ServicesSidebar() {
     (row: ServiceRow) => {
       switch (row.type) {
         case "group":
-          return toggleGroup(row.kind);
+          return toggleGroup(row.id);
         case "agent":
           return void connectAgent(row.agentId);
         case "service":
@@ -164,6 +114,7 @@ export function ServicesSidebar() {
   );
   const nav = useFlatRovingNav<ServiceRow, HTMLDivElement>(rows, rowLabel, activate);
 
+  const noConnection = !context.connections.some(({ config }) => config.type === "ssh");
   const groups = useMemo(() => newServiceGroups(), []);
   const menu = groups.flatMap(({ id, label, entries: items }): ToolbarMenuEntry[] => [
     { type: "label", id: `label-${id}`, label },
@@ -246,8 +197,8 @@ export function ServicesSidebar() {
         <EmptyState
           className="service-empty"
           title={t("service.empty.title")}
-          description={t("service.empty.text")}
-          action={<NewButtons groups={groups.map((group) => group)} />}
+          description={<EmptyText noConnection={noConnection} />}
+          action={<NewButtons groups={groups} />}
           data-testid="services-empty"
         />
       ) : (
@@ -262,12 +213,37 @@ export function ServicesSidebar() {
               data-testid="services-search"
             />
           </div>
-          <ServiceCounts
-            counts={serviceCounts(entries.map((entry) => entry.model))}
-            only={only}
-            onOnly={setOnly}
-            data-testid="services-counts"
-          />
+          {!searching && (
+            <ServiceCounts
+              counts={serviceCounts(models)}
+              only={filter}
+              onOnly={setOnly}
+              data-testid="services-counts"
+            />
+          )}
+          {(searching || filter !== null) && rows.length > 0 && (
+            <div className="services-sidebar__shown" data-testid="services-shown">
+              {filter && <span>{t(ONLY_LABEL[filter])}</span>}
+              {searching && (
+                <span>
+                  {tf("service.counts.shown", {
+                    shown: String(rows.filter((row) => row.type === "service").length),
+                    total: String(models.length),
+                  })}
+                </span>
+              )}
+              {filter && (
+                <button
+                  type="button"
+                  className="service-row__next"
+                  onClick={() => setOnly(null)}
+                  data-testid="services-show-all"
+                >
+                  {t("service.only.all")}
+                </button>
+              )}
+            </div>
+          )}
           {rows.length === 0 ? (
             <EmptyState
               className="service-empty"
@@ -305,7 +281,7 @@ export function ServicesSidebar() {
                       <GroupHeader
                         key={key}
                         row={row}
-                        onToggle={() => toggleGroup(row.kind)}
+                        onToggle={() => toggleGroup(row.id)}
                         rowRef={ref}
                         rowProps={item}
                       />
@@ -317,11 +293,11 @@ export function ServicesSidebar() {
                         row={row}
                         onConnect={() => connectAgent(row.agentId)}
                         rowRef={ref}
-                        rowProps={{ ...item, "aria-level": 2 }}
+                        rowProps={item}
                       />
                     );
                   case "service": {
-                    const level = row.underAgent || row.entry.parentId !== undefined ? 3 : 2;
+                    const level = row.entry.parentId !== undefined ? 3 : 2;
                     const props = { rowRef: ref, rowProps: { ...item, "aria-level": level } };
                     return (
                       <div
@@ -366,17 +342,6 @@ interface RowProps {
   rowRef: (el: HTMLDivElement | null) => void;
   rowProps: React.HTMLAttributes<HTMLDivElement>;
 }
-
-/** The ports and hosts of a tunnel, for the search. */
-function portsOf({ tunnelType }: TunnelConfig): string[] {
-  const { config } = tunnelType;
-  return Object.values(config).map(String);
-}
-
-const GROUP_LABEL = {
-  tunnel: "service.group.tunnels",
-  fileServer: "service.group.fileServers",
-} as const;
 
 function rowLabel(row: ServiceRow): string {
   switch (row.type) {
@@ -424,7 +389,13 @@ interface GroupHeaderProps extends RowProps {
   onToggle: () => void;
 }
 
-/** The line of a group: its name, how many of it run, and whether it is open. */
+/** How many problems the line of a group names; the rest is in its tooltip. */
+const NAMED_PROBLEMS = 2;
+
+/**
+ * The line of a group: its name, and what is wrong in it, also while it is
+ * closed (#6076). How many run is said when nothing is wrong, else in the tooltip.
+ */
 function GroupHeader({ row, onToggle, rowRef, rowProps }: GroupHeaderProps) {
   const Chevron = row.open ? ChevronDown : ChevronRight;
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -436,23 +407,67 @@ function GroupHeader({ row, onToggle, rowRef, rowProps }: GroupHeaderProps) {
       if (!e.repeat) onToggle();
     }
   };
+  const running = serviceRunningLabel(row.models);
+  const problems = serviceProblems(row.models);
   return (
-    <div
-      ref={rowRef}
-      {...rowProps}
-      className="services-sidebar__group"
-      aria-expanded={row.open}
-      onClick={onToggle}
-      onKeyDown={onKeyDown}
-      data-testid={`service-group-${row.kind === "tunnel" ? "tunnels" : "file-servers"}`}
-    >
-      <Chevron size={14} aria-hidden="true" />
-      <span className="services-sidebar__group-name">{t(GROUP_LABEL[row.kind])}</span>
-      <span className="services-sidebar__group-count">
-        {tf("service.counts.running", { running: String(row.running), total: String(row.total) })}
-      </span>
-    </div>
+    <Tooltip content={[running, ...problems.map(({ label }) => label)].join(" · ")} side="right">
+      <div
+        ref={rowRef}
+        {...rowProps}
+        className="services-sidebar__group"
+        aria-expanded={row.open}
+        onClick={onToggle}
+        onKeyDown={onKeyDown}
+        data-testid={`service-group-${row.kind === "tunnel" ? "tunnels" : "file-servers"}`}
+      >
+        <Chevron size={14} aria-hidden="true" />
+        <span className="services-sidebar__group-name">{t(GROUP_LABEL[row.kind])}</span>
+        <span className="services-sidebar__group-count">
+          {row.shown !== undefined
+            ? tf("service.counts.shown", {
+                shown: String(row.shown),
+                total: String(row.models.length),
+              })
+            : problems.length === 0
+              ? running
+              : problems.slice(0, NAMED_PROBLEMS).map(({ id, label }, index) => (
+                  <Fragment key={id}>
+                    {index > 0 && " · "}
+                    <span className={`services-sidebar__problem services-sidebar__problem--${id}`}>
+                      {label}
+                    </span>
+                  </Fragment>
+                ))}
+        </span>
+      </div>
+    </Tooltip>
   );
+}
+
+const ONLY_LABEL: Record<Exclude<ServiceHealth, "quiet">, MessageId> = {
+  running: "service.only.running",
+  error: "service.only.error",
+  notKnown: "service.only.notKnown",
+  reconnecting: "service.only.reconnecting",
+  waiting: "service.only.waiting",
+};
+
+/** "4 tunnels and 1 file server". */
+function servicesText(models: readonly ServiceModel[]): string {
+  const count = (kind: ServiceKind) => models.filter((model) => model.kind === kind).length;
+  const tunnels = count("tunnel");
+  const servers = count("fileServer");
+  const tunnelsText =
+    tunnels === 1
+      ? t("service.agent.tunnel")
+      : tf("service.agent.tunnels", { count: String(tunnels) });
+  const serversText =
+    servers === 1
+      ? t("service.agent.server")
+      : tf("service.agent.servers", { count: String(servers) });
+  if (servers === 0) return tunnelsText;
+  if (tunnels === 0) return serversText;
+  return tf("service.agent.both", { tunnels: tunnelsText, servers: serversText });
 }
 
 interface AgentHeaderProps extends RowProps {
@@ -474,7 +489,12 @@ function AgentHeader({ row, onConnect, rowRef, rowProps }: AgentHeaderProps) {
         <MiddleEllipsis text={row.name} />
       </span>
       <span className="services-sidebar__agent-text">
-        {tf("service.agent.offline", { count: String(row.services) })}{" "}
+        {tf("service.agent.offline", {
+          // Not the part of a chained tunnel that runs here.
+          services: servicesText(
+            row.models.filter((model) => offlineAgentOf(model) === row.agentId)
+          ),
+        })}{" "}
         <button
           type="button"
           className="service-row__next"
@@ -495,13 +515,40 @@ function AgentHeader({ row, onConnect, rowRef, rowProps }: AgentHeaderProps) {
   );
 }
 
-/** "Reach something on a server" with the technical name under it. */
+/** "Reach something through a server" with an example and the technical name. */
 function NewEntryLabel({ entry }: { entry: NewServiceEntry }) {
   return (
     <span className="services-sidebar__new-entry">
       <span>{entry.label}</span>
-      <span className="services-sidebar__technical">{entry.technical}</span>
+      <span className="services-sidebar__technical">
+        {entry.example && <span>{entry.example} </span>}
+        <span>{entry.technical}</span>
+      </span>
     </span>
+  );
+}
+
+/** What a service is, and what one through SSH needs while there is none. */
+function EmptyText({ noConnection }: { noConnection: boolean }) {
+  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
+  return (
+    <>
+      {t("service.empty.text")}
+      {noConnection && (
+        <>
+          {" "}
+          {t("service.empty.noConnection")}{" "}
+          <button
+            type="button"
+            className="service-row__next"
+            onClick={() => openConnectionEditorTab("new")}
+            data-testid="services-empty-connection"
+          >
+            {t("service.empty.newConnection")}
+          </button>
+        </>
+      )}
+    </>
   );
 }
 

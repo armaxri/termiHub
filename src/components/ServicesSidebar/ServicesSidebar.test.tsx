@@ -11,6 +11,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
 
 import { useAppStore } from "@/store/appStore";
 import { seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { seedConnectionsRegion } from "@/test/connectionsHarness";
 import { flushAsync } from "@/test/flushAsync";
 import { withTooltip } from "@/test/tooltip";
 import type { EmbeddedServerConfig, ServerStatus } from "@/types/embeddedServer";
@@ -54,6 +55,7 @@ function server(id: string, over: Partial<EmbeddedServerConfig> = {}): EmbeddedS
 let container: HTMLDivElement;
 let root: Root;
 const openTunnelEditorTab = vi.fn();
+const openConnectionEditorTab = vi.fn();
 
 function seed(
   tunnels: [TunnelConfig, TunnelStatus, object?][],
@@ -111,7 +113,11 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  useAppStore.setState({ ...useAppStore.getInitialState(), openTunnelEditorTab });
+  useAppStore.setState({
+    ...useAppStore.getInitialState(),
+    openTunnelEditorTab,
+    openConnectionEditorTab,
+  });
   useServicesView.setState(useServicesView.getInitialState());
   seedAgentsRegion({ remoteAgents: [{ id: "edge", name: "Edge box", config: {} } as never] });
 });
@@ -160,7 +166,7 @@ describe("both kinds in one list", () => {
       [[server("s"), "error"]]
     );
     await render();
-    expect(q("services-counts")?.textContent).toBe("1 of 3 running· 2 error");
+    expect(q("services-counts")?.textContent).toBe("1 of 3 running2 errors");
     await click("service-count-error");
     expect(shown()).toEqual([
       "service-group-tunnels",
@@ -169,8 +175,85 @@ describe("both kinds in one list", () => {
       "server-item-s",
     ]);
     expect(q("service-count-error")?.getAttribute("aria-pressed")).toBe("true");
+    // What is shown, and how to see all again (#6076).
+    expect(q("services-shown")?.textContent).toBe("Only errors.Show all");
+    expect(q("service-group-tunnels")?.textContent).toContain("1 of 2 shown");
     await click("service-count-error");
     expect(items()).toHaveLength(5);
+    expect(q("services-shown")).toBeNull();
+    await click("service-count-running");
+    expect(items()).toHaveLength(2);
+    await click("services-show-all");
+    expect(items()).toHaveLength(5);
+  });
+
+  it("a group says its problems, also while it is closed (#6076)", async () => {
+    const store = { error: "The store is locked.", cause: "storeLocked" } as const;
+    seed(
+      [
+        [tunnel("a"), "connected"],
+        [tunnel("b"), "waiting", store],
+        [tunnel("c"), "error"],
+        [tunnel("d"), "reconnecting"],
+      ],
+      [[server("s"), "running"]]
+    );
+    await render();
+    const says = (group: string) =>
+      q(`service-group-${group}`)?.querySelector(".services-sidebar__group-count")?.textContent;
+    // The two worst; all of them in the tooltip.
+    expect(says("tunnels")).toBe("1 error · 1 reconnecting");
+    expect(says("file-servers")).toBe("1 of 1 running");
+    await click("service-group-tunnels");
+    expect(says("tunnels")).toBe("1 error · 1 reconnecting");
+    await act(async () => q("service-group-tunnels")!.focus());
+    await flushAsync();
+    expect(document.querySelector("[role=tooltip]")?.textContent).toBe(
+      "1 of 4 running · 1 error · 1 reconnecting · 1 waiting"
+    );
+    // A new problem changes the line, and does not open the group.
+    await act(async () =>
+      useAppStore.setState((s) => ({
+        embeddedServerStates: { s: { ...s.embeddedServerStates["s"], status: "error" } },
+      }))
+    );
+    expect(says("file-servers")).toBe("1 error");
+    expect(q("tunnel-item-a")).toBeNull();
+  });
+
+  it.each([
+    ["ssh tunnel", "tunnel"],
+    ["ssh -L", "tunnel"],
+    ["port forwarding", "tunnel"],
+    ["SSH tunnels", "tunnel"],
+    ["file server", "server"],
+    ["file servers", "server"],
+    ["web server", "server"],
+    ["browser", "server"],
+    ["error", "server"],
+    ["stopped", "tunnel"],
+  ])("the search for %j finds the %s (#6076)", async (text, kind) => {
+    seed([[tunnel("a"), "disconnected"]], [[server("s"), "error"]]);
+    await render();
+    await search(text);
+    expect(items().filter((item) => item.dataset.testid?.includes("-item-"))).toHaveLength(1);
+    expect(q(`${kind}-item-${kind === "tunnel" ? "a" : "s"}`)).not.toBeNull();
+    expect(q("services-shown")?.textContent).toBe("1 of 2 shown");
+    expect(q("services-counts")).toBeNull();
+  });
+
+  it("the search goes with a number", async () => {
+    seed(
+      [
+        [tunnel("a"), "error"],
+        [tunnel("b"), "error"],
+      ],
+      [[server("s"), "stopped"]]
+    );
+    await render();
+    await click("service-count-error");
+    await search("tunnel b");
+    expect(q("services-shown")?.textContent).toBe("Only errors.1 of 3 shownShow all");
   });
 
   it("the search finds in both, and says when there is nothing", async () => {
@@ -181,7 +264,9 @@ describe("both kinds in one list", () => {
     await search("5432");
     expect(shown()).toEqual(["service-group-tunnels", "tunnel-item-a"]);
     await search("zzz");
-    expect(q("services-none")?.textContent).toContain('No service matches "zzz".');
+    expect(q("services-none")?.textContent).toContain(
+      'No service matches "zzz". Search finds names, types, machines, folders and ports.'
+    );
     await click("services-search-clear");
     expect(items()).toHaveLength(4);
   });
@@ -194,19 +279,15 @@ describe("an offline agent", () => {
       [tunnel("b", { host: EDGE }), "waiting", { ...AWAY, error: "Starts until 14:32." }],
     ]);
     await render();
-    expect(shown()).toEqual([
-      "service-group-tunnels",
-      "service-agent-edge",
-      "tunnel-item-a",
-      "tunnel-item-b",
-    ]);
+    expect(shown()).toEqual(["service-agent-edge", "tunnel-item-a", "tunnel-item-b"]);
     expect(q("service-agent-edge")?.textContent).toBe(
-      "Edge boxOffline, 2 services. What runs there may go on; termiHub cannot tell. Connect agent"
+      "Edge boxOffline. 2 tunnels run there or may; termiHub cannot tell. Connect agent"
     );
+    expect(q("service-agent-edge")?.getAttribute("aria-level")).toBe("1");
     for (const id of ["a", "b"]) {
       expect(q(`tunnel-machine-${id}`)).toBeNull();
       expect(q(`tunnel-connect-agent-${id}`)).toBeNull();
-      expect(q(`tunnel-item-${id}`)?.getAttribute("aria-level")).toBe("3");
+      expect(q(`tunnel-item-${id}`)?.getAttribute("aria-level")).toBe("2");
     }
     // What is only the row's own stays on it.
     expect(q("tunnel-reason-a")).toBeNull();
@@ -227,18 +308,39 @@ describe("an offline agent", () => {
       ]
     );
     await render();
-    expect(shown()).toEqual([
-      "service-group-file-servers",
-      "service-agent-edge",
-      "server-item-s",
-      "server-item-t",
-    ]);
+    expect(shown()).toEqual(["service-agent-edge", "server-item-s", "server-item-t"]);
+    expect(q("service-agent-edge")?.textContent).toContain("Offline. 2 file servers run there");
     expect(q("server-machine-s")).toBeNull();
     expect(q("server-reason-s")).toBeNull();
     act(() => q("service-agent-edge")!.focus());
     key(q("service-agent-edge")!, "Enter");
     await flushAsync();
     expect(connectAgent).toHaveBeenCalledOnce();
+  });
+
+  it("has the services of both kinds under its line, without the part that runs here", async () => {
+    seed(
+      [
+        [tunnel("a", { host: EDGE }), "notReachable", AWAY],
+        [tunnel("hop", { companionOf: "a" }), "connected"],
+        [tunnel("here"), "connected"],
+      ],
+      [[server("s", { host: EDGE }), "notReachable", AWAY]]
+    );
+    await render();
+    expect(shown()).toEqual([
+      "service-agent-edge",
+      "tunnel-item-a",
+      "tunnel-item-hop",
+      "server-item-s",
+      "service-group-tunnels",
+      "tunnel-item-here",
+    ]);
+    expect(q("service-agent-edge")?.textContent).toContain(
+      "Offline. 1 tunnel and 1 file server run there or may; termiHub cannot tell."
+    );
+    expect(q("service-group-tunnels")?.textContent).toContain("1 of 1 running");
+    expect(q("tunnel-item-hop")?.getAttribute("aria-level")).toBe("3");
   });
 
   it("with one service here is said on its row", async () => {
@@ -350,7 +452,9 @@ describe("making one", () => {
       item.textContent,
     ]);
     expect(labels.map(([id]) => id)).toEqual(ENTRIES.map((id) => `service-new-${id}`));
-    expect(labels[0][1]).toContain("Reach something on a serverSSH tunnel, local (ssh -L)");
+    expect(labels[0][1]).toContain(
+      "Reach something through a serverSuch as a database. SSH tunnel, local (ssh -L)"
+    );
   });
 
   it.each(["local", "remote", "dynamic"])("a %s tunnel opens its editor", async (type) => {
@@ -380,6 +484,19 @@ describe("making one", () => {
     expect(q("services-empty")?.textContent).toContain("needs a saved SSH connection");
     for (const id of ENTRIES) expect(q(`services-empty-${id}`), id).not.toBeNull();
     expect(q("services-search")).toBeNull();
+    await click("services-empty-connection");
+    expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
+  });
+
+  it("does not ask for an SSH connection when there is one (#6076)", async () => {
+    const saved = (type: string) => ({ id: type, name: type, config: { type, config: {} } });
+    seedConnectionsRegion({ folders: [], connections: [saved("local")] as never });
+    await render();
+    expect(q("services-empty-connection")).not.toBeNull();
+    act(() => seedConnectionsRegion({ folders: [], connections: [saved("ssh")] as never }));
+    await flushAsync();
+    expect(q("services-empty-connection")).toBeNull();
+    expect(q("services-empty")?.textContent).not.toContain("needs a saved SSH connection");
   });
 
   it("a request from elsewhere is taken up when the sidebar opens, once", async () => {

@@ -148,6 +148,9 @@ struct HeldSecret {
     on_disk: bool,
 }
 
+/// The passwords of a deleted server, until its delete is final.
+pub type TakenSecrets = Vec<(AuthSlot, Zeroizing<String>)>;
+
 /// What a [`ServerSecrets::reconcile`] pass changed.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ReconcileOutcome {
@@ -425,6 +428,43 @@ impl ServerSecrets {
                 },
             )),
         }
+    }
+
+    /// On a delete that can be undone: drop every secret of `server_id` like
+    /// [`forget`](Self::forget), and hand them out. A locked store keeps its own.
+    pub fn take(&self, server_id: &str) -> TakenSecrets {
+        let mut taken = TakenSecrets::new();
+        for slot in AuthSlot::ALL {
+            let held = self
+                .lock_held()
+                .get(&(server_id.to_string(), slot))
+                .map(|secret| secret.value.clone());
+            let value = held.or_else(|| {
+                let stored = self.store.get(&credential_key(server_id, slot));
+                stored.ok().flatten().map(Zeroizing::new)
+            });
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                taken.push((slot, value));
+            }
+        }
+        self.forget(server_id);
+        taken
+    }
+
+    /// Undo [`take`](Self::take). What the store does not take now is held for
+    /// this session and [stored](Self::reconcile) as soon as it does.
+    pub fn put_back(&self, server_id: &str, secrets: TakenSecrets) {
+        {
+            let mut held = self.lock_held();
+            for (slot, value) in secrets {
+                let secret = HeldSecret {
+                    value,
+                    on_disk: false,
+                };
+                held.insert((server_id.to_string(), slot), secret);
+            }
+        }
+        self.reconcile();
     }
 
     /// On delete: drop every secret of `server_id` (best-effort for the store,

@@ -18,6 +18,8 @@ import {
   LineChart,
   ListTree,
 } from "lucide-react";
+import { useServiceEntries } from "@/components/ServicesSidebar/useServiceEntries";
+import { serviceCountLabel } from "@/utils/serviceModel";
 import { showServicesView } from "@/components/ServicesSidebar/servicesView";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -411,21 +413,24 @@ function counted(count: number, one: string): string {
  * Services view, and leaves it open.
  */
 function ServicesIndicator() {
-  const tunnels = useAppStore(
-    (s) => s.tunnels.filter((tunnel) => s.tunnelStates[tunnel.id]?.status === "connected").length
-  );
-  const servers = useAppStore(
-    (s) =>
-      Object.values(s.embeddedServerStates).filter((state) => state.status === "running").length
-  );
+  const { entries } = useServiceEntries(false);
+  // Counted as the sidebar counts them (#6076).
+  const models = entries.map((entry) => entry.model);
+  const running = models.filter((model) => model.health === "running");
+  const errors = models.some((model) => model.health === "error")
+    ? serviceCountLabel("error", models)
+    : undefined;
+  if (running.length === 0 && !errors) return null;
 
-  if (tunnels + servers === 0) return null;
-
+  const tunnels = running.filter((model) => model.kind === "tunnel").length;
+  const servers = running.length - tunnels;
   const kinds = [
     tunnels > 0 && counted(tunnels, "tunnel"),
     servers > 0 && counted(servers, "file server"),
   ].filter(Boolean);
-  const label = `${kinds.join(" and ")} running — click to open Services`;
+  const says = [kinds.length > 0 && `${kinds.join(" and ")} running`, errors].filter(Boolean);
+  const label = `${says.join(", ")} — click to open Services`;
+  const text = [running.length > 0 && `${running.length} running`, errors].filter(Boolean);
 
   return (
     <Tooltip content={label} side="top">
@@ -436,7 +441,7 @@ function ServicesIndicator() {
         onClick={showServicesView}
       >
         <Server size={12} />
-        {`${tunnels + servers} running`}
+        {text.join(" · ")}
       </button>
     </Tooltip>
   );

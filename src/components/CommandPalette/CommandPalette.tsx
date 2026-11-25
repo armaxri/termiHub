@@ -272,14 +272,17 @@ export function CommandPalette(): React.ReactElement {
       },
       ...newServiceGroups().flatMap((group) =>
         group.entries.map((entry): PaletteEntry => {
-          const label = tf("service.palette.new", { what: entry.label });
+          const label = tf("service.palette.new", {
+            what: entry.label,
+            technical: entry.technical,
+          });
           return {
             kind: "command",
             key: `command:new-service-${entry.id}`,
             label,
             accelerator: null,
             available: true,
-            aliases: [label, entry.technical, ...entry.words],
+            aliases: [label, entry.example ?? "", ...entry.words],
             run: entry.open,
           };
         })

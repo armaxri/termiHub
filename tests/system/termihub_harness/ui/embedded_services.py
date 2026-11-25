@@ -100,6 +100,9 @@ class EmbeddedServicesUi(HarnessMixin):
         if description is not None:
             self.driver.type("server-dialog-description", description)
         self.driver.click(f"server-dialog-proto-{proto}")
+        if proto == "tftp":
+            # A server for devices starts with nobody chosen (#6076).
+            self.driver.select(self.DIALOG_BIND, "127.0.0.1")
         self.driver.type(self.DIALOG_ROOT, root)
         if port is not None:
             self.driver.type(self.DIALOG_PORT, str(port))

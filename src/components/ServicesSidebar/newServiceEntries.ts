@@ -16,10 +16,12 @@ import { showServicesView, useServicesView } from "./servicesView";
 /** One way to make a service, named by what the user wants to do (#6028). */
 export interface NewServiceEntry {
   id: `tunnel-${TunnelTypeKind}` | `server-${ServerType}`;
-  /** "Reach something on a server". */
+  /** "Reach something through a server". */
   label: string;
   /** "SSH tunnel, local (ssh -L)". */
   technical: string;
+  /** "Such as a database." */
+  example?: string;
   icon: LucideIcon;
   /** More words that find it in the command palette. */
   words: readonly string[];
@@ -37,12 +39,14 @@ function tunnel(
   label: MessageId,
   technical: MessageId,
   icon: LucideIcon,
-  words: readonly string[]
+  words: readonly string[],
+  example: MessageId
 ): NewServiceEntry {
   return {
     id: `tunnel-${type}`,
     label: t(label),
     technical: t(technical),
+    example: t(example),
     icon,
     words: ["SSH tunnel", "port forwarding", ...words],
     open: () => useAppStore.getState().openTunnelEditorTab(null, { tunnelType: type }),
@@ -76,18 +80,30 @@ export function newServiceGroups(): NewServiceGroup[] {
       id: "ssh",
       label: t("service.new.group.ssh"),
       entries: [
-        tunnel("local", "service.new.local", "service.new.local.technical", ArrowRightToLine, [
-          "forward a port",
-          "ssh -L",
-        ]),
-        tunnel("remote", "service.new.remote", "service.new.remote.technical", ArrowLeftFromLine, [
-          "reverse tunnel",
-          "ssh -R",
-        ]),
-        tunnel("dynamic", "service.new.dynamic", "service.new.dynamic.technical", Waypoints, [
-          "SOCKS proxy",
-          "ssh -D",
-        ]),
+        tunnel(
+          "local",
+          "service.new.local",
+          "service.new.local.technical",
+          ArrowRightToLine,
+          ["forward a port", "ssh -L"],
+          "service.new.local.example"
+        ),
+        tunnel(
+          "remote",
+          "service.new.remote",
+          "service.new.remote.technical",
+          ArrowLeftFromLine,
+          ["reverse tunnel", "ssh -R"],
+          "service.new.remote.example"
+        ),
+        tunnel(
+          "dynamic",
+          "service.new.dynamic",
+          "service.new.dynamic.technical",
+          Waypoints,
+          ["SOCKS proxy", "ssh -D"],
+          "service.new.dynamic.example"
+        ),
       ],
     },
     {

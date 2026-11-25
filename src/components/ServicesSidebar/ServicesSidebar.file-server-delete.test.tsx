@@ -14,6 +14,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
+import { __emitSettingsViewForTest, stopSettingsSubscription } from "@/store/settingsBridge";
 import { TooltipProvider } from "@/components/ui";
 import { ServicesSidebar } from "./ServicesSidebar";
 import { serviceMenuItem } from "@/test/serviceMenu";
@@ -44,6 +45,7 @@ vi.mock("@/store/appStore", () => {
   const state: Record<string, unknown> = {};
   const useAppStore = (selector: (s: Record<string, unknown>) => unknown) => selector(state);
   useAppStore.setState = (patch: Record<string, unknown>) => Object.assign(state, patch);
+  useAppStore.getState = () => state;
   return { useAppStore };
 });
 
@@ -142,6 +144,7 @@ describe("EmbeddedServerSidebar — delete confirmation (#1393)", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    stopSettingsSubscription();
     vi.clearAllMocks();
   });
 
@@ -181,7 +184,77 @@ describe("EmbeddedServerSidebar — delete confirmation (#1393)", () => {
     await renderSidebar();
 
     await clickDelete("srv-1");
-    expect(document.body.textContent?.toLowerCase()).toContain("stop");
+    // The folder is not what is deleted, and it can be undone (#6076).
+    expect(document.body.textContent).toContain(
+      "It is running. Deleting stops it. The folder and its files stay. You can undo it right after."
+    );
+  });
+
+  describe("like a tunnel, it can be deleted without asking (#6076)", () => {
+    const updateSettings = vi.fn(() => Promise.resolve());
+    const optOut = () =>
+      document.querySelector<HTMLElement>('[data-testid="confirm-dialog-dont-ask-again"]');
+    const setup = async (states: Record<string, ServerState> = {}) => {
+      const remove = vi.fn(() => Promise.resolve());
+      seedStore(remove, [makeServer("srv-1", "Share")], states);
+      (useAppStore as unknown as { setState: (p: object) => void }).setState({ updateSettings });
+      await renderSidebar();
+      await clickDelete("srv-1");
+      return remove;
+    };
+
+    it("once that is ticked and confirmed, not when it is cancelled", async () => {
+      const remove = await setup();
+      await act(async () => optOut()!.click());
+      await clickCancel();
+      await clickDelete("srv-1");
+      await clickConfirm();
+      expect(remove).toHaveBeenCalledOnce();
+      expect(updateSettings).not.toHaveBeenCalled();
+      await clickDelete("srv-1");
+      await act(async () => optOut()!.click());
+      await clickConfirm();
+      expect(updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ confirmUndoableDelete: false })
+      );
+    });
+
+    const optedOut = () =>
+      act(() =>
+        __emitSettingsViewForTest(
+          {
+            version: "1",
+            externalConnectionFiles: [],
+            powerMonitoringEnabled: true,
+            fileBrowserEnabled: true,
+            confirmUndoableDelete: false,
+          },
+          1
+        )
+      );
+
+    it("a stopped one, not a running one", async () => {
+      optedOut();
+      expect(await setup()).toHaveBeenCalledWith("srv-1");
+      const running = await setup({ "srv-1": runningState("srv-1") });
+      expect(running).not.toHaveBeenCalled();
+      expect(optOut()).toBeNull();
+      await clickConfirm();
+      expect(running).toHaveBeenCalledWith("srv-1");
+    });
+  });
+
+  it("says how many open connections break (#6076)", async () => {
+    const state = runningState("srv-1");
+    state.stats.activeConnections = 1;
+    seedStore(
+      vi.fn(() => Promise.resolve()),
+      [makeServer("srv-1", "Share")],
+      { "srv-1": state }
+    );
+    await renderSidebar();
+    await clickDelete("srv-1");
+    expect(document.body.textContent).toContain("stops it and breaks 1 open connection.");
   });
 
   // #1427: the store's deleteEmbeddedServer used to swallow backend errors, so

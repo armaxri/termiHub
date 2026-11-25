@@ -1342,6 +1342,23 @@ impl<R: Runtime> TunnelManager<R> {
         }
     }
 
+    /// Take back the stop of a tunnel that its agent has not got (#6076).
+    pub fn keep_running(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        let host = self
+            .get_tunnels()?
+            .into_iter()
+            .find(|tunnel| tunnel.id == tunnel_id)
+            .map(|tunnel| tunnel.host);
+        let agent = host.as_ref().map(|host| host.choice());
+        if let Some(HostChoice::Agent(agent_id)) = agent {
+            if self.hosted.keep(agent_id, tunnel_id) {
+                self.emit_status(tunnel_id, TunnelStatus::NotReachable);
+                self.ensure_status_poller();
+            }
+        }
+        Ok(())
+    }
+
     /// Ask the agents about their tunnels now, instead of on the next tick.
     /// Blocking.
     pub fn check_again(&self) {
@@ -2199,7 +2216,7 @@ fn note_attempt(
 /// What the row of a reconnecting tunnel says.
 fn reconnecting_reason(attempt: u32, at: DateTime<Local>) -> String {
     let then = if attempt >= RECONNECT_MAX_ATTEMPTS {
-        ", then it gives up"
+        ", then start it yourself"
     } else {
         ""
     };
@@ -3069,7 +3086,7 @@ mod tests {
         );
         assert_eq!(
             reconnecting_reason(10, at),
-            "Connection lost. Try 10 of 10 at 14:32:08, then it gives up."
+            "Connection lost. Try 10 of 10 at 14:32:08, then start it yourself."
         );
     }
 

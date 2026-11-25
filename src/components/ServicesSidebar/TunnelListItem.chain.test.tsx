@@ -137,7 +137,7 @@ describe("TunnelListItem — chained pair (#2597)", () => {
       />
     );
     expect(q('[data-testid="tunnel-reason-p1"]')?.textContent).toBe(
-      "Does not work on this computer yet, see below."
+      "Does not work on this computer, see below."
     );
     expect(q('[data-testid="tunnel-status-p1"]')?.className).toContain("warning");
     // Its address is another program's on this computer.

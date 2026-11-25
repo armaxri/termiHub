@@ -1,7 +1,7 @@
 ### Added
 
 - **Services** has a search for both kinds, groups you can close, and **New service** asks what you want
-  to do: reach something on a server, let a server reach something here, browse through a server, or
+  to do: reach something through a server, let a server reach something here, browse through a server, or
   share a folder (#6028).
 - The command palette finds the services by their old words, too (tunnel, server, forward, proxy, share),
   and makes a new one (#6028).

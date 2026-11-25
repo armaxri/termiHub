@@ -219,6 +219,23 @@ export function ServiceListItem({
     rowProps?.onKeyDown?.(e);
   };
 
+  const nextStepButton = (
+    step: ServiceNextStep,
+    take: (step: ServiceNextStep) => void | Promise<void>
+  ) => (
+    <button
+      type="button"
+      className="service-row__next"
+      {...ids.nextStepTestIds[step.id]}
+      onClick={(e) => {
+        e.stopPropagation();
+        fireAndForget(Promise.resolve(take(step)), `${step.id} service ${model.id}`);
+      }}
+    >
+      {step.label}
+    </button>
+  );
+
   const onRow = model.actions.filter((action) => ON_ROW.has(action.id));
   const copy = model.actions.find((action) => action.id === "copyAddress");
   const shortcuts = [...new Set(model.actions.flatMap((a) => a.shortcut ?? []))].join(" ");
@@ -296,7 +313,14 @@ export function ServiceListItem({
               {copy && button(copy)}
             </span>
           )}
-          {!riskSaysReach && <span className="service-row__reach">{address.reach}</span>}
+          {!riskSaysReach && (
+            <span className="service-row__reach">
+              {address.reach}
+              {model.addressStep && onNextStep && (
+                <> {nextStepButton(model.addressStep, onNextStep)}</>
+              )}
+            </span>
+          )}
         </span>
       )}
       {model.risk && (
@@ -317,20 +341,7 @@ export function ServiceListItem({
               <span key={step.id} className="service-row__step">
                 {" "}
                 {index > 0 && <span aria-hidden="true">· </span>}
-                <button
-                  type="button"
-                  className="service-row__next"
-                  {...ids.nextStepTestIds[step.id]}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    fireAndForget(
-                      Promise.resolve(onNextStep(step)),
-                      `${step.id} service ${model.id}`
-                    );
-                  }}
-                >
-                  {step.label}
-                </button>
+                {nextStepButton(step, onNextStep)}
               </span>
             ))}
         </span>
