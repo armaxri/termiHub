@@ -9,10 +9,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import { t } from "@/i18n/catalog";
 import type { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const TUNNEL: TunnelConfig = {
   id: "tun-1",
@@ -48,7 +48,7 @@ function renderItem(
         <TunnelListItem
           tunnel={TUNNEL}
           state={stateOf(status)}
-          connections={[] as SavedConnection[]}
+          context={NO_CONTEXT}
           onStart={handlers.onStart ?? noop}
           onStop={noop}
           onReconnect={noop}
@@ -77,9 +77,9 @@ describe("TunnelListItem — SSH connection deleted (#2850)", () => {
 
   it("says the SSH connection was deleted", () => {
     renderItem("missingConnection");
-    const notice = q("tunnel-missing-connection-tun-1");
+    const notice = q("tunnel-reason-tun-1");
     expect(notice).not.toBeNull();
-    expect(notice?.textContent).toContain(t("tunnel.missingConnection.detail"));
+    expect(notice?.textContent).toContain(t("service.reason.needsConnection"));
     expect(q("tunnel-status-tun-1")?.getAttribute("aria-label")).toBe(
       t("service.state.needsConnection")
     );
@@ -96,7 +96,7 @@ describe("TunnelListItem — SSH connection deleted (#2850)", () => {
     const onEdit = vi.fn();
     renderItem("missingConnection", { onEdit });
     const choose = q("tunnel-choose-connection-tun-1") as HTMLButtonElement;
-    expect(choose.textContent).toBe(t("tunnel.missingConnection.choose"));
+    expect(choose.textContent).toBe(t("service.next.chooseConnection"));
     act(() => {
       choose.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -105,7 +105,7 @@ describe("TunnelListItem — SSH connection deleted (#2850)", () => {
 
   it("shows no notice once the tunnel is resolved", () => {
     renderItem("disconnected");
-    expect(q("tunnel-missing-connection-tun-1")).toBeNull();
+    expect(q("tunnel-reason-tun-1")).toBeNull();
     expect(q("tunnel-start-tun-1")).not.toBeNull();
   });
 });

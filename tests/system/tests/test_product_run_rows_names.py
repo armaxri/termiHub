@@ -14,7 +14,8 @@ tags, and a schedule left off. Each row's visible text must be its name,
 description and markers only; the settings must be in its tooltip.
 
 #5770 extends the grade to the other lists: a tunnel (its forwarding, SSH
-connection and host), a service (its protocol, address and folder), a
+connection and host), a service (its protocol, address and folder; both also
+say their state and what they are for in plain words, #6028), a
 workspace (its tab count) and a remote agent (its address), each with a
 description. None of them is started or connected; the rows are graded at
 rest.
@@ -300,7 +301,12 @@ class TestProductRunRowsNames(
             self._ensure_sidebar("tunnels", "activity-bar-ssh-tunnels")
             self._grade_row(
                 f"tunnel-item-{tunnel['id']}",
-                [name, "Reaches the DB"],
+                [
+                    name,
+                    "Reaches the DB",
+                    # What it is for, in plain words, and its state (#6028).
+                    "Stopped · Reach something on the SSH server's side",
+                ],
                 [
                     "Local (ssh -L) · 127.0.0.1:18577 → db.internal:5432",
                     "Use something on the SSH server's side as if it ran here.",
@@ -318,8 +324,8 @@ class TestProductRunRowsNames(
             "rows-names.service",
             "A service row shows its name and description; the protocol, address and folder "
             "are in the tooltip, and Run on is in the editor",
-            expect="the Services sidebar: 'Rows service …' with a grey dot and 'Lab firmware' "
-            "muted under the name; no "
+            expect="the Services sidebar: 'Rows service …' with a grey dot, 'Lab firmware' and "
+            "'Stopped · Open a folder in a browser' muted under the name; no "
             "'HTTP' badge, no ':port → folder' line and no 'Run on' selector on the row "
             "(#5770)",
         ):
@@ -332,7 +338,13 @@ class TestProductRunRowsNames(
             row = f"server-item-{server['id']}"
             self.wait(lambda: self.driver.exists(row), what="the service row")
             self._grade_row(
-                row, [name, "Lab firmware"], [f"HTTP · http://127.0.0.1:{port}", "Serves /tmp"]
+                row,
+                [name, "Lab firmware", "Stopped · Open a folder in a browser"],
+                [
+                    f"HTTP · http://127.0.0.1:{port}",
+                    "Share a folder that others open in a web browser.",
+                    "Serves /tmp",
+                ],
             )
             assert not self.driver.exists(f"server-runloc-{server['id']}"), (
                 "the Run on selector is still on the row"

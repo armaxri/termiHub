@@ -10,9 +10,10 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
+import type { ServiceContext } from "@/utils/serviceModel";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
-import type { SavedConnection } from "@/types/connection";
 
 const noop = () => {};
 
@@ -34,6 +35,11 @@ const STATE: TunnelState = {
   stats: { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 },
 };
 
+const CONTEXT: ServiceContext = {
+  ...NO_CONTEXT,
+  agents: [{ id: "agent-1", name: "build-box", config: {} as never }],
+};
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -44,7 +50,7 @@ function renderItem(tunnel: TunnelConfig): void {
         <TunnelListItem
           tunnel={tunnel}
           state={STATE}
-          connections={[] as SavedConnection[]}
+          context={CONTEXT}
           onStart={noop}
           onStop={noop}
           onReconnect={noop}
@@ -67,7 +73,7 @@ function rowTooltip(): string {
 
 setupAgentsRegion();
 
-describe("TunnelListItem — vantage host in the tooltip (S3, #2155, #5770)", () => {
+describe("TunnelListItem — where it runs, on the row and in the tooltip (#2155, #6028)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -96,6 +102,6 @@ describe("TunnelListItem — vantage host in the tooltip (S3, #2155, #5770)", ()
   it("names the agent for an agent-hosted tunnel", () => {
     renderItem({ ...BASE, host: { kind: "agent", agentId: "agent-1" } });
     expect(rowTooltip()).toContain("Hosted on agent build-box");
-    expect(row().textContent).not.toContain("build-box");
+    expect(row().textContent).toContain("on build-box");
   });
 });

@@ -25,6 +25,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 
@@ -57,6 +58,8 @@ function baseProps(overrides: Partial<React.ComponentProps<typeof EmbeddedServer
     state: undefined as ServerState | undefined,
     onStart: vi.fn(() => Promise.resolve()),
     onStop: vi.fn(() => Promise.resolve()),
+    onRestart: vi.fn(() => Promise.resolve()),
+    context: NO_CONTEXT,
     onEdit: noop,
     onDuplicate: noop,
     onDelete: noop,
@@ -80,8 +83,7 @@ const CONVERTED_ACTIONS: Array<{ testid: string; label: string; running: boolean
   { testid: "server-start-srv-1", label: "Start", running: false },
   { testid: "server-stop-srv-1", label: "Stop", running: true },
   { testid: "server-edit-srv-1", label: "Edit", running: false },
-  { testid: "server-duplicate-srv-1", label: "Duplicate", running: false },
-  { testid: "server-delete-srv-1", label: "Delete", running: false },
+  { testid: "server-more-srv-1", label: "More", running: false },
 ];
 
 describe("EmbeddedServerItem tooltip adoption", () => {

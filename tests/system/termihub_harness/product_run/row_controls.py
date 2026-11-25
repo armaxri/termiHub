@@ -38,7 +38,7 @@ EXPECTED_CONTROL: dict[str, dict[str, str]] = {
         "Stopping": "Stop",
         "Waiting": "Stop waiting",
         "Not reachable": "Stop",
-        "Error": "Start",
+        "Error": "Retry",
     },
 }
 

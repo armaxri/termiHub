@@ -163,7 +163,9 @@ describe("what it is and where it runs", () => {
   ])("a tunnel in plain words", (tunnelType, what) => {
     const model = tunnelModel(tunnel({ tunnelType }), undefined, CONTEXT);
     expect(model.what).toBe(what);
-    expect(model.kindLine).toBe(`${what} · this computer`);
+    // Here is the rule, so the line does not say it.
+    expect(model.kindLine).toBe(what);
+    expect(model.where.label).toBe("this computer");
     expect(model.state).toBe("stopped");
   });
 
@@ -177,15 +179,27 @@ describe("what it is and where it runs", () => {
     expect(model.where.agentId).toBe("edge");
   });
 
+  it("says where once: not again beside the address or in the reason", () => {
+    const onEdge = (state: ServerState | undefined, bindHost = "127.0.0.1") =>
+      fileServerModel(server({ host: EDGE, bindHost }), state, CONTEXT).kindLine;
+    const what = "Open a folder in a browser";
+    // "http://localhost:8080 on Edge box" says it.
+    expect(onEdge(serverIn("running"))).toBe(what);
+    expect(onEdge(serverIn("running"), "0.0.0.0")).toBe(`${what} · agent Edge box`);
+    const away = { ...serverIn("notReachable"), error: "Agent Edge box is offline." };
+    expect(onEdge(away)).toBe(what);
+    expect(onEdge({ ...away, error: "something else" })).toBe(`${what} · agent Edge box`);
+  });
+
   it("names a machine it cannot name", () => {
     const gone = { kind: "agent", agentId: "gone" } as const;
     expect(fileServerModel(server({ host: gone }), undefined, CONTEXT).where.label).toBe(
       "a removed agent"
     );
     const unreadable = { kind: "cluster" } as never;
-    expect(tunnelModel(tunnel({ host: unreadable }), undefined, CONTEXT).where.label).toBe(
-      "an unknown machine"
-    );
+    const unknown = tunnelModel(tunnel({ host: unreadable }), undefined, CONTEXT);
+    expect(unknown.where.label).toBe("an unknown machine");
+    expect(unknown.kindLine).toContain("· an unknown machine");
   });
 });
 
@@ -240,27 +254,26 @@ describe("the address, only while it runs", () => {
   );
 
   it("of a local tunnel here", () => {
-    expect(of(LOCAL)?.text).toBe("localhost:5432");
+    expect(of(LOCAL)).toEqual({ copy: "localhost:5432" });
   });
 
   it("of a local tunnel on an agent, as the agent bound it", () => {
-    expect(of(LOCAL, { host: EDGE })?.text).toBe("localhost:5432 on Edge box");
+    expect(of(LOCAL, { host: EDGE })).toEqual({ copy: "localhost:5432", on: "Edge box" });
     expect(of(LOCAL, { host: EDGE }, { boundAddress: "127.0.0.1:40001" })?.copy).toBe(
       "localhost:40001"
     );
-    expect(of(LOCAL, { host: EDGE }, { boundAddress: "0.0.0.0:5432" })?.text).toBe(
-      "edge.example:5432"
-    );
+    expect(of(LOCAL, { host: EDGE }, { boundAddress: "0.0.0.0:5432" })).toEqual({
+      copy: "edge.example:5432",
+    });
     expect(of(LOCAL, { host: EDGE }, { boundAddress: "?" })?.copy).toBe("localhost:5432");
   });
 
   it("of a remote tunnel, on the SSH server", () => {
     expect(of(remote("localhost"))).toEqual({
-      text: "localhost:9000 on shop-web",
       copy: "localhost:9000",
       on: "shop-web",
     });
-    expect(of(remote("0.0.0.0"))?.text).toBe("shop.example:9000");
+    expect(of(remote("0.0.0.0"))).toEqual({ copy: "shop.example:9000" });
     // The agent that hosts it changes nothing about where it listens.
     expect(of(remote("localhost"), { host: EDGE })?.on).toBe("shop-web");
     expect(of(remote("localhost"), { sshConnectionId: "gone" })?.on).toBe("SSH server");
@@ -271,8 +284,10 @@ describe("the address, only while it runs", () => {
   });
 
   it("of a file server", () => {
-    const at = (over: Partial<EmbeddedServerConfig>) =>
-      fileServerModel(server(over), serverIn("running"), CONTEXT).address?.text;
+    const at = (over: Partial<EmbeddedServerConfig>) => {
+      const { address } = fileServerModel(server(over), serverIn("running"), CONTEXT);
+      return address?.on ? `${address.copy} on ${address.on}` : address?.copy;
+    };
     expect(at({})).toBe("http://localhost:8080");
     expect(at({ bindHost: "0.0.0.0" })).toBe("http://192.168.1.20:8080");
     expect(at({ serverType: "ftp", port: 2121 })).toBe("ftp://localhost:2121");

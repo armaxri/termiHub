@@ -181,7 +181,8 @@ class TestEmbeddedServices(
     def test_duplicate_server(self):
         name = unique_name("dup")
         server = self.create_server(name, proto="http", port=self.free_port())
-        self.driver.click(f"server-duplicate-{server['id']}")
+        self.open_server_menu(server["id"])
+        self.driver.click(f"ctx-duplicate-{server['id']}")
         self.require_server(f"Copy of {name}")
 
     # ── SVC-07: delete restores empty state ──────────────────────────────────
@@ -366,21 +367,31 @@ class TestEmbeddedServices(
         assert self.find_server(name) is None, "ctx Delete should remove the server"
         assert self.driver.exists(self.EMPTY), "empty-state should return after deleting the last server"
 
-    # ── SVC-18: per-server context menu — copy URL ───────────────────────────
+    # ── SVC-18: per-server context menu — copy address ───────────────────────────
     def test_context_menu_copy_url(self):
-        """Copy URL is always present in the menu and selectable without error.
+        """Copy address is in the menu while the server runs (#6028), and selectable
+        without error; a stopped server has no address.
 
         The action writes to the OS clipboard via a Tauri plugin (best-effort,
         swallowing failures), so the clipboard contents are not asserted here —
         the check is that the item exists and the menu closes after selecting it.
         """
         server = self.create_server(unique_name("ctx-url"), proto="http", port=self.free_port())
+        assert not self.driver.exists(f"server-address-{server['id']}")
+        self.start_server(server["id"])
+        self.wait(
+            lambda: self.driver.exists(f"server-address-{server['id']}"),
+            what="the address of the running server",
+        )
+        assert self.driver.get_text(f"server-address-{server['id']}").startswith(
+            "http://localhost:"
+        )
         self.open_server_menu(server["id"])
         assert self.driver.exists(f"ctx-copy-url-{server['id']}")
         self.driver.click(f"ctx-copy-url-{server['id']}")
         self.wait(
             lambda: not self.driver.exists(f"ctx-copy-url-{server['id']}"),
-            what="the context menu to close after Copy URL",
+            what="the context menu to close after Copy address",
         )
 
     # ── SVC-19: per-server context menu — Open in Browser (HTTP only) ─────────
@@ -392,6 +403,7 @@ class TestEmbeddedServices(
         and that the item is *not* rendered for a non-HTTP (FTP) server.
         """
         http = self.create_server(unique_name("ctx-http"), proto="http", port=self.free_port())
+        self.start_server(http["id"])
         self.open_server_menu(http["id"])
         assert self.driver.exists(f"ctx-open-browser-{http['id']}"), "HTTP should offer Open in Browser"
         self.driver.click(f"ctx-open-browser-{http['id']}")
@@ -401,6 +413,7 @@ class TestEmbeddedServices(
         )
 
         ftp = self.create_server(unique_name("ctx-ftp"), proto="ftp", port=self.free_port())
+        self.start_server(ftp["id"])
         self.open_server_menu(ftp["id"])
         assert not self.driver.exists(
             f"ctx-open-browser-{ftp['id']}"

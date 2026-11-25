@@ -37,8 +37,8 @@ export interface VisualScenario {
    * them, and one more key matches no saved workspace.
    */
   importConfirmations?: boolean;
-  /** Tunnels and file servers in every state (#6028): serviceStates.spec.ts. */
-  serviceStates?: boolean;
+  /** The `tunnels` and `services` regions (#6028): servicesGallery.spec.ts. */
+  serviceData?: { tunnels: unknown; services: unknown };
   /**
    * Seed saved connections whose schema secrets are stored (#4431): a plugin
    * connection with stored token fields and an SSH connection whose inline
@@ -395,84 +395,6 @@ const EMBEDDED_SERVER_STATES = [
     startedAt: STAMP,
   },
 ];
-
-/**
- * One row per service state (#6028), with the sentences the backend writes
- * (src-tauri/src/agent_service.rs), so the rendered rows wrap like the real ones.
- */
-const EDGE_HOST = { kind: "agent", agentId: "agent-edge" };
-const EDGE = "Edge gateway in the Frankfurt datacenter rack";
-const SERVICE_REASONS = {
-  waiting: `Waiting for agent ${EDGE}. Starts by itself when the agent is connected.`,
-  waitingStore: "Waiting for the credential store. Starts by itself when you unlock it.",
-  stopping: `Agent ${EDGE} is offline. Stops as soon as the agent is connected again.`,
-  error: `Not started: agent ${EDGE} was not connected within 30 minutes. Connect it, then start again.`,
-  notReachable: `Agent ${EDGE} is offline. It may still run there; termiHub cannot tell.`,
-  unknown: `Agent ${EDGE} did not answer the start. It may run there; termiHub cannot tell.`,
-};
-const NO_STATS = { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 };
-
-const STATE_TUNNEL_ROWS: [id: string, name: string, status: string, error?: string][] = [
-  ["stopped", "Stopped", "disconnected"],
-  ["waiting", "Postgres on the production database replica", "waiting", SERVICE_REASONS.waiting],
-  ["waiting-store", "Behind a bastion", "waiting", SERVICE_REASONS.waitingStore],
-  ["starting", "Starting", "connecting"],
-  ["running", "Running", "connected"],
-  ["stopping", "Stopping", "stopping", SERVICE_REASONS.stopping],
-  ["error", "Not started", "error", SERVICE_REASONS.error],
-  ["deleted", "Needs a connection", "missingConnection"],
-  ["away", "Metrics", "notReachable", SERVICE_REASONS.notReachable],
-  ["unknown", "Grafana", "notReachable", SERVICE_REASONS.unknown],
-];
-
-const STATE_TUNNELS_VIEW = {
-  tunnels: STATE_TUNNEL_ROWS.map(([id, name]) => ({
-    id: `tun-${id}`,
-    name,
-    sshConnectionId: "Work/Build Box",
-    tunnelType: {
-      type: "local",
-      config: { localHost: "127.0.0.1", localPort: 15432, remoteHost: "db", remotePort: 5432 },
-    },
-    host: EDGE_HOST,
-    autoStart: true,
-    reconnectOnDisconnect: false,
-  })),
-  states: Object.fromEntries(
-    STATE_TUNNEL_ROWS.map(([id, , status, error]) => [
-      `tun-${id}`,
-      { tunnelId: `tun-${id}`, status, error, stats: NO_STATS, boundOn: "agent-edge" },
-    ])
-  ),
-};
-
-const STATE_SERVER_ROWS = STATE_TUNNEL_ROWS.filter(([id]) => id !== "deleted").map(
-  ([id, name, status, error]): [string, string, string, string | undefined] => [
-    `srv-${id}`,
-    name,
-    { disconnected: "stopped", connecting: "starting", connected: "running" }[status] ?? status,
-    error,
-  ]
-);
-
-const STATE_SERVERS = STATE_SERVER_ROWS.map(([id, name]) => ({
-  id,
-  name,
-  serverType: "http",
-  rootDirectory: "/srv/releases",
-  bindHost: "127.0.0.1",
-  port: 8080,
-  host: EDGE_HOST,
-  autoStart: true,
-  readOnly: true,
-}));
-
-const STATE_SERVER_STATES = STATE_SERVER_ROWS.map(([serverId, , status, error]) => ({
-  serverId,
-  status,
-  error,
-  stats: NO_STATS,
-}));
 
 /** HTTP monitors: a healthy running one and a paused one, both with long URLs. */
 const HTTP_MONITORS = [
@@ -846,19 +768,14 @@ function regionView(region: string, populated: boolean): unknown {
     if (!populated) return {};
     return window.__VISUAL_SCENARIO__?.iconStyles ? ICON_STYLE_AGENTS_VIEW : AGENTS_VIEW;
   }
+  const { serviceData } = window.__VISUAL_SCENARIO__ ?? {};
+  if (serviceData && region === "tunnels") return serviceData.tunnels;
+  if (serviceData && region === "services") return serviceData.services;
   if (region === "services") {
-    const rows = window.__VISUAL_SCENARIO__?.serviceStates
-      ? [STATE_SERVERS, STATE_SERVER_STATES]
-      : [EMBEDDED_SERVERS, EMBEDDED_SERVER_STATES];
     if (!populated) return {};
-    return {
-      servers: rows[0],
-      states: Object.fromEntries(
-        (rows[1] as { serverId: string }[]).map((state) => [state.serverId, state])
-      ),
-    };
+    const states = EMBEDDED_SERVER_STATES.map((state) => [state.serverId, state] as const);
+    return { servers: EMBEDDED_SERVERS, states: Object.fromEntries(states) };
   }
-  if (region === "tunnels" && window.__VISUAL_SCENARIO__?.serviceStates) return STATE_TUNNELS_VIEW;
   if (region === "tunnels") return populated ? TUNNELS_VIEW : {};
   if (region.startsWith("file-browser@") && window.__VISUAL_SCENARIO__?.fileListing) {
     const pane = { path: "/", entries: [], loading: false, error: null };

@@ -5,7 +5,6 @@
  * which machine it opens. A wide bind (`0.0.0.0`) is never shown: nobody can
  * open it. It becomes the address of the machine that listens.
  */
-import { tf } from "@/i18n/catalog";
 import type { PortValue } from "@/types/tunnel";
 import { isLoopbackBind } from "@/utils/tunnelHost";
 
@@ -17,9 +16,7 @@ export type Listener =
   | { on: "there"; name: string; host?: string };
 
 export interface ServiceAddress {
-  /** What the row shows: the address, with the machine when it opens elsewhere. */
-  text: string;
-  /** What Copy copies: the address alone. */
+  /** What Copy copies, and what the row shows. */
   copy: string;
   /** The machine it opens on, when that is not this computer or the network. */
   on?: string;
@@ -53,9 +50,7 @@ export function serviceAddress(
   if (typeof port !== "number" || port <= 0) return undefined;
   const at = (host: string, on?: string): ServiceAddress => {
     const copy = scheme + hostPort(host, port);
-    return on
-      ? { text: tf("service.address.on", { address: copy, machine: on }), copy, on }
-      : { text: copy, copy };
+    return on ? { copy, on } : { copy };
   };
   const there = listener.on === "there" ? listener.name : undefined;
   // sshd and the backends read an empty bind as loopback.

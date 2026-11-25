@@ -207,7 +207,14 @@ async function cutNameIssues(
   const rows = `[data-testid=sidebar] ${kind.row}`;
   const cut = await page.evaluate(cutNames, { rows, name: kind.name });
   const issues: LayoutIssue[] = [];
-  if (requireCut && cut.length === 0) {
+  if (kind.wraps && cut.length > 0) {
+    issues.push({
+      kind: "expectation",
+      where: `${kind.kind} rows`,
+      detail: `${cut.length} names are cut; they wrap`,
+    });
+  }
+  if (requireCut && !kind.wraps && cut.length === 0) {
     issues.push({
       kind: "expectation",
       where: `${kind.kind} rows`,

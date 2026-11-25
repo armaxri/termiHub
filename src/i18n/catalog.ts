@@ -332,8 +332,6 @@ const en = {
     "{method} enrollment changes.",
 
   // ── Tunnels whose SSH connection was deleted (#2850) ────────────────────
-  "tunnel.missingConnection.detail": "SSH connection deleted — choose another",
-  "tunnel.missingConnection.choose": "Choose connection",
   "tunnel.editor.missingConnection":
     "The SSH connection this tunnel used was deleted. Choose another SSH connection.",
   "tunnel.editor.chooseSshConnection": "Choose an SSH connection",
@@ -739,8 +737,11 @@ const en = {
   "service.where.agent": "agent {agent}",
   "service.where.agentRemoved": "a removed agent",
   "service.where.unknown": "an unknown machine",
-  "service.address.on": "{address} on {machine}",
-  "service.address.label": "Address",
+  "service.address.onMachine": "on {machine}",
+  "service.addressCopied": "Copied the address",
+  "service.more": "More",
+  "service.menu": "Service actions",
+  "service.moreActions": "More actions for {name}",
   "service.next.chooseConnection": "Choose connection",
   "service.reason.needsConnection": "Its SSH connection was deleted.",
   "service.action.start": "Start",

@@ -35,8 +35,9 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { TooltipProvider } from "@/components/ui";
-import { EmbeddedServerConfig } from "@/types/embeddedServer";
+import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -53,12 +54,20 @@ const config: EmbeddedServerConfig = {
   directoryListing: true,
 };
 
+const RUNNING: ServerState = {
+  serverId: "srv-1",
+  status: "running",
+  stats: { activeConnections: 0, totalConnections: 0, bytesSent: 0, bytesReceived: 0 },
+};
+
 function baseProps() {
   return {
     config,
     state: undefined,
     onStart: vi.fn(() => Promise.resolve()),
     onStop: vi.fn(() => Promise.resolve()),
+    onRestart: vi.fn(() => Promise.resolve()),
+    context: NO_CONTEXT,
     onEdit: () => {},
     onDuplicate: () => {},
     onDelete: () => {},
@@ -78,7 +87,7 @@ async function flush() {
   });
 }
 
-describe("EmbeddedServerItem — copy URL feedback (#1342)", () => {
+describe("EmbeddedServerItem — copy address feedback (#1342)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -92,8 +101,8 @@ describe("EmbeddedServerItem — copy URL feedback (#1342)", () => {
     vi.clearAllMocks();
   });
 
-  it("confirms with a success toast after copying the URL", async () => {
-    render(<EmbeddedServerItem {...baseProps()} />);
+  it("confirms with a success toast after copying the address from the menu", async () => {
+    render(<EmbeddedServerItem {...baseProps()} state={RUNNING} />);
 
     // Open the context menu and invoke Copy URL. The item is easiest to reach
     // by calling the context-menu item directly via its testid; open the menu
@@ -111,8 +120,30 @@ describe("EmbeddedServerItem — copy URL feedback (#1342)", () => {
     });
     await flush();
 
-    expect(writeText).toHaveBeenCalledWith("http://127.0.0.1:8080");
+    expect(writeText).toHaveBeenCalledWith("http://localhost:8080");
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("the row's Copy copies the same, and its button is the feedback (#5859)", async () => {
+    render(<EmbeddedServerItem {...baseProps()} state={RUNNING} />);
+    const copy = container.querySelector<HTMLElement>('[data-testid="server-copy-address-srv-1"]');
+    expect(copy?.getAttribute("aria-label")).toBe("Copy address");
+    act(() => copy!.click());
+    await flush();
+    expect(writeText).toHaveBeenCalledWith("http://localhost:8080");
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("there is no address to copy while it does not run", async () => {
+    render(<EmbeddedServerItem {...baseProps()} />);
+    const row = container.querySelector('[data-testid="server-item-srv-1"]')!;
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(document.querySelector('[data-testid="ctx-edit-srv-1"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="ctx-copy-url-srv-1"]')).toBeNull();
+    expect(container.querySelector('[data-testid="server-address-srv-1"]')).toBeNull();
   });
 });

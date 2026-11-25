@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TunnelListItem } from "./TunnelListItem";
+import { NO_CONTEXT } from "@/test/serviceContext";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 
@@ -35,7 +36,7 @@ function render(status?: TunnelStatus) {
         <TunnelListItem
           tunnel={TUNNEL}
           state={state}
-          connections={[]}
+          context={NO_CONTEXT}
           onStart={noop}
           onStop={noop}
           onReconnect={noop}
@@ -88,19 +89,19 @@ describe("TunnelListItem — run control and labelled dot (#5852)", () => {
     expect(dotEl.getAttribute("role")).toBe("img");
   });
 
-  it("keeps the run control out of the hover group, and Edit/Duplicate/Delete in it", () => {
+  it("keeps the run control out of the hover group, and Edit and the menu in it", () => {
     render("connected");
-    expect(moreLabels()).toEqual(["Reconnect", "Edit", "Duplicate", "Delete"]);
+    expect(moreLabels()).toEqual(["Edit", "More"]);
     const row = q('[data-testid="tunnel-item-tun-1"]')!;
     expect(row.classList.contains("sidebar-list-item--primary-action")).toBe(true);
     expect(q('[role="group"]')!.getAttribute("aria-label")).toBe("More actions for Prod DB");
   });
 
-  it("an errored row offers Retry as the run control and View last error in the group", () => {
+  it("an errored row offers Retry as the run control, and says why on the row", () => {
     render("error");
     expect(primaryLabels()).toEqual(["Retry"]);
-    expect(moreLabels()).toContain("View last error");
-    expect(moreLabels()).not.toContain("Retry");
+    expect(moreLabels()).toEqual(["Edit", "More"]);
+    expect(q('[data-testid="tunnel-reason-tun-1"]')!.textContent).toBe("boom");
   });
 
   it("a tunnel whose SSH connection was deleted has no run control", () => {

@@ -1,56 +1,27 @@
 import type React from "react";
-import { useCallback, useState } from "react";
-import {
-  Activity,
-  Play,
-  Square,
-  Pencil,
-  Copy,
-  Trash2,
-  ExternalLink,
-  Clipboard,
-} from "lucide-react";
-import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  Button,
-  toast,
-  Tooltip,
-  ContextMenuContent,
-  ContextMenuRoot,
-  ContextMenuTrigger,
-  MenuItem,
-  MenuSeparator,
-} from "@/components/ui";
-import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
+import { useState } from "react";
+import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceListItem";
+import { toast } from "@/components/ui";
 import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
-import {
-  serverServiceState,
-  serviceReason,
-  serviceRunAction,
-  serviceStateDot,
-} from "@/utils/serviceState";
 import { errorMessage } from "@/utils/errorMessage";
-import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
-import { THIS_COMPUTER, isAgentHost } from "@/utils/runLocation";
-import type { HostChoice } from "@/utils/hostChoice";
+import { isAgentHost } from "@/utils/runLocation";
+import { hostChoice, type HostChoice } from "@/utils/hostChoice";
+import { fileServerModel, type ServiceContext } from "@/utils/serviceModel";
 import { t, tf } from "@/i18n/catalog";
-import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
-import { serverRowTooltip, serverUrl } from "./serverRowTooltip";
+import type { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
+import { serverRowTooltip } from "./serverRowTooltip";
 
 interface Props {
   config: EmbeddedServerConfig;
   state: ServerState | undefined;
-  /** Configured agents, to name the one this server runs on. */
+  /** Configured agents, to say what the one it runs on supports. */
   agents?: RemoteAgentDefinition[];
-  /**
-   * Where the server runs, as stored (#6028). Chosen in the editor (#5770); the
-   * row names it in its tooltip.
-   */
-  runLocation?: HostChoice;
+  /** The agents, connections and network around it. */
+  context: ServiceContext;
   onStart: (id: string) => void | Promise<void>;
   onStop: (id: string) => void | Promise<void>;
+  onRestart: (id: string) => void | Promise<void>;
   onEdit: (id: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
@@ -89,283 +60,78 @@ function runsOnText(runLocation: HostChoice, agents: RemoteAgentDefinition[]): s
 }
 
 /**
- * A single embedded server entry in the Services sidebar.
+ * The row of a file server: the shared {@link ServiceListItem} (#6028), plus its
+ * expandable access log (PROD-034/036).
  */
 export function EmbeddedServerItem({
   config,
   state,
   agents = [],
-  runLocation = THIS_COMPUTER,
+  context,
   onStart,
   onStop,
+  onRestart,
   onEdit,
   onDuplicate,
   onDelete,
   rowRef,
   rowProps,
 }: Props) {
-  const status = state?.status;
-  const serviceState = serverServiceState(status);
-  // Stop, Stop waiting, Start (also after an error), or nothing while stopping.
-  const run = serviceRunAction(serviceState);
-  const stopLabel = run === "stopWaiting" ? t("service.run.stopWaiting") : "Stop";
-  const url = serverUrl(config);
-  // Expandable access log + detailed stats (PROD-034/036).
   const [showActivity, setShowActivity] = useState(false);
-
-  // Start/Stop drive the shared Button's async lifecycle: returning the promise
-  // makes the pressed control show the spinner + disable itself while in flight
-  // (no hand-rolled `busy` flag). We keep the server-scoped error toast and set
-  // `errorToast={false}` on the Button, then re-throw so the Button lands in its
-  // error path (idle, no false success flash) — see #1344.
-  const handleStart = useCallback(async () => {
-    try {
-      await onStart(config.id);
-    } catch (err) {
-      toast.error(`Failed to start ${config.name}`, { description: errorMessage(err) });
-      throw err;
-    }
-  }, [onStart, config.id, config.name]);
-
-  const handleStop = useCallback(async () => {
-    try {
-      await onStop(config.id);
-    } catch (err) {
-      toast.error(`Failed to stop ${config.name}`, { description: errorMessage(err) });
-      throw err;
-    }
-  }, [onStop, config.id, config.name]);
-
-  const handleCopyUrl = () => {
-    writeClipboard(url)
-      // toast-policy: no-in-place-surface — the URL is on the clipboard
-      .then(() => toast.success("Copied URL to clipboard"))
-      .catch((err: unknown) =>
-        toast.error("Failed to copy URL", { description: errorMessage(err) })
-      );
-  };
-
-  const handleOpenBrowser = () => {
-    if (config.serverType === "http") {
-      fireAndForget(openUrl(url), `open server url ${url} in browser`);
-    }
-  };
-
-  // Names, not settings (#5770): protocol, address, folder, host and traffic
-  // are in the tooltip; the row keeps the name and an error.
-  const hostAgent = hostAgentFor(runLocation, agents);
+  const model = fileServerModel(config, state, context);
+  const host = hostChoice(config.host);
   const tooltip = serverRowTooltip(config, {
-    stats: status === "running" ? state?.stats : undefined,
-    runsOn: runsOnText(runLocation, agents),
+    stats: model.state === "running" ? state?.stats : undefined,
+    runsOn: runsOnText(host, agents),
   });
-  const errorText = status === "error" ? state?.error : undefined;
-  // What it waits for, or why it is not reachable (#6028).
-  const reason = status === "error" ? undefined : serviceReason(serviceState, state?.error);
+
+  /** Tell the user what failed, and keep it failed for the button. */
+  const told = async (what: string, work: void | Promise<void>): Promise<void> => {
+    try {
+      await work;
+    } catch (err) {
+      toast.error(`Failed to ${what} ${config.name}`, { description: errorMessage(err) });
+      throw err;
+    }
+  };
+
+  const onAction = (action: ServiceRowAction): void | Promise<void> => {
+    switch (action) {
+      case "start":
+      case "retry":
+        return told("start", onStart(config.id));
+      case "stop":
+      case "stopWaiting":
+        return told("stop", onStop(config.id));
+      case "restart":
+        return told("restart", onRestart(config.id));
+      case "activity":
+        return setShowActivity((shown) => !shown);
+      case "edit":
+        return onEdit(config.id);
+      case "duplicate":
+        return onDuplicate(config.id);
+      case "delete":
+        return onDelete(config.id);
+    }
+  };
 
   return (
-    <ContextMenuRoot>
-      <ContextMenuTrigger asChild>
-        <SidebarListItem
-          ref={rowRef}
-          {...rowProps}
-          testId={`server-item-${config.id}`}
-          nameTestId={`server-name-${config.id}`}
-          name={config.name}
-          error={status === "error"}
-          onDoubleClick={() => onEdit(config.id)}
-          status={
-            <SidebarStatusDot
-              {...serviceStateDot(serviceState)}
-              testId={`server-status-${config.id}`}
-            />
-          }
-          description={config.description}
-          descriptionTestId={`server-description-${config.id}`}
-          tooltip={tooltip}
-          tooltipTestId={`server-tooltip-${config.id}`}
-          primaryAction={
-            run === null ? undefined : run === "stop" || run === "stopWaiting" ? (
-              <Tooltip content={stopLabel} side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label={stopLabel}
-                  data-testid={`server-stop-${config.id}`}
-                  errorToast={false}
-                  icon={<Square size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    return handleStop();
-                  }}
-                />
-              </Tooltip>
-            ) : (
-              <Tooltip content="Start" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="Start"
-                  data-testid={`server-start-${config.id}`}
-                  errorToast={false}
-                  icon={<Play size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    return handleStart();
-                  }}
-                />
-              </Tooltip>
-            )
-          }
-          primaryActionTestId={`server-primary-${config.id}`}
-          moreActionsLabel={`More actions for ${config.name}`}
-          actions={
-            <>
-              <Tooltip content={showActivity ? "Hide activity" : "Show activity"} side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label={showActivity ? "Hide activity" : "Show activity"}
-                  aria-pressed={showActivity}
-                  data-testid={`server-activity-toggle-${config.id}`}
-                  icon={<Activity size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowActivity((v) => !v);
-                  }}
-                />
-              </Tooltip>
-              <Tooltip content="Edit" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="Edit"
-                  data-testid={`server-edit-${config.id}`}
-                  icon={<Pencil size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(config.id);
-                  }}
-                />
-              </Tooltip>
-              <Tooltip content="Duplicate" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="Duplicate"
-                  data-testid={`server-duplicate-${config.id}`}
-                  icon={<Copy size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDuplicate(config.id);
-                  }}
-                />
-              </Tooltip>
-              <Tooltip content="Delete" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  aria-label="Delete"
-                  data-testid={`server-delete-${config.id}`}
-                  icon={<Trash2 size={12} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(config.id);
-                  }}
-                />
-              </Tooltip>
-            </>
-          }
-          details={
-            errorText || reason || showActivity ? (
-              <>
-                {errorText && <span className="sidebar-list-item__error">{errorText}</span>}
-                {reason && (
-                  <span
-                    className="sidebar-list-item__reason"
-                    data-testid={`server-reason-${config.id}`}
-                  >
-                    {reason}
-                  </span>
-                )}
-                {showActivity && (
-                  <EmbeddedServerActivityPanel
-                    serverId={config.id}
-                    live={status === "running"}
-                    hostAgent={hostAgent}
-                  />
-                )}
-              </>
-            ) : undefined
-          }
-        />
-      </ContextMenuTrigger>
-
-      <ContextMenuContent>
-        {run === null ? null : run === "stop" || run === "stopWaiting" ? (
-          <MenuItem
-            onSelect={() =>
-              // handleStop already toasts on failure and re-throws for the
-              // Button lifecycle; from the context menu there is no Button, so
-              // swallow-with-audit the already-surfaced rejection.
-              fireAndForget(handleStop(), `stop server ${config.id} from context menu`)
-            }
-            data-testid={`ctx-stop-${config.id}`}
-          >
-            <Square size={14} /> {stopLabel}
-          </MenuItem>
-        ) : (
-          <MenuItem
-            onSelect={() =>
-              // handleStart already toasts on failure and re-throws for the
-              // Button lifecycle; from the context menu there is no Button, so
-              // swallow-with-audit the already-surfaced rejection.
-              fireAndForget(handleStart(), `start server ${config.id} from context menu`)
-            }
-            data-testid={`ctx-start-${config.id}`}
-          >
-            <Play size={14} /> Start
-          </MenuItem>
-        )}
-        {run !== null && <MenuSeparator />}
-        <MenuItem onSelect={() => onEdit(config.id)} data-testid={`ctx-edit-${config.id}`}>
-          <Pencil size={14} /> Edit…
-        </MenuItem>
-        <MenuItem
-          onSelect={() => onDuplicate(config.id)}
-          data-testid={`ctx-duplicate-${config.id}`}
-        >
-          <Copy size={14} /> Duplicate
-        </MenuItem>
-        <MenuItem
-          onSelect={() => setShowActivity((v) => !v)}
-          data-testid={`ctx-activity-${config.id}`}
-        >
-          <Activity size={14} /> {showActivity ? "Hide activity" : "Show activity"}
-        </MenuItem>
-        <MenuSeparator />
-        <MenuItem onSelect={handleCopyUrl} data-testid={`ctx-copy-url-${config.id}`}>
-          <Clipboard size={14} /> Copy URL
-        </MenuItem>
-        {config.serverType === "http" && (
-          <MenuItem onSelect={handleOpenBrowser} data-testid={`ctx-open-browser-${config.id}`}>
-            <ExternalLink size={14} /> Open in browser
-          </MenuItem>
-        )}
-        <MenuSeparator />
-        <MenuItem
-          danger
-          onSelect={() => onDelete(config.id)}
-          data-testid={`ctx-delete-${config.id}`}
-        >
-          <Trash2 size={14} /> Delete
-        </MenuItem>
-      </ContextMenuContent>
-    </ContextMenuRoot>
+    <ServiceListItem
+      model={model}
+      tooltip={tooltip}
+      onAction={onAction}
+      activity={
+        showActivity ? (
+          <EmbeddedServerActivityPanel
+            serverId={config.id}
+            live={model.state === "running"}
+            hostAgent={hostAgentFor(host, agents)}
+          />
+        ) : undefined
+      }
+      rowRef={rowRef}
+      rowProps={rowProps}
+    />
   );
 }

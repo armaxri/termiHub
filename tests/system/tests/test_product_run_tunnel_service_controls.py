@@ -57,7 +57,7 @@ def test_grade_stopped_tunnel_with_start_passes():
 def test_grade_service_states_pass():
     assert _grade("server", "Stopped", ["Start"]) == []
     assert _grade("server", "Running", ["Stop"]) == []
-    assert _grade("server", "Error", ["Start"]) == []
+    assert _grade("server", "Error", ["Retry"]) == []
 
 
 def test_grade_hover_only_control_fails():

@@ -30,7 +30,6 @@ describe("serviceAddress (#6028)", () => {
     const address = serviceAddress(bind, 80, listener);
     expect(address?.copy).toBe(copy);
     expect(address?.on).toBe(on);
-    expect(address?.text).toBe(on ? `${copy} on ${on}` : copy);
   });
 
   it("is never a wide bind address", () => {
@@ -43,10 +42,9 @@ describe("serviceAddress (#6028)", () => {
     }
   });
 
-  it("carries the scheme in what is copied, the machine only in what is shown", () => {
+  it("carries the scheme, and the machine it opens on beside it", () => {
     const address = serviceAddress("127.0.0.1", 8080, AGENT, "http://");
     expect(address).toEqual({
-      text: "http://localhost:8080 on Edge box",
       copy: "http://localhost:8080",
       on: "Edge box",
     });
