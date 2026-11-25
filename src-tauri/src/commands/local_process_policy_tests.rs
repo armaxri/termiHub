@@ -156,6 +156,33 @@ fn a_bare_name_is_never_found_in_the_working_directory() {
     assert!(judge(Some(&settings(&["true"])), "true", &no_path).is_err());
 }
 
+/// A relative entry of `PATH` is skipped, not only refused: it must not hide the
+/// program that is really on `PATH`.
+#[test]
+#[cfg(unix)]
+fn a_relative_path_entry_does_not_hide_the_real_program() {
+    let dir = TempDir::new().unwrap();
+    let (planted, real) = (dir.path().join("planted"), dir.path().join("real"));
+    for d in [&planted, &real] {
+        std::fs::create_dir(d).unwrap();
+        executable(&d.join("tool"));
+    }
+    // The planted directory, relative to the working directory of this process.
+    let up = std::env::current_dir().unwrap().components().count() - 1;
+    let relative = format!(
+        "{}{}",
+        "../".repeat(up),
+        &planted.display().to_string()[1..]
+    );
+    assert!(Path::new(&relative).join("tool").is_file());
+    let env = SearchEnv {
+        path: Some(format!("{relative}:{}", real.display()).into()),
+        ..env()
+    };
+    let judged = judge(Some(&settings(&["tool"])), "tool", &env).unwrap();
+    assert_eq!(judged.program.path, real.join("tool"));
+}
+
 #[test]
 #[cfg(unix)]
 fn a_relative_path_is_resolved_once_and_shown_in_full() {
@@ -265,6 +292,16 @@ fn windows_names_that_mean_another_file_are_refused() {
         r"C:\x\build.cmd",
     ] {
         assert_eq!(ambiguous(name, true), None, "{name}");
+    }
+    for name in [
+        r"\\?\C:\x\tool.exe",
+        r"\\.\C:\x\tool.exe",
+        "//?/C:/x/tool.exe",
+    ] {
+        assert_eq!(
+            ambiguous(name, true),
+            Some("device paths are not supported")
+        );
     }
     // Unix has no such forms: these are ordinary names there.
     for name in ["C:tool", r"\tool", "tool.", "a|b", "/x/tool ."] {
@@ -390,7 +427,11 @@ fn on_windows_a_bare_name_is_the_exe_on_path() {
     assert!(full.to_lowercase().ends_with("cmd.exe"));
     let by_path = judge(Some(&settings(&[&full])), "cmd", &env).unwrap();
     assert!(by_path.listed.is_ok());
-    for other in [format!("{full}."), format!("{full} "), format!("{full}::$DATA")] {
+    for other in [
+        format!("{full}."),
+        format!("{full} "),
+        format!("{full}::$DATA"),
+    ] {
         let refused = match judge(Some(&settings(&[&full])), &other, &env) {
             Ok(judged) => judged.listed.is_err() || other.trim() == full,
             Err(_) => true,

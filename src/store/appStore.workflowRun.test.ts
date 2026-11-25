@@ -807,6 +807,18 @@ describe("appStore — workflow run slice (#1852)", () => {
         expect(call.approvedPath).toBeUndefined();
       });
 
+      it("an approval does not carry over to a listed program", async () => {
+        seedConnectedTerminal();
+        enableLocalProcess(["ls"]);
+        useAppStore.setState({ workflows: [workflow("w1", [lp("make", []), lp("ls", [])])] });
+        const run = useAppStore.getState().runWorkflow("w1");
+        await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+        useAppStore.getState().resolveLocalProcessPrompt("once");
+        await run;
+        const calls = invokeRunLocalProcess.mock.calls as unknown as [{ approvedPath?: string }][];
+        expect(calls.map(([call]) => call.approvedPath)).toEqual(["/bin/make", undefined]);
+      });
+
       it("an approval does not carry over to other arguments or another program", async () => {
         seedConnectedTerminal();
         enableLocalProcess([]);
