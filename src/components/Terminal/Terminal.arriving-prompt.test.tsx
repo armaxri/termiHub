@@ -338,7 +338,14 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     arrive(PROMPT);
     pressContinue();
     engine().unblock();
-    await vi.waitFor(() => expect(wait()?.stillAsking).toBe(true), { timeout: 3000 });
+    // Taken in slice by slice (#6080): on a slow machine that is longer than Continue
+    // looks, and then it asks rather than holds back. Either way it does not go on.
+    await vi.waitFor(() => expect(wait()?.stillAsking || wait()?.unchecked).toBe(true), {
+      timeout: 3000,
+    });
+    expect(state.result).toBeUndefined();
+    await vi.waitFor(() => expect(line()).toBe(PROMPT.trim()), { timeout: 5000 });
+    if (!wait()?.stillAsking) pressContinue();
     await heldBack(state);
   });
 
