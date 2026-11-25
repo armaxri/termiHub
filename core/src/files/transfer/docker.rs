@@ -29,9 +29,9 @@ use crate::backends::docker::{ContainerCaps, DockerTransferTarget};
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::attempt::{
-    apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, local_fingerprint,
-    local_partial_size, map_copy_outcome, open_local_dest, open_local_read, probe_timed_out,
-    rehydrate_start_offset, settle_attempt, settle_writer, stop_reason, trim_remote_partial,
+    apply_partial_gate, close_writer, drive_transfer, emit, guard_probe, guard_stall,
+    local_fingerprint, local_partial_size, map_copy_outcome, open_local_dest, open_local_read,
+    probe_timed_out, rehydrate_start_offset, settle_attempt, stop_reason, trim_remote_partial,
     AttemptOutcome, AttemptsResult, PartialProbe, Probed, ProgressReporter, ResumeCursor,
     StopReason, STALL_TIMEOUT,
 };
@@ -120,7 +120,9 @@ where
         copy_error,
     )
     .await?;
-    settle_writer(&mut local, &outcome).await;
+    close_writer(&mut local, &outcome)
+        .await
+        .map_err(|e| DockerTransferError::Exec(format!("close local file: {e}")))?;
     if matches!(outcome, ChunkedCopyOutcome::Completed { .. }) {
         // EOF alone proves nothing: a killed `cat`/`tail` also ends stdout.
         // Only a clean exit means the whole file arrived.

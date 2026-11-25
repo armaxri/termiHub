@@ -82,7 +82,11 @@ fn status(id: u32) -> Status {
 impl Drop for Subsystem {
     /// The session's server process ends: its handles close.
     fn drop(&mut self) {
-        let mut disk = self.disk.lock().expect("disk");
+        // A failed test may have poisoned it.
+        let mut disk = self
+            .disk
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for handle in self.handles.values() {
             disk.release(handle);
         }

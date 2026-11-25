@@ -48,7 +48,7 @@ use super::attempt::{
     apply_partial_gate, drive_transfer, emit, guard_probe, guard_stall, handle_attempt_error,
     map_copy_outcome, probe_timed_out, rehydrate_start_offset, settle_attempt, stop_reason,
     trim_remote_partial, AttemptOutcome, AttemptsResult, PartialProbe, Probed, ProgressReporter,
-    ResumeCursor, StopReason, STALL_TIMEOUT,
+    ResumeCursor, StopReason, RELEASE_TIMEOUT, STALL_TIMEOUT,
 };
 #[cfg(feature = "local-transfer")]
 use super::ranged::RangedTransferTarget;
@@ -412,7 +412,7 @@ where
         Err(OpenError::Failed(e)) => return Err(RemoteCopyError::at(ends.dst_prefix, e)),
     };
 
-    let outcome = run_chunked_copy(
+    let copied = run_chunked_copy(
         &mut reader,
         &mut writer,
         CHUNK_SIZE,
@@ -421,18 +421,20 @@ where
         on_progress,
         |phase, e| copy_error(phase, e, ends.src_prefix, ends.dst_prefix),
     )
-    .await?;
-    match outcome {
-        ChunkedCopyOutcome::Completed { .. } => {
+    .await;
+    let settled = match copied {
+        Ok(outcome @ ChunkedCopyOutcome::Completed { .. }) => {
             // Settle both ends even when the source failed, so the bytes that
             // were counted have landed before the next attempt measures them.
             let read = reader.finish().await;
             let write = writer.finish().await;
-            read.map_err(|e| RemoteCopyError::at(ends.src_prefix, format!("read failed: {e}")))?;
-            write
-                .map_err(|e| RemoteCopyError::at(ends.dst_prefix, format!("write failed: {e}")))?;
+            read.map_err(|e| RemoteCopyError::at(ends.src_prefix, format!("read failed: {e}")))
+                .and(write.map_err(|e| {
+                    RemoteCopyError::at(ends.dst_prefix, format!("write failed: {e}"))
+                }))
+                .map(|()| outcome)
         }
-        ChunkedCopyOutcome::Stopped { .. } => {
+        Ok(outcome @ ChunkedCopyOutcome::Stopped { .. }) => {
             // Close the source, then best-effort settle the destination so the
             // bytes counted as sent have landed; the next attempt measures the
             // destination anyway.
@@ -442,9 +444,27 @@ where
                 Ok(Err(e)) => debug!(error = %e, "could not settle destination after stop"),
                 Err(_) => debug!("settling destination after stop timed out"),
             }
+            Ok(outcome)
+        }
+        Err(e) => {
+            drop(reader);
+            drop(writer);
+            Err(e)
+        }
+    };
+    if settled.is_err() {
+        // The destination's close is on its way, and an SFTP server answers one
+        // channel's requests in order: the next attempt, on another channel,
+        // does not find the file still open (Windows locks it, #6040).
+        let released = ends.dst.file_size(ends.dst_path);
+        if tokio::time::timeout(RELEASE_TIMEOUT, released)
+            .await
+            .is_err()
+        {
+            debug!("a failed copy's destination may still be open");
         }
     }
-    Ok(map_copy_outcome(outcome))
+    settled.map(map_copy_outcome)
 }
 
 /// Both endpoints and paths of a copy.

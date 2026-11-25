@@ -29,6 +29,7 @@ mod sftp {
 
     use super::*;
     use crate::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
+    use crate::files::transfer::attempt::RELEASE_TIMEOUT;
 
     /// An SFTP session: each attempt opens its own dedicated channel, so the
     /// browsing session stays live and a broken channel is re-established on
@@ -65,7 +66,7 @@ mod sftp {
         async fn remove_partial(&self, path: &str) {
             match self.browser.open_dedicated_channel().await {
                 Ok(ch) => {
-                    if let Err(e) = ch.remove_file(path).await {
+                    if let Err(e) = ch.remove_partial(path).await {
                         debug!(error = %e, "could not remove partial remote-to-remote copy (best-effort)");
                     }
                 }
@@ -138,8 +139,15 @@ mod sftp {
 
     #[async_trait]
     impl CopyReader for File {
-        async fn finish(self: Box<Self>) -> io::Result<()> {
-            // SFTP reads carry no exit status; EOF is the end of the file.
+        async fn finish(mut self: Box<Self>) -> io::Result<()> {
+            // SFTP reads carry no exit status; EOF is the end of the file. Only
+            // close it: on Windows nothing else can replace it while it is open.
+            if !matches!(
+                tokio::time::timeout(RELEASE_TIMEOUT, self.shutdown()).await,
+                Ok(Ok(()))
+            ) {
+                tracing::debug!("could not close the SFTP copy source (best-effort)");
+            }
             Ok(())
         }
     }

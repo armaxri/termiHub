@@ -41,6 +41,8 @@ struct Running {
     handle: Arc<TransferHandle>,
     messages: Arc<Mutex<Vec<String>>>,
     sink: ProgressSink,
+    /// Whether the last attempt failed.
+    gave_up: Arc<Mutex<bool>>,
 }
 
 impl Running {
@@ -49,7 +51,10 @@ impl Running {
         let handle = registry.enqueue("t", "s", direction, "data.bin", REMOTE, total as u64);
         let messages = Arc::new(Mutex::new(Vec::new()));
         let rec = messages.clone();
+        let gave_up = Arc::new(Mutex::new(false));
+        let failed = gave_up.clone();
         let sink: ProgressSink = Arc::new(move |p| {
+            *failed.lock().expect("flag") = p.phase == TransferPhase::Error;
             if let Some(m) = &p.message {
                 rec.lock().expect("messages").push(m.clone());
             }
@@ -59,13 +64,28 @@ impl Running {
             handle,
             messages,
             sink,
+            gave_up,
         }
     }
 
     /// Wait for `task`, failing instead of hanging when it never ends.
     async fn end(self, task: impl std::future::Future<Output = ()>) -> Ran {
         // Boxed: the futures of a transfer are large for a test thread's stack.
-        tokio::time::timeout(Duration::from_secs(30), Box::pin(task))
+        let mut task = Box::pin(task);
+        let ended = async {
+            loop {
+                tokio::select! {
+                    () = &mut task => return,
+                    // A failed transfer waits for the user to try it again.
+                    () = tokio::time::sleep(Duration::from_millis(10)) => {
+                        if *self.gave_up.lock().expect("flag") {
+                            return;
+                        }
+                    }
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(30), ended)
             .await
             .expect("the transfer ends");
         let messages = self.messages.lock().expect("messages").clone();
@@ -217,8 +237,8 @@ async fn a_failed_attempt_does_not_lock_out_the_next_one() {
         "{:?}",
         ran.messages
     );
-    let open_failures: Vec<_> = ran.messages.iter().filter(|m| m.contains("open")).collect();
-    assert!(open_failures.is_empty(), "{:?}", ran.messages);
+    assert_eq!(ran.messages.len(), 1, "{:?}", ran.messages);
+    assert!(ran.messages[0].contains("transfer"), "{:?}", ran.messages);
     assert!(disk.lock().expect("disk").files[REMOTE] == data);
 }
 
@@ -292,6 +312,28 @@ async fn a_completed_copy_between_servers_has_closed_both_files() {
         "destination"
     );
     assert_eq!(src.lock().expect("disk").open(REMOTE), (0, 0), "source");
+    assert!(dst.lock().expect("disk").files[REMOTE] == data);
+}
+
+#[tokio::test]
+async fn a_failed_copy_attempt_does_not_lock_out_the_next_one() {
+    let data = content(600_000);
+    let (src, dst) = (disk(Duration::ZERO), disk(Duration::from_millis(2500)));
+    src.lock()
+        .expect("disk")
+        .files
+        .insert(REMOTE.to_string(), data.clone());
+    dst.lock().expect("disk").failing_writes = 1;
+
+    let ran = copy_across(&src, &dst, data.len()).await;
+
+    assert_eq!(
+        ran.state(),
+        TransferStateTag::Completed,
+        "{:?}",
+        ran.messages
+    );
+    assert_eq!(ran.messages.len(), 1, "{:?}", ran.messages);
     assert!(dst.lock().expect("disk").files[REMOTE] == data);
 }
 

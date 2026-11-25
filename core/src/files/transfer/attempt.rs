@@ -227,10 +227,13 @@ pub(super) fn map_copy_outcome(outcome: ChunkedCopyOutcome<StopReason>) -> Attem
     }
 }
 
-/// Best-effort: settle a writer after an attempt stopped short (pause/cancel)
-/// so the bytes counted as transferred have actually landed — pipelined writes
-/// are acknowledged asynchronously. A failure is harmless: the next attempt
-/// byte-verifies the destination anyway.
+/// Close an attempt's writer and wait until it is closed (#6040).
+///
+/// A complete copy is complete only then: pipelined writes are acknowledged
+/// asynchronously, a server may hold data back until the close, and it reports
+/// there that it could not keep it. After an attempt stopped short (pause /
+/// cancel) it is best effort, so the bytes counted as transferred have landed;
+/// the next attempt byte-verifies the destination anyway.
 #[cfg_attr(
     not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
     allow(
@@ -238,19 +241,37 @@ pub(super) fn map_copy_outcome(outcome: ChunkedCopyOutcome<StopReason>) -> Attem
         reason = "the FTP executor streams through its own primitive"
     )
 )]
-pub(super) async fn settle_writer<W: tokio::io::AsyncWrite + Unpin>(
+pub(super) async fn close_writer<W: tokio::io::AsyncWrite + Unpin>(
     writer: &mut W,
     outcome: &ChunkedCopyOutcome<StopReason>,
-) {
+) -> std::io::Result<()> {
     use tokio::io::AsyncWriteExt;
-    if matches!(outcome, ChunkedCopyOutcome::Stopped { .. }) {
-        match tokio::time::timeout(STALL_TIMEOUT, writer.shutdown()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => debug!(error = %e, "could not settle writer after stop (best-effort)"),
-            Err(_) => debug!("settling writer after stop timed out (best-effort)"),
+    let closed = match tokio::time::timeout(STALL_TIMEOUT, writer.shutdown()).await {
+        Ok(closed) => closed,
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "no answer to the close",
+        )),
+    };
+    match (outcome, closed) {
+        (ChunkedCopyOutcome::Stopped { .. }, Err(e)) => {
+            debug!(error = %e, "could not settle writer after stop (best-effort)");
+            Ok(())
         }
+        (_, closed) => closed,
     }
 }
+
+/// Longest a failed or finished attempt waits for the far end to close a file
+/// whose data no longer matters (a failed attempt's destination, a source).
+#[cfg_attr(
+    not(any(feature = "ssh", feature = "docker", feature = "local-transfer")),
+    allow(
+        dead_code,
+        reason = "the FTP executor streams through its own primitive"
+    )
+)]
+pub(super) const RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Resume bookkeeping carried across the attempts and Active stints of one
 /// transfer (PARITY-004, #3567).
