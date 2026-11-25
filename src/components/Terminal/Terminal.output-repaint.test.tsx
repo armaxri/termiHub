@@ -3,6 +3,8 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
+import { WRITE_SLICE_BYTES } from "@/utils/slicedWrite";
+import { FLOW_HIGH_WATERMARK } from "@/utils/terminalFlowControl";
 
 // Regression test for #1849: terminal output painted out of order (a later
 // prompt line rendered between an earlier command's output lines) until the tab
@@ -14,6 +16,9 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 // the refresh is issued on the output path.
 
 let capturedWriteCallback: (() => void) | null = null;
+let outputWrites: { bytes: number; parsed: () => void }[] = [];
+/** The output write xterm refuses (its overflow guard), counted from 0. */
+let refusedWrite = Infinity;
 let capturedOnScrollHandler: (() => void) | null = null;
 const mockScrollToBottom = vi.fn();
 const mockRefresh = vi.fn();
@@ -31,8 +36,13 @@ vi.mock("@xterm/xterm", async () => {
       capturedOnScrollHandler = handler;
       return { dispose: vi.fn() };
     });
-    write = vi.fn((_data: unknown, cb?: () => void) => {
+    write = vi.fn((data: unknown, cb?: () => void) => {
+      if (data instanceof Uint8Array && cb && outputWrites.length === refusedWrite) {
+        refusedWrite = Infinity;
+        throw new Error("write data discarded");
+      }
       capturedWriteCallback = cb ?? null;
+      if (data instanceof Uint8Array && cb) outputWrites.push({ bytes: data.length, parsed: cb });
     });
     scrollToBottom = mockScrollToBottom;
     refresh = mockRefresh;
@@ -145,6 +155,8 @@ let root: Root;
 
 beforeEach(() => {
   capturedWriteCallback = null;
+  outputWrites = [];
+  refusedWrite = Infinity;
   capturedOnScrollHandler = null;
   mockScrollToBottom.mockClear();
   mockRefresh.mockClear();
@@ -236,6 +248,49 @@ describe("Terminal output repaint (#1849)", () => {
     // repainted so no stale rows are left behind.
     expect(mockScrollToBottom).not.toHaveBeenCalled();
     expect(mockRefresh).toHaveBeenCalledWith(0, 23);
+  });
+
+  it("writes a flood in slices and repaints once, after the last (#6074)", async () => {
+    renderTerminal();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(outputCallback).not.toBeNull();
+    act(() => outputCallback!(new Uint8Array(2 * WRITE_SLICE_BYTES + 1)));
+    act(() => flushRaf());
+    expect(outputWrites.map((w) => w.bytes)).toEqual([WRITE_SLICE_BYTES, WRITE_SLICE_BYTES, 1]);
+    mockRefresh.mockClear();
+
+    act(() => outputWrites.slice(0, 2).forEach((w) => w.parsed()));
+    act(() => flushRaf());
+    expect(mockRefresh).not.toHaveBeenCalled();
+
+    act(() => outputWrites[2].parsed());
+    act(() => flushRaf());
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes what xterm refused once it has room, also behind a full backlog (#6074)", async () => {
+    renderTerminal();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    // The slices before the refused one fill the backlog, so the retry right
+    // after the refusal cannot write anything.
+    const full = FLOW_HIGH_WATERMARK / WRITE_SLICE_BYTES;
+    refusedWrite = full;
+    act(() => outputCallback!(new Uint8Array(FLOW_HIGH_WATERMARK + 5)));
+    act(() => flushRaf());
+    expect(outputWrites).toHaveLength(full);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    act(() => flushRaf());
+    expect(outputWrites).toHaveLength(full);
+
+    act(() => outputWrites.slice().forEach((w) => w.parsed()));
+    act(() => flushRaf());
+    expect(outputWrites.slice(full).map((w) => w.bytes)).toEqual([5]);
   });
 
   it("skips the post-write scroll and repaint when the tab unmounts before the frame (#5464)", async () => {

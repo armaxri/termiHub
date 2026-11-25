@@ -41,6 +41,7 @@ from .external_shims import HandoffShims
 from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance, require_test_bridge_build
+from .process_sampler import describe_process_tree
 
 T = TypeVar("T")
 
@@ -81,6 +82,10 @@ def _preserve_app_log(
         log_text = app.read_log()
     except Exception:  # noqa: BLE001 — diagnostics must never raise
         log_text = ""
+    if app.pid is not None and app.is_running():
+        # A hang in the webview's own start leaves nothing in the app log (#6074):
+        # whether its processes exist, and burn CPU, is the only trace of it.
+        print(f"\n[{banner}] processes of the app:\n{describe_process_tree(app.pid)}")
     print(f"\n[{banner}] {what}; captured app log follows:")
     print(log_text or f"[{banner}] (app log was empty)")
     try:

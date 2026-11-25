@@ -3915,6 +3915,7 @@ mod reattach_output;
 
 /// A direct SSH tab reports the remote shell's exit status (#5801).
 mod ssh_exit_status;
+mod ssh_input_after_resize;
 
 /// #5960: desktop session ids → the agent's session ids.
 mod agent_session_ids;

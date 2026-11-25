@@ -19,7 +19,7 @@ use termihub_core::connection::SessionEndCause;
 use crate::session::registry::build_desktop_registry;
 
 /// Upper bound for one wait. The exit usually lands within milliseconds.
-const CEILING: Duration = Duration::from_secs(20);
+pub(super) const CEILING: Duration = Duration::from_secs(20);
 
 const PASSWORD: &str = "exit-status-pass";
 
@@ -36,7 +36,7 @@ fn trust_all_host_keys() {
     let _ = set_host_key_verifier(Arc::new(TrustAll));
 }
 
-async fn server() -> TcpServer {
+pub(super) async fn server() -> TcpServer {
     trust_all_host_keys();
     serve_tcp(Script {
         rounds: Vec::new(),
@@ -48,7 +48,7 @@ async fn server() -> TcpServer {
 
 /// Open a direct SSH tab on `server`, `resilient` as the client computes it,
 /// and wait for its shell.
-async fn open_tab(
+pub(super) async fn open_tab(
     manager: &SessionManager,
     emitter: &MockEventEmitter,
     server: &TcpServer,

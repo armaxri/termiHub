@@ -158,7 +158,7 @@ export function createTerminalScrollbar({
     thumb.style.transform = `translateY(${geo.thumbTopPx}px)`;
   };
 
-  // Coalesce frequent triggers (streaming output) into one update per frame.
+  // Coalesce frequent triggers (scrolling, streaming output) into one update per frame.
   const scheduleUpdate = (): void => {
     if (disposed || rafId !== null) return;
     rafId = requestAnimationFrame(() => {
@@ -212,10 +212,12 @@ export function createTerminalScrollbar({
     xterm.scrollLines(clickY < geo.thumbTopPx ? -xterm.rows : xterm.rows);
   };
 
-  // onScroll/onResize are infrequent → render immediately. Buffer growth while
-  // scrolled up changes the thumb but may not fire onScroll, so also refresh on
-  // parsed output (coalesced to one update per frame).
-  const scrollDisposable = xterm.onScroll(update);
+  // xterm fires onScroll once per scrolled line, so a flood fires it hundreds of
+  // thousands of times a second, and each update reads layout after writing
+  // styles: coalesced, or the thumb starves the UI thread (#6074). Buffer growth
+  // while scrolled up changes the thumb but may not fire onScroll, so also
+  // refresh on parsed output. A resize is rare: rendered at once.
+  const scrollDisposable = xterm.onScroll(scheduleUpdate);
   const resizeDisposable = xterm.onResize(update);
   const writeParsedDisposable = xterm.onWriteParsed(scheduleUpdate);
   thumb.addEventListener("pointerdown", onThumbPointerDown);
