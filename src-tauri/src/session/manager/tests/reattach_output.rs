@@ -204,6 +204,31 @@ async fn a_repaint_waits_for_a_re_forward_that_is_still_arriving() {
     }
 }
 
+/// The agent came back as another worker, whose replay ids have no order with
+/// the old one's (#6007): its answer overtakes its replay, and waits for it.
+#[tokio::test]
+async fn a_repaint_waits_for_the_replay_of_a_new_worker() {
+    for old_worker in [REPLAY - 1, REPLAY + 1] {
+        let (manager, emitter, agent) = attached(b"one two ").await;
+        agent
+            .send_replay_start(old_worker, b"one ".to_vec())
+            .unwrap();
+        chunks_until(&emitter, "sess-1", 4).await;
+        let reading = tokio::spawn({
+            let manager = manager.clone();
+            async move { manager.get_remote_session_buffer("sess-1").await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        agent
+            .send_replay_start(REPLAY, b"one two ".to_vec())
+            .unwrap();
+
+        let repaint = reading.await.unwrap().unwrap();
+        assert_eq!(repaint.data, b"one two ", "old worker's id {old_worker}");
+        assert_eq!(repaint.end_offset, 12);
+    }
+}
+
 /// When the rest does not come in time the repaint is what is here, and the
 /// rest follows as live output: the history is shown once either way.
 #[tokio::test]

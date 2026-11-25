@@ -993,9 +993,9 @@ impl SessionManager {
         session_id: &str,
         read: impl FnOnce(&OutputCapture, Option<OutputReplay>) -> T,
     ) -> Option<T> {
-        // The capture first: a stream's connection is registered before its
-        // capture starts, so the connection read after it is never an older one,
-        // whose positions would mean nothing in this capture.
+        // The capture first: it is registered under the `sessions` lock that its
+        // stream's connection is registered in, so the connection read after it is
+        // never an older one, whose positions would mean nothing in this capture.
         let capture = self.output_capture(session_id)?;
         let connection = self
             .sessions
@@ -2787,7 +2787,11 @@ impl SessionManager {
         entry.connection.exit_code()
     }
 
-    /// Emit remaining data (if any), send the exit event, and remove the session.
+    /// Emit remaining data (if any), remove the session and send the exit event.
+    ///
+    /// The stream that ended is the one `capture` belongs to. A session that was
+    /// attached again under the same id meanwhile (#6004) goes on: nothing of it
+    /// is removed, and no tab hears that it ended.
     ///
     /// Intentionally does NOT touch `persistent_sessions`: when an agent SSH
     /// connection drops, the daemon process on the remote host survives. The
@@ -2828,18 +2832,45 @@ impl SessionManager {
             None
         };
 
-        let (end_cause, exit_code, agent_hosted) = {
-            let sessions = sessions.lock().await;
-            sessions
+        // One step under the `sessions` lock, which every attach takes to register
+        // a stream: what is removed here belongs to the stream that ended, and an
+        // attach that the exit event triggers does not find it any more (#6004).
+        let (entry, drop_binding, logger) = {
+            let mut sessions = sessions.lock().await;
+            if sessions
                 .get(session_id)
-                .map_or((None, None, false), |entry| {
-                    (
-                        entry.connection.end_cause(),
-                        Self::reported_exit_code(entry),
-                        entry.remote_session_id.is_some(),
-                    )
-                })
+                .is_some_and(|entry| !Arc::ptr_eq(&entry.capture, capture))
+            {
+                info!("Output stream of {session_id} ended; it was attached again");
+                return;
+            }
+            let entry = sessions.remove(session_id);
+            // The identity bridge entry (#2431/#2439), folded below.
+            let binding = session_tab_ids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(session_id);
+            let logger = session_loggers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(session_id);
+            // The scrollback capture buffer (#1900), so a dead session's 1 MiB
+            // ring does not linger.
+            output_buffers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(session_id);
+            (entry, binding, logger)
         };
+
+        let (end_cause, exit_code, agent_hosted) =
+            entry.as_ref().map_or((None, None, false), |entry| {
+                (
+                    entry.connection.end_cause(),
+                    Self::reported_exit_code(entry),
+                    entry.remote_session_id.is_some(),
+                )
+            });
         let exit_event = TerminalExitEvent {
             session_id: session_id.to_string(),
             exit_code,
@@ -2847,8 +2878,7 @@ impl SessionManager {
         };
         emitter.emit_exit(&exit_event);
 
-        // Capture-and-clear the identity bridge entry (#2431/#2439). A binding
-        // still present here means this exit is a **genuine spontaneous drop** — a
+        // A binding that was still present means this exit is a **genuine spontaneous drop** — a
         // deliberate close (kill/tab-close) clears the binding before disconnecting
         // (see `close_session`), so those never carry a binding to this point. Fold
         // the drop server-side, keyed by the tab id, mirroring the client's
@@ -2856,10 +2886,6 @@ impl SessionManager {
         // tab folds `session.reconnect` (→ Reconnecting), a non-resilient tab
         // `session.dropped` (→ Disconnected); a clean exit-code-0 exit folds
         // nothing. Convergent double-write with the still-live client mirror.
-        let drop_binding = session_tab_ids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id);
         if let Some(binding) = &drop_binding {
             let may_reconnect =
                 drop_may_reconnect(binding.resilient, agent_hosted, exit_event.end_cause);
@@ -2871,36 +2897,9 @@ impl SessionManager {
             }
         }
 
-        {
-            let mut sessions = sessions.lock().await;
-            sessions.remove(session_id);
-        }
-
-        // Drop the session's scrollback capture buffer (#1900) so a dead
-        // session's 1 MiB ring does not linger.
-        // Only its own: a new stream of the same session may have started.
-        {
-            let mut buffers = output_buffers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if buffers
-                .get(session_id)
-                .is_some_and(|current| Arc::ptr_eq(current, capture))
-            {
-                buffers.remove(session_id);
-            }
-        }
-
-        // (The identity bridge entry for this session was already captured and
-        // removed above, where its presence gated the genuine-drop fold — #2439.)
-
         // Flush and drop the session's output logger (#1960) so the transcript's
         // tail is persisted and its file handle is released when the session ends.
-        if let Some(logger) = session_loggers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id)
-        {
+        if let Some(logger) = logger {
             let _ = logger
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

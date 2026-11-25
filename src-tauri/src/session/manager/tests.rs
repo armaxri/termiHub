@@ -171,12 +171,6 @@ impl ConnectionType for LocalBrowserConnection {
     }
 }
 
-/// Helper to create a sessions map and insert a mock session.
-/// A fresh, empty scrollback capture buffer for `run_output_reader` tests (#1900).
-fn new_capture() -> Arc<StdMutex<OutputCapture>> {
-    Arc::new(StdMutex::new(OutputCapture::default()))
-}
-
 /// The capture of the stream that owns the entry of `session_id` (#6004).
 async fn capture_of<M: SessionMap>(
     sessions: &Arc<Mutex<M>>,

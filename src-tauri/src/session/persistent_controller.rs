@@ -503,8 +503,16 @@ impl<'a> PersistentController<'a> {
         &self,
         session_id: &str,
     ) -> Result<ScrollbackReplay, TerminalError> {
+        let asked_after = self
+            .manager
+            .read_capture(session_id, |_, replay| replay.map(|r| r.id))
+            .await
+            .flatten();
         let older = match self.fetch_remote_buffer(session_id).await {
-            Ok(older) => older,
+            Ok(older) => AgentBuffer {
+                asked_after,
+                ..older
+            },
             Err(e) => {
                 let replay = self.manager.replay_scrollback(session_id).await;
                 if replay.data.is_empty() {
@@ -602,6 +610,7 @@ impl<'a> PersistentController<'a> {
             data,
             replay_id: result.replay_id,
             end_position: result.end_position,
+            asked_after: None,
         })
     }
 }
@@ -613,6 +622,8 @@ struct AgentBuffer {
     replay_id: Option<u64>,
     /// `None` from an agent that does not say (before 0.45.0).
     end_position: Option<u64>,
+    /// The last replay that had arrived here when the buffer was requested.
+    asked_after: Option<u64>,
 }
 
 /// Where an [`AgentBuffer`] ends in the session's output stream.
@@ -633,9 +644,8 @@ impl AgentBuffer {
         };
         match (self.replay_id, replay) {
             (Some(id), Some(replay)) if replay.id == id => BufferPlace::At(replay.start + position),
-            // Ids grow. An id of an agent worker before a reconnect may be
-            // larger; the bounded wait ends that case.
-            (Some(id), Some(replay)) if replay.id > id => BufferPlace::Unknown,
+            // Ids only name replays; those of two agent workers have no order.
+            (Some(id), Some(_)) if self.asked_after == Some(id) => BufferPlace::Unknown,
             (Some(_), _) => BufferPlace::NotYet,
             (None, None) => BufferPlace::At(position),
             // Nothing was sent again on an attach that came after `replay`.
@@ -712,30 +722,39 @@ pub(super) fn rekey_persistent_registry(
 mod buffer_place_tests {
     use super::*;
 
-    fn place(buffer: (Option<u64>, Option<u64>), replay: Option<(u64, u64)>) -> BufferPlace {
+    /// Place a buffer `(replay_id, end_position)` that was requested after replay
+    /// `asked_after`, when `replay` is the last one that arrived.
+    fn place_after(
+        asked_after: Option<u64>,
+        buffer: (Option<u64>, Option<u64>),
+        replay: Option<(u64, u64)>,
+    ) -> BufferPlace {
         AgentBuffer {
             data: Vec::new(),
             replay_id: buffer.0,
             end_position: buffer.1,
+            asked_after,
         }
         .end_in_stream(replay.map(|(id, start)| OutputReplay { id, start }))
     }
 
+    fn place(buffer: (Option<u64>, Option<u64>), replay: Option<(u64, u64)>) -> BufferPlace {
+        place_after(None, buffer, replay)
+    }
+
     #[test]
     fn a_buffer_is_placed_by_the_replay_it_counts_from() {
-        assert_eq!(
-            place((Some(4), Some(10)), Some((4, 3))),
-            BufferPlace::At(13)
-        );
+        for asked_after in [None, Some(3), Some(4)] {
+            assert_eq!(
+                place_after(asked_after, (Some(4), Some(10)), Some((4, 3))),
+                BufferPlace::At(13)
+            );
+        }
         // The answer overtook the replay.
         assert_eq!(place((Some(4), Some(10)), None), BufferPlace::NotYet);
-        assert_eq!(
-            place((Some(4), Some(10)), Some((3, 0))),
-            BufferPlace::NotYet
-        );
         // A later replay overtook the answer.
         assert_eq!(
-            place((Some(4), Some(10)), Some((5, 30))),
+            place_after(Some(4), (Some(4), Some(10)), Some((5, 30))),
             BufferPlace::Unknown
         );
         // No replay on this attach: counted from the start.
@@ -743,5 +762,18 @@ mod buffer_place_tests {
         assert_eq!(place((None, Some(10)), Some((5, 3))), BufferPlace::Unknown);
         // An older agent says nothing, whatever arrived.
         assert_eq!(place((None, None), None), BufferPlace::Unknown);
+    }
+
+    /// #6007: after a reconnect another agent worker names the replays, and its
+    /// ids may be smaller or larger than those of the worker before.
+    #[test]
+    fn an_answer_that_overtook_the_replay_of_a_new_worker_waits_for_it() {
+        for old in [3, 9] {
+            assert_eq!(
+                place_after(Some(old), (Some(4), Some(10)), Some((old, 0))),
+                BufferPlace::NotYet,
+                "old id {old}"
+            );
+        }
     }
 }

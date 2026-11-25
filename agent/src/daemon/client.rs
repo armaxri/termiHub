@@ -8,7 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -251,8 +251,30 @@ pub struct BufferEnd {
     pub position: u64,
 }
 
-/// The id of the next replay of this process.
-static NEXT_REPLAY_ID: AtomicU64 = AtomicU64::new(1);
+/// The ids of the replays this process sends.
+static REPLAY_IDS: LazyLock<ReplayIds> = LazyLock::new(ReplayIds::new);
+
+/// Ids for replays, different in every worker (#6007): a desktop's output stream
+/// goes on across a reconnect to another worker. They start at a random number
+/// and not at a time, which two workers can share and which can go back.
+struct ReplayIds(AtomicU64);
+
+impl ReplayIds {
+    /// Bits for the replays of one worker; the random rest keeps an id below
+    /// 2^53, exact for every JSON reader.
+    const COUNTER_BITS: u32 = 20;
+
+    fn new() -> Self {
+        let worker = uuid::Uuid::new_v4().as_fields().0;
+        Self(AtomicU64::new(
+            (u64::from(worker) << Self::COUNTER_BITS) + 1,
+        ))
+    }
+
+    fn next(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst)
+    }
+}
 
 /// What was sent of a session's output on the current daemon connection
 /// (#5990). Only the connection's reader writes it, in the order it sends.
@@ -282,7 +304,7 @@ impl SentOutput {
 
     /// A replay of `len` bytes goes out; returns its id.
     fn replay(&self, len: usize) -> u64 {
-        let id = NEXT_REPLAY_ID.fetch_add(1, Ordering::SeqCst);
+        let id = REPLAY_IDS.next();
         *self.lock() = Sent {
             replay_id: Some(id),
             bytes: len as u64,
@@ -2563,6 +2585,81 @@ mod tests {
 
     fn legacy_wire(method: &str, params: serde_json::Value) -> String {
         wire(&JsonRpcNotification::new(method, params))
+    }
+
+    /// #6007: the replay ids of one worker never name a replay of another.
+    #[test]
+    fn replay_ids_differ_between_workers() {
+        let mut seen = std::collections::HashSet::new();
+        for _worker in 0..50 {
+            let ids = ReplayIds::new();
+            for _ in 0..100 {
+                let id = ids.next();
+                assert!(id < 1 << 53, "{id}");
+                assert!(seen.insert(id), "{id} twice");
+            }
+        }
+    }
+
+    /// #6007: a reconnect of the same client to a daemon that has nothing to send
+    /// again must not count on from the connection before.
+    #[tokio::test]
+    async fn a_reconnected_client_counts_its_output_from_the_start() {
+        let session_id = unique_session_id("itest-reconnect-position");
+        let endpoint = transport::session_endpoint(&session_id);
+        let mut listener = transport::DaemonListener::bind(&endpoint)
+            .await
+            .expect("bind mock daemon");
+        // Each connection: what comes before Ready, then live output, then one
+        // answered buffer query.
+        let server = tokio::spawn(async move {
+            for (replay, live) in [(&b"history"[..], &b"abc"[..]), (b"", b"xy")] {
+                let (mut reader, mut writer) = listener.accept().await.expect("accept");
+                let mut frames = vec![(MSG_READY, &b""[..]), (MSG_OUTPUT, live)];
+                if !replay.is_empty() {
+                    frames.insert(0, (MSG_BUFFER_REPLAY, replay));
+                }
+                for (kind, data) in frames {
+                    protocol::write_frame_async(&mut writer, kind, data)
+                        .await
+                        .expect("send");
+                }
+                while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+                    if frame.msg_type == MSG_QUERY_BUFFER {
+                        protocol::write_frame_async(&mut writer, MSG_BUFFER_REPLAY, b"all")
+                            .await
+                            .expect("answer");
+                    } else if frame.msg_type == MSG_DETACH {
+                        break;
+                    }
+                }
+            }
+            listener.cleanup();
+        });
+
+        let mut client = DaemonClient::connect(session_id, endpoint, make_notification_tx())
+            .await
+            .expect("connect");
+        let end = client
+            .query_buffer()
+            .await
+            .expect("buffer")
+            .end
+            .expect("end");
+        assert!(end.replay_id.is_some());
+        assert_eq!(end.position, 10);
+
+        client.reconnect(false).await.expect("reconnect");
+        let end = client
+            .query_buffer()
+            .await
+            .expect("buffer")
+            .end
+            .expect("end");
+        assert_eq!((end.replay_id, end.position), (None, 2));
+
+        client.detach().await;
+        server.await.expect("mock daemon");
     }
 
     /// #5990: where a buffer ends counts from the last replay of this connection.
