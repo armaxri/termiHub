@@ -1581,7 +1581,8 @@ where
                         // synchronous request/response that owns the whole transport
                         // — run it, then re-split for the concurrent read/write loop.
                         let framed = ironrdp_tokio::unsplit_tokio_framed(reader, writer);
-                        match reactivate(
+                        match reactivate_within(
+                            REACTIVATION_TIMEOUT,
                             framed,
                             connector_config.clone(),
                             &mut stage,
@@ -1614,6 +1615,20 @@ where
                                 .await
                                 .is_err()
                                 {
+                                    break;
+                                }
+                                // Clipboard requests that came in between wait
+                                // for no other PDU.
+                                if let Err(e) = drain_clipboard_events(
+                                    &clipboard_rx,
+                                    &mut stage,
+                                    &mut writer,
+                                    ipc_out,
+                                    &local_clipboard,
+                                )
+                                .await
+                                {
+                                    report_clipboard_failure(ipc_out, &e).await;
                                     break;
                                 }
                                 // A layout requested meanwhile goes out now.
@@ -1980,9 +1995,12 @@ fn is_io_channel_pdu(action: ironrdp_pdu::Action, frame: &[u8], io_channel_id: u
             .is_ok_and(|ctx| ctx.channel_id == io_channel_id)
 }
 
+/// Longest a server may take for a reactivation.
+const REACTIVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// [`reactivate`], given up when the server has not finished it within `limit`.
 async fn reactivate_within<S>(
-    _limit: std::time::Duration,
+    limit: std::time::Duration,
     framed: TokioFramed<S>,
     connector_config: ConnectorConfig,
     stage: &mut ActiveStage,
@@ -1993,15 +2011,20 @@ async fn reactivate_within<S>(
 where
     S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
 {
-    reactivate(
+    let sequence = reactivate(
         framed,
         connector_config,
         stage,
         image,
         io_channel_id,
         user_channel_id,
-    )
-    .await
+    );
+    // Nothing else is served meanwhile, so a server that goes quiet here would
+    // freeze the session (#6030).
+    match tokio::time::timeout(limit, sequence).await {
+        Ok(reactivated) => reactivated,
+        Err(_) => bail!("the server did not finish its reactivation within {limit:?}"),
+    }
 }
 
 /// Handle a PDU that arrived during a reactivation but is not part of it. A
@@ -2106,12 +2129,16 @@ where
                 advertise_local_clipboard(stage, transport, local_clipboard).await?;
             }
             ClipboardEvent::InitiatePaste(format) => {
-                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
-                    Some(cliprdr) => cliprdr
-                        .initiate_paste(format)
-                        .context("cliprdr initiate_paste failed")?,
-                    None => {
-                        warn!("cliprdr channel unavailable; cannot paste remote clipboard");
+                let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+                    warn!("cliprdr channel unavailable; cannot paste remote clipboard");
+                    continue;
+                };
+                // Refused before the channel is ready: no reason to end the
+                // session (#6030).
+                let messages = match cliprdr.initiate_paste(format) {
+                    Ok(messages) => messages,
+                    Err(e) => {
+                        warn!(error = %e, "cliprdr initiate_paste failed");
                         continue;
                     }
                 };
@@ -2119,12 +2146,20 @@ where
             }
             ClipboardEvent::ProvideData(format) => {
                 let response = local_clipboard.response(format);
-                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
-                    Some(cliprdr) => cliprdr
-                        .submit_format_data(response)
-                        .context("cliprdr submit_format_data failed")?,
-                    None => {
-                        warn!("cliprdr channel unavailable; cannot serve clipboard data");
+                let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+                    warn!("cliprdr channel unavailable; cannot serve clipboard data");
+                    continue;
+                };
+                let messages = match cliprdr.submit_format_data(response) {
+                    Ok(messages) => messages,
+                    Err(e) => {
+                        // Asked before the channel is ready: answered then.
+                        warn!(error = %e, "cliprdr submit_format_data failed");
+                        if let Some(backend) =
+                            cliprdr.downcast_backend_mut::<SidecarClipboardBackend>()
+                        {
+                            backend.answer_when_ready(format);
+                        }
                         continue;
                     }
                 };
@@ -2188,12 +2223,14 @@ where
             ClipboardEvent::ProvideFileContents(response) => {
                 // Serve a size/byte range of a locally offered file the remote is
                 // pasting (#1778).
-                let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
-                    Some(cliprdr) => cliprdr
-                        .submit_file_contents(response)
-                        .context("cliprdr submit_file_contents failed")?,
-                    None => {
-                        warn!("cliprdr channel unavailable; cannot serve file contents");
+                let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+                    warn!("cliprdr channel unavailable; cannot serve file contents");
+                    continue;
+                };
+                let messages = match cliprdr.submit_file_contents(response) {
+                    Ok(messages) => messages,
+                    Err(e) => {
+                        warn!(error = %e, "cliprdr submit_file_contents failed");
                         continue;
                     }
                 };
