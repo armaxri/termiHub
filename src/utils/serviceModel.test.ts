@@ -8,6 +8,7 @@ import {
   SERVICE_ACTION_ORDER,
   serviceCounts,
   tunnelModel,
+  withoutAgent,
   type ServiceActionId,
   type ServiceContext,
   type ServiceModel,
@@ -285,7 +286,7 @@ describe("state, reason and next step", () => {
     ["error", "agentOffline", ["Connect agent"]],
     ["waiting", "agentOffline", ["Connect agent"]],
     ["notReachable", "agentOffline", ["Connect agent"]],
-    ["stopping", "agentOffline", ["Connect agent"]],
+    ["stopping", "agentOffline", ["Keep running", "Connect agent"]],
     ["notReachable", "agentSilent", ["Check again"]],
     ["waiting", "storeLocked", ["Unlock"]],
     ["error", "storeLocked", ["Unlock"]],
@@ -370,7 +371,7 @@ describe("state, reason and next step", () => {
       });
     expect(parent("degraded")).toMatchObject({
       stateLabel: "Running",
-      reason: "Does not work on this computer yet, see below.",
+      reason: "Does not work on this computer, see below.",
       dot: { tone: "warning" },
     });
     expect(ids(parent("degraded"))).not.toContain("copyAddress");
@@ -462,7 +463,60 @@ describe("state, reason and next step", () => {
         at("error"),
         at("missingConnection")
       )
-    ).toEqual(["0 of 6 running", "2 error", "2 not known", "1 reconnecting", "1 waiting"]);
+    ).toEqual(["0 of 6 running", "2 errors", "2 not known", "1 reconnecting", "1 waiting"]);
+    expect(list(at("error"))).toEqual(["0 of 1 running", "1 error"]);
+    // Not errors of their own when all of them only need a connection.
+    const bare = at("missingConnection");
+    expect(list(bare)).toEqual(["0 of 1 running", "1 needs a connection"]);
+    expect(list(bare, bare)).toEqual(["0 of 2 running", "2 need a connection"]);
+  });
+
+  it("a taken port is said with the service that has it (#6076)", () => {
+    const portHolders = new Map([[8080, { id: "other", name: "Release builds" }]]);
+    const taken = {
+      ...serverIn("error"),
+      error: "Port 8080 is in use.",
+      cause: "portInUse" as const,
+    };
+    const says = (context: ServiceContext, over: Partial<EmbeddedServerConfig> = {}) =>
+      fileServerModel(server({ port: 8080, ...over }), taken, context).reason;
+    expect(says({ ...CONTEXT, portHolders })).toBe('Port 8080 is used by "Release builds".');
+    expect(says(CONTEXT)).toBe("Port 8080 is in use.");
+    expect(says({ ...CONTEXT, portHolders }, { port: 9 })).toBe("Port 8080 is in use.");
+    // Another machine's port.
+    const there = { host: EDGE } as Partial<EmbeddedServerConfig>;
+    expect(says({ ...CONTEXT, portHolders }, there)).toBe("Port 8080 is in use.");
+  });
+
+  it("a server for devices says when none can reach it (#6076)", () => {
+    const tftp = (bindHost: string, over: Partial<EmbeddedServerConfig> = {}) =>
+      fileServerModel(
+        server({ serverType: "tftp", bindHost, port: 6969, ...over }),
+        serverIn("running"),
+        { ...CONTEXT, networkAddress: "192.168.1.20" }
+      );
+    const here = tftp("127.0.0.1");
+    expect(here.address?.reach).toBe("Only this computer, no device can reach it.");
+    expect(here.addressStep).toEqual({ id: "letReach", label: "Let devices reach it" });
+    const there = tftp("127.0.0.1", { host: EDGE } as Partial<EmbeddedServerConfig>);
+    expect(there.address?.reach).toBe("Only that machine, no device can reach it.");
+    const open = tftp("0.0.0.0");
+    expect(open.address?.reach).toBe("anyone on your network");
+    expect(open.addressStep).toBeUndefined();
+    const web = fileServerModel(server({ bindHost: "127.0.0.1" }), serverIn("running"), CONTEXT);
+    expect(web.address?.reach).toBe("only this computer");
+    expect(web.addressStep).toBeUndefined();
+  });
+
+  it("under its agent's line a pending stop says what will happen (#6076)", () => {
+    const pending = tunnelModel(
+      tunnel({ host: EDGE }),
+      tunnelIn("stopping", { cause: "agentOffline", error: "Its agent is offline. Long." }),
+      CONTEXT
+    );
+    const short = withoutAgent(pending);
+    expect(short.reason).toBe("Will be stopped when the agent is back.");
+    expect(steps(short)).toEqual(["Keep running"]);
   });
 
   it("counts only while it runs", () => {

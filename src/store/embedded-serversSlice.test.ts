@@ -76,15 +76,18 @@ vi.mock("@/themes", () => ({
 vi.mock("@/services/embeddedServerApi", () => ({
   saveEmbeddedServer: vi.fn(() => Promise.resolve()),
   deleteEmbeddedServer: vi.fn(() => Promise.resolve()),
+  restoreEmbeddedServer: vi.fn(() => Promise.resolve()),
   startEmbeddedServer: vi.fn(() => Promise.resolve()),
   stopEmbeddedServer: vi.fn(() => Promise.resolve()),
   createAndStartServer: vi.fn(() => Promise.resolve("srv-new")),
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
 }));
 
+import { toast } from "@/components/ui";
 import { useAppStore } from "./appStore";
 import {
   deleteEmbeddedServer as apiDeleteEmbeddedServer,
+  restoreEmbeddedServer as apiRestoreEmbeddedServer,
   saveEmbeddedServer as apiSaveEmbeddedServer,
   startEmbeddedServer as apiStartEmbeddedServer,
   stopEmbeddedServer as apiStopEmbeddedServer,
@@ -188,6 +191,43 @@ describe("embedded-servers slice (TFE-006)", () => {
         await expect(useAppStore.getState().deleteEmbeddedServer("srv-2")).rejects.toBe(reason);
       }
     );
+  });
+
+  describe("a delete can be undone (#6076)", () => {
+    it("once, from its toast", async () => {
+      const info = vi.spyOn(toast, "info");
+      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Docs")] });
+      await useAppStore.getState().deleteEmbeddedServer("srv-1");
+      expect(info).toHaveBeenCalledWith("Deleted Docs", expect.anything());
+      const undo = () =>
+        (info.mock.calls[0][1] as { action: { onClick: () => void } }).action.onClick();
+      undo();
+      undo();
+      expect(apiRestoreEmbeddedServer).toHaveBeenCalledTimes(1);
+      expect(apiRestoreEmbeddedServer).toHaveBeenCalledWith("srv-1");
+      info.mockRestore();
+    });
+
+    it("says when it cannot, and is not offered when nothing was deleted", async () => {
+      const info = vi.spyOn(toast, "info");
+      const error = vi.spyOn(toast, "error");
+      vi.mocked(apiDeleteEmbeddedServer).mockRejectedValueOnce(new Error("no"));
+      await useAppStore
+        .getState()
+        .deleteEmbeddedServer("srv-1")
+        .catch(() => undefined);
+      expect(info).not.toHaveBeenCalled();
+      await useAppStore.getState().deleteEmbeddedServer("gone");
+      vi.mocked(apiRestoreEmbeddedServer).mockRejectedValueOnce(new Error("too late"));
+      (info.mock.calls[0][1] as { action: { onClick: () => void } }).action.onClick();
+      await vi.waitFor(() =>
+        expect(error).toHaveBeenCalledWith("Failed to restore file server", {
+          description: "too late",
+        })
+      );
+      info.mockRestore();
+      error.mockRestore();
+    });
   });
 
   describe("restartEmbeddedServer", () => {

@@ -5,6 +5,7 @@
  */
 import { t, tf } from "@/i18n/catalog";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
+import { serviceDeleteEffect } from "@/utils/serviceDelete";
 import { isServiceActive, tunnelServiceState } from "@/utils/serviceState";
 import { findCompanion } from "@/utils/tunnelChain";
 
@@ -36,10 +37,10 @@ export function tunnelDeleteConfirmMessage(
 ): string | null {
   const target = tunnels.find((tunnel) => tunnel.id === tunnelId);
   const state = tunnelServiceState(tunnelStates[tunnelId]?.status);
+  const open = tunnelStates[tunnelId]?.stats.activeConnections ?? 0;
   const companion = target ? findCompanion(tunnels, tunnelId) : undefined;
   const says: string[] = [];
-  if (state === "notReachable") says.push(t("service.delete.notReachable"));
-  else if (isServiceActive(state)) says.push(t("service.delete.running"));
+  if (isServiceActive(state)) says.push(serviceDeleteEffect(state, open));
   if (target?.companionOf) says.push(t("service.delete.hop"));
   else if (companion) says.push(tf("service.delete.parent", { name: companion.name }));
   return says.length > 0 ? [...says, t("service.delete.undo")].join(" ") : null;

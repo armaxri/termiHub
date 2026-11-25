@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 
-const { connectAgent, toastError, checkEmbeddedServers } = vi.hoisted(() => ({
-  checkEmbeddedServers: vi.fn(() => Promise.resolve()),
-  connectAgent: vi.fn(),
-  toastError: vi.fn(),
-}));
+const { connectAgent, toastError, checkEmbeddedServers, keepEmbeddedServerRunning } = vi.hoisted(
+  () => ({
+    keepEmbeddedServerRunning: vi.fn(() => Promise.resolve()),
+    checkEmbeddedServers: vi.fn(() => Promise.resolve()),
+    connectAgent: vi.fn(),
+    toastError: vi.fn(),
+  })
+);
 vi.mock("@/utils/connectAgent", () => ({ connectAgentWithCredentials: connectAgent }));
 vi.mock("@/components/ui", async () => {
   const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
@@ -19,6 +22,7 @@ vi.mock("@/components/ui", async () => {
 vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() => Promise.resolve([])),
   checkEmbeddedServers,
+  keepEmbeddedServerRunning,
 }));
 
 import { ServicesSidebar } from "./ServicesSidebar";
@@ -65,6 +69,7 @@ const actions = {
   reconnectTunnel: vi.fn(async (_id: string) => {}),
   retryTunnelNow: vi.fn(async (_id: string) => {}),
   checkTunnelsAgain: vi.fn(async () => {}),
+  keepTunnelRunning: vi.fn(async (_id: string) => {}),
   openTunnelEditorTab: vi.fn(),
   openConnectionEditorTab: vi.fn(),
   saveEmbeddedServer: vi.fn(async (_server: EmbeddedServerConfig) => {}),
@@ -194,6 +199,26 @@ describe("the others", () => {
     await server({ host: EDGE }, silent);
     await press("server-check-again-s");
     expect(checkEmbeddedServers).toHaveBeenCalledOnce();
+  });
+
+  it("Keep running takes back a stop the agent has not got (#6076)", async () => {
+    const pending = { status: "stopping", cause: "agentOffline" } as const;
+    await tunnel({ host: EDGE }, pending);
+    await press("tunnel-keep-running-t");
+    expect(actions.keepTunnelRunning).toHaveBeenCalledWith("t");
+    await server({ host: EDGE }, pending);
+    await press("server-keep-running-s");
+    expect(keepEmbeddedServerRunning).toHaveBeenCalledWith("s");
+    keepEmbeddedServerRunning.mockRejectedValueOnce(new Error("no"));
+    await press("server-keep-running-s");
+    expect(toastError).toHaveBeenCalledWith("Failed to keep running Docs", { description: "no" });
+  });
+
+  it("Let devices reach it opens the settings of a server no device reaches (#6076)", async () => {
+    await server({ serverType: "tftp" }, { status: "running" });
+    expect(document.body.textContent).toContain("Only this computer, no device can reach it.");
+    await press("server-let-reach-s");
+    expect(document.querySelector('[data-testid="server-dialog-name"]')).not.toBeNull();
   });
 
   it("Choose machine opens the editor of a service whose agent is gone", async () => {

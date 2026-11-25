@@ -50,6 +50,32 @@
   font-size: var(--font-size-xs);
 }
 
+.services-sidebar__problem--error {
+  color: var(--color-error);
+}
+
+.services-sidebar__problem--error::before {
+  content: "";
+  display: inline-block;
+  width: var(--spacing-xs);
+  height: var(--spacing-xs);
+  margin-right: var(--spacing-xs);
+  border-radius: 50%;
+  background: currentcolor;
+  vertical-align: middle;
+}
+
+/* ── What is shown, when not all is ───────────────────────────────────────── */
+
+.services-sidebar__shown {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
 .services-sidebar__group:focus-visible,
 .services-sidebar__agent:focus-visible {
   outline: 2px solid var(--focus-border);

@@ -70,9 +70,14 @@ describe("tunnelSummary", () => {
     const tunnels = [tunnel("parent"), tunnel("hop", { companionOf: "parent" }), tunnel("busy")];
     const states = { busy: state("busy", "reconnecting") };
     const says = (id: string) => tunnelDeleteConfirmMessage(tunnels, states, id);
-    expect(says("busy")).toBe(
-      "It is running. Deleting stops it and drops what goes through it. You can undo it right after."
-    );
+    expect(says("busy")).toBe("It is running. Deleting stops it. You can undo it right after.");
+    const open = (activeConnections: number) => {
+      const busy = state("busy", "connected");
+      const stats = { ...busy.stats, activeConnections };
+      return tunnelDeleteConfirmMessage(tunnels, { busy: { ...busy, stats } }, "busy");
+    };
+    expect(open(1)).toContain("stops it and breaks 1 open connection.");
+    expect(open(3)).toContain("stops it and breaks 3 open connections.");
     expect(says("parent")).toBe(
       'Its part on this computer, "hop", is deleted, too. You can undo it right after.'
     );

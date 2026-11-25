@@ -122,6 +122,9 @@ const serverFormSchema = z
         message: "Choose the folder to share.",
       });
     }
+    if (form.bindHost === "") {
+      ctx.addIssue({ code: "custom", path: ["bindHost"], message: "Choose who can open it." });
+    }
     if (form.port === "") {
       ctx.addIssue({ code: "custom", path: ["port"], message: "Port is required." });
     }
@@ -132,6 +135,12 @@ function folderName(folder: string): string | undefined {
   return folder.split(/[\\/]/).filter(Boolean).pop()?.trim() || undefined;
 }
 
+/**
+ * Who can open a new server: only this computer, until others are chosen. A
+ * device is never this computer (#6076), so what is for one asks.
+ */
+const defaultBind = (type: ServerType) => (type === "tftp" ? "" : "127.0.0.1");
+
 /** Blank default config used when creating a new server. */
 function defaultConfig(serverType: ServerType): ServerFormState {
   return {
@@ -139,7 +148,7 @@ function defaultConfig(serverType: ServerType): ServerFormState {
     name: "",
     serverType,
     rootDirectory: "",
-    bindHost: "127.0.0.1",
+    bindHost: defaultBind(serverType),
     port: DEFAULT_PORTS[serverType],
     autoStart: false,
     readOnly: false,
@@ -177,7 +186,7 @@ function bindChoices(
     { addr: current, name: "" },
   ];
   for (const { addr, name } of addresses) {
-    if (choices.some((choice) => choice.value === addr)) continue;
+    if (addr === "" || choices.some((choice) => choice.value === addr)) continue;
     choices.push({
       value: addr,
       label: name
@@ -192,6 +201,7 @@ function bindChoices(
 function missingText(errors: Readonly<Record<string, string | undefined>>): string {
   const missing = [
     errors["rootDirectory"] && t("server.editor.missing.folder"),
+    errors["bindHost"] && t("server.editor.missing.who"),
     errors["name"] && t("server.editor.missing.name"),
     errors["port"] && t("server.editor.missing.port"),
   ].filter(Boolean);
@@ -275,6 +285,10 @@ export function EmbeddedServerDialog({
     const cur = getValues();
     setValue("serverType", type);
     setValue("port", DEFAULT_PORTS[type]);
+    // Not a choice yet: the other kind's preset.
+    if (!config && !draft && cur.bindHost === defaultBind(cur.serverType)) {
+      setValue("bindHost", defaultBind(type));
+    }
     setValue("directoryListing", type === "http" ? (cur.directoryListing ?? true) : undefined);
     setValue("ftpAuth", type === "ftp" ? (cur.ftpAuth ?? { type: "anonymous" }) : undefined);
     setValue("httpAuth", type === "http" ? cur.httpAuth : undefined);
@@ -442,8 +456,9 @@ export function EmbeddedServerDialog({
                 const help = shareTypeHelp(type, location, locationName);
                 return {
                   value: type,
-                  label: help.label,
-                  description: `${help.fact} (${help.protocol})`,
+                  // As the New menu names it (#6076).
+                  label: t(`service.new.${type}`),
+                  description: `${t(`service.new.${type}.technical`)}. ${help.fact}`,
                   help: help.lines,
                   "data-testid": `server-dialog-proto-${type}`,
                 };
@@ -505,9 +520,17 @@ export function EmbeddedServerDialog({
                 value={form.bindHost}
                 onChange={handleBindHostChange}
                 options={bindChoices(interfaces, form.bindHost, isAgentHost(location))}
+                placeholder={t("server.editor.who.choose")}
                 aria-label={t("server.editor.who")}
+                aria-invalid={Boolean(errors["bindHost"])}
+                aria-describedby={errors["bindHost"] ? "server-dialog-bind-error" : undefined}
                 data-testid="server-dialog-bind-host"
               />
+              {errors["bindHost"] && (
+                <p id="server-dialog-bind-error" className="ui-field__error" role="alert">
+                  {errors["bindHost"]}
+                </p>
+              )}
             </div>
             <Controller
               name="port"
@@ -576,6 +599,30 @@ export function EmbeddedServerDialog({
             )}
           />
 
+          {/* Description (#5770): one short line shown under the name. */}
+          <Controller
+            name="description"
+            control={control}
+            render={({ field }) => (
+              <Field
+                label="Description (optional)"
+                htmlFor="server-dialog-description-input"
+                hint="One short line shown under the name in the sidebar."
+                className="server-dialog__label"
+              >
+                <Input
+                  id="server-dialog-description-input"
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
+                  placeholder="What this service is for"
+                  data-testid="server-dialog-description"
+                />
+              </Field>
+            )}
+          />
+
           {/* Run on (#2191): this computer or an agent. */}
           <div className="server-dialog__label">
             <span id="server-dialog-runloc-label">{t("server.editor.runOn")}</span>
@@ -620,12 +667,12 @@ export function EmbeddedServerDialog({
                     <Checkbox
                       checked={field.value ?? false}
                       onCheckedChange={(checked) => field.onChange(checked)}
-                      aria-label="Allow directory listing"
+                      aria-label={t("server.editor.listing")}
                       data-testid="server-dialog-dirlisting"
                     />
                   )}
                 />
-                <span>Allow directory listing</span>
+                <span>{t("server.editor.listing")}</span>
               </label>
             )}
           </fieldset>
@@ -645,10 +692,10 @@ export function EmbeddedServerDialog({
                         : undefined
                     )
                   }
-                  aria-label="Require authentication (HTTP Basic Auth)"
+                  aria-label={t("server.editor.askPassword")}
                   data-testid="server-dialog-http-auth-enable"
                 />
-                <span>Require authentication (Basic Auth)</span>
+                <span>{t("server.editor.askPassword")}</span>
               </label>
               {httpAuthEnabled && (
                 <div className="server-dialog__creds">
@@ -755,29 +802,6 @@ export function EmbeddedServerDialog({
               )}
             </fieldset>
           )}
-          {/* Description (#5770): one short line shown under the name. */}
-          <Controller
-            name="description"
-            control={control}
-            render={({ field }) => (
-              <Field
-                label="Description (optional)"
-                htmlFor="server-dialog-description-input"
-                hint="One short line shown under the name in the sidebar."
-                className="server-dialog__label"
-              >
-                <Input
-                  id="server-dialog-description-input"
-                  value={field.value ?? ""}
-                  onChange={(e) => field.onChange(e.target.value)}
-                  onBlur={field.onBlur}
-                  maxLength={ITEM_DESCRIPTION_MAX_LENGTH}
-                  placeholder="What this service is for"
-                  data-testid="server-dialog-description"
-                />
-              </Field>
-            )}
-          />
         </div>
       </Modal>
     </>

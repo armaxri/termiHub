@@ -4,7 +4,7 @@ import { ServiceListItem, type ServiceRowAction } from "@/components/ServiceList
 import { toast } from "@/components/ui";
 import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
 import { useConnectAgent } from "@/hooks/useConnectAgent";
-import { checkEmbeddedServers } from "@/services/embeddedServerApi";
+import { checkEmbeddedServers, keepEmbeddedServerRunning } from "@/services/embeddedServerApi";
 import { useAppStore } from "@/store/appStore";
 import { errorMessage } from "@/utils/errorMessage";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -143,7 +143,10 @@ export function EmbeddedServerItem({
         return setUnlockDialogOpen(true);
       case "checkAgain":
         return told("check", checkEmbeddedServers());
+      case "keepRunning":
+        return told("keep running", keepEmbeddedServerRunning(config.id));
       case "edit":
+      case "letReach":
       case "chooseMachine":
         return onEdit(config.id);
       case "chooseConnection":

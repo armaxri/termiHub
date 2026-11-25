@@ -12,6 +12,9 @@ import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { flushAsync } from "@/test/flushAsync";
+import { seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import type { EmbeddedServerConfig } from "@/types/embeddedServer";
+import type { TunnelConfig } from "@/types/tunnel";
 import { StatusBar } from "./StatusBar";
 
 setupSettingsRegion();
@@ -19,6 +22,28 @@ setupSettingsRegion();
 function renderStatusBar(root: Root) {
   root.render(React.createElement(TooltipProvider, null, React.createElement(StatusBar)));
 }
+
+const STATS = { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 };
+
+const server = (id: string): EmbeddedServerConfig => ({
+  id,
+  name: id,
+  serverType: "http",
+  rootDirectory: "/srv",
+  bindHost: "127.0.0.1",
+  port: 8080,
+  autoStart: false,
+  readOnly: true,
+});
+
+const tunnel = (id: string): TunnelConfig => ({
+  id,
+  name: id,
+  sshConnectionId: "conn",
+  tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
+  autoStart: false,
+  reconnectOnDisconnect: false,
+});
 
 describe("StatusBar — services indicator (#4498, #5858)", () => {
   let container: HTMLDivElement;
@@ -32,7 +57,8 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     setSidebarView = vi.fn<(view: string) => void>();
     useAppStore.setState({
-      embeddedServerStates: { s1: { status: "running" } as never },
+      embeddedServers: [server("s1")],
+      embeddedServerStates: { s1: { status: "running", stats: STATS } as never },
       setSidebarView,
     });
   });
@@ -74,12 +100,15 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
 
   it("counts tunnels, too (#6063)", async () => {
     seedSettings({ experimentalFeaturesEnabled: false });
+    const at = (status: string) => ({ status, stats: STATS });
     const tunnelStates = {
-      a: { status: "connected" },
-      b: { status: "connected" },
-      c: { status: "notReachable" },
+      a: at("connected"),
+      b: at("connected"),
+      c: at("notReachable"),
+      // Of a tunnel that is not there.
+      gone: at("connected"),
     } as never;
-    const tunnels = [{ id: "a" }, { id: "b" }, { id: "c" }] as never;
+    const tunnels = ["a", "b", "c"].map(tunnel);
     useAppStore.setState({ tunnels, tunnelStates });
     act(() => renderStatusBar(root));
     await flushAsync();
@@ -94,6 +123,32 @@ describe("StatusBar — services indicator (#4498, #5858)", () => {
     expect(setSidebarView).toHaveBeenCalledWith("services");
 
     act(() => useAppStore.setState({ tunnelStates: {} }));
+    expect(indicator()).toBeNull();
+  });
+
+  it("says errors, also when nothing runs (#6076)", async () => {
+    const at = (status: string) => ({ status, stats: STATS });
+    const states = { a: at("connected"), b: at("error"), c: at("error") } as never;
+    useAppStore.setState({ tunnels: ["a", "b", "c"].map(tunnel), tunnelStates: states });
+    act(() => renderStatusBar(root));
+    await flushAsync();
+    expect(indicator()!.textContent).toBe("2 running · 2 errors");
+    expect(indicator()!.getAttribute("aria-label")).toBe(
+      "1 tunnel and 1 file server running, 2 errors — click to open Services"
+    );
+    act(() =>
+      useAppStore.setState({ embeddedServerStates: {}, tunnelStates: { b: at("error") } as never })
+    );
+    expect(indicator()!.textContent).toBe("1 error");
+    expect(indicator()!.getAttribute("aria-label")).toBe("1 error — click to open Services");
+  });
+
+  it("does not count what ran on a removed agent (#6076)", async () => {
+    const host = { kind: "agent", agentId: "removed" } as never;
+    seedAgentsRegion({ remoteAgents: [] });
+    useAppStore.setState({ embeddedServers: [{ ...server("s1"), host }] });
+    act(() => renderStatusBar(root));
+    await flushAsync();
     expect(indicator()).toBeNull();
   });
 });

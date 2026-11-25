@@ -181,7 +181,23 @@ describe("EmbeddedServerSidebar — delete confirmation (#1393)", () => {
     await renderSidebar();
 
     await clickDelete("srv-1");
-    expect(document.body.textContent?.toLowerCase()).toContain("stop");
+    // The folder is not what is deleted, and it can be undone (#6076).
+    expect(document.body.textContent).toContain(
+      "It is running. Deleting stops it. The folder and its files stay. You can undo it right after."
+    );
+  });
+
+  it("says how many open connections break (#6076)", async () => {
+    const state = runningState("srv-1");
+    state.stats.activeConnections = 1;
+    seedStore(
+      vi.fn(() => Promise.resolve()),
+      [makeServer("srv-1", "Share")],
+      { "srv-1": state }
+    );
+    await renderSidebar();
+    await clickDelete("srv-1");
+    expect(document.body.textContent).toContain("stops it and breaks 1 open connection.");
   });
 
   // #1427: the store's deleteEmbeddedServer used to swallow backend errors, so

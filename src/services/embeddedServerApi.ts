@@ -46,6 +46,16 @@ export async function stopEmbeddedServer(serverId: string): Promise<void> {
   await invoke("stop_embedded_server", { serverId });
 }
 
+/** Bring back a server that was just deleted, with its password. */
+export async function restoreEmbeddedServer(serverId: string): Promise<void> {
+  await invoke("restore_embedded_server", { serverId });
+}
+
+/** Take back the stop of a server that its agent has not got yet. */
+export async function keepEmbeddedServerRunning(serverId: string): Promise<void> {
+  await invoke("keep_embedded_server_running", { serverId });
+}
+
 /** Ask the agents about the servers they run, now. */
 export async function checkEmbeddedServers(): Promise<void> {
   await invoke("check_embedded_servers");

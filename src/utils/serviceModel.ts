@@ -66,6 +66,8 @@ export type ServiceNextStepId =
   | "edit"
   | "connectAgent"
   | "checkAgain"
+  | "keepRunning"
+  | "letReach"
   | "chooseMachine"
   | "unlock"
   | "editConnection"
@@ -129,6 +131,8 @@ export interface ServiceModel {
   risk?: string;
   /** Only while it runs. */
   address?: ServiceAddress;
+  /** What helps when nobody it is for reaches that address. */
+  addressStep?: ServiceNextStep;
   /** Only while it runs. */
   counters?: ServiceCounters;
   /** What it offers now, always in this order. */
@@ -146,6 +150,8 @@ export interface ServiceContext {
   networkAddress?: string;
   /** The ports that services of this computer use. */
   usedPorts?: ReadonlySet<number>;
+  /** Which service of this computer has a port open now. */
+  portHolders?: ReadonlyMap<number, { id: string; name: string }>;
 }
 
 /** The part of a chained pair that a tunnel is (#2597). */
@@ -266,7 +272,12 @@ function nextStepsFor(
       const agent = context.agents.find((a) => a.id === where.agentId);
       // One on its way needs no help.
       const helps = agent && (agent.connectionState ?? "disconnected") === "disconnected";
-      return helps ? [{ id: "connectAgent", label: t("service.next.connectAgent") }] : [];
+      const steps: ServiceNextStep[] = [];
+      if (state === "stopping") {
+        steps.push({ id: "keepRunning", label: t("service.next.keepRunning") });
+      }
+      if (helps) steps.push({ id: "connectAgent", label: t("service.next.connectAgent") });
+      return steps;
     }
     case "agentSilent":
       return [{ id: "checkAgain", label: t("service.next.checkAgain") }];
@@ -294,11 +305,17 @@ function stateParts(
   const pending = state === "stopping" && reported?.cause === "agentOffline";
   const stateLabel = pending ? t("service.state.stopPending") : serviceStateLabel(state);
   const dot = serviceStateDot(state);
+  const holder =
+    reported?.cause === "portInUse" && port !== undefined
+      ? context.portHolders?.get(port)
+      : undefined;
   const reason = lost
     ? t("service.reason.agentRemoved")
     : state === "needsConnection"
       ? t("service.reason.needsConnection")
-      : serviceReason(state, reported?.error);
+      : holder && serviceReason(state, reported?.error)
+        ? tf("service.reason.portHeld", { port: String(port), name: holder.name })
+        : serviceReason(state, reported?.error);
   return {
     state,
     stateLabel,
@@ -342,7 +359,12 @@ export function withoutAgent(model: ServiceModel): ServiceModel {
   return {
     ...model,
     machine: undefined,
-    reason: model.state === "notReachable" ? undefined : model.reason,
+    reason:
+      model.state === "notReachable"
+        ? undefined
+        : model.state === "stopping"
+          ? t("service.reason.stopPending.short")
+          : model.reason,
     nextSteps: model.nextSteps.filter((step) => step.id !== "connectAgent"),
   };
 }
@@ -515,6 +537,12 @@ function serverAddress(
   const listener = listenerOn(host, context);
   const scheme = `${config.serverType}://`;
   const address = serviceAddress(config.bindHost, config.port, listener, scheme);
+  // A device is never this computer.
+  if (address && !address.open && config.serverType === "tftp") {
+    const here = host.kind === "thisComputer";
+    const reach = t(here ? "service.reach.noDevice" : "service.reach.noDeviceThere");
+    return { ...address, reach };
+  }
   if (!address?.open || !address.copy || !asksForPassword(config)) return address;
   const here = host.kind === "thisComputer";
   return {
@@ -556,6 +584,10 @@ export function fileServerModel(
         ? t(host.kind === "thisComputer" ? "service.risk.upload.here" : "service.risk.upload.there")
         : undefined,
     address,
+    addressStep:
+      address && !address.open && config.serverType === "tftp"
+        ? { id: "letReach", label: t("service.next.letReach") }
+        : undefined,
     counters: stats && {
       sent: stats.bytesSent,
       received: stats.bytesReceived,
@@ -575,17 +607,52 @@ export interface ServiceCount {
 /** What needs a look, the most urgent first. */
 const COUNTED = ["error", "notKnown", "reconnecting", "waiting"] as const;
 
-/** How many of a list run, and how many are in each state that is not simply on or off. */
-export function serviceCounts(models: readonly Pick<ServiceModel, "health">[]): ServiceCount[] {
-  const count = (id: ServiceHealth) => models.filter((model) => model.health === id).length;
-  const running = tf("service.counts.running", {
-    running: String(count("running")),
+/** "2 errors", "1 waiting"; that all of them only need a connection is said so. */
+export function serviceCountLabel(
+  id: (typeof COUNTED)[number],
+  models: readonly Pick<ServiceModel, "health" | "state">[]
+): string {
+  const own = models.filter((model) => model.health === id);
+  const count = String(own.length);
+  const one = own.length === 1;
+  switch (id) {
+    case "error":
+      if (own.every((model) => model.state === "needsConnection")) {
+        return one
+          ? t("service.counts.needsConnection.one")
+          : tf("service.counts.needsConnection", { count });
+      }
+      return one ? t("service.counts.error.one") : tf("service.counts.error", { count });
+    case "notKnown":
+      return tf("service.counts.notKnown", { count });
+    case "reconnecting":
+      return tf("service.counts.reconnecting", { count });
+    case "waiting":
+      return tf("service.counts.waiting", { count });
+  }
+}
+
+/** The numbers of a list that are not simply running or off. */
+export function serviceProblems(
+  models: readonly Pick<ServiceModel, "health" | "state">[]
+): ServiceCount[] {
+  return COUNTED.filter((id) => models.some((model) => model.health === id)).map((id) => ({
+    id,
+    label: serviceCountLabel(id, models),
+  }));
+}
+
+/** "7 of 15 running". */
+export function serviceRunningLabel(models: readonly Pick<ServiceModel, "health">[]): string {
+  return tf("service.counts.running", {
+    running: String(models.filter((model) => model.health === "running").length),
     total: String(models.length),
   });
-  const counts: ServiceCount[] = [{ id: "running", label: running }];
-  for (const id of COUNTED) {
-    const n = count(id);
-    if (n > 0) counts.push({ id, label: tf(`service.counts.${id}`, { count: String(n) }) });
-  }
-  return counts;
+}
+
+/** How many of a list run, and how many are in each state that is not simply on or off. */
+export function serviceCounts(
+  models: readonly Pick<ServiceModel, "health" | "state">[]
+): ServiceCount[] {
+  return [{ id: "running", label: serviceRunningLabel(models) }, ...serviceProblems(models)];
 }

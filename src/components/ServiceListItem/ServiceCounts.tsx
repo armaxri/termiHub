@@ -21,19 +21,17 @@ export function ServiceCounts({ counts, only, onOnly, ...rest }: ServiceCountsPr
       aria-label={t("service.counts.label")}
       data-testid={rest["data-testid"]}
     >
-      {counts.map((count, index) => (
-        <span key={count.id}>
-          {index > 0 && <span aria-hidden="true">{"· "}</span>}
-          <button
-            type="button"
-            className="service-counts__count"
-            aria-pressed={only === count.id}
-            onClick={() => onOnly(only === count.id ? null : count.id)}
-            data-testid={`service-count-${count.id}`}
-          >
-            {count.label}
-          </button>
-        </span>
+      {counts.map((count) => (
+        <button
+          key={count.id}
+          type="button"
+          className="service-counts__count"
+          aria-pressed={only === count.id}
+          onClick={() => onOnly(only === count.id ? null : count.id)}
+          data-testid={`service-count-${count.id}`}
+        >
+          {count.label}
+        </button>
       ))}
     </div>
   );

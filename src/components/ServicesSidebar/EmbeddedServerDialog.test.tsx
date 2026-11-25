@@ -423,15 +423,53 @@ describe("EmbeddedServerDialog", () => {
       )!;
       return card.closest("label")?.textContent ?? card.textContent;
     });
-    expect(cards[0]).toContain("Web server");
-    expect(cards[0]).toContain("Anyone with a browser; nothing to install (HTTP)");
-    expect(cards[1]).toContain("Needs an FTP program; others can upload if you allow it (FTP)");
-    expect(cards[2]).toContain("For switches, routers, network boot; no password (TFTP)");
+    // As the New menu names them (#6076).
+    expect(cards[0]).toContain("Open it in a browser");
+    expect(cards[0]).toContain("Web server (HTTP). Anyone with a browser; nothing to install");
+    expect(cards[1]).toContain("Upload and download files");
+    expect(cards[1]).toContain(
+      "FTP server. Needs an FTP program; others can upload if you allow it"
+    );
+    expect(cards[2]).toContain("Give files to a device");
+    expect(cards[2]).toContain("For switches, routers, network boot; no password");
+  });
+
+  it("asks who can open a server for devices, which are never this computer (#6076)", async () => {
+    const onSave = vi.fn(() => true);
+    await render(<EmbeddedServerDialog {...baseProps} initialType="tftp" onSave={onSave} />);
+    typeInto(field("server-dialog-root"), "/srv/fw");
+    expect(field("server-dialog-bind-host").textContent).toContain("Choose who");
+    expect(field("server-dialog-missing").textContent).toBe("Still needed: who can open it");
+    await act(async () => field("server-dialog-save").click());
+    expect(onSave).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("Choose who can open it.");
+    // The preset of another kind is not a choice.
+    const pick = (kind: string) => act(async () => field(`server-dialog-proto-${kind}`).click());
+    await pick("http");
+    expect(field("server-dialog-bind-host").textContent).toContain("Only this computer");
+    await pick("tftp");
+    expect(field("server-dialog-bind-host").textContent).toContain("Choose who");
+  });
+
+  it("keeps who can open an existing server when its kind changes (#6076)", async () => {
+    const config: EmbeddedServerConfig = {
+      id: "s",
+      name: "Files",
+      serverType: "http",
+      rootDirectory: "/srv",
+      bindHost: "127.0.0.1",
+      port: 8080,
+      autoStart: false,
+      readOnly: true,
+    };
+    await render(<EmbeddedServerDialog {...baseProps} config={config} />);
+    await act(async () => field("server-dialog-proto-tftp").click());
+    expect(field("server-dialog-bind-host").textContent).toContain("Only this computer");
   });
 
   const field = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLInputElement;
 
-  it("asks for what matters first, and for the name last (S-015)", async () => {
+  it("asks for what matters first (S-015)", async () => {
     await render(<EmbeddedServerDialog {...baseProps} />);
     const order = [
       "server-dialog-proto-http",
@@ -439,8 +477,8 @@ describe("EmbeddedServerDialog", () => {
       "server-dialog-bind-host",
       "server-dialog-port",
       "server-dialog-name",
-      "server-dialog-runloc",
       "server-dialog-description",
+      "server-dialog-runloc",
     ].map((id) => field(id));
     for (let i = 1; i < order.length; i += 1) {
       const follows = order[i - 1].compareDocumentPosition(order[i]);

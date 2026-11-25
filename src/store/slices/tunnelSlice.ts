@@ -173,6 +173,8 @@ export interface TunnelSlice {
   retryTunnelNow: (tunnelId: string) => Promise<void>;
   /** Ask the agents about the tunnels they forward, now (#6068). */
   checkTunnelsAgain: () => Promise<void>;
+  /** Take back the stop of a tunnel that its agent has not got yet (#6076). */
+  keepTunnelRunning: (tunnelId: string) => Promise<void>;
   /**
    * A terminal session for the saved SSH connection `connectionId` just
    * connected: start the tunnels bound to it with `startWithConnection`
@@ -356,6 +358,17 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     } catch (err) {
       frontendLog("app_store", `Failed to check tunnels: ${errorMessage(err)}`);
       toast.error(`Failed to check again: ${errorMessage(err)}`);
+      throw err;
+    }
+  },
+
+  keepTunnelRunning: async (tunnelId) => {
+    try {
+      const ack = await dispatchTunnelIntent("tunnel.keepRunning", { id: tunnelId });
+      throwIfRejected(ack, "keep the tunnel running");
+    } catch (err) {
+      frontendLog("app_store", `Failed to keep a tunnel running: ${errorMessage(err)}`);
+      toast.error(`Failed to keep it running: ${errorMessage(err)}`);
       throw err;
     }
   },

@@ -100,6 +100,7 @@ export function TunnelListItem({
   const connectAgent = useConnectAgent();
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const checkTunnelsAgain = useAppStore((s) => s.checkTunnelsAgain);
+  const keepTunnelRunning = useAppStore((s) => s.keepTunnelRunning);
   const retryTunnelNow = useAppStore((s) => s.retryTunnelNow);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
   const running = model.state === "running";
@@ -160,6 +161,11 @@ export function TunnelListItem({
         return model.where.agentId === undefined ? undefined : connectAgent(model.where.agentId);
       case "checkAgain":
         return checkTunnelsAgain();
+      case "keepRunning":
+        return keepTunnelRunning(tunnel.id);
+      case "letReach":
+        // A tunnel has no kind that only others can use.
+        return;
       case "unlock":
         return setUnlockDialogOpen(true);
       case "editConnection":
