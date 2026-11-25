@@ -21,6 +21,7 @@ another checkout's test app or another xdist worker's app is never touched.
 from __future__ import annotations
 
 import os
+import tempfile
 import time
 import weakref
 from pathlib import Path
@@ -32,6 +33,16 @@ from .relaunch import BRIDGE_PORT_ENV
 
 #: Launch variable naming the pytest process (PID) that launched the app.
 OWNER_ENV = "TERMIHUB_HARNESS_OWNER"
+
+#: Launch variable naming the test whose launch it was (pytest's own
+#: ``PYTEST_CURRENT_TEST`` at that moment), for the report of a leak.
+OWNER_TEST_ENV = "TERMIHUB_HARNESS_OWNER_TEST"
+
+#: Prefix of the temp config dir the harness makes for each app it launches.
+CONFIG_DIR_PREFIX = "termihub-app-config-"
+
+#: Where this checkout's app binaries are built (a symlink is followed).
+TARGET_DIR = Path(__file__).resolve().parents[3] / "target"
 
 #: Executable stem of the app binary on every OS (``termihub``, ``termihub.exe``,
 #: the macOS bundle's ``termiHub``). Only a cheap pre-filter; the tag decides.
@@ -61,6 +72,14 @@ def launch_tag() -> str:
     global _ARMED
     _ARMED = True
     return owner_tag()
+
+
+def launch_env() -> dict[str, str]:
+    """The launch variables that name this session and the running test."""
+    return {
+        OWNER_ENV: launch_tag(),
+        OWNER_TEST_ENV: os.environ.get("PYTEST_CURRENT_TEST", "outside a test"),
+    }
 
 
 def register(instance: _Tracked) -> None:
@@ -124,9 +143,13 @@ def describe(proc: psutil.Process) -> str:
         port = env.get(BRIDGE_PORT_ENV, "<none: a CLI run>")
         created = f"{proc.create_time():.1f}"
         config = env.get("TERMIHUB_CONFIG_DIR", "?")
+        test = env.get(OWNER_TEST_ENV, "?")
     except psutil.Error:
-        port, created, config = "?", "?", "?"
-    return f"pid={proc.pid} created={created} {BRIDGE_PORT_ENV}={port} config={config}"
+        port, created, config, test = "?", "?", "?", "?"
+    return (
+        f"pid={proc.pid} created={created} {BRIDGE_PORT_ENV}={port} config={config} "
+        f"launched by {test}"
+    )
 
 
 def reap(procs: list[psutil.Process], timeout: float = 5.0) -> None:
@@ -151,12 +174,17 @@ def reap(procs: list[psutil.Process], timeout: float = 5.0) -> None:
             pass
 
 
-def reap_leaks(where: str) -> list[str]:
-    """Reap every leaked app; one report line per app (empty when none leaked)."""
+def reap_leaks(where: str, *, session_over: bool = False) -> list[str]:
+    """Reap every leaked app; one report line per app (empty when none leaked).
+
+    ``session_over``: no instance is live any more, so every app of this process
+    is a leak, one whose teardown never ran included (#6046).
+    """
     if not _ARMED:
         return []
+    nothing_live: dict = {"live_pids": set(), "live_ports": set()} if session_over else {}
     try:
-        leaked = find_leaked_apps()
+        leaked = find_leaked_apps(**nothing_live)
     except psutil.Error:
         return []
     lines = [
@@ -216,17 +244,25 @@ def find_foreign_apps(
     return foreign
 
 
+def _owner_gone(tag: str, app_created: Optional[float]) -> bool:
+    """Whether the pytest process ``tag`` is over (its PID free, or reused since)."""
+    try:
+        owner = psutil.Process(int(tag))
+        return app_created is not None and owner.create_time() > app_created
+    except psutil.NoSuchProcess:
+        return True
+    except psutil.Error:
+        return False  # there, but not readable: not proven gone
+
+
 def _owner_state(tag: Optional[str], app_created: Optional[float]) -> str:
     if tag is None:
         return "untagged: not launched by the harness (an installed termiHub?)"
     if tag == owner_tag():
         return f"owner={tag} (this pytest process; no live instance tracks it)"
-    try:
-        owner = psutil.Process(int(tag))
-        reused = app_created is not None and owner.create_time() > app_created
-    except (ValueError, psutil.Error):
-        owner, reused = None, False
-    if owner is None or reused:
+    if not tag.isdecimal():
+        return f"owner={tag} (not a PID)"
+    if _owner_gone(tag, app_created):
         return f"owner={tag} (gone: leaked by an earlier pytest session or a crashed worker)"
     return f"owner={tag} (alive: another pytest process, e.g. a parallel xdist worker)"
 
@@ -248,11 +284,71 @@ def describe_foreign(proc: psutil.Process) -> str:
     owner = _owner_state(env.get(OWNER_ENV), created)
     port = env.get(BRIDGE_PORT_ENV, "<none>")
     config = env.get("TERMIHUB_CONFIG_DIR", "?")
+    test = env.get(OWNER_TEST_ENV, "?")
     when = f"{created:.1f}" if created is not None else "?"
     return (
         f"pid={proc.pid} exe={exe} created={when} {owner} "
-        f"{BRIDGE_PORT_ENV}={port} config={config}"
+        f"{BRIDGE_PORT_ENV}={port} config={config} launched by {test}"
     )
+
+
+# ── Our own leaked instances (#6046) ─────────────────────────────────────────
+#: One line per app :func:`end_leaks_of_gone_sessions` ended in this process.
+ENDED_LEAKS: list[str] = []
+
+
+def is_leak_of_a_gone_session(proc: psutil.Process) -> bool:
+    """Whether ``proc`` is provably a test app that a finished session left behind.
+
+    All of it must hold, read from the process itself: the app binary, run from
+    this checkout's ``target/``; tagged by a pytest process that is over; a test
+    bridge port; and a config dir the harness made. An installed termiHub, a
+    developer's build, another checkout's app or a running session's fails at
+    least one, and whatever cannot be read counts as not ours.
+    """
+    try:
+        if not _is_app(proc):
+            return False
+        env = proc.environ()
+        exe = os.path.realpath(proc.exe())
+        created = proc.create_time()
+    except (psutil.Error, OSError):
+        return False
+    tag = env.get(OWNER_ENV, "")
+    if not tag.isdecimal() or tag == owner_tag() or not _owner_gone(tag, created):
+        return False
+    if not env.get(BRIDGE_PORT_ENV, "").isdecimal():
+        return False
+    config = os.path.realpath(env.get("TERMIHUB_CONFIG_DIR") or os.curdir)
+    in_temp = os.path.dirname(config) == os.path.realpath(tempfile.gettempdir())
+    if not in_temp or not os.path.basename(config).startswith(CONFIG_DIR_PREFIX):
+        return False
+    target = os.path.realpath(TARGET_DIR)
+    try:
+        return bool(exe) and os.path.commonpath([exe, target]) == target
+    except ValueError:  # another drive (Windows)
+        return False
+
+
+def end_leaks_of_gone_sessions(
+    allowed_pids: Iterable[int] = (),
+    processes: Optional[Iterable[psutil.Process]] = None,
+    *,
+    end=reap,
+) -> list[str]:
+    """End every :func:`is_leak_of_a_gone_session`, by its process handle.
+
+    Returns (and keeps in :data:`ENDED_LEAKS`) one line per app, naming the test
+    that launched it. Nothing else is touched.
+    """
+    allowed = set(allowed_pids)
+    candidates = processes if processes is not None else psutil.process_iter()
+    leaked = [p for p in candidates if p.pid not in allowed and is_leak_of_a_gone_session(p)]
+    lines = [describe_foreign(proc) for proc in leaked]
+    if leaked:
+        end(leaked)
+        ENDED_LEAKS.extend(lines)
+    return lines
 
 
 def wait_for_foreign_apps(

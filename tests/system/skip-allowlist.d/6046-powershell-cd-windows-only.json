@@ -1,0 +1,4 @@
+{
+  "why": "#6046: test_windows_shells.py grew test_file_browser_follows_powershell_cd_with_command_marks (PR #5045, 2026-10-27), which needs PowerShell on Windows; off Windows it skips with the existing windows-shells-off-windows reason. The arm64 lane had no headroom for it (bulk-linux and bulk-macos do)",
+  "max_skips": { "bulk-linux-arm64": 1 }
+}

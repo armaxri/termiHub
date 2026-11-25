@@ -8,10 +8,13 @@ process of this pytest process that no live instance tracks. Machinery tests
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import tempfile
 
 import psutil
+import pytest
 
 from termihub_harness import app_leaks
 from termihub_harness.relaunch import BRIDGE_PORT_ENV
@@ -178,3 +181,157 @@ def test_waiting_names_a_foreign_app_that_never_exits():
 def test_describe_app_pid_is_empty_for_a_non_app():
     assert app_leaks.describe_app_pid(psutil.Process().pid) == ""
     assert app_leaks.describe_app_pid(2**31 - 2) == ""
+
+
+# ── Leaks of finished sessions (#6046) ───────────────────────────────────────
+class _OrphanProc:
+    """A process that fits every condition; a test changes one."""
+
+    def __init__(self, tmp_path, **changes):
+        self.pid = changes.pop("pid", 3112)
+        self._name = changes.pop("name", "termihub.exe")
+        self._exe = changes.pop("exe", str(tmp_path / "target" / "debug" / "termihub.exe"))
+        self._created = 1000.0
+        self._env = {
+            app_leaks.OWNER_ENV: changes.pop("owner", _gone_pid()),
+            BRIDGE_PORT_ENV: changes.pop("port", "64484"),
+            "TERMIHUB_CONFIG_DIR": changes.pop(
+                "config",
+                os.path.join(tempfile.gettempdir(), app_leaks.CONFIG_DIR_PREFIX + "azxzd5tf"),
+            ),
+            app_leaks.OWNER_TEST_ENV: "tests/test_x.py::TestX::test_y (setup)",
+        }
+        self._env = {k: v for k, v in self._env.items() if v is not None}
+        self._error = changes.pop("error", None)
+        assert not changes
+
+    def _read(self, value):
+        if self._error is not None:
+            raise self._error
+        return value
+
+    def name(self):
+        return self._name
+
+    def environ(self):
+        return self._read(self._env)
+
+    def exe(self):
+        return self._read(self._exe)
+
+    def create_time(self):
+        return self._read(self._created)
+
+
+def _gone_pid() -> str:
+    child = subprocess.Popen([sys.executable, "-c", ""])
+    child.wait(timeout=30)
+    return str(child.pid)
+
+
+@pytest.fixture
+def target(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_leaks, "TARGET_DIR", tmp_path / "target")
+    monkeypatch.setattr(app_leaks, "ENDED_LEAKS", [])
+    return tmp_path
+
+
+def test_an_orphan_of_a_finished_session_is_ended_and_names_its_test(target):
+    orphan, ended = _OrphanProc(target), []
+    lines = app_leaks.end_leaks_of_gone_sessions([], [orphan], end=ended.extend)
+    assert ended == [orphan]
+    assert len(lines) == 1 and app_leaks.ENDED_LEAKS == lines
+    for part in ("pid=3112", "tests/test_x.py::TestX::test_y", "64484", "azxzd5tf"):
+        assert part in lines[0], lines
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"name": "bash"},  # a shell the app started
+        {"exe": "/Applications/termiHub.app/Contents/MacOS/termiHub"},  # installed
+        {"exe": ""},
+        {"owner": None},  # not launched by a harness
+        {"owner": "not-a-pid"},
+        {"owner": "parent"},  # its session still runs
+        {"owner": "self"},  # this session's: reap_leaks' business
+        {"port": None},
+        {"port": "?"},
+        {"config": None},
+        {"config": os.path.join(os.path.expanduser("~"), ".config", "termihub")},
+        {"config": os.path.join(tempfile.gettempdir(), "someone-elses")},
+        {"config": os.path.join(tempfile.gettempdir(), "x", "termihub-app-config-1")},
+        {"error": psutil.AccessDenied(3112)},
+        {"error": psutil.NoSuchProcess(3112)},
+        {"error": OSError("gone")},
+    ],
+    ids=lambda change: "-".join(change),
+)
+def test_anything_not_provably_our_own_orphan_is_never_touched(target, change):
+    pids = {"parent": os.getppid(), "self": os.getpid()}
+    owner = pids.get(change.get("owner"))
+    proc = _OrphanProc(target, **(change if owner is None else {"owner": str(owner)}))
+    if owner is not None:
+        # Started after its owner, so that PID was not reused.
+        proc._created = psutil.Process(owner).create_time() + 1
+    ended = []
+    assert app_leaks.end_leaks_of_gone_sessions([], [proc], end=ended.extend) == []
+    assert ended == [] and app_leaks.ENDED_LEAKS == []
+
+
+def test_a_sibling_checkouts_app_is_not_under_this_target(target):
+    other = _OrphanProc(target, exe=str(target / "target-old" / "debug" / "termihub"))
+    assert app_leaks.end_leaks_of_gone_sessions([], [other], end=lambda _p: None) == []
+
+
+def test_the_test_instance_itself_is_never_ended(target):
+    orphan = _OrphanProc(target)
+    assert app_leaks.end_leaks_of_gone_sessions([3112], [orphan], end=lambda _p: None) == []
+
+
+def test_a_reused_owner_pid_counts_as_gone(target):
+    # The owner's PID belongs to a process started after the app was.
+    orphan = _OrphanProc(target, owner=str(os.getppid()))
+    assert app_leaks.is_leak_of_a_gone_session(orphan)
+
+
+def test_an_owner_that_cannot_be_read_is_not_gone(target, monkeypatch):
+    orphan = _OrphanProc(target)
+
+    def denied(pid):
+        raise psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(app_leaks.psutil, "Process", denied)
+    assert not app_leaks.is_leak_of_a_gone_session(orphan)
+
+
+def test_an_app_on_another_drive_is_not_under_this_target(target, monkeypatch):
+    def different_drives(_paths):
+        raise ValueError("Paths don't have the same drive")
+
+    monkeypatch.setattr(app_leaks.os.path, "commonpath", different_drives)
+    assert not app_leaks.is_leak_of_a_gone_session(_OrphanProc(target))
+
+
+def test_the_target_dir_is_this_checkouts():
+    assert (app_leaks.TARGET_DIR.parent / "src-tauri" / "Cargo.toml").is_file()
+
+
+def test_the_end_of_the_session_reaps_an_app_an_instance_still_tracks(monkeypatch):
+    # Its teardown never ran (#6046), so it still looks live.
+    asked = []
+    monkeypatch.setattr(app_leaks, "_ARMED", True)
+    monkeypatch.setattr(app_leaks, "find_leaked_apps", lambda **kw: asked.append(kw) or [])
+    app_leaks.reap_leaks("a test")
+    app_leaks.reap_leaks("the session", session_over=True)
+    assert asked == [{}, {"live_pids": set(), "live_ports": set()}]
+
+
+def test_a_launch_names_its_session_and_test(monkeypatch):
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_x.py::test_y (setup)")
+    monkeypatch.setattr(app_leaks, "_ARMED", False)
+    assert app_leaks.launch_env() == {
+        app_leaks.OWNER_ENV: str(os.getpid()),
+        app_leaks.OWNER_TEST_ENV: "tests/test_x.py::test_y (setup)",
+    }
+    assert app_leaks._ARMED
