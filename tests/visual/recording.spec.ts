@@ -143,7 +143,7 @@ for (const viewport of [
       await type(page, ["sudo -v\r"]);
       await type(page, ["h", "u", "n"], "[sudo] password for arne: ");
       await expect(page.locator(id("terminal-view-active-recording"))).toHaveText("Stop recording");
-      await expect(page.locator(id("recording-bar-prompt"))).toContainText("is not recorded");
+      await expect(page.locator(id("recording-bar-prompt"))).toContainText("is kept out of the recording");
       await check(page, "prompt", id("recording-bar-prompt"));
       await type(page, ["\r"], "[sudo] password for arne: ");
       await stop(page);
