@@ -60,28 +60,37 @@
   white-space: nowrap;
 }
 
-/* A trigger runs this automation by itself (and may type into a terminal). */
-.automation-item__marker--armed {
-  color: var(--text-accent);
+/* Readable on the sidebar in every theme (A-018). */
+.automation-item__marker--running {
+  color: var(--text-primary);
+}
+
+/* It waits for the user: not just running (#6026). */
+.automation-item__marker--waiting {
+  color: var(--color-warning);
   font-weight: var(--font-weight-semibold);
 }
 
 /* The last run nobody watched failed: opens its history. */
-.automation-item__marker--failed {
+.automation-item__marker--failed,
+.automation-item__marker--blocked {
   padding: var(--spacing-xxs);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-error);
+  font-size: var(--font-size-2xs);
   font-family: inherit;
   cursor: pointer;
 }
 
-.automation-item__marker--failed:hover {
+.automation-item__marker--failed:hover,
+.automation-item__marker--blocked:hover {
   text-decoration: underline;
 }
 
-.automation-item__marker--failed:focus-visible {
+.automation-item__marker--failed:focus-visible,
+.automation-item__marker--blocked:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
@@ -122,35 +131,67 @@
   }
 }
 
-/* Per-terminal progress of a run on several terminals (#3418). */
+/* Where it runs: one line per terminal (#3418), each a way there. */
 .automation-item__targets {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xxs);
-  margin: var(--spacing-xxs) 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.automation-item__target {
+/* A line under the name that says in words what starts it, where it runs, or why
+   it cannot (#6026). It wraps: a cut sentence says nothing. */
+.automation-item__line {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-xs-sm);
-  font-size: var(--font-size-xs);
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xxs) 0;
   color: var(--text-secondary);
+  font-size: var(--font-size-xs);
 }
 
-.automation-item__target-name {
+.automation-item__line > svg {
+  flex-shrink: 0;
+  margin-top: var(--spacing-xxs);
+}
+
+.automation-item__line--on > svg {
+  color: var(--text-accent);
+}
+
+.automation-item__line--blocked > svg {
+  color: var(--color-error);
+}
+
+.automation-item__line-text {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
-.automation-item__target-progress {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
+.automation-item__where {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.automation-item__where:hover {
+  text-decoration: underline;
+}
+
+.automation-item__where:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
 }
 
 .automation-sidebar__stop-recording {

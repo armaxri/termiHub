@@ -8,6 +8,7 @@
  * `workflow-run` projection region, records the run in history (PROD-0046),
  * and surfaces progress, retries (PROD-045), and the outcome as a toast.
  */
+import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepMeta";
 import { toast } from "@/components/ui";
 import {
   claimWorkflowRunToast,
@@ -39,6 +40,7 @@ import {
   type WorkflowWaitForUserSeam,
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
+import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { Workflow } from "@/types/workflow";
@@ -67,6 +69,7 @@ import {
   openWorkflowOutputContent,
   setWorkflowOutputProcessResult,
 } from "../workflowRunBridge";
+import { failedRunActions } from "./automationRunActions";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
 import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
@@ -192,7 +195,8 @@ export function toastRunOutcome(
   workflowName: string,
   result: WorkflowRunResult,
   total: number,
-  toastId: string
+  toastId: string,
+  automation?: Pick<Automation, "id" | "steps">
 ): void {
   const tolerated = result.continuedFailures ?? [];
   if (result.status === "completed" && tolerated.length === 0) {
@@ -204,24 +208,35 @@ export function toastRunOutcome(
     const first = tolerated[0];
     // toast-policy: explains-outcome — a clean-looking run hid tolerated step failures
     toast.info(
-      `Ran automation "${workflowName}" with ${tolerated.length} tolerated step failure` +
+      `Ran automation “${workflowName}” with ${tolerated.length} tolerated step failure` +
         (tolerated.length === 1 ? "" : "s"),
       { id: toastId, description: `Step ${first.stepIndex + 1}: ${first.error}` }
     );
     keepWorkflowRunFailure(toastId);
   } else if (result.status === "cancelled") {
     // toast-policy: explains-outcome — says how far the canceled run got
-    toast.info(`Automation "${workflowName}" canceled`, {
+    toast.info(`“${workflowName}” stopped`, {
       id: toastId,
       description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
     });
     collapseWorkflowRunOutcome(toastId);
   } else {
-    const stepNumber = (result.failedStepIndex ?? result.stepsCompleted) + 1;
-    toast.error(`Automation "${workflowName}" failed at step ${stepNumber}`, {
-      id: toastId,
-      description: result.error,
-    });
+    const index = result.failedStepIndex ?? result.stepsCompleted;
+    const step = automation?.steps[index];
+    // What the step is, so the user need not count in the editor (#6026).
+    const what = step
+      ? ` (${[stepKindLabel(step.kind), stepSummary(step)].filter(Boolean).join(": ")})`
+      : "";
+    toast.error(
+      result.notStarted
+        ? `“${workflowName}” was not run`
+        : `“${workflowName}” failed at step ${index + 1}${what}`,
+      {
+        id: toastId,
+        description: result.error,
+        ...(automation ? failedRunActions(automation.id) : {}),
+      }
+    );
     keepWorkflowRunFailure(toastId);
   }
 }
@@ -277,7 +292,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     recordAutomationRun(set, notRun, "workflow");
     frontendLog("workflow", `run of "${workflow.name}" refused: it waits for the user`);
     if (!fanout) {
-      toast.error(`Automation "${workflow.name}" was not run`, {
+      toast.error(`Automation “${workflow.name}” was not run`, {
         id: `automation-wait-refused-${workflowId}`,
         description: t("automation.wait.unattended"),
       });
@@ -534,7 +549,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     const note = t("automation.wait.note");
     if (fanout) fanout.onProgress?.(0, note);
     else
-      toast.loading(`Running automation "${workflow.name}"…`, { id: toastId, description: note });
+      toast.loading(`Running automation “${workflow.name}”…`, { id: toastId, description: note });
     const tab = collectLiveTabs(get()).find((x) => x.id === targetTabId);
     return get().waitForUser(
       {
@@ -559,7 +574,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   const startedAt = new Date().toISOString();
   if (!fanout) {
     claimWorkflowRunToast(toastId);
-    toast.loading(`Running automation "${workflow.name}"…`, {
+    toast.loading(`Running automation “${workflow.name}”…`, {
       id: toastId,
       description: `0 / ${total} steps`,
     });
@@ -625,7 +640,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
           fanout.onProgress?.(completed);
           return;
         }
-        toast.loading(`Running automation "${workflow.name}"…`, {
+        toast.loading(`Running automation “${workflow.name}”…`, {
           id: toastId,
           description: `${completed} / ${total} steps`,
         });
@@ -646,7 +661,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
           fanout.onProgress?.(event.stepIndex, retryNote);
           return;
         }
-        toast.loading(`Running automation "${workflow.name}"…`, {
+        toast.loading(`Running automation “${workflow.name}”…`, {
           id: toastId,
           description: retryNote,
         });
@@ -705,6 +720,6 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   );
 
   // A fan-out run summarises all targets once at the end instead (PROD-047).
-  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId);
+  if (!fanout) toastRunOutcome(workflow.name, result, total, toastId, automation);
   return { ...result, historyRunId: runRecord.id };
 }

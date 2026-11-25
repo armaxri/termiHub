@@ -286,7 +286,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
 
     if (workflow.steps.length === 0) {
       // toast-policy: explains-outcome — nothing runs, and this says why
-      toast.info(`Automation "${workflow.name}" has no steps to run`);
+      toast.info(`Automation “${workflow.name}” has no steps to run`);
       return;
     }
 
@@ -295,7 +295,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     const refusal = localProcessRefusal(state, workflow);
     if (refusal) {
       frontendLog("workflow", `run of "${workflow.name}" refused: ${refusal}`);
-      toast.error(`Automation "${workflow.name}" was not run`, {
+      toast.error(`Automation “${workflow.name}” was not run`, {
         id: localProcessRefusalToastId(workflow.id),
         description: refusal,
       });
@@ -317,7 +317,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       set({ workflowParamPrompt: null });
       if (collected === null) {
         // toast-policy: explains-outcome — the parameter prompt was dismissed, nothing runs
-        toast.info(`Automation "${workflow.name}" canceled`);
+        toast.info(`“${workflow.name}” was not run`);
         return;
       }
       paramValues = collected;
@@ -352,7 +352,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     const toastId = `workflow-run-${workflowId}-fanout`;
     const statuses: FanoutTargetStatus[] = targets.map(() => "queued");
     const authDecisions = new Map<string, Promise<LocalProcessDecision>>();
-    const title = `Running automation "${workflow.name}" on ${targets.length} terminals…`;
+    const title = `Running automation “${workflow.name}” on ${targets.length} terminals…`;
     const renderProgress = (note?: string) => {
       const line = describeFanoutProgress(statuses);
       toast.loading(title, { id: toastId, description: note ? `${line} — ${note}` : line });

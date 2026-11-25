@@ -1,8 +1,16 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
-import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
+import {
+  showHistoryInSidebar,
+  useAutomationSections,
+} from "@/components/AutomationSidebar/automationSections";
 import { toast } from "@/components/ui";
 import { getActiveTab, useAppStore } from "@/store/appStore";
+import {
+  EDIT_AUTOMATION_EVENT,
+  SHOW_AUTOMATION_RUNS_EVENT,
+  type AutomationEventDetail,
+} from "@/store/slices/automationRunActions";
 import { errorMessage } from "@/utils/errorMessage";
 import { AutomationEditorDialog, type AutomationSaveRequest } from "./AutomationEditorDialog";
 import { useAutomationEditor } from "./automationEditorStore";
@@ -26,6 +34,25 @@ export function AutomationEditorHost() {
       ? [{ id: automation.id, name: automation.name, stepCount: automation.steps.length }]
       : [];
   }, [automations, runOnId]);
+
+  const openEditor = useAutomationEditor((s) => s.open);
+  // A failed run's toast asks for its automation's editor or runs (#6026).
+  useEffect(() => {
+    const idOf = (e: Event) => (e as CustomEvent<AutomationEventDetail>).detail.automationId;
+    const onEdit = (e: Event) => {
+      const id = idOf(e);
+      const automation = useAppStore.getState().automations.find((a) => a.id === id);
+      if (automation) openEditor(automation, false);
+      else toast.error("The automation no longer exists");
+    };
+    const onRuns = (e: Event) => showHistoryInSidebar(idOf(e));
+    window.addEventListener(EDIT_AUTOMATION_EVENT, onEdit);
+    window.addEventListener(SHOW_AUTOMATION_RUNS_EVENT, onRuns);
+    return () => {
+      window.removeEventListener(EDIT_AUTOMATION_EVENT, onEdit);
+      window.removeEventListener(SHOW_AUTOMATION_RUNS_EVENT, onRuns);
+    };
+  }, [openEditor]);
 
   const save = useCallback(
     async ({ automation, run, schedule }: AutomationSaveRequest) => {

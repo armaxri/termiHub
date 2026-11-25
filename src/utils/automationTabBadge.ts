@@ -66,6 +66,6 @@ export function runningAutomationOnTab(
 
 /** The badge's accessible name: `Running automation "Deploy" (2/5)`. */
 export function runningAutomationLabel(info: RunningAutomationInfo): string {
-  if (info.waiting) return `Automation "${info.name}" waits for you`;
-  return `Running automation "${info.name}" (${info.completed}/${info.total})`;
+  if (info.waiting) return `Automation “${info.name}” waits for you`;
+  return `Running automation “${info.name}” (${info.completed}/${info.total})`;
 }

@@ -39,6 +39,8 @@ export interface AutomationRowActions {
 interface AutomationRowMenuProps {
   automationId: string;
   running: boolean;
+  /** It cannot run; the row says why. */
+  blocked: boolean;
   /** Whether "New automation from this…" applies (typed keystrokes only). */
   canUseInNew: boolean;
   actions: AutomationRowActions;
@@ -51,6 +53,7 @@ interface AutomationRowMenuProps {
 export function AutomationRowMenu({
   automationId: id,
   running,
+  blocked,
   canUseInNew,
   actions,
 }: AutomationRowMenuProps) {
@@ -67,6 +70,7 @@ export function AutomationRowMenu({
       ) : (
         <MenuItem
           icon={<Play size={14} />}
+          disabled={blocked}
           onSelect={() => actions.onRun(id)}
           data-testid={`automation-menu-run-${id}`}
         >
@@ -75,7 +79,7 @@ export function AutomationRowMenu({
       )}
       <MenuItem
         icon={<ListChecks size={14} />}
-        disabled={running}
+        disabled={running || blocked}
         onSelect={() => actions.onRunOn(id)}
         data-testid={`automation-menu-run-on-${id}`}
       >

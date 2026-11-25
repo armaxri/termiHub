@@ -2,7 +2,7 @@
 .automation-history {
   display: flex;
   flex-direction: column;
-  max-height: 40%;
+  max-height: 60%;
   border-top: 1px solid var(--border-primary);
 }
 
@@ -31,7 +31,7 @@
   padding: var(--spacing-xxs) 0;
 }
 
-/* A row is one disclosure button: chevron, status dot, name, time. */
+/* A row is one disclosure button: the name, and under it outcome, time, place. */
 .automation-history__row {
   display: flex;
   align-items: center;
@@ -69,43 +69,65 @@
   transform: rotate(90deg);
 }
 
-.automation-history__name {
-  flex: 1 1 auto;
+.automation-history__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
 }
 
-.automation-history__time {
-  flex-shrink: 0;
+.automation-history__name {
+  min-width: 0;
+}
+
+.automation-history__line {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
   white-space: nowrap;
 }
 
-/* A scheduled time without a run says so: its dot alone would not (#6024). */
 .automation-history__outcome {
-  flex-shrink: 0;
-  font-size: var(--font-size-xs);
+  color: var(--text-primary);
 }
 
-/* The disclosed details: a compact label/value grid under the row. */
+.automation-history__target {
+  flex: 1;
+  min-width: 0;
+}
+
 .automation-history__details {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--spacing-xxs) var(--spacing-sm);
-  margin: 0;
   padding: var(--spacing-xxs) var(--spacing-md) var(--spacing-xs) var(--spacing-xl);
   font-size: var(--font-size-xs);
 }
 
-.automation-history__details dt {
+/* The disclosed facts: a compact label/value grid under the row. */
+.automation-history__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--spacing-xxs) var(--spacing-sm);
+  margin: 0;
+}
+
+.automation-history__facts dt {
   color: var(--text-secondary);
 }
 
-.automation-history__details dd {
+.automation-history__facts dd {
   min-width: 0;
   margin: 0;
   color: var(--text-primary);
   overflow-wrap: anywhere;
+}
+
+.automation-history__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  padding-top: var(--spacing-xs);
 }
 
 .automation-history__via {

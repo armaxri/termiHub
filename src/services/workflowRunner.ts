@@ -300,6 +300,8 @@ export interface WorkflowRunResult {
   failedStepIndex?: number;
   /** For `failed`: a human-readable reason. */
   error?: string;
+  /** It was refused before its first step: nothing was typed. */
+  notStarted?: true;
   /**
    * Id of the persisted run-history record (PROD-0046) of this run. Set by the
    * store-level runner once the record is written; the engine never sets it.
@@ -812,7 +814,7 @@ export interface WorkflowRunOptions {
 /** A human-readable name of an automation id for error messages. */
 function automationLabel(id: string, deps: Pick<WorkflowRunnerDeps, "resolveAutomation">): string {
   const name = deps.resolveAutomation?.(id)?.name;
-  return name ? `"${name}"` : `"${id}"`;
+  return name ? `“${name}”` : `“${id}”`;
 }
 
 /**
@@ -959,7 +961,7 @@ async function runNestedAutomation(
       finish("failed", i, { index: i, error: outcome.error });
       return {
         ok: false,
-        error: `in automation "${callee.name}", step ${i + 1}: ${outcome.error}`,
+        error: `in automation “${callee.name}”, step ${i + 1}: ${outcome.error}`,
         ...(outcome.fatal ? { fatal: true } : {}),
       };
     }

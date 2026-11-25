@@ -27,7 +27,7 @@ export function ScheduleStatus() {
   return (
     <Tooltip content={tooltip} side="top">
       <button
-        className="status-bar__item status-bar__item--interactive"
+        className="status-bar__item status-bar__item--interactive status-bar__item--with-icon"
         aria-label={tooltip}
         data-testid="schedule-status"
         onClick={showSchedulesInSidebar}

@@ -1,0 +1,133 @@
+import { Ban, CalendarClock, Hand, Square, Zap, ZapOff } from "lucide-react";
+import type React from "react";
+import { Button, Toggle } from "@/components/ui";
+import { tf } from "@/i18n/catalog";
+import type { AutomationRunTarget } from "./AutomationRow";
+import type { TriggerState } from "./automationRowInfo";
+
+/** Props of {@link RowLines}. */
+export interface RowLinesProps {
+  id: string;
+  name: string;
+  /** The terminals it runs on right now. */
+  targets: AutomationRunTarget[];
+  /** Why it cannot run. */
+  blocked: string | null;
+  /** What starts it, or does not while its triggers are off. */
+  triggers: TriggerState | null;
+  /** When a schedule runs it next. */
+  nextRun: string | null;
+  onSetTriggers: (on: boolean) => void;
+}
+
+/** Keep a control's clicks and Enter/Space off the row, which acts on them. */
+const keepOffRow = {
+  onClick: (e: React.SyntheticEvent) => e.stopPropagation(),
+  onDoubleClick: (e: React.SyntheticEvent) => e.stopPropagation(),
+  onKeyDown: (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+  },
+};
+
+/** The lines under an automation's name (#6026): its state and what starts it, in words. */
+export function RowLines({
+  id,
+  name,
+  targets,
+  blocked,
+  triggers,
+  nextRun,
+  onSetTriggers,
+}: RowLinesProps) {
+  const several = targets.length > 1;
+  return (
+    <>
+      {targets.length > 0 && (
+        <ul
+          className="automation-item__targets"
+          aria-label="Running terminals"
+          data-testid={`automation-targets-${id}`}
+        >
+          {targets.map((target) => (
+            <li
+              key={target.key}
+              className="automation-item__line"
+              data-testid={`automation-target-${target.key}`}
+              {...keepOffRow}
+            >
+              {target.waiting && <Hand size={10} aria-hidden="true" />}
+              <button
+                type="button"
+                className="automation-item__where"
+                aria-label={`${target.progress}. ${tf("automation.running.show", { tab: target.label })}`}
+                onClick={target.onShow}
+                data-testid={`automation-target-show-${target.key}`}
+              >
+                {target.progress}
+              </button>
+              {several && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={tf("automation.stop.target", { target: target.label })}
+                  data-testid={`automation-target-stop-${target.key}`}
+                  icon={<Square size={10} fill="currentColor" />}
+                  onClick={target.onStop}
+                />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {blocked !== null && (
+        <div
+          className="automation-item__line automation-item__line--blocked"
+          data-testid={`automation-blocked-reason-${id}`}
+        >
+          <Ban size={10} aria-hidden="true" />
+          <span className="automation-item__line-text">{blocked}</span>
+        </div>
+      )}
+      {triggers !== null && (
+        <div
+          className={
+            triggers.on
+              ? "automation-item__line automation-item__line--on"
+              : "automation-item__line"
+          }
+        >
+          {triggers.on ? (
+            <Zap size={10} aria-hidden="true" />
+          ) : (
+            <ZapOff size={10} aria-hidden="true" />
+          )}
+          <span
+            className="automation-item__line-text"
+            data-testid={`automation-armed-${id}`}
+            data-armed={triggers.on ? "true" : "false"}
+          >
+            {triggers.text}
+          </span>
+          <span className="automation-item__arm-toggle" {...keepOffRow}>
+            <Toggle
+              checked={triggers.on}
+              onCheckedChange={onSetTriggers}
+              aria-label={tf(
+                triggers.on ? "automation.triggers.toggleOff" : "automation.triggers.toggleOn",
+                { name }
+              )}
+              data-testid={`automation-arm-toggle-${id}`}
+            />
+          </span>
+        </div>
+      )}
+      {nextRun !== null && (
+        <div className="automation-item__line" data-testid={`automation-next-run-${id}`}>
+          <CalendarClock size={10} aria-hidden="true" />
+          <span className="automation-item__line-text">{nextRun}</span>
+        </div>
+      )}
+    </>
+  );
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { CalendarClock, Plus } from "lucide-react";
+import { CalendarClock, Pause, Play, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, StatusDot, Toggle, Tooltip, toast, EmptyState } from "@/components/ui";
+import { Button, StatusDot, Tooltip, toast, EmptyState } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { AUTOMATION_JUST_SAVED_MS } from "@/components/AutomationSidebar/AutomationRow";
 import {
@@ -118,21 +118,26 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
 
   const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
 
+  // A verb, not a switch (A-019): an "off" switch beside "Schedules" read as if
+  // the schedules were off.
+  const pauseLabel = paused ? "Resume all schedules" : "Pause all schedules";
   // There is nothing to pause without a schedule (R-135); a pause left on stays
   // reachable.
   const pauseToggle =
     schedules.length === 0 && !paused ? null : (
-      <Tooltip content="Pause all schedules" side="top" disabled={!compactHeader}>
-        <label className="schedules__pause" htmlFor="schedules-pause-toggle">
-          {compactHeader ? null : <span>Pause all</span>}
-          <Toggle
-            id="schedules-pause-toggle"
-            checked={paused}
-            onCheckedChange={(v) => void handlePause(v)}
-            aria-label="Pause all schedules"
-            data-testid="schedules-pause-toggle"
-          />
-        </label>
+      <Tooltip content={pauseLabel} side="top" disabled={!compactHeader}>
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly={compactHeader}
+          icon={paused ? <Play size={12} /> : <Pause size={12} />}
+          aria-label={pauseLabel}
+          onClick={() => handlePause(!paused)}
+          data-paused={paused ? "true" : "false"}
+          data-testid="schedules-pause-toggle"
+        >
+          {compactHeader ? null : paused ? "Resume" : "Pause all"}
+        </Button>
       </Tooltip>
     );
 
@@ -155,7 +160,12 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           ref={headerRef}
           title="Schedules"
           icon={<CalendarClock size={12} aria-hidden="true" />}
-          suffix={collapse && schedules.length > 0 ? ` (${schedules.length})` : undefined}
+          suffix={
+            [
+              collapse && schedules.length > 0 ? ` (${schedules.length})` : "",
+              paused ? ` · ${t("schedule.state.paused")}` : "",
+            ].join("") || undefined
+          }
           collapse={
             collapse
               ? {
