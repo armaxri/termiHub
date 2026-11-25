@@ -2732,6 +2732,7 @@ equivalence tests over each fold shape, and the pre-existing projection tests.
 | `connections`       | whole-snapshot, by decision | single whole-view writer from disk; ordered arrays (see below) |
 | `plugin-sandbox`    | whole-snapshot, polled      | read-only; re-snapshots the plugin host every second (#4188)   |
 | `tunnels`           | hybrid (#4574)              | 1 Hz stats tick patches `states.<id>.stats`; rest whole        |
+| `services`          | whole-snapshot, by decision | a short list; 1 Hz only while a server runs (#6028)            |
 
 - **`agents` (hybrid).** The view holds the ordered `agents` list plus the `sessions`,
   `definitions` and `folders` maps. The three maps are keyed by agent id, so a definition, folder
@@ -3638,7 +3639,8 @@ Each domain was migrated behind flags via a **per-domain strangler-fig sequence*
 **Status: complete.** Every UI domain has been inverted onto its own region + `<domain>.*` intents
 and drives the live UI. The shared regions are seeded at boot by `boot::seed_projection_regions`
 (`src-tauri/src/boot/mod.rs`) plus `plugin_sandbox_projection::seed`: `tunnels` (the Phase-2
-pilot, #2150), `session-lifecycle` (#2152), `system-monitors` (#2224), `agents` and `connections` (#2283),
+pilot, #2150), `services` (file servers, #6028, changed by commands instead of intents),
+`session-lifecycle` (#2152), `system-monitors` (#2224), `agents` and `connections` (#2283),
 `settings` (#2227), `transfers` (#2229), and the **read-only** `plugin-sandbox` region (#4188, no
 intents — it reports each native plugin's OS-sandbox state). The client-scoped regions —
 `layout@<clientId>` (#2151), `restore-cohort@<clientId>` (#2206), `file-browser@<clientId>`,
