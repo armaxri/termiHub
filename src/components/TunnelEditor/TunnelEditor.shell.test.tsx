@@ -7,6 +7,7 @@ vi.mock("@/services/embeddedServerApi", () => ({
   listNetworkInterfaces: vi.fn(() => Promise.resolve([{ name: "en0", addr: "192.168.1.20" }])),
 }));
 
+import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 import { useAppStore } from "@/store/appStore";
 import { seedAgentsRegion, setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { checkA11y } from "@/test/axe";
@@ -203,6 +204,7 @@ describe("who can open it", () => {
     await render({ tunnelType: "remote" });
     type("name", "x");
     expect(text("bind")).toContain("Only Build Box itself");
+    expect(listNetworkInterfaces).not.toHaveBeenCalled();
     await press("bind-network");
     expect(text("warning")).toContain("if the SSH server allows it (OpenSSH: GatewayPorts)");
     expect(text("sentence")).toContain("if its SSH server allows it");

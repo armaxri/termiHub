@@ -354,6 +354,10 @@ describe("who can open it", () => {
     await press("bind-address");
     expect(field("address")?.tagName).toBe("INPUT");
     expect(note()).toBe("Still needed: who can open it");
+    await press("save");
+    // Once, at the field that is empty.
+    const said = byTestId("server-editor")!.textContent!.split("Choose who can open it.");
+    expect(said).toHaveLength(2);
     type("address", "10.0.0.5");
     expect(field("warning")?.textContent).toContain("Anyone who reaches 10.0.0.5");
     await press("save");

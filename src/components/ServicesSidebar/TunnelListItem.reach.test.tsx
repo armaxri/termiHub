@@ -110,6 +110,14 @@ describe("TunnelListItem — reported reachability note (#2199)", () => {
     expect(rowTooltip()).toContain("reachable on build-box's network");
   });
 
+  it("claims no more of a remote tunnel's reach than is known (#6034)", () => {
+    renderItem(AGENT_TUNNEL, stateWith("sshServer", "connected", "localhost:9000"));
+    expect(rowTooltip()).toContain("reachable only from the SSH server itself");
+    renderItem(AGENT_TUNNEL, stateWith("sshServer", "connected", "0.0.0.0:9000"));
+    expect(rowTooltip()).toContain("the SSH server decides who reaches it");
+    expect(rowTooltip()).not.toContain("SSH server's network");
+  });
+
   it("says nothing about reach before the agent has reported it", () => {
     renderItem(AGENT_TUNNEL, stateWith(undefined));
     expect(rowTooltip()).not.toContain("reachable");

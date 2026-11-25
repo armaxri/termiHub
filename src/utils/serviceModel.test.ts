@@ -592,6 +592,10 @@ describe("the address, only while it runs", () => {
       // Only its SSH server knows (#6034).
       reach: "anyone who reaches shop-web, if its SSH server allows it",
     });
+    // An address nobody knows is said as such.
+    expect(of(remote("0.0.0.0"), { sshConnectionId: "gone" })?.reach).toContain(
+      "address is not known"
+    );
     // The agent that hosts it changes nothing about where it listens.
     expect(of(remote("localhost"), { host: EDGE })?.on).toBe("shop-web");
     expect(of(remote("localhost"), { sshConnectionId: "gone" })?.on).toBe("the SSH server");

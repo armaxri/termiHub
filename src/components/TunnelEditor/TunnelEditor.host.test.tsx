@@ -211,5 +211,7 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     act(() => here.focus());
     act(() => here.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(field()).toContain("Saving stops it");
+    // It is stopped, not restarted.
+    expect(q("tunnel-editor-note")?.textContent).toBe("");
   });
 });
