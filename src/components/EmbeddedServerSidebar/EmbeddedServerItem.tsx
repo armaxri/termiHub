@@ -23,16 +23,20 @@ import {
   MenuSeparator,
 } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
-import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
-import { serverStatusLabel } from "@/utils/statusLabel";
+import {
+  serverServiceState,
+  serviceReason,
+  serviceRunAction,
+  serviceStateDot,
+} from "@/utils/serviceState";
 import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, isAgentHost } from "@/utils/runLocation";
 import type { HostChoice } from "@/utils/hostChoice";
 import { t, tf } from "@/i18n/catalog";
-import { EmbeddedServerConfig, ServerState, ServerStatus } from "@/types/embeddedServer";
+import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 import { serverRowTooltip, serverUrl } from "./serverRowTooltip";
 
 interface Props {
@@ -54,20 +58,6 @@ interface Props {
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
   rowProps?: React.HTMLAttributes<HTMLDivElement>;
-}
-
-function statusTone(status: ServerStatus | undefined): SidebarStatusTone {
-  switch (status) {
-    case "running":
-      return "success";
-    case "starting":
-    case "stopping":
-      return "warning";
-    case "error":
-      return "error";
-    default:
-      return "neutral";
-  }
 }
 
 /**
@@ -98,10 +88,6 @@ function runsOnText(runLocation: HostChoice, agents: RemoteAgentDefinition[]): s
     : t("server.tooltip.agentRemoved");
 }
 
-function isActive(status: ServerStatus | undefined): boolean {
-  return status === "running" || status === "starting" || status === "stopping";
-}
-
 /**
  * A single embedded server entry in the Services sidebar.
  */
@@ -119,7 +105,10 @@ export function EmbeddedServerItem({
   rowProps,
 }: Props) {
   const status = state?.status;
-  const active = isActive(status);
+  const serviceState = serverServiceState(status);
+  // Stop, Stop waiting, Start (also after an error), or nothing while stopping.
+  const run = serviceRunAction(serviceState);
+  const stopLabel = run === "stopWaiting" ? t("service.run.stopWaiting") : "Stop";
   const url = serverUrl(config);
   // Expandable access log + detailed stats (PROD-034/036).
   const [showActivity, setShowActivity] = useState(false);
@@ -166,10 +155,12 @@ export function EmbeddedServerItem({
   // are in the tooltip; the row keeps the name and an error.
   const hostAgent = hostAgentFor(runLocation, agents);
   const tooltip = serverRowTooltip(config, {
-    stats: active ? state?.stats : undefined,
+    stats: status === "running" ? state?.stats : undefined,
     runsOn: runsOnText(runLocation, agents),
   });
   const errorText = status === "error" ? state?.error : undefined;
+  // What it waits for, or why it is not reachable (#6028).
+  const reason = status === "error" ? undefined : serviceReason(serviceState, state?.error);
 
   return (
     <ContextMenuRoot>
@@ -184,9 +175,7 @@ export function EmbeddedServerItem({
           onDoubleClick={() => onEdit(config.id)}
           status={
             <SidebarStatusDot
-              tone={statusTone(status)}
-              label={serverStatusLabel(status)}
-              title={serverStatusLabel(status)}
+              {...serviceStateDot(serviceState)}
               testId={`server-status-${config.id}`}
             />
           }
@@ -195,13 +184,13 @@ export function EmbeddedServerItem({
           tooltip={tooltip}
           tooltipTestId={`server-tooltip-${config.id}`}
           primaryAction={
-            active ? (
-              <Tooltip content="Stop" side="top">
+            run === null ? undefined : run === "stop" || run === "stopWaiting" ? (
+              <Tooltip content={stopLabel} side="top">
                 <Button
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  aria-label="Stop"
+                  aria-label={stopLabel}
                   data-testid={`server-stop-${config.id}`}
                   errorToast={false}
                   icon={<Square size={12} />}
@@ -293,9 +282,17 @@ export function EmbeddedServerItem({
             </>
           }
           details={
-            errorText || showActivity ? (
+            errorText || reason || showActivity ? (
               <>
                 {errorText && <span className="sidebar-list-item__error">{errorText}</span>}
+                {reason && (
+                  <span
+                    className="sidebar-list-item__reason"
+                    data-testid={`server-reason-${config.id}`}
+                  >
+                    {reason}
+                  </span>
+                )}
                 {showActivity && (
                   <EmbeddedServerActivityPanel
                     serverId={config.id}
@@ -310,7 +307,7 @@ export function EmbeddedServerItem({
       </ContextMenuTrigger>
 
       <ContextMenuContent>
-        {active ? (
+        {run === null ? null : run === "stop" || run === "stopWaiting" ? (
           <MenuItem
             onSelect={() =>
               // handleStop already toasts on failure and re-throws for the
@@ -320,7 +317,7 @@ export function EmbeddedServerItem({
             }
             data-testid={`ctx-stop-${config.id}`}
           >
-            <Square size={14} /> Stop
+            <Square size={14} /> {stopLabel}
           </MenuItem>
         ) : (
           <MenuItem
@@ -335,7 +332,7 @@ export function EmbeddedServerItem({
             <Play size={14} /> Start
           </MenuItem>
         )}
-        <MenuSeparator />
+        {run !== null && <MenuSeparator />}
         <MenuItem onSelect={() => onEdit(config.id)} data-testid={`ctx-edit-${config.id}`}>
           <Pencil size={14} /> Edit…
         </MenuItem>

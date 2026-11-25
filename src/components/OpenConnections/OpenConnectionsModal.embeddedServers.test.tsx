@@ -182,6 +182,22 @@ describe("OpenConnectionsModal — Embedded servers section", () => {
     expect(stopEmbeddedServer).toHaveBeenCalledWith("s2");
   });
 
+  it("lists a server whose agent is offline as not reachable, with Stop (#6028)", async () => {
+    useAppStore.setState({
+      embeddedServers: [config("s1", "Docs HTTP", "http"), config("s2", "Waits", "http")],
+      embeddedServerStates: {
+        s1: serverState("s1", "notReachable"),
+        // Nothing of it is open anywhere.
+        s2: serverState("s2", "waiting"),
+      },
+    });
+    await renderModal();
+    const rows = serverRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector(".oc-row__badge")?.textContent).toBe("not reachable");
+    expect(rows[0].querySelector(".oc-row__kill")).not.toBeNull();
+  });
+
   it("renders no Embedded servers section when no server is running", async () => {
     useAppStore.setState({
       embeddedServers: [config("s1", "Docs HTTP", "http")],

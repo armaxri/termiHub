@@ -1,0 +1,113 @@
+/**
+ * What a tunnel's row says while it waits, stops or cannot be reached (#6028):
+ * the state in words, why, and a way out.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { createRoot, Root } from "react-dom/client";
+import { TunnelListItem } from "./TunnelListItem";
+import { withTooltip } from "@/test/tooltip";
+import type { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
+
+const TUNNEL: TunnelConfig = {
+  id: "tun-1",
+  name: "Prod DB",
+  sshConnectionId: "ssh-1",
+  autoStart: true,
+  reconnectOnDisconnect: false,
+  host: { kind: "agent", agentId: "edge" },
+  tunnelType: {
+    type: "local",
+    config: { localHost: "127.0.0.1", localPort: 5432, remoteHost: "db", remotePort: 5432 },
+  },
+};
+const WHY = "Agent Edge box is offline. It may still run there; termiHub cannot tell.";
+
+let container: HTMLDivElement;
+let root: Root;
+const onStop = vi.fn();
+
+function render(status: TunnelStatus, extra: Partial<TunnelState> = {}) {
+  const state: TunnelState = {
+    tunnelId: "tun-1",
+    status,
+    error: WHY,
+    stats: { bytesSent: 9, bytesReceived: 9, activeConnections: 1, totalConnections: 1 },
+    ...extra,
+  };
+  act(() => {
+    root.render(
+      withTooltip(
+        <TunnelListItem
+          tunnel={TUNNEL}
+          state={state}
+          connections={[]}
+          onStart={vi.fn()}
+          onStop={onStop}
+          onReconnect={vi.fn()}
+          onEdit={vi.fn()}
+          onDuplicate={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      )
+    );
+  });
+}
+
+const q = (testId: string) => container.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+
+describe("TunnelListItem — honest states (#6028)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    onStop.mockClear();
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it.each<[TunnelStatus, string, string]>([
+    ["waiting", "Waiting", "Stop waiting"],
+    ["notReachable", "Not reachable", "Stop"],
+    ["stopping", "Stopping", "Stop"],
+  ])("%s says so, says why, and can be stopped", (status, word, control) => {
+    render(status);
+    expect(q("tunnel-status-tun-1")?.getAttribute("aria-label")).toBe(word);
+    expect(q("tunnel-reason-tun-1")?.textContent).toBe(WHY);
+    const stop = q("tunnel-stop-tun-1")!;
+    expect(stop.getAttribute("aria-label")).toBe(control);
+    act(() => stop.click());
+    expect(onStop).toHaveBeenCalledWith("tun-1");
+    expect(q("tunnel-start-tun-1")).toBeNull();
+    // Reconnect needs something that runs.
+    expect(q("tunnel-reconnect-tun-1")).toBeNull();
+  });
+
+  it("a ring, not a green dot, when it is not known whether it runs", () => {
+    render("notReachable");
+    const classes = q("tunnel-status-tun-1")!.classList;
+    expect(classes.contains("status-dot--hollow")).toBe(true);
+    expect(classes.contains("status-dot--success")).toBe(false);
+  });
+
+  it("shows no reachability note while it is not reachable", () => {
+    render("notReachable", { boundAddress: undefined, reachableFrom: undefined });
+    expect(q("tunnel-reach-tun-1")).toBeNull();
+  });
+
+  it.each<TunnelStatus>(["connected", "disconnected", "connecting"])(
+    "%s has no reason line",
+    (status) => {
+      render(status);
+      expect(q("tunnel-reason-tun-1")).toBeNull();
+    }
+  );
+
+  it.each<TunnelStatus>(["error", "reconnecting"])("%s says why once", (status) => {
+    render(status);
+    expect(q("tunnel-reason-tun-1")).toBeNull();
+    expect(container.textContent?.split(WHY)).toHaveLength(2);
+  });
+});

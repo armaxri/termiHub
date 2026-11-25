@@ -127,8 +127,8 @@ describe("ConnectionPortForwardingSection (PROD-023)", () => {
     expect(byTestId("port-forward-row-t2")).toBeNull();
     expect(byTestId("port-forward-row-t1")!.textContent).toContain("127.0.0.1:5432 → db:5432");
     expect(byTestId("port-forward-type-t1")!.textContent).toBe("Local (ssh -L)");
-    expect(byTestId("port-forward-status-t1")!.textContent).toBe("connected");
-    expect(byTestId("port-forward-status-t3")!.textContent).toBe("disconnected");
+    expect(byTestId("port-forward-status-t1")!.textContent).toBe("Running");
+    expect(byTestId("port-forward-status-t3")!.textContent).toBe("Stopped");
   });
 
   it("explains each type before the connection is saved (#6027)", async () => {

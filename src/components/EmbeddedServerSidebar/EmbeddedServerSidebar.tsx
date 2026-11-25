@@ -6,18 +6,14 @@ import { ConfirmDialog, toast, EmptyState } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
-import { EmbeddedServerConfig, ServerStatus } from "@/types/embeddedServer";
+import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { hostChoice, sameHost, type HostChoice } from "@/utils/hostChoice";
+import { isServiceActive, serverServiceState } from "@/utils/serviceState";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
 import "./EmbeddedServerSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
-
-/** Whether a server in `status` holds its port, so moving it stops it. */
-function isRunning(status: ServerStatus | undefined): boolean {
-  return status === "running" || status === "starting";
-}
 
 /** Whether `config` signs clients in with a password (kept in the credential store). */
 function hasPassword(config: EmbeddedServerConfig): boolean {
@@ -141,9 +137,9 @@ export function EmbeddedServerSidebar() {
     () => servers.find((s) => s.id === serverDelete.pending) ?? null,
     [servers, serverDelete.pending]
   );
-  const pendingIsRunning = serverDelete.pending
-    ? serverStates[serverDelete.pending]?.status === "running"
-    : false;
+  const pendingState = serverServiceState(
+    serverDelete.pending ? serverStates[serverDelete.pending]?.status : undefined
+  );
 
   // Activating a row (Enter / double-click) opens the server for editing,
   // matching the sibling management sidebars (workspaces, tunnels).
@@ -220,7 +216,10 @@ export function EmbeddedServerSidebar() {
         onSave={handleSave}
         agents={agents}
         draft={copyDraft}
-        running={editingConfig ? isRunning(serverStates[editingConfig.id]?.status) : false}
+        running={
+          !!editingConfig &&
+          isServiceActive(serverServiceState(serverStates[editingConfig.id]?.status))
+        }
         runLocation={hostChoice((editingConfig ?? copyDraft)?.host)}
       />
 
@@ -228,9 +227,11 @@ export function EmbeddedServerSidebar() {
         {...serverDelete.dialogProps}
         title="Delete service"
         message={
-          pendingIsRunning
-            ? `This will stop and delete the running server "${pendingServer?.name}". This cannot be undone.`
-            : `Delete "${pendingServer?.name}"? This cannot be undone.`
+          pendingState === "notReachable"
+            ? `"${pendingServer?.name}" may still run on its agent, which is offline. Deleting it stops it there as soon as the agent is connected again. This cannot be undone.`
+            : isServiceActive(pendingState)
+              ? `This will stop and delete the running server "${pendingServer?.name}". This cannot be undone.`
+              : `Delete "${pendingServer?.name}"? This cannot be undone.`
         }
         confirmLabel="Delete"
         data-testid="server-delete-confirm"

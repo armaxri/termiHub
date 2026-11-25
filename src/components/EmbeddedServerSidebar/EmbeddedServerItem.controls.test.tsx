@@ -74,6 +74,8 @@ describe("EmbeddedServerItem — run control and labelled dot (#5852)", () => {
     ["running", "Stop", "Running"],
     ["stopping", "Stop", "Stopping"],
     ["error", "Start", "Error"],
+    ["waiting", "Stop waiting", "Waiting"],
+    ["notReachable", "Stop", "Not reachable"],
   ])("status %s: the run control is %s and the dot reads %s", (status, control, dot) => {
     render(status);
     expect(labels('[data-testid="server-primary-srv-1"]')).toEqual([control]);

@@ -48,6 +48,11 @@ export interface StatusDotProps {
    */
   pulse?: boolean;
   /**
+   * Draw only the dot's ring, for a state that is not known for sure (a service
+   * whose agent is offline). Only with the `warning` tone.
+   */
+  hollow?: boolean;
+  /**
    * Dim the dot (reduced opacity) for a muted/stopped state that keeps its tone
    * but reads as inactive (the persistent-session "stopped" dot).
    */
@@ -80,6 +85,7 @@ export function StatusDot({
   size = "md",
   label,
   pulse = false,
+  hollow = false,
   dimmed = false,
   title,
   ariaHidden,
@@ -92,6 +98,7 @@ export function StatusDot({
     size === "sm" ? "status-dot--sm" : "",
     size === "lg" ? "status-dot--lg" : "",
     pulse ? "status-dot--pulse" : "",
+    hollow ? "status-dot--hollow" : "",
     dimmed ? "status-dot--dimmed" : "",
     className ?? "",
   ]
