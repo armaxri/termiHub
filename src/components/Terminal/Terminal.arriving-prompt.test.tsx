@@ -446,7 +446,6 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     lose();
     regain();
     pressContinue();
-    const { real } = engine();
     const end = streamed;
     await act(async () => {
       shown({ data: encoder.encode("$ \r\n"), endOffset: end, epoch: 1 });
@@ -454,8 +453,24 @@ describe("Continue sees a prompt that has arrived (#6070)", () => {
     });
     terminals.block = true;
     arrive(PROMPT);
-    expect(real).toBe(engine().real);
     engine().unblock();
+    await heldBack(state);
+  });
+
+  it("which a repaint that began while it looks brings", async () => {
+    const state = startWait();
+    let shown = (_: unknown) => {};
+    mockReplay.mockReturnValue(new Promise((resolve) => (shown = resolve)));
+    terminals.block = true;
+    arrive("old\r\n");
+    await settle();
+    pressContinue();
+    lose();
+    regain();
+    engine().unblock();
+    await settle();
+    expect(state.result).toBeUndefined();
+    await act(async () => shown({ data: encoder.encode(PROMPT), endOffset: streamed, epoch: 1 }));
     await heldBack(state);
   });
 

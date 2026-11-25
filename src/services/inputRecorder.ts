@@ -127,8 +127,7 @@ export class InputRecorder {
     let open = true;
     return {
       fill: (data) => {
-        // Nothing is kept of what comes after the recording.
-        if (!open || !this.entries.includes(entry)) return;
+        if (!open) return;
         open = false;
         entry.data = data;
         this.count += 1;

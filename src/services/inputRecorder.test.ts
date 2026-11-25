@@ -218,6 +218,24 @@ describe("what is typed at a password prompt", () => {
     vi.useRealTimers();
   });
 
+  it("says that a password is typed although an answer before it was lost (#6070)", () => {
+    vi.useFakeTimers();
+    const recorder = new InputRecorder(() => 0);
+    recorder.push("?", () => {});
+    recorder.push("p", (then) => then("Password: "));
+    expect(recorder.atPrompt).toBe(true);
+    recorder.push("\r", (then) => then("Password: "));
+
+    recorder.push("?", () => {});
+    recorder.push("x", (then) => then("$ "), "Deploy");
+    // Nothing was read for that one, so it says nothing about the one before.
+    expect(recorder.atPrompt).toBe(false);
+    vi.advanceTimersByTime(PROMPT_READ_LIMIT_MS);
+    expect(recorder.atPrompt).toBe(true);
+    recorder.dispose();
+    vi.useRealTimers();
+  });
+
   it("keeps a lost chunk with the password it belongs to (#6070)", () => {
     const recorder = new InputRecorder(() => 0);
     recorder.push("p", (then) => then("Password: "));
@@ -232,8 +250,8 @@ describe("what is typed at a password prompt", () => {
     for (const end of ["finish", "dispose"] as const) {
       const recorder = new InputRecorder(() => 0);
       let late = (_: string) => {};
-      recorder.push("hunter2", (then) => ((late = then), undefined));
       const slot = recorder.reserve((then) => then("$ "));
+      recorder.push("hunter2", (then) => ((late = then), undefined));
       recorder[end]();
       slot.fill("pasted secret");
       late("$ ");
