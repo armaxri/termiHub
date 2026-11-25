@@ -353,7 +353,13 @@ struct ActiveDownload {
     position: u64,
     /// Total file length once known (0 during a `SIZE` phase, before it resolves).
     total: u64,
+    /// When the server was asked for what is outstanding.
+    asked: std::time::Instant,
 }
+
+/// How long the server may take to answer a file request. Shorter than the host
+/// waits for its fetch, so that its next one is served.
+const FETCH_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// The sidecar's [`CliprdrBackend`]: it holds no clipboard *state* of its own; it
 /// translates CLIPRDR callbacks into [`ClipboardEvent`]s the driver forwards over
@@ -388,6 +394,10 @@ pub struct SidecarClipboardBackend {
     /// The single download currently in flight (one at a time keeps the memory
     /// bound and the stream-id bookkeeping trivial).
     active_download: Option<ActiveDownload>,
+    /// Formats the server asked for before the channel was ready.
+    asked_early: Vec<ClipboardFormatId>,
+    /// How long the server may take to answer one request of it.
+    fetch_stall: std::time::Duration,
     /// Monotonic stream-id allocator for file-contents requests.
     next_stream_id: u32,
     /// View-only sessions never push local data to the remote, so they neither
@@ -515,6 +525,8 @@ impl SidecarClipboardBackend {
                 file_streams: true,
                 download_queue: VecDeque::new(),
                 active_download: None,
+                asked_early: Vec::new(),
+                fetch_stall: FETCH_STALL_TIMEOUT,
                 next_stream_id: 0,
                 view_only,
                 offered_files: Vec::new(),
@@ -664,6 +676,20 @@ impl SidecarClipboardBackend {
         }
     }
 
+    /// Provide `format` once the channel is ready: the server asked too early.
+    pub fn answer_when_ready(&mut self, format: ClipboardFormatId) {
+        // A peer that only asks gets no more than that.
+        if !self.channel_ready && self.asked_early.len() < 16 {
+            self.asked_early.push(format);
+        }
+    }
+
+    /// Another sender of this backend's events.
+    #[cfg(test)]
+    pub(crate) fn event_sender(&self) -> Sender<ClipboardEvent> {
+        self.tx.clone()
+    }
+
     /// Abandon the in-flight file transfer after its `FileContentsRequest`
     /// could not be sent (#4004): a host fetch is told it failed, an eager
     /// download is dropped along with the rest of its queue. The session itself
@@ -791,6 +817,7 @@ impl SidecarClipboardBackend {
                         phase: DownloadPhase::Size,
                         position: 0,
                         total: 0,
+                        asked: std::time::Instant::now(),
                     });
                     self.emit(ClipboardEvent::RequestFileContents(size_request(
                         stream_id,
@@ -817,6 +844,7 @@ impl SidecarClipboardBackend {
             phase: DownloadPhase::Range,
             position: 0,
             total,
+            asked: std::time::Instant::now(),
         });
         self.emit(ClipboardEvent::RequestFileContents(range_request(
             stream_id, index, 0, want,
@@ -841,6 +869,14 @@ impl SidecarClipboardBackend {
                 message: "remote clipboard file transfer is not enabled".to_string(),
             });
             return;
+        }
+        // One the server never answered gives way (#6030).
+        let unanswered = self
+            .active_download
+            .as_ref()
+            .is_some_and(|active| active.asked.elapsed() >= self.fetch_stall);
+        if unanswered {
+            self.abort_active_download("the server sent no answer");
         }
         let Some(meta) = self.remote_offer.iter().find(|f| f.index == index) else {
             self.emit(ClipboardEvent::RemoteFileError {
@@ -896,6 +932,7 @@ impl SidecarClipboardBackend {
                     phase: DownloadPhase::Size,
                     position: 0,
                     total: 0,
+                    asked: std::time::Instant::now(),
                 });
                 self.emit(ClipboardEvent::RequestFileContents(size_request(
                     stream_id, idx,
@@ -1376,6 +1413,9 @@ impl CliprdrBackend for SidecarClipboardBackend {
     fn on_ready(&mut self) {
         debug!("cliprdr channel ready");
         self.channel_ready = true;
+        for format in std::mem::take(&mut self.asked_early) {
+            self.emit(ClipboardEvent::ProvideData(format));
+        }
         // The file offer deferred from the initialization format list (#4086).
         if std::mem::take(&mut self.offer_files_when_ready) && self.serves_local_files() {
             if let Some(files) = self.build_local_file_offer() {
@@ -1653,6 +1693,7 @@ impl CliprdrBackend for SidecarClipboardBackend {
                         phase: DownloadPhase::Range,
                         position: written,
                         total: active.total,
+                        asked: std::time::Instant::now(),
                     });
                     self.emit(ClipboardEvent::RequestFileContents(range_request(
                         stream_id,
@@ -2909,6 +2950,42 @@ mod tests {
         // negotiates none.
         let (text_only, _rx2) = SidecarClipboardBackend::new(None, false);
         assert!(text_only.client_capabilities().is_empty());
+    }
+
+    /// The server never answers one fetch: after a while the next one takes over.
+    #[test]
+    fn a_fetch_takes_over_from_one_the_server_never_answered() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(
+            &[
+                FileDescriptor::new("a.txt").with_file_size(5),
+                FileDescriptor::new("b.txt").with_file_size(5),
+            ],
+            None,
+        );
+        let _ = next_event(&rx);
+        backend.fetch_remote_file(1, 0);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RequestFileContents(_)
+        ));
+        // While it may still be answered, it keeps its turn.
+        backend.fetch_remote_file(2, 1);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 2, .. }
+        ));
+
+        backend.fetch_stall = std::time::Duration::ZERO;
+        backend.fetch_remote_file(3, 1);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 1, .. }
+        ));
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RequestFileContents(_)
+        ));
     }
 
     // --- Remote→host delayed rendering (#1793) ---

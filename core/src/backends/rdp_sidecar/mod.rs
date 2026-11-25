@@ -77,6 +77,18 @@ use protocol::{read_message, write_message, HostMessage, SidecarFailureKind, Sid
 /// Bounded channel depth for frames / cursor updates / input (backpressure).
 const CHANNEL_DEPTH: usize = 32;
 
+/// Longest the host waits for the helper to take a message. One that has not
+/// read a whole queue of them by then is stuck, and nothing may wait for it
+/// forever: a caller holds the session's lock (#6030).
+const HELPER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Longest a disconnect waits to tell the helper before it is killed.
+const DISCONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Longest a clipboard file fetch waits for its next chunk, which the server
+/// may have to read from a slow disk first.
+const FETCH_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Windows `CREATE_NO_WINDOW` process-creation flag (#1758).
 ///
 /// The desktop is a GUI-subsystem process; spawning the console-subsystem
@@ -501,6 +513,36 @@ struct SidecarRuntime {
     _tunnel: Option<tunnel::RdpForward>,
 }
 
+impl SidecarRuntime {
+    /// Queue `message` for the helper. Fails when the session has ended, or when
+    /// the helper does not take messages any more.
+    async fn send(&self, message: HostMessage) -> Result<(), SessionError> {
+        use mpsc::error::SendTimeoutError;
+        self.to_sidecar
+            .send_timeout(message, HELPER_TIMEOUT)
+            .await
+            .map_err(|e| match e {
+                SendTimeoutError::Closed(_) => {
+                    SessionError::NotRunning("rdp session ended".to_string())
+                }
+                SendTimeoutError::Timeout(_) => helper_not_responding(),
+            })
+    }
+
+    /// [`send`](Self::send) for an update that an ended session does not need.
+    async fn update(&self, message: HostMessage) -> Result<(), SessionError> {
+        match self.send(message).await {
+            Err(SessionError::NotRunning(_)) => Ok(()),
+            sent => sent,
+        }
+    }
+}
+
+/// The helper runs and does not take messages.
+fn helper_not_responding() -> SessionError {
+    io_error("the RDP helper does not respond")
+}
+
 /// RDP graphical remote-desktop connection backed by the IronRDP sidecar.
 pub struct SidecarRdp {
     runtime: Option<Arc<SidecarRuntime>>,
@@ -547,6 +589,50 @@ impl Drop for SidecarRdp {
     }
 }
 
+/// The cursor updates that wait for their consumer, as one: where the cursor is
+/// now and its last new shape. A consumer that does not keep up, or that nobody
+/// is, must not hold up what else comes from the helper (#6030).
+#[derive(Default)]
+struct CursorMailbox {
+    pending: StdMutex<Option<crate::connection::CursorUpdate>>,
+    arrived: tokio::sync::Notify,
+}
+
+impl CursorMailbox {
+    fn put(&self, mut update: crate::connection::CursorUpdate) {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if update.shape.is_none() {
+            update.shape = pending.take().and_then(|older| older.shape);
+        }
+        *pending = Some(update);
+        drop(pending);
+        self.arrived.notify_one();
+    }
+
+    fn take(&self) -> Option<crate::connection::CursorUpdate> {
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    /// Deliver to `cursor_tx` until its receiver is gone.
+    async fn deliver(&self, cursor_tx: &mpsc::Sender<crate::connection::CursorUpdate>) {
+        loop {
+            self.arrived.notified().await;
+            let Ok(permit) = cursor_tx.reserve().await else {
+                return;
+            };
+            if let Some(update) = self.take() {
+                permit.send(update);
+            }
+        }
+    }
+}
+
 /// Drive the sidecar → host direction: read framed [`SidecarMessage`]s and route
 /// each to the shared frame / cursor / clipboard surfaces. Runs until cancelled,
 /// the pipe closes (sidecar exited), a fatal `Error`, or a downstream channel
@@ -555,7 +641,7 @@ impl Drop for SidecarRdp {
 /// Generic over the reader so the loopback tests can drive it over an in-memory
 /// duplex pipe, standing in for the real `ChildStdout`.
 async fn run_reader<R>(
-    mut reader: R,
+    reader: R,
     frame_tx: mpsc::Sender<crate::connection::FrameUpdate>,
     cursor_tx: mpsc::Sender<crate::connection::CursorUpdate>,
     cert_prompt_tx: mpsc::Sender<CertPrompt>,
@@ -564,140 +650,152 @@ async fn run_reader<R>(
 ) where
     R: AsyncRead + Unpin,
 {
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            msg = read_message::<_, SidecarMessage>(&mut reader) => {
-                match msg {
-                    Ok(SidecarMessage::Frame(frame)) => {
-                        shared.mark_established();
-                        if frame_tx.send(frame).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(SidecarMessage::Cursor(cursor)) => {
-                        if cursor_tx.send(cursor).await.is_err() {
-                            break;
-                        }
-                    }
-                    Ok(SidecarMessage::Clipboard(text)) => {
-                        // A newer remote copy: any earlier image is stale. (A copy
-                        // offering both text and an image sends the text first,
-                        // then the image, so the image still lands.)
-                        *shared.clipboard_image.lock().await = None;
-                        *shared.clipboard.lock().await = text.clone();
-                        shared.clipboard_changes.send_replace(text);
-                    }
-                    Ok(SidecarMessage::ClipboardImage(image)) => {
-                        // Re-validate at the trust boundary (PROD-021): the sidecar
-                        // already capped it, but the desktop never trusts the pipe.
-                        match image.validate() {
-                            Ok(()) => {
-                                debug!(
-                                    width = image.width,
-                                    height = image.height,
-                                    "remote clipboard image received"
-                                );
-                                *shared.clipboard_image.lock().await = Some(image);
-                            }
-                            Err(violation) => {
-                                warn!(%violation, "rejected remote clipboard image");
-                                *shared.clipboard_image.lock().await = None;
-                            }
-                        }
-                    }
-                    Ok(SidecarMessage::RemoteClipboardFiles(files)) => {
-                        // The remote copied files; surface the list for a local
-                        // paste (#1793). Bytes are fetched later, on demand.
-                        debug!(count = files.len(), "remote clipboard file list surfaced");
-                        *shared.clipboard_image.lock().await = None;
-                        *shared.remote_clipboard_files.lock().await = files;
-                    }
-                    Ok(SidecarMessage::ClipboardFileChunk {
-                        request_id,
-                        position,
-                        data,
-                        last,
-                    }) => {
-                        // Route the chunk to the waiting fetch; a dropped receiver
-                        // (caller gave up) just discards it.
-                        if let Ok(fetches) = shared.fetches.lock() {
-                            if let Some(tx) = fetches.get(&request_id) {
-                                let _ = tx.send(FetchEvent::Chunk {
-                                    position,
-                                    data,
-                                    last,
-                                });
-                            }
-                        }
-                    }
-                    Ok(SidecarMessage::ClipboardFileError {
-                        request_id,
-                        message,
-                    }) => {
-                        if let Ok(fetches) = shared.fetches.lock() {
-                            if let Some(tx) = fetches.get(&request_id) {
-                                let _ = tx.send(FetchEvent::Error(message));
-                            }
-                        }
-                    }
-                    Ok(SidecarMessage::CertPrompt {
-                        fingerprint,
-                        subject,
-                        issuer,
-                        host,
-                    }) => {
-                        // Forward the untrusted-cert prompt up to the manager,
-                        // which owns the trust store + user dialog (#1767). If the
-                        // receiver is gone the session is tearing down anyway.
-                        if cert_prompt_tx
-                            .send(CertPrompt {
-                                fingerprint,
-                                subject,
-                                issuer,
-                                host,
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(SidecarMessage::State(state)) => {
-                        debug!(?state, "rdp sidecar state");
-                        if state == GraphicalState::Active {
-                            shared.mark_established();
-                        }
-                    }
-                    Ok(SidecarMessage::Failure { kind, message }) => {
-                        // The typed reason for the fatal `Error` that follows
-                        // (#3390). Record it — the frame channel closes when this
-                        // reader exits, so the supervisor always sees it by then —
-                        // and keep reading until that `Error` / EOF.
-                        warn!(?kind, %message, "rdp sidecar reported a typed failure");
-                        if let Ok(mut failure) = shared.failure.lock() {
-                            *failure = Some((kind, message));
-                        }
-                    }
-                    Ok(SidecarMessage::Error(err)) => {
-                        warn!(%err, "rdp sidecar reported a fatal error");
-                        break;
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        debug!("rdp sidecar closed its output");
-                        break;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "rdp sidecar read error");
-                        break;
-                    }
-                }
-            }
-        }
+    let cursor = CursorMailbox::default();
+    // Dropping the routes at any point is fine: the pipe ends with them.
+    tokio::select! {
+        _ = cancel.cancelled() => {}
+        _ = cursor.deliver(&cursor_tx) => {}
+        _ = route_messages(reader, frame_tx, &cursor, cert_prompt_tx, &shared) => {}
     }
     // Any typed failure is recorded by now, so a waiter sees its reason.
     shared.mark_ended();
     cancel.cancel();
+}
+
+/// Route the helper's messages until its pipe, the session or a consumer ends.
+async fn route_messages<R>(
+    mut reader: R,
+    frame_tx: mpsc::Sender<crate::connection::FrameUpdate>,
+    mailbox: &CursorMailbox,
+    cert_prompt_tx: mpsc::Sender<CertPrompt>,
+    shared: &SidecarShared,
+) where
+    R: AsyncRead + Unpin,
+{
+    loop {
+        match read_message::<_, SidecarMessage>(&mut reader).await {
+            Ok(SidecarMessage::Frame(frame)) => {
+                shared.mark_established();
+                if frame_tx.send(frame).await.is_err() {
+                    break;
+                }
+            }
+            Ok(SidecarMessage::Cursor(cursor)) => {
+                mailbox.put(cursor);
+            }
+            Ok(SidecarMessage::Clipboard(text)) => {
+                // A newer remote copy: any earlier image is stale. (A copy
+                // offering both text and an image sends the text first,
+                // then the image, so the image still lands.)
+                *shared.clipboard_image.lock().await = None;
+                *shared.clipboard.lock().await = text.clone();
+                shared.clipboard_changes.send_replace(text);
+            }
+            Ok(SidecarMessage::ClipboardImage(image)) => {
+                // Re-validate at the trust boundary (PROD-021): the sidecar
+                // already capped it, but the desktop never trusts the pipe.
+                match image.validate() {
+                    Ok(()) => {
+                        debug!(
+                            width = image.width,
+                            height = image.height,
+                            "remote clipboard image received"
+                        );
+                        *shared.clipboard_image.lock().await = Some(image);
+                    }
+                    Err(violation) => {
+                        warn!(%violation, "rejected remote clipboard image");
+                        *shared.clipboard_image.lock().await = None;
+                    }
+                }
+            }
+            Ok(SidecarMessage::RemoteClipboardFiles(files)) => {
+                // The remote copied files; surface the list for a local
+                // paste (#1793). Bytes are fetched later, on demand.
+                debug!(count = files.len(), "remote clipboard file list surfaced");
+                *shared.clipboard_image.lock().await = None;
+                *shared.remote_clipboard_files.lock().await = files;
+            }
+            Ok(SidecarMessage::ClipboardFileChunk {
+                request_id,
+                position,
+                data,
+                last,
+            }) => {
+                // Route the chunk to the waiting fetch; a dropped receiver
+                // (caller gave up) just discards it.
+                if let Ok(fetches) = shared.fetches.lock() {
+                    if let Some(tx) = fetches.get(&request_id) {
+                        let _ = tx.send(FetchEvent::Chunk {
+                            position,
+                            data,
+                            last,
+                        });
+                    }
+                }
+            }
+            Ok(SidecarMessage::ClipboardFileError {
+                request_id,
+                message,
+            }) => {
+                if let Ok(fetches) = shared.fetches.lock() {
+                    if let Some(tx) = fetches.get(&request_id) {
+                        let _ = tx.send(FetchEvent::Error(message));
+                    }
+                }
+            }
+            Ok(SidecarMessage::CertPrompt {
+                fingerprint,
+                subject,
+                issuer,
+                host,
+            }) => {
+                // Forward the untrusted-cert prompt up to the manager,
+                // which owns the trust store + user dialog (#1767). If the
+                // receiver is gone the session is tearing down anyway.
+                if cert_prompt_tx
+                    .send(CertPrompt {
+                        fingerprint,
+                        subject,
+                        issuer,
+                        host,
+                    })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(SidecarMessage::State(state)) => {
+                debug!(?state, "rdp sidecar state");
+                if state == GraphicalState::Active {
+                    shared.mark_established();
+                }
+            }
+            Ok(SidecarMessage::Failure { kind, message }) => {
+                // The typed reason for the fatal `Error` that follows
+                // (#3390). Record it — the frame channel closes when this
+                // reader exits, so the supervisor always sees it by then —
+                // and keep reading until that `Error` / EOF.
+                warn!(?kind, %message, "rdp sidecar reported a typed failure");
+                if let Ok(mut failure) = shared.failure.lock() {
+                    *failure = Some((kind, message));
+                }
+            }
+            Ok(SidecarMessage::Error(err)) => {
+                warn!(%err, "rdp sidecar reported a fatal error");
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                debug!("rdp sidecar closed its output");
+                break;
+            }
+            Err(e) => {
+                warn!(error = %e, "rdp sidecar read error");
+                break;
+            }
+        }
+    }
 }
 
 /// Drive the host → sidecar direction: forward queued [`HostMessage`]s to the
@@ -723,6 +821,21 @@ async fn run_writer<W>(
                 }
             }
         }
+    }
+}
+
+/// Send the connect request, the first message to a fresh helper.
+async fn send_connect<W: AsyncWrite + Unpin>(
+    stdin: &mut W,
+    cfg: RdpConfig,
+) -> Result<(), SessionError> {
+    let request = HostMessage::Connect(Box::new(cfg));
+    match tokio::time::timeout(HELPER_TIMEOUT, write_message(stdin, &request)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(SessionError::SpawnFailed(format!(
+            "failed to send RDP connect request: {e}"
+        ))),
+        Err(_) => Err(helper_not_responding()),
     }
 }
 
@@ -857,11 +970,7 @@ impl ConnectionType for SidecarRdp {
         // The connect payload — credentials included — travels over stdin, never
         // argv/env. It is always the first message.
         let monitor_layout = cfg.multi_monitor_layout();
-        write_message(&mut stdin, &HostMessage::Connect(Box::new(cfg)))
-            .await
-            .map_err(|e| {
-                SessionError::SpawnFailed(format!("failed to send RDP connect request: {e}"))
-            })?;
+        send_connect(&mut stdin, cfg).await?;
 
         let shared = Arc::new(SidecarShared::new(view_only, monitor_layout));
         let cancel = CancellationToken::new();
@@ -925,7 +1034,9 @@ impl ConnectionType for SidecarRdp {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(rt) = &self.runtime {
             // Best-effort graceful shutdown before the supervisor kills the child.
-            let _ = rt.to_sidecar.send(HostMessage::Disconnect).await;
+            // One that does not read (or has nothing to read it) is just killed.
+            let told = rt.to_sidecar.send(HostMessage::Disconnect);
+            let _ = tokio::time::timeout(DISCONNECT_TIMEOUT, told).await;
         }
         self.teardown();
         Ok(())
@@ -1018,10 +1129,7 @@ impl GraphicalBackend for SidecarRdp {
         if rt.shared.view_only {
             return Ok(());
         }
-        rt.to_sidecar
-            .send(HostMessage::Input(event))
-            .await
-            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))
+        rt.send(HostMessage::Input(event)).await
     }
 
     async fn resize(&self, width_px: u16, height_px: u16) -> Result<(), SessionError> {
@@ -1030,14 +1138,11 @@ impl GraphicalBackend for SidecarRdp {
         };
         // The sidecar renegotiates the remote resolution over the Display
         // Control channel and emits a resized framebuffer (#1755).
-        let _ = rt
-            .to_sidecar
-            .send(HostMessage::Resize {
-                width: width_px,
-                height: height_px,
-            })
-            .await;
-        Ok(())
+        rt.update(HostMessage::Resize {
+            width: width_px,
+            height: height_px,
+        })
+        .await
     }
 
     fn monitor_layout(&self) -> Vec<MonitorRect> {
@@ -1054,10 +1159,8 @@ impl GraphicalBackend for SidecarRdp {
         };
         // The sidecar sends the layout as one Display Control monitor-layout
         // PDU; the server answers with a resized (combined) framebuffer (#3696).
-        rt.to_sidecar
-            .send(HostMessage::SetMonitorLayout(layout.monitors().to_vec()))
-            .await
-            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))?;
+        rt.send(HostMessage::SetMonitorLayout(layout.monitors().to_vec()))
+            .await?;
         if let Ok(mut current) = rt.shared.monitor_layout.lock() {
             *current = Some(layout);
         }
@@ -1088,8 +1191,7 @@ impl GraphicalBackend for SidecarRdp {
         }
         // Forwarded to the sidecar, which mirrors the text to the remote over the
         // CLIPRDR channel (#1756).
-        let _ = rt.to_sidecar.send(HostMessage::SetClipboard(text)).await;
-        Ok(())
+        rt.update(HostMessage::SetClipboard(text)).await
     }
 
     async fn get_clipboard_image(&self) -> Option<ClipboardImage> {
@@ -1111,11 +1213,7 @@ impl GraphicalBackend for SidecarRdp {
             .map_err(|v| SessionError::InvalidConfig(format!("clipboard image rejected: {v}")))?;
         // Forwarded to the sidecar, which advertises CF_DIB to the remote and
         // serves the image when the remote pastes (PROD-021).
-        let _ = rt
-            .to_sidecar
-            .send(HostMessage::SetClipboardImage(image))
-            .await;
-        Ok(())
+        rt.update(HostMessage::SetClipboardImage(image)).await
     }
 
     async fn remote_clipboard_files(&self) -> Vec<RemoteClipboardFile> {
@@ -1165,10 +1263,8 @@ impl GraphicalBackend for SidecarRdp {
             request_id,
         };
 
-        rt.to_sidecar
-            .send(HostMessage::FetchClipboardFile { request_id, index })
-            .await
-            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))?;
+        rt.send(HostMessage::FetchClipboardFile { request_id, index })
+            .await?;
 
         // Stage the bytes into a sanitized, per-fetch temp file, writing each
         // chunk straight to disk so memory stays bounded regardless of file size.
@@ -1189,6 +1285,14 @@ impl GraphicalBackend for SidecarRdp {
             let event = tokio::select! {
                 event = rx.recv() => event,
                 _ = rt.cancel.cancelled() => None,
+                // The helper is alive and the server never answers (#6030).
+                _ = tokio::time::sleep(FETCH_STALL_TIMEOUT) => {
+                    return Err(io_error(format!(
+                        "the server sent no data of {} for {}s",
+                        meta.name,
+                        FETCH_STALL_TIMEOUT.as_secs()
+                    )));
+                }
             };
             match event {
                 Some(FetchEvent::Chunk {
@@ -1244,10 +1348,8 @@ impl GraphicalBackend for SidecarRdp {
         // Route the verdict down to the sidecar, which is blocking its connect on
         // it (#1767). `remember` is informational here — the host already
         // persisted (or not) before calling.
-        rt.to_sidecar
-            .send(HostMessage::CertDecision { accept, remember })
+        rt.send(HostMessage::CertDecision { accept, remember })
             .await
-            .map_err(|_| SessionError::NotRunning("rdp session ended".to_string()))
     }
 
     fn fatal_error(&self) -> Option<SessionError> {
@@ -2421,3 +2523,7 @@ mod tests {
 #[cfg(test)]
 #[path = "establish_tests.rs"]
 mod establish_tests;
+
+#[cfg(test)]
+#[path = "unresponsive_tests.rs"]
+mod unresponsive_tests;

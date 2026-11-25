@@ -332,6 +332,28 @@ fn assert_no_helpers(label: &str) {
     );
 }
 
+/// A command in a fixture that never ends fails the test that ran it (#6030).
+#[cfg(unix)]
+#[test]
+fn a_fixture_command_that_hangs_is_ended_and_named() {
+    let began = std::time::Instant::now();
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", "echo started; sleep 60"]);
+    let error = common::output_within(&mut command, Duration::from_millis(300))
+        .expect_err("it does not end");
+    assert!(error.contains("sleep 60"), "{error}");
+    assert!(began.elapsed() < Duration::from_secs(20));
+
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c", "echo out; echo err >&2; exit 3"]);
+    let output = common::output_within(&mut command, Duration::from_secs(20)).expect("ends");
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        (output.stdout, output.stderr),
+        (b"out\n".to_vec(), b"err\n".to_vec())
+    );
+}
+
 // ── RDP-01: connect, logon and first frame through the real sidecar ─
 
 #[tokio::test]
@@ -754,17 +776,14 @@ async fn set_layout_until(
 fn xrdp_session_monitors(label: &str) -> usize {
     let script = "for d in /tmp/.X11-unix/X1?; do \
         su testuser -c \"DISPLAY=:${d##*X} xrandr --listmonitors\"; done";
-    let out = std::process::Command::new("docker")
-        .args([
-            "exec",
-            &common::fixture_container("rdp"),
-            "bash",
-            "-c",
-            script,
-        ])
-        .output()
-        .unwrap_or_else(|e| panic!("{label}: docker exec failed: {e}"));
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = common::docker_cli(&[
+        "exec",
+        &common::fixture_container("rdp"),
+        "bash",
+        "-c",
+        script,
+    ])
+    .unwrap_or_else(|e| panic!("{label}: {e}"));
     text.lines()
         .find_map(|line| line.strip_prefix("Monitors: ")?.trim().parse().ok())
         .unwrap_or_else(|| panic!("{label}: no xrandr monitor list in {text:?}"))
@@ -1321,7 +1340,10 @@ async fn rdp_13_clipboard_image_round_trips_both_ways() {
 
     // Client -> server: offer the image, then paste it on the server side.
     let image = ClipboardImage::new(DIB_WIDTH, DIB_HEIGHT, dib_rgba()).expect("valid image");
-    let read_server = "xclip -selection clipboard -t image/bmp -o 2>/dev/null | od -An -v -tx1";
+    // `xclip -o` waits for the selection's owner, forever if that never answers
+    // (a request xrdp lost): ended, and asked again below.
+    let read_server =
+        "timeout 10 xclip -selection clipboard -t image/bmp -o 2>/dev/null | od -An -v -tx1";
     let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
     let mut pasted = None;
     while tokio::time::Instant::now() < deadline && pasted.is_none() {
