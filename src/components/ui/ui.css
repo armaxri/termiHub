@@ -818,6 +818,8 @@
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr);
   align-items: center;
+  /* A card stretched by a taller neighbour keeps its text together at the top. */
+  align-content: start;
   column-gap: var(--spacing-sm);
   row-gap: var(--spacing-xs);
   margin: 0;

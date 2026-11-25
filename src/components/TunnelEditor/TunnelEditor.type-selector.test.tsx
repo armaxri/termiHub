@@ -245,7 +245,7 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
       expect(text).toContain("agent build-box");
       expect(text).not.toContain("this computer");
     }
-    expect(q("tunnel-type-remote").textContent).toContain("on agent build-box's side");
+    expect(q("tunnel-type-remote").textContent).toContain("on the agent's side");
     expect(q("tunnel-diagram").textContent).toContain("Agent build-box");
     await hover(q("tunnel-type-dynamic"));
     expect(help("tunnel-type-dynamic")?.textContent).toContain(

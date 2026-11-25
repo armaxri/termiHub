@@ -76,10 +76,7 @@ export function tunnelTypeHelp(
     case "remote":
       return {
         ...base,
-        summary: tf(
-          onAgent ? "tunnel.type.remote.summary.agent" : "tunnel.type.remote.summary",
-          params
-        ),
+        summary: t(onAgent ? "tunnel.type.remote.summary.agent" : "tunnel.type.remote.summary"),
         lines: [
           tf(onAgent ? "tunnel.type.remote.lead.agent" : "tunnel.type.remote.lead", params),
           tf("tunnel.type.remote.how", params),

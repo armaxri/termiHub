@@ -55,7 +55,7 @@ describe("tunnelTypeHelp (#6027)", () => {
       expect(text).not.toMatch(/[{}]/);
     }
     expect(tunnelTypeHelp("remote", AGENT, "build-box").summary).toBe(
-      "Let the SSH server reach something on agent build-box's side"
+      "Let the SSH server reach something on the agent's side"
     );
   });
 

@@ -238,7 +238,7 @@ const en = {
     "Example: a database only the SSH server can reach, at localhost:5432 on {machine}.",
   "tunnel.type.remote.label": "Remote",
   "tunnel.type.remote.summary": "Let the SSH server reach something here",
-  "tunnel.type.remote.summary.agent": "Let the SSH server reach something on {machine}'s side",
+  "tunnel.type.remote.summary.agent": "Let the SSH server reach something on the agent's side",
   "tunnel.type.remote.lead": "Let the SSH server use something here.",
   "tunnel.type.remote.lead.agent": "Let the SSH server use something on {machine}'s side.",
   "tunnel.type.remote.how":
