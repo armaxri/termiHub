@@ -185,79 +185,74 @@ class TestSshTunnels(
         assert self.driver.exists(self.NEW_BTN)
 
     def test_editor_opens_with_all_fields(self):
-        """TUNNEL-02: New Tunnel opens an editor with name, SSH select, type
-        buttons, the diagram, and a "New SSH tunnel" title."""
+        """TUNNEL-02: a new tunnel's editor is titled by what it is for, asks what to
+        reach and through which server, and keeps the kinds behind a link (#6028)."""
         self._open_new_tunnel_editor()
         fields = (
-            "tunnel-editor-name",
+            "tunnel-editor-remote-host",
+            "tunnel-editor-remote-port",
             "tunnel-editor-ssh-connection",
-            "tunnel-type-local",
-            "tunnel-type-remote",
-            "tunnel-type-dynamic",
-            "tunnel-diagram",
+            "tunnel-editor-local-port",
+            "tunnel-editor-bind-here",
+            "tunnel-editor-name",
         )
         self.wait(
             lambda: all(self.driver.exists(t) for t in fields),
             what="the tunnel editor fields",
         )
-        assert "New SSH tunnel" in self.driver.get_text("tunnel-editor-title")
+        assert "Reach something through a server" in self.driver.get_text("tunnel-editor-title")
+        assert not self.driver.exists("tunnel-type-local")
+        self.driver.click("tunnel-editor-change-type")
+        for kind in ("local", "remote", "dynamic"):
+            assert self.driver.exists(f"tunnel-type-{kind}"), kind
+
+    def _show_path(self) -> str:
+        """Open the diagram under "Show path" and return its text."""
+        if not self.driver.exists("tunnel-diagram"):
+            self.driver.click("tunnel-editor-show-path")
+            self.wait(lambda: self.driver.exists("tunnel-diagram"), what="the diagram")
+        return self.driver.get_text("tunnel-diagram")
 
     def test_local_type_shows_forward_diagram_and_fields(self):
-        """TUNNEL-03: Local forward — Your PC → SSH Server → Target, with both
-        local-bind and remote-target host/port fields."""
-        self._open_new_tunnel_editor()
-        self.driver.click("tunnel-type-local")
-        self.wait(
-            lambda: self.driver.exists("tunnel-editor-local-port"),
-            what="the local-forward fields",
-        )
-        diagram = self.driver.get_text("tunnel-diagram")
-        for token in ("Your PC", "SSH server", "Target"):
+        """TUNNEL-03: Local forward — This computer → SSH server → Target, open to
+        this computer only."""
+        self._open_new_tunnel_editor("local")
+        diagram = self._show_path()
+        for token in ("This computer", "SSH server", "Target"):
             assert token in diagram, token
         form = self.driver.get_text("tunnel-editor-form")
-        for label in ("Local host", "Local port", "Remote host", "Remote port"):
+        for label in ("What to reach", "Through", "Open it here on port", "Who can open it"):
             assert label in form, label
+        assert self.driver.get_attribute("tunnel-editor-bind-here", "aria-checked") == "true"
 
     def test_remote_type_shows_reverse_diagram_and_fields(self):
-        """TUNNEL-04: Remote forward — Local Target → SSH Server → Remote Clients."""
-        self._open_new_tunnel_editor()
-        self.driver.click("tunnel-type-remote")
-        self.wait(
-            lambda: "Remote clients" in self.driver.get_text("tunnel-diagram"),
-            what="the reverse-forward diagram",
-        )
-        diagram = self.driver.get_text("tunnel-diagram")
+        """TUNNEL-04: Remote forward — Local target → SSH server → Remote clients, open
+        to the SSH server only (U-007)."""
+        self._open_new_tunnel_editor("remote")
+        diagram = self._show_path()
         for token in ("Local target", "SSH server", "Remote clients"):
             assert token in diagram, token
         form = self.driver.get_text("tunnel-editor-form")
-        for label in ("Local host", "Local port", "Remote host", "Remote port"):
+        for label in ("What runs here", "Through", "Open it on the server on port"):
             assert label in form, label
+        assert self.driver.get_attribute("tunnel-editor-bind-here", "aria-checked") == "true"
+        assert not self.driver.exists("tunnel-editor-warning")
 
     def test_dynamic_type_hides_remote_fields(self):
-        """TUNNEL-05: Dynamic (SOCKS5) — Your PC → SSH Server → Internet, with
-        only the local-bind fields (no remote host/port)."""
-        self._open_new_tunnel_editor()
-        self.driver.click("tunnel-type-dynamic")
-        self.wait(
-            lambda: "Internet" in self.driver.get_text("tunnel-diagram"),
-            what="the dynamic-forward diagram",
-        )
-        diagram = self.driver.get_text("tunnel-diagram")
-        for token in ("Your PC", "SSH server", "Internet"):
+        """TUNNEL-05: Dynamic (SOCKS5) — This computer → SSH server → Internet, with
+        only the port it opens (no target)."""
+        self._open_new_tunnel_editor("dynamic")
+        diagram = self._show_path()
+        for token in ("This computer", "SSH server", "Internet"):
             assert token in diagram, token
-        form = self.driver.get_text("tunnel-editor-form")
-        assert "Local host" in form and "Local port" in form
-        assert "Remote host" not in form
-        assert "Remote port" not in form
+        assert self.driver.exists("tunnel-editor-local-port")
+        assert not self.driver.exists("tunnel-editor-remote-host")
+        assert not self.driver.exists("tunnel-editor-remote-port")
 
     def test_diagram_updates_on_local_port_change(self):
         """TUNNEL-06: the diagram reacts to the local-port input."""
         self._open_new_tunnel_editor()
-        self.driver.click("tunnel-type-local")
-        self.wait(
-            lambda: self.driver.exists("tunnel-editor-local-port"),
-            what="the local-forward fields",
-        )
+        self._show_path()
         self.driver.type("tunnel-editor-local-port", "9191")
         self.wait(
             lambda: "9191" in self.driver.get_text("tunnel-diagram"),
@@ -285,7 +280,6 @@ class TestSshTunnels(
             what="the name field to pre-fill",
         )
         title = self.driver.get_text("tunnel-editor-title")
-        assert "Edit tunnel" in title
         assert tunnel["name"] in title
 
     def _tunnel_menu(self, tunnel_id: str, action: str) -> None:
@@ -421,10 +415,10 @@ class TestSshTunnels(
         assert TUNNEL_OK not in _http_get(port)
 
     # ── helpers ────────────────────────────────────────────────────────────────
-    def _open_new_tunnel_editor(self):
+    def _open_new_tunnel_editor(self, kind: str = "local"):
         """Open a fresh tunnel editor (no SSH connection / save needed)."""
         self.open_services_sidebar()
-        self.choose_new_service("tunnel-local")
+        self.choose_new_service(f"tunnel-{kind}")
         self.wait(lambda: self.driver.exists("tunnel-editor-name"), what="the tunnel editor")
 
     def _create_tunnel(
@@ -446,11 +440,6 @@ class TestSshTunnels(
         self.wait(
             lambda: self._try_select("tunnel-editor-ssh-connection", ssh_value),
             what="the SSH connection option to load",
-        )
-        self.driver.click("tunnel-type-local")
-        self.wait(
-            lambda: self.driver.exists("tunnel-editor-local-port"),
-            what="the local-forward fields",
         )
         self.driver.type("tunnel-editor-local-port", str(local_port))
         self.driver.type("tunnel-editor-remote-host", self.target.remote_host)

@@ -177,7 +177,7 @@ function tunnelTypeOptions(host: HostChoice, agentName?: string): RadioGroupOpti
  * react-hook-form's async error proxy). The scalar fields are Controller-wired;
  * the discriminated `tunnelType` union and the `host` run-location are driven
  * imperatively through `setValue` because they change shape/several fields at
- * once (type switch, "Widen bind", chaining), matching the previous hand-rolled
+ * once (type switch, "Let others reach it", chaining), matching the previous hand-rolled
  * behavior exactly.
  */
 export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
@@ -423,7 +423,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   };
 
   // ── Chain a hop to this computer (#2597) ──────────────────────────────────
-  // The affordance sits beside "Widen bind" on the same reachability warning.
+  // The affordance sits beside "Let others reach it" on the same reachability warning.
   // It is offered only for a *saved* agent-hosted loopback parent (chaining links
   // a companion to the parent's persisted id), disabled while the host agent is
   // offline, and replaced by "Chained ✓ · reveal" once a companion exists.
