@@ -37,6 +37,9 @@ vi.mock("@/themes", () => ({
 
 import { RunTargetsDialog, type RunPickerAutomation } from "./RunTargetsDialog";
 import { resetRememberedRunTargetChoice } from "./runTargetChoice";
+import { automationLibraryState } from "@/store/slices/automationStoreState";
+import type { Automation } from "@/types/generated/Automation";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
@@ -62,6 +65,17 @@ function term(id: string, sessionId: string | null, connectionId?: string): Term
     connectionId,
   };
 }
+
+/** The automation the picker runs, with `steps`. */
+const stored = (steps: AutomationStep[]): Automation => ({
+  id: "m1",
+  name: "Deploy",
+  tags: [],
+  steps,
+  triggers: [],
+  createdAt: "",
+  updatedAt: "",
+});
 
 function seedTabs(tabs: TerminalTab[]) {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: tabs[0].id };
@@ -270,6 +284,36 @@ describe("RunTargetsDialog (#5818 slice 5)", () => {
     expect(onRun).not.toHaveBeenCalled();
     pressEnter("run-targets-target-active");
     expect(onRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms with each terminal's machine and what is typed (A-035)", () => {
+    const at = (id: string, host: string): TerminalTab => ({
+      ...term(id, `s-${id}`),
+      config: { type: "ssh", config: { host, username: "ops" } },
+    });
+    seedTabs([at("a", "web-1"), at("b", "web-2")]);
+    useAppStore.setState(
+      automationLibraryState([stored([{ kind: "send-command", command: "make deploy" }])])
+    );
+    render();
+    click("run-targets-target-all");
+    click("run-targets-run");
+    const list = q("run-targets-confirm-list").textContent;
+    expect(list).toContain("ops@web-1");
+    expect(list).toContain("ops@web-2");
+    expect(q("run-targets-confirm-steps").textContent).toContain("Run command: make deploy");
+  });
+
+  it("says why it cannot run instead of running (A-016)", () => {
+    seedTabs([term("a", "s-a")]);
+    useAppStore.setState(
+      automationLibraryState([stored([{ kind: "run-local-process", program: "make", args: [] }])])
+    );
+    const onRun = render();
+    expect(runButton().disabled || runButton().getAttribute("aria-disabled") === "true").toBe(true);
+    expect(q("run-targets-dialog").textContent).toContain("Cannot run: ");
+    pressEnter("run-targets-target-active");
+    expect(onRun).not.toHaveBeenCalled();
   });
 
   it("a double click on Run does not pass the confirmation", () => {

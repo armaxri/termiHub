@@ -127,7 +127,7 @@ function automationDoes(automation: Automation): string {
   const local = steps.length > 0 && steps.every((s) => s.kind === "run-local-process");
   if (local) return "runs on this computer";
   return isMacroShaped(automation)
-    ? "types what was recorded"
+    ? "types its keys"
     : `types ${steps.length} step${steps.length === 1 ? "" : "s"}`;
 }
 

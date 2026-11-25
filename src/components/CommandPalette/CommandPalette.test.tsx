@@ -252,6 +252,33 @@ describe("CommandPalette", () => {
       expect(useAppStore.getState().commandPaletteOpen).toBe(false);
     });
 
+    it("says what is typed, whether triggers are off, and what cannot run (A-048)", () => {
+      const target = (id: string) =>
+        row(id)?.querySelector(".command-palette__target")?.textContent;
+      seed();
+      setStore({
+        ...automationLibraryState([
+          typed,
+          {
+            ...steps,
+            triggers: [{ kind: "hotkey", binding: "F9" }],
+            triggersEnabled: false,
+          },
+          automation("new-1", "Deploy later", {
+            steps: [{ kind: "future-step" }] as unknown as Automation["steps"],
+          }),
+        ]),
+      });
+      typeInto("login");
+      expect(target("m-1")).toBe("types its keys in prod-web");
+      typeInto("deploy");
+      expect(target("wf-1")).toBe("types 1 step in prod-web · triggers off");
+      expect(target("new-1")).toBe("Cannot run");
+      typeInto("deploy later");
+      keydown("Enter");
+      expect(runAutomation).not.toHaveBeenCalled();
+    });
+
     it("asks where without an active terminal", () => {
       const asked: unknown[] = [];
       const listen = (e: Event) => asked.push((e as CustomEvent).detail);

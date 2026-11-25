@@ -26,6 +26,7 @@ describe("runBlockedReason (A-016)", () => {
 
   it("is null for what can run", () => {
     expect(reason([{ kind: "wait", delayMs: 1 }])).toBeNull();
+    expect(reason([{ kind: "wait", delayMs: 1 }], false)).toBeNull();
     expect(reason([program])).toBeNull();
     expect(reason([calls("gone")])).toBeNull();
   });
