@@ -68,6 +68,24 @@ describe("the keys", () => {
     expect(query("automation-editor-keys-more-text-0")?.textContent).toContain("\\xHH");
   });
 
+  it("inserts a key where the caret was, else at the end of the last row (B-013)", async () => {
+    await open({ kind: "type-keys", chunks: [{ data: "abc", delayMs: 0 }], timing: "recorded" });
+    click("automation-editor-keys-more-0");
+    click("automation-editor-keys-key-0-Tab");
+    expect(valueOf(text(0))).toBe("abc⇥");
+    const input = query(text(0)) as HTMLInputElement;
+    act(() => {
+      input.focus();
+      input.setSelectionRange(1, 1);
+      input.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowLeft", bubbles: true }));
+    });
+    click("automation-editor-keys-key-0-F1");
+    expect(valueOf(text(0))).toBe("a⎋OPbc⇥");
+    // And goes on behind it.
+    click("automation-editor-keys-key-0-Tab");
+    expect(valueOf(text(0))).toBe("a⎋OP⇥bc⇥");
+  });
+
   it("corrects one row and keeps the others byte for byte", async () => {
     await open();
     typeText(text(1), "\\e[B");

@@ -12,6 +12,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { WorkflowParamPromptDialog } from "./WorkflowParamPromptDialog";
 import { useAppStore } from "@/store/appStore";
+import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { WorkflowParameter } from "@/types/workflow";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 
@@ -49,15 +50,19 @@ function render() {
 }
 
 /** Open the prompt via the store and return the resolver spy. */
-function openPrompt(parameters: WorkflowParameter[]) {
+function openPrompt(
+  parameters: WorkflowParameter[],
+  steps: AutomationStep[] = [],
+  targets = ["bash"]
+) {
   const resolve = vi.fn<(values: WorkflowParamValues | null) => void>();
   act(() => {
     useAppStore.setState({
       workflowParamPrompt: {
         workflowName: "Deploy",
         parameters,
-        targets: ["bash"],
-        steps: [],
+        targets,
+        steps,
         resolve,
       },
     });
@@ -79,6 +84,18 @@ afterEach(() => {
 });
 
 describe("WorkflowParamPromptDialog", () => {
+  it("says where it runs and what each value is for (B-006)", () => {
+    render();
+    openPrompt(
+      [{ name: "env", type: "string" }],
+      [{ kind: "send-command", command: "deploy ${env}" }],
+      ["bash", "bash 2"]
+    );
+    const text = document.body.textContent;
+    expect(text).toContain("Runs in bash, bash 2.");
+    expect(text).toContain("Used in step 1 (Run command: deploy ${env})");
+  });
+
   it("is not rendered without a pending prompt", () => {
     render();
     expect(query("workflow-param-prompt")).toBeNull();

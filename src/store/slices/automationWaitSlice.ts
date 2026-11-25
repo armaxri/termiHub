@@ -56,6 +56,8 @@ export interface AutomationWaitSlice {
    * shows it. While the terminal shows a password prompt, the first call only says so.
    */
   continueAutomationWait: (runId: string) => void;
+  /** Stop saying that a terminal still asks once its prompt is answered. */
+  recheckWaitingPrompts: () => void;
   /** End the waits whose terminal was closed, moved away or disconnected. */
   followWaitingTerminals: () => void;
 }
@@ -144,6 +146,17 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
     }
     show(wait.tabId);
     pending.get(runId)?.end("continued");
+  },
+
+  recheckWaitingPrompts: () => {
+    const answered = (w: AutomationWait) =>
+      w.stillAsking && !isPasswordPrompt(promptOfTerminal(w.tabId));
+    if (!get().automationWaits.some(answered)) return;
+    set({
+      automationWaits: get().automationWaits.map((w) =>
+        answered(w) ? { ...w, stillAsking: false } : w
+      ),
+    });
   },
 
   followWaitingTerminals: () => {

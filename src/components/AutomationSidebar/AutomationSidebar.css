@@ -61,6 +61,12 @@
   height: 100%;
 }
 
+/* Shown, it stands beside the name, which makes room, rather than on it. */
+.automation-item:is(:hover, :focus-within) .sidebar-list-item__more {
+  position: static;
+  order: -1;
+}
+
 /* Edit shows on the selected row (A-015), and on any other while it is pointed at. */
 .automation-item:not(:hover, :focus-within) .automation-item__edit {
   display: none;

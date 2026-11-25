@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { HistorySection } from "./HistorySection";
 import { withTooltip } from "@/test/tooltip";
 import { checkA11y } from "@/test/axe";
+import { OPEN_RUN_AUTOMATION_EVENT } from "@/services/contextCommands";
 import { useAppStore } from "@/store/appStore";
 import type { ScheduleView } from "@/types/schedule";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
@@ -245,6 +246,24 @@ describe("HistorySection (#5818, slice 9)", () => {
       const details = document.querySelector('[data-testid^="automation-gap-details-s1"]')!;
       expect(details.textContent).toContain("Every night");
       expect(details.textContent).toContain("termiHub was closed");
+    });
+
+    it("say what to do, and lead to the schedule and to a run now (B-033)", () => {
+      const openScheduleEditor = vi.fn();
+      useAppStore.setState({ openScheduleEditor });
+      const asked: unknown[] = [];
+      const listen = (e: Event) => asked.push((e as CustomEvent).detail);
+      window.addEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
+      render(RUNS, "a2");
+      act(() => toggle()!.click());
+      const at = (part: string) =>
+        document.querySelector<HTMLElement>(`[data-testid^="automation-gap-${part}-s1"]`)!;
+      expect(at("next").textContent).toContain("“If a run is missed”");
+      act(() => at("edit").click());
+      expect(openScheduleEditor).toHaveBeenCalledWith({ scheduleId: "s1" });
+      act(() => at("run").click());
+      window.removeEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
+      expect(asked).toEqual([{ automationId: "a2" }]);
     });
 
     it("name the schedule of a run it started", () => {

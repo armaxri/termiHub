@@ -188,6 +188,19 @@ describe("Continue", () => {
     expect(wait.result).toBe("continued");
   });
 
+  it("is the way on again once the password is typed", async () => {
+    prompt = "[sudo] password for arne: ";
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue anyway");
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue anyway");
+    prompt = "$ ";
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue");
+    expect(wait.result).toBeUndefined();
+  });
+
   it("from anywhere else only shows the terminal that waits (B-001)", async () => {
     const wait = startWait("b");
     const shown: string[] = [];

@@ -38,6 +38,7 @@ export function WaitingRunBar() {
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id);
   const continueWait = useAppStore((s) => s.continueAutomationWait);
   const stop = useAppStore((s) => s.cancelWorkflowRun);
+  const recheck = useAppStore((s) => s.recheckWaitingPrompts);
   const follow = useAppStore((s) => s.followWaitingTerminals);
   // A change of the layout or of a session may be the end of the terminal.
   const rootPanel = useLayoutRenderTree();
@@ -47,6 +48,14 @@ export function WaitingRunBar() {
   useEffect(() => {
     if (waiting) follow();
   }, [waiting, follow, rootPanel, tabGroups, lifecycle]);
+
+  // Once the password is typed, Continue is the way on again.
+  const stillAsking = waits.some((w) => w.stillAsking);
+  useEffect(() => {
+    if (!stillAsking) return;
+    const timer = window.setInterval(recheck, 500);
+    return () => window.clearInterval(timer);
+  }, [stillAsking, recheck]);
 
   useEffect(() => {
     const onShow = (e: Event) => showTerminal((e as CustomEvent<{ tabId: string }>).detail.tabId);
