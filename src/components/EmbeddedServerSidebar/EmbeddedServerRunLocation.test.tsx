@@ -13,6 +13,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { useAppStore } from "@/store/appStore";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerSidebar } from "./EmbeddedServerSidebar";
 
@@ -94,20 +95,12 @@ async function flush() {
   });
 }
 
+setupAgentsRegion();
+
 function seedStore(servers = [makeServer("srv-1", "Docs")], states: Record<string, unknown> = {}) {
   (useAppStore as unknown as { setState: (p: Record<string, unknown>) => void }).setState({
     embeddedServers: servers,
     embeddedServerStates: states,
-    remoteAgents: [
-      {
-        id: "a1",
-        name: "build-server",
-        config: {},
-        agentSettings: {},
-        isExpanded: false,
-        connectionState: "connected",
-      },
-    ],
     saveEmbeddedServer,
     deleteEmbeddedServer: vi.fn(() => Promise.resolve()),
     startEmbeddedServer: vi.fn(() => Promise.resolve()),
@@ -146,6 +139,8 @@ describe("where a file server runs", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedAgentsRegion({ remoteAgents: [{ id: "a1", name: "build-server" } as any] });
     seedStore();
   });
 

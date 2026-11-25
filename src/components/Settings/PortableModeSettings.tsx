@@ -14,6 +14,7 @@ const PORTABLE_FILES = [
   "connections.json",
   "settings.json",
   "tunnels.json",
+  "embedded_servers.json",
   "credentials.enc",
   "workspaces.json",
 ];

@@ -593,7 +593,15 @@ const en = {
   "server.tooltip.listen": "{protocol} · {url}",
   "server.tooltip.root": "Serves {path}",
   "server.tooltip.readOnly": "Read only",
+  "server.tooltip.here": "Runs on this computer",
   "server.tooltip.agent": "Runs on agent {agent}",
+  "server.tooltip.agentRemoved": "Runs on an agent that was removed",
+  // Where a service runs (#6028): a stored host this build does not know.
+  "service.host.unreadable": "termiHub cannot read where it runs",
+  "service.host.moveHint":
+    "It is running. Saving stops it; start it again to run it on the machine you chose.",
+  "server.editor.copyHint":
+    "A copy does not get the password. Enter it here, or the copy cannot start.",
   "server.editor.runOn": "Run on",
   "server.tooltip.traffic": "{active} connections · ↑ {up} · ↓ {down}",
   "workspace.tooltip.tab": "Opens {count} tab",

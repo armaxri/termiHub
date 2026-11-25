@@ -175,4 +175,31 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     await act(async () => q("tunnel-editor-save")!.click());
     expect(vi.mocked(saveTunnel).mock.calls[0][0].host).toEqual({ kind: "agent", agentId: "gone" });
   });
+
+  it("says that moving a running tunnel stops it (#6028)", async () => {
+    useAppStore.setState({
+      tunnelStates: {
+        "tun-agent": {
+          tunnelId: "tun-agent",
+          status: "connected",
+          stats: { bytesSent: 0, bytesReceived: 0, activeConnections: 0, totalConnections: 0 },
+        },
+      },
+    });
+    await render("tun-agent");
+    const field = () => q("tunnel-editor-host-field")?.textContent;
+    expect(field()).not.toContain("Saving stops it");
+    act(() => q("tunnel-editor-host")!.focus());
+    act(() =>
+      q("tunnel-editor-host")!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+      )
+    );
+    const here = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (o) => o.textContent === "This computer"
+    )!;
+    act(() => here.focus());
+    act(() => here.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(field()).toContain("Saving stops it");
+  });
 });

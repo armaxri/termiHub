@@ -6,11 +6,12 @@ import {
   encodeRunLocation,
   runLocationOptions,
 } from "@/utils/runLocation";
+import type { HostChoice } from "@/utils/hostChoice";
 
 /** Props for the shared {@link RunLocationSelect} control. */
 export interface RunLocationSelectProps {
   /** The item's current run-location. */
-  value: RunLocation;
+  value: HostChoice;
   /** Agents offered as run targets ("This computer" is always offered). */
   agents: RemoteAgentDefinition[];
   /** Called with the newly chosen run-location. */
@@ -48,7 +49,7 @@ export function RunLocationSelect({
   disabled,
   ...rest
 }: RunLocationSelectProps) {
-  const options = runLocationOptions(agents, agentAllowed);
+  const options = runLocationOptions(agents, agentAllowed, value);
   // With no agent to offer, "This computer" is the only choice — disable the
   // control so it reads as a fixed vantage rather than an interactive no-op.
   const singleChoice = options.length === 1;

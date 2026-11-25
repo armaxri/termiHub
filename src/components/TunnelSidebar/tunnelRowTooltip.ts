@@ -1,6 +1,7 @@
 import { t, tf } from "@/i18n/catalog";
 import { THIS_COMPUTER, type TunnelConfig, type TunnelStats } from "@/types/tunnel";
 import { formatBytes, formatRate } from "@/utils/formatters";
+import { UNREADABLE_HOST } from "@/utils/hostChoice";
 import { tunnelPortMapping } from "@/utils/tunnelSummary";
 import { tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 
@@ -8,8 +9,8 @@ import { tunnelTypeHelp } from "@/utils/tunnelTypeHelp";
 export interface TunnelRowTooltipInput {
   /** The SSH connection's name ("Unknown" when it is gone). */
   sshLabel: string;
-  /** The host badge: the agent's name, or "this computer". */
-  host: { label: string; onAgent: boolean };
+  /** The host badge: the agent's name, "this computer" or an unknown machine. */
+  host: { label: string; onAgent: boolean; unreadable?: boolean };
   /** Live counters, shown only while the tunnel is active. */
   stats?: TunnelStats;
   /** Smoothed upload / download rates in bytes per second. */
@@ -32,7 +33,11 @@ export interface TunnelRowTooltipInput {
 export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipInput): string[] {
   const help = tunnelTypeHelp(
     tunnel.tunnelType.type,
-    input.host.onAgent ? { kind: "agent", agentId: input.host.label } : THIS_COMPUTER
+    input.host.unreadable
+      ? UNREADABLE_HOST
+      : input.host.onAgent
+        ? { kind: "agent", agentId: input.host.label }
+        : THIS_COMPUTER
   );
   const out = [
     tf("tunnel.tooltip.forward", {
@@ -42,9 +47,11 @@ export function tunnelRowTooltip(tunnel: TunnelConfig, input: TunnelRowTooltipIn
     }),
     help.lines[0],
     tf("tunnel.tooltip.via", { connection: input.sshLabel }),
-    input.host.onAgent
-      ? tf("tunnel.tooltip.hostAgent", { agent: input.host.label })
-      : t("tunnel.tooltip.hostLocal"),
+    input.host.unreadable
+      ? t("service.host.unreadable")
+      : input.host.onAgent
+        ? tf("tunnel.tooltip.hostAgent", { agent: input.host.label })
+        : t("tunnel.tooltip.hostLocal"),
   ];
   if (input.stats) {
     const up = formatRate(input.upRate ?? null);

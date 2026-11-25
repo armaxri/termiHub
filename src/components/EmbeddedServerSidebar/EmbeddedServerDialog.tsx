@@ -27,7 +27,8 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { frontendWarn } from "@/utils/frontendLog";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import type { RemoteAgentDefinition } from "@/types/connection";
-import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
+import { THIS_COMPUTER } from "@/utils/runLocation";
+import { sameHost, type HostChoice } from "@/utils/hostChoice";
 import { t } from "@/i18n/catalog";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -37,18 +38,25 @@ interface Props {
   /** Existing config to edit, or null for a new server. */
   config: EmbeddedServerConfig | null;
   /**
-   * Persist the config and the chosen run-location. Resolve `true` when the
+   * A copy to create (#6028): prefills a new server and asks for the password,
+   * which the copy does not have.
+   */
+  draft?: EmbeddedServerConfig | null;
+  /** Whether the edited server is running, so moving it stops it. */
+  running?: boolean;
+  /**
+   * Persist the config and the chosen machine. Resolve `true` when the
    * save succeeded (the dialog closes) or `false` on failure (the dialog stays
    * open so the user can retry).
    */
-  onSave: (config: EmbeddedServerConfig, runLocation: RunLocation) => boolean | Promise<boolean>;
+  onSave: (config: EmbeddedServerConfig, runLocation: HostChoice) => boolean | Promise<boolean>;
   /** Agents offered as run targets in the "Run on" selector (#2191). */
   agents?: RemoteAgentDefinition[];
   /**
-   * The server's current run-location. Chosen here rather than on the row
+   * Where the server runs, as stored. Chosen here rather than on the row
    * (#5770): a row shows names, not settings.
    */
-  runLocation?: RunLocation;
+  runLocation?: HostChoice;
 }
 
 /**
@@ -127,6 +135,11 @@ function defaultConfig(): ServerFormState {
   };
 }
 
+/** The form's values for an existing server or a copy, else a blank one. */
+function initialConfig(config: EmbeddedServerConfig | null): ServerFormState {
+  return config ? { ...config } : defaultConfig();
+}
+
 /**
  * Create / edit dialog for an embedded server configuration.
  *
@@ -140,12 +153,14 @@ export function EmbeddedServerDialog({
   open,
   onOpenChange,
   config,
+  draft = null,
+  running = false,
   onSave,
   agents = [],
   runLocation = THIS_COMPUTER,
 }: Props) {
   const [lanWarning, setLanWarning] = useState(false);
-  const [location, setLocation] = useState<RunLocation>(runLocation);
+  const [location, setLocation] = useState<HostChoice>(runLocation);
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
     { name: "Loopback", addr: "127.0.0.1" },
     { name: "All interfaces", addr: "0.0.0.0" },
@@ -161,7 +176,7 @@ export function EmbeddedServerDialog({
     canSave,
   } = useZodEditorForm<ServerFormState>({
     schema: serverFormSchema,
-    defaultValues: config ? { ...config } : defaultConfig(),
+    defaultValues: initialConfig(config ?? draft),
   });
   // Errors show once the user edited a field and left it, or tried to save
   // (#5917) — a new service does not open with "Name is required." in red.
@@ -172,7 +187,7 @@ export function EmbeddedServerDialog({
   // leaks in and the network-interface list refreshes.
   useEffect(() => {
     if (open) {
-      const initial = config ? { ...config } : defaultConfig();
+      const initial = initialConfig(config ?? draft);
       reset(initial);
       rebaseline(initial);
       setLocation(runLocation);
@@ -187,7 +202,10 @@ export function EmbeddedServerDialog({
           );
         });
     }
-  }, [open, config, reset, runLocation, rebaseline]);
+    // The stored machine is read when the dialog opens; `runLocation` is a new
+    // object on every render of the sidebar and must not reset the choice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, config, draft, reset, rebaseline]);
 
   const handleProtocolChange = (type: ServerType) => {
     const cur = getValues();
@@ -315,6 +333,11 @@ export function EmbeddedServerDialog({
         }
       >
         <div className="server-dialog__form" {...rootProps}>
+          {draft && (
+            <p className="ui-field__hint" data-testid="server-dialog-copy-hint">
+              {t("server.editor.copyHint")}
+            </p>
+          )}
           {/* Name */}
           <Controller
             name="name"
@@ -415,6 +438,11 @@ export function EmbeddedServerDialog({
               aria-label={t("server.editor.runOn")}
               data-testid="server-dialog-runloc"
             />
+            {running && !sameHost(location, runLocation) && (
+              <p className="ui-field__hint" data-testid="server-dialog-move-hint">
+                {t("service.host.moveHint")}
+              </p>
+            )}
           </div>
 
           {/* Network */}

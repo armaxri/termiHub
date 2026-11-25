@@ -53,12 +53,14 @@ describe("runLocation helpers", () => {
 
   it("keeps a machine it cannot offer selectable only as what it is (#6028)", () => {
     expect(encodeRunLocation({ kind: "unreadable" })).toBe("unreadable");
-    expect(runLocationOptions(AGENTS, true, { kind: "unreadable" }).at(-1)).toEqual({
+    expect(runLocationOptions(AGENTS, true, { kind: "unreadable" }).slice(-1)[0]).toEqual({
       value: "unreadable",
       label: "Unknown machine",
       disabled: true,
     });
-    expect(runLocationOptions(AGENTS, true, { kind: "agent", agentId: "gone" }).at(-1)).toEqual({
+    expect(
+      runLocationOptions(AGENTS, true, { kind: "agent", agentId: "gone" }).slice(-1)[0]
+    ).toEqual({
       value: "agent:gone",
       label: "Removed agent",
       disabled: true,

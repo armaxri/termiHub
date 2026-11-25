@@ -15,6 +15,7 @@ import {
   ServerState as EmbeddedServerState,
   ServerType,
 } from "@/types/embeddedServer";
+import { THIS_COMPUTER } from "@/types/tunnel";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
@@ -85,7 +86,10 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
       set((state) => {
         const exists = state.embeddedServers.some((s) => s.id === config.id);
         const embeddedServers = exists
-          ? state.embeddedServers.map((s) => (s.id === config.id ? config : s))
+          ? // A save without a host keeps the stored one, as the backend does (#6028).
+            state.embeddedServers.map((s) =>
+              s.id === config.id ? { ...config, host: config.host ?? s.host } : s
+            )
           : [...state.embeddedServers, config];
         return { embeddedServers };
       });
@@ -158,6 +162,7 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
       autoStart: false,
       readOnly: false,
       directoryListing: protocol === "http" ? true : undefined,
+      host: THIS_COMPUTER,
     };
     const serverId = await apiCreateAndStartServer(config);
     // Refresh server list so the new entry shows up in the sidebar.
