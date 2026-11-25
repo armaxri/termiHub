@@ -8,17 +8,18 @@
  * file); their entries are converted on reading. An older build cannot read
  * `automations` and refuses the file without importing anything.
  *
- * ## Unknown keys
+ * ## A file is not trusted
  *
- * Every entry is validated strictly (`workflowSchema.ts`), and the keys this
- * build does not know are kept, so a file from a newer build that added one
- * loses nothing. That is safe because an automation never carries a trust
- * decision: which local programs and script files may be used lives in the
- * settings, and {@link prepareAutomationImport} sets the Armed switch itself.
+ * Every entry is validated (`workflowSchema.ts`) and only the keys this build
+ * knows are taken: a forged marker never survives an import. Nothing is left out
+ * silently, though. An entry that loses a key is reported by name, and one with a
+ * step or trigger of a kind this build does not know, which it could only run
+ * wrongly, is refused by name while the others are imported.
  */
-import { child, isRecord } from "@/services/importEnvelope";
+import { child, isNonBlankString, isRecord } from "@/services/importEnvelope";
 import { parseMacroEnvelope } from "@/services/macroIo";
 import { WORKFLOW_EXPORT_VERSION, parseStepEntries } from "@/services/workflowIo";
+import { KNOWN_ENTRY_KEYS, KNOWN_STEP_KINDS, KNOWN_TRIGGER_KINDS } from "@/services/workflowSchema";
 import { referencedAutomations } from "@/services/automationRunner";
 import { newId } from "@/services/transport/ids";
 import { macroToAutomation, workflowToAutomation } from "@/store/slices/automationViews";
@@ -56,46 +57,52 @@ export function withCalledAutomations(
   return [...included.values()];
 }
 
-/** The automations a file holds, under the ids they have in it, per list. */
-export type ParsedAutomationFile = Record<ListKey, Automation[]>;
+/** An entry of a file, under the id it has there. */
+export interface ParsedEntry {
+  automation: Automation;
+  /** It has parts this build does not know, which were left out. */
+  leftOut: boolean;
+}
+
+/** What a file holds, per list. */
+export interface ParsedAutomationFile {
+  entries: Record<ListKey, ParsedEntry[]>;
+  /** Entries of a newer build that were refused, and the kind that is not known. */
+  refused: { name: string; kind: string }[];
+}
 
 /**
- * Add the keys of `raw` that validation dropped because this build does not know
- * them, at every level. A known key keeps its validated value.
+ * The first step or trigger kind of an entry that this build does not know, or
+ * `null`. Anything else that is wrong is left to the validation.
  */
-export function keepUnknownKeys<T>(validated: T, raw: unknown): T {
+function unknownKind(raw: unknown): string | null {
+  const search = (items: unknown, known: ReadonlySet<string>): string | null => {
+    if (!Array.isArray(items)) return null;
+    for (const item of items) {
+      const kind = child(item, "kind");
+      if (typeof kind === "string" && !known.has(kind)) return kind;
+      for (const nested of ["then", "else", "body"]) {
+        const found = search(child(item, nested), known);
+        if (found !== null) return found;
+      }
+    }
+    return null;
+  };
+  return (
+    search(child(raw, "steps"), KNOWN_STEP_KINDS) ??
+    search(child(raw, "triggers"), KNOWN_TRIGGER_KINDS)
+  );
+}
+
+/** Whether `raw` has a key, at any level, that validation took out. */
+function hasLeftOut(validated: unknown, raw: unknown, known: readonly string[] = []): boolean {
   if (Array.isArray(validated)) {
-    return validated.map((item, i) => keepUnknownKeys(item, child(raw, i))) as T;
+    return validated.some((item, i) => hasLeftOut(item, child(raw, i)));
   }
-  if (!isRecord(validated) || !isRecord(raw)) return validated;
-  const unknown = Object.entries(raw).filter(([key]) => !(key in validated) && key !== "__proto__");
-  const known = Object.entries(validated).map(([key, value]) => [
-    key,
-    keepUnknownKeys(value, child(raw, key)),
-  ]);
-  return Object.fromEntries([...known, ...unknown]) as T;
-}
-
-/** `entry`'s keys that its converted form does not have. */
-function leftOver(entry: object, converted: object, dropped: readonly string[] = []): object {
-  return Object.fromEntries(
-    Object.entries(entry).filter(([key]) => !(key in converted) && !dropped.includes(key))
+  if (!isRecord(validated) || !isRecord(raw)) return false;
+  return Object.keys(raw).some((key) =>
+    key in validated ? hasLeftOut(validated[key], raw[key]) : !known.includes(key)
   );
-}
-
-/** Convert one entry of a `macros` list: its keys become one Type keys step. */
-function fromMacroEntry(entry: ReturnType<typeof parseMacroEnvelope>[number]): Automation {
-  const automation = macroToAutomation(entry);
-  const steps = automation.steps.map((step) =>
-    step.kind === "type-keys" ? { ...step, chunks: entry.steps } : step
-  );
-  return { ...leftOver(entry, automation), ...automation, steps };
-}
-
-/** Convert one entry of a `workflows` or `automations` list. */
-function fromStepEntry(entry: ReturnType<typeof parseStepEntries>[number]): Automation {
-  const automation = workflowToAutomation(entry);
-  return { ...leftOver(entry, automation, ["parameters"]), ...automation };
 }
 
 /**
@@ -110,34 +117,63 @@ export function parseAutomationFile(json: string): ParsedAutomationFile {
   } catch {
     throw new Error("Invalid automations file: the file is not valid JSON.");
   }
-  const lists = isRecord(parsed) ? LIST_KEYS.filter((key) => key in parsed) : [];
-  const version = child(parsed, "version");
+  const file = isRecord(parsed) ? parsed : {};
+  const version = file.version;
   if (typeof version === "number" && version > AUTOMATION_FILE_VERSION) {
     throw new Error(
       "The file was exported by a newer version of termiHub. Update termiHub to import it."
     );
   }
-  if (lists.length === 0) {
+  if (!LIST_KEYS.some((key) => key in file)) {
     throw new Error("Invalid automations file: it holds no automations.");
   }
-  const raw = (key: ListKey): unknown => child(parsed, key);
-  const read = (key: "automations" | "workflows"): Automation[] =>
-    lists.includes(key)
-      ? keepUnknownKeys(parseStepEntries(json, key), raw(key)).map(fromStepEntry)
-      : [];
-  return {
-    automations: read("automations"),
-    macros: lists.includes("macros")
-      ? keepUnknownKeys(parseMacroEnvelope(json), raw("macros")).map(fromMacroEntry)
-      : [],
-    workflows: read("workflows"),
+
+  const refused: ParsedAutomationFile["refused"] = [];
+  /** A list without the entries of a newer build. */
+  const readable = (key: ListKey): unknown => {
+    const list = file[key];
+    if (!Array.isArray(list)) return list;
+    return list.filter((raw: unknown) => {
+      const kind = unknownKind(raw);
+      const name = child(raw, "name");
+      // Without a name there is nothing to refuse it by: the validation says so.
+      if (kind === null || !isNonBlankString(name)) return true;
+      refused.push({ name, kind });
+      return false;
+    });
   };
+  const read = <T extends { name: string }>(
+    key: ListKey,
+    parse: (text: string) => T[],
+    convert: (entry: T) => Automation
+  ): ParsedEntry[] => {
+    if (!(key in file)) return [];
+    const list = readable(key);
+    return parse(JSON.stringify({ version, [key]: list })).map((entry, i) => ({
+      automation: convert(entry),
+      leftOut: hasLeftOut(entry, child(list, i), KNOWN_ENTRY_KEYS),
+    }));
+  };
+  const entries = {
+    automations: read(
+      "automations",
+      (t) => parseStepEntries(t, "automations"),
+      workflowToAutomation
+    ),
+    macros: read("macros", parseMacroEnvelope, macroToAutomation),
+    workflows: read("workflows", (t) => parseStepEntries(t, "workflows"), workflowToAutomation),
+  };
+  return { entries, refused };
 }
 
 /** What an import brought in, and what the user should know about it. */
 export interface AutomationImport {
   /** The automations to save, in file order. */
   automations: Automation[];
+  /** Entries of a newer build that were not imported, and the kind not known. */
+  refused: { name: string; kind: string }[];
+  /** The ones with parts this build does not know, which were left out. */
+  leftOut: string[];
   /** The ones with triggers, which arrive switched off. */
   disarmed: string[];
   /** The ones with "Run local process" steps, which need the experimental switch. */
@@ -195,30 +231,32 @@ function hasLocalProcess(steps: readonly AutomationStep[]): boolean {
  *   what starts by itself;
  * - a script file to read from disk is removed (#4310, FEC2-001): a file never
  *   decides which local file is typed into a terminal;
- * - the migration's provenance is dropped, and the backend stamps the dates.
+ * - the backend stamps the dates.
  */
 export function prepareAutomationImport(
   file: ParsedAutomationFile,
   library: readonly Automation[],
   generateId: () => string = () => newId("automation")
 ): AutomationImport {
-  const entries = LIST_KEYS.flatMap((key) => file[key]);
+  const entries = LIST_KEYS.flatMap((key) => file.entries[key]);
   const ids = entries.map(() => generateId());
   // The first entry with an id keeps it, as in the migration (concept 4.1).
   const copies = new Map<string, string>();
-  entries.forEach(({ id }, i) => {
+  entries.forEach(({ automation: { id } }, i) => {
     if (id !== "" && !copies.has(id)) copies.set(id, ids[i]);
   });
 
   const names = new Set(library.map((a) => a.name));
   const result: AutomationImport = {
     automations: [],
+    refused: file.refused,
+    leftOut: [],
     disarmed: [],
     localProcess: [],
     removedScriptPaths: [],
     outside: [],
   };
-  entries.forEach((entry, i) => {
+  entries.forEach(({ automation: entry, leftOut }, i) => {
     const name = importedName(entry.name, names);
     names.add(name);
     const outside = new Set<string | null>();
@@ -233,17 +271,15 @@ export function prepareAutomationImport(
       if (step.kind === "run-script" && step.sourcePath !== undefined) {
         const { sourcePath, ...rest } = step;
         result.removedScriptPaths.push({ name, path: sourcePath });
-        // Nothing else may speak for the removed file either.
-        return Object.fromEntries(
-          Object.entries(rest).filter(([key]) => !key.startsWith("sourcePath"))
-        ) as typeof rest;
+        return rest;
       }
       return step;
     });
     outside.forEach((runs) => result.outside.push({ name, runs }));
+    if (leftOut) result.leftOut.push(name);
     if (hasLocalProcess(steps)) result.localProcess.push(name);
 
-    const { legacy: _legacy, triggersEnabled: _armed, ...kept } = entry;
+    const { triggersEnabled: _armed, ...kept } = entry;
     const automation: Automation = {
       ...kept,
       id: ids[i],

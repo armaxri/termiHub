@@ -99,6 +99,30 @@ describe("import", () => {
     await checkA11y(query("automation-import-dialog")!);
   });
 
+  it("says what it did not take from a newer build", async () => {
+    await importJson({
+      version: 1,
+      automations: [
+        { ...automation({ name: "Odd" }), steps: [{ kind: "teleport" }] },
+        { ...automation({ name: "Part" }), later: 1 },
+      ],
+    });
+    expect(query("automation-import-dialog")?.textContent).toContain("Imported 1 automation");
+    expect(note("refused")).toMatch(/Not imported.*Update termiHub.*Odd: teleport$/);
+    expect(note("left-out")).toMatch(/left out.*Part$/);
+  });
+
+  it("says that nothing was imported", async () => {
+    await importJson({
+      version: 1,
+      automations: [{ ...automation({ name: "Odd" }), steps: [{ kind: "teleport" }] }],
+    });
+    expect(query("automation-import-dialog")?.textContent).toContain("Nothing was imported");
+    expect(note("refused")).toContain("Odd: teleport");
+    expect(query("automation-import-names")).toBeNull();
+    expect(saveAutomation).not.toHaveBeenCalled();
+  });
+
   it("names the automation of this library that a step runs", async () => {
     act(() =>
       useAppStore.setState(automationLibraryState([automation({ id: "here", name: "Cleanup" })]))

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileX2, Link2Off, SquareTerminal, ZapOff } from "lucide-react";
+import { Ban, FileX2, Link2Off, Scissors, SquareTerminal, ZapOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button, Modal } from "@/components/ui";
 import type { AutomationImport } from "@/services/automationFileIo";
@@ -28,6 +28,22 @@ interface Note {
 /** The notes an import needs; empty when there is nothing to look at. */
 function importNotes(result: AutomationImport): Note[] {
   const notes: Note[] = [];
+  if (result.refused.length > 0) {
+    notes.push({
+      id: "refused",
+      Icon: Ban,
+      text: "Not imported: they have a step or a trigger this version of termiHub does not know. Update termiHub to import them.",
+      lines: result.refused.map(({ name, kind }) => `${name}: ${kind}`),
+    });
+  }
+  if (result.leftOut.length > 0) {
+    notes.push({
+      id: "left-out",
+      Icon: Scissors,
+      text: "Parts this version of termiHub does not know were left out. Check what they do before you run them.",
+      lines: result.leftOut,
+    });
+  }
   if (result.disarmed.length > 0) {
     notes.push({
       id: "disarmed",
@@ -87,7 +103,11 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title={`Imported ${count} automation${count === 1 ? "" : "s"}`}
+      title={
+        count === 0
+          ? "Nothing was imported"
+          : `Imported ${count} automation${count === 1 ? "" : "s"}`
+      }
       size="md"
       data-testid="automation-import-dialog"
       footer={
@@ -102,11 +122,13 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
       }
     >
       <div className="automation-import">
-        <p data-testid="automation-import-names">
-          {count === 0
-            ? "The file holds no automations."
-            : (current?.automations ?? []).map((a) => a.name).join(", ")}
-        </p>
+        {(count > 0 || notes.length === 0) && (
+          <p data-testid="automation-import-names">
+            {count === 0
+              ? "The file holds no automations."
+              : (current?.automations ?? []).map((a) => a.name).join(", ")}
+          </p>
+        )}
         {notes.length > 0 && (
           <ul className="automation-import__notes">
             {notes.map(({ id, Icon, text, lines }) => (

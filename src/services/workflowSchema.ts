@@ -13,10 +13,11 @@
  * ## Strictness
  *
  * - Every field of every step / trigger / parameter kind is type-checked.
- * - **Unknown keys are stripped** (zod's default object mode) from what a schema
- *   returns. The automations importer puts them back from the file
- *   (`keepUnknownKeys` in `automationFileIo.ts`), so a file written by a newer
- *   build loses nothing.
+ * - **Unknown keys are stripped** (zod's default object mode), exactly as the
+ *   hand-written validators did by copying only the known fields: a forged
+ *   extra key (for example a fake "already confirmed" marker) never survives an
+ *   import, and a file written by a newer build that adds a key still imports.
+ *   The import says which entries lost a part (`automationFileIo.ts`).
  * - Numbers are finite (zod 4 rejects `Infinity`/`NaN`), which JSON cannot
  *   express anyway.
  *
@@ -364,6 +365,19 @@ const _automationFieldsExact: AssertExact<
   Exclude<keyof Automation, "legacy">,
   keyof z.output<typeof importedWorkflowSchema>
 > = true;
+
+/** The kinds and the top-level keys an import takes; see `automationFileIo.ts`. */
+export const KNOWN_STEP_KINDS: ReadonlySet<string> = new Set(
+  stepOptions.map((option) => option.shape.kind.value)
+);
+export const KNOWN_TRIGGER_KINDS: ReadonlySet<string> = new Set(
+  triggerOptions.map((option) => option.shape.kind.value)
+);
+/** Keys an entry may have that are not imported on purpose: nothing is lost with them. */
+export const KNOWN_ENTRY_KEYS: readonly string[] = [
+  ...Object.keys(importedWorkflowSchema.shape),
+  "legacy",
+];
 
 /* Reference the compile-time guards so `noUnusedLocals`/eslint stay quiet. */
 void [

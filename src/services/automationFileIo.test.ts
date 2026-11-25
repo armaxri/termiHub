@@ -5,7 +5,6 @@ import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import {
   AUTOMATION_FILE_VERSION,
-  keepUnknownKeys,
   parseAutomationFile,
   prepareAutomationImport,
   serializeAutomations,
@@ -44,26 +43,24 @@ function importInto(library: Automation[], file: unknown): AutomationImport {
 const importFile = (file: unknown) => importInto([], file);
 const exported = (...automations: Automation[]) => serializeAutomations(automations);
 
-/** A file with every field of every kind, and an unknown key at every level. */
+/** Every field of every kind. */
 const EVERYTHING = {
   id: "all",
   name: "Everything",
   description: "every field",
   tags: ["ops"],
-  later: { nested: [1, { deep: true }] },
   steps: [
     {
       kind: "type-keys",
       chunks: [
-        { data: "\u001b[200~grüße\r\n🚀\u001b[201~", delayMs: 0, later: 1 },
+        { data: "\u001b[200~grüße\r\n🚀\u001b[201~", delayMs: 0 },
         { data: "\u0003", delayMs: 1500 },
       ],
       timing: "fixed",
       fixedDelayMs: 25,
       recorded: true,
       continueOnError: true,
-      retry: { count: 2, delayMs: 10, backoff: "exponential", later: 2 },
-      later: "step",
+      retry: { count: 2, delayMs: 10, backoff: "exponential" },
     },
     { kind: "type-keys", chunks: [{ data: "x", delayMs: 3 }], timing: "instant" },
     { kind: "send-command", command: "echo ${env}" },
@@ -73,19 +70,19 @@ const EVERYTHING = {
     { kind: "wait-for-output", pattern: "\\$ $", isRegex: true, timeoutMs: 5000 },
     {
       kind: "conditional",
-      condition: { left: "${env}", op: "eq", right: "prod", later: 3 },
+      condition: { left: "${env}", op: "eq", right: "prod" },
       then: [
         {
           kind: "loop",
-          loop: { kind: "while", condition: { left: "1", op: "lt", right: "3" }, later: 4 },
-          body: [{ kind: "wait", delayMs: 1, later: "nested" }],
+          loop: { kind: "while", condition: { left: "1", op: "lt", right: "3" } },
+          body: [{ kind: "wait", delayMs: 1 }],
         },
       ],
       else: [{ kind: "loop", loop: { kind: "count", count: 2 }, body: [runs("all")] }],
     },
   ],
   triggers: [
-    { kind: "on-connect", connectionIds: ["c"], later: 5 },
+    { kind: "on-connect", connectionIds: ["c"] },
     { kind: "hotkey", binding: "Ctrl+Alt+D" },
     { kind: "on-disconnect", connectionIds: ["c"], when: "any" },
     {
@@ -99,7 +96,7 @@ const EVERYTHING = {
   ],
   parameters: [
     { name: "env", label: "Env", type: "enum", default: "dev", required: true, options: ["dev"] },
-    { name: "n", type: "number", later: 6 },
+    { name: "n", type: "number" },
   ],
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
@@ -113,10 +110,11 @@ describe("export → import", () => {
     expect(AUTOMATION_FILE_VERSION).toBe(MACRO_EXPORT_VERSION);
   });
 
-  it("loses nothing: every field, every unknown key, every nested step, every byte", () => {
+  it("loses nothing: every field, every nested step, every byte", () => {
     const [copy] = importFile(exported(EVERYTHING)).automations;
     const expected = JSON.parse(JSON.stringify(EVERYTHING));
     expected.steps[7].else[0].body[0].automationId = "n1"; // runs its own copy
+    expect(importFile(exported(EVERYTHING)).leftOut).toEqual([]);
     expect(copy).toEqual({
       ...expected,
       id: "n1",
@@ -180,10 +178,9 @@ describe("files of older builds", () => {
     description: "logs in",
     tags: ["ops"],
     steps: [
-      { data: "sudo -v", delayMs: 0, later: 1 },
+      { data: "sudo -v", delayMs: 0 },
       { data: "\r", delayMs: 250 },
     ],
-    later: "macro",
     createdAt: "2025-01-01T00:00:00Z",
     updatedAt: "",
   };
@@ -207,13 +204,12 @@ describe("files of older builds", () => {
     ],
     triggers: [{ kind: "manual" }, { kind: "on-connect", connectionIds: ["c"] }],
     parameters: [{ name: "p", type: "string" }],
-    later: "workflow",
     createdAt: "",
     updatedAt: "",
   };
   const keys: AutomationStep = {
     kind: "type-keys",
-    chunks: [{ data: "sudo -v", delayMs: 0, later: 1 } as never, { data: "\r", delayMs: 250 }],
+    chunks: [{ data: "sudo -v", delayMs: 0 } as never, { data: "\r", delayMs: 250 }],
     timing: "recorded",
     recorded: true,
   };
@@ -227,7 +223,6 @@ describe("files of older builds", () => {
         tags: ["ops"],
         steps: [keys],
         triggers: [],
-        later: "macro",
         createdAt: "",
         updatedAt: "",
       },
@@ -252,7 +247,6 @@ describe("files of older builds", () => {
       triggers: [{ kind: "on-connect", connectionIds: ["c"] }],
       parameters: [{ name: "p", type: "string" }],
       triggersEnabled: false,
-      later: "workflow",
       createdAt: "",
       updatedAt: "",
     });
@@ -442,9 +436,9 @@ describe("a bad file imports nothing", () => {
     ["a list that is none", '{"version":1,"automations":{}}', /missing "automations" array/],
     ["an unnamed entry", '{"version":1,"automations":[{"steps":[]}]}', /missing a name/],
     [
-      "a step of a newer build",
-      '{"version":1,"automations":[{"name":"X","steps":[{"kind":"teleport"}]}]}',
-      /step 0 of automation at index 0 \("X"\) has unknown kind "teleport"/,
+      "an unnamed entry of a newer build",
+      '{"version":1,"automations":[{"steps":[{"kind":"teleport"}]}]}',
+      /missing a name/,
     ],
   ])("%s", (_name, json, message) => {
     expect(() => parseAutomationFile(json)).toThrow(message);
@@ -456,11 +450,95 @@ describe("a bad file imports nothing", () => {
   });
 });
 
-it("keepUnknownKeys keeps the validated value of every known key", () => {
-  expect(
-    keepUnknownKeys(
-      { a: "", list: [{ b: 1 }], none: undefined },
-      { a: 7, list: [{ b: 2, c: 3 }], none: "x", d: 4 }
-    )
-  ).toEqual({ a: "", list: [{ b: 1, c: 3 }], none: undefined, d: 4 });
+describe("a file of a newer build", () => {
+  it.each<[string, object]>([
+    ["the automation", { later: true }],
+    ["a step", { steps: [{ kind: "wait", delayMs: 1, later: 1 }] }],
+    ["a chunk", { steps: [{ kind: "type-keys", chunks: [{ data: "x", delayMs: 0, later: 1 }] }] }],
+    [
+      "a nested step",
+      {
+        steps: [
+          {
+            kind: "loop",
+            loop: { kind: "count", count: 1 },
+            body: [{ kind: "wait", delayMs: 1, retry: { count: 1, later: 1 } }],
+          },
+        ],
+      },
+    ],
+    ["a trigger", { triggers: [{ kind: "hotkey", binding: "F8", later: 1 }] }],
+    ["a value it asks for", { parameters: [{ name: "p", type: "string", later: 1 }] }],
+  ])("loses an unknown key of %s, and says so by name", (_where, over) => {
+    const result = importFile(
+      exported(automation({ ...over, name: "New" } as Partial<Automation>))
+    );
+    expect(result.leftOut).toEqual(["New"]);
+    expect(JSON.stringify(result.automations)).not.toContain("later");
+  });
+
+  it("says so for old lists too, and only for the entry it is true of", () => {
+    const macro = { name: "M", steps: [{ data: "x", delayMs: 0 }] };
+    const result = importFile({
+      version: 1,
+      macros: [macro, { ...macro, name: "N", later: 1 }],
+      workflows: [{ name: "W", steps: [{ kind: "wait", delayMs: 1, later: 1 }] }],
+    });
+    expect(result.leftOut).toEqual(["N", "W"]);
+  });
+
+  it("says nothing about what an import sets itself", () => {
+    const result = importFile(
+      exported(
+        automation({
+          triggersEnabled: true,
+          parameters: [],
+          legacy: { from: "macro", version: 1 },
+        })
+      )
+    );
+    expect(result.leftOut).toEqual([]);
+    expect(result.automations[0]).not.toHaveProperty("legacy");
+  });
+
+  it.each<[string, object, string]>([
+    ["a step", { steps: [{ kind: "teleport", to: "x" }] }, "teleport"],
+    [
+      "a nested step",
+      {
+        steps: [
+          { kind: "wait", delayMs: 1 },
+          {
+            kind: "conditional",
+            condition: { left: "", op: "eq", right: "" },
+            then: [],
+            else: [{ kind: "loop", loop: { kind: "count", count: 1 }, body: [{ kind: "zap" }] }],
+          },
+        ],
+      },
+      "zap",
+    ],
+    ["a trigger", { triggers: [{ kind: "on-full-moon" }] }, "on-full-moon"],
+  ])(
+    "refuses the entry with an unknown kind of %s by name, and takes the rest",
+    (_w, over, kind) => {
+      const odd = automation({ ...over, id: "odd", name: "Odd" } as Partial<Automation>);
+      const result = importFile(
+        exported(
+          automation({ id: "a" }),
+          odd,
+          automation({ id: "c", name: "C", steps: [runs("odd")] })
+        )
+      );
+      expect(result.refused).toEqual([{ name: "Odd", kind }]);
+      expect(result.automations.map((a) => a.name)).toEqual(["Deploy", "C"]);
+      // What runs the refused one is not left to fail unannounced.
+      expect(result.outside).toEqual([{ name: "C", runs: null }]);
+    }
+  );
+
+  it("with a kind named like something every object has is refused too", () => {
+    const odd = automation({ steps: [{ kind: "constructor" }] as never });
+    expect(importFile(exported(odd)).refused).toEqual([{ name: "Deploy", kind: "constructor" }]);
+  });
 });

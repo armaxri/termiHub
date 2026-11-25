@@ -807,7 +807,7 @@ describe("files (#5818, slice 11)", () => {
     await flushAsync();
     expect(dialogSave.mock.calls[0][0].defaultPath).toBe(path);
     const file = parseAutomationFile(fsWriteTextFile.mock.calls[0][1] as string);
-    expect(file.automations.map((a) => a.name)).toEqual([name]);
+    expect(file.entries.automations.map((e) => e.automation.name)).toEqual([name]);
     expect(toastSuccess).toHaveBeenCalledWith(`Exported "${name}"`);
   });
 
@@ -823,7 +823,10 @@ describe("files (#5818, slice 11)", () => {
     choose("caller", "export");
     await flushAsync();
     const file = parseAutomationFile(fsWriteTextFile.mock.calls[0][1] as string);
-    expect(file.automations.map((a) => a.name)).toEqual(["Caller", "Sudo login"]);
+    expect(file.entries.automations.map((e) => e.automation.name)).toEqual([
+      "Caller",
+      "Sudo login",
+    ]);
     expect(toastSuccess).toHaveBeenCalledWith('Exported "Caller" and the automation it runs');
   });
 
