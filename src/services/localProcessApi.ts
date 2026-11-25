@@ -1,20 +1,21 @@
 /**
- * Frontend bridge to the guarded local-process backend command (#1857).
+ * Frontend bridge to the guarded local-process backend commands (#1857).
  *
- * The `run-local-process` workflow step spawns a program on the user's own
- * machine, so every call here is gated in the store by the opt-in setting and a
- * per-program authorization (see `appStore.runWorkflow`). This module only wraps
- * the Tauri command and its streamed-output event — it performs no gating itself.
+ * The backend decides what may start, for every run (#5994): it holds the rule
+ * and the allowlist check. {@link checkLocalProcess} asks it beforehand, so the
+ * user can be asked about a program that is not on the list; the decision itself
+ * is made again when the program starts. This module performs no gating.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { LocalProcessCheck } from "@/types/generated/LocalProcessCheck";
 import type { LocalProcessOutcome } from "@/types/generated/LocalProcessOutcome";
 import type { LocalProcessOutputChunk } from "@/types/generated/LocalProcessOutputChunk";
 
 // Generated from the Rust `LocalProcessOutcome` / `LocalProcessOutputEvent`
 // (src-tauri/src/commands/local_process.rs) via ts-rs (#3088).
-export type { LocalProcessOutcome, LocalProcessOutputChunk };
+export type { LocalProcessCheck, LocalProcessOutcome, LocalProcessOutputChunk };
 
 /** Tauri event name carrying one streamed line of local-process output. */
 const LOCAL_PROCESS_OUTPUT_EVENT = "workflow-local-process-output";
@@ -27,14 +28,19 @@ export interface RunLocalProcessArgs {
   program: string;
   /** Discrete argument vector (never concatenated into a command line). */
   args: string[];
+  /**
+   * The file the user approved for this run ({@link LocalProcessCheck} `ask`
+   * named it). The backend starts an unlisted program only as this file.
+   */
+  approvedPath?: string;
   /** Optional timeout in ms; the backend applies a default and a hard cap. */
   timeoutMs?: number;
 }
 
 /**
  * Spawn a guarded local process and resolve its outcome once it finishes. The
- * backend re-checks the experimental switch and the master opt-in and rejects
- * if either is off, so a disabled setting surfaces as a rejected promise here.
+ * backend decides from the persisted settings whether the program may start and
+ * rejects with the reason when it may not.
  */
 export async function invokeRunLocalProcess(
   args: RunLocalProcessArgs
@@ -44,7 +50,13 @@ export async function invokeRunLocalProcess(
     program: args.program,
     args: args.args,
     timeoutMs: args.timeoutMs ?? null,
+    approvedPath: args.approvedPath ?? null,
   });
+}
+
+/** Ask the backend whether `program` may start now, or the user has to be asked. */
+export async function checkLocalProcess(program: string): Promise<LocalProcessCheck> {
+  return await invoke<LocalProcessCheck>("check_local_process", { program });
 }
 
 /** Request cancellation of an in-flight local process by its run id. */

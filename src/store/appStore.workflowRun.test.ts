@@ -142,6 +142,15 @@ vi.mock("@/services/api", async (importOriginal) => ({
   localReadFile: (path: string) => localReadFile(path),
 }));
 vi.mock("@/services/localProcessApi", () => ({
+  // The backend's rule, over the seeded settings: the program as written or its file.
+  checkLocalProcess: vi.fn(async (program: string) => {
+    const { currentSettingsView } = await import("@/store/settingsBridge");
+    const list = currentSettingsView().workflowLocalProcessAllowlist ?? [];
+    const path = `/bin/${program}`;
+    return list.includes(program) || list.includes(path)
+      ? { status: "allowed", path }
+      : { status: "ask", path, reason: `"${program}" (${path}) is not an allowed program.` };
+  }),
   invokeRunLocalProcess: (args: { program: string; args: string[] }) => invokeRunLocalProcess(args),
   cancelLocalProcess: (runId: string) => cancelLocalProcess(runId),
   subscribeLocalProcessOutput: (runId: string, onChunk: (chunk: LocalProcessOutputChunk) => void) =>
@@ -155,6 +164,8 @@ import type { AutomationStep } from "@/types/generated/AutomationStep";
 import { automationLibraryState } from "./slices/automationStoreState";
 import { workflowToAutomation } from "./slices/automationViews";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
+import { serializeAutomations } from "@/services/automationFileIo";
+import { checkLocalProcess } from "@/services/localProcessApi";
 import { currentSettingsView } from "./settingsBridge";
 import {
   currentWorkflowOutputContent,
@@ -754,6 +765,151 @@ describe("appStore — workflow run slice (#1852)", () => {
       });
     });
 
+    describe("the backend decides what may start (#5994)", () => {
+      const runsOnce = async (decision: "once" | "always" | "cancel") => {
+        seedConnectedTerminal();
+        enableLocalProcess([]);
+        useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["a"])])] });
+        const run = useAppStore.getState().runWorkflow("w1");
+        await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+        const prompt = useAppStore.getState().localProcessPrompt!;
+        useAppStore.getState().resolveLocalProcessPrompt(decision);
+        await run;
+        return prompt;
+      };
+
+      it.each(["once", "always"] as const)(
+        "an approval (%s) starts the file the user was shown",
+        async (decision) => {
+          const prompt = await runsOnce(decision);
+          expect(prompt).toMatchObject({ program: "make", path: "/bin/make" });
+          expect(invokeRunLocalProcess.mock.calls[0][0]).toMatchObject({
+            program: "make",
+            approvedPath: "/bin/make",
+          });
+        }
+      );
+
+      describe("slice 11's one way to run, and an imported automation", () => {
+        const library = [auto("w1", [lpStep])];
+        type RunOptions = Parameters<ReturnType<typeof useAppStore.getState>["runAutomation"]>[1];
+        const ways: [string, RunOptions][] = [
+          ["row, editor or palette", undefined],
+          ["palette", { origin: "palette" }],
+          ["hotkey", { origin: "hotkey" }],
+          ["picked terminals or broadcast", { targetTabIds: ["tab-active"] }],
+          ["one after another", { targetTabIds: ["tab-active"], parallel: false }],
+        ];
+        const refuse = () =>
+          vi
+            .mocked(checkLocalProcess)
+            .mockImplementationOnce((() =>
+              Promise.resolve({ status: "refused", reason: "backend says no" })) as never);
+
+        it.each(ways)("%s: the backend's refusal starts nothing", async (_name, options) => {
+          refuse();
+          seedConnectedTerminal();
+          enableLocalProcess(["make"]);
+          useAppStore.setState(automationLibraryState(library));
+          await useAppStore.getState().runAutomation("w1", options);
+          expect(checkLocalProcess).toHaveBeenLastCalledWith("make");
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+          await vi.waitFor(() => expect(recordedRuns[0]?.error).toContain("backend says no"));
+        });
+
+        it("an import adds no program to the list and is asked about", async () => {
+          seedConnectedTerminal();
+          enableLocalProcess([]);
+          const json = serializeAutomations([auto("imported", [lpStep])]);
+          const { automations } = await useAppStore.getState().importAutomations(json);
+          expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual([]);
+          const run = useAppStore.getState().runAutomation(automations[0].id);
+          await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+          useAppStore.getState().resolveLocalProcessPrompt("cancel");
+          await run;
+          expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        });
+      });
+
+      it("a canceled question starts nothing", async () => {
+        await runsOnce("cancel");
+        expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+      });
+
+      it("a listed program carries no approval of its own", async () => {
+        seedConnectedTerminal();
+        enableLocalProcess(["/bin/make"]);
+        useAppStore.setState({ workflows: [workflow("w1", [lp("make", [])])] });
+        await useAppStore.getState().runWorkflow("w1");
+        const call = invokeRunLocalProcess.mock.calls[0][0] as { approvedPath?: string };
+        expect(call.approvedPath).toBeUndefined();
+      });
+
+      it("an approval does not carry over to a listed program", async () => {
+        seedConnectedTerminal();
+        enableLocalProcess(["ls"]);
+        useAppStore.setState({ workflows: [workflow("w1", [lp("make", []), lp("ls", [])])] });
+        const run = useAppStore.getState().runWorkflow("w1");
+        await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+        useAppStore.getState().resolveLocalProcessPrompt("once");
+        await run;
+        const calls = invokeRunLocalProcess.mock.calls as unknown as [{ approvedPath?: string }][];
+        expect(calls.map(([call]) => call.approvedPath)).toEqual(["/bin/make", undefined]);
+      });
+
+      it("an approval does not carry over to other arguments or another program", async () => {
+        seedConnectedTerminal();
+        enableLocalProcess([]);
+        useAppStore.setState({
+          workflows: [workflow("w1", [lp("make", ["a"]), lp("make", ["b"])])],
+        });
+        const run = useAppStore.getState().runWorkflow("w1");
+        await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+        useAppStore.getState().resolveLocalProcessPrompt("once");
+        await vi.waitFor(() =>
+          expect(useAppStore.getState().localProcessPrompt?.args).toEqual(["b"])
+        );
+        useAppStore.getState().resolveLocalProcessPrompt("cancel");
+        await run;
+        expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      });
+
+      it.each<[string, () => unknown, string]>([
+        [
+          "refuses",
+          () => Promise.resolve({ status: "refused", reason: "no such program was found" }),
+          "no such program was found",
+        ],
+        ["cannot be asked", () => Promise.reject(new Error("ipc down")), "ipc down"],
+        [
+          "answers something unknown",
+          () => Promise.resolve({ status: "new-status", reason: "why" }),
+          "why",
+        ],
+      ])("nothing starts when the backend %s", async (_name, answer, reason) => {
+        vi.mocked(checkLocalProcess).mockImplementationOnce(answer as never);
+        seedConnectedTerminal();
+        enableLocalProcess(["make"]);
+        useAppStore.setState({ workflows: [workflow("w1", [lp("make", [])])] });
+        await useAppStore.getState().runWorkflow("w1");
+        expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+        expect(useAppStore.getState().localProcessPrompt).toBeNull();
+        await vi.waitFor(() => expect(recordedRuns[0]?.error).toContain(reason));
+      });
+
+      it("a refusal at the start is the step's error, not an exit code", async () => {
+        invokeRunLocalProcess.mockRejectedValueOnce(new Error('"make" is not an allowed program.'));
+        seedConnectedTerminal();
+        enableLocalProcess(["make"]);
+        useAppStore.setState({ workflows: [workflow("w1", [lp("make", [])])] });
+        await useAppStore.getState().runWorkflow("w1");
+        await vi.waitFor(() =>
+          expect(recordedRuns[0]?.error).toContain('"make" is not an allowed program.')
+        );
+      });
+    });
+
     it("runs an allowlisted program without prompting, passing discrete args", async () => {
       seedConnectedTerminal();
       enableLocalProcess(["notify-send"]);
@@ -804,7 +960,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await done;
 
       expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
-      expect(currentSettingsView().workflowLocalProcessAllowlist).toContain("echo");
+      expect(currentSettingsView().workflowLocalProcessAllowlist).toContain("/bin/echo");
     });
 
     it("GUARDRAIL: 'cancel' refuses — the process never spawns", async () => {
@@ -1242,7 +1398,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
       // The program was appended even though the allowlist started undefined.
-      expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual(["echo"]);
+      expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual(["/bin/echo"]);
     });
 
     it("logs a null exit code without crashing the run", async () => {
@@ -2176,7 +2332,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     const report = await executeScheduledRun(fire(), store);
 
     expect(report.outcome).toBe("failed");
-    expect(report.message).toContain('"curl" is not authorized');
+    expect(report.message).toContain('"curl" (/bin/curl) is not an allowed program');
     expect(useAppStore.getState().localProcessPrompt).toBeNull();
     expect(invokeRunLocalProcess).not.toHaveBeenCalled();
   });

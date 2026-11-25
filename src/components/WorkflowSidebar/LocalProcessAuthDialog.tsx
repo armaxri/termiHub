@@ -74,6 +74,14 @@ export function LocalProcessAuthDialog() {
               {prompt.program || "(none)"}
             </code>
           </div>
+          {prompt.path !== prompt.program && (
+            <div className="local-process-auth__field">
+              <span className="local-process-auth__label">File</span>
+              <code className="local-process-auth__value" data-testid="local-process-auth-path">
+                {prompt.path}
+              </code>
+            </div>
+          )}
           <div className="local-process-auth__field">
             <span className="local-process-auth__label">
               {prompt.args.length === 1 ? "Argument" : "Arguments"}
@@ -91,8 +99,8 @@ export function LocalProcessAuthDialog() {
             )}
           </div>
           <p className="local-process-auth__note">
-            &ldquo;Always allow&rdquo; remembers this program; manage or revoke it later under
-            Settings &rarr; Security.
+            &ldquo;Always allow&rdquo; remembers this file, with any arguments and for every
+            automation; manage or revoke it later under Settings &rarr; Security.
           </p>
         </div>
       )}

@@ -917,6 +917,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::schedules::register_schedule_window,
             commands::schedules::ack_schedule_run,
             commands::schedules::schedule_run_coverage,
+            commands::local_process::check_local_process,
             commands::local_process::run_local_process,
             commands::local_process::cancel_local_process,
             // Network diagnostics

@@ -2237,6 +2237,19 @@ sequenceDiagram
   change during a run, and `run_local_process` checks the persisted settings whatever the frontend
   says (`authorize_spawn`). The `workflowLocalProcessEnabled` opt-in and the per-program allowlist
   (or prompt) are separate controls; a spawn needs all three.
+- **What a Run local process step may start is decided in the backend** (#5994,
+  `commands/local_process_policy.rs`), when it starts, for every run. The program is trimmed, refused
+  when its name is ambiguous (hidden characters; on Windows also drive-relative, device, stream and
+  trailing-dot forms), and resolved to one absolute file: a bare name only in the absolute directories
+  of `PATH` (never the working directory; on Windows only as `.exe`). An allowlist entry must **equal**
+  the program as written or the resolved path, with no normalization, and arguments are not part of
+  it. Exactly that file is spawned. An unlisted program starts only as the file the user approved for
+  this run. "Always allow" stores the resolved path, so it is pinned; older entries (a bare name, a
+  relative path) keep working and are not. Settings that cannot be read refuse. The frontend holds no
+  rule: it asks `check_local_process` first, to prompt. **Not protected:** the window itself, which
+  writes the settings, reports the approval and can open a local shell; the arguments of an allowed
+  program (an interpreter runs anything); a file, link or `PATH` directory that someone else can write,
+  also between the check and the start; the inherited environment and working directory.
 - **Schedules in the UI** (`src/components/Schedules/`, #6024) — a row says its state with the next
   run, the rule, the automation, the connections, why it will not run and how the last run ended
   with the whole reason (`scheduleStatus.ts`). The editor asks the scheduler for the next run before

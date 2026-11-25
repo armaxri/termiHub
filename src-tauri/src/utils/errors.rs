@@ -117,7 +117,6 @@ pub enum IpcErrorCode {
     TunnelError,
     WorkspaceError,
     SessionHistoryError,
-    WorkflowError,
     /// An automation store or run-history operation failed (#5818).
     AutomationError,
     NetworkError,
@@ -294,9 +293,6 @@ pub enum TerminalError {
     SessionHistoryError(String),
 
     #[error("Automation error: {0}")]
-    WorkflowError(String),
-
-    #[error("Automation error: {0}")]
     AutomationError(String),
 
     #[error("Network error: {0}")]
@@ -463,7 +459,6 @@ impl TerminalError {
             TerminalError::TunnelError(_) => C::TunnelError,
             TerminalError::WorkspaceError(_) => C::WorkspaceError,
             TerminalError::SessionHistoryError(_) => C::SessionHistoryError,
-            TerminalError::WorkflowError(_) => C::WorkflowError,
             TerminalError::AutomationError(_) => C::AutomationError,
             TerminalError::NetworkError(_) => C::NetworkError,
             TerminalError::NotFound(_) => C::NotFound,
