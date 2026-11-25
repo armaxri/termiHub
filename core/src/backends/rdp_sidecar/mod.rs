@@ -726,6 +726,16 @@ async fn run_writer<W>(
     }
 }
 
+/// Send the connect request, the first message to a fresh helper.
+async fn send_connect<W: AsyncWrite + Unpin>(
+    stdin: &mut W,
+    cfg: RdpConfig,
+) -> Result<(), SessionError> {
+    write_message(stdin, &HostMessage::Connect(Box::new(cfg)))
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("failed to send RDP connect request: {e}")))
+}
+
 /// Own the child process: kill it on cancel, and reap it when it exits on its
 /// own.
 ///
@@ -857,11 +867,7 @@ impl ConnectionType for SidecarRdp {
         // The connect payload — credentials included — travels over stdin, never
         // argv/env. It is always the first message.
         let monitor_layout = cfg.multi_monitor_layout();
-        write_message(&mut stdin, &HostMessage::Connect(Box::new(cfg)))
-            .await
-            .map_err(|e| {
-                SessionError::SpawnFailed(format!("failed to send RDP connect request: {e}"))
-            })?;
+        send_connect(&mut stdin, cfg).await?;
 
         let shared = Arc::new(SidecarShared::new(view_only, monitor_layout));
         let cancel = CancellationToken::new();
@@ -2421,3 +2427,7 @@ mod tests {
 #[cfg(test)]
 #[path = "establish_tests.rs"]
 mod establish_tests;
+
+#[cfg(test)]
+#[path = "unresponsive_tests.rs"]
+mod unresponsive_tests;
