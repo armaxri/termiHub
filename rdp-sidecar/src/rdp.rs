@@ -1980,6 +1980,30 @@ fn is_io_channel_pdu(action: ironrdp_pdu::Action, frame: &[u8], io_channel_id: u
             .is_ok_and(|ctx| ctx.channel_id == io_channel_id)
 }
 
+/// [`reactivate`], given up when the server has not finished it within `limit`.
+async fn reactivate_within<S>(
+    _limit: std::time::Duration,
+    framed: TokioFramed<S>,
+    connector_config: ConnectorConfig,
+    stage: &mut ActiveStage,
+    image: &mut DecodedImage,
+    io_channel_id: u16,
+    user_channel_id: u16,
+) -> Result<(TokioFramed<S>, RedrawSupport, input::InputPath)>
+where
+    S: AsyncRead + AsyncWrite + Send + Sync + Unpin,
+{
+    reactivate(
+        framed,
+        connector_config,
+        stage,
+        image,
+        io_channel_id,
+        user_channel_id,
+    )
+    .await
+}
+
 /// Handle a PDU that arrived during a reactivation but is not part of it. A
 /// virtual-channel PDU still goes to its channel (CLIPRDR, drdynvc), whose
 /// replies are written back; fast-path output is dropped, as the server repaints
@@ -2832,8 +2856,8 @@ mod tests {
     // ── Deactivate All + Deactivation-Reactivation Sequence (#3611) ──────
 
     /// MCS channel ids used by the scripted-server tests below.
-    const TEST_IO_CHANNEL: u16 = 1003;
-    const TEST_USER_CHANNEL: u16 = 1007;
+    pub(super) const TEST_IO_CHANNEL: u16 = 1003;
+    pub(super) const TEST_USER_CHANNEL: u16 = 1007;
     /// MCS user id a server sends from (the MCS server channel id).
     const TEST_SERVER_CHANNEL: u16 = 1002;
 
@@ -2895,7 +2919,7 @@ mod tests {
         )
     }
 
-    fn test_active_stage(share_id: u32) -> ActiveStage {
+    pub(super) fn test_active_stage(share_id: u32) -> ActiveStage {
         ActiveStageBuilder {
             static_channels: ironrdp_svc::StaticChannelSet::new(),
             user_channel_id: TEST_USER_CHANNEL,
@@ -2909,7 +2933,7 @@ mod tests {
         .build()
     }
 
-    fn test_connector_config() -> ConnectorConfig {
+    pub(super) fn test_connector_config() -> ConnectorConfig {
         build_connector_config(&RdpConfig {
             host: "h".to_string(),
             username: "user".to_string(),
@@ -3413,3 +3437,7 @@ mod redirect_hop_tests;
 #[cfg(test)]
 #[path = "redirect_broker_tests.rs"]
 mod redirect_broker_tests;
+
+#[cfg(test)]
+#[path = "unresponsive_tests.rs"]
+mod unresponsive_tests;

@@ -490,34 +490,23 @@ pub struct FaultGuard;
 impl FaultGuard {
     pub fn new() -> Self {
         // Reset any leftover faults from previous runs.
-        let _ = std::process::Command::new("docker")
-            .args(["exec", &network_fault_container(), "reset-faults"])
-            .output();
+        let _ = docker_cli(&["exec", &network_fault_container(), "reset-faults"]);
         FaultGuard
     }
 }
 
 impl Drop for FaultGuard {
     fn drop(&mut self) {
-        let _ = std::process::Command::new("docker")
-            .args(["exec", &network_fault_container(), "reset-faults"])
-            .output();
+        let _ = docker_cli(&["exec", &network_fault_container(), "reset-faults"]);
     }
 }
 
 /// Apply a network fault to the network-fault container.
 pub fn apply_fault(args: &[&str]) -> Result<(), String> {
-    let output = std::process::Command::new("docker")
-        .arg("exec")
-        .arg(network_fault_container())
-        .args(args)
-        .output()
-        .map_err(|e| format!("Failed to run docker exec: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Fault injection failed: {stderr}"));
-    }
+    let container = network_fault_container();
+    let mut command = vec!["exec", container.as_str()];
+    command.extend_from_slice(args);
+    docker_cli(&command).map_err(|e| format!("Fault injection failed: {e}"))?;
     Ok(())
 }
 
@@ -639,12 +628,15 @@ pub fn fixture_container(service: &str) -> String {
     fixture_env::fixture_container(service)
 }
 
+/// Longest one `docker` command may take. `docker exec` waits for what it runs,
+/// and an X client waits forever for a selection nobody hands over (#6030).
+const DOCKER_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Run `docker <args>` and return its stdout, or the failure as an error.
 pub fn docker_cli(args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("docker")
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run docker {args:?}: {e}"))?;
+    let mut command = std::process::Command::new("docker");
+    command.args(args);
+    let output = output_within(&mut command, DOCKER_LIMIT)?;
     if !output.status.success() {
         return Err(format!(
             "docker {args:?} failed: {}",
@@ -652,4 +644,57 @@ pub fn docker_cli(args: &[&str]) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run `command` to its end; one that takes longer than `limit` is killed and
+/// is an error that names it.
+pub fn output_within(
+    command: &mut std::process::Command,
+    limit: std::time::Duration,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let name = format!("{command:?}");
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to run {name}: {e}"))?;
+    // Read on threads: a full pipe would stop the child. They end with the
+    // pipes, which a process the killed child left behind may hold open, so
+    // they are never waited for after the limit.
+    fn read_all(pipe: Option<impl Read + Send + 'static>) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            let _ = tx.send(bytes);
+        });
+        rx
+    }
+    let (stdout, stderr) = (read_all(child.stdout.take()), read_all(child.stderr.take()));
+    let deadline = std::time::Instant::now() + limit;
+    let left = || deadline.saturating_duration_since(std::time::Instant::now());
+    let too_long = || format!("{name} did not end within {limit:?}");
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if left().is_zero() => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(too_long());
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(e) => return Err(format!("failed to wait for {name}: {e}")),
+        }
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.recv_timeout(left()).map_err(|_| too_long())?,
+        stderr: stderr.recv_timeout(left()).map_err(|_| too_long())?,
+    })
 }

@@ -355,6 +355,10 @@ struct ActiveDownload {
     total: u64,
 }
 
+/// How long the server may take to answer a file request. Shorter than the host
+/// waits for its fetch, so that its next one is served.
+const FETCH_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// The sidecar's [`CliprdrBackend`]: it holds no clipboard *state* of its own; it
 /// translates CLIPRDR callbacks into [`ClipboardEvent`]s the driver forwards over
 /// IPC (text) or acts on (file downloads), and reads the **host** OS clipboard's
@@ -388,6 +392,8 @@ pub struct SidecarClipboardBackend {
     /// The single download currently in flight (one at a time keeps the memory
     /// bound and the stream-id bookkeeping trivial).
     active_download: Option<ActiveDownload>,
+    /// How long the server may take to answer one request of it.
+    fetch_stall: std::time::Duration,
     /// Monotonic stream-id allocator for file-contents requests.
     next_stream_id: u32,
     /// View-only sessions never push local data to the remote, so they neither
@@ -515,6 +521,7 @@ impl SidecarClipboardBackend {
                 file_streams: true,
                 download_queue: VecDeque::new(),
                 active_download: None,
+                fetch_stall: FETCH_STALL_TIMEOUT,
                 next_stream_id: 0,
                 view_only,
                 offered_files: Vec::new(),
@@ -662,6 +669,12 @@ impl SidecarClipboardBackend {
                 message,
             });
         }
+    }
+
+    /// Another sender of this backend's events.
+    #[cfg(test)]
+    pub(crate) fn event_sender(&self) -> Sender<ClipboardEvent> {
+        self.tx.clone()
     }
 
     /// Abandon the in-flight file transfer after its `FileContentsRequest`
@@ -2909,6 +2922,42 @@ mod tests {
         // negotiates none.
         let (text_only, _rx2) = SidecarClipboardBackend::new(None, false);
         assert!(text_only.client_capabilities().is_empty());
+    }
+
+    /// The server never answers one fetch: after a while the next one takes over.
+    #[test]
+    fn a_fetch_takes_over_from_one_the_server_never_answered() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(
+            &[
+                FileDescriptor::new("a.txt").with_file_size(5),
+                FileDescriptor::new("b.txt").with_file_size(5),
+            ],
+            None,
+        );
+        let _ = next_event(&rx);
+        backend.fetch_remote_file(1, 0);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RequestFileContents(_)
+        ));
+        // While it may still be answered, it keeps its turn.
+        backend.fetch_remote_file(2, 1);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 2, .. }
+        ));
+
+        backend.fetch_stall = std::time::Duration::ZERO;
+        backend.fetch_remote_file(3, 1);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 1, .. }
+        ));
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RequestFileContents(_)
+        ));
     }
 
     // --- Remote→host delayed rendering (#1793) ---
