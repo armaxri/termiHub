@@ -180,6 +180,13 @@
           <span><code>docs/concepts/implemented/workflow-automation.html</code></span>
         </div>
       </header>
+      <blockquote>
+        <p>
+          <strong>Superseded</strong> by <a href="automations.html">Automations</a> (#5818), which
+          merged macros and workflows into one type. Kept as the design record of what it replaced;
+          the code it names is gone.
+        </p>
+      </blockquote>
 
       <!-- ── Table of contents ──────────────────────────────────────── -->
       <nav class="concept-toc">
@@ -904,7 +911,8 @@ sequenceDiagram
                 <td>Workflow engine, storage, editor, and triggers per this concept</td>
                 <td>
                   Implemented — <code>src-tauri/src/workflows/</code>,
-                  <code>src/components/WorkflowSidebar/</code>, <code>src/services/workflow*.ts</code>
+                  <code>src/components/WorkflowSidebar/</code>,
+                  <code>src/services/workflow*.ts</code>
                   (engine, step types, sidebar/editor, manual/on-connect/hotkey triggers,
                   import/export, run-local-process)
                 </td>

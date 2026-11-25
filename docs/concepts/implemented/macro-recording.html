@@ -392,6 +392,13 @@
           <span><code>docs/concepts/implemented/macro-recording.html</code></span>
         </div>
       </header>
+      <blockquote>
+        <p>
+          <strong>Superseded</strong> by <a href="automations.html">Automations</a> (#5818), which
+          merged macros and workflows into one type. Kept as the design record of what it replaced;
+          the code it names is gone.
+        </p>
+      </blockquote>
 
       <blockquote>
         <p>
@@ -2128,11 +2135,12 @@ pub struct MacroSettings {
 
         <h3>Implementation Status</h3>
         <p>
-          Implemented via epic <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a>
-          (#1673–#1677): storage model + backend (<code>src-tauri/src/macros/</code>), frontend api/state
-          (<code>src/services/macro*.ts</code>, <code>src/store/appStore.macro*.ts</code>), recording +
-          save (<code>src/components/Terminal/MacroRecordSaveDialog.tsx</code>), playback with timing
-          modes + triggers (<code>src/services/macroPlayback.ts</code>,
+          Implemented via epic
+          <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a> (#1673–#1677): storage
+          model + backend (<code>src-tauri/src/macros/</code>), frontend api/state
+          (<code>src/services/macro*.ts</code>, <code>src/store/appStore.macro*.ts</code>),
+          recording + save (<code>src/components/Terminal/MacroRecordSaveDialog.tsx</code>),
+          playback with timing modes + triggers (<code>src/services/macroPlayback.ts</code>,
           <code>MacroPlaybackDialog.tsx</code>), the macro manager panel
           (<code>src/components/MacroSidebar/</code>), and file import/export
           (<code>src/services/macroIo.ts</code>).

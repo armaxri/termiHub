@@ -50,6 +50,14 @@ export interface VisualScenario {
   pluginUpdate?: boolean;
   /** The file the open dialog picks, and its text (#5818). */
   openFile?: { path: string; text: string };
+  /** Answer the automation and schedule lists with these (#5818). */
+  automationData?: {
+    automations?: unknown[];
+    runs?: unknown[];
+    schedules?: { paused: boolean; schedules: unknown[] };
+  };
+  /** Turn "Allow experimental features" off. */
+  experimentalOff?: boolean;
   /**
    * Answer `discover_mobaxterm_configs` with a found configuration and
    * `preview_mobaxterm_import` with a mixed preview (#4850).
@@ -729,7 +737,8 @@ const MONITORS_VIEW = {
 };
 
 function settingsFor(scenario: VisualScenario): unknown {
-  return scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
+  const settings = scenario.importConfirmations ? IMPORT_CONFIRMED_SETTINGS : FRESH_SETTINGS;
+  return scenario.experimentalOff ? { ...settings, experimentalFeaturesEnabled: false } : settings;
 }
 
 function regionView(region: string, populated: boolean): unknown {
@@ -890,11 +899,14 @@ export function handleCommand(cmd: string, args: Args): unknown {
       return summary ? { id, name: summary.name, tabGroups: [] } : null;
     }
     case "list_automations":
-      return populated ? AUTOMATIONS : [];
+      return scenario.automationData?.automations ?? (populated ? AUTOMATIONS : []);
     case "list_automation_runs":
-      return populated ? AUTOMATION_RUNS : [];
+      return scenario.automationData?.runs ?? (populated ? AUTOMATION_RUNS : []);
     case "list_schedules":
-      return populated ? SCHEDULES : { paused: false, schedules: [] };
+      return (
+        scenario.automationData?.schedules ??
+        (populated ? SCHEDULES : { paused: false, schedules: [] })
+      );
     case "get_credential_store_status":
       return scenario.credentialStore ?? { mode: "none", status: "unavailable" };
     case "unlock_credential_store":

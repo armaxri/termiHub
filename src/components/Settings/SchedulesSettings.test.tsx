@@ -99,11 +99,13 @@ describe("SchedulesSettings (#4623)", () => {
       h.textContent?.trim().toLowerCase()
     );
     expect(titles.filter((t) => t === "schedules")).toHaveLength(1);
-    // The global pause switch stays reachable without the header.
+    // Nothing to pause without a schedule (R-135); a pause left on stays reachable.
+    expect(query("schedules-pause-toggle")).toBeNull();
+    await render([], true);
     expect(query("schedules-pause-toggle")).not.toBeNull();
   });
 
-  it("lists every schedule with its rule and targets; creates new ones but edits none", async () => {
+  it("lists every schedule with its rule and targets; creates and edits them (R-017)", async () => {
     await render([view(), view({ id: "s2", name: "Health", enabled: false })]);
     expect(query("schedule-item-s1")).not.toBeNull();
     expect(query("schedule-item-s2")).not.toBeNull();
@@ -113,7 +115,8 @@ describe("SchedulesSettings (#4623)", () => {
     expect(tip).toContain("db-1");
     expect(query("schedule-item-s1")!.textContent).not.toContain("db-1");
     expect(query("schedule-status-s2")!.textContent).toBe("Disabled");
-    expect(query("schedule-edit-s1")).toBeNull();
+    act(() => query("schedule-edit-s1")!.click());
+    expect(openScheduleEditor).toHaveBeenLastCalledWith({ scheduleId: "s1" });
     act(() => query("schedules-new-btn")!.click());
     expect(openScheduleEditor).toHaveBeenCalledWith();
   });

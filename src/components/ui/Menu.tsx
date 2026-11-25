@@ -160,6 +160,8 @@ export const DropdownMenuContent = React.forwardRef<
       <RadixDropdownMenu.Content
         ref={ref}
         className={cx("ui-menu__content", width === "wide" && "ui-menu__content--wide", className)}
+        // A dialog clips what it holds, so its menu fits into it (and scrolls).
+        collisionBoundary={container instanceof Element ? container : undefined}
         {...rest}
       >
         <MenuKindContext.Provider value="dropdown">{children}</MenuKindContext.Provider>
