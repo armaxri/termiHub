@@ -46,11 +46,11 @@ let container: HTMLDivElement;
 let root: Root;
 let saveTunnel: (config: TunnelConfig) => Promise<void>;
 
-async function render(tunnelId: string | null = null) {
+async function render(tunnelId: string | null = null, tunnelType?: "remote") {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <TunnelEditor tabId={TAB_ID} meta={{ tunnelId }} isVisible={true} />
+        <TunnelEditor tabId={TAB_ID} meta={{ tunnelId, tunnelType }} isVisible={true} />
       </TooltipProvider>
     );
   });
@@ -142,6 +142,11 @@ describe("TunnelEditor — tunnel type selector (UISF2-002)", () => {
     expect(q("tunnel-type-local").getAttribute("aria-checked")).toBe("true");
     expect(q("tunnel-type-remote").getAttribute("aria-checked")).toBe("false");
     expect(q("tunnel-type-dynamic").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("starts with the type the New menu asked for (#6028)", async () => {
+    await render(null, "remote");
+    expect(q("tunnel-type-remote").getAttribute("aria-checked")).toBe("true");
   });
 
   it("reflects a click in aria-checked", async () => {

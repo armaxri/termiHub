@@ -162,10 +162,10 @@ describe("what the row says", () => {
   });
 
   it("keeps the end of a long machine's name, and all of it for a screen reader", () => {
-    const where = { label: "agent x", agentId: "x", name: "Edge gateway in the Frankfurt rack" };
-    render({ ...serverIn("stopped"), where });
+    const machine = "Edge gateway in the Frankfurt rack";
+    render({ ...serverIn("stopped"), machine });
     const chip = q("server-machine-s")!;
-    expect(chip.textContent).toBe(where.name);
+    expect(chip.textContent).toBe(machine);
     expect(chip.querySelector(".middle-ellipsis__tail")?.textContent).toBe("urt rack");
   });
 
