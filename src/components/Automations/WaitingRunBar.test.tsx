@@ -185,6 +185,13 @@ describe("Continue", () => {
     expect(wait.result).toBe("continued");
   });
 
+  it("says nothing of a password where none was asked for", () => {
+    prompt = "$ ";
+    startWait();
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-message-a")?.textContent).not.toContain("No password prompt");
+  });
+
   it("is the way on again once the password is typed", async () => {
     prompt = "[sudo] password for arne: ";
     const wait = startWait();
