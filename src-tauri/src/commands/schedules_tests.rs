@@ -151,6 +151,48 @@ fn unknown_ids_are_errors_and_change_nothing() {
 }
 
 #[test]
+fn the_next_run_is_previewed_before_the_schedule_is_saved() {
+    let h = Harness::new();
+    let rule = ScheduleRule::Interval { every_minutes: 10 };
+    let next = preview_schedule_next_run(None, rule, h.manager())
+        .unwrap()
+        .expect("a valid rule has a next run");
+    let next = chrono::DateTime::parse_from_rfc3339(&next).unwrap();
+    let wait = next.with_timezone(&Utc) - Utc::now();
+    assert!(wait > Duration::minutes(9) && wait <= Duration::minutes(10));
+    let invalid = ScheduleRule::Interval { every_minutes: 0 };
+    assert_eq!(
+        preview_schedule_next_run(None, invalid, h.manager()).unwrap(),
+        None
+    );
+    assert_eq!(h.changed(), 0);
+}
+
+#[test]
+fn clearing_the_history_notifies_only_when_something_was_cleared() {
+    let h = Harness::new();
+    let id = h.enabled_schedule();
+    clear_schedule_history(None, h.handle(), h.manager()).unwrap();
+    let before = h.changed();
+    h.tick_ahead(10);
+    h.manager()
+        .tick(Utc::now() + Duration::hours(5), &Utc, &["main".to_string()]);
+    let schedule = || {
+        list_schedules(h.manager()).unwrap().schedules[0]
+            .schedule
+            .clone()
+    };
+    assert!(!schedule().history.is_empty());
+    clear_schedule_history(Some(vec!["other".into()]), h.handle(), h.manager()).unwrap();
+    assert!(!schedule().history.is_empty());
+    assert_eq!(h.changed(), before);
+    clear_schedule_history(Some(vec![id]), h.handle(), h.manager()).unwrap();
+    assert!(schedule().history.is_empty());
+    assert!(schedule().last_result.is_some(), "the last result stays");
+    assert_eq!(h.changed(), before + 1);
+}
+
+#[test]
 fn the_first_enable_must_be_confirmed() {
     let h = Harness::new();
     let id = save_schedule(input(), h.handle(), h.manager())

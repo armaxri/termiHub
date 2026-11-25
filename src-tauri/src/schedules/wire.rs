@@ -249,14 +249,17 @@ pub(crate) fn aggregate(
                 .message
                 .clone()
                 .unwrap_or_else(|| "a run failed".into());
-            (
-                ScheduleRunOutcome::Failed,
-                Some(format!("{summary}: {detail}")),
-            )
+            // The reason comes first: it is what the user looks for (#6024).
+            let message = if targets == 1 {
+                detail
+            } else {
+                format!("{detail} ({})", lowercase_first(&summary))
+            };
+            (ScheduleRunOutcome::Failed, Some(message))
         } else if worst(ScheduleRunOutcome::Cancelled).is_some() {
             (
                 ScheduleRunOutcome::Cancelled,
-                Some(format!("{summary}: cancelled")),
+                Some(format!("{summary}: canceled")),
             )
         } else {
             (ScheduleRunOutcome::Completed, Some(summary))
@@ -270,6 +273,14 @@ pub(crate) fn aggregate(
         run_ids,
         ..fired_result(fired_at, at, outcome, message, catch_up)
     }
+}
+
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_lowercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// The result of a run fired at `fired_at` that settled at `at`, with its
@@ -290,8 +301,12 @@ fn fired_result(
         outcome,
         message,
         catch_up,
+        missed_due_at: None,
     }
 }
+
+/// Why a run was missed.
+pub(crate) const MISSED_REASON: &str = "termiHub was closed or the computer was asleep";
 
 pub(crate) fn skipped(
     at: DateTime<Utc>,
@@ -306,5 +321,16 @@ pub(crate) fn skipped(
         outcome: ScheduleRunOutcome::Skipped,
         message: Some(message.into()),
         catch_up,
+        missed_due_at: None,
+    }
+}
+
+/// The result of a run due at `due` that was missed: termiHub was not running,
+/// or the computer slept (#6024). The due time is kept apart from the reason,
+/// so the UI can show both in its own words and date format.
+pub(crate) fn missed_run(at: DateTime<Utc>, due: DateTime<Utc>) -> ScheduleRunResult {
+    ScheduleRunResult {
+        missed_due_at: Some(due.to_rfc3339()),
+        ..skipped(at, MISSED_REASON, false)
     }
 }

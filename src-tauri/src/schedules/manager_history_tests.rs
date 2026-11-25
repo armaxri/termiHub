@@ -46,6 +46,25 @@ fn skips_no_longer_overwrite_each_other() {
 }
 
 #[test]
+fn clearing_the_history_is_saved_and_keeps_the_last_result() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    let w = windows(&["main"]);
+    let token = m.tick_all(t(10, 10), &Utc, &w).fires[0].token.clone();
+    m.report(&token, "main", completed(1), t(10, 11)).unwrap();
+    assert!(!m.clear_history(Some(&["other".to_string()])).unwrap());
+    assert_eq!(history(&m).len(), 1);
+    assert!(m.clear_history(None).unwrap());
+    assert!(history(&m).is_empty());
+    assert!(!m.clear_history(None).unwrap(), "nothing left to clear");
+
+    let reopened = ScheduleManager::new_test(dir.path());
+    assert!(history(&reopened).is_empty());
+    let stored = reopened.state(t(0, 0), &Utc).unwrap();
+    assert!(stored.schedules[0].schedule.last_result.is_some());
+}
+
+#[test]
 fn a_fired_run_records_start_duration_and_run_ids() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
@@ -93,7 +112,8 @@ fn a_skipped_slot_has_no_start_or_duration() {
     m.tick_all(t(12, 0), &Utc, &windows(&["main"]));
     let r = &history(&m)[0];
     assert_eq!(r.outcome, ScheduleRunOutcome::Skipped);
-    assert!(r.message.as_deref().unwrap().contains("Missed"));
+    assert!(r.message.as_deref().unwrap().contains("asleep"));
+    assert!(r.missed_due_at.is_some());
     assert!(r.started_at.is_none());
     assert!(r.duration_ms.is_none());
 }

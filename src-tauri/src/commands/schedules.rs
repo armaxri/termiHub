@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Runtime, State};
 
+use crate::schedules::config::ScheduleRule;
 use crate::schedules::manager::{
     RunCoverage, ScheduleInput, ScheduleManager, ScheduleView, SchedulerState, WindowRunReport,
 };
@@ -69,6 +70,35 @@ pub fn set_schedule_enabled<R: Runtime>(
     )?;
     notify(&app);
     Ok(view)
+}
+
+/// When `rule` would run next: shown in the editor before saving. `schedule_id`
+/// is the schedule being edited, if any.
+#[tauri::command]
+pub fn preview_schedule_next_run(
+    schedule_id: Option<String>,
+    rule: ScheduleRule,
+    manager: State<'_, Arc<ScheduleManager>>,
+) -> Result<Option<String>, TerminalError> {
+    manager.preview_next_run(
+        schedule_id.as_deref(),
+        &rule,
+        chrono::Utc::now(),
+        &chrono::Local,
+    )
+}
+
+/// Clear the recorded attempts of these schedules (none named: of all).
+#[tauri::command]
+pub fn clear_schedule_history<R: Runtime>(
+    schedule_ids: Option<Vec<String>>,
+    app: AppHandle<R>,
+    manager: State<'_, Arc<ScheduleManager>>,
+) -> Result<(), TerminalError> {
+    if manager.clear_history(schedule_ids.as_deref())? {
+        notify(&app);
+    }
+    Ok(())
 }
 
 /// Pause or resume all schedules.
