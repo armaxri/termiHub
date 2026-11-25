@@ -20,6 +20,7 @@ import { clearOverrides, setOverride } from "@/services/keybindings";
 import { sessionLoggingStart } from "@/services/api";
 import {
   OPEN_RUN_AUTOMATION_EVENT,
+  openRunPicker,
   TOGGLE_SESSION_LOGGING_EVENT,
 } from "@/services/contextCommands";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -258,6 +259,27 @@ describe("TerminalView — logging and play shortcuts (#5779)", () => {
 });
 
 describe("TerminalView — macro playback and dialogs (#5172)", () => {
+  it("opens the picker on the one automation the palette asked for (#5818)", async () => {
+    const named = (id: string) => ({
+      id,
+      name: id,
+      tags: [],
+      steps: [],
+      triggers: [],
+      createdAt: "",
+      updatedAt: "",
+    });
+    useAppStore.setState({ automations: [named("a1"), named("a2")] });
+    seed(leaf("a", [tab("t1", "a")]), "a");
+    await renderView();
+    act(() => openRunPicker("a2"));
+    expect(probes.playback?.open).toBe(true);
+    expect(probes.playback?.automations.map((a) => a.id)).toEqual(["a2"]);
+    act(() => probes.playback!.onOpenChange(false));
+    act(() => openRunPicker());
+    expect(probes.playback?.automations.map((a) => a.id)).toEqual(["a1", "a2"]);
+  });
+
   it("opens the playback dialog and forwards a play request to the store", async () => {
     const runAutomation = vi.fn(() => Promise.resolve());
     useAppStore.setState({ runAutomation });

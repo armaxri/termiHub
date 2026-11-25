@@ -10,7 +10,7 @@
  *   human-readable message the hand-written validators produced (one
  *   documented improvement: a loop's `while` condition is now tagged `(loop)`,
  *   not `(conditional)`).
- * - **Unknown keys are stripped** at every level, as before.
+ * - **Unknown keys are stripped** here; `automationFileIo.ts` puts them back.
  */
 import { describe, expect, it } from "vitest";
 
@@ -22,7 +22,12 @@ import type {
   WorkflowTrigger,
   WorkflowTriggerKind,
 } from "@/types/workflow";
-import { parseWorkflowEnvelope, serializeWorkflows, WORKFLOW_EXPORT_VERSION } from "./workflowIo";
+import { parseStepEntries, WORKFLOW_EXPORT_VERSION } from "./workflowIo";
+
+/** A `workflows` file as older builds exported it. */
+const serializeWorkflows = (workflows: Workflow[]) =>
+  JSON.stringify({ version: WORKFLOW_EXPORT_VERSION, workflows });
+const parseWorkflowEnvelope = (json: string) => parseStepEntries(json, "workflows");
 
 /** Every field of a union variant, optional ones included. */
 type Maximal<U, K> = Required<Extract<U, { kind: K }>>;
@@ -423,5 +428,17 @@ describe("workflow import rejects a malformed workflow or envelope", () => {
     expect(() =>
       parseWorkflowEnvelope(rawEnvelope({ name: "A", steps: [] }, { name: "B", steps: [{}] }))
     ).toThrow('Invalid workflow file: step 0 of workflow at index 1 ("B") is malformed.');
+  });
+});
+
+describe("the automations list", () => {
+  it("is read by the same rules, and named in the messages", () => {
+    const json = (steps: unknown[]) =>
+      JSON.stringify({ version: 1, automations: [{ name: "X", steps }] });
+    const step = { kind: "run-automation", automationId: "a", retry: FULL_RETRY };
+    expect(parseStepEntries(json([step]), "automations")[0].steps).toStrictEqual([step]);
+    expect(() => parseStepEntries(json([{ kind: "run-automation" }]), "automations")).toThrow(
+      'Invalid automation file: step 0 of automation at index 0 ("X") (run-automation) is missing "automationId".'
+    );
   });
 });

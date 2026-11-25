@@ -6,7 +6,7 @@
  * whenever it cannot run cleanly. Those skips had no test:
  *
  * - another run (triggered or manual) is in flight;
- * - another workflow is waiting for input, or a macro is playing;
+ * - another automation is waiting for input, or another automation is typing;
  * - the workflow has no steps;
  * - a required parameter has no default (surfaced as a toast);
  * - the run itself fails (logged; the in-flight claim is released);
@@ -171,14 +171,14 @@ describe("workflowSessionTriggers launch guards", () => {
     expect(runner.runWorkflowOnTarget.mock.calls[0][0]).toMatchObject({ targetSessionId: "" });
   });
 
-  it("skips while another workflow run is in progress", () => {
+  it("skips while another automation is running", () => {
     runner.activeWorkflowRunCount.mockReturnValue(1);
     useAppStore.setState({ workflows: [workflow("wf-a")] });
     drop();
 
     expect(runner.runWorkflowOnTarget).not.toHaveBeenCalled();
     expect(skips()).toEqual([
-      expect.stringContaining('"Workflow wf-a" skipped: another workflow run is in progress'),
+      expect.stringContaining('"Workflow wf-a" skipped: another automation is running'),
     ]);
   });
 
@@ -199,9 +199,13 @@ describe("workflowSessionTriggers launch guards", () => {
   });
 
   it.each([
-    ["a parameter prompt", { workflowParamPrompt: {} }, "another workflow is waiting for input"],
-    ["a local-process prompt", { localProcessPrompt: {} }, "another workflow is waiting for input"],
-    ["macro playback", { macroPlayback: {} }, "a macro is playing"],
+    ["a parameter prompt", { workflowParamPrompt: {} }, "another automation is waiting for input"],
+    [
+      "a local-process prompt",
+      { localProcessPrompt: {} },
+      "another automation is waiting for input",
+    ],
+    ["macro playback", { macroPlayback: {} }, "another automation is typing"],
   ])("skips while %s is pending", (_what, busy, reason) => {
     useAppStore.setState({ workflows: [workflow("wf-a")], ...(busy as Partial<AppState>) });
     drop();
@@ -227,7 +231,7 @@ describe("workflowSessionTriggers launch guards", () => {
     drop();
 
     expect(runner.runWorkflowOnTarget).not.toHaveBeenCalled();
-    expect(info).toHaveBeenCalledWith('Workflow "Workflow wf-a" was not run', {
+    expect(info).toHaveBeenCalledWith('Automation "Workflow wf-a" was not run', {
       description: 'Parameter "Host" needs a default value to run from a trigger',
     });
   });

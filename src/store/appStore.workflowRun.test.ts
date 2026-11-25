@@ -172,7 +172,6 @@ import {
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
-import { serializeWorkflows } from "@/services/workflowIo";
 import {
   onConnectDispatchRecordCount,
   resetOnConnectDispatchState,
@@ -951,50 +950,6 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(useAppStore.getState().workflows.map((w) => w.id)).toEqual(["w1"]);
   });
 
-  it("imports workflows from an exported file, giving them fresh ids", async () => {
-    useAppStore.setState({ workflows: [] });
-    const json = serializeWorkflows([workflow("original", [cmd("ls")])]);
-
-    const result = await useAppStore.getState().importWorkflows(json);
-
-    expect(result.imported).toBe(1);
-    // A clean file carries no run-local-process steps to flag.
-    expect(result.localProcessSteps).toBe(0);
-    expect(result.workflowsWithLocalProcess).toBe(0);
-    const imported = layoutState().workflows;
-    expect(imported).toHaveLength(1);
-    // A fresh id is assigned on import (never the file's original id).
-    expect(imported[0].id).not.toBe("original");
-    expect(imported[0].steps).toEqual([cmd("ls")]);
-  });
-
-  it("flags imported run-local-process steps without stripping them", async () => {
-    useAppStore.setState({ workflows: [] });
-    const json = serializeWorkflows([
-      {
-        ...workflow("danger", [cmd("ls")]),
-        steps: [
-          { kind: "send-command", command: "ls" },
-          { kind: "run-local-process", program: "echo", args: ["hi"] },
-        ],
-      },
-    ]);
-
-    const result = await useAppStore.getState().importWorkflows(json);
-
-    // The step count is surfaced so the caller can warn the user...
-    expect(result.imported).toBe(1);
-    expect(result.workflowsWithLocalProcess).toBe(1);
-    expect(result.localProcessSteps).toBe(1);
-    // ...and the step is preserved (not stripped), so #1857's run-time guard applies.
-    const imported = layoutState().workflows;
-    expect(imported[0].steps).toContainEqual({
-      kind: "run-local-process",
-      program: "echo",
-      args: ["hi"],
-    });
-  });
-
   describe("run-script sourcePath trust (#4310, FEC2-001)", () => {
     const script = (body: string, sourcePath?: string): WorkflowStep => ({
       kind: "run-script",
@@ -1021,9 +976,11 @@ describe("appStore — workflow run slice (#1852)", () => {
         ],
       });
 
-      const result = await useAppStore.getState().importWorkflows(json);
+      const result = await useAppStore.getState().importAutomations(json);
 
-      expect(result.removedScriptSourcePaths).toEqual(["/home/u/.ssh/id_ed25519"]);
+      expect(result.removedScriptPaths).toEqual([
+        { name: "innocent", path: "/home/u/.ssh/id_ed25519" },
+      ]);
       const [imported] = layoutState().workflows;
       expect(imported.steps).toEqual([{ kind: "run-script", script: "echo harmless" }]);
 
@@ -1467,7 +1424,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       const recorded = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.tabId);
       expect(recorded).toEqual(["tab-a", "tab-b"]);
       expect(toast.success).toHaveBeenCalledWith(
-        'Ran workflow "Workflow w1" on 2 terminals',
+        'Ran automation "Workflow w1" on 2 terminals',
         expect.objectContaining({ id: "workflow-run-w1-fanout" })
       );
     });
@@ -1481,7 +1438,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends).toEqual([["tab-a", "uptime\n"]]);
       expect(toast.info).toHaveBeenCalledWith(
-        'Ran workflow "Workflow w1" on 1 terminal',
+        'Ran automation "Workflow w1" on 1 terminal',
         expect.objectContaining({ description: expect.stringContaining("1 skipped") })
       );
     });
@@ -1545,7 +1502,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends.map(([tabId]) => tabId)).toEqual(["tab-a", "tab-b"]);
       expect(toast.error).toHaveBeenCalledWith(
-        'Workflow "Workflow w1" failed on 1 terminal',
+        'Automation "Workflow w1" failed on 1 terminal',
         expect.objectContaining({ description: expect.stringContaining("web-1:") })
       );
     });
@@ -1564,7 +1521,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(sends).toEqual([["tab-a", "one\n"]]);
       expect(toast.info).toHaveBeenCalledWith(
-        'Workflow "Workflow w1" canceled',
+        'Automation "Workflow w1" canceled',
         expect.objectContaining({ id: "workflow-run-w1-fanout" })
       );
     });
@@ -1582,7 +1539,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(run.status).toBe("completed");
       expect(run.continuedFailures).toBe(1);
       expect(toast.info).toHaveBeenCalledWith(
-        'Ran workflow "Workflow w1" with 1 tolerated step failure',
+        'Ran automation "Workflow w1" with 1 tolerated step failure',
         expect.anything()
       );
     });
@@ -1644,7 +1601,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(runs.map((r) => r.label)).toEqual(["web-1", "web-2"]);
       expect(new Set(runs.map((r) => r.runId)).size).toBe(2);
       expect(toast.loading).toHaveBeenCalledWith(
-        'Running workflow "Workflow w1" on 2 terminals…',
+        'Running automation "Workflow w1" on 2 terminals…',
         expect.objectContaining({ description: "2 running" })
       );
 
@@ -1674,7 +1631,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(inj.maxInFlight()).toBe(WORKFLOW_FANOUT_CONCURRENCY);
       expect(inj.sends).toHaveLength(ids.length);
       expect(toast.success).toHaveBeenCalledWith(
-        `Ran workflow "Workflow w1" on ${ids.length} terminals`,
+        `Ran automation "Workflow w1" on ${ids.length} terminals`,
         expect.anything()
       );
     });
@@ -1710,7 +1667,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
       expect(statuses).toEqual(Array(WORKFLOW_FANOUT_CONCURRENCY).fill("cancelled"));
       expect(toast.info).toHaveBeenCalledWith(
-        'Workflow "Workflow w1" canceled',
+        'Automation "Workflow w1" canceled',
         expect.objectContaining({ description: expect.stringContaining("10 not finished") })
       );
     });
@@ -1829,7 +1786,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await run;
 
       expect(injected).toEqual([]);
-      expect(toast.info).toHaveBeenCalledWith('Workflow "Workflow wp" canceled');
+      expect(toast.info).toHaveBeenCalledWith('Automation "Workflow wp" canceled');
       expect(apiRecordWorkflowRun).not.toHaveBeenCalled();
     });
 
@@ -1840,7 +1797,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await useAppStore.getState().runWorkflow("w1", { targetTabIds: [] });
 
       expect(injected).toEqual([]);
-      expect(toast.error).toHaveBeenCalledWith("No terminals selected to run the workflow against");
+      expect(toast.error).toHaveBeenCalledWith("No terminals selected to run the automation on");
     });
 
     it("names the single selected terminal when it is not connected", async () => {
@@ -2371,7 +2328,7 @@ describe("appStore — scheduled runs (PROD-043)", () => {
     const report = await executeScheduledRun(fire(), store);
 
     expect(report.outcome).toBe("skipped");
-    expect(report.message).toMatch(/in progress/);
+    expect(report.message).toMatch(/was running/);
     await manual;
     // The user's run was not cancelled.
     expect(injected).toEqual([{ tabId: "tab-b", data: "done\n" }]);

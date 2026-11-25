@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
-  matchHotkeyWorkflow,
+  matchHotkeyAutomation,
   matchOnConnectWorkflows,
   dispatchOnConnectTriggers,
   forgetOnConnectSession,
@@ -16,6 +16,7 @@ import {
   sessionEndCauseFromExit,
   workflowTriggersEnabled,
 } from "@/services/workflowTriggers";
+import type { Automation } from "@/types/generated/Automation";
 import type { Workflow, WorkflowTrigger } from "@/types/workflow";
 
 function makeKeyEvent(
@@ -43,46 +44,46 @@ function makeWorkflow(id: string, triggers: WorkflowTrigger[]): Workflow {
   };
 }
 
-describe("matchHotkeyWorkflow", () => {
-  it("returns the workflow whose hotkey binding matches the event", () => {
-    const workflows = [
-      makeWorkflow("a", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]),
-      makeWorkflow("b", [{ kind: "manual" }]),
+const withTriggers = (id: string, triggers: Automation["triggers"]) => ({ id, triggers });
+
+describe("matchHotkeyAutomation", () => {
+  it("returns the automation whose hotkey binding matches the event", () => {
+    const automations = [
+      withTriggers("a", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]),
+      withTriggers("b", []),
     ];
     const event = makeKeyEvent("h", { ctrl: true, alt: true });
-    expect(matchHotkeyWorkflow(event, workflows)).toBe("a");
+    expect(matchHotkeyAutomation(event, automations)).toBe("a");
   });
 
   it("returns null when no hotkey trigger matches the event", () => {
-    const workflows = [makeWorkflow("a", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }])];
+    const automations = [withTriggers("a", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }])];
     const event = makeKeyEvent("j", { ctrl: true, alt: true });
-    expect(matchHotkeyWorkflow(event, workflows)).toBeNull();
+    expect(matchHotkeyAutomation(event, automations)).toBeNull();
   });
 
   it("ignores non-hotkey triggers", () => {
-    const workflows = [
-      makeWorkflow("a", [{ kind: "manual" }, { kind: "on-connect", connectionIds: ["c1"] }]),
-    ];
+    const automations = [withTriggers("a", [{ kind: "on-connect", connectionIds: ["c1"] }])];
     const event = makeKeyEvent("h", { ctrl: true, alt: true });
-    expect(matchHotkeyWorkflow(event, workflows)).toBeNull();
+    expect(matchHotkeyAutomation(event, automations)).toBeNull();
   });
 
-  it("skips workflows with an empty or unbound hotkey binding", () => {
-    const workflows = [
-      makeWorkflow("a", [{ kind: "hotkey", binding: "" }]),
-      makeWorkflow("b", [{ kind: "hotkey", binding: "   " }]),
+  it("skips automations with an empty or unbound hotkey binding", () => {
+    const automations = [
+      withTriggers("a", [{ kind: "hotkey", binding: "" }]),
+      withTriggers("b", [{ kind: "hotkey", binding: "   " }]),
     ];
     const event = makeKeyEvent("", {});
-    expect(matchHotkeyWorkflow(event, workflows)).toBeNull();
+    expect(matchHotkeyAutomation(event, automations)).toBeNull();
   });
 
-  it("returns the first matching workflow when several share a binding", () => {
-    const workflows = [
-      makeWorkflow("first", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]),
-      makeWorkflow("second", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]),
+  it("returns the first matching automation when several share a binding", () => {
+    const automations = [
+      withTriggers("first", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]),
+      withTriggers("second", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]),
     ];
     const event = makeKeyEvent("h", { ctrl: true, alt: true });
-    expect(matchHotkeyWorkflow(event, workflows)).toBe("first");
+    expect(matchHotkeyAutomation(event, automations)).toBe("first");
   });
 });
 
@@ -327,9 +328,11 @@ describe("disarmed workflows (#5674)", () => {
     resetOnConnectDispatchState();
   });
 
-  it("still lets the hotkey of a disarmed workflow run it (user-started)", () => {
-    const workflows = [disarm(makeWorkflow("hk", [{ kind: "hotkey", binding: "Ctrl+Alt+H" }]))];
+  it("ignores the hotkey of a disarmed one, and takes the next (#5818)", () => {
+    const hotkey = [{ kind: "hotkey", binding: "Ctrl+Alt+H" }] as const;
     const event = makeKeyEvent("h", { ctrl: true, alt: true });
-    expect(matchHotkeyWorkflow(event, workflows)).toBe("hk");
+    const off = { id: "off", triggers: [...hotkey], triggersEnabled: false };
+    expect(matchHotkeyAutomation(event, [off])).toBeNull();
+    expect(matchHotkeyAutomation(event, [off, { id: "on", triggers: [...hotkey] }])).toBe("on");
   });
 });

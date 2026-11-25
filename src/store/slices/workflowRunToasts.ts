@@ -1,11 +1,11 @@
 import { toast } from "@/components/ui";
 
 /**
- * One visible "Ran workflow …" outcome at a time (#5675).
+ * One visible "Ran automation …" outcome at a time (#5675).
  *
  * Every run resolves its own toast in place (its id is per workflow and
  * target), so running a few workflows in a row used to stack three or four
- * green "Ran workflow" toasts. A clean outcome (success, cancel) now replaces
+ * green "Ran automation" toasts. A clean outcome (success, cancel) now replaces
  * the previous clean outcome instead: the earlier one is dismissed when the
  * next one lands. A failure is never collapsed — it persists until the user
  * dismisses it, and a later success never removes it.

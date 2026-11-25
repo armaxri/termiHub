@@ -429,7 +429,7 @@ pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
         id: "automations",
         label: "Automations",
-        description: "Macros and workflows in one list.",
+        description: "All automations.",
         file_name: AutomationStore::FILE_NAME,
         current_version: AutomationStore::CURRENT_VERSION,
         shape: Shape::List {
@@ -444,7 +444,7 @@ pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
         id: "macros",
         label: "Macros",
-        description: "Terminal macros.",
+        description: "Macros of older versions.",
         file_name: "macros.json",
         current_version: MacroStore::CURRENT_VERSION,
         shape: Shape::List { field: "macros" },
@@ -457,7 +457,7 @@ pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
         id: "workflows",
         label: "Workflows",
-        description: "Automation workflows.",
+        description: "Workflows of older versions.",
         file_name: "workflows.json",
         current_version: <WorkflowStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "workflows" },
@@ -470,7 +470,7 @@ pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
         id: "schedules",
         label: "Schedules",
-        description: "Scheduled workflow and macro runs.",
+        description: "Scheduled automation runs.",
         file_name: "schedules.json",
         current_version: <ScheduleStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "schedules" },

@@ -382,7 +382,7 @@ class TestProductRunAutomations(
             self.driver.press_key("p", meta=mac, ctrl=not mac, shift=not mac)
             self.wait(lambda: self.driver.exists("command-palette-input"), what="the palette")
             self.driver.type("command-palette-input", "Release check")
-            item = f"command-palette-item-macro:{self.ids['macro']}"
+            item = f"command-palette-item-automation:{self.ids['macro']}"
             self.wait(lambda: self.driver.exists(item), what="the macro in the palette")
             self.shot(label="palette")
             self.driver.click(item)

@@ -196,7 +196,12 @@ function runOrStopAutomation(): void {
     state.cancelMacroPlayback();
     return;
   }
-  window.dispatchEvent(new CustomEvent(OPEN_RUN_AUTOMATION_EVENT));
+  openRunPicker();
+}
+
+/** Open the run picker on one automation, or on all of them to pick from. */
+export function openRunPicker(automationId?: string): void {
+  window.dispatchEvent(new CustomEvent(OPEN_RUN_AUTOMATION_EVENT, { detail: { automationId } }));
 }
 
 /**

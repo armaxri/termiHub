@@ -5,8 +5,8 @@ deselected without ``--product-run``). The UI review of run
 ``20261123T215628Z`` saw success toasts stack over the terminal for results
 the screen already showed: "Saved …" after a connection editor closed and its
 row appeared (R-132, R-159), "Connected …" beside a green tab dot (R-143,
-R-147, R-160), and "Played macro …" / "Ran workflow …" while the output was
-typing into the visible terminal (R-016).
+R-147, R-160), and "Ran automation …" (then "Played macro …" / "Ran workflow …")
+while the output was typing into the visible terminal (R-016).
 
 The maintainer's rule (decision A): feedback is visible in place; a toast only
 when it isn't — failures, background events (transfers, scheduled or automatic
@@ -51,8 +51,7 @@ IN_PLACE_PREFIXES = (
     "Saved",
     "Created",
     "Connected",
-    "Played macro",
-    "Ran workflow",
+    "Ran automation",
     "Duplicated",
     "Deleted",
     "Enabled",
@@ -113,16 +112,16 @@ def test_grade_counts_each_in_place_toast_once():
     flow = [
         ("save", ["Saved “web”"]),
         ("connect", ["Connected", "pr-web", "Saved “web”"]),
-        ("macro", ["Played macro “deploy”"]),
-        ("workflow", ["Ran workflow “check”"]),
+        ("typed", ["Ran automation “deploy”"]),
+        ("steps", ["Ran automation “check”"]),
     ]
     assert count_success_toasts(flow) == 4
     assert policy_problems(flow) == [
         "save: the 'Saved “web”' toast repeats what the screen shows",
         "connect: the 'Connected' toast repeats what the screen shows",
         "connect: the 'Saved “web”' toast repeats what the screen shows",
-        "macro: the 'Played macro “deploy”' toast repeats what the screen shows",
-        "workflow: the 'Ran workflow “check”' toast repeats what the screen shows",
+        "typed: the 'Ran automation “deploy”' toast repeats what the screen shows",
+        "steps: the 'Ran automation “check”' toast repeats what the screen shows",
     ]
 
 

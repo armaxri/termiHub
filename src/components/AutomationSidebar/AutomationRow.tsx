@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { AlertTriangle, MoreHorizontal, Pencil, Play, Square, Zap, ZapOff } from "lucide-react";
 import {
   Button,
@@ -21,6 +21,7 @@ import {
   armedMarkerDescription,
   automationRowTooltip,
   automaticTriggers,
+  hotkeyBindings,
   triggersArmed,
   type AutomationRunSummary,
   type ConnectionName,
@@ -104,8 +105,11 @@ export function AutomationRow({
   const { ref, ...rovingProps } = rowProps;
   const running = targets.length > 0;
   const several = targets.length > 1;
-  const automatic = automaticTriggers(automation).length > 0;
   const armed = triggersArmed(automation);
+  // A hotkey starts nothing by itself, so on its own it only shows when it is off.
+  const watches = automaticTriggers(automation).length > 0;
+  const armRef = useRef<HTMLSpanElement>(null);
+  const automatic = watches || (!armed && hotkeyBindings(automation).length > 0);
   const failed = !running && runs?.failedUnattended === true;
   const armedDescription = automatic ? armedMarkerDescription(automation, connectionName) : "";
 
@@ -188,10 +192,14 @@ export function AutomationRow({
               {compact ? null : <span aria-hidden="true">{armedText}</span>}
             </span>
           </Tooltip>
-          <span className="automation-item__arm-toggle" {...keepOffRow}>
+          <span ref={armRef} className="automation-item__arm-toggle" {...keepOffRow}>
             <Toggle
               checked={armed}
-              onCheckedChange={(next) => onSetArmed(id, next)}
+              onCheckedChange={(next) => {
+                // A hotkey's switch goes once it is on: the row takes its focus.
+                if (!watches) armRef.current?.closest<HTMLElement>("[role=treeitem]")?.focus();
+                onSetArmed(id, next);
+              }}
               aria-label={tf(armed ? "automation.armed.toggleOff" : "automation.armed.toggleOn", {
                 name,
               })}

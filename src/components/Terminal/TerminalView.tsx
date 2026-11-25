@@ -94,10 +94,14 @@ export function TerminalView() {
   const macroPlayback = useAppStore((s) => s.macroPlayback);
   const runAutomation = useAppStore((s) => s.runAutomation);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
-  const [runDialogOpen, setRunDialogOpen] = useState(false);
+  // Open for one automation (the palette, without a terminal) or to pick one.
+  const [runDialog, setRunDialog] = useState<{ automationId?: string } | null>(null);
   const runItems = useMemo(
-    () => automations.map((a) => ({ id: a.id, name: a.name, stepCount: a.steps.length })),
-    [automations]
+    () =>
+      automations
+        .filter((a) => runDialog?.automationId === undefined || a.id === runDialog.automationId)
+        .map((a) => ({ id: a.id, name: a.name, stepCount: a.steps.length })),
+    [automations, runDialog]
   );
   const [broadcastDialogOpen, setBroadcastDialogOpen] = useState(false);
   const [broadcastSourceTabId, setBroadcastSourceTabId] = useState<string | null>(null);
@@ -195,7 +199,8 @@ export function TerminalView() {
   toggleLoggingRef.current = handleToggleLogging;
   useEffect(() => {
     const onToggleLogging = () => void toggleLoggingRef.current();
-    const onOpenPlayback = () => setRunDialogOpen(true);
+    const onOpenPlayback = (e: Event) =>
+      setRunDialog((e as CustomEvent<{ automationId?: string } | null>).detail ?? {});
     window.addEventListener(TOGGLE_SESSION_LOGGING_EVENT, onToggleLogging);
     window.addEventListener(OPEN_RUN_AUTOMATION_EVENT, onOpenPlayback);
     return () => {
@@ -348,7 +353,7 @@ export function TerminalView() {
               recordingLabel={recordingLabel}
               onToggleRecording={toggleRecording}
               playback={macroPlayback}
-              onRunAutomation={() => setRunDialogOpen(true)}
+              onRunAutomation={() => setRunDialog({})}
               onStopPlayback={cancelMacroPlayback}
             />
           </div>
@@ -360,10 +365,12 @@ export function TerminalView() {
         </div>
       </main>
       <RunTargetsDialog
-        open={runDialogOpen}
+        open={runDialog !== null}
         automations={runItems}
         emptyText="No automations yet. Record what you type in a terminal first."
-        onOpenChange={setRunDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setRunDialog(null);
+        }}
         onRun={(id, targetTabIds, { parallel }) =>
           void runAutomation(id, { targetTabIds, parallel })
         }

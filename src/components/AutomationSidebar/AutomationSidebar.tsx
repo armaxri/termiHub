@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { CircleDot, Download, Keyboard, ListPlus, Plus, Upload } from "lucide-react";
+import { ArrowDownUp, CircleDot, Keyboard, ListPlus, Plus } from "lucide-react";
 import { getActiveTab, useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
@@ -23,7 +23,7 @@ import { HistorySection } from "./HistorySection";
 import { summarizeRuns } from "./automationRowInfo";
 import { useAutomationSections } from "./automationSections";
 import { useAutomationEditors } from "./useAutomationEditors";
-import { useAutomationFiles } from "./useAutomationFiles";
+import { useAutomationFiles } from "@/components/Automations/useAutomationFiles";
 import { useRunningAutomations } from "./useRunningAutomations";
 import "./AutomationSidebar.css";
 
@@ -40,8 +40,9 @@ const NO_TARGETS: never[] = [];
  * The Automations sidebar (#5818, slice 6): the one place to find, run and
  * create an automation. It replaces the Macros and Workflows sidebars.
  *
- * Toolbar: New (step by step, typed keystrokes, Import, Export all) and Record,
- * every one named in text (R-037) and both in view at every width. The list holds every
+ * Toolbar: New (step by step, typed keystrokes, and a link to import and export,
+ * which live in the settings) and Record, every one named in text (R-037) and both
+ * in view at every width. The list holds every
  * automation, searchable by name, description and tag; rows show names and
  * state, never settings. Below it, the collapsible Schedules and History
  * sections and the output of a running local process.
@@ -56,6 +57,7 @@ export function AutomationSidebar() {
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const toggleRecording = useAppStore((s) => s.toggleRecording);
   const recording = useAppStore((s) => s.recording !== null);
   // Where Run types (R-113, R-119): the active terminal tab's title.
@@ -92,7 +94,7 @@ export function AutomationSidebar() {
   const listRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
 
-  const files = useAutomationFiles();
+  const { exportOne } = useAutomationFiles();
 
   const deletion = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
@@ -162,7 +164,7 @@ export function AutomationSidebar() {
         );
       },
       onUseInNew: newFromAutomation,
-      onExport: files.exportOne,
+      onExport: exportOne,
       onDelete: (id) => {
         const automation = automations.find((a) => a.id === id);
         if (automation) requestDelete({ id: automation.id, name: automation.name });
@@ -172,7 +174,7 @@ export function AutomationSidebar() {
       automations,
       duplicateAutomation,
       edit,
-      files.exportOne,
+      exportOne,
       handleRun,
       handleStop,
       newFromAutomation,
@@ -259,19 +261,11 @@ export function AutomationSidebar() {
               },
               { type: "separator", id: "files-sep" },
               {
-                id: "import",
-                label: "Import…",
-                icon: <Upload size={14} />,
-                onSelect: files.importFile,
-                testId: "automation-import-btn",
-              },
-              {
-                id: "export-all",
-                label: "Export all…",
-                icon: <Download size={14} />,
-                onSelect: files.exportAll,
-                disabled: automations.length === 0,
-                testId: "automation-export-all-btn",
+                id: "files",
+                label: "Import or export…",
+                icon: <ArrowDownUp size={14} />,
+                onSelect: () => openSettingsTab({ category: "import" }),
+                testId: "automation-files-btn",
               },
             ],
           },

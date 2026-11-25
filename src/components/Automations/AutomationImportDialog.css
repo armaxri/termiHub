@@ -1,0 +1,40 @@
+.automation-import {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-wrap: anywhere;
+}
+
+.automation-import p {
+  margin: 0;
+}
+
+.automation-import__notes,
+.automation-import__lines {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.automation-import__notes {
+  gap: var(--spacing-md);
+}
+
+.automation-import__note {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.automation-import__note > svg {
+  flex-shrink: 0;
+  margin-top: var(--spacing-xs);
+  color: var(--text-secondary);
+}
+
+.automation-import__lines {
+  margin-top: var(--spacing-xs);
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+}

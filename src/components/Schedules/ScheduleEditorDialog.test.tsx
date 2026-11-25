@@ -335,7 +335,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
         },
         onSave,
       });
-      expect(query("schedule-editor-automation")!.textContent).toContain("Deleted automation");
+      expect(query("schedule-editor-automation")!.textContent).toContain("Missing automation");
       setInput("schedule-editor-name", "Orphan 2");
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).toHaveBeenCalledWith(

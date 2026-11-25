@@ -18,7 +18,9 @@ import type { SavedConnection } from "@/types/connection";
 import { layoutState } from "@/test/layoutState";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { ensureBroadcastSubscribed } from "@/store/broadcastBridge";
-import type { Workflow } from "@/types/workflow";
+import { OPEN_RUN_AUTOMATION_EVENT } from "@/services/contextCommands";
+import { automationLibraryState } from "@/store/slices/automationStoreState";
+import type { Automation } from "@/types/generated/Automation";
 import { getActionAccelerator } from "@/services/keybindings";
 
 const { connectSpy } = vi.hoisted(() => ({
@@ -35,6 +37,19 @@ function sshConn(id: string, name: string, host: string): SavedConnection {
     name,
     folderId: null,
     config: { type: "ssh", config: { host, username: "user", authMethod: "agent" } },
+  };
+}
+
+function automation(id: string, name: string, over: Partial<Automation> = {}): Automation {
+  return {
+    id,
+    name,
+    tags: [],
+    steps: [{ kind: "send-command", command: "echo hi" }],
+    triggers: [],
+    createdAt: "2026-09-26T00:00:00Z",
+    updatedAt: "2026-09-26T00:00:00Z",
+    ...over,
   };
 }
 
@@ -162,61 +177,95 @@ describe("CommandPalette", () => {
     expect(connectSpy).not.toHaveBeenCalled();
   });
 
-  it("runs the highlighted workflow on Enter via the manual trigger and closes", () => {
-    const runWorkflow = vi.fn(() => Promise.resolve());
-    setStore({
-      runWorkflow,
-      workflows: [
-        {
-          id: "wf-1",
-          name: "Deploy",
-          tags: [],
-          steps: [{ kind: "send-command", command: "echo hi" }],
-          triggers: [{ kind: "manual" }],
-          createdAt: "2026-07-24T00:00:00Z",
-          updatedAt: "2026-07-24T00:00:00Z",
-        },
-      ],
+  describe("automations (#5818, slice 11)", () => {
+    const steps: Automation = automation("wf-1", "Deploy", {
+      steps: [{ kind: "send-command", command: "echo hi" }],
     });
-    typeInto("run workflow: deploy");
-    // The row shows the workflow's name first, with no verb prefix (#5519).
-    expect(activeLabel()).toBe("Deploy");
-    keydown("Enter");
-    expect(runWorkflow).toHaveBeenCalledWith("wf-1");
-    expect(useAppStore.getState().commandPaletteOpen).toBe(false);
-    expect(connectSpy).not.toHaveBeenCalled();
-  });
+    const typed: Automation = automation("m-1", "Login", {
+      steps: [{ kind: "type-keys", chunks: [{ data: "a", delayMs: 0 }] }],
+      tags: ["credentials"],
+    });
+    const runAutomation = vi.fn(() => Promise.resolve());
 
-  it("lists automations by name and still finds them by the run verb (#5519)", () => {
-    setStore({
-      workflows: [
-        {
-          id: "wf-1",
-          name: "Deploy",
-          tags: [],
-          steps: [{ kind: "send-command", command: "echo hi" }],
-          triggers: [{ kind: "manual" }],
-          createdAt: "2026-07-24T00:00:00Z",
-          updatedAt: "2026-07-24T00:00:00Z",
-        },
-      ],
-      macros: [
-        {
-          id: "m-1",
-          name: "Login",
-          tags: [],
-          steps: [{ data: "a", delayMs: 0 }],
-          createdAt: "2026-07-24T00:00:00Z",
-          updatedAt: "2026-07-24T00:00:00Z",
-        },
-      ],
+    /** The library, and an active terminal unless `terminal` is null. */
+    function seed(terminal: string | null = "prod-web"): void {
+      setStore({ runAutomation, ...automationLibraryState([steps, typed]) });
+      if (terminal === null) return;
+      act(() => {
+        const id = useAppStore
+          .getState()
+          .addTab(terminal, "local", undefined, { contentType: "terminal" });
+        const panel = getAllLeaves(layoutState().rootPanel).find((p) =>
+          p.tabs.some((t) => t.id === id)
+        )!;
+        useAppStore.getState().setActivePanel(panel.id);
+        useAppStore.getState().setActiveTab(id, panel.id);
+      });
+    }
+    const row = (id: string) =>
+      document.querySelector(`[data-testid="command-palette-item-automation:${id}"]`);
+
+    it("is one kind of entry: name first, and where it runs (R-083)", () => {
+      seed();
+      typeInto("deploy");
+      expect(activeLabel()).toBe("Deploy");
+      expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
+        "→ prod-web"
+      );
+      expect(row("wf-1")?.textContent).not.toMatch(/macro|workflow/i);
+      typeInto("login");
+      expect(activeLabel()).toBe("Login");
+      expect(document.querySelectorAll('[data-testid*="item-automation:"]')).toHaveLength(1);
     });
-    typeInto("deploy");
-    expect(activeLabel()).toBe("Deploy");
-    typeInto("login");
-    expect(activeLabel()).toBe("Login");
-    typeInto("run macro");
-    expect(activeLabel()).toBe("Login");
+
+    it.each([
+      ["run automation: deploy", "Deploy"],
+      ["run macro: login", "Login"],
+      ["run workflow: deploy", "Deploy"],
+      // Either old word finds either of them.
+      ["run macro: deploy", "Deploy"],
+      ["run workflow: login", "Login"],
+      ["credentials", "Login"],
+    ])("is found by %s", (query, name) => {
+      seed();
+      typeInto(query);
+      expect(activeLabel()).toBe(name);
+    });
+
+    it.each([
+      ["record macro", "Record automation (start/stop)"],
+      ["play macro", "Run automation…"],
+    ])("the command once called %s is %s", (query, label) => {
+      seed();
+      typeInto(query);
+      expect(activeLabel()).toBe(label);
+    });
+
+    it.each([
+      ["deploy", "wf-1"],
+      ["login", "m-1"],
+    ])("runs %s through the one entry point, from the palette", (query, id) => {
+      seed();
+      typeInto(query);
+      keydown("Enter");
+      expect(runAutomation).toHaveBeenCalledWith(id, { origin: "palette" });
+      expect(useAppStore.getState().commandPaletteOpen).toBe(false);
+    });
+
+    it("asks where without an active terminal", () => {
+      const asked: unknown[] = [];
+      const listen = (e: Event) => asked.push((e as CustomEvent).detail);
+      window.addEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
+      seed(null);
+      typeInto("deploy");
+      expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
+        "→ choose a terminal"
+      );
+      keydown("Enter");
+      window.removeEventListener(OPEN_RUN_AUTOMATION_EVENT, listen);
+      expect(asked).toEqual([{ automationId: "wf-1" }]);
+      expect(runAutomation).not.toHaveBeenCalled();
+    });
   });
 
   it("lists saved workspaces and launches the highlighted one on Enter", () => {
@@ -322,26 +371,14 @@ describe("CommandPalette", () => {
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
   });
 
-  describe("Run workflow on broadcast group (#3430)", () => {
+  describe("Run automation on broadcast group (#3430)", () => {
     let harness: ReturnType<typeof installBroadcastHarness> | null = null;
-
-    function wf(id: string, name: string): Workflow {
-      return {
-        id,
-        name,
-        tags: [],
-        steps: [{ kind: "send-command", command: "echo hi" }],
-        triggers: [{ kind: "manual" }],
-        createdAt: "2026-09-26T00:00:00Z",
-        updatedAt: "2026-09-26T00:00:00Z",
-      };
-    }
 
     /** Seed the broadcast region + connected targets, then remount the palette. */
     async function setup(opts: {
       active: boolean;
       connected: string[];
-      workflows?: Workflow[];
+      automations?: Automation[];
     }): Promise<ReturnType<typeof vi.fn>> {
       harness = installBroadcastHarness({
         active: opts.active,
@@ -351,22 +388,24 @@ describe("CommandPalette", () => {
       await act(async () => {
         await ensureBroadcastSubscribed();
       });
-      const runWorkflow = vi.fn(() => Promise.resolve());
+      const runAutomation = vi.fn(() => Promise.resolve());
       setStore({
-        runWorkflow,
+        runAutomation,
         getBroadcastTargetTabIds: () => [...opts.connected],
-        workflows: opts.workflows ?? [wf("wf-1", "Deploy"), wf("wf-2", "Health Check")],
+        ...automationLibraryState(
+          opts.automations ?? [automation("wf-1", "Deploy"), automation("wf-2", "Health Check")]
+        ),
       });
       act(() => {
         root.unmount();
       });
       root = createRoot(container);
       await render();
-      return runWorkflow;
+      return runAutomation;
     }
 
     function broadcastItem(): HTMLElement | null {
-      return document.querySelector('[data-testid="command-palette-item-broadcast-workflow"]');
+      return document.querySelector('[data-testid="command-palette-item-broadcast"]');
     }
 
     afterEach(() => {
@@ -384,30 +423,30 @@ describe("CommandPalette", () => {
       const item = broadcastItem();
       expect(item).not.toBeNull();
       expect(item?.getAttribute("aria-disabled")).toBeNull();
-      expect(item?.textContent).toContain("Run workflow on broadcast group");
+      expect(item?.textContent).toContain("Run automation on broadcast group");
       expect(item?.textContent).toContain("2 terminals");
     });
 
     it("is disabled and inert when the group has no connected terminals", async () => {
-      const runWorkflow = await setup({ active: true, connected: [] });
-      typeInto("run workflow on broadcast group");
-      expect(activeLabel()).toContain("Run workflow on broadcast group");
+      const runAutomation = await setup({ active: true, connected: [] });
+      typeInto("run automation on broadcast group");
+      expect(activeLabel()).toContain("Run automation on broadcast group");
       expect(broadcastItem()?.getAttribute("aria-disabled")).toBe("true");
       keydown("Enter");
       // Still on the root list, palette open, nothing run.
       expect(document.querySelector('[data-testid="command-palette-picker"]')).toBeNull();
       expect(useAppStore.getState().commandPaletteOpen).toBe(true);
-      expect(runWorkflow).not.toHaveBeenCalled();
+      expect(runAutomation).not.toHaveBeenCalled();
     });
 
-    it("is disabled when there are no workflows to run", async () => {
-      await setup({ active: true, connected: ["t1"], workflows: [] });
+    it("is disabled when there are no automations to run", async () => {
+      await setup({ active: true, connected: ["t1"], automations: [] });
       expect(broadcastItem()?.getAttribute("aria-disabled")).toBe("true");
     });
 
-    it("opens a workflow picker listing every workflow", async () => {
+    it("opens a automation picker listing every automation", async () => {
       await setup({ active: true, connected: ["t1", "t2"] });
-      typeInto("run workflow on broadcast group");
+      typeInto("run automation on broadcast group");
       keydown("Enter");
       expect(useAppStore.getState().commandPaletteOpen).toBe(true);
       expect(document.querySelector('[data-testid="command-palette-picker"]')).not.toBeNull();
@@ -418,26 +457,29 @@ describe("CommandPalette", () => {
       expect(labels).toEqual(["Deploy", "Health Check"]);
     });
 
-    it("runs the picked workflow on the group's connected terminals and closes", async () => {
-      const runWorkflow = await setup({ active: true, connected: ["t1", "t3"] });
-      typeInto("run workflow on broadcast group");
+    it("runs the picked automation on the group's connected terminals and closes", async () => {
+      const runAutomation = await setup({ active: true, connected: ["t1", "t3"] });
+      typeInto("run automation on broadcast group");
       keydown("Enter");
       typeInto("health");
       expect(activeLabel()).toBe("Health Check");
       keydown("Enter");
-      expect(runWorkflow).toHaveBeenCalledWith("wf-2", { targetTabIds: ["t1", "t3"] });
+      expect(runAutomation).toHaveBeenCalledWith("wf-2", {
+        targetTabIds: ["t1", "t3"],
+        origin: "palette",
+      });
       expect(useAppStore.getState().commandPaletteOpen).toBe(false);
     });
 
     it("Backspace on an empty picker query returns to the command list", async () => {
-      const runWorkflow = await setup({ active: true, connected: ["t1"] });
-      typeInto("run workflow on broadcast group");
+      const runAutomation = await setup({ active: true, connected: ["t1"] });
+      typeInto("run automation on broadcast group");
       keydown("Enter");
       expect(document.querySelector('[data-testid="command-palette-picker"]')).not.toBeNull();
       keydown("Backspace");
       expect(document.querySelector('[data-testid="command-palette-picker"]')).toBeNull();
       expect(broadcastItem()).not.toBeNull();
-      expect(runWorkflow).not.toHaveBeenCalled();
+      expect(runAutomation).not.toHaveBeenCalled();
     });
   });
 

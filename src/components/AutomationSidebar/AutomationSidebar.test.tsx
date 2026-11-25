@@ -20,16 +20,12 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(vi.f
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
 const dialogSave = vi.fn();
-const dialogOpen = vi.fn();
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: (...args: unknown[]) => dialogSave(...args),
-  open: (...args: unknown[]) => dialogOpen(...args),
 }));
 const fsWriteTextFile = vi.fn();
-const fsReadTextFile = vi.fn();
 vi.mock("@tauri-apps/plugin-fs", () => ({
   writeTextFile: (...args: unknown[]) => fsWriteTextFile(...args),
-  readTextFile: (...args: unknown[]) => fsReadTextFile(...args),
 }));
 
 const toastSuccess = vi.fn();
@@ -52,8 +48,7 @@ import { useAppStore } from "@/store/appStore";
 import { automationLibraryState } from "@/store/slices/automationStoreState";
 import { setWorkflowRunViewForTest } from "@/store/workflowRunBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
-import { parseMacroEnvelope } from "@/services/macroIo";
-import { parseWorkflowEnvelope } from "@/services/workflowIo";
+import { parseAutomationFile } from "@/services/automationFileIo";
 import { resetRememberedRunTargetChoice } from "@/components/Automations/runTargetChoice";
 import { AUTOMATION_JUST_SAVED_MS } from "./AutomationRow";
 import { AutomationEditorHost, useAutomationEditor } from "@/components/AutomationEditor";
@@ -147,8 +142,7 @@ const storeFns = {
   deleteAutomationFromBackend: vi.fn(),
   saveAutomationToBackend: vi.fn(),
   setWorkflowTriggersEnabled: vi.fn(),
-  importMacros: vi.fn(),
-  importWorkflows: vi.fn(),
+  openSettingsTab: vi.fn(),
   cancelWorkflowRun: vi.fn(),
   cancelMacroPlayback: vi.fn(),
   cancelMacroPlaybackOnTab: vi.fn(),
@@ -200,13 +194,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetRememberedRunTargetChoice();
   for (const fn of Object.values(storeFns)) fn.mockResolvedValue(undefined);
-  storeFns.importMacros.mockResolvedValue(1);
-  storeFns.importWorkflows.mockResolvedValue({
-    imported: 1,
-    workflowsWithLocalProcess: 0,
-    localProcessSteps: 0,
-    removedScriptSourcePaths: [],
-  });
   useAppStore.setState(useAppStore.getInitialState());
   useAppStore.setState({ ...storeFns });
   useAutomationSections.setState(useAutomationSections.getInitialState());
@@ -291,11 +278,10 @@ describe("empty state", () => {
     expect(query("automation-editor-dialog")).not.toBeNull();
   });
 
-  it("keeps Import reachable and disables Export all", async () => {
+  it("keeps the way to import reachable", async () => {
     await render([]);
     openMenu("automation-new-btn");
-    expect(query("automation-import-btn")!.hasAttribute("data-disabled")).toBe(false);
-    expect(query("automation-export-all-btn")!.hasAttribute("data-disabled")).toBe(true);
+    expect(query("automation-files-btn")!.hasAttribute("data-disabled")).toBe(false);
   });
 });
 
@@ -305,8 +291,7 @@ describe("toolbar (R-037)", () => {
     expect(query("automation-new-btn")!.textContent).toBe("New");
     expect(query("automation-record-btn")!.textContent).toBe("Record");
     openMenu("automation-new-btn");
-    expect(query("automation-import-btn")!.textContent).toBe("Import…");
-    expect(query("automation-export-all-btn")!.textContent).toBe("Export all…");
+    expect(query("automation-files-btn")!.textContent).toBe("Import or export…");
   });
 
   it("creates step by step or from typed keystrokes, in the one editor", async () => {
@@ -508,6 +493,26 @@ describe("markers", () => {
     );
     click("automation-arm-toggle-workflow-2");
     expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
+  });
+
+  it("shows a hotkey that is off, and turns it on without losing the focus (#5818)", async () => {
+    const hotkey: Automation = {
+      ...triggered,
+      triggers: [{ kind: "hotkey", binding: "Ctrl+Alt+D" }],
+      triggersEnabled: false,
+    };
+    await render([hotkey]);
+    const toggle = query("automation-arm-toggle-workflow-2")!;
+    expect(query("automation-armed-workflow-2")!.getAttribute("aria-label")).toContain(
+      "hotkey Ctrl+Alt+D"
+    );
+    act(() => toggle.focus());
+    click("automation-arm-toggle-workflow-2");
+    expect(storeFns.setWorkflowTriggersEnabled).toHaveBeenCalledWith("workflow-2", true);
+    act(() => setLibrary([{ ...hotkey, triggersEnabled: undefined }]));
+    // On, a hotkey needs no marker: it starts nothing by itself.
+    expect(query("automation-arm-toggle-workflow-2")).toBeNull();
+    expect(document.activeElement).toBe(query("automation-item-workflow-2"));
   });
 
   it("reports a failed disarm", async () => {
@@ -784,93 +789,53 @@ describe("the editor", () => {
   });
 });
 
-describe("files", () => {
-  it("exports the whole library to one file both old importers read", async () => {
-    dialogSave.mockResolvedValue("/tmp/a.json");
+describe("files (#5818, slice 11)", () => {
+  it("links to the settings, where import and export live", async () => {
     await render();
     openMenu("automation-new-btn");
-    click("automation-export-all-btn");
-    await flushAsync();
-    expect(dialogSave.mock.calls[0][0].defaultPath).toBe("termihub-automations.json");
-    const json = fsWriteTextFile.mock.calls[0][1] as string;
-    expect(parseMacroEnvelope(json).map((m) => m.name)).toEqual(["Sudo login"]);
-    expect(parseWorkflowEnvelope(json).map((w) => w.name)).toEqual([
-      "Deploy prep",
-      "Answer on match",
-    ]);
-    expect(toastSuccess).toHaveBeenCalledWith("Exported 3 automations");
+    click("automation-files-btn");
+    expect(storeFns.openSettingsTab).toHaveBeenCalledWith({ category: "import" });
   });
 
   it.each([
-    ["macro-1", "termihub-automation-sudo-login.json", parseMacroEnvelope, "Sudo login"],
-    ["workflow-1", "termihub-automation-deploy-prep.json", parseWorkflowEnvelope, "Deploy prep"],
-  ])("exports %s on its own", async (id, path, parse, name) => {
+    ["macro-1", "termihub-automation-sudo-login.json", "Sudo login"],
+    ["workflow-1", "termihub-automation-deploy-prep.json", "Deploy prep"],
+  ])("exports %s on its own", async (id, path, name) => {
     dialogSave.mockResolvedValue("/tmp/a.json");
     await render();
     choose(id, "export");
     await flushAsync();
     expect(dialogSave.mock.calls[0][0].defaultPath).toBe(path);
-    expect(parse(fsWriteTextFile.mock.calls[0][1] as string).map((x) => x.name)).toEqual([name]);
+    const file = parseAutomationFile(fsWriteTextFile.mock.calls[0][1] as string);
+    expect(file.entries.automations.map((e) => e.automation.name)).toEqual([name]);
+    expect(toastSuccess).toHaveBeenCalledWith(`Exported "${name}"`);
   });
 
-  async function importJson(json: string): Promise<void> {
-    dialogOpen.mockResolvedValue("/tmp/in.json");
-    fsReadTextFile.mockResolvedValue(json);
-    await render();
-    openMenu("automation-new-btn");
-    click("automation-import-btn");
+  it("exports the automations one runs with it, and says so", async () => {
+    dialogSave.mockResolvedValue("/tmp/a.json");
+    const caller: Automation = {
+      ...library[1],
+      id: "caller",
+      name: "Caller",
+      steps: [{ kind: "run-automation", automationId: "macro-1" }],
+    };
+    await render([...library, caller]);
+    choose("caller", "export");
     await flushAsync();
-  }
-
-  it.each([
-    ["a macro file", '{"version":1,"macros":[]}', 1, 0],
-    ["a workflow file", '{"version":1,"workflows":[]}', 0, 1],
-    ["a file with both", '{"version":1,"macros":[],"workflows":[]}', 1, 1],
-  ])("imports %s without a toast", async (_name, json, macros, workflows) => {
-    await importJson(json);
-    expect(storeFns.importMacros).toHaveBeenCalledTimes(macros);
-    expect(storeFns.importWorkflows).toHaveBeenCalledTimes(workflows);
-    expect(toastSuccess).not.toHaveBeenCalled();
-    expect(toastInfo).not.toHaveBeenCalled();
-    expect(toastError).not.toHaveBeenCalled();
+    const file = parseAutomationFile(fsWriteTextFile.mock.calls[0][1] as string);
+    expect(file.entries.automations.map((e) => e.automation.name)).toEqual([
+      "Caller",
+      "Sudo login",
+    ]);
+    expect(toastSuccess).toHaveBeenCalledWith('Exported "Caller" and the automation it runs');
   });
 
-  it("imports nothing from a file that is malformed in one list", async () => {
-    await importJson('{"version":1,"macros":[],"workflows":[{"name":""}]}');
-    expect(storeFns.importMacros).not.toHaveBeenCalled();
-    expect(storeFns.importWorkflows).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith(
-      expect.stringMatching(/^Failed to import automations: Invalid workflow file/)
-    );
-  });
-
-  it("flags imported local-process steps and removed script paths, and stays up", async () => {
-    storeFns.importWorkflows.mockResolvedValue({
-      imported: 2,
-      workflowsWithLocalProcess: 1,
-      localProcessSteps: 2,
-      removedScriptSourcePaths: ["/home/u/x.sh"],
-    });
-    await importJson('{"version":1,"workflows":[]}');
-    const [title, options] = toastInfo.mock.calls[0];
-    expect(title).toBe("Imported 2 automations");
-    expect(options.duration).toBe(Infinity);
-    expect(options.description).toContain("1 imported automation contain 2 local-process steps");
-    expect(options.description).toContain("/home/u/x.sh");
-  });
-
-  it("does nothing when the dialogs are canceled", async () => {
+  it("does nothing when the dialog is canceled", async () => {
     dialogSave.mockResolvedValue(null);
-    dialogOpen.mockResolvedValue(null);
     await render();
-    openMenu("automation-new-btn");
-    click("automation-export-all-btn");
-    await flushAsync();
-    openMenu("automation-new-btn");
-    click("automation-import-btn");
+    choose("macro-1", "export");
     await flushAsync();
     expect(fsWriteTextFile).not.toHaveBeenCalled();
-    expect(fsReadTextFile).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });
 });
