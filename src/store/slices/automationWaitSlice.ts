@@ -275,7 +275,6 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
             prompted,
             answered: prompted && !asking,
             stillAsking: w.stillAsking && asking,
-            askedAgain: w.askedAgain === true && asking,
             unchecked: w.unchecked === true && asking,
             elsewhere:
               w.elsewhere === true &&
