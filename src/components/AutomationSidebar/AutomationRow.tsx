@@ -140,7 +140,7 @@ export function AutomationRow({
   const markers = (
     <>
       {running ? (
-        <Tooltip content={runningText} side="top" disabled={!compact}>
+        <Tooltip content={runningText} side="top" disabled={!compact && !several}>
           <span
             className={
               waiting
@@ -149,11 +149,11 @@ export function AutomationRow({
             }
             data-waiting={waiting ? "true" : undefined}
             data-testid={`automation-running-${id}`}
-            role={compact ? "img" : undefined}
-            aria-label={compact ? runningText : undefined}
+            role={compact || several ? "img" : undefined}
+            aria-label={compact || several ? runningText : undefined}
           >
             {waiting ? <Hand size={10} aria-hidden="true" /> : <Spinner size={10} label={null} />}
-            {compact ? null : runningText}
+            {compact || several ? null : runningText}
           </span>
         </Tooltip>
       ) : null}
@@ -197,11 +197,11 @@ export function AutomationRow({
   );
 
   const runControl = running ? (
-    <Tooltip content={several ? "Stop all" : "Stop"} side="top">
+    <Tooltip content="Stop" side="top" disabled={several}>
       <Button
         variant="ghost"
         size="sm"
-        iconOnly
+        iconOnly={!several}
         aria-label={tf(several ? "automation.stop.allLabel" : "automation.stop.label", { name })}
         data-testid={`automation-stop-${id}`}
         icon={<Square size={12} fill="currentColor" />}
@@ -209,7 +209,10 @@ export function AutomationRow({
           e.stopPropagation();
           actions.onStop(id);
         }}
-      />
+      >
+        {/* It ends every line below, so it says so (B-003). */}
+        {several ? tf("automation.stop.all", { count: targets.length }) : null}
+      </Button>
     </Tooltip>
   ) : blocked ? null : (
     <Tooltip
@@ -261,6 +264,8 @@ export function AutomationRow({
       name={name}
       targets={targets}
       blocked={running ? null : blocked}
+      importedInPart={automation.importedInPart ?? []}
+      onEdit={() => actions.onEdit(id)}
       triggers={triggers}
       nextRun={nextRun}
       onSetTriggers={(on) => onSetTriggers(id, on)}
@@ -274,7 +279,13 @@ export function AutomationRow({
           ref={ref}
           {...rovingProps}
           aria-label={rowLabel}
-          className={justSaved ? "automation-item automation-item--just-saved" : "automation-item"}
+          className={[
+            "automation-item",
+            selected ? "automation-item--selected" : "",
+            justSaved ? "automation-item--just-saved" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           data-just-saved={justSaved ? "true" : undefined}
           testId={`automation-item-${id}`}
           name={name}

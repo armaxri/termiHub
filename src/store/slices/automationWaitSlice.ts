@@ -52,10 +52,12 @@ export interface AutomationWaitSlice {
     signal?: WorkflowStepSignal
   ) => Promise<WaitForUserResult>;
   /**
-   * Go on with a waiting run. While its terminal shows a password prompt, the
-   * first call only says so.
+   * Go on with a waiting run. Only from its own terminal: from elsewhere the call
+   * shows it. While the terminal shows a password prompt, the first call only says so.
    */
   continueAutomationWait: (runId: string) => void;
+  /** Stop saying that a terminal still asks once its prompt is answered. */
+  recheckWaitingPrompts: () => void;
   /** End the waits whose terminal was closed, moved away or disconnected. */
   followWaitingTerminals: () => void;
 }
@@ -110,7 +112,7 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
           id: toastId,
           duration: Infinity,
           action: {
-            label: "Show terminal",
+            label: tf("automation.wait.show", { tab: request.tabTitle }),
             testId: "automation-wait-show",
             onClick: () => show(tabId),
           },
@@ -127,6 +129,12 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
       pending.get(runId)?.end("timed-out");
       return;
     }
+    // Nobody continues into a terminal they do not see (B-001): the first press only
+    // shows it, whatever it came from.
+    if (getActiveTab(get())?.id !== wait.tabId) {
+      show(wait.tabId);
+      return;
+    }
     if (!wait.stillAsking && isPasswordPrompt(promptOfTerminal(wait.tabId))) {
       set({
         automationWaits: get().automationWaits.map((w) =>
@@ -138,6 +146,17 @@ export const createAutomationWaitSlice: StateCreator<AppState, [], [], Automatio
     }
     show(wait.tabId);
     pending.get(runId)?.end("continued");
+  },
+
+  recheckWaitingPrompts: () => {
+    const answered = (w: AutomationWait) =>
+      w.stillAsking && !isPasswordPrompt(promptOfTerminal(w.tabId));
+    if (!get().automationWaits.some(answered)) return;
+    set({
+      automationWaits: get().automationWaits.map((w) =>
+        answered(w) ? { ...w, stillAsking: false } : w
+      ),
+    });
   },
 
   followWaitingTerminals: () => {

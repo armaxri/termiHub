@@ -238,7 +238,9 @@ describe("conditional", () => {
   it("edits, moves, deletes and adds steps of a branch", async () => {
     await open(step);
     expect(query("automation-editor-branch-0-then")?.textContent).toContain("Then (2)");
-    expect(query("automation-editor-branch-0-else")?.textContent).toContain("Else (optional) (1)");
+    expect(query("automation-editor-branch-0-else")?.textContent).toContain(
+      "Otherwise (optional) (1)"
+    );
     typeText("automation-editor-step-command-0-then-0", "uno");
     await chooseStep("0-then-0", "down");
     await chooseStep("0-then-0", "delete");

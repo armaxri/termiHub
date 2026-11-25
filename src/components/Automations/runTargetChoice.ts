@@ -30,7 +30,7 @@ export interface RunTargetTerminal {
   title: string;
   /** Whether input typed now would reach it (connected, not taken over). */
   live: boolean;
-  /** The machine it types into, and its tab group's name (A-035). */
+  /** The machine it types into, and its tab group's name when there are several (A-035). */
   where: string;
   group: string;
 }
@@ -47,7 +47,7 @@ export interface RunTargetOptions {
   panel: string[];
   /** The live terminals of the current tab group. */
   all: string[];
-  /** The current tab group's name (A-036). */
+  /** The current tab group's name when there are several, else empty (A-036). */
   groupName: string;
   /** The saved broadcast groups with their live member tabs. */
   groups: { id: string; name: string; tabIds: string[] }[];

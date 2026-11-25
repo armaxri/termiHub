@@ -15,6 +15,7 @@ import { registerTerminalPromptReader } from "@/services/passwordPrompt";
 import { WAIT_FOR_USER_LIMIT_MS, type WaitForUserResult } from "@/services/workflowRunner";
 import { useAppStore } from "@/store/appStore";
 import { __emitSessionViewForTest, type ProjectedSessionLifecycle } from "@/store/sessionBridge";
+import { SHOW_WAITING_TERMINAL_EVENT } from "@/store/slices/automationWaitSlice";
 import { checkA11y } from "@/test/axe";
 import { click, query } from "@/test/automationEditorHarness";
 import { flushAsync } from "@/test/flushAsync";
@@ -108,7 +109,7 @@ describe("the bar", () => {
     const bar = query("automation-wait-a")!;
     expect(bar.textContent).toContain("“Deploy” waits for you in prod-web.");
     expect(query("automation-wait-message-a")?.textContent).toBe(
-      "Type your password, then Continue."
+      "Type your password and press Enter in the terminal, then Continue."
     );
     expect(bar.textContent).toMatch(/Stops at .+ if you do nothing\./);
     expect(query("automation-wait-show-a")).toBeNull();
@@ -118,7 +119,7 @@ describe("the bar", () => {
   it("has a wording of its own when the step has none", () => {
     startWait("a", { message: "  " });
     expect(query("automation-wait-message-a")?.textContent).toBe(
-      "Type what the terminal asks for, then Continue."
+      "Type what the terminal asks for and press Enter there, then Continue."
     );
   });
 
@@ -139,7 +140,15 @@ describe("the bar", () => {
       "“Deploy” waits for you in db-1",
       expect.objectContaining({ duration: Infinity })
     );
-    expect(query("automation-wait-show-b")).not.toBeNull();
+    // Shown first: Continue would type into a terminal nobody sees (B-001).
+    expect(query("automation-wait-continue-b")).toBeNull();
+    expect(query("automation-wait-show-b")?.textContent).toBe("Show db-1");
+    expect(query("automation-wait-message-b")?.textContent).toBe(
+      "Show it, type your password and press Enter."
+    );
+    expect(wait.result).toBeUndefined();
+    act(() => seedTabs([tab("a"), tab("b")], "b"));
+    expect(query("automation-wait-show-b")).toBeNull();
     click("automation-wait-continue-b");
     await flushAsync();
     expect(wait.result).toBe("continued");
@@ -149,11 +158,11 @@ describe("the bar", () => {
   it("keeps the waits of several terminals apart", async () => {
     const a = startWait("a");
     const b = startWait("b");
-    click("automation-wait-continue-b");
+    click("automation-wait-continue-a");
     await flushAsync();
-    expect([a.result, b.result]).toEqual([undefined, "continued"]);
-    expect(query("automation-wait-a")).not.toBeNull();
-    expect(query("automation-wait-b")).toBeNull();
+    expect([a.result, b.result]).toEqual(["continued", undefined]);
+    expect(query("automation-wait-b")).not.toBeNull();
+    expect(query("automation-wait-a")).toBeNull();
   });
 });
 
@@ -179,6 +188,35 @@ describe("Continue", () => {
     expect(wait.result).toBe("continued");
   });
 
+  it("is the way on again once the password is typed", async () => {
+    prompt = "[sudo] password for arne: ";
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue anyway");
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue anyway");
+    prompt = "$ ";
+    act(() => store().recheckWaitingPrompts());
+    expect(query("automation-wait-continue-a")?.textContent).toBe("Continue");
+    expect(wait.result).toBeUndefined();
+  });
+
+  it("from anywhere else only shows the terminal that waits (B-001)", async () => {
+    const wait = startWait("b");
+    const shown: string[] = [];
+    const listen = (e: Event) => shown.push((e as CustomEvent<{ tabId: string }>).detail.tabId);
+    window.addEventListener(SHOW_WAITING_TERMINAL_EVENT, listen);
+    act(() => CONTEXT_COMMANDS["continue-automation"].run());
+    await flushAsync();
+    expect(wait.result).toBeUndefined();
+    expect(shown).toEqual(["b"]);
+    // Shown now, so the next press means it.
+    act(() => CONTEXT_COMMANDS["continue-automation"].run());
+    await flushAsync();
+    expect(wait.result).toBe("continued");
+    window.removeEventListener(SHOW_WAITING_TERMINAL_EVENT, listen);
+  });
+
   it("is in the command palette for the keyboard, the active terminal's wait first", async () => {
     const command = CONTEXT_COMMANDS["continue-automation"];
     expect(command.isAvailable()).toBe(false);
@@ -188,6 +226,26 @@ describe("Continue", () => {
     act(() => command.run());
     await flushAsync();
     expect([a.result, b.result]).toEqual(["continued", undefined]);
+  });
+
+  it("does nothing for a wait that is over, or a run stopped before it waited", async () => {
+    act(() => store().continueAutomationWait("gone"));
+    act(() => store().recheckWaitingPrompts());
+    expect(store().automationWaits).toEqual([]);
+    const result = await store().waitForUser(
+      { runId: "r", tabId: "a", sessionId: "s", tabTitle: "a", automationName: "x" },
+      { isCancelled: () => true }
+    );
+    expect(result).toBe("cancelled");
+    expect(store().automationWaits).toEqual([]);
+  });
+
+  it("ends once, whatever comes after", async () => {
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    act(() => wait.cancel());
+    await flushAsync();
+    expect(wait.result).toBe("continued");
   });
 
   it("is too late after the limit, also when the computer slept through the timer", async () => {

@@ -19,6 +19,7 @@ import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { ScheduleView } from "@/types/schedule";
 import { formatDayTime, formatRelativeTime } from "@/utils/formatters";
 import { automationRunTargets } from "./historyFormat";
+import { joinWords } from "@/utils/joinWords";
 
 /** How many bound connection names a trigger lists before collapsing to "+N". */
 const MAX_SUMMARY_CONNECTIONS = 2;
@@ -47,7 +48,11 @@ function isSessionTrigger(trigger: AutomationTrigger): trigger is SessionTrigger
  * connection never fires, so it does not count; a hotkey is the user.
  */
 export function automaticTriggers(automation: Automation): SessionTrigger[] {
-  return automation.triggers.filter(
+  return boundTriggers(automation.triggers);
+}
+
+function boundTriggers(triggers: readonly AutomationTrigger[]): SessionTrigger[] {
+  return triggers.filter(
     (trigger): trigger is SessionTrigger =>
       isSessionTrigger(trigger) && trigger.connectionIds.length > 0
   );
@@ -59,8 +64,8 @@ export function triggersArmed(automation: Automation): boolean {
 }
 
 /** The keys its hotkey triggers name. */
-function hotkeyBindings(automation: Automation): string[] {
-  return automation.triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
+function hotkeyBindings(triggers: readonly AutomationTrigger[]): string[] {
+  return triggers.flatMap((t) => (t.kind === "hotkey" && t.binding ? [t.binding] : []));
 }
 
 /** The bound connections' names, the first few listed and the rest counted. */
@@ -104,6 +109,21 @@ export interface TriggerState {
   text: string;
 }
 
+/** What can start it by itself, in words: "hotkey F8", "connecting to prod". */
+export function triggerPhrases(
+  triggers: readonly AutomationTrigger[],
+  connectionName: ConnectionName
+): string[] {
+  return [
+    ...hotkeyBindings(triggers).map((keys) => tf("automation.trigger.hotkey", { keys })),
+    ...boundTriggers(triggers).map((trigger) =>
+      tf(TRIGGER_PHRASE[trigger.kind], {
+        connections: connectionList(trigger.connectionIds, connectionName),
+      })
+    ),
+  ];
+}
+
 /**
  * The row's trigger line (#6026): which hotkey and what else starts it, or, while
  * its triggers are off, what does not start it any more. `null` when nothing
@@ -113,43 +133,44 @@ export function triggerState(
   automation: Automation,
   connectionName: ConnectionName
 ): TriggerState | null {
-  const parts = [
-    ...hotkeyBindings(automation).map((keys) => tf("automation.trigger.hotkey", { keys })),
-    ...automaticTriggers(automation).map((trigger) =>
-      tf(TRIGGER_PHRASE[trigger.kind], {
-        connections: connectionList(trigger.connectionIds, connectionName),
-      })
-    ),
-  ];
+  const parts = triggerPhrases(automation.triggers, connectionName);
   if (parts.length === 0) return null;
   const on = triggersArmed(automation);
   return {
     on,
     text: on
       ? tf("automation.triggers.on", { triggers: parts.join(", ") })
-      : tf("automation.triggers.off", { triggers: parts.join(", or ") }),
+      : tf(parts.length > 1 ? "automation.triggers.offMany" : "automation.triggers.off", {
+          triggers: joinWords(parts),
+        }),
   };
 }
 
 /**
- * When a schedule runs it next (#6026), over every schedule of it that is on;
- * `null` without one.
+ * When a schedule runs it next (#6026), over every schedule of it that is on and can
+ * run, or why none will (B-016); `null` without one that is on. `triggersOff` says
+ * that the schedule goes on although the triggers do not.
  */
 export function nextScheduledRun(
   automationId: string,
   schedules: readonly ScheduleView[],
   paused: boolean,
+  blockedShort: (schedule: ScheduleView) => string | null,
+  triggersOff = false,
   now?: Date
 ): string | null {
   const on = schedules.filter((s) => s.enabled && s.action.automationId === automationId);
   if (on.length === 0) return null;
   if (paused) return t("automation.schedule.paused");
-  const next = on.flatMap((s) => (s.nextRunAt ? [s.nextRunAt] : [])).sort(byTime)[0];
+  const able = on.filter((s) => blockedShort(s) === null);
+  if (able.length === 0) {
+    return tf("automation.schedule.blocked", { reason: blockedShort(on[0]) ?? "" });
+  }
+  const next = able.flatMap((s) => (s.nextRunAt ? [s.nextRunAt] : [])).sort(byTime)[0];
   if (next === undefined) return t("automation.schedule.on");
   const when = formatDayTime(next, now);
-  return on.length === 1
-    ? tf("automation.schedule.next", { when })
-    : tf("automation.schedule.nextOf", { when, count: on.length });
+  if (able.length > 1) return tf("automation.schedule.nextOf", { when, count: able.length });
+  return tf(triggersOff ? "automation.schedule.still" : "automation.schedule.next", { when });
 }
 
 function byTime(a: string, b: string): number {

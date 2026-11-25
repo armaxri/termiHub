@@ -130,16 +130,29 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     container.remove();
   });
 
-  it("keeps Save disabled until the schedule has a name, a target and a choice", () => {
+  it("says everything that is missing; Save stays a button that looks alive (B-032)", () => {
     render({});
     const save = () => query("schedule-editor-save") as HTMLButtonElement;
-    expect(save().getAttribute("aria-disabled")).toBe("true");
+    expect(save().getAttribute("aria-disabled")).toBeNull();
+    expect(save().disabled).toBe(false);
+    expect(summary()[0]).toBe(
+      "To save: give it a name, choose a connection and choose what happens if a connection is closed."
+    );
     setInput("schedule-editor-name", "Nightly");
-    expect(save().getAttribute("aria-disabled")).toBe("true");
     act(() => query("schedule-editor-connection-c2")!.click());
-    expect(save().getAttribute("aria-disabled")).toBe("true");
+    expect(summary()[0]).toBe("To save: choose what happens if a connection is closed.");
     choose("skip");
-    expect(save().getAttribute("aria-disabled")).toBe("false");
+    expect(summary().join()).not.toContain("To save");
+  });
+
+  it("saves to be switched on, when it would run (B-030)", async () => {
+    const onSave = vi.fn();
+    render({ onSave });
+    setInput("schedule-editor-name", "Nightly");
+    act(() => query("schedule-editor-connection-c2")!.click());
+    choose("skip");
+    await act(async () => query("schedule-editor-save-on")!.click());
+    expect(onSave.mock.calls[0][1]).toEqual({ switchOn: true });
   });
 
   it("saves the pre-selected automation on the chosen connections every N minutes", async () => {
@@ -150,14 +163,17 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     setInput("schedule-editor-every", "5");
     choose("skip");
     await act(async () => query("schedule-editor-save")!.click());
-    expect(onSave).toHaveBeenCalledWith({
-      id: "schedule-new",
-      name: "Ping",
-      action: { kind: "automation", automationId: "wf-1" },
-      targets: { kind: "connections", connectionIds: ["c1"] },
-      rule: { kind: "interval", everyMinutes: 5 },
-      missedRuns: "skip",
-    });
+    expect(onSave).toHaveBeenCalledWith(
+      {
+        id: "schedule-new",
+        name: "Ping",
+        action: { kind: "automation", automationId: "wf-1" },
+        targets: { kind: "connections", connectionIds: ["c1"] },
+        rule: { kind: "interval", everyMinutes: 5 },
+        missedRuns: "skip",
+      },
+      { switchOn: false }
+    );
   });
 
   it("saves a short one-line description (#5757)", async () => {
@@ -235,7 +251,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
         query(a)!.compareDocumentPosition(query(b)!) & Node.DOCUMENT_POSITION_FOLLOWING;
       expect(follows("schedule-editor-closed", "schedule-editor-rule-kind")).toBeTruthy();
       const first = query("schedule-editor-form")!.firstElementChild!;
-      expect(first.textContent).toBe("Runs only while termiHub is open on this computer.");
+      expect(first.textContent).toBe(
+        "Runs only while termiHub is open and this computer is awake."
+      );
       const details = query("schedule-editor-details")!.closest("details")!;
       expect(details.open).toBe(false);
       expect(details.textContent).toContain("Tabs opened for the run close when it ends");
@@ -265,9 +283,10 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       await flushAsync();
       expect(preview).toHaveBeenLastCalledWith({ kind: "daily", time: "02:00" });
       expect(summary()).toEqual([
-        "Next run: tomorrow 02:00 on web-2.",
+        "On. Next run: tomorrow 02:00 on web-2.",
         "Skipped where the connection is closed.",
       ]);
+      expect(query("schedule-editor-save-on")).toBeNull();
       choose("connect");
       expect(summary()[1]).toMatch(/^Saving switches it off/);
     });
@@ -275,10 +294,8 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     it("says that a new one is off, and follows the rule", async () => {
       render({ previewNextRun: preview });
       await flushAsync();
-      expect(summary()).toEqual([
-        "Next run: 15 minutes after you switch it on, but no connection is chosen.",
-        "Off until you switch it on in the list.",
-      ]);
+      setInput("schedule-editor-name", "Nightly");
+      choose("connect");
       setInput("schedule-editor-every", "5");
       await flushAsync();
       expect(preview).toHaveBeenLastCalledWith({ kind: "interval", everyMinutes: 5 });
@@ -309,7 +326,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       );
       render({ schedule: nightly, enabled: true, previewNextRun: preview });
       await flushAsync();
-      expect(summary()[0]).toBe("Next run: tomorrow 02:00 on web-2.");
+      expect(summary()[0]).toBe("On. Next run: tomorrow 02:00 on web-2.");
       setInput("schedule-editor-time", "03:00");
       await flushAsync();
       expect(summary()).toEqual(["Skipped where the connection is closed."]);
@@ -361,7 +378,8 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       render({ schedule: stored(["Work/Old Box", "c1"]), onSave });
       act(() => query("schedule-editor-connection-c1")!.click());
       const save = query("schedule-editor-save")!;
-      expect(save.getAttribute("aria-disabled")).toBe("true");
+      expect(query("schedule-editor-save-on")).toBeNull();
+      expect(summary()[0]).toBe("To save: choose a connection that still exists.");
       expect(query("schedule-editor-dialog")!.textContent).toContain(
         "All chosen connections were deleted. Pick another one."
       );
@@ -385,7 +403,10 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
         automations: withStep({ parameters: [{ name: "env", type: "string", required: true }] }),
       });
       expect(note()).toContain("it asks for “env”");
-      expect(summary()[0]).toContain("it asks for “env”");
+      // The reason stands once, at the field, with the way there (B-035).
+      expect(summary()).toContain("Will not run on a schedule.");
+      expect(summary().join()).not.toContain("env");
+      expect(query("schedule-editor-save-on")).toBeNull();
     });
 
     it("says which values it uses", () => {
@@ -453,11 +474,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       ]);
       await act(async () => query("schedule-editor-save")!.click());
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({
-          targets: { kind: "connections", connectionIds: ["c2", "c1"] },
-        })
-      );
+      expect(onSave.mock.calls[0][0]).toMatchObject({
+        targets: { kind: "connections", connectionIds: ["c2", "c1"] },
+      });
     });
 
     it("keeps unsaved edits when the schedule list refreshes", async () => {
@@ -471,7 +490,7 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       });
       await act(async () => query("schedule-editor-save")!.click());
 
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: "Edited" }));
+      expect(onSave.mock.calls[0][0]).toMatchObject({ name: "Edited" });
     });
   });
 
@@ -484,7 +503,6 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       render({});
       expect(nameError()).toBeNull();
       expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
-      expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
     });
 
     it("shows a field's error once it was edited and left", () => {
@@ -538,7 +556,6 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       render({ initialAction: undefined, onSave });
       setInput("schedule-editor-name", "Ping");
       act(() => query("schedule-editor-connection-c1")!.click());
-      expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).not.toHaveBeenCalled();
       expect(query("schedule-editor-dialog")!.textContent).toContain("Pick an automation.");
@@ -552,9 +569,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       act(() => query("schedule-editor-connection-c2")!.click());
       choose("skip");
       await act(async () => query("schedule-editor-save")!.click());
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ action: { kind: "automation", automationId: "m-1" } })
-      );
+      expect(onSave.mock.calls[0][0]).toMatchObject({
+        action: { kind: "automation", automationId: "m-1" },
+      });
     });
 
     it("keeps a deleted automation's id on save and names it as deleted", async () => {
@@ -573,9 +590,9 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       expect(query("schedule-editor-automation")!.textContent).toContain("Deleted automation");
       setInput("schedule-editor-name", "Orphan 2");
       await act(async () => query("schedule-editor-save")!.click());
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ action: { kind: "automation", automationId: "gone" } })
-      );
+      expect(onSave.mock.calls[0][0]).toMatchObject({
+        action: { kind: "automation", automationId: "gone" },
+      });
     });
   });
 
@@ -630,7 +647,6 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       setInput("schedule-editor-name", "Nightly");
       act(() => query("schedule-editor-connection-c1")!.click());
       choose("skip");
-      expect(query("schedule-editor-save")!.getAttribute("aria-disabled")).toBe("true");
       expect(text()).toContain(LOCAL_PROCESS_REASON);
       await act(async () => query("schedule-editor-save")!.click());
       expect(onSave).not.toHaveBeenCalled();
@@ -642,12 +658,10 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
       expect(text()).toContain(LOCAL_PROCESS_REASON);
       setInput("schedule-editor-name", "Renamed");
       await act(async () => query("schedule-editor-save")!.click());
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: "Renamed",
-          action: { kind: "automation", automationId: "lp" },
-        })
-      );
+      expect(onSave.mock.calls[0][0]).toMatchObject({
+        name: "Renamed",
+        action: { kind: "automation", automationId: "lp" },
+      });
     });
   });
 });

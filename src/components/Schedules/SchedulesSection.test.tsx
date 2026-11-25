@@ -134,7 +134,7 @@ describe("SchedulesSection (PROD-043)", () => {
       } as ScheduleView["lastResult"];
       const failed = { at: "", outcome: "failed" } as ScheduleView["lastResult"];
       await render([view({ enabled: true, lastResult: missed })], false, closed);
-      expect(query("schedules-failed-dot")!.className).toContain("status-dot--warning");
+      expect(query("schedules-section-toggle")!.textContent).toBe("Schedules (1) · 1 not run");
       await render(
         [
           view({ enabled: true, lastResult: missed }),
@@ -143,7 +143,7 @@ describe("SchedulesSection (PROD-043)", () => {
         false,
         closed
       );
-      expect(query("schedules-failed-dot")!.className).toContain("status-dot--error");
+      expect(query("schedules-section-toggle")!.textContent).toBe("Schedules (2) · 1 failed");
     });
 
     it("keeps the header, its count and New schedule, and hides the list", async () => {
@@ -166,21 +166,21 @@ describe("SchedulesSection (PROD-043)", () => {
       expect(onChange).toHaveBeenCalledWith(false);
     });
 
-    it("says on the closed header that a scheduled run failed", async () => {
+    it("says on the header that a scheduled run failed, open too (B-034)", async () => {
       const failed = {
         at: new Date().toISOString(),
         outcome: "failed",
         catchUp: false,
       } as ScheduleView["lastResult"];
       await render([view({ enabled: true, lastResult: failed })], false, closed);
-      expect(query("schedules-failed-dot")).not.toBeNull();
+      expect(query("schedules-section-toggle")!.textContent).toContain("1 failed");
       await render([view({ enabled: false, lastResult: failed })], false, closed);
-      expect(query("schedules-failed-dot")).toBeNull();
+      expect(query("schedules-section-toggle")!.textContent).not.toContain("failed");
       await render([view({ enabled: true, lastResult: failed })], false, {
         expanded: true,
         onChange,
       });
-      expect(query("schedules-failed-dot")).toBeNull();
+      expect(query("schedules-section-toggle")!.textContent).toContain("1 failed");
     });
 
     it("offers Pause all only with something to pause, or to undo a pause (R-135)", async () => {
@@ -246,7 +246,7 @@ describe("SchedulesSection (PROD-043)", () => {
         }),
       ]);
       expect(line("last")).toBe(
-        "Last run missed: termiHub was closed or the computer was asleep (due today 02:00)"
+        "Last run missed: termiHub was closed or the computer was asleep (due today 02:00) Show in History"
       );
       const css = readFileSync(
         join(dirname(fileURLToPath(import.meta.url)), "Schedules.css"),
@@ -279,7 +279,16 @@ describe("SchedulesSection (PROD-043)", () => {
       ]);
       expect(line("status", "gone")).toBe("On");
       expect(line("what", "gone")).toBe("Uptime on Deleted connection “Old Box”");
-      expect(line("blocked", "gone")).toBe("Will not run: its connections were deleted.");
+      expect(line("blocked", "gone")).toBe(
+        "Will not run: its connections were deleted. Choose a connection"
+      );
+      // The way to repair it, where the reason stands (B-017).
+      act(() => query("schedule-repair-gone")!.click());
+      expect(openScheduleEditor).toHaveBeenCalledWith({
+        scheduleId: "gone",
+        startAtConnections: true,
+      });
+      expect(query("schedule-repair-noauto")).toBeNull();
       expect(line("what", "noauto")).toContain("Deleted automation on");
       expect(line("blocked", "noauto")).toBe("Will not run: its automation was deleted.");
     });
@@ -344,7 +353,7 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(hosts.textContent).toContain("web-2");
     const dialog = query("schedule-enable-confirm")!.textContent ?? "";
     expect(dialog).toContain("Switch on “Health”?");
-    expect(dialog).toContain("Every 15 minutes, termiHub runs Uptime");
+    expect(dialog).toContain("Every 15 minutes, termiHub runs “Uptime”");
     expect(dialog).not.toMatch(/enable|disable/i);
     expect(query("schedule-confirm-next")!.textContent).toBe("First run: tomorrow 02:00.");
     await act(async () => query("schedule-enable-confirm-confirm")!.click());

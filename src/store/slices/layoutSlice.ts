@@ -61,6 +61,8 @@ import { currentSettingsView } from "@/store/settingsBridge";
 import { createLayoutCommit } from "./layoutCommit";
 import { numberedTabTitle, shellTabName } from "@/utils/defaultTabTitle";
 import { prunedSessionState, prunedTabState, releaseTabFromSharedRegions } from "../tabTeardown";
+import { runsReplacedBy } from "./runningAutomations";
+import { tf } from "@/i18n/catalog";
 
 /**
  * Core tabs/panel layout slice (ARCH-001/FES-011, appStore god-module split via
@@ -485,6 +487,15 @@ export const createLayoutSlice: StateCreator<AppState, [], [], LayoutSlice> = (s
             sessionId,
             workflows: get().workflows,
             run: (workflowId, targetTabId) => {
+              // Nobody asked for it, so it never stops a run (#6042).
+              const [running] = runsReplacedBy(get(), false);
+              if (running) {
+                const name = get().workflows.find((w) => w.id === workflowId)?.name ?? "";
+                toast.error(`“${name}” was not run`, {
+                  description: `${tf("automation.replace.one", { ...running })} is running.`,
+                });
+                return;
+              }
               void get().runWorkflow(workflowId, { targetTabId, triggeredBy: "on-connect" });
             },
           });

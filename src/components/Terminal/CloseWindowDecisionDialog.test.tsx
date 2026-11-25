@@ -213,9 +213,9 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
       ask();
       expect(q("close-window-decision-recording").textContent).toContain("Recording in prod-web");
       expect(q("close-window-decision-dialog").textContent).toContain(
-        "The recording is not saved and would be lost."
+        "The recording is not saved and will be lost."
       );
-      expect(q("close-window-decision-end").textContent).toContain("Discard & close");
+      expect(q("close-window-decision-end").textContent).toContain("Close without saving");
     });
 
     it("blocks moving the tabs, which would lose it", () => {
@@ -259,7 +259,7 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     render();
     const runs = [
       { key: "r1", name: "Deploy", tabTitle: "prod-web" },
-      { key: "r2", name: "Backup", tabTitle: "db-1" },
+      { key: "r2", name: "Backup", tabTitle: "db-1", waiting: true },
     ];
     act(() =>
       useAppStore.getState().setPendingWindowClose(request({ sessions: [], runs, mode: "quit" }))
@@ -267,9 +267,12 @@ describe("CloseWindowDecisionDialog (#1903)", () => {
     expect(q("close-window-decision-run-r1").textContent).toContain(
       "“Deploy” is running in prod-web"
     );
+    expect(q("close-window-decision-run-r2").textContent).toContain(
+      "“Backup” waits for you in db-1"
+    );
     expect(q("close-window-decision-run-r2").textContent).toContain("Will be stopped");
     expect(q("close-window-decision-dialog").textContent).toContain(
-      "The running automations would be stopped"
+      "2 automations will be stopped."
     );
   });
 

@@ -1,9 +1,12 @@
-import { Field, Input, NumberInput, Select } from "@/components/ui";
+import { Button, Field, Input, NumberInput, Select } from "@/components/ui";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { WorkflowCondition } from "@/types/workflow";
 import type { StepDraft, StepListName } from "./automationDraft";
 import { useStepEditor } from "./stepEditorContext";
 import { conditionOpLabel, WORKFLOW_CONDITION_OPS } from "./stepMeta";
+
+/** How a step refers to a value the run asks for. */
+const reference = (name: string): string => "${" + name + "}";
 
 interface ConditionFieldsProps {
   path: string;
@@ -18,40 +21,64 @@ interface ConditionFieldsProps {
  * a loop) are resolved at run time.
  */
 function ConditionFields({ path, condition, error, onChange }: ConditionFieldsProps) {
+  const { valueNames } = useStepEditor();
+  // Inside a loop its count is one more; a while-condition is always inside one.
+  const names =
+    path.includes("body") || path.endsWith("-loop") ? [...valueNames, "iteration"] : valueNames;
   return (
-    <div className="automation-step__condition">
-      <Field label="If" htmlFor={`automation-step-cond-left-${path}`} error={error}>
-        <Input
-          error={Boolean(error)}
-          id={`automation-step-cond-left-${path}`}
-          value={condition.left}
-          placeholder="e.g. ${env}"
-          onChange={(e) => onChange({ ...condition, left: e.target.value })}
-          data-testid={`automation-editor-cond-left-${path}`}
-        />
-      </Field>
-      <Field label="Operator" htmlFor={`automation-step-cond-op-${path}`}>
-        <Select
-          id={`automation-step-cond-op-${path}`}
-          value={condition.op}
-          onChange={(value) => onChange({ ...condition, op: value as WorkflowCondition["op"] })}
-          options={WORKFLOW_CONDITION_OPS.map((op) => ({
-            value: op,
-            label: conditionOpLabel(op),
-          }))}
-          data-testid={`automation-editor-cond-op-${path}`}
-        />
-      </Field>
-      <Field label="Value" htmlFor={`automation-step-cond-right-${path}`}>
-        <Input
-          id={`automation-step-cond-right-${path}`}
-          value={condition.right}
-          placeholder="e.g. prod"
-          onChange={(e) => onChange({ ...condition, right: e.target.value })}
-          data-testid={`automation-editor-cond-right-${path}`}
-        />
-      </Field>
-    </div>
+    <>
+      <div className="automation-step__condition">
+        <Field label="If" htmlFor={`automation-step-cond-left-${path}`} error={error}>
+          <Input
+            error={Boolean(error)}
+            id={`automation-step-cond-left-${path}`}
+            value={condition.left}
+            placeholder="e.g. ${env}"
+            onChange={(e) => onChange({ ...condition, left: e.target.value })}
+            data-testid={`automation-editor-cond-left-${path}`}
+          />
+        </Field>
+        <Field label="Operator" htmlFor={`automation-step-cond-op-${path}`}>
+          <Select
+            id={`automation-step-cond-op-${path}`}
+            value={condition.op}
+            onChange={(value) => onChange({ ...condition, op: value as WorkflowCondition["op"] })}
+            options={WORKFLOW_CONDITION_OPS.map((op) => ({
+              value: op,
+              label: conditionOpLabel(op),
+            }))}
+            data-testid={`automation-editor-cond-op-${path}`}
+          />
+        </Field>
+        <Field label="Value" htmlFor={`automation-step-cond-right-${path}`}>
+          <Input
+            id={`automation-step-cond-right-${path}`}
+            value={condition.right}
+            placeholder="e.g. prod"
+            onChange={(e) => onChange({ ...condition, right: e.target.value })}
+            data-testid={`automation-editor-cond-right-${path}`}
+          />
+        </Field>
+      </div>
+      {names.length > 0 ? (
+        <p className="automation-step__note" data-testid={`automation-editor-cond-values-${path}`}>
+          Values you can use:{" "}
+          {names.map((name) => (
+            <Button
+              key={name}
+              variant="secondary"
+              size="xs"
+              aria-label={`Insert the value ${name}`}
+              onClick={() =>
+                onChange({ ...condition, left: `${condition.left}${reference(name)}` })
+              }
+            >
+              {reference(name)}
+            </Button>
+          ))}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -101,7 +128,7 @@ export function ConditionalFields({ draft, step, path, error, onChange }: Condit
         draft={draft}
         path={path}
         list="else"
-        label="Else (optional)"
+        label="Otherwise (optional)"
         onChange={onChange}
       />
     </div>

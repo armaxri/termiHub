@@ -921,15 +921,16 @@ Editor "● Record steps" ─▶ the editor collapses to a bar above the target 
             stops, the terminal keeps the focus, and a bar above the terminals says which automation
             waits where and what to do, with <strong>Continue</strong> and <strong>Stop</strong>.
             Nothing else goes on: whether a prompt was answered cannot be told from outside (a wrong
-            password asks again), so only Continue counts, and while the terminal still shows a
-            password prompt the first Continue only says so. After five minutes, or when the
-            terminal is closed or disconnects, the run fails and the History says why; neither
-            "continue if it fails" nor a retry, of the step or of anything around it, can tolerate
-            that. What is typed meanwhile is kept apart if it is recorded, like a password. Several
-            terminals wait on their own. A run nobody watches (a schedule, On disconnect, On output
-            match) does not start at all. An older build does not know the kind and refuses the
-            automation. Recordings made before this kept only a pause in the place; they cannot be
-            told from one whose password is stored, and type on.
+            password asks again), so only Continue counts, only while that terminal shows (else the
+            bar offers to show it), and while the terminal still shows a password prompt the first
+            Continue only says so. After five minutes, or when the terminal is closed or
+            disconnects, the run fails and the History says why; neither "continue if it fails" nor
+            a retry, of the step or of anything around it, can tolerate that. What is typed
+            meanwhile is kept apart if it is recorded, like a password. Several terminals wait on
+            their own. A run nobody watches (a schedule, On disconnect, On output match) does not
+            start at all. An older build does not know the kind and refuses the automation.
+            Recordings made before this kept only a pause in the place; they cannot be told from one
+            whose password is stored, and type on.
           </li>
           <li>
             <strong>Lifecycle:</strong> a dropped connection pauses the recording and it goes on

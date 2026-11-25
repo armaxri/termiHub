@@ -146,7 +146,7 @@ export function StepFields({ draft, path, stepNumber, onChange }: StepFieldsProp
     case "wait-for-user":
       return (
         <>
-          <Field label="Ask you to (optional)" htmlFor={`automation-step-message-${path}`}>
+          <Field label="What you should do (optional)" htmlFor={`automation-step-message-${path}`}>
             <Input
               id={`automation-step-message-${path}`}
               value={step.message ?? ""}

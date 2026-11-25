@@ -100,7 +100,7 @@ describe("labels and icons", () => {
 
   it("names the recorded speed only for a recording", () => {
     expect(typingSpeedLabel("recorded", true)).toBe("As recorded");
-    expect(typingSpeedLabel("recorded", false)).toBe("Set for each row");
+    expect(typingSpeedLabel("recorded", false)).toBe("Own pause before each row");
   });
 });
 
@@ -170,6 +170,15 @@ describe("stepSummary (#5637)", () => {
         then: [{ kind: "wait", delayMs: 1 }],
       })
     ).toBe("If ${x} equals 1 · 1 step");
+    // The other branch counts too (B-020).
+    expect(
+      stepSummary({
+        kind: "conditional",
+        condition: { left: "${x}", op: "eq", right: "1" },
+        then: [],
+        else: [{ kind: "wait", delayMs: 1 }],
+      })
+    ).toBe("If ${x} equals 1 · 0 steps, otherwise 1");
     expect(stepSummary({ kind: "loop", loop: { kind: "count", count: 3 }, body: [] })).toBe(
       "3× · 0 steps"
     );

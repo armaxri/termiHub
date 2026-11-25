@@ -1,5 +1,6 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAppStore } from "@/store/appStore";
+import { useAutomationEditor } from "@/components/AutomationEditor/automationEditorStore";
 import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
 import { toast } from "@/components/ui";
 import type { ScheduleInput, ScheduleRule } from "@/types/schedule";
@@ -7,6 +8,7 @@ import { t, tf } from "@/i18n/catalog";
 import { previewScheduleNextRun } from "@/services/scheduleApi";
 import { errorMessage } from "@/utils/errorMessage";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
+import { ScheduleSwitchOn } from "./ScheduleSwitchOn";
 import { useScheduleLabels } from "./useScheduleLabels";
 
 /**
@@ -17,6 +19,10 @@ export function ScheduleEditorHost() {
   const editor = useAppStore((s) => s.scheduleEditor);
   const schedules = useAppStore((s) => s.schedules);
   const saveSchedule = useAppStore((s) => s.saveSchedule);
+  const setScheduleEnabled = useAppStore((s) => s.setScheduleEnabled);
+  const openAutomationEditor = useAutomationEditor((s) => s.open);
+  // Saved to be switched on: the hosts are still to be confirmed (B-030).
+  const [switchOnId, setSwitchOnId] = useState<string | null>(null);
   const closeScheduleEditor = useAppStore((s) => s.closeScheduleEditor);
   const { automations, connections, groups } = useScheduleLabels();
 
@@ -50,7 +56,7 @@ export function ScheduleEditorHost() {
   const scheduleId = existing?.id ?? editor?.draftId ?? "";
 
   const handleSave = useCallback(
-    async (next: ScheduleInput) => {
+    async (next: ScheduleInput, { switchOn }: { switchOn: boolean }) => {
       try {
         const saved = await saveSchedule(next);
         closeScheduleEditor();
@@ -59,13 +65,22 @@ export function ScheduleEditorHost() {
         sections.markScheduleSaved(saved.id);
         // The saved row shows in the Schedules list (#5859). One that is off
         // will not run, which the user must know after saving it.
-        if (!saved.enabled) {
+        if (!saved.enabled && switchOn) {
+          // The first time asks which hosts; after that the switch just switches.
+          if (!saved.confirmedAt) setSwitchOnId(saved.id);
+          else await setScheduleEnabled(saved.id, true, false);
+        } else if (!saved.enabled) {
           // After the editor closed: its own status line would take the message
           // with it.
           window.setTimeout(() => {
             // toast-policy: explains-outcome — the schedule was saved but will not run yet
             toast.info(tf("schedule.saved.off", { name: saved.name }), {
               description: t("schedule.saved.offHint"),
+              action: {
+                label: t("schedule.switchOn"),
+                testId: "schedule-saved-switch-on",
+                onClick: () => setSwitchOnId(saved.id),
+              },
             });
           }, 0);
         }
@@ -74,25 +89,33 @@ export function ScheduleEditorHost() {
         throw err;
       }
     },
-    [saveSchedule, closeScheduleEditor]
+    [saveSchedule, setScheduleEnabled, closeScheduleEditor]
   );
 
   return (
-    <ScheduleEditorDialog
-      open={editor !== null}
-      scheduleId={scheduleId}
-      schedule={input}
-      initialAction={editor?.action}
-      automations={automations}
-      connections={connections}
-      groups={groups}
-      enabled={existing?.enabled === true}
-      paused={paused}
-      previewNextRun={preview}
-      onOpenChange={(open) => {
-        if (!open) closeScheduleEditor();
-      }}
-      onSave={handleSave}
-    />
+    <>
+      <ScheduleEditorDialog
+        open={editor !== null}
+        scheduleId={scheduleId}
+        schedule={input}
+        initialAction={editor?.action}
+        automations={automations}
+        connections={connections}
+        groups={groups}
+        enabled={existing?.enabled === true}
+        paused={paused}
+        previewNextRun={preview}
+        onOpenChange={(open) => {
+          if (!open) closeScheduleEditor();
+        }}
+        onSave={handleSave}
+        onEditAutomation={(automation) => openAutomationEditor(automation, false)}
+        startAtConnections={editor?.startAtConnections}
+      />
+      <ScheduleSwitchOn
+        schedule={schedules.find((s) => s.id === switchOnId) ?? null}
+        onDone={() => setSwitchOnId(null)}
+      />
+    </>
   );
 }

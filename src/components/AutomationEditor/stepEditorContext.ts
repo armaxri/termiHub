@@ -25,6 +25,8 @@ export interface StepListProps {
 export interface StepEditorContextValue {
   /** The automations a "Run automation" step can run (never the edited one). */
   automations: readonly Automation[];
+  /** The names of the values a run asks for, which a step can refer to. */
+  valueNames: readonly string[];
   /** The validation errors the user should see now, by draft path. */
   errors: ZodFieldErrors;
   /** Uids of the steps whose detail editor is open. */

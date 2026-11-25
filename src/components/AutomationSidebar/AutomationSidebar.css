@@ -21,6 +21,17 @@
   padding: var(--spacing-xs) 0;
 }
 
+/* An open section takes the room; the list keeps a few rows (B-034). */
+.automation-sidebar:has(> [data-open="true"]) > .automation-sidebar__list {
+  flex: 0 0 auto;
+  height: 25%;
+}
+
+.automation-sidebar > [data-open="true"] {
+  flex: 1 1 0;
+  max-height: none;
+}
+
 /* Open sections shrink before the list loses its few rows, never past their header. */
 .automation-sidebar > .schedules,
 .automation-sidebar > .automation-history {
@@ -44,10 +55,18 @@
 }
 
 .automation-item .sidebar-list-item__more {
+  /* Always first, not only once it shows: a first layout that kept it last put Stop
+     and Run one button further left, and a press there was never a click. */
+  order: -1;
   right: 100%;
   max-width: none;
   flex-wrap: nowrap;
   height: 100%;
+}
+
+/* Shown, it stands beside the name, which makes room, rather than on it. */
+.automation-item:is(:hover, :focus-within) .sidebar-list-item__more {
+  position: static;
 }
 
 /* Edit shows on the selected row (A-015), and on any other while it is pointed at. */
@@ -106,6 +125,15 @@
   align-items: center;
 }
 
+/* The row the keys act on (B-018), as in the other lists. */
+.sidebar-list-item.automation-item--selected {
+  /* #5398: secondary/muted text here sits on the accent-tinted --bg-selected. */
+  --text-secondary: var(--text-secondary-on-selection);
+  --text-muted: var(--text-muted-on-selection);
+  --sidebar-list-item-surface: color-mix(in srgb, var(--accent-color) 18%, var(--sidebar-bg));
+  background: var(--bg-selected);
+}
+
 /*
  * The row just saved from an editor (#5687): an accent tint and leading bar so
  * the user sees which automation changed. It holds, then fades out over
@@ -161,6 +189,16 @@
   margin-top: var(--spacing-xxs);
 }
 
+/* A terminal and its Stop on one line, close to the next. */
+.automation-item__line--target {
+  align-items: center;
+  padding: 0;
+}
+
+.automation-item__line--target > svg {
+  margin-top: 0;
+}
+
 .automation-item__line--on > svg {
   color: var(--text-accent);
 }
@@ -169,11 +207,33 @@
   color: var(--color-error);
 }
 
+.automation-item__line--warning > svg {
+  color: var(--color-warning);
+}
+
 .automation-item__line-text {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.automation-item__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  cursor: pointer;
+}
+
+.automation-item__link:hover {
+  text-decoration: underline;
+}
+
+.automation-item__link:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
 .automation-item__where {

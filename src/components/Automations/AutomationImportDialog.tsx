@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Ban, Check, Scissors } from "lucide-react";
+import { Ban, Check, TriangleAlert } from "lucide-react";
 import { Button, Modal } from "@/components/ui";
 import type { AutomationImport, ImportedEntry } from "@/services/automationFileIo";
+import { joinWords } from "@/utils/joinWords";
 import { EXPERIMENTAL_SETTING_PATH } from "@/utils/experimentalSetting";
 import "./AutomationImportDialog.css";
 
@@ -19,8 +20,9 @@ function entryNotes(entry: ImportedEntry): string[] {
   const notes: string[] = [];
   if (entry.leftOut.length > 0) {
     notes.push(
-      `Left out, because this version does not know it: ${entry.leftOut.join(", ")}. ` +
-        "It may do less, or something else, than the original: read its steps before you run it."
+      `Left out, because this version does not know ${entry.leftOut.length === 1 ? "it" : "them"}: ` +
+        `${joinWords(entry.leftOut)}. It may do less, or something else, than the original: ` +
+        "check it before you run it. Its row says so until you have saved it."
     );
   }
   if (entry.triggersOff.length > 0) {
@@ -110,7 +112,7 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
                 data-state={partly ? "partly" : "imported"}
               >
                 {partly ? (
-                  <Scissors size={14} aria-hidden="true" />
+                  <TriangleAlert size={14} aria-hidden="true" />
                 ) : (
                   <Check size={14} aria-hidden="true" />
                 )}
@@ -144,8 +146,9 @@ export function AutomationImportDialog({ result, onClose, onShow }: AutomationIm
                 </p>
                 <ul className="automation-import__notes">
                   <li>
-                    It needs a newer termiHub ({kind}). Update termiHub, then import the file again;
-                    it was not changed.
+                    It needs a newer termiHub ({kind}). Update termiHub, then import the file again.
+                    {count > 0 &&
+                      " What came in now comes a second time then, under another name: delete one."}
                   </li>
                 </ul>
               </div>

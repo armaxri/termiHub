@@ -35,8 +35,8 @@ const tab: TerminalTab = {
 
 const running: RunningAutomationInfo = {
   name: "Deploy",
-  completed: 1,
-  total: 3,
+  progress: "2/5",
+  progressText: "step 2 of 5",
   waiting: false,
   stop: { kind: "macro" },
 };

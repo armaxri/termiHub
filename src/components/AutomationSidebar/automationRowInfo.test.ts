@@ -96,8 +96,10 @@ describe("triggers", () => {
     it("says what does not start it while they are off, and that it still runs", () => {
       const off = triggerState({ ...a, triggersEnabled: false }, nameOf)!;
       expect(off.on).toBe(false);
-      expect(off.text).toMatch(/^Triggers off: not on hotkey Ctrl\+Alt\+D, or matching output/);
-      expect(off.text).toMatch(/You can still run it\.$/);
+      expect(off.text).toMatch(
+        /^Triggers off: hotkey Ctrl\+Alt\+D, matching output in prod, .+ and disconnecting/
+      );
+      expect(off.text).toMatch(/ do not start it\. You can still run it\.$/);
     });
 
     it.each([
@@ -119,8 +121,12 @@ describe("triggers", () => {
         nextRunAt: at(2, 2),
         ...over,
       }) as ScheduleView;
-    const next = (schedules: ScheduleView[], paused = false) =>
-      nextScheduledRun("a1", schedules, paused, now);
+    const next = (
+      schedules: ScheduleView[],
+      paused = false,
+      blocked: (s: ScheduleView) => string | null = () => null,
+      triggersOff = false
+    ) => nextScheduledRun("a1", schedules, paused, blocked, triggersOff, now);
     expect(next([])).toBeNull();
     expect(next([schedule({ enabled: false })])).toBeNull();
     expect(next([schedule({ action: { kind: "automation", automationId: "a2" } })])).toBeNull();
@@ -130,6 +136,17 @@ describe("triggers", () => {
     );
     expect(next([schedule({})], true)).toBe("Schedules paused");
     expect(next([schedule({ nextRunAt: undefined })])).toBe("Schedule on");
+    // The triggers' switch is not the schedule's (B-029).
+    expect(next([schedule({})], false, () => null, true)).toBe(
+      "Schedule still on: next run tomorrow 02:00"
+    );
+    // One that cannot run promises nothing (B-016), and does not count.
+    const gone = schedule({ nextRunAt: at(1, 19), id: "gone" });
+    const blocked = (s: ScheduleView) => (s.id === "gone" ? "its connections were deleted" : null);
+    expect(next([gone], false, blocked)).toBe(
+      "Schedule will not run: its connections were deleted"
+    );
+    expect(next([gone, schedule({})], false, blocked)).toBe("Next run tomorrow 02:00");
   });
 });
 

@@ -12,7 +12,7 @@ import "./LocalProcessAuthDialog.css";
  * executes a program on the user's own machine, unlike every other workflow step.
  *
  * Three outcomes, mirroring the store's {@link LocalProcessAuthDecision}:
- * - **Cancel** — refuse; the step does not run (the safe default, focused).
+ * - **Don't allow** — refuse; the step fails (the safe default, focused).
  * - **Allow once** — run this time only; nothing is remembered.
  * - **Always allow** — run and remember the program on the allowlist.
  *
@@ -40,7 +40,7 @@ export function LocalProcessAuthDialog() {
             onClick={() => resolve("cancel")}
             data-testid="local-process-auth-cancel"
           >
-            Cancel
+            Don&apos;t allow
           </Button>
           <Button
             variant="secondary"
@@ -50,7 +50,7 @@ export function LocalProcessAuthDialog() {
             Allow once
           </Button>
           <Button
-            variant="danger"
+            variant="ghost"
             onClick={() => resolve("always")}
             data-testid="local-process-auth-always"
           >
@@ -100,7 +100,8 @@ export function LocalProcessAuthDialog() {
           </div>
           <p className="local-process-auth__note">
             &ldquo;Always allow&rdquo; remembers this file, with any arguments and for every
-            automation; manage or revoke it later under Settings &rarr; Security.
+            automation; manage or revoke it later under Settings &rarr; Security. If you do not
+            allow it, the step fails and the run stops, unless the step continues on error.
           </p>
         </div>
       )}

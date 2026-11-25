@@ -210,7 +210,7 @@ describe("CommandPalette", () => {
       typeInto("deploy");
       expect(activeLabel()).toBe("Run Deploy");
       expect(row("wf-1")?.querySelector(".command-palette__target")?.textContent).toBe(
-        "types 1 step in prod-web"
+        "types into prod-web, 1 step"
       );
       expect(row("wf-1")?.textContent).not.toMatch(/macro|workflow/i);
       typeInto("login");
@@ -270,10 +270,10 @@ describe("CommandPalette", () => {
         ]),
       });
       typeInto("login");
-      expect(target("m-1")).toBe("types its keys in prod-web");
+      expect(target("m-1")).toBe("types into prod-web");
       typeInto("deploy");
-      expect(target("wf-1")).toBe("types 1 step in prod-web · triggers off");
-      expect(target("new-1")).toBe("Cannot run");
+      expect(target("wf-1")).toBe("types into prod-web, 1 step · triggers off");
+      expect(target("new-1")).toBe("Cannot run: needs a newer termiHub");
       typeInto("deploy later");
       keydown("Enter");
       expect(runAutomation).not.toHaveBeenCalled();

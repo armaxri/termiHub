@@ -134,13 +134,33 @@ fn every_automatic_trigger_kind_round_trips() {
 }
 
 #[test]
+fn what_an_import_left_out_is_kept_until_it_is_saved_without_it() {
+    let raw = json!({ "id": "a", "name": "A", "importedInPart": ["a setting"] });
+    let a: Automation = serde_json::from_value(raw).unwrap();
+    assert_eq!(a.imported_in_part, ["a setting"]);
+    assert!(
+        a.extra.is_empty(),
+        "it is a field, not an unknown key: {:?}",
+        a.extra
+    );
+    let json = serde_json::to_value(&a).unwrap();
+    assert_eq!(json["importedInPart"], json!(["a setting"]));
+}
+
+#[test]
 fn a_minimal_automation_has_no_triggers_and_is_armed() {
     let a: Automation = serde_json::from_value(json!({ "id": "a", "name": "A" })).unwrap();
     assert!(a.triggers.is_empty(), "no triggers means run it yourself");
     assert!(a.triggers_enabled);
     assert!(a.legacy.is_none());
     let json = serde_json::to_value(&a).unwrap();
-    for absent in ["triggersEnabled", "parameters", "legacy", "description"] {
+    for absent in [
+        "triggersEnabled",
+        "parameters",
+        "legacy",
+        "description",
+        "importedInPart",
+    ] {
         assert!(
             json.get(absent).is_none(),
             "{absent} must be omitted: {json}"

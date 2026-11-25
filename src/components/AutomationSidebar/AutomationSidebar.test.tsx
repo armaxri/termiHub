@@ -462,7 +462,9 @@ describe("running", () => {
       output: null,
     });
     await render();
-    expect(query("automation-running-workflow-1")!.textContent).toBe("Running 2");
+    expect(query("automation-running-workflow-1")!.getAttribute("aria-label")).toBe("Running 2");
+    // It ends both, so it says so; each line has its own (B-003).
+    expect(query("automation-stop-workflow-1")!.textContent).toBe("Stop all 2");
     expect(query("automation-target-r1")!.textContent).toContain("in web-1, step 2 of 3");
     expect(query("automation-target-r2")!.textContent).toContain("in db-2, step 3 of 3");
     click("automation-target-stop-r2");
@@ -519,7 +521,7 @@ describe("markers", () => {
   it("says what no longer happens while they are off, and still offers Run (A-013)", async () => {
     await render([{ ...triggered, triggersEnabled: false }]);
     expect(query("automation-armed-workflow-2")!.textContent).toBe(
-      "Triggers off: not on matching output in prod. You can still run it."
+      "Triggers off: matching output in prod does not start it. You can still run it."
     );
     expect(query("automation-start-workflow-2")).not.toBeNull();
     click("automation-arm-toggle-workflow-2");

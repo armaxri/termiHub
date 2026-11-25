@@ -7,6 +7,7 @@ import { Button, EmptyState, SearchInput, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { RunTargetsDialog } from "@/components/Automations/RunTargetsDialog";
+import { useScheduleLabels } from "@/components/Schedules/useScheduleLabels";
 import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "@/components/WorkflowSidebar/WorkflowRunOutput";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
@@ -22,7 +23,7 @@ import { errorMessage } from "@/utils/errorMessage";
 import { AUTOMATION_JUST_SAVED_MS, AutomationRow } from "./AutomationRow";
 import type { AutomationRowActions } from "./AutomationRowMenu";
 import { HistorySection } from "./HistorySection";
-import { nextScheduledRun, summarizeRuns } from "./automationRowInfo";
+import { nextScheduledRun, summarizeRuns, triggerState } from "./automationRowInfo";
 import { useAutomationSections } from "./automationSections";
 import { useAutomationEditors } from "./useAutomationEditors";
 import { useAutomationFiles } from "@/components/Automations/useAutomationFiles";
@@ -77,6 +78,7 @@ export function AutomationSidebar() {
   const runSummaries = useMemo(() => summarizeRuns(automationRuns), [automationRuns]);
   const running = useRunningAutomations();
   const schedules = useAppStore((s) => s.schedules);
+  const { blockedShort } = useScheduleLabels();
   const schedulesPaused = useAppStore((s) => s.schedulesPaused);
   const experimental = useExperimentalFeatures();
   const resolve = useCallback((id: string) => automations.find((a) => a.id === id), [automations]);
@@ -288,9 +290,9 @@ export function AutomationSidebar() {
               : recording
                 ? "Stop recording and name the automation"
                 : runTarget === null
-                  ? "Open a terminal to record in"
+                  ? "Open a terminal and record"
                   : `Record what you type in ${runTarget}`,
-            disabled: recordingIntoEditor || (!recording && runTarget === null),
+            disabled: recordingIntoEditor,
             icon:
               recording && !recordingIntoEditor ? (
                 <Square
@@ -301,7 +303,9 @@ export function AutomationSidebar() {
               ) : (
                 <CircleDot size={12} />
               ),
-            onClick: toggleRecording,
+            // Without a terminal it opens one (B-028).
+            onClick:
+              !recording && runTarget === null ? () => void recordInNewTerminal() : toggleRecording,
             testId: "automation-record-btn",
           },
         ]}
@@ -389,7 +393,13 @@ export function AutomationSidebar() {
               compact={compact}
               connectionName={connectionName}
               blocked={runBlockedReason(automation, resolve, experimental)}
-              nextRun={nextScheduledRun(automation.id, schedules, schedulesPaused)}
+              nextRun={nextScheduledRun(
+                automation.id,
+                schedules,
+                schedulesPaused,
+                blockedShort,
+                triggerState(automation, connectionName)?.on === false
+              )}
               onSetTriggers={(id, on) => void handleSetTriggers(id, on)}
               actions={actions}
               justSaved={justSaved?.id === automation.id}

@@ -176,7 +176,8 @@ export function StepRow({
               : undefined
           }
           onSpeed={
-            step.kind === "type-keys"
+            step.kind === "type-keys" &&
+            ((draft.keys?.length ?? 0) > 1 || (step.timing ?? "recorded") !== "recorded")
               ? () => openAndFocus(`#automation-step-speed-${path}`)
               : undefined
           }

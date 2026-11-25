@@ -8,12 +8,14 @@ import type { StatusTone } from "@/components/ui";
 import { stepKindLabel, stepSummary } from "@/components/AutomationEditor/stepText";
 import { t, tf, type MessageId } from "@/i18n/catalog";
 import { isMacroShaped } from "@/store/slices/automationViews";
+import type { AttemptSummary } from "@/components/Schedules/scheduleStatus";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { AutomationRunStatus } from "@/types/generated/AutomationRunStatus";
 import { formatElapsed } from "@/utils/formatters";
 import { compareNames } from "@/utils/locale";
+import { typedProgress } from "@/utils/runProgress";
 
 /** Who or what started a run; a schedule by its name (A-039). */
 export function automationRunStarter(origin: AutomationRunOrigin, schedule?: string): string {
@@ -118,7 +120,7 @@ export function automationRunProgress(
   automation?: RunAutomation
 ): string {
   if (countsTyped(run, automation)) {
-    return `${Math.floor((run.stepsCompleted / Math.max(1, run.total)) * 100)} % typed`;
+    return typedProgress(run.stepsCompleted, run.total);
   }
   return `${run.stepsCompleted} of ${run.total} step${run.total === 1 ? "" : "s"}`;
 }
@@ -152,7 +154,10 @@ const NEXT_STEPS: readonly [RegExp, MessageId][] = [
     "automationHistory.next.reconnect",
   ],
   [/wait-for-output timed out/, "automationHistory.next.pattern"],
-  [/is not authorized|is not an allowed program/, "automationHistory.next.allow"],
+  [
+    /is not authorized|was not allowed to run|is not an allowed program/,
+    "automationHistory.next.allow",
+  ],
   [/exited with code/, "automationHistory.next.program"],
 ];
 
@@ -161,6 +166,15 @@ export function nextStepAfter(run: Pick<AutomationRun, "status" | "error">): str
   if (run.status !== "failed" || !run.error) return null;
   const found = NEXT_STEPS.find(([words]) => words.test(run.error ?? ""));
   return found ? t(found[1]) : null;
+}
+
+/** What to do about a scheduled time at which nothing ran (B-033), or `null`. */
+export function nextStepAfterGap(gap: Pick<AttemptSummary, "kind" | "reason">): string | null {
+  if (gap.kind === "missed") return t("schedule.next.missed");
+  const closed = t("schedule.skip.noneOpen");
+  return gap.kind === "skipped" && gap.reason?.startsWith(closed)
+    ? t("schedule.next.closed")
+    : null;
 }
 
 /** The runs of one automation (`null`: every run), in the order given. */

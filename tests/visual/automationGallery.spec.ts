@@ -15,6 +15,7 @@ import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { VISUAL_SESSION_ID } from "./harness/interactionIds";
 import type { VisualScenario } from "./harness/mockBackend";
 import type { VisualHandle } from "./harness/visualHandle";
 import { auditLayout } from "./layoutAudit";
@@ -64,6 +65,7 @@ const STATES = {
   "editor--add-trigger": "Choose what starts it.",
   "editor--on-connect": "Make it run when a connection opens, below another trigger.",
   "editor--hotkey": "Press the keys of a hotkey that an app shortcut already uses.",
+  "editor--hotkey-other": "Press the keys of a hotkey that another automation uses.",
   "editor--wait-step": "Change how long a step waits.",
   "editor--condition-step": "Run steps only for production.",
   "editor--loop-step": "Repeat steps.",
@@ -82,9 +84,14 @@ const STATES = {
   "run--confirmation": "About to type into several terminals: check which.",
   "run--running": "The automation types into this terminal: see progress, stop it.",
   "run--program": "A step wants to start a program on this computer: allow it or not.",
+  "run--program-refused": "The program was not allowed: what became of the run?",
+  "run--stopped": "A run was stopped: how far did it get?",
+  "run--replace": "Start one while another one runs: what happens to it?",
+  "run--wait-ended": "Nobody continued a run that waited: what now?",
   "run--quit": "Quit while automations run: know what is stopped.",
   "run--password-wait": "The run waits for a password: type it, then go on.",
   "run--password-still-asked": "Continue was pressed too early: the terminal still asks.",
+  "run--password-typed": "The password was typed: let the run go on.",
   "run--password-wait-elsewhere": "A run waits in a terminal that does not show.",
   "run--values": "The automation asks for a value before it runs.",
   "run--failed": "A run failed: see which step and why, and what to do.",
@@ -100,6 +107,7 @@ const STATES = {
   "schedules--new-nightly": "Every night, also on a closed connection: check before saving.",
   "schedules--saved": "The schedule was saved: is it on?",
   "schedules--first-on": "Switch it on for the first time: check what it will do.",
+  "schedules--first-on-connects": "The same for one that also connects.",
   "schedules--editor": "Change an automation that runs every night on chosen connections.",
   "schedules--editor-deleted": "Edit a schedule whose connection was deleted.",
   "schedules--editor-asks": "Schedule an automation that asks for a value: can it run alone?",
@@ -107,7 +115,11 @@ const STATES = {
   "schedules--editor-waits": "Schedule an automation that waits for the user.",
   "palette--automations": "Find an automation by name and know what Enter does.",
   "palette--triggers-off": "Run one whose triggers are off: does it still run?",
-  "palette--no-terminal": "The same without a terminal, with one that cannot run.",
+  "palette--no-terminal": "The same without a terminal.",
+  "palette--cannot-run": "Find one that cannot run: why?",
+  "import--entry": "Get to the import.",
+  "import--shown": "The imported ones in the list: which one needs a look?",
+  "import--export": "Give an automation to somebody else.",
   "import--notes": "After an import: what came in, was switched off, left out, refused.",
 } as const;
 type State = keyof typeof STATES;
@@ -117,7 +129,8 @@ const automation = (over: Record<string, unknown>) => ({
   steps: [{ kind: "send-command", command: "make" }],
   triggers: [],
   createdAt: STAMP,
-  updatedAt: STAMP,
+  // Before any of the runs, so that a run can name its step.
+  updatedAt: "2026-09-01T12:00:00Z",
   ...over,
 });
 
@@ -409,7 +422,7 @@ const running = {
       name: "Health check",
       steps: [
         { kind: "send-command", command: "curl -sf localhost/health" },
-        { kind: "wait", delayMs: 600_000 },
+        { kind: "wait-for-output", pattern: "never printed", timeoutMs: 600_000 },
         { kind: "send-command", command: "systemctl status nginx" },
       ],
     }),
@@ -443,7 +456,6 @@ const running = {
         { kind: "run-automation", automationId: "deleted" },
       ],
     }),
-    LIBRARY[0],
   ],
   runs: [],
   schedules: { paused: false, schedules: [] },
@@ -515,6 +527,16 @@ async function bootWithTerminals(
     }
   }
   await page.locator(".xterm").last().waitFor();
+}
+
+/** Print `text` in the `n`th terminal, as its session would. */
+async function print(page: Page, n: number, text: string): Promise<void> {
+  await page.evaluate(
+    async ([id, data]) => {
+      await window.__visual.emit("terminal-output", { session_id: id, data: btoa(data) });
+    },
+    [n === 1 ? VISUAL_SESSION_ID : `${VISUAL_SESSION_ID}-${n}`, text]
+  );
 }
 
 /** Start recording from the toolbar and type `keys`, each after `prompt`. */
@@ -619,13 +641,16 @@ for (const viewport of WINDOWS) {
         }
         await page.locator(id("automation-armed-off-hotkey")).scrollIntoViewIfNeeded();
         await shot(page, "sidebar--switched-off", SIDEBAR);
-        await page.locator(id("automation-name-full")).click();
-        await expect(page.locator(id("automation-edit-full"))).toBeVisible();
-        await page.locator(id("automation-item-keys")).scrollIntoViewIfNeeded();
-        await shot(page, "sidebar--selected", SIDEBAR);
         await page.locator(id("automation-search")).fill("kubernetes");
         await page.locator(id("automation-no-results")).waitFor();
         await shot(page, "sidebar--search-empty", SIDEBAR);
+      });
+
+      test("sidebar, selected", async ({ page }) => {
+        await boot(page, theme);
+        await page.locator(id("automation-name-full")).click();
+        await expect(page.locator(id("automation-edit-full"))).toBeVisible();
+        await shot(page, "sidebar--selected", SIDEBAR);
       });
 
       test("sidebar, empty", async ({ page }) => {
@@ -681,7 +706,7 @@ for (const viewport of WINDOWS) {
           .click();
         await page.locator(id("run-targets-run")).click();
         await page.locator(id("run-targets-run")).click();
-        await expect(page.locator(id("automation-running-typing"))).toContainText("2");
+        await expect(page.locator(id("automation-stop-typing"))).toHaveText("Stop all 2");
         await shot(page, "sidebar--two-runs", SIDEBAR);
       });
 
@@ -697,6 +722,37 @@ for (const viewport of WINDOWS) {
         await shot(page, "run--quit", QUIT);
       });
 
+      test("replacing and stopping a run", async ({ page }) => {
+        await bootWithTerminals(page, theme, 1, { automationData: running });
+        await page.locator(id("automation-start-health")).click();
+        await expect(page.locator(id("automation-running-health"))).toBeVisible();
+        await page.locator(id("automation-start-missing")).click();
+        await page.locator(id("run-replace-dialog")).waitFor();
+        await shot(page, "run--replace", id("run-replace-dialog"));
+        await page.locator(id("run-replace-cancel")).click();
+        await page.locator(id("automation-stop-health")).click();
+        await expect(page.locator(id("toast-region"))).toContainText("stopped");
+        await shot(page, "run--stopped", SIDEBAR);
+      });
+
+      test("a wait that ended", async ({ page }) => {
+        const ended = run({
+          id: "w1",
+          automationId: "password",
+          automationName: "Restart the web server",
+          status: "failed",
+          stepsCompleted: 1,
+          total: 3,
+          failedStepIndex: 1,
+          error: "nobody pressed Continue within 5 minutes; nothing more was typed",
+        });
+        await boot(page, theme, { automationData: { ...running, runs: [ended] } });
+        await page.locator(id("automation-failed-password")).click();
+        await page.locator(id("automation-run-toggle-w1")).click();
+        await page.locator(id("automation-run-next-w1")).waitFor();
+        await shot(page, "run--wait-ended", SIDEBAR);
+      });
+
       test("running a program", async ({ page }) => {
         await bootWithTerminals(page, theme, 1, {
           automationData: running,
@@ -705,6 +761,9 @@ for (const viewport of WINDOWS) {
         await page.locator(id("automation-start-program")).click();
         await page.locator("[role=dialog]").waitFor();
         await shot(page, "run--program", "[role=dialog]");
+        await page.locator(id("local-process-auth-cancel")).click();
+        await expect(page.locator(id("toast-region"))).toContainText("failed at step 1");
+        await shot(page, "run--program-refused", SIDEBAR);
       });
 
       test("editor", async ({ page }) => {
@@ -757,6 +816,7 @@ for (const viewport of WINDOWS) {
         await shot(page, "editor--local-process-off", EDITOR);
         await page.locator(id("automation-editor-step-open-settings-4")).click();
         await page.locator(id("automation-editor-aside")).waitFor();
+        await page.locator(id("settings-experimental-features")).waitFor();
         await shot(page, "editor--settings-aside", id("automation-editor-aside"));
         await page.locator(id("automation-editor-aside-return")).click();
         await page.locator(EDITOR).waitFor();
@@ -815,9 +875,11 @@ for (const viewport of WINDOWS) {
         const hotkey = page.locator(id("automation-trigger-binding-0"));
         await hotkey.scrollIntoViewIfNeeded();
         await hotkey.press("Control+Shift+P");
-        await hotkey.press("Control+Alt+R");
         await expect(page.locator(id("automation-editor-trigger-0"))).toContainText("is used by");
         await shot(page, "editor--hotkey", EDITOR);
+        await hotkey.press("Control+Alt+R");
+        await expect(page.locator(id("automation-editor-trigger-0"))).toContainText("“Release”");
+        await shot(page, "editor--hotkey-other", EDITOR);
       });
 
       test("editor, keys", async ({ page }) => {
@@ -833,8 +895,8 @@ for (const viewport of WINDOWS) {
         await record(page, [["sudo -v\r", "$ "]]);
         await shot(page, "recording--chip", id("terminal-view-active-recording"));
         await record(page, [["h", "[sudo] password for arne: "]]);
-        await expect(page.locator(id("terminal-view-active-recording"))).toContainText("password");
-        await shot(page, "recording--password-prompt", id("terminal-view-active-recording"));
+        await page.locator(id("recording-bar-prompt")).waitFor();
+        await shot(page, "recording--password-prompt", id("recording-bar-prompt"));
         await record(page, [["\r", "[sudo] password for arne: "]]);
         await page.locator(id("terminal-view-active-recording")).click();
         await page.locator(id("recording-save-secrets")).waitFor();
@@ -877,22 +939,18 @@ for (const viewport of WINDOWS) {
         const bar = page.locator(id("automation-waits"));
         await bar.waitFor();
         await shot(page, "run--password-wait", id("automation-waits"));
-        await page.evaluate(() => {
-          const store = window.__visual.store as unknown as {
-            getState(): { automationWaits: object[] };
-            setState(partial: unknown): void;
-          };
-          // What Continue does while the prompt is still on the screen.
-          const { automationWaits } = store.getState();
-          store.setState({
-            automationWaits: automationWaits.map((w) => ({ ...w, stillAsking: true })),
-          });
-        });
+        await print(page, 2, "[sudo] password for arne: ");
+        await bar.locator("[data-testid^='automation-wait-continue-']").click();
         await expect(bar).toContainText("still asks for a password");
         await shot(page, "run--password-still-asked", id("automation-waits"));
         await page.locator("[role=tab]").first().click();
         await bar.locator("[data-testid^='automation-wait-show-']").waitFor();
+        await expect(bar.locator("[data-testid^='automation-wait-continue-']")).toHaveCount(0);
         await shot(page, "run--password-wait-elsewhere", id("automation-waits"));
+        await bar.locator("[data-testid^='automation-wait-show-']").click();
+        await print(page, 2, "\r\n$ ");
+        await expect(bar).not.toContainText("still asks");
+        await shot(page, "run--password-typed", id("automation-waits"));
         await bar.locator("[data-testid^='automation-wait-stop-']").click();
         await bar.waitFor({ state: "hidden" });
       });
@@ -975,7 +1033,7 @@ for (const viewport of WINDOWS) {
         await shot(page, "schedules--list", SIDEBAR);
         await page.locator(id("schedule-edit-s1")).click();
         await page.locator(SCHEDULE_EDITOR).waitFor();
-        await page.getByText("Next run: tomorrow 02:00 on Build Box.").waitFor();
+        await page.getByText("On. Next run: tomorrow 02:00 on Build Box.").waitFor();
         await shot(page, "schedules--editor", SCHEDULE_EDITOR);
       });
 
@@ -984,6 +1042,21 @@ for (const viewport of WINDOWS) {
         await page.locator(id("schedule-enable-s2")).click();
         await page.locator(id("schedule-confirm-next")).waitFor();
         await shot(page, "schedules--first-on", id("schedule-enable-confirm"));
+        await page.locator(id("schedule-enable-confirm-cancel")).click();
+        await page.evaluate(() => {
+          const store = window.__visual.store as unknown as {
+            getState(): { schedules: { id: string; connectIfNeeded?: boolean }[] };
+            setState(partial: unknown): void;
+          };
+          store.setState({
+            schedules: store
+              .getState()
+              .schedules.map((s) => (s.id === "s2" ? { ...s, connectIfNeeded: true } : s)),
+          });
+        });
+        await page.locator(id("schedule-enable-s2")).click();
+        await page.locator(id("schedule-confirm-connects")).waitFor();
+        await shot(page, "schedules--first-on-connects", id("schedule-enable-confirm"));
       });
 
       test("schedules, paused", async ({ page }) => {
@@ -994,20 +1067,20 @@ for (const viewport of WINDOWS) {
 
       test("schedules, missed and failed", async ({ page }) => {
         await bootSchedules(page, TROUBLED, { runs: TROUBLED_RUNS });
-        await page.locator(id("schedule-last-s3")).scrollIntoViewIfNeeded();
+        await page.locator(id("schedule-last-s1")).waitFor();
         await shot(page, "schedules--missed", SIDEBAR);
-        await page.locator(id("schedule-more-s1")).click();
-        await page.locator(id("schedule-menu-history-s1")).click();
-        await page.locator(id("schedules-section-toggle")).click();
+        await page.locator(id("schedule-last-history-s1")).click();
         const gap = page.locator("[data-testid^='automation-gap-toggle-s1']");
         await gap.click();
-        await page.locator("[data-testid^='automation-gap-reason-s1']").scrollIntoViewIfNeeded();
+        await page.locator("[data-testid^='automation-gap-reason-s1']").waitFor();
         await shot(page, "schedules--history", SIDEBAR);
       });
 
       test("schedules, a deleted connection", async ({ page }) => {
         await bootSchedules(page, DELETED);
         await page.locator(id("schedule-blocked-s1")).waitFor();
+        // The row of its automation says the same, in view above it.
+        await page.locator(id("automation-next-run-off-trigger")).scrollIntoViewIfNeeded();
         await shot(page, "schedules--deleted", SIDEBAR);
         await page.locator(id("schedule-edit-s1")).click();
         await page.locator(id("schedule-editor-connection-deleted-0")).waitFor();
@@ -1027,7 +1100,7 @@ for (const viewport of WINDOWS) {
         await page.locator(id("schedule-editor-rule-kind")).click();
         await page.getByRole("option", { name: "Daily" }).click();
         await page.locator(id("schedule-editor-time")).fill("02:00");
-        await page.getByText("Next run: tomorrow 02:00 on Build Box.").waitFor();
+        await page.getByText("When switched on: next run tomorrow 02:00 on Build Box.").waitFor();
         await shot(page, "schedules--new-nightly", SCHEDULE_EDITOR);
         await page.locator(id("schedule-editor-save")).click();
         await page.locator(SCHEDULE_EDITOR).waitFor({ state: "hidden" });
@@ -1046,7 +1119,9 @@ for (const viewport of WINDOWS) {
         await shot(page, "schedules--editor-password", SCHEDULE_EDITOR);
         await page.locator(id("schedule-editor-cancel")).click();
         await newSchedule(page, "password");
-        await expect(page.locator(id("schedule-editor-automation-note"))).toContainText("stops");
+        await expect(page.locator(id("schedule-editor-automation-note"))).toContainText(
+          "waits for you"
+        );
         await shot(page, "schedules--editor-waits", SCHEDULE_EDITOR);
       });
 
@@ -1070,22 +1145,56 @@ for (const viewport of WINDOWS) {
         await page.evaluate(() =>
           (window.__visual.store.getState() as unknown as GalleryState).setCommandPaletteOpen(true)
         );
-        await page.locator(id("command-palette-input")).fill("ne");
-        await page.locator(id("command-palette-item-automation:unknown")).waitFor();
+        await page.locator(id("command-palette-input")).fill("re");
+        await page.locator(id("command-palette-item-automation:full")).waitFor();
         await shot(page, "palette--no-terminal", id("command-palette"));
+        await page.locator(id("command-palette-input")).fill("newer");
+        await page.locator(id("command-palette-item-automation:unknown")).waitFor();
+        await shot(page, "palette--cannot-run", id("command-palette"));
       });
 
       test("import", async ({ page }) => {
         await boot(page, theme, { openFile: { path: "/tmp/in.json", text: IMPORT } });
         await page.locator(id("automation-new-btn")).click();
+        await page.locator(id("automation-files-btn")).waitFor();
+        await shot(page, "import--entry", "[role=menu]");
         await page.locator(id("automation-files-btn")).click();
         await page.locator(id("import-migration-automations-import-btn")).click();
         await expect(page.locator(id("automation-import-dialog"))).toContainText("Imported 2 of 3");
         await shot(page, "import--notes", id("automation-import-dialog"));
+        await page.locator(id("automation-import-show")).click();
+        await page.locator(SIDEBAR).waitFor();
+        await page.getByText("Imported in part", { exact: false }).scrollIntoViewIfNeeded();
+        await shot(page, "import--shown", SIDEBAR);
+        await page.locator(id("automation-item-keys")).click({ button: "right" });
+        await page.locator(id("automation-menu-export-keys")).waitFor();
+        await shot(page, "import--export", "[role=menu]");
       });
     });
   }
 }
+
+// A press on Stop was no click while the row's hidden buttons made room for themselves
+// beside it, on the way in: it was pressed in one place and released in another.
+test("Run and Stop never move under the pointer", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await bootWithTerminals(page, "light", 1, { automationData: running });
+  await page.locator(id("automation-start-health")).click();
+  const stop = page.locator(id("automation-stop-health"));
+  await stop.waitFor();
+  const seen = new Set<number>();
+  for (let i = 0; i < 25; i += 1) {
+    await page.locator(id("automation-start-missing")).focus();
+    await page.mouse.move(600, 300);
+    await settle(page);
+    const at = (await stop.boundingBox())!;
+    await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+    seen.add((await stop.boundingBox())!.x);
+    await settle(page);
+    seen.add((await stop.boundingBox())!.x);
+  }
+  expect([...seen]).toHaveLength(1);
+});
 
 // What a 600 px high window leaves at 140 % zoom: less than the menu needs.
 test("the add step menu fits into a short dialog and scrolls", async ({ page }) => {
