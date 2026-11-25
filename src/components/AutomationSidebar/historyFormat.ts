@@ -154,7 +154,10 @@ const NEXT_STEPS: readonly [RegExp, MessageId][] = [
     "automationHistory.next.reconnect",
   ],
   [/wait-for-output timed out/, "automationHistory.next.pattern"],
-  [/is not authorized|is not an allowed program/, "automationHistory.next.allow"],
+  [
+    /is not authorized|was not allowed to run|is not an allowed program/,
+    "automationHistory.next.allow",
+  ],
   [/exited with code/, "automationHistory.next.program"],
 ];
 

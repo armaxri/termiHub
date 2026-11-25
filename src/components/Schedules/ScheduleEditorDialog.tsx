@@ -345,7 +345,7 @@ export function ScheduleEditorDialog({
                 error={pickRefused ? (blockedPick ?? undefined) : errorFor("automationId")}
                 hint={
                   pickRefused || automationNote === null ? undefined : (
-                    <>
+                    <span>
                       {automationNote}
                       {cannotRun !== null && picked && onEditAutomation ? (
                         <>
@@ -360,7 +360,7 @@ export function ScheduleEditorDialog({
                           </button>
                         </>
                       ) : null}
-                    </>
+                    </span>
                   )
                 }
                 hintVariant={automationNote === defaultsNote ? "default" : "warning"}

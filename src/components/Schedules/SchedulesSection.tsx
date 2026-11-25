@@ -105,17 +105,6 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
   const [unmarkedSeq, setUnmarkedSeq] = useState(saved?.seq ?? 0);
   const justSaved = saved && saved.seq > unmarkedSeq ? saved : null;
   const listRef = useRef<HTMLDivElement>(null);
-  // Opened, it shows the schedule that needs attention, not just the first (B-034).
-  const firstConcern = schedules.find((s) => lastRunAttention(s) !== null)?.id;
-  const wasOpen = useRef(open);
-  useEffect(() => {
-    const opened = open && !wasOpen.current;
-    wasOpen.current = open;
-    if (!opened || !firstConcern) return;
-    Array.from(listRef.current?.children ?? [])
-      .find((row) => row.getAttribute("data-testid") === `schedule-item-${firstConcern}`)
-      ?.scrollIntoView?.({ block: "nearest" });
-  }, [open, firstConcern]);
   const rowExists = justSaved !== null && schedules.some((s) => s.id === justSaved.id);
   useEffect(() => {
     if (!justSaved || !rowExists || !open) return;
@@ -127,23 +116,23 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
     return () => window.clearTimeout(timer);
   }, [justSaved, rowExists, open]);
 
-  // A closed section must not hide a schedule that needs attention.
+  // Neither a closed section nor the fold hides a schedule that needs attention.
   const concerns = schedules.map(lastRunAttention);
   const failed = concerns.filter((c) => c === "error").length;
   const notRun = concerns.filter((c) => c === "warning").length;
   const count = collapse && schedules.length > 0 ? ` (${schedules.length})` : "";
   const suffix = paused
     ? ` · ${t("schedule.state.paused")}`
-    : !open && failed > 0
+    : failed > 0
       ? `${count} · ${failed} failed`
-      : !open && notRun > 0
+      : notRun > 0
         ? `${count} · ${notRun} not run`
         : count;
   // A verb, not a switch (A-019): an "off" switch beside "Schedules" read as if
   // the schedules were off.
   const pauseLabel = paused ? "Resume all schedules" : "Pause all schedules";
   // The words of the title come before the button's.
-  const compactPause = compactHeader || (!open && failed + notRun > 0 && !paused);
+  const compactPause = compactHeader || (failed + notRun > 0 && !paused);
   // There is nothing to pause without a schedule (R-135); a pause left on stays
   // reachable.
   const pauseToggle =

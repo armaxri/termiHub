@@ -129,7 +129,8 @@ const automation = (over: Record<string, unknown>) => ({
   steps: [{ kind: "send-command", command: "make" }],
   triggers: [],
   createdAt: STAMP,
-  updatedAt: STAMP,
+  // Before any of the runs, so that a run can name its step.
+  updatedAt: "2026-09-01T12:00:00Z",
   ...over,
 });
 
@@ -421,7 +422,7 @@ const running = {
       name: "Health check",
       steps: [
         { kind: "send-command", command: "curl -sf localhost/health" },
-        { kind: "wait", delayMs: 600_000 },
+        { kind: "wait-for-output", pattern: "never printed", timeoutMs: 600_000 },
         { kind: "send-command", command: "systemctl status nginx" },
       ],
     }),
@@ -1078,6 +1079,8 @@ for (const viewport of WINDOWS) {
       test("schedules, a deleted connection", async ({ page }) => {
         await bootSchedules(page, DELETED);
         await page.locator(id("schedule-blocked-s1")).waitFor();
+        // The row of its automation says the same, in view above it.
+        await page.locator(id("automation-next-run-off-trigger")).scrollIntoViewIfNeeded();
         await shot(page, "schedules--deleted", SIDEBAR);
         await page.locator(id("schedule-edit-s1")).click();
         await page.locator(id("schedule-editor-connection-deleted-0")).waitFor();

@@ -356,12 +356,17 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     // Not yet trusted — ask the user, once, via the confirmation dialog, about the
     // file that would start. The approval is for that file only.
     const { path } = verdict;
+    // The question is what it waits for; a spinner beside it would lie on it (B-004).
+    if (!fanout) toast.dismiss(toastId);
     const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
       set({
         localProcessPrompt: { program, path, args, workflowName: workflow.name, resolve },
       });
     });
     set({ localProcessPrompt: null });
+    if (!fanout && decision !== "cancel") {
+      toast.loading(`Running automation “${workflow.name}”…`, { id: toastId });
+    }
 
     if (decision === "cancel") return { ok: false };
     if (decision === "always") {

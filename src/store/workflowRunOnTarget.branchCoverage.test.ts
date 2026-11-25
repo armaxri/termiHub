@@ -410,7 +410,7 @@ describe("runWorkflowOnTarget — local-process authorization", () => {
       fanout: { authDecisions },
     });
     expect(result).toMatchObject({ status: "failed", failedStepIndex: 1 });
-    expect(result.error).toContain("not authorized");
+    expect(result.error).toContain("not allowed to run");
   });
 
   it("refuses an un-allowlisted program in an unattended run without prompting", async () => {

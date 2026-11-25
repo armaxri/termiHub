@@ -85,18 +85,20 @@ export function MoreKeys({ path, onInsert }: MoreKeysProps) {
       {KEY_GROUPS.map((group) => (
         <div key={group.title} className="type-keys__group" role="group" aria-label={group.title}>
           <span className="type-keys__group-title">{group.title}</span>
-          {group.keys.map(({ name, data }) => (
-            <Button
-              key={name}
-              variant="secondary"
-              size="xs"
-              aria-label={SPOKEN[name] ?? name}
-              onClick={() => onInsert(escapeMacroStepData(data))}
-              data-testid={`automation-editor-keys-key-${path}-${name}`}
-            >
-              {name}
-            </Button>
-          ))}
+          <span className="type-keys__group-keys">
+            {group.keys.map(({ name, data }) => (
+              <Button
+                key={name}
+                variant="secondary"
+                size="xs"
+                aria-label={SPOKEN[name] ?? name}
+                onClick={() => onInsert(escapeMacroStepData(data))}
+                data-testid={`automation-editor-keys-key-${path}-${name}`}
+              >
+                {name}
+              </Button>
+            ))}
+          </span>
         </div>
       ))}
       <p className="type-keys__hint">

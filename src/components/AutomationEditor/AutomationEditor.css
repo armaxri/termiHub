@@ -679,12 +679,19 @@
 
 .type-keys__group {
   display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+}
+
+.type-keys__group-keys {
+  display: flex;
+  flex: 1;
   flex-wrap: wrap;
-  align-items: center;
   gap: var(--spacing-xs);
 }
 
 .type-keys__group-title {
+  flex-shrink: 0;
   width: 88px;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);

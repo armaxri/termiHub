@@ -205,6 +205,10 @@
   color: var(--color-error);
 }
 
+.automation-item__line--warning > svg {
+  color: var(--color-warning);
+}
+
 .automation-item__line-text {
   flex: 1;
   min-width: 0;

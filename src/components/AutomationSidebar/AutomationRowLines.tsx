@@ -97,7 +97,7 @@ export function RowLines({
       )}
       {importedInPart.length > 0 && (
         <div
-          className="automation-item__line automation-item__line--blocked"
+          className="automation-item__line automation-item__line--warning"
           data-testid={`automation-imported-part-${id}`}
           {...keepOffRow}
         >

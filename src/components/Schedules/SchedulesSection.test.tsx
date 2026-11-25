@@ -166,7 +166,7 @@ describe("SchedulesSection (PROD-043)", () => {
       expect(onChange).toHaveBeenCalledWith(false);
     });
 
-    it("says on the closed header that a scheduled run failed", async () => {
+    it("says on the header that a scheduled run failed, open too (B-034)", async () => {
       const failed = {
         at: new Date().toISOString(),
         outcome: "failed",
@@ -180,7 +180,7 @@ describe("SchedulesSection (PROD-043)", () => {
         expanded: true,
         onChange,
       });
-      expect(query("schedules-section-toggle")!.textContent).not.toContain("failed");
+      expect(query("schedules-section-toggle")!.textContent).toContain("1 failed");
     });
 
     it("offers Pause all only with something to pause, or to undo a pause (R-135)", async () => {
