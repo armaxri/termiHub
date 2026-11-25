@@ -97,6 +97,12 @@ describe("confirmed commands (#6057)", () => {
     expect(revokeConfirmedLocalCommands).toHaveBeenCalledExactlyOnceWith("a", null);
   });
 
+  it("has no button for all automations when there is one", async () => {
+    await render([GROUPS[0]]);
+    expect(query("confirmed-commands-revoke-all")).toBeNull();
+    expect(query("confirmed-commands-revoke-a")).not.toBeNull();
+  });
+
   it("revokes all after asking", async () => {
     await render();
     await click("confirmed-commands-revoke-all");

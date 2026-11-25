@@ -598,7 +598,8 @@ fn a_file_that_was_not_chosen_keeps_all_but_its_switches() {
     let d = dir.path();
     let mut mine = automation("a", "ls");
     mine["later"] = json!(1);
-    let mut library = doc("automations", "automations", json!([mine]));
+    let by_hand = json!({"id": "b", "name": "B", "steps": [], "triggers": []});
+    let mut library = doc("automations", "automations", json!([mine, by_hand]));
     library["migratedFrom"] = json!({"macros.json": {"version": 1, "sha256": "x", "entries": []}});
     write_doc(d, "automations.json", &library);
     let connections = |host: &str| {
@@ -767,4 +768,172 @@ fn before_with(id: &'static str, doc: Value) -> Side {
     let mut side = Side::default();
     side.insert(id, doc);
     side
+}
+
+#[test]
+fn a_changed_workspace_that_is_here_waits_for_confirmation() {
+    let dir = tempfile::tempdir().unwrap();
+    here(
+        dir.path(),
+        "workspaces",
+        "workspaces",
+        json!([workspace("make")]),
+    );
+    replace(
+        dir.path(),
+        vec![section(
+            "workspaces",
+            "workspaces",
+            json!([workspace("rm")]),
+        )],
+    );
+    assert_eq!(tab(dir.path())["pendingInitialCommand"], "rm");
+}
+
+/// What is started is followed through what it starts, and through the old files that
+/// the next start merges into the automations.
+#[test]
+fn a_change_is_found_behind_other_automations_and_old_entries() {
+    let calls = |id: &str, other: &str| {
+        json!({"id": id, "name": id, "triggers": [],
+            "steps": [{"kind": "run-automation", "automationId": other}]})
+    };
+    let plain = |id: &str, command: &str| {
+        json!({"id": id, "name": id, "triggers": [],
+            "steps": [{"kind": "send-command", "command": command}]})
+    };
+    let remapped = |mut doc: Value| {
+        doc["idRemaps"] = json!([{"source": "macro", "oldId": "old", "newId": "inner"}]);
+        doc
+    };
+    for (section_id, list, changed) in [
+        ("automations", "automations", "inner"),
+        ("workflows", "workflows", "inner"),
+        ("macros", "macros", "inner"),
+        ("macros", "macros", "old"),
+        ("macros", "macros", "unrelated"),
+    ] {
+        let side = |command: &str| {
+            let mut library = vec![calls("a", "middle"), calls("middle", "inner")];
+            let mut side = before_with(
+                "schedules",
+                doc("schedules", "schedules", json!([schedule("s")])),
+            );
+            if section_id == "automations" {
+                library.push(plain(changed, command));
+            } else {
+                let entry = json!([plain(changed, command)]);
+                side.insert(section_id, doc(section_id, list, entry));
+            }
+            let library = doc("automations", "automations", json!(library));
+            side.insert("automations", remapped(library));
+            side
+        };
+        let off = switch_off(
+            &side("ls"),
+            &mut side("rm"),
+            chrono::Utc::now(),
+            &chrono::Utc,
+        );
+        let expected = usize::from(changed != "unrelated");
+        assert_eq!(off.len(), expected, "{section_id} {changed}");
+    }
+}
+
+#[test]
+fn an_automation_that_only_a_person_starts_is_not_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut manual = automation("a", "ls");
+    manual["triggers"] = json!([{"kind": "manual"}]);
+    let off = replace(
+        dir.path(),
+        vec![section("automations", "automations", json!([manual]))],
+    )
+    .switched_off;
+    assert!(off.is_empty(), "{off:?}");
+}
+
+/// A tunnel of this machine only, beside a restored one, whose agent the backup moves.
+#[test]
+fn the_preview_finds_what_is_only_here_and_uses_a_changed_agent() {
+    let agents = |host: &str| {
+        let mut doc = spec("connections").unwrap().default_doc();
+        doc["agents"] = json!([{"id": "box", "name": "Box",
+            "config": {"host": host, "port": 22, "username": "u", "authMethod": "agent"}}]);
+        doc
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let mut mine = tunnel("mine");
+    mine["host"] = json!({"kind": "agent", "agentId": "box"});
+    here(d, "tunnels", "tunnels", json!([mine]));
+    for (host, count) in [("old.example", 0), ("new.example", 1)] {
+        write_doc(d, "connections.json", &agents("old.example"));
+        let backup = raw_backup(
+            vec![
+                BackupSection {
+                    id: "connections".into(),
+                    schema_version: spec("connections").unwrap().current_version,
+                    data: agents(host),
+                },
+                section("tunnels", "tunnels", json!([tunnel("t")])),
+            ],
+            BACKUP_FORMAT_VERSION,
+        );
+        let opened = restore::open(&backup, None).unwrap();
+        let off = restore::plan(&opened, d, no_creds).switched_off;
+        assert_eq!(
+            off.iter().filter(|o| o.id == "mine").count(),
+            count,
+            "{host}"
+        );
+    }
+}
+
+#[test]
+fn the_list_has_each_entry_once_as_it_was_restored_last() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let mut other = tunnel("other");
+    other["autoStart"] = json!(false);
+    for name in ["First", "Second"] {
+        let mut t = tunnel("t");
+        t["name"] = json!(name);
+        replace(
+            d,
+            vec![section("tunnels", "tunnels", json!([t, other.clone()]))],
+        );
+    }
+    let listed = restored_off::list(d);
+    let names: Vec<_> = listed
+        .iter()
+        .filter(|e| e.id == "t")
+        .map(|e| &e.name)
+        .collect();
+    assert_eq!(names, ["Second"]);
+    // Gone, though another tunnel is off.
+    here(d, "tunnels", "tunnels", json!([other]));
+    assert!(!restored_off::list(d).iter().any(|e| e.id == "t"));
+}
+
+#[test]
+fn a_workflow_and_its_automation_are_listed_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let entry = json!([automation("w", "ls")]);
+    replace(
+        d,
+        vec![
+            section("workflows", "workflows", entry.clone()),
+            section("automations", "automations", entry),
+        ],
+    );
+    assert_eq!(restored_off::list(d).len(), 1);
+    // A macro of that id became another automation.
+    let mut off = automation("w", "ls");
+    off["triggersEnabled"] = json!(false);
+    let mut library = doc("automations", "automations", json!([off]));
+    library["idRemaps"] = json!([{"source": "macro", "oldId": "w", "newId": "m"}]);
+    write_doc(d, "automations.json", &library);
+    assert_eq!(restored_off::list(d)[0].id, "w");
 }

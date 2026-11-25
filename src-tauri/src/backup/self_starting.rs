@@ -306,7 +306,7 @@ pub(super) fn switch_off<Tz: TimeZone>(
                     id: text(item, "id"),
                     name: text(item, "name"),
                     starts: describe(starter.section, item, &switches, after),
-                    next_run_at: next_run(starter.section, item, now, tz),
+                    next_run_at: next_run(item, now, tz),
                     exists_here: here.is_some(),
                     same_here: was_doing.is_some_and(|w| w["own"] == will_do["own"]),
                     on_here: here.is_some_and(|h| starter.switches.iter().any(|s| is_on(h, s))),
@@ -489,16 +489,8 @@ fn describe_rule(rule: &ScheduleRule) -> String {
     }
 }
 
-/// When a schedule would run next if it were switched on now.
-fn next_run<Tz: TimeZone>(
-    section: &str,
-    item: &Value,
-    now: DateTime<Utc>,
-    tz: &Tz,
-) -> Option<String> {
-    if section != "schedules" {
-        return None;
-    }
+/// When a schedule (nothing else has a rule) would run next if it were on now.
+fn next_run<Tz: TimeZone>(item: &Value, now: DateTime<Utc>, tz: &Tz) -> Option<String> {
     let rule = serde_json::from_value::<ScheduleRule>(item["rule"].clone()).ok()?;
     next_run_after(&rule, now, now, tz).map(|d| d.to_rfc3339())
 }
@@ -545,9 +537,6 @@ pub fn quieten(
             after.insert(id, doc);
             chosen.insert(id);
         }
-    }
-    if chosen.is_empty() {
-        return Ok(Vec::new());
     }
     let prepared = after.clone();
     let off = switch_off(&before, &mut after, Utc::now(), &chrono::Local);

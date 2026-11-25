@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => win }));
 import { dismissRestoredOff, listRestoredOff } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
+import { RestoredOffDialog } from "./RestoredOffDialog";
 import { RestoredOffHost } from "./RestoredOffHost";
 
 const entry = (section: string, over: Partial<RestoredStart> = {}): RestoredStart => ({
@@ -218,6 +219,7 @@ describe("what a restore left switched off (#6056)", () => {
       "“The embeddedServers” stays off: the file server was not found.",
     ]);
     expect(query("restored-off-row-tunnels-x")).toBeNull();
+    expect((query("restored-off-turn-on") as HTMLButtonElement).disabled).toBe(true);
     expect(query("restored-off-row-schedules-x")).not.toBeNull();
     expect(dismissRestoredOff).not.toHaveBeenCalled();
   });
@@ -234,6 +236,23 @@ describe("what a restore left switched off (#6056)", () => {
       "“The tunnels” stays off: the tunnel was not found.",
       "“The later” stays off: it cannot be turned on from here.",
     ]);
+  });
+
+  it("opened again, it starts fresh", async () => {
+    setScheduleEnabled.mockRejectedValue(new Error("no"));
+    const show = (open: boolean) =>
+      act(async () =>
+        root.render(
+          <RestoredOffDialog open={open} entries={ALL} onLater={vi.fn()} onDone={vi.fn()} />
+        )
+      );
+    await show(true);
+    await click("restored-off-check-schedules-x");
+    await click("restored-off-turn-on");
+    expect(query("restored-off-error")).not.toBeNull();
+    await show(false);
+    await show(true);
+    expect(query("restored-off-error")).toBeNull();
   });
 
   it("a list that cannot be read asks nothing", async () => {

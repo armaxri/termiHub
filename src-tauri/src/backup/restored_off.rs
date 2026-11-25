@@ -44,9 +44,6 @@ fn write(path: &Path, entries: Vec<RestoredStart>) -> anyhow::Result<()> {
 
 /// Put the list beside the staged files of a restore.
 pub fn stage(staging: &Path, entries: &[RestoredStart]) -> anyhow::Result<()> {
-    if entries.is_empty() {
-        return Ok(());
-    }
     write(&staging.join(RESTORED_OFF_FILE), entries.to_vec())
 }
 

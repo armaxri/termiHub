@@ -523,6 +523,7 @@ fn a_confirmation_kept_as_a_hash_still_counts_and_can_be_taken_back() {
     confirm(&m, &["a"], "make", &[]);
     assert_eq!(m.confirmed_commands().unwrap()[0].commands.len(), 1);
     m.revoke_confirmed(Some("a"), Some(&hash)).unwrap();
+    assert!(m.confirmed_commands().unwrap().is_empty());
     assert!(asks(&m, &["a"], "make", &[]));
 }
 
