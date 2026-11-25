@@ -941,6 +941,28 @@ mod tests {
         assert!(svc.state().is_none());
     }
 
+    /// #6028: the state is read from the service, not from an event that may
+    /// have passed, so a start that failed is listed as failed.
+    #[test]
+    fn a_failed_start_is_listed_as_failed_with_its_reason() {
+        let mut svc = EmbeddedServerService::new(ServerType::Http);
+        svc.config = Some(http_config(0));
+        svc.set_status_and_emit(
+            ServiceStatus::Failed("port gone".into()),
+            ServerStats::default(),
+            None,
+        );
+        let state = svc.state().expect("configured");
+        assert_eq!(state.status, ServerStatus::Error);
+        assert_eq!(state.error.as_deref(), Some("port gone"));
+        // A stop puts it away.
+        svc.shutdown();
+        assert_eq!(
+            svc.state().expect("configured").status,
+            ServerStatus::Stopped
+        );
+    }
+
     #[test]
     fn test_running_service_reports_live_running_state() {
         // A service constructed in the Running state (no real socket) lists as a

@@ -161,8 +161,10 @@ async fn traffic_arrives_by_itself_while_a_server_runs() {
         window.sink.frames().last(),
         Some(ProjectionFrame::Diff(_))
     ));
+    assert!(run.manager.is_polling());
     run.manager.stop_server("web").unwrap();
     let frames = window.sink.frames().len();
     tokio::time::sleep(Duration::from_millis(2500)).await;
     assert_eq!(window.sink.frames().len(), frames, "quiet when stopped");
+    assert!(!run.manager.is_polling(), "nothing left to publish");
 }

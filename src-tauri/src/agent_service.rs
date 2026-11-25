@@ -376,7 +376,7 @@ impl AgentStatusPoller {
 
     /// Whether a task is currently tracked and not yet finished.
     #[cfg(test)]
-    fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         self.slot
             .lock()
             .map(|slot| slot.as_ref().is_some_and(|handle| !handle.is_finished()))

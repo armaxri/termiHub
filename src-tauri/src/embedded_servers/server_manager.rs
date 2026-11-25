@@ -842,6 +842,12 @@ impl<R: Runtime> EmbeddedServerManager<R> {
         self.announce();
     }
 
+    /// Whether the status poller runs.
+    #[cfg(test)]
+    pub(super) fn is_polling(&self) -> bool {
+        self.agent_status_poller.is_running()
+    }
+
     /// Where the desktop-hosted server `server_id` listens.
     #[cfg(test)]
     pub(super) fn local_addr_of(&self, server_id: &str) -> Option<std::net::SocketAddr> {
