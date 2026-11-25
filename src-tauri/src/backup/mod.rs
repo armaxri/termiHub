@@ -40,6 +40,12 @@
 //! running app therefore never has its in-memory stores changed underneath it,
 //! and a restore is all-or-nothing across every chosen section.
 //!
+//! ## What starts by itself (#6056)
+//!
+//! Schedules, triggers, tunnels and file servers arrive switched off unless they are on
+//! here in the same way ([`self_starting`]); the user is told which and turns on what
+//! they want ([`restored_off`]).
+//!
 //! ## Trust stores and plugins (#3515)
 //!
 //! - The SSH host-key and RDP certificate trust stores are ordinary sections
@@ -66,7 +72,9 @@ pub mod export;
 pub mod pending;
 pub mod plugins;
 pub mod restore;
+pub mod restored_off;
 pub mod sections;
+pub mod self_starting;
 pub mod trust_map;
 
 #[cfg(test)]
@@ -87,6 +95,8 @@ mod tests_plugins;
 mod tests_real_keychain;
 #[cfg(test)]
 mod tests_restart;
+#[cfg(test)]
+mod tests_self_starting;
 #[cfg(test)]
 mod tests_trust;
 
@@ -316,6 +326,9 @@ pub struct BackupRestorePreview {
     pub sections: Vec<BackupSectionPreview>,
     /// Present when the backup carries a credential vault.
     pub credentials: Option<BackupCredentialsPreview>,
+    /// What would start by itself and arrives switched off (#6056), over every section
+    /// of the backup.
+    pub switched_off: Vec<self_starting::RestoredStart>,
 }
 
 /// How to restore one section.
@@ -363,6 +376,8 @@ pub struct SectionRestoreOutcome {
 pub struct BackupRestoreResult {
     pub sections: Vec<SectionRestoreOutcome>,
     pub credentials: Option<VaultImportResult>,
+    /// What would start by itself and was left switched off (#6056).
+    pub switched_off: Vec<self_starting::RestoredStart>,
     /// Store sections were staged; termiHub must restart to apply them.
     pub restart_required: bool,
 }

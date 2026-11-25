@@ -10,10 +10,19 @@ use tauri::{AppHandle, Runtime};
 use super::config::{Automation, AutomationTrigger, UnknownTrigger};
 use super::storage::StoreFile;
 use super::store::{AutomationStore, UnreadableAutomation};
-use super::trust::{SaveOrigin, Standing, TrustBook};
+use super::trust::{ConfirmedCommand, SaveOrigin, Standing, TrustBook};
 use crate::connection::id_changes::ConnectionIdRemap;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
+
+/// The confirmed commands of one automation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmedAutomation {
+    pub automation_id: String,
+    /// `None` when there is no such automation here.
+    pub name: Option<String>,
+    pub commands: Vec<ConfirmedCommand>,
+}
 
 /// Central automation manager: CRUD for stored automations, persisting
 /// through `automations.json`. The boot migration
@@ -226,6 +235,36 @@ impl AutomationManager {
         let store = self.lock()?;
         self.lock_trust()?
             .confirm(&store, chain, program, args, path)
+            .map_err(TerminalError::AutomationError)
+    }
+
+    /// The confirmed commands, per automation that is not the user's own (#6057).
+    pub fn confirmed_commands(&self) -> Result<Vec<ConfirmedAutomation>, TerminalError> {
+        let store = self.lock()?;
+        let trust = self.lock_trust()?;
+        Ok(trust
+            .confirmed()
+            .iter()
+            .map(|(id, commands)| ConfirmedAutomation {
+                automation_id: id.clone(),
+                name: store
+                    .automations
+                    .iter()
+                    .find(|a| a.id == *id)
+                    .map(|a| a.name.clone()),
+                commands: commands.clone(),
+            })
+            .collect())
+    }
+
+    /// Take confirmations back (#6057): see [`TrustBook::revoke`].
+    pub fn revoke_confirmed(
+        &self,
+        id: Option<&str>,
+        key: Option<&str>,
+    ) -> Result<(), TerminalError> {
+        self.lock_trust()?
+            .revoke(id, key)
             .map_err(TerminalError::AutomationError)
     }
 

@@ -553,3 +553,62 @@
 .settings-panel__field .biometric-unlock__note {
   margin-top: var(--spacing-xs);
 }
+
+/* An allowed program that runs whatever it is told to (#6057). */
+.allowed-programs__warning {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--color-warning);
+}
+
+.allowed-programs__warning svg {
+  flex-shrink: 0;
+}
+
+/* The confirmed commands of imported automations, per automation (#6057). */
+.confirmed-commands__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.confirmed-commands__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  min-height: var(--control-height-sm);
+}
+
+.confirmed-commands__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.confirmed-commands__command {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+}
+
+/* One line until it is opened. */
+.confirmed-commands__command summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.confirmed-commands__full {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  max-height: 30vh;
+  margin-top: var(--spacing-xs);
+  overflow-y: auto;
+  color: var(--text-secondary);
+}

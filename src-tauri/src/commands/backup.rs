@@ -13,10 +13,11 @@ use tauri::{AppHandle, State};
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
+use crate::backup::self_starting::RestoredStart;
 use crate::backup::{
-    export, restore, BackupCredentialsPreview, BackupExportOptions, BackupExportResult,
-    BackupHeader, BackupRestorePreview, BackupRestoreRequest, BackupRestoreResult,
-    BackupSectionInfo,
+    export, restore, restored_off, BackupCredentialsPreview, BackupExportOptions,
+    BackupExportResult, BackupHeader, BackupRestorePreview, BackupRestoreRequest,
+    BackupRestoreResult, BackupSectionInfo,
 };
 use crate::commands::credential_vault::known_owners;
 use crate::connection::manager::ConnectionManager;
@@ -196,6 +197,20 @@ pub async fn apply_backup_restore(
     // passwords (embedded servers before #3514) that must go into the store.
     let store: &dyn CredentialStore = &**manager;
     restore::apply(&opened, &config_dir(&app)?, &request, Some(store))
+}
+
+/// What the last restores left switched off and the user has not dealt with (#6056).
+#[tauri::command]
+pub fn list_restored_off(app: AppHandle) -> Result<Vec<RestoredStart>, VaultError> {
+    Ok(restored_off::list(&config_dir(&app)?))
+}
+
+/// The user has seen what the last restores left switched off.
+#[tauri::command]
+pub fn dismiss_restored_off(app: AppHandle) -> Result<(), VaultError> {
+    restored_off::dismiss(&config_dir(&app)?).map_err(|e| VaultError::Other {
+        message: format!("The list could not be removed: {e}"),
+    })
 }
 
 /// Restart termiHub so a staged restore is applied before any store loads.

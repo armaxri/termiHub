@@ -40,7 +40,7 @@ use tracing::{debug, warn};
 
 use super::local_process_policy::{self, LocalProcessCheck, Program, SearchEnv};
 use crate::automations::manager::AutomationManager;
-use crate::automations::trust::Standing;
+use crate::automations::trust::{ConfirmedCommand, Standing};
 use crate::connection::settings::{AppSettings, SettingsStorage};
 use crate::utils::errors::TerminalError;
 
@@ -213,6 +213,85 @@ pub fn confirm_local_process<R: Runtime>(
         .try_state::<AutomationManager>()
         .ok_or_else(|| TerminalError::AutomationError("No automations are loaded.".into()))?
         .confirm_command(&automation_chain, &program, &args, &judged.program.path)
+}
+
+/// A command the user confirmed for an imported automation, for the settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmedLocalCommand {
+    /// Names it when it is revoked.
+    pub key: String,
+    /// The file and the arguments. Absent when an earlier build kept only a hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub path: Option<String>,
+    /// Every argument.
+    pub args: Vec<String>,
+}
+
+/// The confirmed commands of one imported automation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmedLocalCommands {
+    pub automation_id: String,
+    /// Absent when there is no such automation here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub automation_name: Option<String>,
+    pub commands: Vec<ConfirmedLocalCommand>,
+}
+
+/// The commands the user confirmed for imported automations (#6057).
+#[tauri::command]
+pub fn list_confirmed_local_commands(
+    manager: State<'_, AutomationManager>,
+) -> Result<Vec<ConfirmedLocalCommands>, TerminalError> {
+    Ok(manager
+        .confirmed_commands()?
+        .into_iter()
+        .map(|a| ConfirmedLocalCommands {
+            automation_id: a.automation_id,
+            automation_name: a.name,
+            commands: a
+                .commands
+                .into_iter()
+                .map(|command| {
+                    let key = command.key();
+                    let (path, args) = match command {
+                        ConfirmedCommand::Command { path, args } => (Some(path), args),
+                        ConfirmedCommand::Hash(_) => (None, Vec::new()),
+                    };
+                    ConfirmedLocalCommand { key, path, args }
+                })
+                .collect(),
+        })
+        .collect())
+}
+
+/// Take confirmations back (#6057): one command of an automation, all of one
+/// automation (no `key`), or all (no `automation_id`).
+#[tauri::command]
+pub fn revoke_confirmed_local_commands(
+    automation_id: Option<String>,
+    key: Option<String>,
+    manager: State<'_, AutomationManager>,
+) -> Result<(), TerminalError> {
+    manager.revoke_confirmed(automation_id.as_deref(), key.as_deref())
+}
+
+/// Which of these entries of the list are programs that run whatever they are told
+/// to (#6057). An entry that resolves to no file is judged by its name.
+#[tauri::command]
+pub fn interpreters_among(programs: Vec<String>) -> Vec<String> {
+    let env = SearchEnv::current();
+    programs
+        .into_iter()
+        .filter(|program| local_process_policy::is_interpreter_entry(program, &env))
+        .collect()
 }
 
 /// Clamp a caller-requested timeout into `[1ms, MAX_TIMEOUT_MS]`, applying the

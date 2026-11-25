@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 #: What is not the user's own, and what they confirmed, in the config directory.
@@ -40,6 +42,21 @@ def trust_problems(trust: Any, automation_id: str, *, confirmed: int) -> list[st
     if len(commands) != confirmed:
         problems.append(f"{len(commands)} commands are confirmed, not {confirmed}")
     return problems
+
+
+def confirmed_keys(trust: Any, automation_id: str) -> list[str]:
+    """The keys the settings list an automation's confirmed commands by (#6057)."""
+    commands = ((trust or {}).get("confirmed") or {}).get(automation_id) or []
+    return [
+        hashlib.sha256(
+            json.dumps(
+                [c["path"], c["args"]], separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+        ).hexdigest()
+        if isinstance(c, dict)
+        else str(c)
+        for c in commands
+    ]
 
 
 def mark_problems(stored: Any) -> list[str]:

@@ -921,6 +921,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::local_process::check_local_process,
             commands::local_process::run_local_process,
             commands::local_process::confirm_local_process,
+            commands::local_process::list_confirmed_local_commands,
+            commands::local_process::revoke_confirmed_local_commands,
+            commands::local_process::interpreters_among,
             commands::local_process::cancel_local_process,
             // Network diagnostics
             commands::network::network_port_scan,
@@ -996,6 +999,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::backup::read_backup_header,
             commands::backup::preview_backup_restore,
             commands::backup::apply_backup_restore,
+            commands::backup::list_restored_off,
+            commands::backup::dismiss_restored_off,
             commands::backup::restart_after_backup_restore,
             // Portable mode
             commands::portable::get_app_mode,

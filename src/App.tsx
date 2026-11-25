@@ -27,6 +27,7 @@ import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDial
 import { ExportDialog, ImportDialog, MobaxtermImportHost } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
 import { SpawnPicker } from "@/components/Spawn";
+import { RestoredOffHost } from "@/components/RestoredOff/RestoredOffHost";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
 import { CommandPalette } from "@/components/CommandPalette/CommandPalette";
@@ -427,6 +428,7 @@ function App() {
             onOpenChange={setRecoveryDialogOpen}
             warnings={recoveryWarnings}
           />
+          <RestoredOffHost />
           <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
           <CommandPalette />
           <OverlayViewPanel />
