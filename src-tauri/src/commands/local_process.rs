@@ -447,6 +447,41 @@ mod tests {
         }
     }
 
+    /// #5994: with both switches on, a program that is not on the allowlist is
+    /// never spawned, whatever the caller says about the run.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unlisted_program_is_never_spawned() {
+        use crate::utils::config_paths::ConfigDirOverride;
+        use tauri::Manager;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = tauri::test::mock_app();
+        app.manage(ConfigDirOverride(dir.path().to_path_buf()));
+        app.manage(LocalProcessRegistry::default());
+        SettingsStorage::new(app.handle())
+            .unwrap()
+            .save(&AppSettings {
+                experimental_features_enabled: Some(true),
+                workflow_local_process_enabled: true,
+                workflow_local_process_allowlist: vec!["/usr/bin/true".into()],
+                ..AppSettings::default()
+            })
+            .unwrap();
+        let marker = dir.path().join("spawned");
+        let result = run_local_process(
+            "run-1".into(),
+            "/usr/bin/touch".into(),
+            vec![marker.display().to_string()],
+            Some(5_000),
+            app.state(),
+            app.handle().clone(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!marker.exists());
+    }
+
     /// Drain the output channel into a flat list of `(stream, line)` pairs.
     #[cfg(unix)] // only the unix-gated argv tests inspect output
     fn collect_output(mut rx: mpsc::Receiver<(&'static str, String)>) -> Vec<(String, String)> {

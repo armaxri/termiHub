@@ -293,6 +293,35 @@ describe("executeStep", () => {
       expect(runLocalProcess).not.toHaveBeenCalled();
     });
 
+    it("says why a refused program did not run (#5994)", async () => {
+      const spawn = vi.fn();
+      const refusal = 'Not run: "rm" is not an allowed program. See Settings ▸ Security.';
+      const refused = await executeStep(
+        step("rm"),
+        deps({
+          authorizeLocalProcess: (async () => ({
+            refused: refusal,
+          })) as unknown as WorkflowAuthorizeLocalProcessSeam,
+          runLocalProcess: spawn,
+        })
+      );
+      expect(refused).toEqual({ ok: false, error: refusal });
+      expect(spawn).not.toHaveBeenCalled();
+      const atTheSpawn = await executeStep(
+        step("rm"),
+        deps({
+          authorizeLocalProcess: async () => true,
+          runLocalProcess: (async () => ({
+            exitCode: 1,
+            timedOut: false,
+            cancelled: false,
+            error: refusal,
+          })) as WorkflowRunLocalProcessSeam,
+        })
+      );
+      expect(atTheSpawn).toEqual({ ok: false, error: refusal });
+    });
+
     it("GUARDRAIL: passes args as a discrete array, unmodified (no shell split)", async () => {
       const authorizeLocalProcess = vi.fn(async () => true);
       const runLocalProcess = vi.fn(okRun);
