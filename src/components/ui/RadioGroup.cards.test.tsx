@@ -3,6 +3,7 @@ import { act, useState } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { checkA11y } from "@/test/axe";
 import { pressRadioArrow } from "@/test/radioKeyboard";
+import { TooltipProvider } from "./Tooltip";
 import { RadioGroup, type RadioGroupOption } from "./RadioGroup";
 
 let container: HTMLDivElement;
@@ -165,5 +166,95 @@ describe("RadioGroup cards variant", () => {
   it("has no a11y violations", async () => {
     act(() => root.render(<Harness />));
     expect(await checkA11y()).toHaveNoViolations();
+  });
+
+  describe("card help (#6027)", () => {
+    const HELP_OPTIONS: RadioGroupOption[] = OPTIONS.map((option) => ({
+      ...option,
+      help: [`What ${option.value} is for.`, `How ${option.value} works.`],
+    }));
+
+    function HelpHarness() {
+      const [value, setValue] = useState("a");
+      return (
+        <TooltipProvider delayDuration={0}>
+          <RadioGroup
+            variant="cards"
+            orientation="horizontal"
+            value={value}
+            onValueChange={setValue}
+            aria-label="Pick a card"
+            options={HELP_OPTIONS}
+          />
+        </TooltipProvider>
+      );
+    }
+
+    /** Move the pointer onto an element as Radix's tooltip sees it. */
+    async function hover(el: HTMLElement) {
+      await act(async () => {
+        el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      });
+    }
+
+    /** The text a screen reader gets as the element's description. */
+    function description(el: HTMLElement): string {
+      return (el.getAttribute("aria-describedby") ?? "")
+        .split(" ")
+        .map((ref) => document.getElementById(ref)?.textContent)
+        .join(" ");
+    }
+
+    it("describes the card by its description and its help with no tooltip open", () => {
+      act(() => root.render(<HelpHarness />));
+      expect(byTestId("card-b-help")).toBeNull();
+      expect(description(byTestId("card-b"))).toBe("Second choice What b is for. How b works.");
+      // A card without a description is described by its help alone.
+      expect(description(byTestId("card-c"))).toBe("What c is for. How c works.");
+      // The help is not part of the card's own text or its accessible name.
+      expect(byTestId("card-b").textContent).toBe("BetaSecond choice");
+    });
+
+    it.each(["card-a", "card-b"])("shows the help on hover, selected or not (%s)", async (card) => {
+      act(() => root.render(<HelpHarness />));
+      await hover(byTestId(card));
+      expect(byTestId(`${card}-help`).textContent).toContain(`What ${card.slice(-1)} is for.`);
+      // Still described by the same text while the tooltip is open.
+      expect(description(byTestId(card))).toContain(`How ${card.slice(-1)} works.`);
+    });
+
+    it("keeps the radio's checked state with the tooltip open", async () => {
+      act(() => root.render(<HelpHarness />));
+      await hover(byTestId("card-a"));
+      expect(byTestId("card-a").getAttribute("data-state")).toBe("checked");
+      expect(byTestId("card-b").getAttribute("data-state")).toBe("unchecked");
+    });
+
+    it("shows the help of the card the arrow keys move to, and Escape closes it", async () => {
+      act(() => root.render(<HelpHarness />));
+      act(() => byTestId("card-a").focus());
+      expect(byTestId("card-a-help")).not.toBeNull();
+      await pressRadioArrow(byTestId("card-a"), "ArrowRight");
+      expect(document.activeElement).toBe(byTestId("card-b"));
+      expect(byTestId("card-b").getAttribute("aria-checked")).toBe("true");
+      expect(byTestId("card-b-help")).not.toBeNull();
+      expect(byTestId("card-a-help")).toBeNull();
+      const escape = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => void byTestId("card-b").dispatchEvent(escape));
+      expect(byTestId("card-b-help")).toBeNull();
+      // Consumed, so an editor around the group does not also cancel.
+      expect(escape.defaultPrevented).toBe(true);
+    });
+
+    it("has no a11y violations with the help open", async () => {
+      act(() => root.render(<HelpHarness />));
+      await hover(byTestId("card-b"));
+      expect(await checkA11y()).toHaveNoViolations();
+    });
   });
 });

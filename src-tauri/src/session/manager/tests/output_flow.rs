@@ -46,6 +46,7 @@ async fn set_output_flow_pauses_and_resumes_the_session_reader() {
     let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
     let reader_emitter = emitter.clone();
     let sessions = manager.sessions.clone();
+    let capture = capture_of(&sessions, "s").await;
     let handle = tokio::spawn(async move {
         SessionManager::run_output_reader(
             "s".to_string(),
@@ -53,7 +54,7 @@ async fn set_output_flow_pauses_and_resumes_the_session_reader() {
             reader_emitter,
             sessions,
             None,
-            new_capture(),
+            capture,
             new_output_buffers(),
             new_session_loggers(),
             new_session_tab_ids(),

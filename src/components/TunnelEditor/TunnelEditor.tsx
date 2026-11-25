@@ -45,6 +45,7 @@ import {
   tunnelReachabilityWarning,
   WIDE_BIND_HOST,
 } from "@/utils/tunnelHost";
+import { tunnelTypeHelp, type TunnelTypeKind } from "@/utils/tunnelTypeHelp";
 import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunnelChain";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
@@ -166,17 +167,32 @@ const tunnelFormSchema = z
     }
   });
 
-/** The three tunnel kinds, offered as one shared radio-card selector (UISF2-002). */
-const TUNNEL_TYPE_OPTIONS: RadioGroupOption[] = [
-  { value: "local", label: "Local", description: "ssh -L", "data-testid": "tunnel-type-local" },
-  { value: "remote", label: "Remote", description: "ssh -R", "data-testid": "tunnel-type-remote" },
-  {
-    value: "dynamic",
-    label: "Dynamic",
-    description: "ssh -D (SOCKS5)",
-    "data-testid": "tunnel-type-dynamic",
-  },
-];
+/**
+ * The three tunnel kinds, offered as one shared radio-card selector
+ * (UISF2-002). Each card says in plain words what the type does and explains
+ * it on hover and keyboard focus, for the machine the tunnel runs on (#6027).
+ */
+function tunnelTypeOptions(host: RunLocation, agentName?: string): RadioGroupOption[] {
+  const card = (kind: TunnelTypeKind): RadioGroupOption => {
+    const help = tunnelTypeHelp(kind, host, agentName);
+    return {
+      value: kind,
+      label: help.label,
+      description: (
+        <>
+          <span className="tunnel-editor__type-summary">{help.summary}</span>{" "}
+          <code className="tunnel-editor__type-flag">{help.flag}</code>
+        </>
+      ),
+      help: help.lines,
+    };
+  };
+  return [
+    { ...card("local"), "data-testid": "tunnel-type-local" },
+    { ...card("remote"), "data-testid": "tunnel-type-remote" },
+    { ...card("dynamic"), "data-testid": "tunnel-type-dynamic" },
+  ];
+}
 
 /**
  * Tab-based editor for an SSH tunnel: name, SSH connection, run-location host,
@@ -714,11 +730,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             onValueChange={(v) => handleTypeChange(v as "local" | "remote" | "dynamic")}
             aria-labelledby={`tunnel-type-label-${tabId}`}
             data-testid="tunnel-editor-type-selector"
-            options={TUNNEL_TYPE_OPTIONS}
+            options={tunnelTypeOptions(host, hostAgentName)}
           />
         </div>
 
-        <TunnelDiagram tunnelType={tunnelType} />
+        <TunnelDiagram tunnelType={tunnelType} agentName={hostAgentName} />
 
         <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
           <div className="tunnel-editor__endpoints-host">

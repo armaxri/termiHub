@@ -4255,7 +4255,8 @@ Terminal output data from a session the desktop is attached to.
 Every attach of a daemon-backed session makes the agent send the session's whole buffer again
 before live output goes on. Its first chunk carries a `replay_id`: everything sent for the
 session before it is part of what follows. The desktop starts the session's captured history over
-there, so a repaint shows it once, whichever action attached the session (#5990).
+there, so a repaint shows it once, whichever action attached the session (#5990). The id only
+names the replay: no two agent workers use the same one, and ids have no order.
 
 **Delivery semantics:**
 

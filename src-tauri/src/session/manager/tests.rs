@@ -171,10 +171,13 @@ impl ConnectionType for LocalBrowserConnection {
     }
 }
 
-/// Helper to create a sessions map and insert a mock session.
-/// A fresh, empty scrollback capture buffer for `run_output_reader` tests (#1900).
-fn new_capture() -> Arc<StdMutex<OutputCapture>> {
-    Arc::new(StdMutex::new(OutputCapture::default()))
+/// The capture of the stream that owns the entry of `session_id` (#6004).
+async fn capture_of<M: SessionMap>(
+    sessions: &Arc<Mutex<M>>,
+    session_id: &str,
+) -> Arc<StdMutex<OutputCapture>> {
+    let sessions = sessions.lock().await;
+    sessions.get(session_id).expect("entry").capture.clone()
 }
 
 /// A fresh, empty `output_buffers` map for the cleanup path (#1900).
@@ -192,31 +195,32 @@ fn new_session_tab_ids() -> SessionTabIds {
     Arc::new(StdMutex::new(HashMap::new()))
 }
 
-async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, SessionEntry>>> {
-    let sessions = Arc::new(Mutex::new(HashMap::new()));
-    let mut map = sessions.lock().await;
-    map.insert(
-        session_id.to_string(),
-        SessionEntry {
-            connection: Arc::new(MockConnection::default()),
-            info: SessionInfo {
-                id: session_id.to_string(),
-                title: "Mock".to_string(),
-                connection_type: "mock".to_string(),
-                alive: true,
-                agent_id: None,
-                spawned: false,
-                x11_forwarding: None,
-                x11_forwarding_reason: None,
-            },
-            remote_session_id: None,
-            line_ending: LineEnding::default(),
-            reader_cancel: CancellationToken::new(),
-            io: SessionIo::default(),
+/// An entry whose connection is a [`MockConnection`].
+fn mock_entry(session_id: &str) -> SessionEntry {
+    SessionEntry {
+        connection: Arc::new(MockConnection::default()),
+        info: SessionInfo {
+            id: session_id.to_string(),
+            title: "Mock".to_string(),
+            connection_type: "mock".to_string(),
+            alive: true,
+            agent_id: None,
+            spawned: false,
+            x11_forwarding: None,
+            x11_forwarding_reason: None,
         },
-    );
-    drop(map);
-    sessions
+        remote_session_id: None,
+        line_ending: LineEnding::default(),
+        reader_cancel: CancellationToken::new(),
+        io: SessionIo::default(),
+        capture: Arc::default(),
+    }
+}
+
+async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, SessionEntry>>> {
+    let mut map = HashMap::new();
+    map.insert(session_id.to_string(), mock_entry(session_id));
+    Arc::new(Mutex::new(map))
 }
 
 // ── MockEventEmitter ─────────────────────────────────────────────
@@ -324,6 +328,7 @@ async fn sessions_with_local_browser(
             line_ending: LineEnding::default(),
             reader_cancel: CancellationToken::new(),
             io: SessionIo::default(),
+            capture: Arc::default(),
         },
     );
     drop(map);
@@ -662,7 +667,7 @@ async fn emit_and_cleanup_sends_exit_event() {
         Vec::new(),
         &emitter,
         &sessions,
-        &new_capture(),
+        &capture_of(&sessions, "sess-exit").await,
         &output_buffers,
         &new_session_loggers(),
         &new_session_tab_ids(),
@@ -689,7 +694,7 @@ async fn emit_and_cleanup_flushes_remaining_data() {
         b"final bytes".to_vec(),
         &emitter,
         &sessions,
-        &new_capture(),
+        &capture_of(&sessions, "sess-data").await,
         &output_buffers,
         &new_session_loggers(),
         &new_session_tab_ids(),
@@ -713,7 +718,7 @@ async fn run_output_reader_emits_chunks_and_exit() {
     tx.send(b"world".to_vec()).await.unwrap();
     drop(tx); // signal EOF
 
-    let capture = new_capture();
+    let capture = capture_of(&sessions, "sess-stream").await;
     let output_buffers = new_output_buffers();
     SessionManager::run_output_reader(
         "sess-stream".to_string(),
@@ -769,6 +774,7 @@ async fn run_output_reader_emits_chunks_and_exit() {
 async fn run_output_reader_stops_on_cancellation_without_eof() {
     let emitter = MockEventEmitter::new();
     let sessions = sessions_with_mock("sess-cancel").await;
+    let capture = capture_of(&sessions, "sess-cancel").await;
     // Keep the sender alive for the whole test: the reader can only reach EOF
     // if `tx` drops, so if cancellation were broken the task would hang.
     let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
@@ -783,7 +789,7 @@ async fn run_output_reader_stops_on_cancellation_without_eof() {
             reader_emitter,
             sessions,
             None,
-            new_capture(),
+            capture,
             new_output_buffers(),
             new_session_loggers(),
             new_session_tab_ids(),
@@ -819,6 +825,7 @@ async fn run_output_reader_stops_on_cancellation_without_eof() {
 async fn run_output_reader_writes_to_active_session_logger() {
     let emitter = MockEventEmitter::new();
     let sessions = sessions_with_mock("sess-log").await;
+    let capture = capture_of(&sessions, "sess-log").await;
     let session_loggers = new_session_loggers();
 
     // Point a logger at a temp file and register it as the active logger for
@@ -850,7 +857,7 @@ async fn run_output_reader_writes_to_active_session_logger() {
         emitter,
         sessions,
         None,
-        new_capture(),
+        capture,
         new_output_buffers(),
         session_loggers.clone(),
         new_session_tab_ids(),
@@ -878,6 +885,7 @@ async fn run_output_reader_writes_to_active_session_logger() {
 async fn run_output_reader_stops_on_emitter_failure() {
     let emitter = MockEventEmitter::failing();
     let sessions = sessions_with_mock("sess-fail").await;
+    let capture = capture_of(&sessions, "sess-fail").await;
     let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
 
     tx.send(b"data".to_vec()).await.unwrap();
@@ -889,7 +897,7 @@ async fn run_output_reader_stops_on_emitter_failure() {
         emitter.clone(),
         sessions,
         None,
-        new_capture(),
+        capture,
         new_output_buffers(),
         new_session_loggers(),
         new_session_tab_ids(),
@@ -915,6 +923,7 @@ async fn run_output_reader_stops_on_emitter_failure() {
 async fn collect_stream_events(chunks: Vec<Vec<u8>>) -> Vec<TerminalOutputEvent> {
     let emitter = MockEventEmitter::new();
     let sessions = sessions_with_mock("sess-perf").await;
+    let capture = capture_of(&sessions, "sess-perf").await;
     let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
     for chunk in chunks {
         tx.send(chunk).await.unwrap();
@@ -927,7 +936,7 @@ async fn collect_stream_events(chunks: Vec<Vec<u8>>) -> Vec<TerminalOutputEvent>
         emitter.clone(),
         sessions,
         None,
-        new_capture(),
+        capture,
         new_output_buffers(),
         new_session_loggers(),
         new_session_tab_ids(),
@@ -1026,7 +1035,7 @@ async fn emit_and_cleanup_preserves_persistent_session_record() {
         Vec::new(),
         &emitter,
         &sessions,
-        &new_capture(),
+        &capture_of(&sessions, "sess-ps").await,
         &new_output_buffers(),
         &new_session_loggers(),
         &new_session_tab_ids(),
@@ -1738,7 +1747,7 @@ async fn emit_and_cleanup_clears_the_tab_id_identity_bridge() {
         Vec::new(),
         &emitter,
         &sessions,
-        &new_capture(),
+        &capture_of(&sessions, "sess-tab").await,
         &new_output_buffers(),
         &new_session_loggers(),
         &session_tab_ids,

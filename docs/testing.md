@@ -711,6 +711,12 @@ pnpm exec playwright test -c tests/visual/playwright.config.ts automationGallery
 They land in `tests/visual/test-results/screens/automations/`; `index.json` there lists each
 state with the situation the user is in.
 
+For the SSH tunnel types (#6027), `tunnelTypeHelp.spec.ts` grades the type cards at rest, hovered
+(also while another type is selected) and focused from the keyboard, for this computer and for an
+agent with a long name, plus the sidebar row's tooltip and the Port Forwarding section, at 800x600
+and 1280x800 in dark and light. Its screenshots land in
+`tests/visual/test-results/screens/tunnel-type-help/`.
+
 ### How it works
 
 - **Harness.** `tests/visual/harness/index.html` boots the unmodified

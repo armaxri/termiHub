@@ -43,6 +43,17 @@
   color: var(--text-secondary);
 }
 
+/* Type cards (#6027): what the type does, then its ssh flag on its own line. */
+.tunnel-editor__type-summary {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.tunnel-editor__type-flag {
+  display: block;
+  font-family: var(--font-mono);
+}
+
 .tunnel-editor__row {
   display: flex;
   gap: var(--spacing-md);

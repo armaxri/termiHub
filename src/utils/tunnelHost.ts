@@ -45,7 +45,7 @@ export function tunnelHostBadge(
 }
 
 /** The concrete machine name used inside endpoint copy ("agent build-box"). */
-function hostMachine(host: RunLocation, agentName?: string): string {
+export function tunnelHostMachine(host: RunLocation, agentName?: string): string {
   return isAgentHost(host) ? `agent ${agentName || host.agentId}` : "this computer";
 }
 
@@ -99,7 +99,7 @@ export function tunnelEndpointLines(
   opts: { agentName?: string; sshLabel?: string } = {}
 ): TunnelEndpointLine[] {
   const { agentName, sshLabel = "SSH connection" } = opts;
-  const machine = hostMachine(host, agentName);
+  const machine = tunnelHostMachine(host, agentName);
 
   switch (tunnelType.type) {
     case "local": {

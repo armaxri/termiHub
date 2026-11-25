@@ -12,7 +12,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 120px;
+  /* Shrinks at the minimum window, so a long agent name does not push the row out. */
+  min-width: min(120px, 20%);
   padding: var(--spacing-md) var(--spacing-lg);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
@@ -29,6 +30,8 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-primary);
+  text-align: center;
+  overflow-wrap: anywhere;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -37,6 +40,7 @@
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .tunnel-diagram__arrow {
@@ -52,6 +56,7 @@
   font-size: var(--font-size-xl);
   line-height: 1;
   color: var(--text-accent);
+  white-space: nowrap;
 }
 
 .tunnel-diagram__arrow-label {

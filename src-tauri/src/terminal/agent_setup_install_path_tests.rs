@@ -120,11 +120,11 @@ fn the_setup_script_refuses_to_replace_a_file_that_is_not_an_agent() {
 
 #[test]
 fn a_failed_posix_setup_keeps_the_stored_path() {
-    // 0 and "only the service failed" installed the agent; no code says nothing.
+    // 0 and "only the service failed" installed the agent; a shell that is
+    // still open may yet.
     for end in [
         ShellEnd::Exited(0),
         ShellEnd::Exited(EXIT_SERVICE_FAILED),
-        ShellEnd::NoStatus,
         ShellEnd::StillOpen,
     ] {
         assert!(installs_agent(end), "{end:?}");
@@ -138,4 +138,7 @@ fn a_failed_posix_setup_keeps_the_stored_path() {
     ] {
         assert!(!installs_agent(ShellEnd::Exited(code)), "{code}");
     }
+    // A lost link or a closed tab hangs up on the script, which then puts the
+    // previous agent back.
+    assert!(!installs_agent(ShellEnd::NoStatus));
 }

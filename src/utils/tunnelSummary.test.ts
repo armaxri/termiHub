@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
-import { tunnelDeleteConfirmMessage, tunnelPortMapping, tunnelTypeFlag } from "./tunnelSummary";
+import { tunnelDeleteConfirmMessage, tunnelPortMapping } from "./tunnelSummary";
 
 function tunnel(id: string, extra: Partial<TunnelConfig> = {}): TunnelConfig {
   return {
@@ -42,15 +42,9 @@ describe("tunnelSummary", () => {
     const dynamic = tunnel("d", {
       tunnelType: { type: "dynamic", config: { localHost: "127.0.0.1", localPort: 1080 } },
     });
-    expect([tunnelTypeFlag(local), tunnelPortMapping(local)]).toEqual([
-      "-L",
-      "127.0.0.1:8080 → db:5432",
-    ]);
-    expect([tunnelTypeFlag(remote), tunnelPortMapping(remote)]).toEqual([
-      "-R",
-      "0.0.0.0:9000 → 127.0.0.1:3000",
-    ]);
-    expect([tunnelTypeFlag(dynamic), tunnelPortMapping(dynamic)]).toEqual(["-D", "127.0.0.1:1080"]);
+    expect(tunnelPortMapping(local)).toBe("127.0.0.1:8080 → db:5432");
+    expect(tunnelPortMapping(remote)).toBe("0.0.0.0:9000 → 127.0.0.1:3000");
+    expect(tunnelPortMapping(dynamic)).toBe("127.0.0.1:1080");
   });
 
   it("needs no confirmation to delete an idle, unchained tunnel", () => {

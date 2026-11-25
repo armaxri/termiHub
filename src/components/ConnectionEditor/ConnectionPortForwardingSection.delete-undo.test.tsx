@@ -69,7 +69,7 @@ vi.mock("@/components/ui", async () => {
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
-import { toast } from "@/components/ui";
+import { toast, TooltipProvider } from "@/components/ui";
 import type { TunnelConfig } from "@/types/tunnel";
 import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 
@@ -112,7 +112,11 @@ describe("ConnectionPortForwardingSection — delete with Undo (#5216)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
-      root.render(<ConnectionPortForwardingSection connectionId="conn-1" />);
+      root.render(
+        <TooltipProvider>
+          <ConnectionPortForwardingSection connectionId="conn-1" />
+        </TooltipProvider>
+      );
     });
   });
 

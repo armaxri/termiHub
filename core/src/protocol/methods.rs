@@ -928,7 +928,8 @@ pub struct ConnectionOutputNotification {
     /// This chunk starts a replay of the session's whole buffer, which the
     /// agent sends on every attach (0.45.0, #5990): everything sent before it is
     /// part of what follows. The id names the replay, for
-    /// [`SessionGetBufferResult::replay_id`]. Left out for live output.
+    /// [`SessionGetBufferResult::replay_id`]; ids have no order. Left out for
+    /// live output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_id: Option<u64>,
 }

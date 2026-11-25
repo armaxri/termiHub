@@ -158,6 +158,7 @@ pub(super) async fn maps_with_session() -> (Sessions, Tasks, Overrides, Arc<Coun
             line_ending: LineEnding::default(),
             reader_cancel: CancellationToken::new(),
             io: SessionIo::default(),
+            capture: Arc::default(),
         },
     );
     (sessions, tasks, overrides, provider)
