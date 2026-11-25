@@ -929,7 +929,20 @@ fn a_workflow_and_its_automation_are_listed_once() {
         ],
     );
     assert_eq!(restored_off::list(d).len(), 1);
-    // A macro of that id became another automation.
+}
+
+#[test]
+fn a_macro_of_a_workflows_id_is_another_automation() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    replace(
+        d,
+        vec![section(
+            "workflows",
+            "workflows",
+            json!([automation("w", "ls")]),
+        )],
+    );
     let mut off = automation("w", "ls");
     off["triggersEnabled"] = json!(false);
     let mut library = doc("automations", "automations", json!([off]));
