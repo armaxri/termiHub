@@ -155,6 +155,39 @@ describe("appStore — closing a window with a recording (#5818)", () => {
     setWorkflowRunViewForTest({ run: null, output: null });
   });
 
+  it("names every terminal an automation types into (#6026)", () => {
+    useAppStore.setState({
+      macroPlayback: {
+        macroId: "m",
+        macroName: "Login",
+        tabId: "t",
+        total: 2,
+        played: 1,
+        targetTabIds: ["t", "u"],
+      },
+    });
+    expect(store().prepareAppQuit()).toBe("prompt");
+    expect(store().pendingWindowClose?.runs?.map((r) => r.key)).toEqual(["t", "u"]);
+  });
+
+  it("says which run waits for the user (B-008)", () => {
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r1",
+        workflowId: "w",
+        workflowName: "Deploy",
+        tabId: "t",
+        total: 2,
+        completed: 1,
+      },
+      output: null,
+    });
+    useAppStore.setState({ automationWaits: [{ runId: "r1" }] as never });
+    expect(store().prepareAppQuit()).toBe("prompt");
+    expect(store().pendingWindowClose?.runs).toMatchObject([{ key: "r1", waiting: true }]);
+    setWorkflowRunViewForTest({ run: null, output: null });
+  });
+
   it("asks first while the editor waits hidden for one, though nothing was typed", async () => {
     store().startRecording({ intoEditor: "Deploy" });
     expect(await store().prepareWindowClose(OTHERS)).toBe("prompt");

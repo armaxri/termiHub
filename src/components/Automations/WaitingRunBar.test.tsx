@@ -232,6 +232,26 @@ describe("Continue", () => {
     expect([a.result, b.result]).toEqual(["continued", undefined]);
   });
 
+  it("does nothing for a wait that is over, or a run stopped before it waited", async () => {
+    act(() => store().continueAutomationWait("gone"));
+    act(() => store().recheckWaitingPrompts());
+    expect(store().automationWaits).toEqual([]);
+    const result = await store().waitForUser(
+      { runId: "r", tabId: "a", sessionId: "s", tabTitle: "a", automationName: "x" },
+      { isCancelled: () => true }
+    );
+    expect(result).toBe("cancelled");
+    expect(store().automationWaits).toEqual([]);
+  });
+
+  it("ends once, whatever comes after", async () => {
+    const wait = startWait();
+    click("automation-wait-continue-a");
+    act(() => wait.cancel());
+    await flushAsync();
+    expect(wait.result).toBe("continued");
+  });
+
   it("is too late after the limit, also when the computer slept through the timer", async () => {
     const wait = startWait();
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + WAIT_FOR_USER_LIMIT_MS);

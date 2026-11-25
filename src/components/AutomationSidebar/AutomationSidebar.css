@@ -56,6 +56,9 @@
 }
 
 .automation-item .sidebar-list-item__more {
+  /* Always first, not only once it shows: a first layout that kept it last put Stop
+     and Run one button further left, and a press there was never a click. */
+  order: -1;
   right: 100%;
   max-width: none;
   flex-wrap: nowrap;
@@ -65,7 +68,6 @@
 /* Shown, it stands beside the name, which makes room, rather than on it. */
 .automation-item:is(:hover, :focus-within) .sidebar-list-item__more {
   position: static;
-  order: -1;
 }
 
 /* Edit shows on the selected row (A-015), and on any other while it is pointed at. */

@@ -31,4 +31,6 @@
 ### Fixed
 
 - **Stop ends a Wait step at once.** It used to take effect only after the wait, up to 5 seconds later.
+- A press on Run or Stop of an automation could miss: its hidden buttons moved it while the pointer
+  came in. Stop pressed before a run had begun its first step was lost.
 - The spinner of a run no longer stays while the run waits for you or asks about a program.

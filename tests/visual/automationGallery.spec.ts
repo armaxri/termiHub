@@ -1174,6 +1174,28 @@ for (const viewport of WINDOWS) {
   }
 }
 
+// A press on Stop was no click while the row's hidden buttons made room for themselves
+// beside it, on the way in: it was pressed in one place and released in another.
+test("Run and Stop never move under the pointer", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await bootWithTerminals(page, "light", 1, { automationData: running });
+  await page.locator(id("automation-start-health")).click();
+  const stop = page.locator(id("automation-stop-health"));
+  await stop.waitFor();
+  const seen = new Set<number>();
+  for (let i = 0; i < 25; i += 1) {
+    await page.locator(id("automation-start-missing")).focus();
+    await page.mouse.move(600, 300);
+    await settle(page);
+    const at = (await stop.boundingBox())!;
+    await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+    seen.add((await stop.boundingBox())!.x);
+    await settle(page);
+    seen.add((await stop.boundingBox())!.x);
+  }
+  expect([...seen]).toHaveLength(1);
+});
+
 // What a 600 px high window leaves at 140 % zoom: less than the menu needs.
 test("the add step menu fits into a short dialog and scrolls", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 428 });
