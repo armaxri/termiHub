@@ -37,9 +37,13 @@ const SERIALIZED_SCROLLBACK = "\x1b[32mlocal scrollback snapshot\x1b[0m\r\n";
 // Every xterm instance created, in order, with its write() spy — so a test can
 // inspect what the fresh (final) instance rendered. The shared mock records each
 // constructed instance in `mockXtermInstances`.
-const inputFrom = vi.hoisted(() => ({ user: true }));
+const inputFrom = vi.hoisted(() => ({ user: true, known: true }));
 vi.mock("./xtermUserInput", () => ({
-  trackUserInput: () => ({ take: () => inputFrom.user, dispose: () => undefined }),
+  trackUserInput: () => ({
+    known: inputFrom.known,
+    take: () => !inputFrom.known || inputFrom.user,
+    dispose: () => undefined,
+  }),
 }));
 vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 vi.mock("@xterm/addon-fit", () => {
@@ -475,6 +479,38 @@ describe("Terminal — a resumed session and the tab's own scrollback (#5990)", 
     type("c");
 
     expect(mockSendInput.mock.calls.map((call) => call[1])).toEqual(["a", "b", "c"]);
+  });
+
+  it("sends no reply to what is repainted when xterm does not tell typed input", async () => {
+    const tabId = await mountConnected();
+    mockTakeResumed.mockResolvedValue(true);
+    let answer: (value: unknown) => void = () => {};
+    mockGetAgentSessionBuffer.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+    inputFrom.known = false;
+    try {
+      await disconnectAndReconnect(tabId);
+      const fresh = xtermInstances[xtermInstances.length - 1];
+      mockSendInput.mockClear();
+      type("l");
+      fresh.write.mockImplementationOnce((_data: unknown, done?: () => void) => {
+        type("\x1b[0n", false);
+        done?.();
+      });
+      await act(async () => {
+        const data = new TextEncoder().encode("\x1b[5n");
+        answer({ data, endOffset: 4, epoch: 1, coming: false });
+        await wait(60);
+      });
+      type("x");
+    } finally {
+      inputFrom.known = true;
+    }
+
+    expect(mockSendInput.mock.calls.map((call) => call[1])).toEqual(["l", "x"]);
   });
 
   it("stamps the resumed line with the time the repaint ended", async () => {

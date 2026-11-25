@@ -593,7 +593,10 @@ async fn a_late_cleanup_leaves_a_session_that_was_attached_again() {
     sessions.remove("sess-1");
     let new = registered.start(&mut sessions);
     drop(sessions);
-    late.await.expect("cleanup");
+    tokio::time::timeout(Duration::from_secs(10), late)
+        .await
+        .expect("the cleanup ends")
+        .expect("cleanup");
 
     assert_eq!(registered.present().await, [true; 4]);
     assert!(Arc::ptr_eq(

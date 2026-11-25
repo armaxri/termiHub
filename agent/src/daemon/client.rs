@@ -2659,7 +2659,10 @@ mod tests {
         assert_eq!((end.replay_id, end.position), (None, 2));
 
         client.detach().await;
-        server.await.expect("mock daemon");
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .expect("the mock daemon ends")
+            .expect("mock daemon");
     }
 
     /// #5990: where a buffer ends counts from the last replay of this connection.

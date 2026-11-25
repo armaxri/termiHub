@@ -347,14 +347,37 @@ fn an_end_without_a_code_an_early_end_and_an_open_shell_are_told_apart() {
         ShellEnd::Exited(1)
     );
     // Gone before the watch began: no event, and no five-minute wait.
+    let began = std::time::Instant::now();
     let gone = SessionEndWatch::start(app.handle(), "s3");
     assert_eq!(
         gone.wait(Duration::from_secs(60), || false),
         ShellEnd::NoStatus
     );
+    assert!(began.elapsed() < Duration::from_secs(20));
     let open = SessionEndWatch::start(app.handle(), "s4");
     assert_eq!(
         open.wait(Duration::from_millis(20), || true),
         ShellEnd::StillOpen
     );
+}
+
+/// The session is dropped right before its end is announced (#6004), so the
+/// wait may begin between the two: the code that follows still counts.
+#[test]
+fn an_end_announced_right_after_the_session_was_dropped_is_seen() {
+    let app = tauri::test::mock_app();
+    let watch = SessionEndWatch::start(app.handle(), "s1");
+    let handle = app.handle().clone();
+    let mut announcing = None;
+    let end = watch.wait(Duration::from_secs(60), || {
+        announcing = Some(std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            handle
+                .emit("terminal-exit", exit_event("s1", Some(1)))
+                .unwrap();
+        }));
+        false
+    });
+    announcing.expect("asked").join().unwrap();
+    assert_eq!(end, ShellEnd::Exited(1));
 }
