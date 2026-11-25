@@ -2,7 +2,7 @@
 //! `automations.json`, and the reconcile pass that merges back what an older
 //! build changed in the legacy files (#5818, slice 2).
 //!
-//! Runs at boot, before any automation, macro or workflow manager loads:
+//! Runs at boot, before any automation manager loads:
 //!
 //! 1. `automations.json` missing: copy each legacy file to
 //!    `<name>.pre-automations.bak` once, convert both libraries with
@@ -66,6 +66,27 @@ pub struct LibraryReport {
     /// Automations removed at the switch-over because the old UI had deleted
     /// them from a legacy file during the transition (#5971).
     pub followed_deletions: usize,
+    /// Legacy library files this build cannot use, and why.
+    pub unreadable: Vec<(&'static str, String)>,
+    /// Corrupt entries left out of a legacy file that is new since the last
+    /// sync, one message each.
+    pub dropped: Vec<(&'static str, Vec<String>)>,
+}
+
+impl LibraryReport {
+    /// Take note of what could not be read of one legacy file. `known` is the
+    /// hash of the file at the last sync, whose problems were reported then.
+    fn note<T>(&mut self, file_name: &'static str, read: &LegacyRead<T>, known: Option<&str>) {
+        match read {
+            LegacyRead::Unreadable(why) => self.unreadable.push((file_name, why.clone())),
+            LegacyRead::Read {
+                sha256, dropped, ..
+            } if !dropped.is_empty() && known != Some(sha256.as_str()) => {
+                self.dropped.push((file_name, dropped.clone()));
+            }
+            _ => {}
+        }
+    }
 }
 
 /// One legacy entry, converted, with its fingerprint.
@@ -89,11 +110,14 @@ pub fn migrate_library(dir: &Path) -> Result<LibraryReport> {
         let mut store = first_migration(&macros, &workflows);
         store.legacy_frozen_at = Some(now);
         file.save(&store)?;
-        return Ok(LibraryReport {
+        let mut report = LibraryReport {
             created: true,
             macro_ids: macro_id_map(&store),
             ..LibraryReport::default()
-        });
+        };
+        report.note(MACROS_FILE, &macros, None);
+        report.note(WORKFLOWS_FILE, &workflows, None);
+        return Ok(report);
     }
 
     let raw = fs::read_to_string(file.path()).context("Failed to read automations.json")?;
@@ -106,6 +130,12 @@ pub fn migrate_library(dir: &Path) -> Result<LibraryReport> {
     };
     let before = store.clone();
     let mut report = reconcile(&mut store, &macros, &workflows);
+    let synced = before.migrated_from.as_ref();
+    let hash = |record: Option<&LegacyFileRecord>| record.map(|r| r.sha256.clone());
+    let macros_hash = hash(synced.and_then(|p| p.macros.as_ref()));
+    let workflows_hash = hash(synced.and_then(|p| p.workflows.as_ref()));
+    report.note(MACROS_FILE, &macros, macros_hash.as_deref());
+    report.note(WORKFLOWS_FILE, &workflows, workflows_hash.as_deref());
     if store.legacy_frozen_at.is_none() {
         // A store restored from a backup (no provenance) adopted the legacy
         // files above instead of syncing with them: nothing to follow.
@@ -255,7 +285,7 @@ fn file_record<T>(
             sha256: sha256.clone(),
             entries,
         }),
-        LegacyRead::Unreadable => None,
+        LegacyRead::Unreadable(_) => None,
     }
 }
 
@@ -371,7 +401,7 @@ fn reconcile_file<T>(
         LegacyRead::Absent => return Some(LegacyFileRecord::default()),
         // Keep the last good record so the entries compare correctly once
         // the file can be read again.
-        LegacyRead::Unreadable => return record,
+        LegacyRead::Unreadable(_) => return record,
         LegacyRead::Read {
             version, sha256, ..
         } => (*version, sha256.clone()),
@@ -528,8 +558,8 @@ pub struct BootReport {
 }
 
 /// Run the library, the run-history and the schedules migration over the
-/// config directory `dir`. Call before any automation, macro, workflow or
-/// schedule manager loads.
+/// config directory `dir`. Call before any automation or schedule manager
+/// loads.
 pub fn run_boot_migration(dir: &Path, now: chrono::DateTime<chrono::Utc>) -> Result<BootReport> {
     let library = migrate_library(dir).context("Failed to migrate macros and workflows")?;
     let runs = super::migrate_runs::migrate_runs(dir, &library.macro_ids, now)
@@ -549,6 +579,39 @@ pub fn run_boot_migration(dir: &Path, now: chrono::DateTime<chrono::Utc>) -> Res
         runs,
         schedules,
     })
+}
+
+/// What could not be read of the legacy files, as recovery warnings. Nothing but
+/// the migration reads them, so nothing else would say so.
+pub fn legacy_warnings(report: &LibraryReport) -> Vec<RecoveryWarning> {
+    let unreadable = report
+        .unreadable
+        .iter()
+        .map(|(file_name, why)| RecoveryWarning {
+            file_name: file_name.to_string(),
+            message: format!(
+                "Could not read {file_name}, which an older termiHub version wrote. What it holds \
+                 is not among the automations. The file was left as it is; repair or remove it to \
+                 stop this message."
+            ),
+            details: Some(why.clone()),
+        });
+    let dropped =
+        report
+            .dropped
+            .iter()
+            .map(|(file_name, entries)| RecoveryWarning {
+                file_name: file_name.to_string(),
+                message: format!(
+                "{} corrupt {} of {file_name} could not be read and {} not among the automations. \
+                 The file was left as it is.",
+                entries.len(),
+                if entries.len() == 1 { "entry" } else { "entries" },
+                if entries.len() == 1 { "is" } else { "are" },
+            ),
+                details: Some(entries.join("\n")),
+            });
+    unreadable.chain(dropped).collect()
 }
 
 /// The recovery warning that reports merged-back changes, or `None` when

@@ -4,7 +4,7 @@
 //! in-memory: a restart loses every in-flight, queued, or paused transfer. This
 //! module holds the **metadata-only** on-disk record that makes the queue durable
 //! across restarts, mirroring the persisted workflow run-history store
-//! (`crate::workflows::history`, PROD-0046) in shape and recovery discipline.
+//! (`crate::automations::history`, PROD-0046) in shape and recovery discipline.
 //!
 //! # Security — metadata only, never secrets (the point of PROD-0011's care-zone)
 //!

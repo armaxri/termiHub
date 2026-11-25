@@ -24,6 +24,7 @@ use super::restore::{self, PENDING_DIR};
 use super::tests::{choice, mp_manager, options, PASSPHRASE};
 use super::tests_plugins::{install, plugins_root, theme_manifest};
 use super::*;
+use crate::automations::storage::StoreFile;
 use crate::connection::config::{ConnectionFolder, SavedConnection};
 use crate::connection::credential_scope::owner_id;
 use crate::connection::jump_host_resolver::resolve_credential;
@@ -32,7 +33,6 @@ use crate::credential::types::StorageMode;
 use crate::credential::vault::{self, ConflictStrategy};
 use crate::credential::CredentialManager;
 use crate::macros::config::{Macro, MacroStore};
-use crate::macros::storage::MacroStorage;
 use crate::session::ssh_host_key_verifier::{
     SshHostKeyEventSink, SshHostKeyPromptClosedEvent, SshHostKeyPromptEvent,
     SshHostKeyTrustedEvent, SshHostKeyVerifier,
@@ -118,7 +118,7 @@ fn populate_source(dir: &Path) -> (Arc<CredentialManager>, String) {
         updated_at: created_at(),
         extra: Default::default(),
     };
-    MacroStorage::new_test(dir)
+    StoreFile::<MacroStore>::in_dir(dir)
         .save(&MacroStore {
             macros: vec![macro_],
             ..MacroStore::default()
@@ -163,7 +163,7 @@ fn restore_after_restart_brings_back_connections_macro_theme_and_saved_password(
     // Staged only: the running app still sees its old (empty) stores.
     assert!(dst.path().join(PENDING_DIR).exists());
     assert!(!dst.path().join("connections.json").exists());
-    assert!(MacroStorage::new_test(dst.path())
+    assert!(StoreFile::<MacroStore>::in_dir(dst.path())
         .load_with_recovery()
         .unwrap()
         .data
@@ -198,7 +198,7 @@ fn restore_after_restart_brings_back_connections_macro_theme_and_saved_password(
     assert_eq!(ops.icon_emoji.as_deref(), Some("\u{1F6E0}"));
 
     assert_eq!(connections.get_settings().theme.as_deref(), Some(THEME));
-    let macros = MacroStorage::new_test(dst.path())
+    let macros = StoreFile::<MacroStore>::in_dir(dst.path())
         .load_with_recovery()
         .unwrap();
     assert!(macros.warnings.is_empty());

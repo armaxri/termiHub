@@ -63,13 +63,7 @@ import {
   setWorkflowOutputProcessResult,
 } from "../workflowRunBridge";
 import { automationForRun, recordAutomationRun } from "./automationStoreState";
-import {
-  collectNestedRun,
-  nestedRunRecord,
-  type FinishedRun,
-  workflowRunToAutomationRun,
-  workflowToAutomation,
-} from "./automationViews";
+import { collectNestedRun, nestedRunRecord, workflowToAutomation } from "./automationViews";
 import type { LocalProcessAuthDecision, WorkflowRunOutputLine } from "./workflowsSlice";
 
 /**
@@ -592,10 +586,10 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
   // Persist a metadata-only record of this run (PROD-0046). Fire-and-forget:
   // a history-write failure must NEVER fail or block the run, so it is logged
   // (never rethrown) and the returned, capped list is mirrored into the store.
-  const runRecord: FinishedRun = {
+  const runRecord: AutomationRun = {
     id: newId("workflow-run"),
-    workflowId,
-    workflowName: workflow.name,
+    automationId: workflowId,
+    automationName: workflow.name,
     startedAt,
     endedAt: new Date().toISOString(),
     status: result.status,
@@ -606,10 +600,10 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     continuedFailures: result.continuedFailures?.length || undefined,
     tabId: targetTabId,
     targetLabel: targetLabel || undefined,
-    triggeredBy,
+    origin: triggeredBy,
   };
   for (const nested of nestedRuns.values()) recordAutomationRun(set, nested, "workflow");
-  recordAutomationRun(set, workflowRunToAutomationRun(runRecord), "workflow");
+  recordAutomationRun(set, runRecord, "workflow");
 
   // Settle this run's keyed region entry (#3418). Keyed by run id, a run a newer
   // runWorkflow superseded settles only itself and cannot stamp the newer run's

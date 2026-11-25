@@ -1,32 +1,25 @@
 /**
- * Thin adapters between the single automation store and the two legacy views
- * (#5818, slice 4). The store holds `Automation`s and `AutomationRun`s only; the
- * Macros and Workflows sidebars, editors and palette entries keep reading
- * `Macro` / `Workflow` / `MacroRun` / `WorkflowRun` objects, which these
- * **pure** functions derive from it, and write back through them. The one
- * Automation history panel (slice 9) reads `AutomationRun`s directly.
+ * The two views of an automation that the run paths take (#5818): keys that are
+ * typed (`Macro`) and steps that are run (`Workflow`). The store holds
+ * `Automation`s only; these **pure** functions derive the views from it, and
+ * convert the entries of old files.
  *
  * Which view an automation shows in: an automation with only `type-keys` steps,
  * no triggers and no parameters is a macro; everything else is a workflow. An
  * automation with no steps follows its `legacy` provenance (a macro only when
- * it came from `macros.json`). Every automation shows in exactly one view.
- *
- * A run belongs to the `macroRuns` view (the macro rows' "Last run") when it
- * carries `targetCount` (macro playbacks always record it, migrated macro runs
- * too) and to the `workflowRuns` view otherwise.
+ * it came from `macros.json`). Every automation has exactly one view.
  */
 import { newId } from "@/services/transport/ids";
 import type { WorkflowNestedRunEvent } from "@/services/workflowRunner";
 import type { Automation } from "@/types/generated/Automation";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
-import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
-import type { Macro, MacroRun, MacroRunOrigin, MacroStep } from "@/types/macro";
-import type { Workflow, WorkflowRun, WorkflowRunTrigger, WorkflowStep } from "@/types/workflow";
+import type { Macro, MacroStep } from "@/types/macro";
+import type { Workflow, WorkflowStep } from "@/types/workflow";
 
 type TypeKeysStep = Extract<AutomationStep, { kind: "type-keys" }>;
 
-/** Whether `automation` shows in the Macros view (see the module docs). */
+/** Whether `automation` only types keys (see the module docs). */
 export function isMacroShaped(automation: Automation): boolean {
   if (automation.triggers.length > 0 || (automation.parameters?.length ?? 0) > 0) return false;
   if (automation.steps.length === 0) return automation.legacy?.from === "macro";
@@ -194,138 +187,6 @@ export function libraryViews(automations: readonly Automation[]): {
     else workflows.push(automationToWorkflow(automation));
   }
   return { macros, workflows };
-}
-
-/** Whether a run shows in the Macros history (see the module docs). */
-export function isMacroRun(run: AutomationRun): boolean {
-  return run.targetCount !== undefined && run.targetCount !== null;
-}
-
-const MACRO_ORIGIN: Partial<Record<AutomationRunOrigin, MacroRunOrigin>> = {
-  manual: "manual",
-  palette: "palette",
-  scheduled: "scheduled",
-  "run-by-automation": "workflow-step",
-};
-
-/** The macro-history view of a run. */
-export function automationRunToMacroRun(run: AutomationRun): MacroRun {
-  const labels = run.targetLabels?.length
-    ? run.targetLabels
-    : run.targetLabel
-      ? [run.targetLabel]
-      : undefined;
-  const view: MacroRun = {
-    id: run.id,
-    macroId: run.automationId,
-    macroName: run.automationName,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt,
-    status: run.status === "failed" ? "error" : run.status,
-    stepsPlayed: run.stepsCompleted,
-    totalSteps: run.total,
-    targetCount: run.targetCount ?? labels?.length ?? 1,
-    origin: MACRO_ORIGIN[run.origin] ?? "manual",
-  };
-  if (labels) view.targetLabels = labels;
-  if (run.error) view.error = run.error;
-  return view;
-}
-
-const WORKFLOW_TRIGGER: Partial<Record<AutomationRunOrigin, WorkflowRunTrigger>> = {
-  manual: "manual",
-  hotkey: "hotkey",
-  scheduled: "scheduled",
-  "on-connect": "on-connect",
-  "on-disconnect": "on-disconnect",
-  "on-output-match": "on-output-match",
-};
-
-/** The workflow-history view of a run. */
-export function automationRunToWorkflowRun(run: AutomationRun): WorkflowRun {
-  const view: WorkflowRun = {
-    id: run.id,
-    workflowId: run.automationId,
-    workflowName: run.automationName,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt,
-    status: run.status,
-    stepsCompleted: run.stepsCompleted,
-    total: run.total,
-    triggeredBy: WORKFLOW_TRIGGER[run.origin] ?? "manual",
-  };
-  if (run.failedStepIndex !== undefined) view.failedStepIndex = run.failedStepIndex;
-  if (run.error) view.error = run.error;
-  if (run.continuedFailures !== undefined) view.continuedFailures = run.continuedFailures;
-  if (run.tabId) view.tabId = run.tabId;
-  if (run.targetLabel) view.targetLabel = run.targetLabel;
-  return view;
-}
-
-/** The two history views of the store, newest first like the store. */
-export function runViews(runs: readonly AutomationRun[]): {
-  macroRuns: MacroRun[];
-  workflowRuns: WorkflowRun[];
-} {
-  const macroRuns: MacroRun[] = [];
-  const workflowRuns: WorkflowRun[] = [];
-  for (const run of runs) {
-    if (isMacroRun(run)) macroRuns.push(automationRunToMacroRun(run));
-    else workflowRuns.push(automationRunToWorkflowRun(run));
-  }
-  return { macroRuns, workflowRuns };
-}
-
-const FROM_MACRO_ORIGIN: Record<MacroRunOrigin, AutomationRunOrigin> = {
-  manual: "manual",
-  palette: "palette",
-  scheduled: "scheduled",
-  "workflow-step": "run-by-automation",
-};
-
-/** A finished macro playback as an automation run (mirrors the Rust migration). */
-export function macroRunToAutomationRun(run: MacroRun): AutomationRun {
-  const record: AutomationRun = {
-    id: run.id,
-    automationId: run.macroId,
-    automationName: run.macroName,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt,
-    status: run.status === "error" ? "failed" : run.status,
-    stepsCompleted: run.stepsPlayed,
-    total: run.totalSteps,
-    targetCount: run.targetCount,
-    origin: FROM_MACRO_ORIGIN[run.origin],
-  };
-  const labels = run.targetLabels ?? [];
-  if (labels.length > 0) record.targetLabels = labels;
-  if (labels.length === 1) record.targetLabel = labels[0];
-  if (run.error) record.error = run.error;
-  return record;
-}
-
-/** A finished step-by-step run; unlike the workflow view, any origin. */
-export type FinishedRun = Omit<WorkflowRun, "triggeredBy"> & { triggeredBy: AutomationRunOrigin };
-
-/** A finished workflow run as an automation run (mirrors the Rust migration). */
-export function workflowRunToAutomationRun(run: FinishedRun): AutomationRun {
-  const record: AutomationRun = {
-    id: run.id,
-    automationId: run.workflowId,
-    automationName: run.workflowName,
-    startedAt: run.startedAt,
-    endedAt: run.endedAt,
-    status: run.status,
-    stepsCompleted: run.stepsCompleted,
-    total: run.total,
-    origin: run.triggeredBy,
-  };
-  if (run.failedStepIndex !== undefined) record.failedStepIndex = run.failedStepIndex;
-  if (run.error) record.error = run.error;
-  if (run.continuedFailures !== undefined) record.continuedFailures = run.continuedFailures;
-  if (run.tabId) record.tabId = run.tabId;
-  if (run.targetLabel) record.targetLabel = run.targetLabel;
-  return record;
 }
 
 /**

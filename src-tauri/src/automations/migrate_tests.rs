@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use super::config::{AutomationStep, LegacySource};
 use super::legacy::{sha256_hex, BAK_SUFFIX};
 use super::manager::AutomationManager;
-use super::migrate::{merge_warning, run_boot_migration, CONFLICT_SUFFIX};
+use super::migrate::{legacy_warnings, merge_warning, run_boot_migration, CONFLICT_SUFFIX};
 use super::storage::StoreFile;
 use super::store::AutomationStore;
 
@@ -529,6 +529,58 @@ fn a_corrupt_legacy_entry_is_salvaged_in_memory_only() {
         raw
     );
     assert!(!dir.path().join("macros.json.bak").exists());
+}
+
+#[test]
+fn what_cannot_be_read_of_a_legacy_file_is_reported() {
+    let dir = TempDir::new().unwrap();
+    seed(dir.path());
+    assert!(legacy_warnings(&run_boot_migration(dir.path(), now()).unwrap().library).is_empty());
+
+    // A corrupt entry: reported when the file is new, not on every start.
+    let raw = json!({ "version": "1", "macros": [
+        macro_entry("macro-1", "List", "ls\r", "2026-02-01T00:00:00Z"),
+        "not a macro"
+    ]});
+    fs::write(dir.path().join("macros.json"), raw.to_string()).unwrap();
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    let warnings = legacy_warnings(&report.library);
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].file_name, "macros.json");
+    assert!(warnings[0].message.starts_with("1 corrupt entry of macros.json"));
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    assert!(legacy_warnings(&report.library).is_empty());
+
+    // A file that cannot be read at all: reported until it is repaired.
+    fs::write(dir.path().join("workflows.json"), "{ not json").unwrap();
+    for _ in 0..2 {
+        let report = run_boot_migration(dir.path(), now()).unwrap();
+        let warnings = legacy_warnings(&report.library);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("Could not read workflows.json"));
+        assert!(warnings[0].details.is_some());
+    }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("workflows.json")).unwrap(),
+        "{ not json",
+        "never written"
+    );
+}
+
+#[test]
+fn the_first_migration_reports_what_it_could_not_read() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("macros.json"),
+        r#"{"version":"1","macros":["bad","worse"]}"#,
+    )
+    .unwrap();
+    fs::write(dir.path().join("workflows.json"), [0xff, 0xfe, 0x00]).unwrap();
+    let report = run_boot_migration(dir.path(), now()).unwrap();
+    let warnings = legacy_warnings(&report.library);
+    let files: Vec<_> = warnings.iter().map(|w| w.file_name.as_str()).collect();
+    assert_eq!(files, ["workflows.json", "macros.json"]);
+    assert!(warnings[1].message.starts_with("2 corrupt entries of macros.json"));
 }
 
 /// Rewrite `automations.json` as a build from before the switch-over (slices

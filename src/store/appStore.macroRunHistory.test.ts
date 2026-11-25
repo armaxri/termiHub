@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
-import type { Macro, MacroRun } from "@/types/macro";
+import type { Macro } from "@/types/macro";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -57,7 +57,6 @@ import {
   clearAutomationRunHistory as apiClearMacroRunHistory,
 } from "@/services/automationApi";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
-import { automationRunToMacroRun } from "./slices/automationViews";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 
 const SECRET = "hunter2-secret-input";
@@ -91,10 +90,10 @@ function seedFleet() {
   seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
-/** Wait until the fire-and-forget record lands, then return its macro view. */
-async function lastRecorded(): Promise<MacroRun> {
+/** Wait until the fire-and-forget record lands, then return it. */
+async function lastRecorded(): Promise<AutomationRun> {
   await vi.waitFor(() => expect(recorded.length).toBeGreaterThan(0));
-  return automationRunToMacroRun(recorded[0]);
+  return recorded[0];
 }
 
 describe("appStore — macro run history (#3543)", () => {
@@ -120,12 +119,12 @@ describe("appStore — macro run history (#3543)", () => {
 
     const run = await lastRecorded();
     expect(run).toMatchObject({
-      macroId: "m1",
-      macroName: "Macro m1",
+      automationId: "m1",
+      automationName: "Macro m1",
       status: "completed",
       origin: "manual",
-      stepsPlayed: 1,
-      totalSteps: 1,
+      stepsCompleted: 1,
+      total: 1,
       targetCount: 1,
       targetLabels: ["title-a"],
     });
@@ -133,7 +132,7 @@ describe("appStore — macro run history (#3543)", () => {
     expect(Date.parse(run.endedAt)).toBeGreaterThanOrEqual(Date.parse(run.startedAt));
     expect(JSON.stringify(run)).not.toContain(SECRET);
     // The store's list is refreshed from the backend's response.
-    await vi.waitFor(() => expect(useAppStore.getState().macroRuns).toHaveLength(1));
+    await vi.waitFor(() => expect(useAppStore.getState().automationRuns).toHaveLength(1));
   });
 
   it("records the caller's origin and hands it the record", async () => {
@@ -154,8 +153,8 @@ describe("appStore — macro run history (#3543)", () => {
     await useAppStore.getState().playMacro("m1");
 
     const run = await lastRecorded();
-    expect(run.status).toBe("error");
-    expect(run.stepsPlayed).toBe(0);
+    expect(run.status).toBe("failed");
+    expect(run.stepsCompleted).toBe(0);
     expect(run.error).toMatch(/stopped accepting input/);
   });
 
@@ -238,15 +237,15 @@ describe("appStore — macro run history (#3543)", () => {
   });
 
   it("stores an empty history when the backend replies with a non-array (#2979)", async () => {
-    useAppStore.setState({ macroRuns: [{ id: "stale" }] as never });
+    useAppStore.setState({ automationRuns: [{ id: "stale" }] as never });
     vi.mocked(apiListMacroRuns).mockResolvedValueOnce(null as never);
-    await useAppStore.getState().loadMacroRuns();
-    expect(useAppStore.getState().macroRuns).toEqual([]);
+    await useAppStore.getState().loadAutomationRuns();
+    expect(useAppStore.getState().automationRuns).toEqual([]);
 
-    useAppStore.setState({ macroRuns: [{ id: "stale" }] as never });
+    useAppStore.setState({ automationRuns: [{ id: "stale" }] as never });
     vi.mocked(apiClearMacroRunHistory).mockResolvedValueOnce(undefined as never);
-    await useAppStore.getState().clearMacroRunHistory();
-    expect(useAppStore.getState().macroRuns).toEqual([]);
+    await useAppStore.getState().clearAutomationRuns();
+    expect(useAppStore.getState().automationRuns).toEqual([]);
   });
 
   it("loads and clears the history", async () => {
@@ -254,44 +253,11 @@ describe("appStore — macro run history (#3543)", () => {
     await useAppStore.getState().playMacro("m1");
     await lastRecorded();
 
-    useAppStore.setState({ macroRuns: [] });
-    await useAppStore.getState().loadMacroRuns();
-    expect(useAppStore.getState().macroRuns).toHaveLength(1);
+    useAppStore.setState({ automationRuns: [] });
+    await useAppStore.getState().loadAutomationRuns();
+    expect(useAppStore.getState().automationRuns).toHaveLength(1);
 
-    await useAppStore.getState().clearMacroRunHistory();
-    expect(useAppStore.getState().macroRuns).toEqual([]);
-  });
-
-  it("records into the automation history and clears only the macro runs (#5818)", async () => {
-    useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
-    await useAppStore.getState().playMacro("m1");
-    await lastRecorded();
-    expect(recorded[0]).toMatchObject({
-      automationId: "m1",
-      status: "completed",
-      stepsCompleted: 1,
-      total: 1,
-      targetCount: 1,
-      targetLabel: "title-a",
-    });
-    // A workflow run shares the store but not the macro history.
-    recorded.push({
-      id: "wrun-1",
-      automationId: "w1",
-      automationName: "Deploy",
-      startedAt: "2026-11-24T10:00:00Z",
-      endedAt: "2026-11-24T10:00:01Z",
-      status: "completed",
-      stepsCompleted: 1,
-      total: 1,
-      origin: "manual",
-    });
-    await useAppStore.getState().loadMacroRuns();
-    expect(useAppStore.getState().macroRuns.map((r) => r.macroId)).toEqual(["m1"]);
-    expect(useAppStore.getState().workflowRuns.map((r) => r.id)).toEqual(["wrun-1"]);
-
-    await useAppStore.getState().clearMacroRunHistory();
-    expect(useAppStore.getState().macroRuns).toEqual([]);
-    expect(useAppStore.getState().workflowRuns.map((r) => r.id)).toEqual(["wrun-1"]);
+    await useAppStore.getState().clearAutomationRuns();
+    expect(useAppStore.getState().automationRuns).toEqual([]);
   });
 });

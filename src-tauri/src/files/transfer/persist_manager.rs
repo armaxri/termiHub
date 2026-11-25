@@ -6,7 +6,7 @@
 //! flushed), and the store is written **only on a status change or a coarse byte
 //! checkpoint** — never per-chunk — so a hot progress stream costs nothing.
 //!
-//! Mirrors `crate::workflows::history_manager::WorkflowRunHistoryManager` in
+//! Mirrors `crate::automations::history_manager::AutomationRunHistoryManager` in
 //! construction and recovery-warning handling.
 
 use std::sync::mpsc::{self, Sender};

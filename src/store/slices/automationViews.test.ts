@@ -5,21 +5,15 @@
 import { describe, it, expect } from "vitest";
 
 import type { Automation } from "@/types/generated/Automation";
-import type { AutomationRun } from "@/types/generated/AutomationRun";
-import type { Macro, MacroRun } from "@/types/macro";
-import type { Workflow, WorkflowRun } from "@/types/workflow";
+import type { Macro } from "@/types/macro";
+import type { Workflow } from "@/types/workflow";
 
 import {
-  automationRunToMacroRun,
-  automationRunToWorkflowRun,
   automationToMacro,
   automationToWorkflow,
   isMacroShaped,
   libraryViews,
-  macroRunToAutomationRun,
   macroToAutomation,
-  runViews,
-  workflowRunToAutomationRun,
   workflowToAutomation,
 } from "./automationViews";
 
@@ -173,65 +167,5 @@ describe("workflow view", () => {
       steps: [],
       triggers: [],
     });
-  });
-});
-
-describe("run views", () => {
-  const macroRun: MacroRun = {
-    id: "mr",
-    macroId: "m1",
-    macroName: "List",
-    startedAt: "s",
-    endedAt: "e",
-    status: "error",
-    stepsPlayed: 1,
-    totalSteps: 2,
-    targetCount: 2,
-    targetLabels: ["a", "b"],
-    origin: "workflow-step",
-    error: "boom",
-  };
-  const workflowRun: WorkflowRun = {
-    id: "wr",
-    workflowId: "w1",
-    workflowName: "Deploy",
-    startedAt: "s",
-    endedAt: "e",
-    status: "failed",
-    stepsCompleted: 0,
-    total: 3,
-    failedStepIndex: 0,
-    error: "nope",
-    tabId: "t",
-    targetLabel: "prod",
-    triggeredBy: "on-output-match",
-  };
-
-  it("round-trips a macro run through the automation history", () => {
-    const stored = macroRunToAutomationRun(macroRun);
-    expect(stored).toMatchObject({ status: "failed", origin: "run-by-automation", targetCount: 2 });
-    expect(automationRunToMacroRun(stored)).toEqual(macroRun);
-  });
-
-  it("round-trips a workflow run through the automation history", () => {
-    const stored = workflowRunToAutomationRun(workflowRun);
-    expect(stored.targetCount).toBeUndefined();
-    expect(automationRunToWorkflowRun(stored)).toEqual(workflowRun);
-  });
-
-  it("splits the history by targetCount and maps origins either view lacks", () => {
-    const palette: AutomationRun = {
-      ...workflowRunToAutomationRun(workflowRun),
-      id: "p",
-      origin: "palette",
-    };
-    const hotkeyMacro: AutomationRun = {
-      ...macroRunToAutomationRun(macroRun),
-      id: "h",
-      origin: "hotkey",
-    };
-    const { macroRuns, workflowRuns } = runViews([palette, hotkeyMacro]);
-    expect(macroRuns.map((r) => [r.id, r.origin])).toEqual([["h", "manual"]]);
-    expect(workflowRuns.map((r) => [r.id, r.triggeredBy])).toEqual([["p", "manual"]]);
   });
 });

@@ -4,7 +4,7 @@ import { toast } from "@/components/ui";
 import { claimWorkflowRunToast } from "./workflowRunToasts";
 import type { WorkflowParamValues } from "@/services/workflowRunner";
 import type { AutomationRunOrigin } from "@/types/generated/AutomationRunOrigin";
-import { Workflow, WorkflowParameter, WorkflowRun } from "@/types/workflow";
+import type { Workflow, WorkflowParameter } from "@/types/workflow";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
 import { localProcessRefusal, localProcessRefusalToastId } from "../localProcessRefusal";
@@ -12,7 +12,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import type { AppState } from "../appStore";
 import { getActiveTab } from "../layoutHelpers";
 import { automationForRun } from "./automationStoreState";
-import { automationToWorkflow, isMacroShaped, workflowToAutomation } from "./automationViews";
+import { automationToWorkflow, isMacroShaped } from "./automationViews";
 import {
   clampFanoutConcurrency,
   describeFanoutProgress,
@@ -186,12 +186,6 @@ export interface WorkflowsSlice {
   // Workflows (#1852) — the foundation of the Workflow Automation epic (#1851).
   /** All stored workflows. */
   workflows: Workflow[];
-  /** Load the workflow library from the backend into the store. */
-  loadWorkflows: () => Promise<void>;
-  /** Save (add or update) a workflow, then refresh the list. Returns the stored workflow. */
-  saveWorkflowToBackend: (workflow: Workflow) => Promise<Workflow>;
-  /** Delete a workflow by ID; only mutates local state after the backend delete resolves. */
-  deleteWorkflowFromBackend: (workflowId: string) => Promise<void>;
   /**
    * Arm (`true`) or disarm (`false`) a workflow's automatic triggers (#5674)
    * without touching its trigger bindings, then refresh the list (which also
@@ -199,16 +193,6 @@ export interface WorkflowsSlice {
    * or the save fails; the store is unchanged then.
    */
   setWorkflowTriggersEnabled: (workflowId: string, enabled: boolean) => Promise<void>;
-  /**
-   * Persisted, metadata-only history of recent workflow runs (PROD-0046),
-   * most-recent first. Populated by {@link loadWorkflowRuns} and refreshed as a
-   * side effect of each finished run's fire-and-forget record.
-   */
-  workflowRuns: WorkflowRun[];
-  /** Load the run history from the backend into the store. */
-  loadWorkflowRuns: () => Promise<void>;
-  /** Clear the persisted run history, then refresh the (now empty) list. */
-  clearWorkflowRunHistory: () => Promise<void>;
   /**
    * Run a stored workflow's steps against a target terminal, dispatching each
    * step through the shared `send_input` seam and surfacing live progress.
@@ -252,16 +236,6 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
   // Workflows (#1852)
   workflows: [],
 
-  // The library and history live in the automation store (#5818, slice 4);
-  // these are thin adapters that read and write it through the workflow view.
-  loadWorkflows: () => get().loadAutomations(),
-
-  saveWorkflowToBackend: async (workflow) => {
-    const existing = get().automations.find((a) => a.id === workflow.id);
-    const saved = await get().saveAutomationToBackend(workflowToAutomation(workflow, existing));
-    return automationToWorkflow(saved);
-  },
-
   setWorkflowTriggersEnabled: async (workflowId, enabled) => {
     // The stored automation itself, so nothing a view cannot show is lost (#6009).
     const stored = automationForRun(get(), workflowId);
@@ -270,15 +244,6 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     const { triggersEnabled: _previous, ...rest } = stored;
     await get().saveAutomationToBackend(enabled ? rest : { ...rest, triggersEnabled: false });
   },
-
-  deleteWorkflowFromBackend: (workflowId) => get().deleteAutomationFromBackend(workflowId),
-
-  workflowRuns: [],
-
-  loadWorkflowRuns: () => get().loadAutomationRuns(),
-
-  // Clears only the runs this history shows; macro runs stay.
-  clearWorkflowRunHistory: () => get().clearAutomationRuns(get().workflowRuns.map((r) => r.id)),
 
   runWorkflow: async (workflowId, opts) => {
     const workflow =

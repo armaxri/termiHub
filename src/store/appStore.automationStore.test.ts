@@ -258,14 +258,4 @@ describe("appStore — single automation store (#5818, slice 4)", () => {
     expect(await useAppStore.getState().playMacro("ghost")).toBeNull();
     expect(getAutomation).toHaveBeenCalledWith("ghost");
   });
-
-  it("saves a workflow view edit back without losing the stored provenance", async () => {
-    useAppStore.setState(automationLibraryState([workflow]));
-    const view = useAppStore.getState().workflows[0];
-    const { saveAutomation } = await import("@/services/automationApi");
-
-    await useAppStore.getState().saveWorkflowToBackend({ ...view, name: "Renamed" });
-
-    expect(saveAutomation).toHaveBeenCalledWith({ ...workflow, name: "Renamed" });
-  });
 });

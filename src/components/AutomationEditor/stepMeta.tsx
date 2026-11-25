@@ -22,7 +22,7 @@ import type { Automation } from "@/types/generated/Automation";
 import type { AutomationStep } from "@/types/generated/AutomationStep";
 import type { AutomationTrigger } from "@/types/generated/AutomationTrigger";
 import type { TypingSpeed } from "@/types/generated/TypingSpeed";
-import type { WorkflowComparisonOp, WorkflowCondition, WorkflowRunTrigger } from "@/types/workflow";
+import type { WorkflowComparisonOp, WorkflowCondition } from "@/types/workflow";
 import { DEFAULT_FIXED_DELAY_MS } from "@/services/macroPlayback";
 import { t } from "@/i18n/catalog";
 import { formatMacroStepData } from "./keysFormat";
@@ -173,12 +173,11 @@ export function triggerKindIcon(
 }
 
 /**
- * Human-readable label of a trigger kind, or of what launched a recorded run
- * (`WorkflowRunTrigger` is the trigger kinds plus `scheduled`). One map so the
+ * Human-readable label of a trigger kind, or of what else starts a run. One map so the
  * editor, the row's trigger marker and the run history use the same wording
  * (#5529).
  */
-export function triggerKindLabel(kind: WorkflowRunTrigger): string {
+export function triggerKindLabel(kind: AutomationTriggerKind | "manual"): string {
   switch (kind) {
     case "manual":
       return "Manual";
@@ -186,8 +185,6 @@ export function triggerKindLabel(kind: WorkflowRunTrigger): string {
       return "On connect";
     case "hotkey":
       return "Hotkey";
-    case "scheduled":
-      return "Scheduled";
     case "on-disconnect":
       return t("workflow.trigger.onDisconnect.label");
     case "on-output-match":
