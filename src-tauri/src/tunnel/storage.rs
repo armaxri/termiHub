@@ -140,6 +140,7 @@ mod tests {
                 start_with_connection: false,
                 reconnect_on_disconnect: false,
                 companion_of: None,
+                extra: Default::default(),
             }],
         };
         let mut value = serde_json::to_value(&good).unwrap();
