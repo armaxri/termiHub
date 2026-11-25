@@ -21,6 +21,8 @@ mod key_load;
 #[cfg(any(test, feature = "ssh-test-support"))]
 pub mod ki_test_server;
 mod legacy_pem;
+#[cfg(test)]
+pub(crate) mod locking_sftp_test_server;
 mod monitoring;
 mod process;
 mod prompt_clock;

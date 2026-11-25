@@ -499,6 +499,10 @@ pub async fn run_sftp_remote_copy(
 }
 
 #[cfg(test)]
+#[path = "sftp_close_tests.rs"]
+mod close_tests;
+
+#[cfg(test)]
 mod tests {
     //! A cancel while the SFTP executor waits on a dead connection — the
     //! up-front probe or a per-attempt channel open — settles promptly (#4672).
