@@ -1219,7 +1219,7 @@ export async function executeStep(
     case "wait-for-user": {
       if (!deps.waitForUser) return { ok: false, error: WAIT_FOR_USER_NOBODY, fatal: true };
       const result = await deps.waitForUser(resolved.message, { signal });
-      if (cancelled() || result === "cancelled") return { ok: true, cancelled: true };
+      if (result === "cancelled") return { ok: true, cancelled: true };
       if (result === "continued") return { ok: true };
       return { ok: false, error: WAIT_FOR_USER_ERROR[result], fatal: true };
     }
