@@ -347,9 +347,13 @@ describe("Continue", () => {
     vi.useFakeTimers();
     let arrived = 0;
     let busy = false;
+    // While busy, more has arrived whenever it answers.
     const read = (then: (before: string | null) => void) => {
-      if (busy) arrived += 1;
-      then("Password: ");
+      if (!busy) return then("Password: ");
+      setTimeout(() => {
+        arrived += 1;
+        then("Password: ");
+      }, 10);
     };
     takeBack.push(registerTerminalPrompt("a", { read, arrived: () => arrived, pin }));
     const wait = startWait();
