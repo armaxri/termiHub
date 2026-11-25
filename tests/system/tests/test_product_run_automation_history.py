@@ -234,7 +234,7 @@ class TestProductRunAutomationHistory(
             "automation-history.panel",
             "One history lists macro and workflow runs; rows show name, dot and time only",
             expect="the Automations sidebar's History: the four new runs, newest first, each row "
-            "only the automation's name, a status dot and 'just now'; the nested run opened, "
+            "only the automation's name, a status dot and 'today HH:MM'; the nested run opened, "
             "showing 'Started by: Run by another automation', its steps and the terminal",
         ):
             self.require("automation-history.records")

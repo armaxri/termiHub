@@ -907,6 +907,29 @@ export function handleCommand(cmd: string, args: Args): unknown {
         scenario.automationData?.schedules ??
         (populated ? SCHEDULES : { paused: false, schedules: [] })
       );
+    case "preview_schedule_next_run": {
+      // Close enough for a picture: the next such time, day rules left out.
+      const rule = args?.rule as { kind: string; everyMinutes?: number; time?: string };
+      const next = new Date();
+      if (rule.kind === "interval") {
+        if (!rule.everyMinutes) return null;
+        next.setMinutes(next.getMinutes() + rule.everyMinutes);
+      } else {
+        const [hours, minutes] = (rule.time ?? "").split(":").map(Number);
+        if (Number.isNaN(hours) || minutes === undefined) return null;
+        next.setHours(hours, minutes, 0, 0);
+        if (next <= new Date()) next.setDate(next.getDate() + 1);
+      }
+      return next.toISOString();
+    }
+    case "save_schedule":
+      return {
+        ...(args?.schedule as object),
+        enabled: false,
+        running: false,
+        createdAt: STAMP,
+        updatedAt: STAMP,
+      };
     case "get_credential_store_status":
       return scenario.credentialStore ?? { mode: "none", status: "unavailable" };
     case "unlock_credential_store":

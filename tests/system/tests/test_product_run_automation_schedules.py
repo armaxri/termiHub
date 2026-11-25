@@ -41,6 +41,7 @@ from termihub_harness.product_run.automation_schedules import (
     edit_problems,
     linked_run_problems,
     schedule_file_problems,
+    schedule_row_problems,
 )
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
@@ -142,6 +143,49 @@ def test_grade_edit_that_did_not_take_or_lost_the_schedule_fails():
     assert edit_problems(_edited(), _edited(new=1), {}) == ["new is 1, not None"]
 
 
+def _row_problems(schedule: dict[str, Any], **texts: str) -> list[str]:
+    lines = {
+        "status": "Next run tomorrow 02:00",
+        "rule": "Daily at 02:00",
+        "what": "Backup on db-1",
+        "last": "",
+        **texts,
+    }
+    return schedule_row_problems(lines, schedule, automation_name="Backup", targets="db-1")
+
+
+def test_grade_row_that_answers_everything_passes():
+    assert _row_problems({"enabled": True}) == []
+    assert _row_problems({"enabled": False}, status="Off until you switch it on") == []
+    ran = {"enabled": False, "lastResult": {"outcome": "completed"}}
+    assert _row_problems(ran, status="Off", last="Last run completed (today 02:00)") == []
+    missed = {"enabled": True, "lastResult": {"outcome": "skipped"}}
+    text = "Last run missed: termiHub was closed or the computer was asleep (due today 02:00)"
+    assert _row_problems(missed, last=text) == []
+
+
+def test_grade_row_without_an_answer_fails():
+    assert _row_problems({"enabled": True}, status="") == [
+        "a schedule that is on reads '', not its next run"
+    ]
+    assert _row_problems({"enabled": False}, status="Disabled") == [
+        "a schedule that is off reads 'Disabled'",
+        "'Disabled' is on the row: 'Disabled'",
+    ]
+    assert _row_problems({"enabled": True}, rule="") == ["the row does not say the rule"]
+    assert _row_problems({"enabled": True}, what="Backup") == [
+        "the row says 'Backup', not 'Backup on db-1'"
+    ]
+    failed = {"enabled": True, "lastResult": {"outcome": "failed"}}
+    assert _row_problems(failed) == ["the row does not say how the last run ended: ''"]
+    assert _row_problems(failed, last="Last run completed (today 02:00)") == [
+        "the last run reads 'Last run completed (today 02:00)'"
+    ]
+    assert _row_problems({"enabled": True}, last="Last run failed") == [
+        "a schedule that never ran says 'Last run failed'"
+    ]
+
+
 # ── live grade ────────────────────────────────────────────────────────────
 @pytest.mark.product_run
 @pytest.mark.integration
@@ -173,6 +217,19 @@ class TestProductRunAutomationSchedules(
         doc = self._stored(AUTOMATION_RUNS_FILE)
         runs = doc.get("runs") if isinstance(doc, dict) else None
         return runs if isinstance(runs, list) else []
+
+    def _grade_row(self, schedule_id: str, automation_name: str, label: str) -> None:
+        """Grade the schedule's row in Settings -> Schedules and take its picture."""
+        texts = self.schedule_row_texts(schedule_id)
+        self.evidence(f"row {texts}")
+        problems = schedule_row_problems(
+            texts,
+            self.schedule(schedule_id) or {},
+            automation_name=automation_name,
+            targets=f"pr-sched-local-{self.tag}",
+        )
+        self.shot(label=label)
+        assert not problems, problems
 
     def _fires_and_links(self, schedule_id: str, automation_id: str, marker: str) -> None:
         """Enable the schedule, wait for its first run, grade it, switch it off."""
@@ -229,7 +286,7 @@ class TestProductRunAutomationSchedules(
             self.ids["typed"] = self.create_macro(f"Sched typed {t}", [f"echo PR_SCHED_T_{t}\\r"])
             sid = self.schedule_automation(self.ids["typed"], f"Typed every minute {t}", self.ids["conn"])
             self._fires_and_links(sid, self.ids["typed"], f"PR_SCHED_T_{t}")
-            self.shot(label="typed-disabled")
+            self._grade_row(sid, f"Sched typed {t}", "typed-off")
 
     def test_20_command_automation_on_a_schedule(self):
         with self.step(
@@ -250,6 +307,6 @@ class TestProductRunAutomationSchedules(
                 self.ids["command"], f"Command every minute {t}", self.ids["conn"]
             )
             self._fires_and_links(sid, self.ids["command"], f"PR_SCHED_C_{t}")
-            self.shot(label="command-disabled")
+            self._grade_row(sid, f"Sched command {t}", "command-off")
             self.close_all_tabs()
             self.switch_to_connections_sidebar()

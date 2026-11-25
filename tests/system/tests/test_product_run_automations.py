@@ -41,6 +41,7 @@ from termihub_harness import (
     unique_name,
 )
 from termihub_harness.product_run import ProductRunUi
+from termihub_harness.product_run.automation_schedules import schedule_row_problems
 from termihub_harness.product_run.automation_steps import AutomationPhaseUi
 from termihub_harness.product_run.grades import row_leftover_text
 from termihub_harness.product_run.ssh_steps import SshPhaseUi
@@ -400,10 +401,9 @@ class TestProductRunAutomations(
             "automations.schedule",
             "A 1-minute schedule plays the macro on the local connection by itself",
             expect="Settings -> Schedules with the schedule switched off after its run; the row "
-            "leads with its name, its dot is grey (not green) once switched off, 'Disabled' sits "
-            "on the line under the name in sentence case, no 'Next: …', rule or 'Last run' text "
-            "on the row (they are in the tooltip), and the switch and delete are visible "
-            "without a hover (#5612, #5757)",
+            "leads with its name, 'Off', the rule, the automation and the connection, and "
+            "'Last run completed (today …)' with a green dot are under it, and the switch, Edit "
+            "and the … menu are visible without a hover (#6024)",
             screenshot=False,
         ):
             self.require("automations.macro.edit", "automations.targets")
@@ -427,59 +427,34 @@ class TestProductRunAutomations(
                 assert "scheduled" in origins, f"no scheduled macro run recorded: {origins}"
             finally:
                 self.set_schedule_enabled(sid, False)
-            self.shot(label="disabled")
+            self.shot(label="off")
             self._grade_schedule_row(sid, enabled=False)
 
     def _grade_schedule_row(self, sid: str, *, enabled: bool) -> None:
-        """Grade a Settings -> Schedules row (#5612, #5757).
+        """Grade a Settings -> Schedules row (#6024): when, what, where, how it went.
 
-        The leading dot shows whether the schedule is on (the disabled tone
-        when off, never the last run's green). The row shows the name and,
-        only when it needs attention, the state ("Disabled", "Paused", …) in
-        sentence case after the name; the next run, rule, targets and last
-        result are in the tooltip. The switch and delete are visible without a
-        hover.
+        The switch is the only sign of on and off; the switch, Edit and the "…"
+        menu are visible without a hover.
         """
-        dot = self.driver.get_attribute(f"schedule-dot-{sid}", "class") or ""
-        self.evidence(f"row dot (enabled={enabled}): {dot}")
-        if enabled:
-            assert "status-dot--disabled" not in dot, f"an enabled schedule's dot is grey: {dot}"
-        else:
-            assert "status-dot--disabled" in dot, f"a disabled schedule's dot is not grey: {dot}"
-            assert "status-dot--success" not in dot, f"a disabled schedule's dot is green: {dot}"
         row_id = f"schedule-item-{sid}"
-        status_id = f"schedule-status-{sid}"
-        status = self.driver.get_text(status_id).strip() if self.driver.exists(status_id) else ""
-        failed_id = f"schedule-last-failed-{sid}"
-        failed = self.driver.get_text(failed_id).strip() if self.driver.exists(failed_id) else ""
-        name_text = (self.schedule(sid) or {}).get("name", "")
-        text = self.row_text(row_id)
-        tip = self.row_tooltip(row_id)
-        self.evidence(f"row {text!r}; state {status!r}; tooltip {tip!r}")
-        left = row_leftover_text(text, [name_text, status, failed])
-        assert left == "", f"settings text on the schedule row: {left!r}"
-        assert "Next:" not in text, f"the next run is on the row: {text!r}"
-        assert " on " in tip, f"the tooltip does not name the targets: {tip!r}"
+        texts = self.schedule_row_texts(sid)
+        self.evidence(f"row (enabled={enabled}) {texts}")
+        problems = schedule_row_problems(
+            texts,
+            {**(self.schedule(sid) or {}), "enabled": enabled},
+            automation_name=(self.macro(self.ids["macro"]) or {}).get("name", ""),
+            targets=f"pr-auto-local-{self.tag}",
+        )
+        assert not problems, problems
         row_class = self.driver.get_attribute(row_id, "class") or ""
         assert "sidebar-list-item--actions-visible" in row_class, (
             f"row actions hidden behind hover: {row_class}"
         )
-        for control in (f"schedule-enable-{sid}", f"schedule-delete-{sid}"):
+        for control in (f"schedule-enable-{sid}", f"schedule-edit-{sid}", f"schedule-more-{sid}"):
             assert self.driver.measure_element(control)["rect"]["width"] > 0, f"{control} not shown"
-        if enabled:
-            assert status in ("", "Running now"), f"routine state shown on the row: {status!r}"
-            if not status:
-                assert "Next:" in tip, f"the tooltip has no next run: {tip!r}"
-            return
-        assert status == "Disabled", f"state line of a disabled schedule: {status!r}"
-        transform = self.driver.get_computed_style("text-transform", status_id)
-        assert transform != "uppercase", f"the state line is rendered uppercase: {status!r}"
-        assert status[:1].isupper() and not status.isupper(), f"not sentence case: {status!r}"
         name = self.driver.measure_element(f"schedule-name-{sid}")["rect"]
-        state = self.driver.measure_element(status_id)["rect"]
-        below = state["y"] >= name["y"] + name["height"] - 1
-        after = state["x"] >= name["x"] + name["width"] - 1
-        assert below or after, f"the state {state} leads the name {name}"
+        state = self.driver.measure_element(f"schedule-status-{sid}")["rect"]
+        assert state["y"] >= name["y"] + name["height"] - 1, f"{state} is not under the name {name}"
 
     # ── macro row + history header grade (#5636) ─────────────────────────────
     def test_70_macro_row_actions(self):

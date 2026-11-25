@@ -46,7 +46,10 @@ export interface AutomationCycle {
 }
 
 /** Visit every step, nested ones included, depth first, in step order. */
-function visitSteps(steps: readonly RunnableStep[], visit: (step: RunnableStep) => void): void {
+export function visitSteps(
+  steps: readonly RunnableStep[],
+  visit: (step: RunnableStep) => void
+): void {
   for (const step of steps) {
     visit(step);
     if (step.kind === "conditional") {

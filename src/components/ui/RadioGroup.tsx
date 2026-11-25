@@ -71,6 +71,10 @@ export interface RadioGroupProps {
   "aria-label"?: string;
   /** id of a visible element that labels the group. */
   "aria-labelledby"?: string;
+  /** Marks the group invalid (set by a wrapping `Field` with an error). */
+  "aria-invalid"?: boolean;
+  /** id of the text that describes the group (e.g. its error). */
+  "aria-describedby"?: string;
   /** Extra class(es) appended to the `ui-radio-group` root. */
   className?: string;
   /** Test hook forwarded to the group root. */
@@ -222,6 +226,8 @@ export function RadioGroup({
       name={name}
       aria-label={rest["aria-label"]}
       aria-labelledby={rest["aria-labelledby"]}
+      aria-invalid={rest["aria-invalid"] || undefined}
+      aria-describedby={rest["aria-describedby"]}
       data-testid={rest["data-testid"]}
     >
       {children ?? renderOptions()}

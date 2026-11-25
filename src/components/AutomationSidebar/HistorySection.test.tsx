@@ -5,6 +5,7 @@ import { HistorySection } from "./HistorySection";
 import { withTooltip } from "@/test/tooltip";
 import { checkA11y } from "@/test/axe";
 import { useAppStore } from "@/store/appStore";
+import type { ScheduleView } from "@/types/schedule";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
 
 function run(overrides: Partial<AutomationRun> = {}): AutomationRun {
@@ -116,14 +117,13 @@ describe("HistorySection (#5818, slice 9)", () => {
   });
 
   it("keeps rows to the name, a status dot and the time (names, not settings)", () => {
-    // A recent end reads "just now"; an older one would show a date.
-    const endedAt = new Date(Date.now() - 1000).toISOString();
+    const endedAt = new Date(new Date().setHours(2, 5, 0, 0)).toISOString();
     render(RUNS.map((r) => ({ ...r, endedAt })));
     const row = query("automation-run-toggle-run-2")!;
     expect(row.querySelector(".automation-history__name")!.textContent).toBe("Rotate logs");
     expect(row.querySelector('[aria-label="Failed"]')).not.toBeNull();
     expect(query("automation-run-time-run-2")!.getAttribute("dateTime")).toBe(endedAt);
-    expect(query("automation-run-time-run-2")!.textContent).toBe("just now");
+    expect(query("automation-run-time-run-2")!.textContent).toBe("today 02:05");
     const text = query("automation-history-list")!.textContent ?? "";
     expect(text).not.toMatch(/\d+\s*\/\s*\d+|\d+ (of \d+ )?steps?/);
     expect(text).not.toContain("db-1");
@@ -207,6 +207,64 @@ describe("HistorySection (#5818, slice 9)", () => {
       query("automation-history-clear-confirm-cancel")!.click();
     });
     expect(clearAutomationRuns).not.toHaveBeenCalled();
+  });
+
+  describe("scheduled times without a run (A-043)", () => {
+    const missed = {
+      at: "2026-09-25T08:00:00Z",
+      outcome: "skipped" as const,
+      missedDueAt: "2026-09-25T00:00:00Z",
+      message: "termiHub was closed",
+    };
+    const ran = { at: "2026-09-20T00:00:03Z", outcome: "failed" as const, runIds: ["run-2"] };
+    const nightly = {
+      id: "s1",
+      name: "Every night",
+      action: { kind: "automation", automationId: "a2" },
+      history: [missed, ran],
+    } as unknown as ScheduleView;
+    const other = { ...nightly, id: "s2", action: { kind: "automation", automationId: "a1" } };
+    const toggle = () =>
+      document.querySelector<HTMLElement>('[data-testid^="automation-gap-toggle-s1"]');
+    let clearScheduleHistory: ReturnType<typeof vi.fn<(ids: string[]) => Promise<void>>>;
+    beforeEach(() => {
+      clearScheduleHistory = vi.fn<(ids: string[]) => Promise<void>>(() => Promise.resolve());
+      useAppStore.setState({ schedules: [nightly, other as ScheduleView], clearScheduleHistory });
+    });
+
+    it("stand in the list, say what happened and open to which schedule and why", () => {
+      render(RUNS, "a2");
+      expect(toggle()!.textContent).toContain("Missed");
+      act(() => toggle()!.click());
+      const details = document.querySelector('[data-testid^="automation-gap-details-s1"]')!;
+      expect(details.textContent).toContain("Every night");
+      expect(details.textContent).toContain("termiHub was closed");
+    });
+
+    it("name the schedule of a run it started", () => {
+      render(RUNS);
+      act(() => query("automation-run-toggle-run-2")!.click());
+      expect(query("automation-run-schedule-run-2")!.textContent).toBe("Every night");
+    });
+
+    it("show without any run, and are narrowed with the rest", () => {
+      render([], "a3");
+      expect(query("automation-history-empty")).not.toBeNull();
+      render([], "a2");
+      expect(query("automation-history-empty")).toBeNull();
+      expect(toggle()).not.toBeNull();
+    });
+
+    it("are cleared with the runs: of the filtered automation, or all", async () => {
+      render(RUNS, "a2");
+      await openClearConfirm();
+      await act(async () => query("automation-history-clear-confirm-confirm")!.click());
+      expect(clearAutomationRuns).toHaveBeenLastCalledWith(["run-2"]);
+      expect(clearScheduleHistory).toHaveBeenLastCalledWith(["s1"]);
+      await openClearConfirm();
+      await act(async () => query("automation-history-clear-confirm-alternate")!.click());
+      expect(clearScheduleHistory).toHaveBeenLastCalledWith(["s1", "s2"]);
+    });
   });
 
   it("has no axe violations with a row open", async () => {

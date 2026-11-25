@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+import { useAutomationSections } from "@/components/AutomationSidebar/automationSections";
+import { chooseFrom } from "@/test/automationEditorHarness";
 import { flushAsync } from "@/test/flushAsync";
 import { LOCAL_PROCESS_REASON } from "@/utils/localProcessGate";
 import { useAppStore } from "@/store/appStore";
@@ -9,6 +14,11 @@ import { withTooltip } from "@/test/tooltip";
 import type { ScheduleView } from "@/types/schedule";
 import { SchedulesSection, type SchedulesSectionProps } from "./SchedulesSection";
 
+const preview = vi.hoisted(() => vi.fn());
+vi.mock("@/services/scheduleApi", async (original) => ({
+  ...(await original<typeof import("@/services/scheduleApi")>()),
+  previewScheduleNextRun: preview,
+}));
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
 setupConnectionsRegion();
@@ -79,6 +89,11 @@ describe("SchedulesSection (PROD-043)", () => {
     setSchedulesPaused = vi.fn(() => Promise.resolve());
     deleteSchedule = vi.fn(() => Promise.resolve());
     openScheduleEditor = vi.fn();
+    const next = new Date();
+    next.setDate(next.getDate() + 1);
+    next.setHours(2, 0, 0, 0);
+    preview.mockReset().mockResolvedValue(next.toISOString());
+    useAutomationSections.setState({ historyOpen: false, historyAutomationId: null });
     seedConnectionsRegion({
       connections: [
         { id: "c1", name: "web-1", config: {} as never, folderId: null },
@@ -110,6 +125,26 @@ describe("SchedulesSection (PROD-043)", () => {
     const onChange = vi.fn();
     const closed = { expanded: false, onChange };
     beforeEach(() => onChange.mockClear());
+
+    it("says on the closed header that a run was missed, quieter than a failure", async () => {
+      const missed = {
+        at: new Date().toISOString(),
+        outcome: "skipped",
+        missedDueAt: new Date().toISOString(),
+      } as ScheduleView["lastResult"];
+      const failed = { at: "", outcome: "failed" } as ScheduleView["lastResult"];
+      await render([view({ enabled: true, lastResult: missed })], false, closed);
+      expect(query("schedules-failed-dot")!.className).toContain("status-dot--warning");
+      await render(
+        [
+          view({ enabled: true, lastResult: missed }),
+          view({ id: "s2", enabled: true, lastResult: failed }),
+        ],
+        false,
+        closed
+      );
+      expect(query("schedules-failed-dot")!.className).toContain("status-dot--error");
+    });
 
     it("keeps the header, its count and New schedule, and hides the list", async () => {
       await render([view(), view({ id: "s2" })], false, closed);
@@ -158,27 +193,136 @@ describe("SchedulesSection (PROD-043)", () => {
     });
   });
 
-  const tip = (id: string) => query(`schedule-item-${id}`)!.getAttribute("aria-description");
-
-  it("puts the next run, rule, action and target hosts in the tooltip (#5757)", async () => {
-    await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
-    expect(tip("s1")).toMatch(
-      /^Next: today .*\. Every 15 minutes · automation "Uptime" on web-1, web-2$/
-    );
-    // An enabled schedule with a run coming shows only its name (and dot).
-    expect(query("schedule-summary-s1")).toBeNull();
-    expect(query("schedule-status-s1")).toBeNull();
-    expect(query("schedule-item-s1")!.textContent).toBe("Health");
+  const line = (what: string, id = "s1") => query(`schedule-${what}-${id}`)?.textContent ?? null;
+  const tomorrow = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(2, 0, 0, 0);
+    return d.toISOString();
+  };
+  const last = (over: Partial<NonNullable<ScheduleView["lastResult"]>>) => ({
+    at: new Date().toISOString(),
+    outcome: "completed" as const,
+    ...over,
   });
 
-  it("reveals the details in the name's tooltip", async () => {
-    await render([view({ enabled: true, nextRunAt: new Date().toISOString() })]);
-    act(() => {
-      query("schedule-name-s1")!.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+  describe("a row answers when, what, where and how it went (A-040 to A-042)", () => {
+    const on = (over: Partial<ScheduleView> = {}) =>
+      view({ enabled: true, confirmedAt: "x", nextRunAt: tomorrow(), ...over });
+
+    it("says when it next runs, its rule, the automation and the connections", async () => {
+      await render([on()]);
+      expect(line("status")).toBe("Next run tomorrow 02:00");
+      expect(line("rule")).toBe("Every 15 minutes");
+      expect(line("what")).toBe("Uptime on web-1, web-2");
+      expect(query("schedule-last-s1")).toBeNull();
+      expect(query("schedule-blocked-s1")).toBeNull();
     });
-    const content = query("schedule-tooltip-s1")!.textContent ?? "";
-    expect(content).toContain("Health");
-    expect(content).toContain("web-1, web-2");
+
+    it("says off, paused and running", async () => {
+      await render(
+        [
+          on({ id: "a" }),
+          on({ id: "b", running: true }),
+          view({ id: "c", confirmedAt: "x" }),
+          view({ id: "d" }),
+        ],
+        true
+      );
+      expect(line("status", "a")).toBe("Paused");
+      expect(line("status", "b")).toBe("Running now");
+      expect(line("status", "c")).toBe("Off");
+      expect(line("status", "d")).toBe("Off until you switch it on");
+    });
+
+    it("gives the whole reason of a missed run, which is never cut", async () => {
+      await render([
+        on({
+          lastResult: last({
+            outcome: "skipped",
+            missedDueAt: new Date(new Date().setHours(2, 0, 0, 0)).toISOString(),
+            message: "termiHub was closed or the computer was asleep",
+          }),
+        }),
+      ]);
+      expect(line("last")).toBe(
+        "Last run missed: termiHub was closed or the computer was asleep (due today 02:00)"
+      );
+      const css = readFileSync(
+        join(dirname(fileURLToPath(import.meta.url)), "Schedules.css"),
+        "utf8"
+      );
+      for (const rule of css.match(/\.schedules__line[^{]*\{[^}]*\}/g) ?? []) {
+        expect(rule).not.toMatch(/ellipsis|nowrap|line-clamp/);
+      }
+    });
+
+    it("a coloured dot always means an outcome, never 'on'", async () => {
+      await render([
+        on({ id: "ok", lastResult: last({}) }),
+        on({ id: "bad", lastResult: last({ outcome: "failed", message: "web-1: it broke" }) }),
+        on({ id: "none" }),
+      ]);
+      const dots = (id: string) =>
+        [...query(`schedule-item-${id}`)!.querySelectorAll(".status-dot")].map((d) => d.className);
+      expect(dots("none")).toEqual([]);
+      expect(dots("ok")).toHaveLength(1);
+      expect(dots("ok")[0]).toContain("status-dot--success");
+      expect(dots("bad")[0]).toContain("status-dot--error");
+      expect(line("last", "bad")).toContain("Last run failed: web-1: it broke");
+    });
+
+    it("says that it will not run, and then promises no next run", async () => {
+      await render([
+        on({ id: "gone", targets: { kind: "connections", connectionIds: ["Work/Old Box"] } }),
+        on({ id: "noauto", action: { kind: "automation", automationId: "zz" } }),
+      ]);
+      expect(line("status", "gone")).toBe("On");
+      expect(line("what", "gone")).toBe("Uptime on Deleted connection “Old Box”");
+      expect(line("blocked", "gone")).toBe("Will not run: its connections were deleted.");
+      expect(line("what", "noauto")).toContain("Deleted automation on");
+      expect(line("blocked", "noauto")).toBe("Will not run: its automation was deleted.");
+    });
+
+    it("says that an automation asking for a value cannot run by itself (A-047)", async () => {
+      await render([on()]);
+      act(() => {
+        useAppStore.setState((state) => ({
+          automations: state.automations.map((x) => ({
+            ...x,
+            parameters: [{ name: "env", type: "string" as const, required: true }],
+          })),
+        }));
+      });
+      expect(line("blocked")).toContain("it asks for “env”");
+    });
+
+    it("opens the History on the automation's runs (A-043)", async () => {
+      await render([on()]);
+      await chooseFrom("schedule-more-s1", "schedule-menu-history-s1");
+      expect(useAutomationSections.getState()).toMatchObject({
+        historyOpen: true,
+        historyAutomationId: "wf-1",
+      });
+    });
+
+    it("marks the schedule that was just saved, and only for a moment", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        await render([on(), on({ id: "s2" })]);
+        const marked = () =>
+          ["s1", "s2"].filter((id) =>
+            query(`schedule-item-${id}`)!.classList.contains("automation-item--just-saved")
+          );
+        expect(marked()).toEqual([]);
+        act(() => useAutomationSections.getState().markScheduleSaved("s2"));
+        expect(marked()).toEqual(["s2"]);
+        act(() => vi.advanceTimersByTime(3001));
+        expect(marked()).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("shows the user's description muted under the name, only when set (#5757)", async () => {
@@ -190,18 +334,19 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-description-b")).toBeNull();
   });
 
-  it("marks an enabled schedule with no run coming as needing attention", async () => {
-    await render([view({ enabled: true, confirmedAt: "x" })]);
-    expect(query("schedule-status-s1")!.textContent).toBe("Not scheduled");
-  });
-
   it("asks for confirmation listing the hosts before the first enable", async () => {
     await render([view()]);
     act(() => query("schedule-enable-s1")!.click());
+    await flushAsync();
     expect(setScheduleEnabled).not.toHaveBeenCalled();
     const hosts = query("schedule-confirm-hosts")!;
     expect(hosts.textContent).toContain("web-1");
     expect(hosts.textContent).toContain("web-2");
+    const dialog = query("schedule-enable-confirm")!.textContent ?? "";
+    expect(dialog).toContain("Switch on “Health”?");
+    expect(dialog).toContain("Every 15 minutes, termiHub runs Uptime");
+    expect(dialog).not.toMatch(/enable|disable/i);
+    expect(query("schedule-confirm-next")!.textContent).toBe("First run: tomorrow 02:00.");
     await act(async () => query("schedule-enable-confirm-confirm")!.click());
     await flush();
     expect(setScheduleEnabled).toHaveBeenCalledWith("s1", true, true);
@@ -211,11 +356,23 @@ describe("SchedulesSection (PROD-043)", () => {
     await render([view()]);
     act(() => query("schedule-enable-s1")!.click());
     expect(query("schedule-confirm-connects")).toBeNull();
+    expect(query("schedule-confirm-skips")!.textContent).toContain("is skipped");
     act(() => query("schedule-enable-confirm-cancel")!.click());
 
     await render([view({ connectIfNeeded: true })]);
     act(() => query("schedule-enable-s1")!.click());
     expect(query("schedule-confirm-connects")!.textContent).toContain("never asking");
+  });
+
+  it("the confirmation says when there is nothing left to run on", async () => {
+    await render([view({ targets: { kind: "connections", connectionIds: ["Work/Old Box"] } })]);
+    act(() => query("schedule-enable-s1")!.click());
+    await flushAsync();
+    expect(query("schedule-confirm-hosts")!.textContent).toBe("Deleted connection “Old Box”");
+    expect(query("schedule-confirm-gone")!.textContent).toBe(
+      "Nothing will run: its connections were deleted."
+    );
+    expect(query("schedule-confirm-next")).toBeNull();
   });
 
   it("cancelling the confirmation leaves the schedule disabled", async () => {
@@ -238,147 +395,6 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(setSchedulesPaused).toHaveBeenCalledWith(true);
   });
 
-  it("shows paused, running and disabled states and the last result", async () => {
-    await render(
-      [
-        view({ id: "a", enabled: true, confirmedAt: "x" }),
-        view({ id: "b", enabled: true, confirmedAt: "x", running: true }),
-        view({
-          id: "c",
-          lastResult: {
-            at: new Date().toISOString(),
-            outcome: "skipped",
-            message: "None of the target connections is connected",
-          },
-        }),
-      ],
-      true
-    );
-    expect(query("schedule-status-a")!.textContent).toBe("Paused");
-    expect(query("schedule-status-b")!.textContent).toBe("Running now");
-    expect(query("schedule-status-c")!.textContent).toBe("Disabled");
-    expect(tip("c")).toContain("skipped — None of the target connections is connected");
-    expect(query("schedule-last-c")).toBeNull();
-    // A skipped run is not a failure: no marker.
-    expect(query("schedule-last-failed-c")).toBeNull();
-  });
-
-  it("drives the row dot from the schedule state, not the last run (#5612)", async () => {
-    const completed = { at: new Date().toISOString(), outcome: "completed" as const };
-    await render(
-      [
-        view({ id: "off", enabled: false, lastResult: completed }),
-        view({
-          id: "on",
-          enabled: true,
-          confirmedAt: "x",
-          nextRunAt: new Date().toISOString(),
-          lastResult: { at: completed.at, outcome: "failed" as const },
-        }),
-        view({ id: "never", enabled: false }),
-      ],
-      false
-    );
-    const dot = (id: string) => query(`schedule-dot-${id}`)!;
-    expect(dot("off").classList.contains("status-dot--disabled")).toBe(true);
-    expect(dot("off").classList.contains("status-dot--success")).toBe(false);
-    expect(dot("off").getAttribute("aria-label")).toBe("Disabled");
-    expect(dot("on").classList.contains("status-dot--success")).toBe(true);
-    // A schedule that never ran still shows its state.
-    expect(dot("never").classList.contains("status-dot--disabled")).toBe(true);
-    // The last run is in the tooltip; only a failed one is marked on the row.
-    expect(tip("off")).toContain("completed");
-    expect(query("schedule-last-failed-off")).toBeNull();
-    expect(query("schedule-last-failed-on")!.textContent).toBe("Last run failed");
-    expect(query("schedule-last-failed-never")).toBeNull();
-  });
-
-  it("tones a paused schedule as a warning", async () => {
-    await render([view({ enabled: true, confirmedAt: "x" })], true);
-    expect(query("schedule-dot-s1")!.classList.contains("status-dot--warning")).toBe(true);
-  });
-
-  it("leads the row with the name and puts the state after it, not as a badge (#5612)", async () => {
-    await render([view({ enabled: false })]);
-    const row = query("schedule-item-s1")!;
-    expect(row.querySelector(".sidebar-list-item__badge")).toBeNull();
-    const name = query("schedule-name-s1")!;
-    const status = query("schedule-status-s1")!;
-    expect(status.textContent).toBe("Disabled");
-    // DOCUMENT_POSITION_FOLLOWING: the state comes after the name.
-    expect(name.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("keeps the enable switch and delete visible without a hover (#5612)", async () => {
-    await render([view()]);
-    const row = query("schedule-item-s1")!;
-    expect(row.classList.contains("sidebar-list-item--actions-visible")).toBe(true);
-    expect(row.contains(query("schedule-enable-s1"))).toBe(true);
-    expect(row.contains(query("schedule-delete-s1"))).toBe(true);
-  });
-
-  it("expands a schedule to its recent attempts, including skips and their reasons", async () => {
-    const now = Date.now();
-    const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
-    const history = [
-      {
-        at: iso(1),
-        startedAt: iso(3),
-        durationMs: 125_000,
-        outcome: "completed" as const,
-        message: "Ran on 2 terminals",
-        runIds: ["run-a", "run-b"],
-      },
-      {
-        at: iso(10),
-        outcome: "skipped" as const,
-        message: "Skipped: the previous run was still in progress",
-        catchUp: true,
-      },
-      { at: iso(20), outcome: "skipped" as const, message: "Missed the run due at 09:00" },
-    ];
-    await render([view({ lastResult: history[0], history })]);
-
-    expect(query("schedule-attempts-s1")).toBeNull();
-    const toggle = query("schedule-attempts-toggle-s1")!;
-    // An icon action: no text on the row (#5757).
-    expect(toggle.textContent).toBe("");
-    expect(toggle.getAttribute("aria-label")).toBe("Show recent attempts (3)");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-
-    act(() => toggle.click());
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle.getAttribute("aria-label")).toBe("Hide recent attempts");
-    const items = query("schedule-attempts-s1")!.querySelectorAll("li");
-    expect(items).toHaveLength(3);
-    expect(items[0].textContent).toContain("Completed");
-    expect(items[0].textContent).toContain("2m 05s");
-    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("2 runs in history");
-    expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("run-a\nrun-b");
-    expect(items[1].textContent).toContain("Skipped");
-    expect(items[1].textContent).toContain("catch-up");
-    expect(items[1].textContent).toContain("previous run was still in progress");
-    expect(items[2].textContent).toContain("Missed the run due at 09:00");
-    expect(query("schedule-attempt-runs-s1-1")).toBeNull();
-
-    act(() => toggle.click());
-    expect(query("schedule-attempts-s1")).toBeNull();
-  });
-
-  it("links a scheduled attempt to its automation run-history record (#3543, #5818)", async () => {
-    const attempt = {
-      at: new Date().toISOString(),
-      outcome: "completed" as const,
-      message: "Ran on 1 terminal",
-      runIds: ["mrun-1"],
-    };
-    await render([view({ lastResult: attempt, history: [attempt] })]);
-
-    act(() => query("schedule-attempts-toggle-s1")!.click());
-    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("1 run in history");
-    expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("mrun-1");
-  });
-
   it("says why a schedule of a local-process automation will not run (#5818)", async () => {
     await render([view({})]);
     expect(query("schedule-blocked-s1")).toBeNull();
@@ -393,16 +409,13 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-blocked-s1")!.textContent).toBe(LOCAL_PROCESS_REASON);
   });
 
-  it("offers no attempts toggle before the first attempt", async () => {
-    await render([view()]);
-    expect(query("schedule-attempts-toggle-s1")).toBeNull();
-  });
-
   it("edits and deletes a schedule", async () => {
     await render([view()]);
     act(() => query("schedule-edit-s1")!.click());
     expect(openScheduleEditor).toHaveBeenCalledWith({ scheduleId: "s1" });
-    act(() => query("schedule-delete-s1")!.click());
+    await chooseFrom("schedule-more-s1", "schedule-menu-edit-s1");
+    expect(openScheduleEditor).toHaveBeenCalledTimes(2);
+    await chooseFrom("schedule-more-s1", "schedule-menu-delete-s1");
     await act(async () => query("confirm-delete-confirm")!.click());
     await flush();
     expect(deleteSchedule).toHaveBeenCalledWith("s1");

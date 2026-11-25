@@ -36,6 +36,10 @@ const WINDOWS = [
 const THEMES = ["dark", "light"];
 const id = (testId: string) => `[data-testid="${testId}"]`;
 const STAMP = "2026-10-01T12:00:00Z";
+/** The time it is in every picture, so "today" and "tomorrow" fit the data. */
+const NOW = "2026-10-01T18:00:00Z";
+/** A connection of the mock backend, by its id. */
+const BUILD_BOX = "Work/Build Box";
 
 /** Every state, and what the user wants to do there. */
 const STATES = {
@@ -63,9 +67,21 @@ const STATES = {
   "run--running": "The automation types into this terminal: see progress, stop it.",
   "run--failed": "A run was refused or failed: see why.",
   "run--history": "Find out what ran, when, where and how it ended.",
+  "editor--triggers-deleted": "The connection a trigger watched was deleted: see and fix it.",
   "schedules--list": "See what runs by itself and when; turn one off.",
   "schedules--missed": "A scheduled run was missed and one failed: find out why.",
-  "schedules--editor": "Run an automation every night on chosen connections.",
+  "schedules--history": "Look up last night in the History: what ran, what did not, why.",
+  "schedules--deleted": "A schedule's connection was deleted: see that it cannot run.",
+  "schedules--paused": "All schedules are paused: see it, and that nothing runs.",
+  "schedules--new": "A new schedule, opened from an automation: what is still to choose.",
+  "schedules--new-refused": "Save was refused: see what is missing.",
+  "schedules--new-nightly": "Every night, also on a closed connection: check before saving.",
+  "schedules--saved": "The schedule was saved: is it on?",
+  "schedules--first-on": "Switch it on for the first time: check what it will do.",
+  "schedules--editor": "Change an automation that runs every night on chosen connections.",
+  "schedules--editor-deleted": "Edit a schedule whose connection was deleted.",
+  "schedules--editor-asks": "Schedule an automation that asks for a value: can it run alone?",
+  "schedules--editor-password": "Schedule an automation that may meet a password prompt.",
   "palette--automations": "Find an automation by name and see where it will run.",
   "import--notes": "After an import: what was switched off, left out, refused.",
 } as const;
@@ -130,14 +146,14 @@ const LIBRARY = [
     ],
     triggers: [
       { kind: "hotkey", binding: "Ctrl+Alt+R" },
-      { kind: "on-output-match", connectionIds: ["conn-1"], pattern: "Continue?" },
+      { kind: "on-output-match", connectionIds: [BUILD_BOX], pattern: "Continue?" },
     ],
     parameters: [{ name: "env", type: "enum", options: ["dev", "prod"], default: "dev" }],
   }),
   automation({
     id: "off-trigger",
     name: "Nightly cleanup",
-    triggers: [{ kind: "on-connect", connectionIds: ["conn-1"] }],
+    triggers: [{ kind: "on-connect", connectionIds: [BUILD_BOX] }],
     triggersEnabled: false,
   }),
   automation({
@@ -169,29 +185,65 @@ const run = (over: Record<string, unknown>) => ({
   origin: "manual",
   ...over,
 });
+/** The nightly cleanup at 02:00 on a day: its run, and the schedule's attempt. */
+const nightlyRun = (month: string, day: string) =>
+  run({
+    id: `n${month}-${day}`,
+    automationId: "off-trigger",
+    automationName: "Nightly cleanup",
+    startedAt: `2026-${month}-${day}T02:00:00Z`,
+    endedAt: `2026-${month}-${day}T02:00:04Z`,
+    stepsCompleted: 1,
+    total: 1,
+    targetLabel: "Build Box",
+    origin: "scheduled",
+  });
+const nightlyAttempt = (month: string, day: string) => ({
+  at: `2026-${month}-${day}T02:00:04Z`,
+  startedAt: `2026-${month}-${day}T02:00:00Z`,
+  durationMs: 4000,
+  outcome: "completed",
+  message: "Ran on 1 terminal",
+  runIds: [`n${month}-${day}`],
+});
 const RUNS = [
+  run({ id: "r2", origin: "palette", endedAt: "2026-10-01T12:01:12Z" }),
+  run({ id: "r3", status: "cancelled", stepsCompleted: 2, origin: "hotkey" }),
+  nightlyRun("10", "01"),
   run({
     id: "r1",
     automationId: "failed",
     automationName: "Nightly backup of the Frankfurt replica",
+    startedAt: "2026-10-01T01:00:00Z",
+    endedAt: "2026-10-01T01:00:01Z",
     status: "failed",
     stepsCompleted: 0,
     total: 1,
     failedStepIndex: 0,
     error: "The terminal stopped accepting input",
-    targetLabel: "db-1",
+    targetLabel: "Build Box",
     origin: "scheduled",
   }),
-  run({ id: "r2", origin: "palette", endedAt: "2026-10-01T12:01:12Z" }),
-  run({ id: "r3", status: "cancelled", stepsCompleted: 2, origin: "hotkey" }),
-  run({ id: "r4", origin: "on-output-match", continuedFailures: 1 }),
-  run({ id: "r5", automationId: "keys", automationName: "Deploy staging", total: 2 }),
+  run({
+    id: "r4",
+    origin: "on-output-match",
+    continuedFailures: 1,
+    endedAt: "2026-09-30T09:00:00Z",
+  }),
+  run({
+    id: "r5",
+    automationId: "keys",
+    automationName: "Deploy staging",
+    total: 2,
+    endedAt: "2026-09-30T08:00:00Z",
+  }),
+  nightlyRun("09", "30"),
 ];
 
 const schedule = (over: Record<string, unknown>) => ({
   running: false,
   action: { kind: "automation", automationId: "failed" },
-  targets: { kind: "connections", connectionIds: ["conn-1"] },
+  targets: { kind: "connections", connectionIds: [BUILD_BOX] },
   rule: { kind: "daily", time: "02:00" },
   missedRuns: "skip",
   enabled: true,
@@ -201,38 +253,81 @@ const schedule = (over: Record<string, unknown>) => ({
   updatedAt: STAMP,
   ...over,
 });
+/** Missed today at 02:00, noticed when termiHub was opened at 07:45. */
 const MISSED = {
-  at: "2026-10-01T02:00:00Z",
+  at: "2026-10-01T07:45:00Z",
   outcome: "skipped",
-  message:
-    "Missed the run due at 2026-10-01 02:00 (termiHub was closed or the computer was asleep)",
+  missedDueAt: "2026-10-01T02:00:00Z",
+  message: "termiHub was closed or the computer was asleep",
 };
+const CLEANED_TODAY = nightlyAttempt("10", "01");
+const CLEANED_YESTERDAY = nightlyAttempt("09", "30");
+/** Failed today at 01:00: the run `r1`. */
 const FAILED = {
-  at: "2026-09-30T02:00:00Z",
-  startedAt: "2026-09-30T02:00:00Z",
+  at: "2026-10-01T01:00:01Z",
+  startedAt: "2026-10-01T01:00:00Z",
   durationMs: 1200,
   outcome: "failed",
-  message: "A target terminal disconnected during playback",
+  message: "Build Box: The terminal stopped accepting input",
+  runIds: ["r1"],
 };
-const SCHEDULES = {
+const NIGHTLY = schedule({
+  id: "s1",
+  name: "Clean up every night",
+  action: { kind: "automation", automationId: "off-trigger" },
+  connectIfNeeded: true,
+  lastRunAt: CLEANED_TODAY.startedAt,
+  lastResult: CLEANED_TODAY,
+  history: [CLEANED_TODAY, CLEANED_YESTERDAY],
+});
+const HEALTH_CHECK = schedule({
+  id: "s2",
+  name: "Health check",
+  action: { kind: "automation", automationId: "keys" },
+  rule: { kind: "interval", everyMinutes: 30 },
+  enabled: false,
+  confirmedAt: undefined,
+  nextRunAt: undefined,
+});
+const ARCHIVE = schedule({
+  id: "s3",
+  name: "Copy to the archive",
+  rule: { kind: "daily", time: "01:00" },
+  nextRunAt: "2026-10-02T01:00:00Z",
+  lastRunAt: FAILED.startedAt,
+  lastResult: FAILED,
+  history: [FAILED],
+});
+const SCHEDULES = { paused: false, schedules: [NIGHTLY, HEALTH_CHECK, ARCHIVE] };
+/** A night in which one was missed and one failed. */
+const TROUBLED = {
+  paused: false,
+  schedules: [{ ...NIGHTLY, lastResult: MISSED, history: [MISSED, CLEANED_YESTERDAY] }, ARCHIVE],
+};
+/** The runs of that night: the missed one left none. */
+const TROUBLED_RUNS = RUNS.filter((r) => (r as { id?: string }).id !== "n10-01");
+const DELETED = {
   paused: false,
   schedules: [
-    schedule({
-      id: "s1",
-      name: "Backup every night",
-      lastRunAt: FAILED.at,
-      lastResult: MISSED,
-      history: [FAILED, MISSED],
-    }),
-    schedule({
-      id: "s2",
-      name: "Health check",
-      action: { kind: "automation", automationId: "full" },
-      rule: { kind: "interval", everyMinutes: 30 },
-      enabled: false,
-    }),
+    { ...NIGHTLY, targets: { kind: "connections", connectionIds: ["Work/Old Build Box"] } },
+    HEALTH_CHECK,
   ],
 };
+/** Automations that cannot simply run alone. */
+const UNATTENDED = [
+  ...LIBRARY,
+  automation({
+    id: "asks",
+    name: "Deploy a version",
+    steps: [{ kind: "send-command", command: "deploy ${version}" }],
+    parameters: [{ name: "version", type: "string", required: true }],
+  }),
+  automation({
+    id: "sudo",
+    name: "Restart the web server",
+    steps: [{ kind: "send-command", command: "sudo systemctl restart nginx" }],
+  }),
+];
 
 /** An import that needs every note. */
 const IMPORT = JSON.stringify({
@@ -251,7 +346,10 @@ interface GalleryState {
   loadAutomations(): Promise<void>;
   loadAutomationRuns(): Promise<void>;
   loadSchedules(): Promise<void>;
-  openScheduleEditor(target: { scheduleId: string }): void;
+  openScheduleEditor(target: {
+    scheduleId?: string;
+    action?: { kind: string; automationId: string };
+  }): void;
   openSettingsTab(target: { category: string }): void;
   setCommandPaletteOpen(open: boolean): void;
   recordInput(tabId: string, data: string, readPrompt?: () => string): void;
@@ -269,6 +367,7 @@ async function settle(page: Page): Promise<void> {
 
 /** Boot the app with the gallery's library, on the Automations sidebar. */
 async function boot(page: Page, theme: string, scenario: VisualScenario = {}): Promise<void> {
+  await page.clock.setFixedTime(NOW);
   await page.addInitScript(
     (s) => {
       window.__VISUAL_SCENARIO__ = s;
@@ -362,7 +461,7 @@ for (const viewport of WINDOWS) {
     const where = `${viewport.width}x${viewport.height}--${theme}`;
 
     test.describe(`automations gallery ${where}`, () => {
-      test.use({ viewport });
+      test.use({ viewport, timezoneId: "UTC", locale: "en-US" });
 
       /** Screenshot a state and audit `root`'s layout. */
       async function shot(page: Page, state: State, root: string): Promise<void> {
@@ -533,18 +632,130 @@ for (const viewport of WINDOWS) {
         await shot(page, "run--history", SIDEBAR);
       });
 
-      test("schedules", async ({ page }) => {
-        await boot(page, theme);
+      /** Boot with these schedules and open their section. */
+      async function bootSchedules(
+        page: Page,
+        schedules: unknown,
+        { automations = LIBRARY, runs = RUNS } = {}
+      ): Promise<void> {
+        await boot(page, theme, {
+          automationData: { automations, runs, schedules: schedules as typeof SCHEDULES },
+        });
         await page.locator(id("schedules-section-toggle")).click();
         await page.locator(id("schedule-enable-s1")).waitFor();
-        await shot(page, "schedules--list", SIDEBAR);
-        await page.locator(id("schedule-attempts-toggle-s1")).click();
-        await page.locator(id("schedule-attempts-s1")).waitFor();
-        await page.locator(id("schedule-attempts-s1")).scrollIntoViewIfNeeded();
-        await shot(page, "schedules--missed", SIDEBAR);
-        await page.locator(id("schedule-edit-s1")).click();
+      }
+
+      /** Open the editor of a new schedule for an automation. */
+      async function newSchedule(page: Page, automationId: string): Promise<void> {
+        await page.evaluate((automation) => {
+          const state = window.__visual.store.getState() as unknown as GalleryState;
+          state.openScheduleEditor({ action: { kind: "automation", automationId: automation } });
+        }, automationId);
         await page.locator(id("schedule-editor-dialog")).waitFor();
-        await shot(page, "schedules--editor", id("schedule-editor-dialog"));
+      }
+      const SCHEDULE_EDITOR = id("schedule-editor-dialog");
+
+      test("editor, trigger of a deleted connection", async ({ page }) => {
+        await boot(page, theme, {
+          automationData: {
+            automations: LIBRARY.map((a) =>
+              (a as { id?: string }).id === "full"
+                ? {
+                    ...a,
+                    triggers: [
+                      {
+                        kind: "on-output-match",
+                        connectionIds: ["Work/Old Build Box"],
+                        pattern: "Continue?",
+                      },
+                    ],
+                  }
+                : a
+            ),
+            runs: RUNS,
+            schedules: SCHEDULES,
+          },
+        });
+        await edit(page, "full");
+        await page.locator(id("automation-trigger-connection-0-none")).scrollIntoViewIfNeeded();
+        await shot(page, "editor--triggers-deleted", EDITOR);
+      });
+
+      test("schedules", async ({ page }) => {
+        await bootSchedules(page, SCHEDULES);
+        await page.locator(id("schedule-last-s1")).waitFor();
+        await shot(page, "schedules--list", SIDEBAR);
+        await page.locator(id("schedule-edit-s1")).click();
+        await page.locator(SCHEDULE_EDITOR).waitFor();
+        await page.getByText("Next run: tomorrow 02:00 on Build Box.").waitFor();
+        await shot(page, "schedules--editor", SCHEDULE_EDITOR);
+      });
+
+      test("schedules, switched on for the first time", async ({ page }) => {
+        await bootSchedules(page, SCHEDULES);
+        await page.locator(id("schedule-enable-s2")).click();
+        await page.locator(id("schedule-confirm-next")).waitFor();
+        await shot(page, "schedules--first-on", id("schedule-enable-confirm"));
+      });
+
+      test("schedules, paused", async ({ page }) => {
+        await bootSchedules(page, { ...SCHEDULES, paused: true });
+        await expect(page.locator(id("schedule-status-s1"))).toHaveText("Paused");
+        await shot(page, "schedules--paused", SIDEBAR);
+      });
+
+      test("schedules, missed and failed", async ({ page }) => {
+        await bootSchedules(page, TROUBLED, { runs: TROUBLED_RUNS });
+        await page.locator(id("schedule-last-s3")).scrollIntoViewIfNeeded();
+        await shot(page, "schedules--missed", SIDEBAR);
+        await page.locator(id("schedule-more-s1")).click();
+        await page.locator(id("schedule-menu-history-s1")).click();
+        await page.locator(id("schedules-section-toggle")).click();
+        const gap = page.locator("[data-testid^='automation-gap-toggle-s1']");
+        await gap.click();
+        await page.locator("[data-testid^='automation-gap-reason-s1']").scrollIntoViewIfNeeded();
+        await shot(page, "schedules--history", SIDEBAR);
+      });
+
+      test("schedules, a deleted connection", async ({ page }) => {
+        await bootSchedules(page, DELETED);
+        await page.locator(id("schedule-blocked-s1")).waitFor();
+        await shot(page, "schedules--deleted", SIDEBAR);
+        await page.locator(id("schedule-edit-s1")).click();
+        await page.locator(id("schedule-editor-connection-deleted-0")).waitFor();
+        await shot(page, "schedules--editor-deleted", SCHEDULE_EDITOR);
+      });
+
+      test("schedules, a new one", async ({ page }) => {
+        await bootSchedules(page, SCHEDULES);
+        await newSchedule(page, "failed");
+        await shot(page, "schedules--new", SCHEDULE_EDITOR);
+        await page.locator(id("schedule-editor-save")).click({ force: true });
+        await page.getByText("Choose what to do with a closed connection.").waitFor();
+        await shot(page, "schedules--new-refused", SCHEDULE_EDITOR);
+        await page.locator(id("schedule-editor-name")).fill("Backup at night");
+        await page.locator(id(`schedule-editor-connection-${BUILD_BOX}`)).click();
+        await page.locator(id("schedule-editor-closed-connect")).click();
+        await page.locator(id("schedule-editor-rule-kind")).click();
+        await page.getByRole("option", { name: "Daily" }).click();
+        await page.locator(id("schedule-editor-time")).fill("02:00");
+        await page.getByText("Next run: tomorrow 02:00 on Build Box.").waitFor();
+        await shot(page, "schedules--new-nightly", SCHEDULE_EDITOR);
+        await page.locator(id("schedule-editor-save")).click();
+        await page.locator(SCHEDULE_EDITOR).waitFor({ state: "hidden" });
+        await page.getByText("Backup at night", { exact: true }).scrollIntoViewIfNeeded();
+        await shot(page, "schedules--saved", SIDEBAR);
+      });
+
+      test("schedules, an automation that cannot run alone", async ({ page }) => {
+        await bootSchedules(page, SCHEDULES, { automations: UNATTENDED });
+        await newSchedule(page, "asks");
+        await page.locator(id("schedule-editor-automation-note")).waitFor();
+        await shot(page, "schedules--editor-asks", SCHEDULE_EDITOR);
+        await page.locator(id("schedule-editor-cancel")).click();
+        await newSchedule(page, "sudo");
+        await page.locator(id("schedule-editor-automation-note")).waitFor();
+        await shot(page, "schedules--editor-password", SCHEDULE_EDITOR);
       });
 
       test("palette", async ({ page }) => {

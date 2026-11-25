@@ -1,20 +1,22 @@
-import { useCallback, useId, useState } from "react";
-import { CalendarClock, History, Pencil, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { CalendarClock, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, StatusDot, Toggle, Tooltip, toast, EmptyState } from "@/components/ui";
-import type { StatusTone } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
-import { SidebarListItem } from "@/components/SidebarListItem";
+import { AUTOMATION_JUST_SAVED_MS } from "@/components/AutomationSidebar/AutomationRow";
+import {
+  showHistoryInSidebar,
+  useAutomationSections,
+} from "@/components/AutomationSidebar/automationSections";
 import { SidebarSectionHeader } from "@/components/Sidebar/SidebarSectionHeader";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { ScheduleView } from "@/types/schedule";
 import { errorMessage } from "@/utils/errorMessage";
-import { t, tf } from "@/i18n/catalog";
-import { formatRelativeTime } from "@/utils/formatters";
-import { describeRule, formatNextRun } from "./scheduleForm";
-import { ScheduleAttemptHistory } from "./ScheduleAttemptHistory";
+import { t } from "@/i18n/catalog";
 import { ScheduleEnableConfirmDialog } from "./ScheduleEnableConfirmDialog";
+import { ScheduleRow } from "./ScheduleRow";
+import { lastRunAttention } from "./scheduleStatus";
 import { useScheduleLabels } from "./useScheduleLabels";
 import "./Schedules.css";
 
@@ -25,45 +27,11 @@ import "./Schedules.css";
  */
 export const SCHEDULES_HEADER_COMPACT_WIDTH = 220;
 
-/** One-line status of a schedule: next run, running, paused, or disabled. */
-export function scheduleStatus(s: ScheduleView, paused: boolean): string {
-  if (!s.enabled) return "Disabled";
-  if (s.running) return "Running now";
-  if (paused) return "Paused";
-  return s.nextRunAt ? `Next: ${formatNextRun(s.nextRunAt)}` : "Not scheduled";
-}
-
 /**
- * Whether the row shows {@link scheduleStatus} as a visible marker (#5757):
- * only when the state needs attention — off, paused, running, or on with no
- * run coming. The routine "Next: today 09:10" of a schedule that is on is a
- * detail, not a state to act on: the dot already says "on", and the time is
- * in the tooltip.
- */
-export function scheduleStatusNeedsAttention(s: ScheduleView, paused: boolean): boolean {
-  return !s.enabled || s.running || paused || !s.nextRunAt;
-}
-
-/**
- * Tone of a schedule row's leading dot: whether the schedule is on (#5612).
- * The last run's outcome is in the tooltip (a failed one also gets a visible
- * "Last run failed" marker, #5757) — a disabled schedule whose last run
- * completed must not read as active.
- */
-export function scheduleTone(s: ScheduleView, paused: boolean): StatusTone {
-  if (!s.enabled) return "disabled";
-  if (s.running) return "connecting";
-  if (paused) return "warning";
-  return s.nextRunAt ? "success" : "neutral";
-}
-
-/**
- * The schedules list (PROD-043): every scheduled automation run by name,
- * with its state dot and a marker when the state needs attention; its rule,
- * targets, next run and last result are in the name's tooltip (#5757). A row
- * expands to its recent attempts (#3528); per-schedule enable (the first
- * enable asks for confirmation of the target hosts), edit and delete; and the
- * global pause switch. Lives in the Automations sidebar, where it collapses to
+ * The schedules list (PROD-043): one {@link ScheduleRow} per schedule, with its
+ * switch (the first time it is switched on asks for confirmation of the target
+ * hosts), edit and delete, and the global pause switch. What ran, and what did
+ * not, is in the one History (#6024). Lives in the Automations sidebar, where it collapses to
  * its header (#5818), and in Settings → Schedules (#4623).
  */
 export interface SchedulesSectionProps {
@@ -89,17 +57,8 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
   const labels = useScheduleLabels();
   const [confirming, setConfirming] = useState<ScheduleView | null>(null);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [headerRef, headerWidth] = useElementWidth<HTMLElement>();
   const compactHeader = headerWidth !== null && headerWidth < SCHEDULES_HEADER_COMPACT_WIDTH;
-
-  const toggleExpanded = useCallback((id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
-  }, []);
 
   const scheduleDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id }) => {
     try {
@@ -140,6 +99,23 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
     [setSchedulesPaused]
   );
 
+  // The schedule just saved: its row is tinted and brought into view, so the
+  // user sees at once whether it is on (#6024).
+  const saved = useAutomationSections((s) => s.savedSchedule);
+  const [unmarkedSeq, setUnmarkedSeq] = useState(saved?.seq ?? 0);
+  const justSaved = saved && saved.seq > unmarkedSeq ? saved : null;
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowExists = justSaved !== null && schedules.some((s) => s.id === justSaved.id);
+  useEffect(() => {
+    if (!justSaved || !rowExists || !open) return;
+    const rowTestId = `schedule-item-${justSaved.id}`;
+    Array.from(listRef.current?.children ?? [])
+      .find((row) => row.getAttribute("data-testid") === rowTestId)
+      ?.scrollIntoView?.({ block: "nearest" });
+    const timer = window.setTimeout(() => setUnmarkedSeq(justSaved.seq), AUTOMATION_JUST_SAVED_MS);
+    return () => window.clearTimeout(timer);
+  }, [justSaved, rowExists, open]);
+
   const confirmTargets = confirming ? labels.targets(confirming.targets) : null;
 
   // There is nothing to pause without a schedule (R-135); a pause left on stays
@@ -161,7 +137,8 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
     );
 
   // A closed section must not hide a schedule that needs attention.
-  const anyFailed = schedules.some((s) => s.enabled && s.lastResult?.outcome === "failed");
+  const concerns = schedules.map(lastRunAttention);
+  const concern = concerns.includes("error") ? "error" : concerns.find(Boolean);
   const openNew = () => {
     collapse?.onChange(true);
     openScheduleEditor();
@@ -192,10 +169,12 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           data-testid="schedules-header"
           actions={
             <>
-              {!open && anyFailed ? (
+              {!open && concern ? (
                 <StatusDot
-                  tone="error"
-                  label={t("schedule.marker.lastFailed")}
+                  tone={concern}
+                  label={t(
+                    concern === "error" ? "schedule.marker.lastFailed" : "schedule.marker.attention"
+                  )}
                   testId="schedules-failed-dot"
                 />
               ) : null}
@@ -251,139 +230,31 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
           />
         </div>
       ) : (
-        <div id={contentId} className="schedules__list" data-testid="schedules-list">
-          {schedules.map((s) => {
-            const result = s.lastResult;
-            const attempts = s.history ?? [];
-            const attemptsOpen = expanded.has(s.id);
-            const status = scheduleStatus(s, paused);
-            const blocked = labels.blockedReason(s.action);
-            const lastFailed = result?.outcome === "failed";
-            const tooltip = [
-              status,
-              blocked ?? "",
-              `${describeRule(s.rule)} · ${labels.actionLabel(s.action)} on ${
-                labels.targets(s.targets).label
-              }`,
-              result
-                ? `${tf("schedule.tooltip.last", {
-                    when: formatRelativeTime(result.at),
-                    outcome: result.outcome,
-                  })}${result.catchUp ? " (catch-up)" : ""}${
-                    result.message ? ` — ${result.message}` : ""
-                  }`
-                : "",
-            ];
-            const showStatus = scheduleStatusNeedsAttention(s, paused);
-            const attemptsLabel = attemptsOpen
-              ? t("schedule.attempts.hide")
-              : tf("schedule.attempts.show", { count: attempts.length });
-            return (
-              <SidebarListItem
-                key={s.id}
-                testId={`schedule-item-${s.id}`}
-                name={s.name}
-                nameTestId={`schedule-name-${s.id}`}
-                description={s.description}
-                descriptionTestId={`schedule-description-${s.id}`}
-                tooltip={tooltip}
-                tooltipTestId={`schedule-tooltip-${s.id}`}
-                actionsVisible
-                status={
-                  <StatusDot
-                    tone={scheduleTone(s, paused)}
-                    pulse={s.running}
-                    label={status}
-                    testId={`schedule-dot-${s.id}`}
-                  />
-                }
-                actions={
-                  <>
-                    <Toggle
-                      checked={s.enabled}
-                      onCheckedChange={(v) => handleToggle(s, v)}
-                      aria-label={`${s.enabled ? "Disable" : "Enable"} schedule ${s.name}`}
-                      data-testid={`schedule-enable-${s.id}`}
-                    />
-                    {attempts.length > 0 ? (
-                      <Tooltip content={attemptsLabel} side="top">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          iconOnly
-                          aria-label={attemptsLabel}
-                          aria-expanded={attemptsOpen}
-                          data-testid={`schedule-attempts-toggle-${s.id}`}
-                          icon={<History size={12} />}
-                          onClick={() => toggleExpanded(s.id)}
-                        />
-                      </Tooltip>
-                    ) : null}
-
-                    <Tooltip content="Edit" side="top">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label="Edit schedule"
-                        data-testid={`schedule-edit-${s.id}`}
-                        icon={<Pencil size={12} />}
-                        onClick={() => openScheduleEditor({ scheduleId: s.id })}
-                      />
-                    </Tooltip>
-
-                    <Tooltip content="Delete" side="top">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label="Delete schedule"
-                        data-testid={`schedule-delete-${s.id}`}
-                        icon={<Trash2 size={12} />}
-                        onClick={() => scheduleDelete.request({ id: s.id, name: s.name })}
-                      />
-                    </Tooltip>
-                  </>
-                }
-                details={
-                  showStatus || blocked || lastFailed || (attemptsOpen && attempts.length > 0) ? (
-                    <>
-                      {showStatus ? (
-                        <span className="schedules__meta" data-testid={`schedule-status-${s.id}`}>
-                          {status}
-                        </span>
-                      ) : null}
-                      {blocked ? (
-                        <span className="schedules__meta" data-testid={`schedule-blocked-${s.id}`}>
-                          {blocked}
-                        </span>
-                      ) : null}
-                      {lastFailed ? (
-                        <span
-                          className="schedules__meta schedules__last-failed"
-                          data-testid={`schedule-last-failed-${s.id}`}
-                        >
-                          <StatusDot tone="error" size="sm" ariaHidden />
-                          {t("schedule.marker.lastFailed")}
-                        </span>
-                      ) : null}
-                      {attemptsOpen && attempts.length > 0 ? (
-                        <ScheduleAttemptHistory scheduleId={s.id} attempts={attempts} />
-                      ) : null}
-                    </>
-                  ) : null
-                }
-              />
-            );
-          })}
+        <div ref={listRef} id={contentId} className="schedules__list" data-testid="schedules-list">
+          {schedules.map((s) => (
+            <ScheduleRow
+              key={s.id}
+              schedule={s}
+              paused={paused}
+              action={labels.actionLabel(s.action)}
+              targets={labels.targets(s.targets).label}
+              blocked={labels.blockedReason(s)}
+              justSaved={justSaved?.id === s.id}
+              onToggle={(next) => handleToggle(s, next)}
+              onEdit={() => openScheduleEditor({ scheduleId: s.id })}
+              onShowHistory={() => showHistoryInSidebar(s.action.automationId)}
+              onDelete={() => scheduleDelete.request({ id: s.id, name: s.name })}
+            />
+          ))}
         </div>
       )}
       <ScheduleEnableConfirmDialog
         open={confirming !== null}
         scheduleName={confirming?.name ?? ""}
         actionLabel={confirming ? labels.actionLabel(confirming.action) : ""}
-        ruleLabel={confirming ? describeRule(confirming.rule) : ""}
+        rule={confirming?.rule ?? null}
         hosts={confirmTargets?.hosts ?? []}
+        gone={confirmTargets?.gone ?? null}
         connects={confirming?.connectIfNeeded === true}
         onConfirm={async () => {
           if (confirming) await enable(confirming, true, true);
@@ -393,7 +264,7 @@ export function SchedulesSection({ showTitle = true, collapse }: SchedulesSectio
       />
       <ConfirmDeleteDialog
         {...scheduleDelete.dialogProps}
-        message={scheduleDelete.pending ? `Delete schedule "${scheduleDelete.pending.name}"?` : ""}
+        message={scheduleDelete.pending ? `Delete schedule “${scheduleDelete.pending.name}”?` : ""}
       />
     </section>
   );

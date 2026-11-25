@@ -37,4 +37,9 @@ message?: string,
 /**
  * `true` when this was a catch-up run for a missed slot.
  */
-catchUp?: boolean, };
+catchUp?: boolean, 
+/**
+ * Present only for a skipped slot that was missed (termiHub was closed or
+ * the computer was asleep, #6024): RFC 3339 time the run was due.
+ */
+missedDueAt?: string, };

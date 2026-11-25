@@ -13,6 +13,7 @@ import {
 } from "@/components/ui";
 import { describeRule } from "@/components/Schedules/scheduleForm";
 import { useScheduleLabels } from "@/components/Schedules/useScheduleLabels";
+import { t } from "@/i18n/catalog";
 import { newId } from "@/services/transport/ids";
 import { useAppStore } from "@/store/appStore";
 import type { ZodFieldErrors } from "@/hooks/useZodEditorForm";
@@ -154,7 +155,7 @@ export function WhenItRuns({
           <CalendarClock size={14} aria-hidden="true" />
           <span className="automation-triggers__schedule-text">
             {schedule.name}: {describeRule(schedule.rule)} on {targets(schedule.targets).label}
-            {schedule.enabled ? "" : " · Disabled"}
+            {schedule.enabled ? "" : ` · ${t("schedule.state.off")}`}
           </span>
           <Button
             variant="ghost"

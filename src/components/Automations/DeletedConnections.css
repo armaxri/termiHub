@@ -1,0 +1,19 @@
+/* A referenced connection that was deleted (#6024). Tokens only. */
+.deleted-connection {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+  color: var(--color-warning);
+  font-size: var(--font-size-sm);
+}
+
+.deleted-connection > svg {
+  flex-shrink: 0;
+}
+
+.deleted-connection__name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

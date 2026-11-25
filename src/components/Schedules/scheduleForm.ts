@@ -9,6 +9,7 @@
 import { z } from "zod";
 import { ITEM_DESCRIPTION_MAX_LENGTH, normalizeItemDescription } from "@/utils/itemDescription";
 
+import { t, tf } from "@/i18n/catalog";
 import type { BroadcastGroup } from "@/types/terminal";
 import type {
   MissedRunPolicy,
@@ -19,7 +20,7 @@ import type {
   ScheduleWeekday,
 } from "@/types/schedule";
 import { SCHEDULE_WEEKDAYS } from "@/types/schedule";
-import { formatRelativeDay, formatShortDate } from "@/utils/formatters";
+import { deletedConnectionLabel } from "@/utils/deletedConnection";
 
 /** Shortest interval, in minutes (mirrors the backend). */
 export const MIN_INTERVAL_MINUTES = 1;
@@ -61,8 +62,12 @@ export interface ScheduleFormValues {
   time: string;
   days: ScheduleWeekday[];
   missedRuns: MissedRunPolicy;
-  /** "Connect if not connected" (#3527, default off). */
-  connectIfNeeded: boolean;
+  /**
+   * What a run does about a target whose connection is closed (#3527, #6024).
+   * `""` = not chosen yet: a new schedule must say, because skipping it at night
+   * is a run that never happens.
+   */
+  ifClosed: "" | "connect" | "skip";
 }
 
 /** Validation schema for {@link ScheduleFormValues}. */
@@ -79,7 +84,7 @@ export const scheduleFormSchema = z
     time: z.string(),
     days: z.array(z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])),
     missedRuns: z.enum(["skip", "run-once"]),
-    connectIfNeeded: z.boolean(),
+    ifClosed: z.enum(["", "connect", "skip"]),
   })
   .superRefine((v, ctx) => {
     const issue = (path: string, message: string) =>
@@ -99,6 +104,7 @@ export const scheduleFormSchema = z
     if (v.targetsKind === "broadcast-group" && v.groupId === "") {
       issue("groupId", "Pick a broadcast group.");
     }
+    if (v.ifClosed === "") issue("ifClosed", t("schedule.closed.error"));
     if (v.ruleKind === "interval") {
       const n = v.everyMinutes;
       if (n === "" || !Number.isInteger(n) || n < MIN_INTERVAL_MINUTES) {
@@ -126,7 +132,7 @@ export function blankScheduleForm(action?: ScheduleAction): ScheduleFormValues {
     time: "09:00",
     days: ["mon", "tue", "wed", "thu", "fri"],
     missedRuns: "skip",
-    connectIfNeeded: false,
+    ifClosed: "",
   };
 }
 
@@ -145,8 +151,25 @@ export function scheduleToForm(input: ScheduleInput): ScheduleFormValues {
     time: input.rule.kind === "interval" ? base.time : input.rule.time,
     days: input.rule.kind === "weekly" ? [...input.rule.days] : base.days,
     missedRuns: input.missedRuns,
-    connectIfNeeded: input.connectIfNeeded === true,
+    ifClosed: input.connectIfNeeded === true ? "connect" : "skip",
   };
+}
+
+/** The rule the form describes. */
+export function ruleOf(v: ScheduleFormValues): ScheduleRule {
+  switch (v.ruleKind) {
+    case "interval":
+      return { kind: "interval", everyMinutes: Number(v.everyMinutes) };
+    case "daily":
+      return { kind: "daily", time: v.time };
+    case "weekly":
+      // Stored in week order regardless of click order.
+      return {
+        kind: "weekly",
+        days: SCHEDULE_WEEKDAYS.filter((d) => v.days.includes(d)),
+        time: v.time,
+      };
+  }
 }
 
 /** Build the {@link ScheduleInput} a valid form describes. */
@@ -156,26 +179,16 @@ export function formToScheduleInput(id: string, v: ScheduleFormValues): Schedule
     v.targetsKind === "connections"
       ? { kind: "connections", connectionIds: v.connectionIds }
       : { kind: "broadcast-group", groupId: v.groupId };
-  let rule: ScheduleRule;
-  if (v.ruleKind === "interval") {
-    rule = { kind: "interval", everyMinutes: Number(v.everyMinutes) };
-  } else if (v.ruleKind === "daily") {
-    rule = { kind: "daily", time: v.time };
-  } else {
-    // Stored in week order regardless of click order.
-    const days = SCHEDULE_WEEKDAYS.filter((d) => v.days.includes(d));
-    rule = { kind: "weekly", days, time: v.time };
-  }
   return {
     id,
     name: v.name.trim(),
     description: normalizeItemDescription(v.description),
     action,
     targets,
-    rule,
+    rule: ruleOf(v),
     missedRuns: v.missedRuns,
     // Sent only when on, so a schedule that never opted in stays unchanged.
-    ...(v.connectIfNeeded ? { connectIfNeeded: true } : {}),
+    ...(v.ifClosed === "connect" ? { connectIfNeeded: true } : {}),
   };
 }
 
@@ -208,11 +221,7 @@ export function keepUntouched(
     ),
     rule: pick(untouched("ruleKind", "everyMinutes", "time", "days"), stored.rule, edited.rule),
     missedRuns: pick(untouched("missedRuns"), stored.missedRuns, edited.missedRuns),
-    connectIfNeeded: pick(
-      untouched("connectIfNeeded"),
-      stored.connectIfNeeded,
-      edited.connectIfNeeded
-    ),
+    connectIfNeeded: pick(untouched("ifClosed"), stored.connectIfNeeded, edited.connectIfNeeded),
   } satisfies { [K in keyof Required<ScheduleInput>]: ScheduleInput[K] };
 }
 
@@ -236,37 +245,34 @@ export function describeRule(rule: ScheduleRule): string {
   }
 }
 
+/** What a schedule's targets are called, and whether any of them still exists. */
+export interface TargetNames {
+  /** For one line: the names, or the group's name. */
+  label: string;
+  /** Every connection, a deleted one named as such. */
+  hosts: string[];
+  /** Why there is nothing left to run on (#6024), or `null`. */
+  gone: string | null;
+}
+
 /** The connection names a schedule targets, resolved for display. */
 export function describeTargetNames(
   targets: ScheduleTargets,
   connectionName: (id: string) => string | undefined,
   groups: readonly BroadcastGroup[]
-): { label: string; hosts: string[] } {
+): TargetNames {
+  const name = (id: string) => connectionName(id) ?? deletedConnectionLabel(id);
+  const live = (ids: string[]) => ids.some((id) => connectionName(id) !== undefined);
   if (targets.kind === "connections") {
-    const hosts = targets.connectionIds.map((id) => connectionName(id) ?? `Unknown (${id})`);
-    return { label: hosts.join(", "), hosts };
+    const hosts = targets.connectionIds.map(name);
+    const gone = live(targets.connectionIds) ? null : t("schedule.gone.connections");
+    return { label: hosts.join(", "), hosts, gone };
   }
   const group = groups.find((g) => g.id === targets.groupId);
-  if (!group) return { label: "Missing broadcast group", hosts: [] };
-  const hosts = group.connectionIds.map((id) => connectionName(id) ?? `Unknown (${id})`);
-  return { label: `Group "${group.name}"`, hosts };
-}
-
-/** Two-digit `HH:MM` of a date, in local time. */
-function hhmm(d: Date): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-/**
- * A compact local rendering of a next-run instant: "today 09:00",
- * "tomorrow 09:00", or "Wed, Jun 3 09:00". The relative day and the date are
- * both rendered in the UI locale (#4374), so they never mix languages.
- */
-export function formatNextRun(iso: string, now: Date = new Date()): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const dayStart = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((dayStart(d) - dayStart(now)) / (24 * 60 * 60 * 1000));
-  const day = days === 0 || days === 1 ? formatRelativeDay(days) : formatShortDate(d);
-  return `${day} ${hhmm(d)}`;
+  if (!group) {
+    return { label: t("schedule.group.deleted"), hosts: [], gone: t("schedule.gone.group") };
+  }
+  const hosts = group.connectionIds.map(name);
+  const gone = live(group.connectionIds) ? null : t("schedule.gone.groupMembers");
+  return { label: tf("schedule.group.label", { name: group.name }), hosts, gone };
 }

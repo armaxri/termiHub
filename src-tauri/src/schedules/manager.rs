@@ -33,7 +33,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use tauri::AppHandle;
 
-use super::config::{Schedule, ScheduleStore, ScheduleTargets};
+use super::config::{Schedule, ScheduleRule, ScheduleStore, ScheduleTargets};
 use super::storage::ScheduleStorage;
 use super::tick::{self, TickContext};
 use super::timing::next_run_after;
@@ -421,6 +421,51 @@ impl ScheduleManager {
         inner.runtime.entry(id.to_string()).or_default().next_due = next;
         self.persist(&inner.store)?;
         Ok(Self::view(inner, &inner.store.schedules[idx], now, tz))
+    }
+
+    /// When `rule` would run next (#6024), so the editor can say it before the
+    /// schedule is saved: `None` for an invalid rule.
+    ///
+    /// For the schedule `id` while it is on and still has this rule, that is its
+    /// real next run. Otherwise the schedule is (re)timed from `now`: an
+    /// interval starts counting when it is switched on or the edit is saved.
+    pub fn preview_next_run<Tz: TimeZone>(
+        &self,
+        id: Option<&str>,
+        rule: &ScheduleRule,
+        now: DateTime<Utc>,
+        tz: &Tz,
+    ) -> Result<Option<String>, TerminalError> {
+        let inner = self.lock()?;
+        let current = inner
+            .store
+            .schedules
+            .iter()
+            .find(|s| Some(s.id.as_str()) == id && s.enabled && s.rule == *rule);
+        Ok(match current {
+            Some(s) => Self::view(&inner, s, now, tz).next_run_at,
+            None => next_run_after(rule, now, now, tz).map(|d| d.to_rfc3339()),
+        })
+    }
+
+    /// Clear the recorded attempts of the schedules `ids` (`None`: of every
+    /// schedule). The last result stays: it is the schedule's state, not its
+    /// history. Returns whether anything was cleared.
+    pub fn clear_history(&self, ids: Option<&[String]>) -> Result<bool, TerminalError> {
+        let mut inner = self.lock()?;
+        let mut next = inner.store.clone();
+        let mut changed = false;
+        for s in &mut next.schedules {
+            if ids.is_none_or(|ids| ids.contains(&s.id)) && !s.history.is_empty() {
+                s.history.clear();
+                changed = true;
+            }
+        }
+        if changed {
+            self.persist(&next)?;
+            inner.store = next;
+        }
+        Ok(changed)
     }
 
     /// Set the global pause switch. Resuming re-times every schedule from

@@ -73,6 +73,7 @@ mod tests {
             outcome: ScheduleRunOutcome::Skipped,
             message: Some(format!("skip {i}")),
             catch_up: false,
+            missed_due_at: None,
         }
     }
 

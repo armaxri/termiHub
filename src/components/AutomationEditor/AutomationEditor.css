@@ -572,6 +572,10 @@
   font-size: var(--font-size-xs);
 }
 
+.automation-triggers__hint--warning {
+  color: var(--color-warning);
+}
+
 .automation-triggers__connections {
   display: flex;
   flex-direction: column;

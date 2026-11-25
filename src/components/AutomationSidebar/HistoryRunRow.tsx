@@ -1,7 +1,9 @@
 import { ChevronRight } from "lucide-react";
 import { StatusDot, TruncatedText } from "@/components/ui";
+import { t } from "@/i18n/catalog";
+import type { RunSchedule } from "./historyEntries";
 import type { AutomationRun } from "@/types/generated/AutomationRun";
-import { formatAbsoluteTime, formatRelativeTime } from "@/utils/formatters";
+import { formatAbsoluteTime, formatDayTime } from "@/utils/formatters";
 import {
   automationRunDuration,
   automationRunOriginDetail,
@@ -16,6 +18,8 @@ import {
 export interface HistoryRunRowProps {
   /** The run record to show. */
   run: AutomationRun;
+  /** The schedule that started it, when one did. */
+  schedule?: RunSchedule;
   /** Whether the run's details are shown. */
   expanded: boolean;
   /** Show or hide the run's details. */
@@ -29,7 +33,7 @@ export interface HistoryRunRowProps {
  * row discloses the run's details: who started it, its outcome, how far it
  * got, the terminals it ran on and any error.
  */
-export function HistoryRunRow({ run, expanded, onToggle }: HistoryRunRowProps) {
+export function HistoryRunRow({ run, schedule, expanded, onToggle }: HistoryRunRowProps) {
   const detailsId = `automation-run-details-${run.id}`;
   const status = automationRunStatusLabel(run.status);
   const origin = automationRunOriginLabel(run.origin);
@@ -77,7 +81,7 @@ export function HistoryRunRow({ run, expanded, onToggle }: HistoryRunRowProps) {
           title={formatAbsoluteTime(run.endedAt)}
           data-testid={`automation-run-time-${run.id}`}
         >
-          {formatRelativeTime(run.endedAt)}
+          {formatDayTime(run.endedAt)}
         </time>
       </button>
       {expanded ? (
@@ -87,6 +91,15 @@ export function HistoryRunRow({ run, expanded, onToggle }: HistoryRunRowProps) {
             {origin}
             {via ? <span className="automation-history__via"> · {via}</span> : null}
           </dd>
+          {schedule ? (
+            <>
+              <dt>{t("automationHistory.schedule")}</dt>
+              <dd data-testid={`automation-run-schedule-${run.id}`}>
+                {schedule.name}
+                {schedule.leftOut ? ` · ${schedule.leftOut}` : ""}
+              </dd>
+            </>
+          ) : null}
           <dt>Outcome</dt>
           <dd data-testid={`automation-run-status-${run.id}`}>
             {failedStep !== null ? `${status} at step ${failedStep}` : status}
@@ -98,7 +111,7 @@ export function HistoryRunRow({ run, expanded, onToggle }: HistoryRunRowProps) {
           <dd data-testid={`automation-run-steps-${run.id}`}>{automationRunProgress(run)}</dd>
           <dt>When</dt>
           <dd>
-            {formatAbsoluteTime(run.startedAt)}
+            {formatDayTime(run.startedAt)}
             {duration ? ` · ${duration}` : ""}
           </dd>
           {targets.length > 0 ? (

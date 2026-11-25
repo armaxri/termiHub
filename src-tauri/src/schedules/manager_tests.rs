@@ -339,7 +339,7 @@ fn a_failure_in_any_window_marks_the_run_failed() {
     assert_eq!(res.outcome, ScheduleRunOutcome::Failed);
     assert_eq!(
         res.message.as_deref(),
-        Some("Ran on 3 terminals: step 2 failed")
+        Some("step 2 failed (ran on 3 terminals)")
     );
 }
 
@@ -453,6 +453,41 @@ fn a_closed_window_must_register_again() {
         .is_empty());
 }
 
+// ── previewing the next run (#6024) ────────────────────────────────────
+
+#[test]
+fn a_preview_of_the_running_rule_is_its_real_next_run() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    let preview = |rule| {
+        m.preview_next_run(Some("s1"), &rule, t(10, 4), &Utc)
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(preview(every(10)), t(10, 10).to_rfc3339());
+    // Another rule re-times the schedule from now, as saving it would.
+    assert_eq!(preview(every(20)), t(10, 24).to_rfc3339());
+    let daily = ScheduleRule::Daily {
+        time: "02:00".to_string(),
+    };
+    assert_eq!(
+        preview(daily),
+        (t(2, 0) + Duration::days(1)).to_rfc3339(),
+        "tomorrow at that time"
+    );
+}
+
+#[test]
+fn a_preview_of_a_schedule_that_is_off_counts_from_now() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    m.set_enabled("s1", false, false, t(10, 1), &Utc).unwrap();
+    let preview = m.preview_next_run(Some("s1"), &every(10), t(10, 4), &Utc);
+    assert_eq!(preview.unwrap(), Some(t(10, 14).to_rfc3339()));
+    let preview = m.preview_next_run(None, &every(10), t(10, 4), &Utc);
+    assert_eq!(preview.unwrap(), Some(t(10, 14).to_rfc3339()));
+}
+
 // ── missed runs: skip vs catch-up ───────────────────────────────────────
 
 #[test]
@@ -474,10 +509,14 @@ fn missed_runs_are_skipped_by_default() {
     assert!(r.fires.is_empty());
     let res = last_result(&m);
     assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
-    assert!(res
-        .message
-        .unwrap()
-        .contains("Missed the run due at 2026-06-01 10:10"));
+    assert_eq!(
+        res.message.as_deref(),
+        Some("termiHub was closed or the computer was asleep")
+    );
+    assert_eq!(
+        res.missed_due_at.as_deref(),
+        Some(t(10, 10).to_rfc3339().as_str())
+    );
     // Back on the regular cadence (anchor-aligned).
     let v = &m.state(t(11, 3), &Utc).unwrap().schedules[0];
     assert_eq!(

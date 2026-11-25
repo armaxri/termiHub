@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import { checkA11y } from "@/test/axe";
 import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
 import { withTooltip } from "@/test/tooltip";
+import { chooseFrom } from "@/test/automationEditorHarness";
 import type { ScheduleView } from "@/types/schedule";
 import { SchedulesSettings } from "./SchedulesSettings";
 
@@ -109,12 +110,10 @@ describe("SchedulesSettings (#4623)", () => {
     await render([view(), view({ id: "s2", name: "Health", enabled: false })]);
     expect(query("schedule-item-s1")).not.toBeNull();
     expect(query("schedule-item-s2")).not.toBeNull();
-    // Rule and targets are in the row tooltip, not on the row (#5757).
-    const tip = query("schedule-item-s1")!.getAttribute("aria-description") ?? "";
-    expect(tip).toContain("Every 30 minutes");
-    expect(tip).toContain("db-1");
-    expect(query("schedule-item-s1")!.textContent).not.toContain("db-1");
-    expect(query("schedule-status-s2")!.textContent).toBe("Disabled");
+    // The rows answer when, what and where (#6024).
+    expect(query("schedule-rule-s1")!.textContent).toBe("Every 30 minutes");
+    expect(query("schedule-what-s1")!.textContent).toContain("on db-1");
+    expect(query("schedule-status-s2")!.textContent).toBe("Off");
     act(() => query("schedule-edit-s1")!.click());
     expect(openScheduleEditor).toHaveBeenLastCalledWith({ scheduleId: "s1" });
     act(() => query("schedules-new-btn")!.click());
@@ -144,7 +143,7 @@ describe("SchedulesSettings (#4623)", () => {
 
   it("deletes a schedule after confirmation", async () => {
     await render([view()]);
-    act(() => query("schedule-delete-s1")!.click());
+    await chooseFrom("schedule-more-s1", "schedule-menu-delete-s1");
     expect(deleteSchedule).not.toHaveBeenCalled();
     await act(async () => query("confirm-delete-confirm")!.click());
     await flush();
