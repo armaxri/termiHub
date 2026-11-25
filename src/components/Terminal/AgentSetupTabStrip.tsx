@@ -38,6 +38,16 @@ export type AgentSetupTabNotice =
   | { kind: "unknown"; reason: string };
 
 /**
+ * What the POSIX setup script's own exit codes say (`agent_setup_posix.rs`):
+ * a failure that kept the previous agent, and one after the new one was in
+ * place (#5999).
+ */
+const SCRIPT_EXIT_REASONS: Record<number, string> = {
+  10: "The new agent was not installed. The previous agent is still in place and starts.",
+  11: "The new agent is installed and starts, but its service could not be set up.",
+};
+
+/**
  * The notice a setup tab shows, or `null` while the setup still runs, for a
  * tab that is no setup tab, and once the user dismissed it. `exit` is the
  * tab's session exit, when its session ended.
@@ -69,9 +79,10 @@ export function agentSetupTabNotice(
   if (!exit) return null;
   if (!tab.reportsExit) return { kind: "checking" };
   if (exit.code === null) return null;
-  return exit.code === 0
-    ? { kind: "installed" }
-    : { kind: "failed", reason: `The setup script exited with code ${exit.code}.` };
+  if (exit.code === 0) return { kind: "installed" };
+  const reason =
+    SCRIPT_EXIT_REASONS[exit.code] ?? `The setup script exited with code ${exit.code}.`;
+  return { kind: "failed", reason };
 }
 
 /** How a setup tab's setup ended; `null` while it runs or when nothing is known. */

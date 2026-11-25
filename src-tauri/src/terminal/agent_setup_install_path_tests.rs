@@ -108,10 +108,34 @@ fn the_setup_script_refuses_to_replace_a_file_that_is_not_an_agent() {
     let guard = script
         .find("Never replace a file that is not a termiHub agent")
         .expect("the guard is in the script");
-    let mv = script.find("$SUDO mv").expect("the install move");
+    let mv = script
+        .find("$SUDO mv -f \"$NEW\" \"$TARGET\"")
+        .expect("the install move");
     assert!(
         guard < mv,
         "the guard runs before the binary is moved into place"
     );
     assert!(script.contains(r#""termihub-agent "*)"#));
+}
+
+#[test]
+fn a_failed_posix_setup_keeps_the_stored_path() {
+    // 0 and "only the service failed" installed the agent; no code says nothing.
+    for end in [
+        ShellEnd::Exited(0),
+        ShellEnd::Exited(EXIT_SERVICE_FAILED),
+        ShellEnd::NoStatus,
+        ShellEnd::StillOpen,
+    ] {
+        assert!(installs_agent(end), "{end:?}");
+    }
+    for code in [
+        1,
+        2,
+        127,
+        129,
+        crate::terminal::agent_setup_posix::EXIT_PREVIOUS_KEPT,
+    ] {
+        assert!(!installs_agent(ShellEnd::Exited(code)), "{code}");
+    }
 }

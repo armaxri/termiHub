@@ -16,8 +16,9 @@ use crate::terminal::agent_cancel::bail_if_cancelled;
 use crate::terminal::agent_install;
 use crate::terminal::agent_setup_outcome::{
     recover_and_check_host, sha256_hex, windows_setup_outcome, SessionEndWatch, SetupOutcome,
-    CHECK_TIMEOUT, SHELL_END_CEILING,
+    ShellEnd, CHECK_TIMEOUT, SHELL_END_CEILING,
 };
+use crate::terminal::agent_setup_posix::{generate_setup_script, EXIT_SERVICE_FAILED};
 use crate::terminal::agent_setup_windows::{
     windows_echo_input, windows_setup_input, windows_setup_script, WINDOWS_ENTER,
     WINDOWS_SETUP_SCRIPT_NAME,
@@ -539,11 +540,8 @@ fn run_setup_background(
 
     emit_progress(app_handle, agent_id, "install", "Running setup script...");
     let exec_command = setup_exec_command(&upload_dir);
+    let watch = SessionEndWatch::start(app_handle, session_id);
     inject_commands(session_manager, session_id, &exec_command, rt_handle);
-
-    // The next connect must run the binary this setup installs: store the
-    // chosen path as the agent path (#5532).
-    crate::commands::connection::record_setup_agent_path(app_handle, agent_id, remote_path);
 
     emit_progress(
         app_handle,
@@ -552,6 +550,38 @@ fn run_setup_background(
         "Setup script started in terminal",
     );
     info!("Agent setup: script started for agent {}", agent_id);
+
+    // The next connect must run the binary this setup installs: store the
+    // chosen path as the agent path (#5532). Not after a failure: the stored
+    // path names the agent that was working (#5999).
+    let end = watch.wait(SHELL_END_CEILING, || {
+        session_is_open(session_manager, session_id, rt_handle)
+    });
+    if installs_agent(end) {
+        crate::commands::connection::record_setup_agent_path(app_handle, agent_id, remote_path);
+    }
+}
+
+/// Whether the setup's terminal session still exists.
+fn session_is_open(
+    session_manager: &SessionManager,
+    session_id: &str,
+    rt_handle: &tokio::runtime::Handle,
+) -> bool {
+    rt_handle
+        .block_on(session_manager.list_sessions())
+        .iter()
+        .any(|s| s.id == session_id)
+}
+
+/// Whether a POSIX setup whose shell ended as `end` may have installed the
+/// agent: its exit code says so (only a failed service leaves the new agent in
+/// place), and an end without one says nothing against it.
+fn installs_agent(end: ShellEnd) -> bool {
+    match end {
+        ShellEnd::Exited(code) => code == 0 || code == EXIT_SERVICE_FAILED,
+        ShellEnd::NoStatus | ShellEnd::StillOpen => true,
+    }
 }
 
 /// Emit a `cancelled` progress event and show the cancellation in the visible
@@ -680,10 +710,7 @@ fn run_windows_install(
     info!("Agent setup: Windows install commands sent for agent {agent_id}");
 
     let end = watch.wait(SHELL_END_CEILING, || {
-        rt_handle
-            .block_on(session_manager.list_sessions())
-            .iter()
-            .any(|s| s.id == session_id)
+        session_is_open(session_manager, session_id, rt_handle)
     });
     let check = std::fs::read(binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))
@@ -928,172 +955,6 @@ fn resolve_binary(
     }
 }
 
-/// Generate a self-contained POSIX shell script for agent installation.
-///
-/// The script handles privilege escalation detection, directory creation,
-/// binary installation, verification, and optional systemd service setup.
-/// It uses `set -e` for error handling and prints plain-ASCII progress
-/// markers (`[..]`, `[ok]`, `[error]`) via `printf '%s\n'` only, ending in one
-/// summary line: `Agent v<x> installed at <path>.` (a branch build reads
-/// `v<x> (<branch>)`, a path under `$HOME` is shown as `~/…`, #5956) or
-/// `Agent setup failed: <reason>` (#5822).
-/// `binary_src` is where the agent binary was uploaded — inside a private
-/// upload dir validated by [`agent_install::parse_prepared_upload_dir`].
-pub fn generate_setup_script(remote_path: &str, install_service: bool, binary_src: &str) -> String {
-    let service_flag = if install_service { "true" } else { "false" };
-    SETUP_SCRIPT_TEMPLATE
-        .replace("__BINARY_SRC__", binary_src)
-        .replace("__INSTALL_PATH__", remote_path)
-        .replace("__INSTALL_SERVICE__", service_flag)
-}
-
-/// Template for the agent setup script.
-///
-/// Placeholders `__BINARY_SRC__`, `__INSTALL_PATH__` and `__INSTALL_SERVICE__`
-/// are replaced at runtime by [`generate_setup_script`].
-const SETUP_SCRIPT_TEMPLATE: &str = r#"#!/bin/sh
-set -e
-
-BINARY_SRC="__BINARY_SRC__"
-INSTALL_PATH="__INSTALL_PATH__"
-INSTALL_SERVICE=__INSTALL_SERVICE__
-
-# --- Helpers ---
-# Plain ASCII markers printed with printf only: `echo` does not expand escapes
-# in every sh, so the output reads the same on any shell and locale (#5822).
-say() {
-    printf '%s\n' "$*"
-}
-
-FAILED=false
-fail() {
-    FAILED=true
-    say "[error] $1"
-    if [ -n "$2" ]; then
-        say "        $2"
-    fi
-    say ""
-    say "Agent setup failed: $1"
-    exit 1
-}
-
-# The script removes itself, a leftover upload and its private upload dir, so
-# the command typed into the terminal stays one short `sh` line (#5822).
-finish() {
-    status=$?
-    if [ "$status" -ne 0 ] && [ "$FAILED" = false ]; then
-        say ""
-        say "Agent setup failed: a setup step exited with status $status (see above)."
-    fi
-    rm -f "$BINARY_SRC" "$0" 2>/dev/null || true
-    rmdir "${0%/*}" 2>/dev/null || true
-}
-trap finish EXIT
-
-say ""
-say "=== termiHub Agent Setup ==="
-say ""
-
-# --- Step 1: Verify uploaded binary ---
-say "[..] Checking the uploaded agent binary"
-if [ -f "$BINARY_SRC" ]; then
-    say "[ok] Agent binary uploaded"
-else
-    fail "The agent binary was not uploaded." "Run the setup again."
-fi
-
-# --- Step 2: Resolve install path ---
-case "$INSTALL_PATH" in
-    "~/"*) INSTALL_PATH="$HOME/${INSTALL_PATH#\~/}" ;;
-esac
-say "[..] Install path: $INSTALL_PATH"
-
-# --- Step 2b: Never replace a file that is not a termiHub agent ---
-if [ -e "$INSTALL_PATH" ]; then
-    EXISTING=$("$INSTALL_PATH" --version 2>/dev/null || true)
-    case "$EXISTING" in
-        "termihub-agent "*) say "[..] Replacing the installed agent ($EXISTING)" ;;
-        *) fail "$INSTALL_PATH already exists and is not a termiHub agent; it was not replaced." "Remove it or choose another install path." ;;
-    esac
-fi
-
-# --- Step 3: Check permissions ---
-SUDO=""
-TARGET_DIR=$(dirname "$INSTALL_PATH")
-say "[..] Checking write access to $TARGET_DIR"
-if [ -d "$TARGET_DIR" ] && [ -w "$TARGET_DIR" ]; then
-    say "[ok] $TARGET_DIR is writable"
-else
-    # Walk up to the first existing ancestor to check writability
-    CHECK_DIR="$TARGET_DIR"
-    while [ -n "$CHECK_DIR" ] && [ "$CHECK_DIR" != "/" ] && [ ! -d "$CHECK_DIR" ]; do
-        CHECK_DIR=$(dirname "$CHECK_DIR")
-    done
-    if [ -w "$CHECK_DIR" ]; then
-        say "[ok] $CHECK_DIR is writable"
-    elif [ "$(id -u)" -eq 0 ]; then
-        say "[ok] Running as root"
-    elif command -v sudo >/dev/null 2>&1; then
-        SUDO="sudo"
-        say "[ok] Using sudo to write to $TARGET_DIR"
-    else
-        fail "Cannot create $TARGET_DIR (permission denied, no sudo available)." "Ask the server admin to create the directory, or choose a writable path."
-    fi
-fi
-
-# --- Step 4: Create directory ---
-if [ ! -d "$TARGET_DIR" ]; then
-    say "[..] Creating $TARGET_DIR"
-    $SUDO mkdir -p "$TARGET_DIR"
-fi
-
-# --- Step 5: Install binary ---
-say "[..] Installing the agent to $INSTALL_PATH"
-$SUDO mv "$BINARY_SRC" "$INSTALL_PATH"
-$SUDO chmod +x "$INSTALL_PATH"
-
-# --- Step 6: Verify ---
-say "[..] Verifying the installed agent"
-if ! VERSION_OUT=$("$INSTALL_PATH" --version 2>&1); then
-    fail "The installed agent at $INSTALL_PATH does not run: $VERSION_OUT" "Check that the binary matches this host's architecture."
-fi
-VERSION_LINE=$(printf '%s\n' "$VERSION_OUT" | head -n 1)
-VERSION=${VERSION_LINE#termihub-agent }
-VERSION=${VERSION#v}
-# A branch build reports "0.1.0 (branch: develop)": show it as "v0.1.0 (develop)".
-case "$VERSION" in
-    *" (branch: "*")")
-        BUILD_BRANCH=${VERSION#* (branch: }
-        VERSION_LABEL="v${VERSION%% *} (${BUILD_BRANCH%)})"
-        ;;
-    *) VERSION_LABEL="v$VERSION" ;;
-esac
-say "[ok] $VERSION_LINE"
-
-# --- Step 7: Optional systemd service ---
-if [ "$INSTALL_SERVICE" = true ]; then
-    say "[..] Installing the systemd service termihub-agent"
-    printf '[Unit]\nDescription=termiHub Agent\nAfter=network.target\n\n[Service]\nExecStart=%s --listen 127.0.0.1:7685\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n' "$INSTALL_PATH" \
-        | $SUDO tee /etc/systemd/system/termihub-agent.service > /dev/null
-    $SUDO systemctl daemon-reload
-    say "[ok] Service registered"
-    $SUDO systemctl enable --quiet termihub-agent
-    say "[ok] Service enabled"
-    $SUDO systemctl start termihub-agent
-    say "[ok] Service started"
-fi
-
-# The summary names the path home-relative; the full one is printed above.
-SHOWN_PATH=$INSTALL_PATH
-if [ -n "$HOME" ] && [ "$HOME" != / ]; then
-    case "$INSTALL_PATH" in
-        "$HOME"/*) SHOWN_PATH="~${INSTALL_PATH#"$HOME"}" ;;
-    esac
-fi
-say ""
-say "Agent $VERSION_LABEL installed at $SHOWN_PATH. You can close this tab."
-"#;
-
 /// Inject commands into the visible terminal session via the SessionManager.
 ///
 /// Uses the raw (non-normalizing) input path: these are internal setup commands
@@ -1302,7 +1163,7 @@ mod tests {
         assert!(script.contains("=== termiHub Agent Setup ==="));
         assert!(script
             .contains("Agent $VERSION_LABEL installed at $SHOWN_PATH. You can close this tab."));
-        assert!(script.contains("Agent setup failed: $1"));
+        assert!(script.contains("Agent setup failed: ${REASON"));
         assert!(script.contains("INSTALL_SERVICE=false"));
     }
 
@@ -1311,10 +1172,11 @@ mod tests {
         let script = generate_setup_script("/usr/local/bin/termihub-agent", true, TEST_BINARY_SRC);
         assert!(script.contains("INSTALL_SERVICE=true"));
         assert!(script.contains("systemd service"));
-        assert!(script.contains("$SUDO tee /etc/systemd/system/termihub-agent.service"));
-        assert!(script.contains("$SUDO systemctl daemon-reload"));
-        assert!(script.contains("$SUDO systemctl enable --quiet termihub-agent"));
-        assert!(script.contains("$SUDO systemctl start termihub-agent"));
+        assert!(script.contains("UNIT=\"$UNIT_DIR/termihub-agent.service\""));
+        assert!(script.contains("UNIT_DIR=/etc/systemd/system\n"));
+        assert!(script.contains("$SERVICE_SUDO systemctl daemon-reload"));
+        assert!(script.contains("$SERVICE_SUDO systemctl enable --quiet termihub-agent"));
+        assert!(script.contains("$SERVICE_SUDO systemctl restart termihub-agent"));
         assert!(script.contains("ExecStart=%s --listen 127.0.0.1:7685"));
     }
 
